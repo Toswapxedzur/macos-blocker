@@ -1,0 +1,407 @@
+/* chrome.* shim for the macosBlocker native port.
+ *
+ * The customBlocker editor UI (popup.html / popup.js) was written for a
+ * Chrome MV3 extension. Inside a WKWebView there is no `chrome` object, so
+ * this shim provides the small surface the editor actually uses:
+ *
+ *   - chrome.storage.local.get / set / remove
+ *   - chrome.storage.onChanged
+ *   - chrome.runtime.getURL / sendMessage / onMessage / id / lastError
+ *   - chrome.permissions.contains / request
+ *   - chrome.i18n.getMessage (best effort; the editor mostly uses its own
+ *     translation/*.json loader)
+ *
+ * Storage is mirrored to two places:
+ *   1. localStorage, so the UI works even with no native host (plain Safari).
+ *   2. the native host via window.webkit.messageHandlers.cbBridge, so the
+ *      Swift policy core sees the same blockedGroups / settings / usage data.
+ *
+ * The native host can also push an initial store snapshot by calling
+ *   window.__cbApplyNativeStore(jsonString)
+ * before the editor reads storage.
+ */
+(function () {
+  if (window.chrome && window.chrome.__cbShim) {
+    return;
+  }
+
+  var STORE_KEY = "__cb_chrome_storage__";
+
+  function nativeBridge() {
+    try {
+      if (
+        window.webkit &&
+        window.webkit.messageHandlers &&
+        window.webkit.messageHandlers.cbBridge
+      ) {
+        return window.webkit.messageHandlers.cbBridge;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  function loadStore() {
+    try {
+      return JSON.parse(window.localStorage.getItem(STORE_KEY) || "{}") || {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function persist() {
+    try {
+      window.localStorage.setItem(STORE_KEY, JSON.stringify(store));
+    } catch (_) {}
+    var bridge = nativeBridge();
+    if (bridge) {
+      try {
+        bridge.postMessage({ kind: "persist-store", store: store });
+      } catch (_) {}
+    }
+  }
+
+  var store = loadStore();
+
+  // Allow the native host to seed/replace the store before first read.
+  window.__cbApplyNativeStore = function (json) {
+    try {
+      var incoming = typeof json === "string" ? JSON.parse(json) : json;
+      if (incoming && typeof incoming === "object") {
+        store = incoming;
+        try {
+          window.localStorage.setItem(STORE_KEY, JSON.stringify(store));
+        } catch (_) {}
+      }
+    } catch (_) {}
+  };
+
+  // The native macOS host seeds the installed-application inventory here so the
+  // editor's app picker can search/show real apps (name + bundle id + icon).
+  // Each entry: { id: <bundleId>, name: <String>, icon: <data URL or "" > }.
+  // On plain Safari (no native host) this stays an empty array and the picker
+  // simply shows "no apps found".
+  if (!Array.isArray(window.__cbAppInventory)) {
+    window.__cbAppInventory = [];
+  }
+  window.__cbApplyAppInventory = function (json) {
+    try {
+      var incoming = typeof json === "string" ? JSON.parse(json) : json;
+      if (Array.isArray(incoming)) {
+        window.__cbAppInventory = incoming.filter(function (entry) {
+          return entry && typeof entry.id === "string" && entry.id;
+        });
+        if (typeof window.__cbOnAppInventory === "function") {
+          try { window.__cbOnAppInventory(); } catch (_) {}
+        }
+      }
+    } catch (_) {}
+  };
+
+  var changeListeners = [];
+
+  function notifyChanges(changes) {
+    for (var i = 0; i < changeListeners.length; i++) {
+      try {
+        changeListeners[i](changes, "local");
+      } catch (_) {}
+    }
+  }
+
+  function deepClone(value) {
+    if (value === undefined) {
+      return undefined;
+    }
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch (_) {
+      return value;
+    }
+  }
+
+  function resolveQuery(query) {
+    var out = {};
+    if (query === null || query === undefined) {
+      for (var k in store) {
+        if (Object.prototype.hasOwnProperty.call(store, k)) {
+          out[k] = deepClone(store[k]);
+        }
+      }
+      return out;
+    }
+    if (typeof query === "string") {
+      out[query] = deepClone(store[query]);
+      return out;
+    }
+    if (Array.isArray(query)) {
+      query.forEach(function (key) {
+        out[key] = deepClone(store[key]);
+      });
+      return out;
+    }
+    if (typeof query === "object") {
+      Object.keys(query).forEach(function (key) {
+        out[key] = Object.prototype.hasOwnProperty.call(store, key)
+          ? deepClone(store[key])
+          : deepClone(query[key]);
+      });
+      return out;
+    }
+    return out;
+  }
+
+  function settleCallback(promiseResult, callback) {
+    if (typeof callback === "function") {
+      Promise.resolve(promiseResult).then(function (value) {
+        callback(value);
+      });
+      return undefined;
+    }
+    return Promise.resolve(promiseResult);
+  }
+
+  var storageLocal = {
+    get: function (query, callback) {
+      return settleCallback(resolveQuery(query), callback);
+    },
+    set: function (items, callback) {
+      var changes = {};
+      Object.keys(items || {}).forEach(function (key) {
+        changes[key] = {
+          oldValue: deepClone(store[key]),
+          newValue: deepClone(items[key])
+        };
+        store[key] = deepClone(items[key]);
+      });
+      persist();
+      notifyChanges(changes);
+      return settleCallback(undefined, callback);
+    },
+    remove: function (keys, callback) {
+      var list = Array.isArray(keys) ? keys : [keys];
+      var changes = {};
+      list.forEach(function (key) {
+        changes[key] = { oldValue: deepClone(store[key]), newValue: undefined };
+        delete store[key];
+      });
+      persist();
+      notifyChanges(changes);
+      return settleCallback(undefined, callback);
+    }
+  };
+
+  // ----- custom-rule syntax check (runs in-page, like the sandbox) -----
+
+  function noop() {}
+
+  function stubHelpers() {
+    return new Proxy(
+      {},
+      {
+        get: function () {
+          return function () {
+            return new Proxy({}, { get: function () { return noop; } });
+          };
+        }
+      }
+    );
+  }
+
+  function countingRegistry(onRegister) {
+    var api = {
+      register: function () {
+        onRegister();
+        return true;
+      },
+      unregister: function () { return true; },
+      unregisterAll: function () { return 0; },
+      getEvent: function () { return null; },
+      getEvents: function () { return {}; },
+      countRegistered: function () { return 0; },
+      post: noop
+    };
+    var typed = [
+      "TickEvent", "OpenWebEvent", "CloseWebEvent", "SwitchWebEvent",
+      "SwitchDomainEvent", "WebChangedEvent", "TimerEnded", "SnoozePress",
+      "PanelEvent", "LocalFileEvent", "PageHeartbeatEvent"
+    ];
+    typed.forEach(function (name) {
+      api["register" + name] = function () { onRegister(); return true; };
+      api["get" + name] = function () { return null; };
+      api["get" + name + "s"] = function () { return {}; };
+      api["count" + name + "Registered"] = function () { return 0; };
+    });
+    return api;
+  }
+
+  function checkSyntax(source) {
+    try {
+      var count = 0;
+      var factory = new Function('"use strict"; return (' + String(source || "") + "\n);");
+      var rule = factory();
+      if (typeof rule !== "function") {
+        return { ok: true, result: { ok: false, error: "Rule must evaluate to a function." } };
+      }
+      try {
+        rule(countingRegistry(function () { count += 1; }), stubHelpers());
+      } catch (runErr) {
+        // Registration body referenced a helper at top level; syntax is
+        // still valid, so report ok with however many handlers registered.
+        return { ok: true, result: { ok: true, handlers: count } };
+      }
+      return { ok: true, result: { ok: true, handlers: count } };
+    } catch (parseErr) {
+      return {
+        ok: true,
+        result: { ok: false, error: String((parseErr && parseErr.message) || parseErr) }
+      };
+    }
+  }
+
+  // ----- runtime -----
+
+  var messageListeners = [];
+
+  function bridgeOrResolve(kind, message, fallback) {
+    var bridge = nativeBridge();
+    if (bridge) {
+      try {
+        bridge.postMessage({ kind: kind, message: message });
+      } catch (_) {}
+    }
+    return Promise.resolve(fallback);
+  }
+
+  function handleSendMessage(message) {
+    var type = message && message.type;
+    switch (type) {
+      case "get-log-feed":
+        return Promise.resolve({ ok: true, entries: [] });
+      case "clear-log-feed":
+        return Promise.resolve({ ok: true });
+      case "check-custom-group-syntax":
+        return Promise.resolve(checkSyntax(message && message.source));
+      case "run-custom-group":
+        return bridgeOrResolve("run-custom-group", message, {
+          ok: true,
+          loadResult: { ok: true, handlers: 0 }
+        });
+      case "fire-snooze-press":
+        return bridgeOrResolve("fire-snooze-press", message, { ok: true });
+      case "refresh-blocking-rules":
+        return bridgeOrResolve("refresh-blocking-rules", message, { ok: true });
+      case "unload-custom-group":
+        return bridgeOrResolve("unload-custom-group", message, { ok: true });
+      default:
+        return Promise.resolve({ ok: true });
+    }
+  }
+
+  var runtime = {
+    id: "ios-blocker",
+    lastError: null,
+    getURL: function (path) {
+      try {
+        return new URL(String(path || ""), document.baseURI).href;
+      } catch (_) {
+        return String(path || "");
+      }
+    },
+    getManifest: function () {
+      return { version: "1.2.0", name: "macosBlocker" };
+    },
+    sendMessage: function (message, callback) {
+      var result = handleSendMessage(message);
+      if (typeof callback === "function") {
+        result.then(callback);
+        return undefined;
+      }
+      return result;
+    },
+    onMessage: {
+      addListener: function (fn) {
+        if (typeof fn === "function") messageListeners.push(fn);
+      },
+      removeListener: function (fn) {
+        var i = messageListeners.indexOf(fn);
+        if (i >= 0) messageListeners.splice(i, 1);
+      },
+      hasListener: function (fn) {
+        return messageListeners.indexOf(fn) >= 0;
+      }
+    }
+  };
+
+  // Let the native host deliver a message into the page (e.g. log-feed push).
+  window.__cbDispatchRuntimeMessage = function (message) {
+    for (var i = 0; i < messageListeners.length; i++) {
+      try {
+        messageListeners[i](message, { id: runtime.id }, function () {});
+      } catch (_) {}
+    }
+  };
+
+  // ----- permissions (always granted on native; hides the site-access banner) -----
+
+  var permissions = {
+    contains: function (_query, callback) {
+      return settleCallback(true, callback);
+    },
+    request: function (_query, callback) {
+      return settleCallback(true, callback);
+    }
+  };
+
+  // ----- i18n (best effort; editor primarily uses translation/*.json) -----
+
+  var i18n = {
+    getMessage: function (key) {
+      return key;
+    },
+    getUILanguage: function () {
+      try {
+        return navigator.language || "en";
+      } catch (_) {
+        return "en";
+      }
+    }
+  };
+
+  window.chrome = window.chrome || {};
+  window.chrome.__cbShim = true;
+  window.chrome.storage = {
+    local: storageLocal,
+    onChanged: {
+      addListener: function (fn) {
+        if (typeof fn === "function") changeListeners.push(fn);
+      },
+      removeListener: function (fn) {
+        var i = changeListeners.indexOf(fn);
+        if (i >= 0) changeListeners.splice(i, 1);
+      },
+      hasListener: function (fn) {
+        return changeListeners.indexOf(fn) >= 0;
+      }
+    }
+  };
+  window.chrome.runtime = runtime;
+  window.chrome.permissions = permissions;
+  window.chrome.i18n = i18n;
+
+  // Pull the installed-application inventory (served dynamically by the native
+  // scheme handler). It can be multi-megabyte with icons, so we fetch it rather
+  // than have it injected. Resolves relative to the current page origin.
+  try {
+    if (typeof fetch === "function") {
+      fetch("app-inventory.json", { cache: "no-store" })
+        .then(function (response) {
+          return response && response.ok ? response.json() : null;
+        })
+        .then(function (list) {
+          if (Array.isArray(list) && typeof window.__cbApplyAppInventory === "function") {
+            window.__cbApplyAppInventory(list);
+          }
+        })
+        .catch(function () {});
+    }
+  } catch (_) {}
+})();

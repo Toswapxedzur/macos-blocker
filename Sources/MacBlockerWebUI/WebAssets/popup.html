@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title data-i18n="app.title">Screen Time Limiter: Custom Application Blocker & Focus Timer</title>
+    <link rel="icon" href="icons/icon-128.png" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="popup">
+      <header class="hero">
+        <div class="hero-topbar">
+          <div>
+            <h1 data-i18n="app.shortTitle">Custom Application Blocker</h1>
+          </div>
+          <div class="hero-actions">
+            <button id="settingsButton" type="button" class="secondary" data-i18n="settings.button">
+              Settings
+            </button>
+            <button id="manualButton" type="button" class="secondary" data-i18n="manual.button">
+              Instruction Manual
+            </button>
+            <div class="language-picker">
+              <select id="languageSelect" aria-label="Language" data-i18n-aria-label="language.label"></select>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div
+        id="siteAccessBanner"
+        class="site-access-banner"
+        role="status"
+        aria-live="polite"
+        hidden
+      >
+        <div class="site-access-banner-text">
+          <strong data-i18n="siteAccess.title">Limited site access detected</strong>
+          <span data-i18n="siteAccess.body">
+            Chrome is currently restricting this extension's access to web pages.
+            Screen Time Limiter: Custom Website Blocker & Focus Timer needs access to all sites in order to block them.
+          </span>
+        </div>
+        <div class="site-access-banner-actions">
+          <button id="siteAccessGrantButton" type="button" data-i18n="siteAccess.grant">
+            Grant access
+          </button>
+          <button
+            id="siteAccessDismissButton"
+            type="button"
+            class="secondary"
+            data-i18n="siteAccess.dismiss"
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+
+      <section id="layout" class="layout">
+        <aside class="groups-panel">
+          <div class="panel-header">
+            <div>
+              <h2 data-i18n="groups.title">Block Groups</h2>
+              <p class="panel-copy" data-i18n="groups.copy">
+                Drag groups to reorder them. Each group has its own rules and toggle.
+              </p>
+            </div>
+            <div class="add-group-controls">
+              <select id="addGroupType" aria-label="Block group type to add" data-i18n-aria-label="groups.addTypeAria">
+                <option value="site" data-i18n="groupType.site">Default</option>
+                <option value="youtube" data-i18n="groupType.youtube">YouTube</option>
+                <option value="tiktok" data-i18n="groupType.tiktok">TikTok</option>
+                <option value="facebook" data-i18n="groupType.facebook">Facebook</option>
+                <option value="instagram" data-i18n="groupType.instagram">Instagram</option>
+                <option value="twitch" data-i18n="groupType.twitch">Twitch</option>
+                <option value="reddit" data-i18n="groupType.reddit">Reddit</option>
+                <option value="discord" data-i18n="groupType.discord">Discord</option>
+                <option value="custom" data-i18n="groupType.custom">Custom</option>
+              </select>
+              <div class="add-group-buttons">
+                <button id="addGroupButton" type="button" data-i18n="groups.addButton">Add</button>
+                <button id="deleteAllGroupsButton" type="button" class="secondary danger" data-i18n="groups.deleteAllButton">Clear</button>
+              </div>
+            </div>
+          </div>
+          <p id="bulkActionNotice" class="field-help"></p>
+
+          <div id="groupList" class="group-list" aria-label="Block groups" data-i18n-aria-label="groups.listAria"></div>
+        </aside>
+
+        <div
+          id="layoutResizer"
+          class="layout-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize block groups panel"
+          data-i18n-aria-label="layout.resizerAriaLabel"
+          tabindex="0"
+        ></div>
+
+        <section class="editor-panel">
+          <div class="panel-header editor-header">
+            <div>
+              <h2 id="editorTitle" data-i18n="editor.title">Edit Group</h2>
+              <p id="editorCopy" class="panel-copy" data-i18n="editor.copy">
+                Add the applications you want this group to block.
+              </p>
+              <p id="groupTypeSummary" class="panel-copy"></p>
+            </div>
+            <div class="editor-actions">
+              <button id="exportGroupButton" type="button" class="secondary" data-i18n="editor.exportGroupButton">
+                Export
+              </button>
+              <button id="importGroupButton" type="button" class="secondary" data-i18n="editor.importGroupButton">
+                Import
+              </button>
+              <button id="deleteGroupButton" type="button" class="secondary danger" data-i18n="editor.deleteGroupButton">
+                Delete Group
+              </button>
+            </div>
+          </div>
+
+          <label class="label" for="groupName" data-i18n="editor.groupName">Group name</label>
+          <input
+            id="groupName"
+            type="text"
+            maxlength="60"
+            placeholder="Work distractions"
+            data-i18n-placeholder="editor.groupNamePlaceholder"
+          />
+
+          <label class="checkbox-row" for="groupEnabled">
+            <input id="groupEnabled" type="checkbox" />
+            <span data-i18n="editor.enableGroup">Enable this block group</span>
+          </label>
+
+          <div id="blockModeSection">
+            <label class="label" for="blockMode" data-i18n="editor.blockMode">Blocking behavior</label>
+            <select id="blockMode">
+              <option value="instant" data-i18n="mode.instant">Block immediately</option>
+              <option value="after-minutes" data-i18n="mode.afterMinutes">Block after a number of minutes</option>
+              <option value="timer" data-i18n="mode.timer">Timer (count down, then block)</option>
+            </select>
+          </div>
+
+          <!-- Redirection removed: app blocking has no URL to redirect to.
+               A hidden field is retained only so the shared editor pipeline
+               keeps working; it is always empty and ignored by enforcement. -->
+          <input id="fallbackUrl" type="hidden" value="" />
+
+          <section id="siteSettingsSection">
+            <label class="label" data-i18n="apps.label">Blocked applications</label>
+            <p class="field-help" data-i18n="apps.help">
+              Add the applications you want this group to block. Click the plus tile to search your installed apps.
+            </p>
+
+            <!-- Hidden backing store: newline-free JSON array of { id, name }.
+                 The chips UI below is the editable surface; this field keeps the
+                 existing draft/autosave pipeline working unchanged. -->
+            <input id="blockedAppsData" type="hidden" />
+
+            <div id="blockedAppsList" class="app-chip-list" role="list"></div>
+
+            <div class="actions">
+              <button id="clearSitesButton" type="button" class="secondary danger" data-i18n="apps.clearButton">
+                Clear Apps
+              </button>
+            </div>
+          </section>
+
+          <div id="timedSettings" class="timed-settings">
+            <div class="settings-grid">
+              <div id="allowedMinutesRow">
+                <label class="label" for="allowedMinutes" data-i18n="timed.allowedMinutes">Allowed minutes before block</label>
+                <input
+                  id="allowedMinutes"
+                  type="number"
+                  min="0.1"
+                  step="0.1"
+                  inputmode="decimal"
+                  placeholder="15"
+                  data-i18n-placeholder="timed.allowedMinutesPlaceholder"
+                />
+              </div>
+
+              <div>
+                <label class="label" for="resetIntervalHours" data-i18n="timed.resetHours">Timer reset interval (hours)</label>
+                <input
+                  id="resetIntervalHours"
+                  type="number"
+                  min="0.1"
+                  step="0.1"
+                  inputmode="decimal"
+                  placeholder="24"
+                  data-i18n-placeholder="timed.resetHoursPlaceholder"
+                />
+              </div>
+            </div>
+
+            <div class="usage-row">
+              <p id="usageSummary" class="usage-summary"></p>
+            </div>
+          </div>
+
+          <section id="customSettingsCard" class="section-card hidden">
+            <div class="section-header">
+              <div>
+                <h3 data-i18n="custom.title">Blocking Rules</h3>
+              </div>
+            </div>
+
+            <div id="blockingRulesEditor" class="code-editor">
+              <pre id="blockingRulesHighlight" class="code-editor-highlight" aria-hidden="true"></pre>
+              <textarea
+                id="blockingRules"
+                rows="8"
+                aria-label="Custom Rules"
+                data-i18n-aria-label="custom.rules"
+                placeholder="(event, helpers) => {&#10;  // Register handlers here.&#10;}"
+                data-i18n-placeholder="custom.rulesPlaceholder"
+                spellcheck="false"
+              ></textarea>
+            </div>
+            <p id="blockingRulesLint" class="code-editor-lint" aria-live="polite"></p>
+            <div class="field-actions">
+              <button id="openRuleTemplatesButton" type="button" class="secondary weird" data-i18n="custom.templates">
+                Templates
+              </button>
+              <button id="runCustomGroupButton" type="button" class="weird" data-i18n="custom.runButton">
+                Run
+              </button>
+              <button id="checkSyntaxButton" type="button" class="secondary weird" data-i18n="custom.letAiCodeButton">
+                Let AI Code
+              </button>
+              <span id="runCustomGroupStatus" class="run-status"></span>
+            </div>
+            <div id="aiPromptPanel" class="ai-prompt-panel hidden">
+              <label class="label" for="aiPromptInput" data-i18n="custom.aiPromptLabel">Prompt for AI</label>
+              <textarea
+                id="aiPromptInput"
+                rows="4"
+                data-i18n-placeholder="custom.aiPromptPlaceholder"
+                spellcheck="true"
+              ></textarea>
+              <div class="field-actions">
+                <button id="aiPromptCopyButton" type="button" class="weird" data-i18n="custom.aiPromptCopyButton">
+                  Prompt for AI
+                </button>
+                <span id="aiPromptStatus" class="run-status"></span>
+              </div>
+              <p class="field-help" data-i18n="custom.aiPromptHelp">
+                This copies a bundled prompt with your request, the current rule, and the custom-rule API reference. Paste it into your AI tool, then paste the generated code back here.
+              </p>
+            </div>
+
+            <details id="logFeedSection" class="log-feed">
+              <summary>
+                <span data-i18n="logFeed.title">Log</span>
+                <span id="logFeedCount" class="log-feed-count">0</span>
+              </summary>
+              <div class="log-feed-toolbar">
+                <span class="log-feed-hint" data-i18n="logFeed.hint">Live feed of helpers.getLogHelper() output from every event dispatch.</span>
+                <button id="logFeedClear" type="button" class="weird" data-i18n="logFeed.clear">Clear</button>
+              </div>
+              <div id="logFeedList" class="log-feed-list" aria-live="polite"></div>
+              <p id="logFeedEmpty" class="log-feed-empty" data-i18n="logFeed.empty">No activity yet. Trigger an event (e.g. press Start Snooze, switch tabs, or click Run) to see logs here.</p>
+            </details>
+          </section>
+
+          <section id="platformVideoCard" class="section-card hidden">
+            <div class="section-header">
+              <div>
+                <h3 id="platformVideoTitle"></h3>
+                <p id="platformVideoCopy" class="section-copy"></p>
+              </div>
+            </div>
+
+            <label id="platformVideoModeLabel" class="label" for="platformVideoMode"></label>
+            <select id="platformVideoMode">
+              <option value="all"></option>
+              <option value="short"></option>
+              <option value="long"></option>
+              <option value="post"></option>
+            </select>
+
+            <label id="platformAuthorModeLabel" class="label" for="platformAuthorMode"></label>
+            <select id="platformAuthorMode">
+              <option value="none"></option>
+              <option value="include"></option>
+              <option value="exclude"></option>
+            </select>
+
+            <label id="platformAuthorsLabel" class="label" for="platformAuthors"></label>
+            <textarea
+              id="platformAuthors"
+              rows="5"
+              placeholder="@creatorhandle&#10;https://www.youtube.com/@anothercreator&#10;channel/UC..."
+              data-i18n-placeholder="filter.platformAuthorsPlaceholder"
+              spellcheck="false"
+            ></textarea>
+            <p id="platformVideoHelp" class="field-help"></p>
+
+            <label class="checkbox-row compact" for="platformBlockHomePage">
+              <input id="platformBlockHomePage" type="checkbox" />
+              <span data-i18n="filter.blockHomePage">Block home/feed pages</span>
+            </label>
+
+            <!-- Redirection removed: "skip to next" was a redirect-style
+                 behavior. Hidden field retained only for pipeline stability. -->
+            <div id="skipToNextOnBlockRow" class="hidden">
+              <input id="skipToNextOnBlock" type="checkbox" hidden />
+            </div>
+          </section>
+
+          <section id="redditSettingsCard" class="section-card hidden">
+            <div class="section-header">
+              <div>
+                <h3 data-i18n="reddit.title">Reddit Filters</h3>
+                <p class="section-copy" data-i18n="reddit.copy">
+                  Apply this group to all of Reddit, only certain subreddits, or all subreddits except certain ones.
+                </p>
+              </div>
+            </div>
+
+            <label class="label" for="redditMode" data-i18n="reddit.mode">Subreddit filter</label>
+            <select id="redditMode">
+              <option value="all" data-i18n="reddit.modeAll">Apply to all Reddit pages</option>
+              <option value="include" data-i18n="reddit.modeInclude">Apply to certain subreddits</option>
+              <option value="exclude" data-i18n="reddit.modeExclude">Apply to all except certain subreddits</option>
+            </select>
+
+            <label class="label" for="redditSubreddits" data-i18n="reddit.subreddits">Subreddits</label>
+            <textarea
+              id="redditSubreddits"
+              rows="6"
+              placeholder="productivity&#10;programming&#10;r/focus"
+              data-i18n-placeholder="reddit.subredditsPlaceholder"
+              spellcheck="false"
+            ></textarea>
+            <p class="field-help" data-i18n="reddit.help">
+              Use one subreddit per line. Plain names like `productivity` and paths like `r/productivity` are both accepted.
+            </p>
+
+            <label class="checkbox-row compact" for="redditBlockHomePage">
+              <input id="redditBlockHomePage" type="checkbox" />
+              <span data-i18n="filter.blockHomePage">Block home/feed pages</span>
+            </label>
+            <p class="field-help" data-i18n="filter.blockHomePageRedditHelp">
+              Blocks the Reddit home feed, r/popular, and r/all when enabled.
+            </p>
+          </section>
+
+          <section id="discordSettingsCard" class="section-card hidden">
+            <div class="section-header">
+              <div>
+                <h3 data-i18n="discord.title">Discord Filters</h3>
+                <p class="section-copy" data-i18n="discord.copy">
+                  Apply this group to all of Discord, or to a custom mix of servers and channels — entries can be either, in any combination.
+                </p>
+              </div>
+            </div>
+
+            <label class="label" for="discordMode" data-i18n="discord.mode">Target filter</label>
+            <select id="discordMode">
+              <option value="all" data-i18n="discord.modeAll">Apply to all Discord pages</option>
+              <option value="include" data-i18n="discord.modeInclude">Apply to certain servers/channels</option>
+              <option value="exclude" data-i18n="discord.modeExclude">Apply to all except certain servers/channels</option>
+            </select>
+
+            <label id="discordTargetsLabel" class="label" for="discordTargets" data-i18n="discord.targets">Servers &amp; channels</label>
+            <textarea
+              id="discordTargets"
+              rows="6"
+              placeholder="123456789012345678&#10;https://discord.com/channels/123456789012345678/&#10;https://discord.com/channels/123456789012345678/234567890123456789"
+              data-i18n-placeholder="discord.targetsPlaceholder"
+              spellcheck="false"
+            ></textarea>
+            <p id="discordTargetsHelp" class="field-help" data-i18n="discord.targetsHelp">
+              Use one Discord server ID or channel ID per line. Both kinds may be mixed in the same list. Plain snowflake IDs and links of the form <code>discord.com/channels/&lt;serverId&gt;</code> or <code>discord.com/channels/&lt;serverId&gt;/&lt;channelId&gt;</code> are accepted; channel links keep the channel ID as the entry.
+            </p>
+
+            <label class="checkbox-row compact" for="discordBlockHomePage">
+              <input id="discordBlockHomePage" type="checkbox" />
+              <span data-i18n="filter.blockHomePage">Block home/feed pages</span>
+            </label>
+            <p class="field-help" data-i18n="filter.blockHomePageDiscordHelp">
+              Blocks the Discord DMs home screen (/channels/@me) when enabled.
+            </p>
+          </section>
+
+          <section id="scheduleSection" class="section-card">
+            <div class="section-header">
+              <div>
+                <h3 data-i18n="schedule.title">Schedule</h3>
+                <p class="section-copy" data-i18n="schedule.copy">
+                  Limit this group to certain days or time windows.
+                </p>
+              </div>
+            </div>
+
+            <label class="label" data-i18n="schedule.days">Days to block</label>
+            <div id="daysGrid" class="days-grid">
+              <label class="day-pill"><input type="checkbox" value="monday" /> <span data-i18n="day.mon">Mon</span></label>
+              <label class="day-pill"><input type="checkbox" value="tuesday" /> <span data-i18n="day.tue">Tue</span></label>
+              <label class="day-pill"><input type="checkbox" value="wednesday" /> <span data-i18n="day.wed">Wed</span></label>
+              <label class="day-pill"><input type="checkbox" value="thursday" /> <span data-i18n="day.thu">Thu</span></label>
+              <label class="day-pill"><input type="checkbox" value="friday" /> <span data-i18n="day.fri">Fri</span></label>
+              <label class="day-pill"><input type="checkbox" value="saturday" /> <span data-i18n="day.sat">Sat</span></label>
+              <label class="day-pill"><input type="checkbox" value="sunday" /> <span data-i18n="day.sun">Sun</span></label>
+            </div>
+
+            <label class="label" for="scheduleWindows" data-i18n="schedule.windows">Time windows</label>
+            <textarea
+              id="scheduleWindows"
+              rows="4"
+              placeholder="0900-1000&#10;1200-1300"
+              data-i18n-placeholder="schedule.windowsPlaceholder"
+              spellcheck="false"
+            ></textarea>
+            <p class="field-help" data-i18n="schedule.help">
+              Leave blank to apply all day. Use one range per line in `HHMM-HHMM` format.
+            </p>
+          </section>
+
+          <section class="section-card freeze-section">
+            <div class="section-header">
+              <div>
+                <h3 data-i18n="freeze.title">Freeze</h3>
+                <p id="freezeSummary" class="section-copy"></p>
+              </div>
+              <button id="unfreezeButton" type="button" class="secondary hidden" data-i18n="freeze.unfreezeButton">
+                Unfreeze
+              </button>
+            </div>
+
+            <div id="freezeSetup" class="freeze-setup">
+              <div class="settings-grid">
+                <div>
+                  <label class="label" for="freezeMode" data-i18n="freeze.mode">Freeze mode</label>
+                  <select id="freezeMode">
+                    <option value="frozen" data-i18n="freeze.frozenOption">Frozen</option>
+                    <option value="strict" data-i18n="freeze.strictOption">Strict frozen</option>
+                  </select>
+                </div>
+
+                <div id="strictFreezeSettings" class="hidden">
+                  <label class="label" for="strictFreezeHours" data-i18n="freeze.unlockAfter">Unlock after (hours)</label>
+                  <input
+                    id="strictFreezeHours"
+                    type="number"
+                    min="0.1"
+                    max="72"
+                    step="0.1"
+                    inputmode="decimal"
+                    placeholder="24"
+                    data-i18n-placeholder="freeze.unlockAfterPlaceholder"
+                  />
+                </div>
+              </div>
+
+              <div class="actions">
+                <button id="applyFreezeButton" type="button" data-i18n="freeze.applyButton">Freeze Group</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="section-card snooze-section">
+            <div class="section-header">
+              <div>
+                <h3 data-i18n="snooze.title">Snooze</h3>
+                <p id="snoozeSummary" class="section-copy"></p>
+              </div>
+              <button id="endSnoozeButton" type="button" class="secondary hidden" data-i18n="snooze.endButton">
+                End Snooze
+              </button>
+            </div>
+
+            <label class="checkbox-row compact" for="allowSnooze">
+              <input id="allowSnooze" type="checkbox" />
+              <span data-i18n="snooze.allow">Allow snooze for this group</span>
+            </label>
+
+            <p id="snoozeCustomCopy" class="field-help hidden" data-i18n="snooze.customCopy">
+              Custom rules don't snooze. Pressing the button fires a snoozePress event so rules can react (e.g. log, redirect, fire other events), but there's no programmatic snooze API.
+            </p>
+
+            <div id="snoozeNumericFields" class="settings-grid">
+              <div>
+                <label class="label" for="snoozeMinutes" data-i18n="snooze.minutes">Snooze for (minutes)</label>
+                <input
+                  id="snoozeMinutes"
+                  type="number"
+                  min="0.1"
+                  step="0.1"
+                  inputmode="decimal"
+                  placeholder="30"
+                  data-i18n-placeholder="snooze.minutesPlaceholder"
+                />
+              </div>
+              <div>
+                <label class="label" for="snoozeActivationDelay" data-i18n="snooze.activationDelay">Activation delay (minutes)</label>
+                <input
+                  id="snoozeActivationDelay"
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  inputmode="decimal"
+                  placeholder="0"
+                  data-i18n-placeholder="snooze.activationDelayPlaceholder"
+                />
+              </div>
+              <div>
+                <label class="label" for="snoozeCooldown" data-i18n="snooze.cooldown">Cooldown after snooze (minutes)</label>
+                <input
+                  id="snoozeCooldown"
+                  type="number"
+                  min="0"
+                  max="5"
+                  step="0.1"
+                  inputmode="decimal"
+                  placeholder="0"
+                  data-i18n-placeholder="snooze.cooldownPlaceholder"
+                />
+              </div>
+              <div>
+                <label class="label" for="snoozeConfirmations" data-i18n="snooze.confirmations">Times of confirmation</label>
+                <input
+                  id="snoozeConfirmations"
+                  type="number"
+                  min="0"
+                  step="1"
+                  inputmode="numeric"
+                  placeholder="0"
+                  data-i18n-placeholder="snooze.confirmationsPlaceholder"
+                />
+              </div>
+            </div>
+
+            <div class="actions">
+              <button id="startSnoozeButton" type="button" data-i18n="snooze.startButton">Start Snooze</button>
+            </div>
+            <p id="snoozeWarning" class="inline-warning"></p>
+          </section>
+        </section>
+      </section>
+
+      <p id="statusMessage" class="status" aria-live="polite"></p>
+    </main>
+
+    <div id="confirmModal" class="modal hidden">
+      <div class="modal-card">
+        <h3 data-i18n="modal.unfreezeTitle">Unfreeze Group</h3>
+        <p id="confirmMessage" class="modal-copy" data-i18n="modal.unfreezeMessageDefault">
+          Are you sure you want to give up your self-discipline?
+        </p>
+        <p id="confirmProgress" class="modal-copy"></p>
+        <div class="modal-actions">
+          <button id="confirmCancelButton" type="button" class="secondary" data-i18n="modal.cancel">Cancel</button>
+          <button id="confirmProceedButton" type="button" disabled data-i18n="modal.confirm">Confirm</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="manualModal" class="modal hidden">
+      <div class="modal-card manual-modal-card">
+        <div class="manual-modal-header">
+          <div>
+            <h3 data-i18n="manual.title">Instruction Manual</h3>
+            <p id="manualStatus" class="modal-copy" data-i18n="manual.loading">
+              Loading manual...
+            </p>
+          </div>
+          <button id="manualCloseButton" type="button" class="secondary" data-i18n="manual.close">
+            Close
+          </button>
+        </div>
+        <div id="manualContent" class="manual-content"></div>
+      </div>
+    </div>
+
+    <div id="settingsModal" class="modal hidden">
+      <div class="modal-card">
+        <div class="manual-modal-header">
+          <div>
+            <h3 data-i18n="settings.title">Global Settings</h3>
+            <p class="modal-copy" data-i18n="settings.copy">
+              These preferences apply across all block groups.
+            </p>
+          </div>
+          <button id="settingsCloseButton" type="button" class="secondary" data-i18n="manual.close">
+            Close
+          </button>
+        </div>
+
+        <div class="settings-grid">
+          <div>
+            <label class="label" for="settingsTickRate" data-i18n="settings.tickRate">
+              Tick rate (ms)
+            </label>
+            <input
+              id="settingsTickRate"
+              type="number"
+              min="250"
+              max="60000"
+              step="50"
+              inputmode="numeric"
+              placeholder="1000"
+              data-i18n-placeholder="settings.tickRatePlaceholder"
+            />
+            <p class="field-help" data-i18n="settings.tickRateHelp">
+              How often the shared tickEvent fires across all tabs. Lower values are more responsive but use more CPU.
+            </p>
+          </div>
+          <div>
+            <label class="label" for="settingsAutosaveDebounce" data-i18n="settings.autosaveDebounce">
+              Autosave debounce (ms)
+            </label>
+            <input
+              id="settingsAutosaveDebounce"
+              type="number"
+              min="0"
+              max="5000"
+              step="50"
+              inputmode="numeric"
+              placeholder="400"
+              data-i18n-placeholder="settings.autosaveDebouncePlaceholder"
+            />
+            <p class="field-help" data-i18n="settings.autosaveDebounceHelp">
+              How long the popup waits after the last keystroke before persisting your edits.
+            </p>
+          </div>
+          <div>
+            <label class="label" for="settingsDefaultSnoozeMinutes" data-i18n="settings.defaultSnoozeMinutes">
+              Default snooze duration (minutes)
+            </label>
+            <input
+              id="settingsDefaultSnoozeMinutes"
+              type="number"
+              min="0.1"
+              step="0.1"
+              inputmode="decimal"
+              placeholder="30"
+              data-i18n-placeholder="settings.defaultSnoozeMinutesPlaceholder"
+            />
+            <p class="field-help" data-i18n="settings.defaultSnoozeMinutesHelp">
+              Snooze length used when creating new non-custom groups.
+            </p>
+          </div>
+          <div>
+            <label class="label" for="settingsDefaultFallbackUrl" data-i18n="settings.defaultFallbackUrl">
+              Default fallback URL
+            </label>
+            <input
+              id="settingsDefaultFallbackUrl"
+              type="text"
+              placeholder="about:blank"
+              data-i18n-placeholder="settings.defaultFallbackUrlPlaceholder"
+            />
+            <p class="field-help" data-i18n="settings.defaultFallbackUrlHelp">
+              Used when a group does not specify its own fallback URL.
+            </p>
+          </div>
+        </div>
+
+        <label class="checkbox-row compact" for="settingsDebugMode">
+          <input id="settingsDebugMode" type="checkbox" />
+          <span data-i18n="settings.debugMode">Debug mode</span>
+        </label>
+        <p class="field-help" data-i18n="settings.debugModeHelp">
+          When on, shows the on-page debug overlay for custom rules and emits verbose [CustomBlocker] / [CustomBlocker:trace] console output. Your own helpers.log() calls always work regardless.
+        </p>
+
+        <label class="checkbox-row compact" for="settingsShowOnPageLogToasts">
+          <input id="settingsShowOnPageLogToasts" type="checkbox" />
+          <span data-i18n="settings.showOnPageLogToasts">Show custom rule logs on web pages</span>
+        </label>
+        <p class="field-help" data-i18n="settings.showOnPageLogToastsHelp">
+          When off, helpers.log(), warn(), and error() still appear in the popup Log panel but do not show page toasts. Rules can use logScreen() for screen-only toasts.
+        </p>
+
+        <section class="section-card settings-section-card">
+          <div class="section-header">
+            <div>
+              <h3 data-i18n="settings.localFolderTitle">Local File Folder</h3>
+              <p class="section-copy" data-i18n="settings.localFolderCopy">
+                Grant a folder for custom rules to read and write .txt, .csv, and .json files. Paths stay inside this folder.
+              </p>
+            </div>
+          </div>
+          <div class="field-actions">
+            <button id="localFolderChooseButton" type="button" class="secondary" data-i18n="settings.localFolderChoose">
+              Choose folder
+            </button>
+            <button id="localFolderRevokeButton" type="button" class="secondary danger" data-i18n="settings.localFolderRevoke">
+              Revoke folder
+            </button>
+          </div>
+          <p id="localFolderStatus" class="field-help" data-i18n="settings.localFolderStatusNone">
+            No folder connected.
+          </p>
+        </section>
+
+        <div class="modal-actions">
+          <button id="settingsResetButton" type="button" class="secondary danger" data-i18n="settings.reset">
+            Reset to defaults
+          </button>
+          <button id="settingsSaveButton" type="button" data-i18n="settings.save">
+            Save
+          </button>
+        </div>
+        <p id="settingsStatus" class="inline-warning"></p>
+      </div>
+    </div>
+
+    <div id="templateModal" class="modal hidden">
+      <div class="modal-card template-modal-card">
+        <div class="manual-modal-header">
+          <div>
+            <h3 data-i18n="custom.templatesTitle">Custom Rule Templates</h3>
+            <p id="templateStatus" class="modal-copy" data-i18n="custom.templatesCopy">
+              Pick a preset, tweak its parameters, then apply it to replace the current rule.
+            </p>
+          </div>
+          <button id="templateCloseButton" type="button" class="secondary" data-i18n="manual.close">
+            Close
+          </button>
+        </div>
+        <div class="template-filter-row">
+          <span data-i18n="custom.templateFilterLabel">Filter</span>
+          <div id="templateFilter" class="template-filter-scroller" aria-label="Template filters" data-i18n-aria-label="custom.templateFilterAriaLabel"></div>
+        </div>
+        <div id="templateGrid" class="template-grid"></div>
+        <div class="modal-actions">
+          <button id="templateApplyButton" type="button" class="weird" data-i18n="custom.applyTemplate" disabled>
+            Apply preset
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="appPickerModal" class="modal hidden">
+      <div class="modal-card app-picker-card">
+        <div class="manual-modal-header">
+          <div>
+            <h3 data-i18n="apps.pickerTitle">Add an application</h3>
+            <p class="modal-copy" data-i18n="apps.pickerCopy">
+              Search your installed applications and choose one to block.
+            </p>
+          </div>
+          <button id="appPickerCloseButton" type="button" class="secondary" data-i18n="manual.close">
+            Close
+          </button>
+        </div>
+        <input
+          id="appPickerSearch"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          data-i18n-placeholder="apps.searchPlaceholder"
+          placeholder="Type an app name..."
+        />
+        <div id="appPickerResults" class="app-picker-results" role="listbox"></div>
+        <p id="appPickerEmpty" class="field-help hidden" data-i18n="apps.noResults">
+          No matching applications found.
+        </p>
+      </div>
+    </div>
+
+    <!--
+      macosBlocker port: chrome-shim.js MUST load first. It defines a minimal
+      chrome.* surface (storage/runtime/permissions/i18n) backed by
+      localStorage and a native WKWebView bridge so the unmodified editor
+      runs outside a Chrome extension.
+    -->
+    <script src="chrome-shim.js"></script>
+    <script src="translations.js"></script>
+    <script src="popup-markdown.js"></script>
+    <!--
+      Custom rule templates are split into category files under
+      templates/. template-utils.js MUST load first because it
+      defines window.CB_REGISTER_TEMPLATES, window.quoteJs and
+      window.minutesToMsLiteral, which every category file uses.
+      popup.js consumes window.__CUSTOM_BLOCKER_TEMPLATES, so all
+      category files must run before it.
+    -->
+    <script src="templates/template-utils.js"></script>
+    <script src="templates/timers.js"></script>
+    <script src="templates/schedule.js"></script>
+    <script src="templates/feed.js"></script>
+    <script src="templates/focus.js"></script>
+    <script src="templates/nudge.js"></script>
+    <script src="templates/persistence.js"></script>
+    <script src="templates/dom.js"></script>
+    <script src="templates/debug.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>
