@@ -10,18 +10,24 @@ public struct BlockerWebPanel: View {
     private let appInventoryJSON: (() -> String?)?
     private let ruleLogJSON: (() -> String?)?
     private let onStorePersisted: (() -> Void)?
+    private let onSnoozePress: ((String) -> Void)?
+    private let onPanelEvent: ((String, [String: String]) -> Void)?
     @State private var lastRunMessage: String?
 
     public init(
         store: BlockerWebStore = BlockerWebStore(),
         appInventoryJSON: (() -> String?)? = nil,
         ruleLogJSON: (() -> String?)? = nil,
-        onStorePersisted: (() -> Void)? = nil
+        onStorePersisted: (() -> Void)? = nil,
+        onSnoozePress: ((String) -> Void)? = nil,
+        onPanelEvent: ((String, [String: String]) -> Void)? = nil
     ) {
         self.store = store
         self.appInventoryJSON = appInventoryJSON
         self.ruleLogJSON = ruleLogJSON
         self.onStorePersisted = onStorePersisted
+        self.onSnoozePress = onSnoozePress
+        self.onPanelEvent = onPanelEvent
     }
 
     public var body: some View {
@@ -29,10 +35,13 @@ public struct BlockerWebPanel: View {
             store: store,
             appInventoryJSON: appInventoryJSON,
             ruleLogJSON: ruleLogJSON,
-            onStorePersisted: onStorePersisted
-        ) { groupID, source in
-            loadIntoPolicyRuntime(groupID: groupID, source: source)
-        }
+            onStorePersisted: onStorePersisted,
+            onRunCustomGroup: { groupID, source in
+                loadIntoPolicyRuntime(groupID: groupID, source: source)
+            },
+            onSnoozePress: onSnoozePress,
+            onPanelEvent: onPanelEvent
+        )
         .ignoresSafeArea()
     }
 

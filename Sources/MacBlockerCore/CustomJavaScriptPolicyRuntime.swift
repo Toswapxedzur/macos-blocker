@@ -333,7 +333,10 @@ public final class CustomJavaScriptPolicyRuntime: CustomPolicyRuntime {
                   const factory = Function('"use strict"; return (' + source + ');');
                   const rule = factory();
                   if (typeof rule !== "function") throw new Error("Custom rule must evaluate to a function.");
-                  rule(eventRegistry(groupId), {});
+                  const loadEvent = hostEvent({ type: "_register", groupID: groupId, now: new Date().toISOString(), data: {} });
+                  rule(eventRegistry(groupId), helpersFor(loadEvent));
+                  const list = handlersByGroup.get(groupId) || [];
+                  return JSON.stringify({ handlers: list.length, decisions: loadEvent.__decisions });
                 },
                 unload(groupId) {
                   handlersByGroup.delete(groupId);
@@ -346,7 +349,7 @@ public final class CustomJavaScriptPolicyRuntime: CustomPolicyRuntime {
                     if (entry.type !== rawEvent.type) continue;
                     entry.handler(event, helpers);
                   }
-                  return JSON.stringify(event.__decisions);
+                  return JSON.stringify({ decisions: event.__decisions, intents: [] });
                 }
               };
             })();

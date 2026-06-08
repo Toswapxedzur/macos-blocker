@@ -17,6 +17,7 @@ public final class SharedAppGroupStore: @unchecked Sendable {
 
     public init(baseDirectory: URL = AppGroup.baseDirectory()) {
         self.baseDirectory = baseDirectory
+        print("[SharedAppGroupStore] init baseDirectory: \(baseDirectory.path)")
     }
 
     public func url(for fileName: String) -> URL {
@@ -24,19 +25,39 @@ public final class SharedAppGroupStore: @unchecked Sendable {
     }
 
     private func ensureDirectory() {
-        try? fileManager.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
+        do {
+            try fileManager.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
+        } catch {
+            print("[SharedAppGroupStore] ensureDirectory FAILED for \(baseDirectory.path): \(error)")
+        }
     }
 
     // MARK: Raw bytes
 
-    public func readData(_ fileName: String) -> Data? {
-        queue.sync { try? Data(contentsOf: url(for: fileName)) }
+    public func readData(_ fileName: String, silent: Bool = false) -> Data? {
+        queue.sync {
+            let target = url(for: fileName)
+            do {
+                let data = try Data(contentsOf: target)
+                return data
+            } catch {
+                if !silent {
+                    print("[SharedAppGroupStore] readData FAILED for \(target.path): \(error)")
+                }
+                return nil
+            }
+        }
     }
 
     public func writeData(_ data: Data, to fileName: String) {
         queue.sync {
             ensureDirectory()
-            try? data.write(to: url(for: fileName), options: [.atomic])
+            let target = url(for: fileName)
+            do {
+                try data.write(to: target, options: [.atomic])
+            } catch {
+                print("[SharedAppGroupStore] writeData FAILED for \(target.path): \(error)")
+            }
         }
     }
 
@@ -112,7 +133,8 @@ public final class SharedAppGroupStore: @unchecked Sendable {
     // enforcement plan, keyed by the web editor's group IDs.
 
     public func loadGroupTargets() -> [String: [BlockTarget]] {
-        readJSON([String: [BlockTarget]].self, from: Self.groupTargetsFileName) ?? [:]
+        guard let data = readData(Self.groupTargetsFileName, silent: true) else { return [:] }
+        return (try? Self.decoder.decode([String: [BlockTarget]].self, from: data)) ?? [:]
     }
 
     public func saveGroupTargets(_ targets: [String: [BlockTarget]]) {
