@@ -18,6 +18,26 @@ public final class BlockerWebStore: @unchecked Sendable {
         shared.url(for: SharedAppGroupStore.webStoreFileName)
     }
 
+    /// Creates a default `web-store.json` with an empty `blockedGroups` array
+    /// if the file does not already exist. Call once at launch so the
+    /// enforcement bridge always has a store to read from.
+    public func seedIfNeeded() {
+        let existing = shared.readData(SharedAppGroupStore.webStoreFileName)
+        if existing != nil {
+            print("[BlockerWebStore] seedIfNeeded: file already exists (\(shared.url(for: SharedAppGroupStore.webStoreFileName).path))")
+            return
+        }
+        print("[BlockerWebStore] seedIfNeeded: no file at \(shared.url(for: SharedAppGroupStore.webStoreFileName).path) — writing default store")
+        let defaultStore: [String: Any] = ["blockedGroups": [] as [[String: Any]]]
+        save(rawStore: defaultStore)
+        let verify = shared.readData(SharedAppGroupStore.webStoreFileName)
+        if verify != nil {
+            print("[BlockerWebStore] seedIfNeeded: ✓ file written successfully")
+        } else {
+            print("[BlockerWebStore] seedIfNeeded: ✗ file still missing after write!")
+        }
+    }
+
     public func loadRawJSON() -> String? {
         guard let data = shared.readData(SharedAppGroupStore.webStoreFileName) else {
             return nil
@@ -140,7 +160,7 @@ public final class BlockerWebStore: @unchecked Sendable {
     /// Bridges the editor's stored `blockedGroups` into the typed core model.
     public func importedGroups() -> ChromeExtensionImportResult? {
         guard let data = shared.readData(SharedAppGroupStore.webStoreFileName) else {
-            print("[BlockerWebStore] No web store file found.")
+            print("[BlockerWebStore] No web store file found at: \(shared.url(for: SharedAppGroupStore.webStoreFileName).path)")
             return nil
         }
         do {

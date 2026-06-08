@@ -27,23 +27,29 @@ public struct BlockerWebView: _CBViewRepresentable {
     /// Invoked (on the main thread) right after the editor's store has been
     /// persisted, so the host can recompile/enforce the policy immediately.
     private let onStorePersisted: (() -> Void)?
+    private let onSnoozePress: ((String) -> Void)?
+    private let onPanelEvent: ((String, [String: String]) -> Void)?
 
     public init(
         store: BlockerWebStore = BlockerWebStore(),
         appInventoryJSON: (() -> String?)? = nil,
         ruleLogJSON: (() -> String?)? = nil,
         onStorePersisted: (() -> Void)? = nil,
-        onRunCustomGroup: ((String, String) -> Void)? = nil
+        onRunCustomGroup: ((String, String) -> Void)? = nil,
+        onSnoozePress: ((String) -> Void)? = nil,
+        onPanelEvent: ((String, [String: String]) -> Void)? = nil
     ) {
         self.store = store
         self.appInventoryJSON = appInventoryJSON
         self.ruleLogJSON = ruleLogJSON
         self.onStorePersisted = onStorePersisted
         self.onRunCustomGroup = onRunCustomGroup
+        self.onSnoozePress = onSnoozePress
+        self.onPanelEvent = onPanelEvent
     }
 
     public func makeCoordinator() -> Coordinator {
-        Coordinator(store: store, ruleLogJSON: ruleLogJSON, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup)
+        Coordinator(store: store, ruleLogJSON: ruleLogJSON, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup, onSnoozePress: onSnoozePress, onPanelEvent: onPanelEvent)
     }
 
     private func makeWebView(context: Context) -> WKWebView {
@@ -132,6 +138,8 @@ public struct BlockerWebView: _CBViewRepresentable {
         private let ruleLogJSON: (() -> String?)?
         private let onStorePersisted: (() -> Void)?
         private let onRunCustomGroup: ((String, String) -> Void)?
+        private let onSnoozePress: ((String) -> Void)?
+        private let onPanelEvent: ((String, [String: String]) -> Void)?
 
         private var usagePushTimer: Timer?
 
@@ -139,12 +147,16 @@ public struct BlockerWebView: _CBViewRepresentable {
             store: BlockerWebStore,
             ruleLogJSON: (() -> String?)?,
             onStorePersisted: (() -> Void)?,
-            onRunCustomGroup: ((String, String) -> Void)?
+            onRunCustomGroup: ((String, String) -> Void)?,
+            onSnoozePress: ((String) -> Void)?,
+            onPanelEvent: ((String, [String: String]) -> Void)?
         ) {
             self.store = store
             self.ruleLogJSON = ruleLogJSON
             self.onStorePersisted = onStorePersisted
             self.onRunCustomGroup = onRunCustomGroup
+            self.onSnoozePress = onSnoozePress
+            self.onPanelEvent = onPanelEvent
         }
 
         deinit {
@@ -204,6 +216,20 @@ public struct BlockerWebView: _CBViewRepresentable {
                    let groupID = payload["groupId"] as? String,
                    let source = payload["source"] as? String {
                     onRunCustomGroup?(groupID, source)
+                }
+            case "fire-snooze-press":
+                if let payload = body["message"] as? [String: Any],
+                   let groupID = payload["groupId"] as? String {
+                    onSnoozePress?(groupID)
+                }
+            case "custom-panel-event":
+                if let payload = body["message"] as? [String: Any],
+                   let groupID = payload["groupId"] as? String {
+                    var data: [String: String] = [:]
+                    for (key, value) in payload where key != "groupId" {
+                        data[key] = "\(value)"
+                    }
+                    onPanelEvent?(groupID, data)
                 }
             default:
                 break

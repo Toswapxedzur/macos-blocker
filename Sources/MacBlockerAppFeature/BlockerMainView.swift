@@ -31,7 +31,9 @@ public struct BlockerMainView: View {
             store: enforcement.webStore,
             appInventoryJSON: { MacAppInventoryJSON.make() },
             ruleLogJSON: { [weak enforcement] in enforcement?.drainLogJSON() },
-            onStorePersisted: { enforcement.refresh() }
+            onStorePersisted: { enforcement.refresh() },
+            onSnoozePress: { [weak enforcement] groupID in enforcement?.fireSnoozePress(groupID: groupID) },
+            onPanelEvent: { [weak enforcement] groupID, data in enforcement?.firePanelEvent(groupID: groupID, data: data) }
         )
         .tabItem {
             Label("Editor", systemImage: "slider.horizontal.3")

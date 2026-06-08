@@ -9,27 +9,22 @@ import MacBlockerMacControl
 /// Connects the web editor's saved groups to live macOS enforcement and the
 /// floating timer HUD.
 ///
-/// On a short repeating tick it:
-///   1. samples the frontmost application and accrues "time spent" into timed
-///      groups that target it (the macOS analogue of the extension's per-page
-///      heartbeat), persisting usage to the shared store;
-///   2. re-evaluates the groups against schedule + usage and enforces only what
-///      should be blocked right now (so timer groups block exactly when their
-///      budget runs out, never before);
-///   3. dispatches native events into the custom-rule JS runtime for groups
-///      that have a `customRuleSource`, collecting shield/allow/log decisions
-///      that drive enforcement alongside mode/schedule blocking;
-///   4. renders the remaining time of any active timer in an always-on-top
-///      overlay panel that floats over every app, including full-screen ones —
-///      the native equivalent of the extension's on-page timer overlay.
-///
-/// Off macOS it is an inert holder for the shared `BlockerWebStore`.
+/// Events parallel customBlocker's extension model:
+///   - `tickEvent` — every tick (~1s) for all enabled groups
+///   - `openAppEvent` — an app launched (new process appeared)
+///   - `closeAppEvent` — an app terminated (process disappeared)
+///   - `switchAppEvent` — the frontmost app changed
+///   - `appChangedEvent` — superset: fires on any open/close/switch
+///   - `timerEnded` — synthesized by the JS runtime when a backward timer hits 0
+///   - `snoozePress` — user tapped snooze in the UI
+///   - `panelEvent` — user interacted with a web panel control
+///   - `localFileEvent` — a file operation completed
 @MainActor
 public final class MacEnforcementBridge: ObservableObject {
     /// Shared store the editor persists into and we read groups back out of.
     public let webStore: BlockerWebStore
 
-    /// Rolling log of custom-rule output (capped). Published so the web UI
+    /// Rolling log of event + rule output (capped). Published so the web UI
     /// can display it.
     @Published public var ruleLog: [RuleLogEntry] = []
 
@@ -45,8 +40,9 @@ public final class MacEnforcementBridge: ObservableObject {
     private var ruleRuntime: CustomJavaScriptPolicyRuntime?
     private var loadedRuleSources: [String: String] = [:]
     private var lastFrontmost: String?
-    private var wasActiveByGroup: [String: Bool] = [:]
-    private var wasOverThresholdByGroup: [String: Bool] = [:]
+
+    // App lifecycle tracking (for openApp/closeApp detection)
+    private var lastRunningBundleIDs: Set<String> = []
 
     // Browser tab + dynamic site blocklist
     private let focusObserver = BrowserFocusObserver()
@@ -85,12 +81,57 @@ public final class MacEnforcementBridge: ObservableObject {
         return json
     }
 
+    // MARK: - Public event triggers
+
+    /// Fire a `snoozePress` event for the given group. Called when the user
+    /// taps snooze in the shield/UI.
+    public func fireSnoozePress(groupID: String) {
+        #if os(macOS)
+        let groups = webStore.importedGroups()?.groups ?? []
+        guard let group = groups.first(where: { $0.id == groupID }) else { return }
+        let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let event = makeEvent(type: "snoozePress", group: group, frontmost: frontmost,
+                              data: ["triggeredAt": String(Int(Date().timeIntervalSince1970 * 1000))])
+        dispatchSingleEvent(event, group: group, frontmost: frontmost)
+        #endif
+    }
+
+    /// Fire a `panelEvent` for the given group. Called when the web UI panel
+    /// sends an interaction (button click, input change, etc).
+    public func firePanelEvent(groupID: String, data: [String: String]) {
+        #if os(macOS)
+        let groups = webStore.importedGroups()?.groups ?? []
+        guard let group = groups.first(where: { $0.id == groupID }) else { return }
+        let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let event = makeEvent(type: "panelEvent", group: group, frontmost: frontmost, data: data)
+        dispatchSingleEvent(event, group: group, frontmost: frontmost)
+        #endif
+    }
+
+    /// Fire a `localFileEvent` for the given group. Called after a file
+    /// operation initiated by a custom rule completes.
+    public func fireLocalFileEvent(groupID: String, data: [String: String]) {
+        #if os(macOS)
+        let groups = webStore.importedGroups()?.groups ?? []
+        guard let group = groups.first(where: { $0.id == groupID }) else { return }
+        let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let event = makeEvent(type: "localFileEvent", group: group, frontmost: frontmost, data: data)
+        dispatchSingleEvent(event, group: group, frontmost: frontmost)
+        #endif
+    }
+
     /// Begins enforcement: an initial evaluation plus a repeating tick that
     /// accrues usage, re-evaluates, enforces, and refreshes the timer HUD.
     public func start() {
         #if os(macOS)
         guard timer == nil else { return }
+        print("[MacEnforcementBridge] start() called")
+        print("[MacEnforcementBridge] AppGroup.containerURL = \(AppGroup.containerURL()?.path ?? "nil")")
+        print("[MacEnforcementBridge] AppGroup.baseDirectory = \(AppGroup.baseDirectory().path)")
+        webStore.seedIfNeeded()
         lastSampleAt = Date()
+        lastRunningBundleIDs = currentRunningBundleIDs()
+        lastFrontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         tick()
         let timer = Timer.scheduledTimer(withTimeInterval: tickInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -124,10 +165,7 @@ public final class MacEnforcementBridge: ObservableObject {
         let importResult = webStore.importedGroups()
         let groups = importResult?.groups ?? []
         let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-
-        if importResult == nil {
-            print("[MacEnforcementBridge] tick: importedGroups() returned nil — no stored data or decode error.")
-        }
+        let currentRunning = currentRunningBundleIDs()
 
         // Read browser tab URL if frontmost is a browser.
         if let fm = frontmost, BrowserTabReader.isBrowser(fm) {
@@ -152,12 +190,18 @@ public final class MacEnforcementBridge: ObservableObject {
                       message: "Closed blocked site: \(tab.url)")
         }
 
-        // 2. Dispatch custom-rule events and collect shield decisions.
-        let ruleBlocked = dispatchCustomRules(
-            groups: groups, frontmost: frontmost, usage: usage, now: now
+        // 2. Detect app lifecycle changes for openApp/closeApp events.
+        let launched = currentRunning.subtracting(lastRunningBundleIDs)
+        let terminated = lastRunningBundleIDs.subtracting(currentRunning)
+        let switched = frontmost != lastFrontmost
+
+        // 3. Build and dispatch events for ALL enabled groups, log each event.
+        let ruleBlocked = dispatchEvents(
+            groups: groups, frontmost: frontmost, usage: usage, now: now,
+            launched: launched, terminated: terminated, switched: switched
         )
 
-        // 3. Enforce: block apps whose group says "blocked now" PLUS
+        // 4. Enforce: block apps whose group says "blocked now" PLUS
         //    any apps shield-ed by custom-rule decisions.
         Task { [adapter, ruleBlocked] in
             try? await adapter.applyGroups(
@@ -166,7 +210,7 @@ public final class MacEnforcementBridge: ObservableObject {
             )
         }
 
-        // 4. Render the HUD for any timer whose app is currently frontmost.
+        // 5. Render the HUD for any timer whose app is currently frontmost.
         let activeTargetIDs = matchingTargetIDs(groups: groups, frontmost: frontmost)
         let context = ActivityContext(
             now: now,
@@ -180,44 +224,39 @@ public final class MacEnforcementBridge: ObservableObject {
         }
         overlay.update(rows: rows)
 
-        // Track frontmost for change detection next tick.
+        // Track state for next tick.
         lastFrontmost = frontmost
+        lastRunningBundleIDs = currentRunning
     }
 
-    // MARK: - Custom Rule Dispatch
+    // MARK: - Event Dispatch
 
-    private var didLogFirstDispatch = false
-
-    private func dispatchCustomRules(
+    /// Builds events and dispatches them for all enabled groups. Groups with
+    /// `customRuleSource` get dispatched to the JS runtime; all groups get
+    /// their events logged regardless.
+    private func dispatchEvents(
         groups: [BlockGroup],
         frontmost: String?,
         usage: UsageSnapshot,
-        now: Date
+        now: Date,
+        launched: Set<String>,
+        terminated: Set<String>,
+        switched: Bool
     ) -> Set<String> {
-        let ruleGroups = groups.filter { $0.enabled && !$0.customRuleSource.isEmpty }
-        if !didLogFirstDispatch {
-            didLogFirstDispatch = true
-            print("[MacEnforcementBridge] dispatchCustomRules: \(groups.count) total groups, \(ruleGroups.count) custom rule groups")
-            for g in groups {
-                print("  - \(g.name) (type=\(g.groupType), enabled=\(g.enabled), ruleSource=\(g.customRuleSource.prefix(60)))")
-            }
-        }
-        guard !ruleGroups.isEmpty else {
-            if !loadedRuleSources.isEmpty {
-                unloadAllRules()
-            }
-            return []
-        }
+        let enabledGroups = groups.filter { $0.enabled }
+        let ruleGroups = enabledGroups.filter { !$0.customRuleSource.isEmpty }
 
-        let runtime = ensureRuntime()
-        guard let runtime else { return [] }
-
-        reconcileRuleRuntime(runtime: runtime, groups: ruleGroups)
+        // Reconcile the JS runtime for groups that have custom rules.
+        if ruleGroups.isEmpty {
+            if !loadedRuleSources.isEmpty { unloadAllRules() }
+        } else if let runtime = ensureRuntime() {
+            reconcileRuleRuntime(runtime: runtime, groups: ruleGroups)
+        }
 
         var shieldedBundleIDs: Set<String> = []
         var allowedBundleIDs: Set<String> = []
 
-        for group in ruleGroups {
+        for group in enabledGroups {
             guard group.isActive(at: now) else { continue }
             if usage.snoozesByGroup[group.id]?.phase(at: now) == .active { continue }
 
@@ -227,10 +266,17 @@ public final class MacEnforcementBridge: ObservableObject {
 
             let events = buildEventsForGroup(
                 group: group, frontmost: frontmost,
-                matchingTarget: matchingTarget, usage: usage, now: now
+                matchingTarget: matchingTarget, now: now,
+                launched: launched, terminated: terminated, switched: switched
             )
 
             for event in events {
+                appendLog(level: "log", group: group.name,
+                          message: "event fired: \(event.type) | target: \(event.target?.displayName ?? "none") | url: \(event.url.isEmpty ? "—" : event.url)")
+
+                // Only dispatch to runtime if this group has a custom rule loaded.
+                guard !group.customRuleSource.isEmpty, let runtime = ruleRuntime else { continue }
+
                 let result: DispatchResult
                 do {
                     result = try runtime.dispatch(event)
@@ -268,14 +314,6 @@ public final class MacEnforcementBridge: ObservableObject {
 
                 processWindowIntents(result.intents, frontmost: frontmost)
             }
-
-            // Track threshold crossings for usageThresholdReached.
-            if group.mode == .timer || group.mode == .afterMinutes {
-                let used = usage.usageByGroupSeconds[group.id] ?? 0
-                let allowed = TimeInterval(max(0, group.allowedMinutes) * 60)
-                let isOver = allowed > 0 && used >= allowed
-                wasOverThresholdByGroup[group.id] = isOver
-            }
         }
 
         shieldedBundleIDs.subtract(allowedBundleIDs)
@@ -286,12 +324,61 @@ public final class MacEnforcementBridge: ObservableObject {
         group: BlockGroup,
         frontmost: String?,
         matchingTarget: BlockTarget?,
-        usage: UsageSnapshot,
-        now: Date
+        now: Date,
+        launched: Set<String>,
+        terminated: Set<String>,
+        switched: Bool
     ) -> [CustomRuleEvent] {
         var events: [CustomRuleEvent] = []
 
-        // Use real browser tab URL when available; fall back to app:// scheme.
+        func make(type: String, data: [String: String] = [:]) -> CustomRuleEvent {
+            makeEvent(type: type, group: group, frontmost: frontmost, data: data)
+        }
+
+        // Always fire tickEvent.
+        events.append(make(type: "tickEvent", data: ["intervalMs": "1000"]))
+
+        // openAppEvent: an app in this group's targets was launched.
+        let groupTargetIDs = Set(group.targets.filter { $0.kind == .application }.map(\.id))
+        let launchedTargets = launched.intersection(groupTargetIDs)
+        for appID in launchedTargets {
+            events.append(make(type: "openAppEvent", data: ["launchedAppId": appID]))
+            events.append(make(type: "appChangedEvent", data: ["reason": "open", "appId": appID]))
+        }
+
+        // closeAppEvent: an app in this group's targets was terminated.
+        let terminatedTargets = terminated.intersection(groupTargetIDs)
+        for appID in terminatedTargets {
+            events.append(make(type: "closeAppEvent", data: ["terminatedAppId": appID]))
+            events.append(make(type: "appChangedEvent", data: ["reason": "close", "appId": appID]))
+        }
+
+        // switchAppEvent: the frontmost app changed.
+        if switched {
+            events.append(make(type: "switchAppEvent", data: [
+                "previousAppId": lastFrontmost ?? "",
+                "currentAppId": frontmost ?? ""
+            ]))
+            // appChangedEvent always accompanies a switch.
+            if launchedTargets.isEmpty && terminatedTargets.isEmpty {
+                events.append(make(type: "appChangedEvent", data: [
+                    "reason": "switch",
+                    "previousAppId": lastFrontmost ?? "",
+                    "currentAppId": frontmost ?? ""
+                ]))
+            }
+        }
+
+        return events
+    }
+
+    /// Helper to build a single event with standard enriched data.
+    private func makeEvent(
+        type: String,
+        group: BlockGroup,
+        frontmost: String?,
+        data: [String: String] = [:]
+    ) -> CustomRuleEvent {
         let url: String
         let hostname: String
         if let tab = lastBrowserTab {
@@ -303,58 +390,61 @@ public final class MacEnforcementBridge: ObservableObject {
         }
 
         let isBrowser = frontmost.map { BrowserTabReader.isBrowser($0) } ?? false
+        let matchingTarget = frontmost.flatMap { fm in
+            group.targets.first(where: { $0.kind == .application && $0.id == fm })
+        }
 
-        func makeEvent(type: String, data: [String: String] = [:]) -> CustomRuleEvent {
-            var enrichedData = data
-            enrichedData["appId"] = frontmost ?? ""
-            enrichedData["appName"] = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
-            enrichedData["isBrowser"] = isBrowser ? "true" : "false"
-            if let tab = lastBrowserTab {
-                enrichedData["tabTitle"] = tab.title
+        var enrichedData = data
+        enrichedData["appId"] = frontmost ?? ""
+        enrichedData["appName"] = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
+        enrichedData["isBrowser"] = isBrowser ? "true" : "false"
+        if let tab = lastBrowserTab {
+            enrichedData["tabTitle"] = tab.title
+        }
+        return CustomRuleEvent(
+            type: type, groupID: group.id,
+            target: matchingTarget, now: Date(),
+            url: url, hostname: hostname, data: enrichedData
+        )
+    }
+
+    /// Dispatches a single event (snoozePress, panelEvent, localFileEvent)
+    /// outside the regular tick loop.
+    private func dispatchSingleEvent(_ event: CustomRuleEvent, group: BlockGroup, frontmost: String?) {
+        appendLog(level: "log", group: group.name,
+                  message: "event fired: \(event.type) | target: \(event.target?.displayName ?? "none") | url: \(event.url.isEmpty ? "—" : event.url)")
+
+        guard !group.customRuleSource.isEmpty, let runtime = ensureRuntime() else { return }
+
+        // Ensure the rule is loaded.
+        if loadedRuleSources[group.id] != group.customRuleSource {
+            reconcileRuleRuntime(runtime: runtime, groups: [group])
+        }
+
+        let result: DispatchResult
+        do {
+            result = try runtime.dispatch(event)
+        } catch {
+            appendLog(level: "error", group: group.name,
+                      message: "dispatch failed: \(error.localizedDescription)")
+            return
+        }
+
+        for decision in result.decisions {
+            switch decision.action {
+            case .log:
+                let level = decision.metadata["level"] ?? "log"
+                appendLog(level: level, group: group.name, message: decision.reason)
+            case .shield:
+                if let fm = frontmost {
+                    MacProcessTerminator.terminate(bundleIdentifier: fm)
+                }
+            default:
+                break
             }
-            return CustomRuleEvent(
-                type: type, groupID: group.id,
-                target: matchingTarget, now: now,
-                url: url, hostname: hostname, data: enrichedData
-            )
         }
 
-        // Always fire tickEvent.
-        events.append(makeEvent(type: "tickEvent"))
-
-        // Focus transitions.
-        let prevFrontmost = lastFrontmost
-        if frontmost != prevFrontmost {
-            if matchingTarget != nil {
-                events.append(makeEvent(type: "openWebEvent"))
-                events.append(makeEvent(type: "switchWebEvent"))
-                events.append(makeEvent(type: "webChangedEvent"))
-            } else if prevFrontmost != nil,
-                      group.targets.contains(where: { $0.kind == .application && $0.id == prevFrontmost! }) {
-                events.append(makeEvent(type: "closeWebEvent"))
-            }
-        }
-
-        // Schedule transitions.
-        let wasActive = wasActiveByGroup[group.id] ?? true
-        let isActive = group.isActive(at: now)
-        if isActive != wasActive {
-            events.append(makeEvent(type: "scheduleChanged", data: ["active": isActive ? "true" : "false"]))
-        }
-        wasActiveByGroup[group.id] = isActive
-
-        // usageThresholdReached: fires once when timer crosses its limit.
-        if group.mode == .timer || group.mode == .afterMinutes {
-            let used = usage.usageByGroupSeconds[group.id] ?? 0
-            let allowed = TimeInterval(max(0, group.allowedMinutes) * 60)
-            let isOver = allowed > 0 && used >= allowed
-            let wasOver = wasOverThresholdByGroup[group.id] ?? false
-            if isOver && !wasOver {
-                events.append(makeEvent(type: "usageThresholdReached"))
-            }
-        }
-
-        return events
+        processWindowIntents(result.intents, frontmost: frontmost)
     }
 
     private func ensureRuntime() -> CustomJavaScriptPolicyRuntime? {
@@ -372,13 +462,11 @@ public final class MacEnforcementBridge: ObservableObject {
     private func reconcileRuleRuntime(runtime: CustomJavaScriptPolicyRuntime, groups: [BlockGroup]) {
         let currentGroupIDs = Set(groups.map(\.id))
 
-        // Unload removed/disabled groups.
         for (groupID, _) in loadedRuleSources where !currentGroupIDs.contains(groupID) {
             runtime.unload(groupID: groupID)
             loadedRuleSources.removeValue(forKey: groupID)
         }
 
-        // Load/reload changed sources.
         for group in groups {
             let source = group.customRuleSource
             if loadedRuleSources[group.id] == source { continue }
@@ -434,11 +522,10 @@ public final class MacEnforcementBridge: ObservableObject {
     }
 
     /// Handles a chokepoint event from the browser focus observer.
-    /// Fires custom-rule events immediately (instead of waiting for the next tick).
+    /// Fires appChangedEvent immediately (instead of waiting for the next tick).
     private func handleBrowserFocusEvent(_ event: BrowserFocusObserver.FocusEvent) {
         lastBrowserTab = event.tab
 
-        // Check dynamic blocklist immediately on focus/URL change.
         if let tab = event.tab, siteBlocklist.isBlocked(tab.url) {
             BrowserTabReader.closeActiveTab(browserBundleID: tab.browserBundleID)
             appendLog(level: "log", group: "system",
@@ -446,7 +533,6 @@ public final class MacEnforcementBridge: ObservableObject {
             return
         }
 
-        // Fire custom rule events for the URL change.
         let now = Date()
         let groups = webStore.importedGroups()?.groups ?? []
         let frontmost = event.browserBundleID
@@ -455,22 +541,28 @@ public final class MacEnforcementBridge: ObservableObject {
 
         for group in ruleGroups {
             guard group.isActive(at: now) else { continue }
-            let eventType = event.trigger == .appActivated ? "openWebEvent" : "webChangedEvent"
+            // Only fire appChangedEvent from the chokepoint — switchAppEvent is
+            // handled by the tick loop to avoid duplicates.
+            guard event.trigger == .urlChanged else { continue }
             let url = event.tab?.url ?? ""
             let hostname = URL(string: url)?.host ?? frontmost
 
             var data: [String: String] = [
                 "appId": frontmost,
                 "appName": BrowserTabReader.isBrowser(frontmost) ? frontmost : "",
-                "isBrowser": "true"
+                "isBrowser": "true",
+                "reason": "urlChanged"
             ]
             if let tab = event.tab { data["tabTitle"] = tab.title }
 
+            let matchingTarget = group.targets.first(where: { $0.kind == .application && $0.id == frontmost })
             let ruleEvent = CustomRuleEvent(
-                type: eventType, groupID: group.id,
-                target: nil, now: now,
+                type: "appChangedEvent", groupID: group.id,
+                target: matchingTarget, now: now,
                 url: url, hostname: hostname, data: data
             )
+            appendLog(level: "log", group: group.name,
+                      message: "event fired: appChangedEvent | target: \(matchingTarget?.displayName ?? "none") | url: \(url.isEmpty ? "—" : url)")
             do {
                 let result = try runtime.dispatch(ruleEvent)
                 for decision in result.decisions where decision.action == .shield {
@@ -498,6 +590,7 @@ public final class MacEnforcementBridge: ObservableObject {
     }
 
     private func appendLog(level: String, group: String, message: String) {
+        print("[MacEnforcementBridge] [\(group)] \(level): \(message)")
         let entry = RuleLogEntry(timestamp: Date(), level: level, group: group, message: message)
         ruleLog.append(entry)
         if ruleLog.count > 200 {
@@ -505,7 +598,11 @@ public final class MacEnforcementBridge: ObservableObject {
         }
     }
 
-    // MARK: - Usage
+    // MARK: - Helpers
+
+    private func currentRunningBundleIDs() -> Set<String> {
+        Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+    }
 
     private func elapsedSinceLastSample(now: Date) -> TimeInterval {
         guard let lastSampleAt else { return 0 }

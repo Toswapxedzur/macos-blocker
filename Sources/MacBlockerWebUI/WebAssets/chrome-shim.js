@@ -126,6 +126,22 @@
   // Native rule-log push. Each entry: { timestamp, level, group, message }.
   // Stored under the "ruleLog" key in the shim store so the popup Log panel
   // can read it like any other chrome.storage.local value.
+  // Also dispatches each entry as a "log-feed-entry" runtime message so the
+  // popup's live Log panel updates immediately.
+  var logFeedCounter = 0;
+
+  function nativeLogToFeedEntry(e) {
+    var ts = e.timestamp ? new Date(e.timestamp).getTime() : Date.now();
+    if (!Number.isFinite(ts)) ts = Date.now();
+    return {
+      id: "native-" + ts + "-" + (++logFeedCounter),
+      ts: ts,
+      level: e.level || "log",
+      eventType: e.group || "",
+      message: e.message || ""
+    };
+  }
+
   window.__cbApplyNativeRuleLog = function (json) {
     try {
       var entries = typeof json === "string" ? JSON.parse(json) : json;
@@ -139,6 +155,15 @@
         window.localStorage.setItem(STORE_KEY, JSON.stringify(store));
       } catch (_) {}
       notifyChanges({ ruleLog: { oldValue: oldValue, newValue: merged } });
+
+      for (var i = 0; i < entries.length; i++) {
+        try {
+          window.__cbDispatchRuntimeMessage({
+            type: "log-feed-entry",
+            entry: nativeLogToFeedEntry(entries[i])
+          });
+        } catch (_) {}
+      }
     } catch (_) {}
   };
 
@@ -333,8 +358,12 @@
     var type = message && message.type;
     switch (type) {
       case "get-log-feed":
-        return Promise.resolve({ ok: true, entries: [] });
+        var feed = Array.isArray(store.ruleLog) ? store.ruleLog : [];
+        var mapped = feed.map(function (e, i) { return nativeLogToFeedEntry(e); });
+        return Promise.resolve({ ok: true, entries: mapped });
       case "clear-log-feed":
+        store.ruleLog = [];
+        try { window.localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (_) {}
         return Promise.resolve({ ok: true });
       case "check-custom-group-syntax":
         return Promise.resolve(checkSyntax(message && message.source));
@@ -350,6 +379,8 @@
         });
       case "fire-snooze-press":
         return bridgeOrResolve("fire-snooze-press", message, { ok: true });
+      case "custom-panel-event":
+        return bridgeOrResolve("custom-panel-event", message, { ok: true });
       case "refresh-blocking-rules":
         return bridgeOrResolve("refresh-blocking-rules", message, { ok: true });
       case "unload-custom-group":

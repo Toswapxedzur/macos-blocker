@@ -188,15 +188,19 @@ public final class MacBlockerAppModel: ObservableObject {
     }
 
     private func appendLogEntries(for decisions: [PolicyDecision]) {
-        for decision in decisions {
-            appendLog(
-                PolicyApplicationLogEntry(
-                    action: decision.action,
-                    groupID: decision.groupID,
-                    message: decision.reason.isEmpty ? decision.action.rawValue : decision.reason
-                )
+        guard !decisions.isEmpty else { return }
+        let entries = decisions.map {
+            PolicyApplicationLogEntry(
+                action: $0.action,
+                groupID: $0.groupID,
+                message: $0.reason.isEmpty ? $0.action.rawValue : $0.reason
             )
         }
+        state.logEntries.insert(contentsOf: entries, at: 0)
+        if state.logEntries.count > 200 {
+            state.logEntries.removeLast(state.logEntries.count - 200)
+        }
+        save()
     }
 
     private func appendLog(_ entry: PolicyApplicationLogEntry) {
