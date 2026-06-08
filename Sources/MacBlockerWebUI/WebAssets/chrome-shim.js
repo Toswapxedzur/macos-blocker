@@ -97,6 +97,51 @@
     } catch (_) {}
   };
 
+  // The native macOS host accrues "time spent" usage (while a blocked app is
+  // frontmost — the analogue of the extension's per-page heartbeat) and pushes
+  // it here every second so the editor's countdown ticks live, exactly like the
+  // Chrome extension's popup. We merge the incoming usage keys and fire the
+  // storage-change listeners (NOT persist) so the popup re-renders without
+  // writing back to the native store.
+  window.__cbApplyNativeUsage = function (json) {
+    try {
+      var incoming = typeof json === "string" ? JSON.parse(json) : json;
+      if (!incoming || typeof incoming !== "object") return;
+      var changes = {};
+      ["usageTimersMs", "usageResetAtMs"].forEach(function (key) {
+        if (incoming[key] && typeof incoming[key] === "object") {
+          var oldValue = store[key];
+          store[key] = incoming[key];
+          changes[key] = { oldValue: oldValue, newValue: incoming[key] };
+        }
+      });
+      if (Object.keys(changes).length === 0) return;
+      try {
+        window.localStorage.setItem(STORE_KEY, JSON.stringify(store));
+      } catch (_) {}
+      notifyChanges(changes);
+    } catch (_) {}
+  };
+
+  // Native rule-log push. Each entry: { timestamp, level, group, message }.
+  // Stored under the "ruleLog" key in the shim store so the popup Log panel
+  // can read it like any other chrome.storage.local value.
+  window.__cbApplyNativeRuleLog = function (json) {
+    try {
+      var entries = typeof json === "string" ? JSON.parse(json) : json;
+      if (!Array.isArray(entries) || entries.length === 0) return;
+      var existing = Array.isArray(store.ruleLog) ? store.ruleLog : [];
+      var merged = existing.concat(entries);
+      if (merged.length > 200) merged = merged.slice(merged.length - 200);
+      var oldValue = store.ruleLog;
+      store.ruleLog = merged;
+      try {
+        window.localStorage.setItem(STORE_KEY, JSON.stringify(store));
+      } catch (_) {}
+      notifyChanges({ ruleLog: { oldValue: oldValue, newValue: merged } });
+    } catch (_) {}
+  };
+
   var changeListeners = [];
 
   function notifyChanges(changes) {

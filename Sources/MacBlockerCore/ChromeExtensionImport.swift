@@ -105,6 +105,8 @@ public enum ChromeExtensionImporter {
         )
     }
 
+    /// The macOS app blocks whole apps/sites only; the extension's platform
+    /// group types collapse to the generic `.app` type natively.
     private static func mapGroupType(_ groupType: BlockGroupType) -> BlockGroupType {
         switch groupType {
         case .youtube, .tiktok, .facebook, .instagram, .twitch, .reddit, .discord:

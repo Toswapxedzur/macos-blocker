@@ -30,6 +30,7 @@ public struct BlockerMainView: View {
         return BlockerWebPanel(
             store: enforcement.webStore,
             appInventoryJSON: { MacAppInventoryJSON.make() },
+            ruleLogJSON: { [weak enforcement] in enforcement?.drainLogJSON() },
             onStorePersisted: { enforcement.refresh() }
         )
         .tabItem {

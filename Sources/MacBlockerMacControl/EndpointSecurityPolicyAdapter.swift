@@ -88,16 +88,22 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
         usage: UsageSnapshot,
         now: Date = Date(),
         calendar: Calendar = .current,
-        mode: MacEnforcementMode? = nil
+        mode: MacEnforcementMode? = nil,
+        customBlockedBundleIDs: Set<String> = []
     ) async throws {
         let resolved = mode ?? defaultMode
-        let modes = Self.blockedApplicationModes(
+        var modes = Self.blockedApplicationModes(
             groups: groups,
             usage: usage,
             now: now,
             calendar: calendar,
             mode: resolved
         )
+
+        // Merge in bundle IDs shielded by custom-rule decisions.
+        for bundleID in customBlockedBundleIDs {
+            modes[bundleID] = resolved
+        }
 
         // Unchanged set → no rebuild/inventory scan; just keep enforcing.
         if modes == activeModes {

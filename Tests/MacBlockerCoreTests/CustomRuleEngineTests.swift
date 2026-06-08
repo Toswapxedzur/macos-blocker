@@ -124,4 +124,50 @@ final class CustomRuleEngineTests: XCTestCase {
         // Dispatching an unrelated type yields no decisions but does not throw.
         XCTAssertTrue(try runtime.dispatch(CustomRuleEvent(type: "snoozePress", groupID: "g")).isEmpty)
     }
+
+    func testTimerEndedAutoFires() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(groupID: "g", source: """
+        (event, helpers) => {
+          event.registerTickEvent("setup", (ev, h) => {
+            const tm = h.getTimerHelper();
+            const t = tm.getOrCreateTimer({ id: "countdown", direction: "backward", currentMs: 500 });
+            tm.addMs("countdown", -500);
+          });
+          event.registerTimerEndedEvent("react", (ev, h) => {
+            ev.block("timer expired: " + ev.data.timerId);
+          });
+        }
+        """)
+
+        let decisions = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g"))
+        let shieldDecisions = decisions.filter { $0.action == .shield }
+        XCTAssertEqual(shieldDecisions.count, 1)
+        XCTAssertTrue(shieldDecisions.first?.reason.contains("countdown") ?? false)
+    }
+
+    func testTimerEndedDeduplicatesAcrossDispatches() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(groupID: "g", source: """
+        (event, helpers) => {
+          event.registerTickEvent("drain", (ev, h) => {
+            const tm = h.getTimerHelper();
+            tm.getOrCreateTimer({ id: "x", direction: "backward", currentMs: 0 });
+          });
+          event.registerTimerEndedEvent("log", (ev, h) => {
+            h.log("fired for " + ev.data.timerId);
+          });
+        }
+        """)
+
+        // First tick fires timerEnded.
+        let first = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g"))
+        let firstLogs = first.filter { $0.action == .log && $0.reason.contains("fired for x") }
+        XCTAssertEqual(firstLogs.count, 1)
+
+        // Second tick does NOT re-fire (already expired, not a new transition).
+        let second = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g"))
+        let secondLogs = second.filter { $0.action == .log && $0.reason.contains("fired for x") }
+        XCTAssertEqual(secondLogs.count, 0)
+    }
 }

@@ -21,6 +21,9 @@ public struct BlockerWebView: _CBViewRepresentable {
     /// app layer (which can import AppKit / MacControl); nil on platforms with
     /// no native app list.
     private let appInventoryJSON: (() -> String?)?
+    /// Supplies rule-log entries as a JSON array string. Called on the 1-second
+    /// push timer; entries are forwarded to `window.__cbApplyNativeRuleLog`.
+    private let ruleLogJSON: (() -> String?)?
     /// Invoked (on the main thread) right after the editor's store has been
     /// persisted, so the host can recompile/enforce the policy immediately.
     private let onStorePersisted: (() -> Void)?
@@ -28,17 +31,19 @@ public struct BlockerWebView: _CBViewRepresentable {
     public init(
         store: BlockerWebStore = BlockerWebStore(),
         appInventoryJSON: (() -> String?)? = nil,
+        ruleLogJSON: (() -> String?)? = nil,
         onStorePersisted: (() -> Void)? = nil,
         onRunCustomGroup: ((String, String) -> Void)? = nil
     ) {
         self.store = store
         self.appInventoryJSON = appInventoryJSON
+        self.ruleLogJSON = ruleLogJSON
         self.onStorePersisted = onStorePersisted
         self.onRunCustomGroup = onRunCustomGroup
     }
 
     public func makeCoordinator() -> Coordinator {
-        Coordinator(store: store, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup)
+        Coordinator(store: store, ruleLogJSON: ruleLogJSON, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup)
     }
 
     private func makeWebView(context: Context) -> WKWebView {
@@ -79,6 +84,7 @@ public struct BlockerWebView: _CBViewRepresentable {
 
         let webView = WKWebView(frame: .zero, configuration: config)
         context.coordinator.webView = webView
+        context.coordinator.startUsagePush()
 
         if WebAssetsLocator.assetsDirectory != nil {
             webView.load(URLRequest(url: WebAssetSchemeHandler.indexURL))
@@ -122,17 +128,57 @@ public struct BlockerWebView: _CBViewRepresentable {
         weak var webView: WKWebView?
         var schemeHandler: WebAssetSchemeHandler?
         private let store: BlockerWebStore
+        private let ruleLogJSON: (() -> String?)?
         private let onStorePersisted: (() -> Void)?
         private let onRunCustomGroup: ((String, String) -> Void)?
 
+        private var usagePushTimer: Timer?
+
         init(
             store: BlockerWebStore,
+            ruleLogJSON: (() -> String?)?,
             onStorePersisted: (() -> Void)?,
             onRunCustomGroup: ((String, String) -> Void)?
         ) {
             self.store = store
+            self.ruleLogJSON = ruleLogJSON
             self.onStorePersisted = onStorePersisted
             self.onRunCustomGroup = onRunCustomGroup
+        }
+
+        deinit {
+            usagePushTimer?.invalidate()
+        }
+
+        func startUsagePush() {
+            usagePushTimer?.invalidate()
+            let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+                self?.pushUsage()
+                self?.pushRuleLog()
+            }
+            usagePushTimer = timer
+        }
+
+        private func pushUsage() {
+            guard let webView else { return }
+            let usage = store.loadUsageTimers()
+            guard !usage.timersMs.isEmpty || !usage.resetAtMs.isEmpty else { return }
+            let payload: [String: Any] = [
+                "usageTimersMs": usage.timersMs,
+                "usageResetAtMs": usage.resetAtMs
+            ]
+            guard let data = try? JSONSerialization.data(withJSONObject: payload),
+                  let json = String(data: data, encoding: .utf8)
+            else {
+                return
+            }
+            webView.evaluateJavaScript("window.__cbApplyNativeUsage(\(json));", completionHandler: nil)
+        }
+
+        private func pushRuleLog() {
+            guard let webView, let provider = ruleLogJSON,
+                  let json = provider(), !json.isEmpty else { return }
+            webView.evaluateJavaScript("window.__cbApplyNativeRuleLog(\(json));", completionHandler: nil)
         }
 
         public func userContentController(

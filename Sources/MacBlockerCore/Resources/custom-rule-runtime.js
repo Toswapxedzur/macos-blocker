@@ -26,6 +26,7 @@ var MacBlockerRuntime = (function () {
   var handlersByGroup = {};      // groupId -> [entry]
   var persistenceByGroup = {};   // groupId -> { key: jsonString }
   var timersByGroup = {};        // groupId -> { timerId: timer }
+  var previouslyExpired = {};    // groupId -> { timerId: true } for timerEnded dedup
 
   var TYPED = {
     TickEvent: "tickEvent",
@@ -637,10 +638,36 @@ var MacBlockerRuntime = (function () {
       delete handlersByGroup[groupId];
       delete persistenceByGroup[groupId];
       delete timersByGroup[groupId];
+      delete previouslyExpired[groupId];
     },
     dispatch: function (rawEvent) {
       var ctx = makeContext(rawEvent);
       runHandlers(rawEvent, ctx, 0);
+      // Auto-fire timerEnded for backward timers that just crossed zero.
+      var bucket = timersByGroup[rawEvent.groupID];
+      if (bucket && rawEvent.type !== "timerEnded") {
+        var prev = previouslyExpired[rawEvent.groupID] || {};
+        var nowExpired = {};
+        for (var tid in bucket) {
+          var t = bucket[tid];
+          if (t && t.direction === "backward" && t.currentMs <= 0) {
+            nowExpired[tid] = true;
+            if (!prev[tid]) {
+              var synthEvent = {
+                type: "timerEnded",
+                groupID: rawEvent.groupID,
+                target: rawEvent.target,
+                now: rawEvent.now,
+                url: rawEvent.url,
+                hostname: rawEvent.hostname,
+                data: { timerId: tid, displayName: t.displayName, direction: t.direction, currentMs: t.currentMs }
+              };
+              runHandlers(synthEvent, ctx, 0);
+            }
+          }
+        }
+        previouslyExpired[rawEvent.groupID] = nowExpired;
+      }
       return JSON.stringify(ctx.decisions);
     },
     handlerCount: function (groupId) { return countHandlers(groupId); }

@@ -8,16 +8,19 @@ import MacBlockerCore
 public struct BlockerWebPanel: View {
     private let store: BlockerWebStore
     private let appInventoryJSON: (() -> String?)?
+    private let ruleLogJSON: (() -> String?)?
     private let onStorePersisted: (() -> Void)?
     @State private var lastRunMessage: String?
 
     public init(
         store: BlockerWebStore = BlockerWebStore(),
         appInventoryJSON: (() -> String?)? = nil,
+        ruleLogJSON: (() -> String?)? = nil,
         onStorePersisted: (() -> Void)? = nil
     ) {
         self.store = store
         self.appInventoryJSON = appInventoryJSON
+        self.ruleLogJSON = ruleLogJSON
         self.onStorePersisted = onStorePersisted
     }
 
@@ -25,6 +28,7 @@ public struct BlockerWebPanel: View {
         BlockerWebView(
             store: store,
             appInventoryJSON: appInventoryJSON,
+            ruleLogJSON: ruleLogJSON,
             onStorePersisted: onStorePersisted
         ) { groupID, source in
             loadIntoPolicyRuntime(groupID: groupID, source: source)
@@ -33,8 +37,6 @@ public struct BlockerWebPanel: View {
     }
 
     private func loadIntoPolicyRuntime(groupID: String, source: String) {
-        // When the user presses Run, also load the rule into the native
-        // policy runtime so the same JavaScript drives shield decisions.
         do {
             let runtime = try CustomJavaScriptPolicyRuntime()
             try runtime.load(groupID: groupID, source: source)
