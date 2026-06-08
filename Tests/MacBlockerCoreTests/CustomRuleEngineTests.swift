@@ -1,31 +1,35 @@
 import XCTest
 @testable import MacBlockerCore
 
-/// Exercises the iOS-portable custom-rule engine (timers, persistence, domain
-/// classifiers, redirect, unsupported-helper logging) to prove rules execute.
+/// Exercises the custom-rule engine (timers, persistence, domain classifiers,
+/// ev.close/block/unblock/open, unsupported-helper logging) to prove rules execute.
 final class CustomRuleEngineTests: XCTestCase {
     func testDomainHelperClassifiesAndBlocks() throws {
         let runtime = try CustomJavaScriptPolicyRuntime()
         try runtime.load(groupID: "g", source: """
         (event, helpers) => {
           event.registerOpenWebEvent("yt", (ev, h) => {
-            if (h.getDomainHelper().isYouTubeHost(ev.hostname)) ev.block("no youtube");
+            if (h.getDomainHelper().isYouTubeHost(ev.hostname)) ev.block();
           });
         }
         """)
 
-        let blocked = try runtime.dispatch(
-            CustomRuleEvent(type: "openWebEvent", groupID: "g", hostname: "www.youtube.com")
-        ).decisions
-        XCTAssertEqual(blocked.first?.action, .shield)
+        let result = try runtime.dispatch(
+            CustomRuleEvent(type: "openWebEvent", groupID: "g",
+                            hostname: "www.youtube.com",
+                            data: ["isBrowser": "true"])
+        )
+        let blockIntents = result.intents.filter { $0.action == "blockSite" }
+        XCTAssertFalse(blockIntents.isEmpty)
 
-        let allowed = try runtime.dispatch(
+        let allowedResult = try runtime.dispatch(
             CustomRuleEvent(type: "openWebEvent", groupID: "g", hostname: "example.com")
-        ).decisions
-        XCTAssertTrue(allowed.isEmpty)
+        )
+        let allowedBlocks = allowedResult.intents.filter { $0.action == "blockSite" || $0.action == "blockApp" }
+        XCTAssertTrue(allowedBlocks.isEmpty)
     }
 
-    func testTimerExpiryBlocks() throws {
+    func testTimerExpiryCloses() throws {
         let runtime = try CustomJavaScriptPolicyRuntime()
         try runtime.load(groupID: "g", source: """
         (event, helpers) => {
@@ -33,14 +37,15 @@ final class CustomRuleEngineTests: XCTestCase {
             const tm = h.getTimerHelper();
             tm.getOrCreateTimer({ id: "x", direction: "backward", currentMs: 1000 });
             tm.addMs("x", -1000);
-            if (tm.isExpired("x")) ev.block("time up");
+            if (tm.isExpired("x")) ev.close("com.example.app");
           });
         }
         """)
 
-        let decisions = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g")).decisions
-        XCTAssertEqual(decisions.first?.action, .shield)
-        XCTAssertEqual(decisions.first?.reason, "time up")
+        let result = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g"))
+        let closeIntents = result.intents.filter { $0.action == "close" }
+        XCTAssertEqual(closeIntents.count, 1)
+        XCTAssertEqual(closeIntents.first?.target, "com.example.app")
     }
 
     func testPersistenceCountsAcrossDispatches() throws {
@@ -51,18 +56,19 @@ final class CustomRuleEngineTests: XCTestCase {
             const p = h.getPersistenceHelper();
             const n = (p.get("n", 0)) + 1;
             p.set("n", n);
-            if (n >= 3) ev.block("third visit");
+            if (n >= 3) ev.block("example.com");
           });
         }
         """)
 
-        XCTAssertTrue(try runtime.dispatch(CustomRuleEvent(type: "webChangedEvent", groupID: "g")).decisions.isEmpty)
-        XCTAssertTrue(try runtime.dispatch(CustomRuleEvent(type: "webChangedEvent", groupID: "g")).decisions.isEmpty)
-        let third = try runtime.dispatch(CustomRuleEvent(type: "webChangedEvent", groupID: "g")).decisions
-        XCTAssertEqual(third.first?.action, .shield)
+        XCTAssertTrue(try runtime.dispatch(CustomRuleEvent(type: "webChangedEvent", groupID: "g")).intents.filter { $0.action == "blockSite" }.isEmpty)
+        XCTAssertTrue(try runtime.dispatch(CustomRuleEvent(type: "webChangedEvent", groupID: "g")).intents.filter { $0.action == "blockSite" }.isEmpty)
+        let third = try runtime.dispatch(CustomRuleEvent(type: "webChangedEvent", groupID: "g"))
+        let blockIntents = third.intents.filter { $0.action == "blockSite" }
+        XCTAssertEqual(blockIntents.count, 1)
     }
 
-    func testRedirectIsRemovedButStillBlocks() throws {
+    func testRedirectIsRemovedButSetResultStillBlocks() throws {
         let runtime = try CustomJavaScriptPolicyRuntime()
         try runtime.load(groupID: "g", source: """
         (event, helpers) => {
@@ -93,21 +99,22 @@ final class CustomRuleEngineTests: XCTestCase {
         XCTAssertTrue(decisions.first?.reason.contains("getDOMHelper") ?? false)
     }
 
-    func testPlatformClassifierAndPriorityOrder() throws {
+    func testPlatformClassifierBlocks() throws {
         let runtime = try CustomJavaScriptPolicyRuntime()
         try runtime.load(groupID: "g", source: """
         (event, helpers) => {
           event.registerOpenWebEvent("shorts", (ev, h) => {
             const yt = h.getPlatformHelper().youtube();
-            if (yt.isShortUrl(ev.url)) ev.block("no shorts");
+            if (yt.isShortUrl(ev.url)) ev.block("youtube.com");
           }, { priority: 5 });
         }
         """)
 
-        let decisions = try runtime.dispatch(
+        let result = try runtime.dispatch(
             CustomRuleEvent(type: "openWebEvent", groupID: "g", url: "https://youtube.com/shorts/abc123")
-        ).decisions
-        XCTAssertEqual(decisions.first?.action, .shield)
+        )
+        let blockIntents = result.intents.filter { $0.action == "blockSite" }
+        XCTAssertFalse(blockIntents.isEmpty)
     }
 
     func testTypedRegistrarCountsHandlers() throws {
@@ -131,25 +138,24 @@ final class CustomRuleEngineTests: XCTestCase {
             tm.addMs("countdown", -500);
           });
           event.registerTimerEndedEvent("react", (ev, h) => {
-            ev.block("timer expired: " + ev.data.timerId);
+            h.log("timer expired: " + ev.data.timerId);
           });
         }
         """)
 
-        let decisions = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g")).decisions
-        let shieldDecisions = decisions.filter { $0.action == .shield }
-        XCTAssertEqual(shieldDecisions.count, 1)
-        XCTAssertTrue(shieldDecisions.first?.reason.contains("countdown") ?? false)
+        let result = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g"))
+        let logDecisions = result.decisions.filter { $0.action == .log && $0.reason.contains("countdown") }
+        XCTAssertEqual(logDecisions.count, 1)
     }
 
-    func testWorkHoursTickRuleRegistersAndBlocks() throws {
+    func testWorkHoursTickRuleBlocks() throws {
         let runtime = try CustomJavaScriptPolicyRuntime()
         try runtime.load(groupID: "g", source: """
         (events, helpers) => {
             events.registerTickEvent("work-hours", (ev, h) => {
               const hour = new Date(ev.time.now).getHours();
               if (hour >= 9 && hour < 17) {
-                ev.block("Blocked during work hours (9am-5pm)");
+                ev.close();
               }
             });
           }
@@ -163,18 +169,21 @@ final class CustomRuleEngineTests: XCTestCase {
         components.second = 0
         let workTime = cal.date(from: components)!
 
-        let decisions = try runtime.dispatch(
-            CustomRuleEvent(type: "tickEvent", groupID: "g", now: workTime)
-        ).decisions
-        XCTAssertEqual(decisions.first?.action, .shield)
-        XCTAssertEqual(decisions.first?.reason, "Blocked during work hours (9am-5pm)")
+        let result = try runtime.dispatch(
+            CustomRuleEvent(type: "tickEvent", groupID: "g", now: workTime,
+                            data: ["appId": "com.example.app"])
+        )
+        let closeIntents = result.intents.filter { $0.action == "close" }
+        XCTAssertFalse(closeIntents.isEmpty)
 
         components.hour = 20
         let eveningTime = cal.date(from: components)!
-        let eveningDecisions = try runtime.dispatch(
-            CustomRuleEvent(type: "tickEvent", groupID: "g", now: eveningTime)
-        ).decisions
-        XCTAssertTrue(eveningDecisions.isEmpty)
+        let eveningResult = try runtime.dispatch(
+            CustomRuleEvent(type: "tickEvent", groupID: "g", now: eveningTime,
+                            data: ["appId": "com.example.app"])
+        )
+        let eveningCloseIntents = eveningResult.intents.filter { $0.action == "close" }
+        XCTAssertTrue(eveningCloseIntents.isEmpty)
     }
 
     func testTimerEndedDeduplicatesAcrossDispatches() throws {
@@ -301,5 +310,125 @@ final class CustomRuleEngineTests: XCTestCase {
         """)
         XCTAssertEqual(loadResult.handlers, 1)
         XCTAssertTrue(loadResult.decisions.contains(where: { $0.reason == "registration log" }))
+    }
+
+    // MARK: - ev.close / ev.block / ev.unblock / ev.open
+
+    func testEvCloseNoArgClosesFocused() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(groupID: "g", source: """
+        (event, helpers) => {
+          event.registerTickEvent("close-focused", (ev, h) => {
+            ev.close();
+          });
+        }
+        """)
+
+        let result = try runtime.dispatch(
+            CustomRuleEvent(type: "tickEvent", groupID: "g",
+                            data: ["appId": "com.example.app"])
+        )
+        let closeIntents = result.intents.filter { $0.action == "close" }
+        XCTAssertEqual(closeIntents.count, 1)
+        XCTAssertEqual(closeIntents.first?.target, "com.example.app")
+    }
+
+    func testEvCloseWithIdClosesSpecific() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(groupID: "g", source: """
+        (event, helpers) => {
+          event.registerTickEvent("close-specific", (ev, h) => {
+            ev.close("com.apple.calculator");
+          });
+        }
+        """)
+
+        let result = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g"))
+        let closeIntents = result.intents.filter { $0.action == "close" }
+        XCTAssertEqual(closeIntents.count, 1)
+        XCTAssertEqual(closeIntents.first?.target, "com.apple.calculator")
+    }
+
+    func testEvBlockNoArgBlocksFocusedBrowser() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(groupID: "g", source: """
+        (event, helpers) => {
+          event.registerTickEvent("block-focused", (ev, h) => {
+            ev.block();
+          });
+        }
+        """)
+
+        let result = try runtime.dispatch(
+            CustomRuleEvent(type: "tickEvent", groupID: "g",
+                            hostname: "youtube.com",
+                            data: ["isBrowser": "true", "appId": "com.google.Chrome"])
+        )
+        let siteBlocks = result.intents.filter { $0.action == "blockSite" }
+        XCTAssertEqual(siteBlocks.count, 1)
+        XCTAssertEqual(siteBlocks.first?.pattern, "youtube.com")
+    }
+
+    func testEvBlockWithIdBlocksSpecific() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(groupID: "g", source: """
+        (event, helpers) => {
+          event.registerTickEvent("block-specific", (ev, h) => {
+            ev.block("reddit.com");
+          });
+        }
+        """)
+
+        let result = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g"))
+        let blockIntents = result.intents.filter { $0.action == "blockSite" }
+        XCTAssertEqual(blockIntents.count, 1)
+        XCTAssertEqual(blockIntents.first?.pattern, "reddit.com")
+    }
+
+    func testEvUnblock() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(groupID: "g", source: """
+        (event, helpers) => {
+          event.registerTickEvent("unblock", (ev, h) => {
+            ev.unblock("youtube.com");
+          });
+        }
+        """)
+
+        let result = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g"))
+        let unblockIntents = result.intents.filter { $0.action == "unblockSite" }
+        XCTAssertEqual(unblockIntents.count, 1)
+        XCTAssertEqual(unblockIntents.first?.pattern, "youtube.com")
+    }
+
+    func testEvOpen() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(groupID: "g", source: """
+        (event, helpers) => {
+          event.registerTickEvent("open-app", (ev, h) => {
+            ev.open("com.apple.calculator");
+          });
+        }
+        """)
+
+        let result = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g"))
+        let openIntents = result.intents.filter { $0.action == "openApp" }
+        XCTAssertEqual(openIntents.count, 1)
+        XCTAssertEqual(openIntents.first?.target, "com.apple.calculator")
+    }
+
+    func testEvOpenNoArgIsNoop() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(groupID: "g", source: """
+        (event, helpers) => {
+          event.registerTickEvent("open-noop", (ev, h) => {
+            ev.open();
+          });
+        }
+        """)
+
+        let result = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g"))
+        let openIntents = result.intents.filter { $0.action == "openApp" }
+        XCTAssertTrue(openIntents.isEmpty)
     }
 }

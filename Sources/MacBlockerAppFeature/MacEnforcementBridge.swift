@@ -56,9 +56,10 @@ public final class MacEnforcementBridge: ObservableObject {
     private var pendingLifecycleEvents: [AppLifecycleEvent] = []
     private var workspaceObservers: [Any] = []
 
-    // Browser tab + dynamic site blocklist
+    // Browser tab + dynamic site blocklist + persistent app blocklist
     private let focusObserver = BrowserFocusObserver()
     private let siteBlocklist = DynamicSiteBlocklist()
+    private var blockedAppBundleIDs: Set<String> = []
     private var lastBrowserTab: BrowserTabReader.TabInfo?
     #endif
 
@@ -239,6 +240,13 @@ public final class MacEnforcementBridge: ObservableObject {
             BrowserTabReader.closeActiveTab(browserBundleID: tab.browserBundleID)
             appendLog(level: "log", group: "system",
                       message: "Closed blocked site: \(tab.url)")
+        }
+
+        // Enforce persistent app blocklist: kill any blocked app that's running.
+        if !blockedAppBundleIDs.isEmpty, let fm = frontmost, blockedAppBundleIDs.contains(fm) {
+            MacProcessTerminator.terminate(bundleIdentifier: fm)
+            appendLog(level: "log", group: "system",
+                      message: "Killed blocked app: \(fm)")
         }
 
         // 2. Drain notification-driven lifecycle events.
@@ -582,6 +590,28 @@ public final class MacEnforcementBridge: ObservableObject {
                     siteBlocklist.remove(pattern)
                     appendLog(level: "log", group: "system",
                               message: "Site unblocked: \(pattern)")
+                }
+            case "blockApp":
+                if let target = intent.target, !target.isEmpty {
+                    blockedAppBundleIDs.insert(target)
+                    MacProcessTerminator.terminate(bundleIdentifier: target)
+                    appendLog(level: "log", group: "system",
+                              message: "App blocked: \(target)")
+                }
+            case "unblockApp":
+                if let target = intent.target, !target.isEmpty {
+                    blockedAppBundleIDs.remove(target)
+                    appendLog(level: "log", group: "system",
+                              message: "App unblocked: \(target)")
+                }
+            case "openApp":
+                if let target = intent.target, !target.isEmpty {
+                    if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: target) {
+                        NSWorkspace.shared.openApplication(at: url,
+                                                           configuration: NSWorkspace.OpenConfiguration())
+                        appendLog(level: "log", group: "system",
+                                  message: "App opened: \(target)")
+                    }
                 }
             default:
                 break

@@ -310,21 +310,35 @@ public final class CustomJavaScriptPolicyRuntime: CustomPolicyRuntime {
               function hostEvent(rawEvent) {
                 const ev = Object.assign({}, rawEvent);
                 ev.__decisions = [];
-                ev.block = function(reason) {
-                  ev.__decisions.push({
-                    action: "shield",
-                    groupID: ev.groupID,
-                    targetIDs: ev.target && ev.target.id ? [ev.target.id] : [],
-                    reason: String(reason || "Blocked by custom rule."),
-                    shieldMessage: String(reason || "Blocked by custom rule."),
-                    overlayStatus: {
-                      title: "Blocked",
-                      message: String(reason || "Blocked by custom rule."),
-                      timerGroupID: ev.groupID,
-                      expiresAt: null
-                    },
-                    metadata: {}
-                  });
+                ev.__intents = [];
+                const focusedAppId = (rawEvent.data && rawEvent.data.appId) || "";
+                const focusedIsBrowser = (rawEvent.data && rawEvent.data.isBrowser) === "true";
+                const focusedHostname = rawEvent.hostname || "";
+                ev.close = function(id) {
+                  if (typeof id === "string" && id) {
+                    ev.__intents.push({ kind: "window", action: "close", target: id });
+                    ev.__intents.push({ kind: "window", action: "closeTabsByPattern", pattern: id });
+                  } else if (focusedIsBrowser) {
+                    ev.__intents.push({ kind: "window", action: "closeTab" });
+                  } else if (focusedAppId) {
+                    ev.__intents.push({ kind: "window", action: "close", target: focusedAppId });
+                  }
+                };
+                ev.block = function(id) {
+                  const pattern = typeof id === "string" && id ? id : (focusedIsBrowser ? focusedHostname : focusedAppId);
+                  if (!pattern) return;
+                  ev.__intents.push({ kind: "window", action: "blockSite", pattern: pattern });
+                  ev.__intents.push({ kind: "window", action: "blockApp", target: pattern });
+                };
+                ev.unblock = function(id) {
+                  const pattern = typeof id === "string" && id ? id : (focusedIsBrowser ? focusedHostname : focusedAppId);
+                  if (!pattern) return;
+                  ev.__intents.push({ kind: "window", action: "unblockSite", pattern: pattern });
+                  ev.__intents.push({ kind: "window", action: "unblockApp", target: pattern });
+                };
+                ev.open = function(id) {
+                  if (typeof id !== "string" || !id) return;
+                  ev.__intents.push({ kind: "window", action: "openApp", target: id });
                 };
                 ev.allow = function(reason) {
                   ev.__decisions.push({
@@ -366,7 +380,7 @@ public final class CustomJavaScriptPolicyRuntime: CustomPolicyRuntime {
                     if (entry.type !== rawEvent.type) continue;
                     entry.handler(event, helpers);
                   }
-                  return JSON.stringify({ decisions: event.__decisions, intents: [] });
+                  return JSON.stringify({ decisions: event.__decisions, intents: event.__intents });
                 }
               };
             })();

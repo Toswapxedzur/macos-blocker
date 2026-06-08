@@ -2,15 +2,14 @@ import XCTest
 @testable import MacBlockerCore
 
 final class CustomJavaScriptPolicyRuntimeTests: XCTestCase {
-    func testCustomRuleCanShieldTarget() throws {
+    func testCustomRuleCanBlockTarget() throws {
         let runtime = try CustomJavaScriptPolicyRuntime()
         try runtime.load(
             groupID: "group-1",
             source: """
             (event, helpers) => {
               event.registerUsageThresholdReached("limit", (ev, h) => {
-                ev.block("Daily limit reached");
-                ev.setShieldMessage("Go back to work");
+                ev.block("com.zhiliaoapp.musically");
               });
             }
             """
@@ -30,8 +29,8 @@ final class CustomJavaScriptPolicyRuntimeTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(result.decisions.first?.action, .shield)
-        XCTAssertEqual(result.decisions.first?.shieldMessage, "Go back to work")
-        XCTAssertEqual(result.decisions.first?.targetIDs, [target.id])
+        let blockIntents = result.intents.filter { $0.action == "blockApp" }
+        XCTAssertEqual(blockIntents.count, 1)
+        XCTAssertEqual(blockIntents.first?.target, "com.zhiliaoapp.musically")
     }
 }

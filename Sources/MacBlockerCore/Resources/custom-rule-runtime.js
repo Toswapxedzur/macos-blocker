@@ -692,11 +692,45 @@ var MacBlockerRuntime = (function () {
     // Redirection removed (no URL target for app blocking); kept as no-ops.
     ev.setRedirectLink = function () {};
     ev.getRedirectLink = function () { return null; };
-    ev.block = function (reason) {
-      ev.__result = -1;
-      ev.__reason = String(reason || "Blocked by custom rule.");
-      if (!ev.__shieldMessage) ev.__shieldMessage = ev.__reason;
+    // Resolve the focused app's identity from event context.
+    var focusedAppId = (rawEvent.data && rawEvent.data.appId) || "";
+    var focusedIsBrowser = (rawEvent.data && rawEvent.data.isBrowser) === "true";
+    var focusedHostname = ev.hostname || "";
+
+    function pushIntent(intent) { ctx.intents.push(intent); }
+
+    ev.close = function (id) {
+      if (typeof id === "string" && id) {
+        pushIntent({ kind: "window", action: "close", target: id });
+        pushIntent({ kind: "window", action: "closeTabsByPattern", pattern: id });
+      } else {
+        if (focusedIsBrowser) {
+          pushIntent({ kind: "window", action: "closeTab" });
+        } else if (focusedAppId) {
+          pushIntent({ kind: "window", action: "close", target: focusedAppId });
+        }
+      }
     };
+
+    ev.block = function (id) {
+      var pattern = typeof id === "string" && id ? id : (focusedIsBrowser ? focusedHostname : focusedAppId);
+      if (!pattern) return;
+      pushIntent({ kind: "window", action: "blockSite", pattern: pattern });
+      pushIntent({ kind: "window", action: "blockApp", target: pattern });
+    };
+
+    ev.unblock = function (id) {
+      var pattern = typeof id === "string" && id ? id : (focusedIsBrowser ? focusedHostname : focusedAppId);
+      if (!pattern) return;
+      pushIntent({ kind: "window", action: "unblockSite", pattern: pattern });
+      pushIntent({ kind: "window", action: "unblockApp", target: pattern });
+    };
+
+    ev.open = function (id) {
+      if (typeof id !== "string" || !id) return;
+      pushIntent({ kind: "window", action: "openApp", target: id });
+    };
+
     ev.allow = function (reason) { ev.__result = 1; ev.__reason = String(reason || ""); };
     ev.setShieldMessage = function (m) { ev.__shieldMessage = String(m || ""); };
     ev.post = function (type, data, options) {
