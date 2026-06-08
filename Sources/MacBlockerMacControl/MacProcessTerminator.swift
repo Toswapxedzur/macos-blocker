@@ -143,6 +143,16 @@ public enum MacProcessTerminator {
         return taken
     }
 
+    /// Terminates all processes matching the given bundle identifier.
+    public static func terminate(bundleIdentifier: String) {
+        let apps = NSWorkspace.shared.runningApplications.filter {
+            $0.bundleIdentifier == bundleIdentifier
+        }
+        for app in apps {
+            app.terminate()
+        }
+    }
+
     private static func apply(_ action: MacEnforcementMode.RunningAction, to app: NSRunningApplication) {
         switch action {
         case .none:

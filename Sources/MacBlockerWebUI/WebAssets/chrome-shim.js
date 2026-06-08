@@ -267,15 +267,28 @@
     var typed = [
       "TickEvent", "OpenWebEvent", "CloseWebEvent", "SwitchWebEvent",
       "SwitchDomainEvent", "WebChangedEvent", "TimerEnded", "SnoozePress",
-      "PanelEvent", "LocalFileEvent", "PageHeartbeatEvent"
+      "PanelEvent", "LocalFileEvent", "PageHeartbeatEvent",
+      "UsageThresholdReached", "ScheduleChanged", "ShieldAction"
     ];
     typed.forEach(function (name) {
       api["register" + name] = function () { onRegister(); return true; };
+      api["register" + name + "Event"] = function () { onRegister(); return true; };
       api["get" + name] = function () { return null; };
       api["get" + name + "s"] = function () { return {}; };
+      api["get" + name + "Event"] = function () { return null; };
+      api["get" + name + "Events"] = function () { return {}; };
       api["count" + name + "Registered"] = function () { return 0; };
+      api["count" + name + "EventRegistered"] = function () { return 0; };
     });
-    return api;
+    return new Proxy(api, {
+      get: function (target, prop) {
+        if (prop in target) return target[prop];
+        if (typeof prop === "string" && prop.indexOf("register") === 0) {
+          return function () { onRegister(); return true; };
+        }
+        return noop;
+      }
+    });
   }
 
   function checkSyntax(source) {
@@ -326,9 +339,14 @@
       case "check-custom-group-syntax":
         return Promise.resolve(checkSyntax(message && message.source));
       case "run-custom-group":
-        return bridgeOrResolve("run-custom-group", message, {
+        var runResult = checkSyntax(message && message.source);
+        var bridge = nativeBridge();
+        if (bridge) {
+          try { bridge.postMessage({ kind: "run-custom-group", message: message }); } catch (_) {}
+        }
+        return Promise.resolve({
           ok: true,
-          loadResult: { ok: true, handlers: 0 }
+          loadResult: runResult && runResult.result ? runResult.result : { ok: true, handlers: 0 }
         });
       case "fire-snooze-press":
         return bridgeOrResolve("fire-snooze-press", message, { ok: true });

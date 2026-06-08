@@ -5125,6 +5125,9 @@ async function runSelectedCustomGroup() {
       const lr = response.loadResult;
       if (lr.ok) {
         markCustomGroupSourceActive(group.id, source);
+        chrome.storage.local.set({
+          [BLOCKED_GROUPS_KEY]: state.groups
+        });
         if (runCustomGroupStatus) {
           // Append a reload reminder so the user knows that already-
           // open tabs need a refresh before content-script-driven

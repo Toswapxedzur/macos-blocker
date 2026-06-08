@@ -47,6 +47,11 @@ public final class MacEnforcementBridge: ObservableObject {
     private var lastFrontmost: String?
     private var wasActiveByGroup: [String: Bool] = [:]
     private var wasOverThresholdByGroup: [String: Bool] = [:]
+
+    // Browser tab + dynamic site blocklist
+    private let focusObserver = BrowserFocusObserver()
+    private let siteBlocklist = DynamicSiteBlocklist()
+    private var lastBrowserTab: BrowserTabReader.TabInfo?
     #endif
 
     public init(webStore: BlockerWebStore = BlockerWebStore(), sweepInterval: TimeInterval = 1.0) {
@@ -93,6 +98,13 @@ public final class MacEnforcementBridge: ObservableObject {
             }
         }
         self.timer = timer
+
+        focusObserver.onFocusEvent = { [weak self] event in
+            Task { @MainActor in
+                self?.handleBrowserFocusEvent(event)
+            }
+        }
+        focusObserver.start()
         #endif
     }
 
@@ -102,14 +114,27 @@ public final class MacEnforcementBridge: ObservableObject {
         timer = nil
         lastSampleAt = nil
         overlay.hide()
+        focusObserver.stop()
         #endif
     }
 
     #if os(macOS)
     private func tick() {
         let now = Date()
-        let groups = webStore.importedGroups()?.groups ?? []
+        let importResult = webStore.importedGroups()
+        let groups = importResult?.groups ?? []
         let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+
+        if importResult == nil {
+            print("[MacEnforcementBridge] tick: importedGroups() returned nil — no stored data or decode error.")
+        }
+
+        // Read browser tab URL if frontmost is a browser.
+        if let fm = frontmost, BrowserTabReader.isBrowser(fm) {
+            lastBrowserTab = BrowserTabReader.currentTab(browserBundleID: fm)
+        } else {
+            lastBrowserTab = nil
+        }
 
         // 1. Reconcile reset windows + accrue time spent in the frontmost app.
         let elapsed = elapsedSinceLastSample(now: now)
@@ -119,6 +144,13 @@ public final class MacEnforcementBridge: ObservableObject {
             usageByGroupSeconds: timersMs.mapValues { $0 / 1000 },
             snoozesByGroup: webStore.loadSnoozes()
         )
+
+        // Check dynamic site blocklist against current tab.
+        if let tab = lastBrowserTab, siteBlocklist.isBlocked(tab.url) {
+            BrowserTabReader.closeActiveTab(browserBundleID: tab.browserBundleID)
+            appendLog(level: "log", group: "system",
+                      message: "Closed blocked site: \(tab.url)")
+        }
 
         // 2. Dispatch custom-rule events and collect shield decisions.
         let ruleBlocked = dispatchCustomRules(
@@ -154,6 +186,8 @@ public final class MacEnforcementBridge: ObservableObject {
 
     // MARK: - Custom Rule Dispatch
 
+    private var didLogFirstDispatch = false
+
     private func dispatchCustomRules(
         groups: [BlockGroup],
         frontmost: String?,
@@ -161,8 +195,17 @@ public final class MacEnforcementBridge: ObservableObject {
         now: Date
     ) -> Set<String> {
         let ruleGroups = groups.filter { $0.enabled && !$0.customRuleSource.isEmpty }
+        if !didLogFirstDispatch {
+            didLogFirstDispatch = true
+            print("[MacEnforcementBridge] dispatchCustomRules: \(groups.count) total groups, \(ruleGroups.count) custom rule groups")
+            for g in groups {
+                print("  - \(g.name) (type=\(g.groupType), enabled=\(g.enabled), ruleSource=\(g.customRuleSource.prefix(60)))")
+            }
+        }
         guard !ruleGroups.isEmpty else {
-            unloadAllRules()
+            if !loadedRuleSources.isEmpty {
+                unloadAllRules()
+            }
             return []
         }
 
@@ -188,24 +231,32 @@ public final class MacEnforcementBridge: ObservableObject {
             )
 
             for event in events {
-                let decisions: [PolicyDecision]
+                let result: DispatchResult
                 do {
-                    decisions = try runtime.dispatch(event)
+                    result = try runtime.dispatch(event)
                 } catch {
                     appendLog(level: "error", group: group.name,
                               message: "dispatch failed: \(error.localizedDescription)")
                     continue
                 }
 
-                for decision in decisions {
+                for decision in result.decisions {
                     switch decision.action {
                     case .shield:
-                        for id in decision.targetIDs {
-                            shieldedBundleIDs.insert(id)
+                        if decision.targetIDs.isEmpty, let fm = frontmost {
+                            shieldedBundleIDs.insert(fm)
+                        } else {
+                            for id in decision.targetIDs {
+                                shieldedBundleIDs.insert(id)
+                            }
                         }
                     case .allow:
-                        for id in decision.targetIDs {
-                            allowedBundleIDs.insert(id)
+                        if decision.targetIDs.isEmpty, let fm = frontmost {
+                            allowedBundleIDs.insert(fm)
+                        } else {
+                            for id in decision.targetIDs {
+                                allowedBundleIDs.insert(id)
+                            }
                         }
                     case .log:
                         let level = decision.metadata["level"] ?? "log"
@@ -214,6 +265,8 @@ public final class MacEnforcementBridge: ObservableObject {
                         break
                     }
                 }
+
+                processWindowIntents(result.intents, frontmost: frontmost)
             }
 
             // Track threshold crossings for usageThresholdReached.
@@ -238,14 +291,31 @@ public final class MacEnforcementBridge: ObservableObject {
     ) -> [CustomRuleEvent] {
         var events: [CustomRuleEvent] = []
 
-        let url = frontmost.map { "app://\($0)" } ?? ""
-        let hostname = frontmost ?? ""
+        // Use real browser tab URL when available; fall back to app:// scheme.
+        let url: String
+        let hostname: String
+        if let tab = lastBrowserTab {
+            url = tab.url
+            hostname = URL(string: tab.url)?.host ?? frontmost ?? ""
+        } else {
+            url = frontmost.map { "app://\($0)" } ?? ""
+            hostname = frontmost ?? ""
+        }
+
+        let isBrowser = frontmost.map { BrowserTabReader.isBrowser($0) } ?? false
 
         func makeEvent(type: String, data: [String: String] = [:]) -> CustomRuleEvent {
-            CustomRuleEvent(
+            var enrichedData = data
+            enrichedData["appId"] = frontmost ?? ""
+            enrichedData["appName"] = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
+            enrichedData["isBrowser"] = isBrowser ? "true" : "false"
+            if let tab = lastBrowserTab {
+                enrichedData["tabTitle"] = tab.title
+            }
+            return CustomRuleEvent(
                 type: type, groupID: group.id,
                 target: matchingTarget, now: now,
-                url: url, hostname: hostname, data: data
+                url: url, hostname: hostname, data: enrichedData
             )
         }
 
@@ -316,12 +386,105 @@ public final class MacEnforcementBridge: ObservableObject {
                 runtime.unload(groupID: group.id)
             }
             do {
-                try runtime.load(groupID: group.id, source: source)
+                let loadResult = try runtime.load(groupID: group.id, source: source)
                 loadedRuleSources[group.id] = source
+                appendLog(level: "log", group: group.name,
+                          message: "Rule loaded: \(loadResult.handlers) handler(s)")
+                for decision in loadResult.decisions where decision.action == .log {
+                    let level = decision.metadata["level"] ?? "log"
+                    appendLog(level: level, group: group.name, message: decision.reason)
+                }
             } catch {
                 loadedRuleSources.removeValue(forKey: group.id)
                 appendLog(level: "error", group: group.name,
                           message: "Rule load failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func processWindowIntents(_ intents: [WindowIntent], frontmost: String?) {
+        for intent in intents {
+            switch intent.action {
+            case "close":
+                if let target = intent.target, !target.isEmpty {
+                    MacProcessTerminator.terminate(bundleIdentifier: target)
+                } else if let fm = frontmost {
+                    MacProcessTerminator.terminate(bundleIdentifier: fm)
+                }
+            case "closeTab":
+                if let fm = frontmost, BrowserTabReader.isBrowser(fm) {
+                    BrowserTabReader.closeActiveTab(browserBundleID: fm)
+                }
+            case "blockSite":
+                if let pattern = intent.pattern, !pattern.isEmpty {
+                    siteBlocklist.add(pattern)
+                    appendLog(level: "log", group: "system",
+                              message: "Site blocked: \(pattern)")
+                }
+            case "unblockSite":
+                if let pattern = intent.pattern, !pattern.isEmpty {
+                    siteBlocklist.remove(pattern)
+                    appendLog(level: "log", group: "system",
+                              message: "Site unblocked: \(pattern)")
+                }
+            default:
+                break
+            }
+        }
+    }
+
+    /// Handles a chokepoint event from the browser focus observer.
+    /// Fires custom-rule events immediately (instead of waiting for the next tick).
+    private func handleBrowserFocusEvent(_ event: BrowserFocusObserver.FocusEvent) {
+        lastBrowserTab = event.tab
+
+        // Check dynamic blocklist immediately on focus/URL change.
+        if let tab = event.tab, siteBlocklist.isBlocked(tab.url) {
+            BrowserTabReader.closeActiveTab(browserBundleID: tab.browserBundleID)
+            appendLog(level: "log", group: "system",
+                      message: "Closed blocked site (chokepoint): \(tab.url)")
+            return
+        }
+
+        // Fire custom rule events for the URL change.
+        let now = Date()
+        let groups = webStore.importedGroups()?.groups ?? []
+        let frontmost = event.browserBundleID
+        let ruleGroups = groups.filter { $0.enabled && !$0.customRuleSource.isEmpty }
+        guard !ruleGroups.isEmpty, let runtime = ensureRuntime() else { return }
+
+        for group in ruleGroups {
+            guard group.isActive(at: now) else { continue }
+            let eventType = event.trigger == .appActivated ? "openWebEvent" : "webChangedEvent"
+            let url = event.tab?.url ?? ""
+            let hostname = URL(string: url)?.host ?? frontmost
+
+            var data: [String: String] = [
+                "appId": frontmost,
+                "appName": BrowserTabReader.isBrowser(frontmost) ? frontmost : "",
+                "isBrowser": "true"
+            ]
+            if let tab = event.tab { data["tabTitle"] = tab.title }
+
+            let ruleEvent = CustomRuleEvent(
+                type: eventType, groupID: group.id,
+                target: nil, now: now,
+                url: url, hostname: hostname, data: data
+            )
+            do {
+                let result = try runtime.dispatch(ruleEvent)
+                for decision in result.decisions where decision.action == .shield {
+                    if BrowserTabReader.isBrowser(frontmost) {
+                        BrowserTabReader.closeActiveTab(browserBundleID: frontmost)
+                        appendLog(level: "log", group: group.name,
+                                  message: "Blocked tab (chokepoint): \(url)")
+                    }
+                    break
+                }
+                processWindowIntents(result.intents, frontmost: frontmost)
+            } catch {
+                appendLog(level: "error", group: group.name,
+                          message: "chokepoint dispatch failed: \(error.localizedDescription)")
             }
         }
     }
