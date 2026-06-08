@@ -45,6 +45,9 @@ public struct WindowIntent: Codable, Equatable, Sendable {
     public var action: String
     public var target: String?
     public var pattern: String?
+    public var browserBundleID: String?
+    public var windowIndex: Int?
+    public var tabIndex: Int?
 }
 
 /// The result of dispatching a custom rule event: decisions for enforcement
@@ -83,6 +86,10 @@ public final class CustomJavaScriptPolicyRuntime: CustomPolicyRuntime {
     private let context: JSContext
     #endif
 
+    /// Optional closure that returns a JSON array of all browser tabs.
+    /// Injected into the JSContext as `__nativeGetAllTabs()`.
+    public var tabProvider: (() -> String)?
+
     public init() throws {
         #if canImport(JavaScriptCore)
         guard let context = JSContext() else {
@@ -92,6 +99,16 @@ public final class CustomJavaScriptPolicyRuntime: CustomPolicyRuntime {
         installBootstrap()
         #else
         throw CustomJavaScriptPolicyRuntimeError.javaScriptCoreUnavailable
+        #endif
+    }
+
+    /// Injects the tab provider closure into the JSContext so JS can call
+    /// `__nativeGetAllTabs()` synchronously.
+    public func installTabProvider() {
+        #if canImport(JavaScriptCore)
+        guard let provider = tabProvider else { return }
+        let block: @convention(block) () -> String = { provider() }
+        context.setObject(block, forKeyedSubscript: "__nativeGetAllTabs" as NSString)
         #endif
     }
 
