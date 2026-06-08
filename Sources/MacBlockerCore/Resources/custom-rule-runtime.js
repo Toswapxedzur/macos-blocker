@@ -39,7 +39,16 @@ var MacBlockerRuntime = (function () {
     SnoozePress: "snoozePress",
     PanelEvent: "panelEvent",
     LocalFileEvent: "localFileEvent",
-    PageHeartbeatEvent: "pageHeartbeatEvent"
+    PageHeartbeatEvent: "pageHeartbeatEvent",
+    // macOS app lifecycle events (notification-driven)
+    OpenAppEvent: "openAppEvent",
+    CloseAppEvent: "closeAppEvent",
+    FocusEvent: "focusEvent",
+    UnfocusEvent: "unfocusEvent",
+    MinimizeEvent: "minimizeEvent",
+    UnminimizeEvent: "unminimizeEvent",
+    SwitchAppEvent: "switchAppEvent",
+    AppChangedEvent: "appChangedEvent"
   };
 
   // ----------------------------------------------------------------- utils
@@ -432,6 +441,45 @@ var MacBlockerRuntime = (function () {
     return helper;
   }
 
+  // ------------------------------------------------- tab helper
+
+  function tabHelper(rawEvent, pushIntent) {
+    return {
+      getAllTabs: function () {
+        if (typeof __nativeGetAllTabs === "function") {
+          try {
+            var json = __nativeGetAllTabs();
+            return typeof json === "string" ? JSON.parse(json) : json;
+          } catch (e) { return []; }
+        }
+        return [];
+      },
+      closeTab: function (tab) {
+        if (!tab) return;
+        pushIntent({
+          kind: "window", action: "closeTab",
+          browserBundleID: tab.browserBundleID || "",
+          windowIndex: Number(tab.windowIndex) || 0,
+          tabIndex: Number(tab.tabIndex) || 0
+        });
+      },
+      closeTabsByPattern: function (pattern) {
+        var p = String(pattern || "").trim().toLowerCase();
+        if (!p) return;
+        pushIntent({ kind: "window", action: "closeTabsByPattern", pattern: p });
+      },
+      currentTab: function () {
+        return {
+          url: rawEvent.url || "",
+          title: rawEvent.data && rawEvent.data.tabTitle || "",
+          browserBundleID: rawEvent.data && rawEvent.data.appId || "",
+          windowIndex: 1,
+          tabIndex: 1
+        };
+      }
+    };
+  }
+
   // ------------------------------------------------- dynamic site blocklist
 
   var dynamicBlocklist = {};  // pattern -> true
@@ -458,8 +506,14 @@ var MacBlockerRuntime = (function () {
       close: function (target) {
         pushIntent({ kind: "window", action: "close", target: String(target || "") });
       },
-      closeTab: function () {
-        pushIntent({ kind: "window", action: "closeTab" });
+      closeTab: function (tab) {
+        if (tab && tab.browserBundleID && tab.windowIndex && tab.tabIndex) {
+          pushIntent({ kind: "window", action: "closeTab",
+            browserBundleID: tab.browserBundleID,
+            windowIndex: Number(tab.windowIndex), tabIndex: Number(tab.tabIndex) });
+        } else {
+          pushIntent({ kind: "window", action: "closeTab" });
+        }
       },
       block: function (pattern) {
         var p = String(pattern || "").trim().toLowerCase();
@@ -577,7 +631,7 @@ var MacBlockerRuntime = (function () {
       getPlatformHelper: function () { return platformHelper(logUnsupported); },
       getDOMHelper: function () { return unsupportedHelper("getDOMHelper", logUnsupported); },
       getNavigationHelper: function () { return unsupportedHelper("getNavigationHelper", logUnsupported); },
-      getTabHelper: function () { return unsupportedHelper("getTabHelper", logUnsupported); },
+      getTabHelper: function () { return tabHelper(rawEvent, pushIntent); },
       getLocalFolderHelper: function () { return unsupportedHelper("getLocalFolderHelper", logUnsupported); }
     };
     // Unknown helper getters resolve to inert helpers instead of throwing.

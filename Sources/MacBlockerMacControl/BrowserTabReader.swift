@@ -11,6 +11,15 @@ public enum BrowserTabReader {
         public let browserBundleID: String
     }
 
+    /// Extended tab info with window/tab indices for targeted operations.
+    public struct TabDetail: Sendable, Equatable {
+        public let url: String
+        public let title: String
+        public let browserBundleID: String
+        public let windowIndex: Int
+        public let tabIndex: Int
+    }
+
     // MARK: - Known Browsers
 
     private static let browserScripts: [(bundleID: String, urlScript: String, titleScript: String, closeScript: String)] = [
@@ -74,6 +83,113 @@ public enum BrowserTabReader {
         return TabInfo(url: url, title: title, browserBundleID: browserBundleID)
     }
 
+    // MARK: - Enumerate All Tabs
+
+    /// Returns all open tabs across all windows for every running browser.
+    /// Expensive (~200-500ms total); call on-demand only, not every tick.
+    public static func allTabs() -> [TabDetail] {
+        let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+        var results: [TabDetail] = []
+        for bundleID in knownBrowserBundleIDs where running.contains(bundleID) {
+            results.append(contentsOf: allTabs(browserBundleID: bundleID))
+        }
+        return results
+    }
+
+    /// Returns all open tabs for a specific browser.
+    public static func allTabs(browserBundleID: String) -> [TabDetail] {
+        let appName = appNameForBundleID(browserBundleID)
+        guard !appName.isEmpty else { return [] }
+
+        let script: String
+        if browserBundleID == "com.apple.Safari" {
+            script = """
+            tell application "Safari"
+                set output to ""
+                set wIdx to 0
+                repeat with w in windows
+                    set wIdx to wIdx + 1
+                    set tIdx to 0
+                    repeat with t in tabs of w
+                        set tIdx to tIdx + 1
+                        set tabURL to URL of t
+                        set tabName to name of t
+                        set output to output & tabURL & "\\t" & tabName & "\\t" & wIdx & "\\t" & tIdx & linefeed
+                    end repeat
+                end repeat
+                return output
+            end tell
+            """
+        } else if browserBundleID == "org.mozilla.firefox" {
+            script = """
+            tell application "Firefox"
+                set output to ""
+                set wIdx to 0
+                repeat with w in windows
+                    set wIdx to wIdx + 1
+                    set tIdx to 0
+                    repeat with t in tabs of w
+                        set tIdx to tIdx + 1
+                        set tabURL to URL of t
+                        set tabName to name of t
+                        set output to output & tabURL & "\\t" & tabName & "\\t" & wIdx & "\\t" & tIdx & linefeed
+                    end repeat
+                end repeat
+                return output
+            end tell
+            """
+        } else {
+            script = """
+            tell application "\(appName)"
+                set output to ""
+                set wIdx to 0
+                repeat with w in windows
+                    set wIdx to wIdx + 1
+                    set tIdx to 0
+                    repeat with t in tabs of w
+                        set tIdx to tIdx + 1
+                        set tabURL to URL of t
+                        set tabTitle to title of t
+                        set output to output & tabURL & "\\t" & tabTitle & "\\t" & wIdx & "\\t" & tIdx & linefeed
+                    end repeat
+                end repeat
+                return output
+            end tell
+            """
+        }
+
+        guard let raw = runAppleScript(script) else { return [] }
+        var results: [TabDetail] = []
+        for line in raw.components(separatedBy: .newlines) where !line.isEmpty {
+            let parts = line.components(separatedBy: "\t")
+            guard parts.count >= 4,
+                  let wIdx = Int(parts[2]),
+                  let tIdx = Int(parts[3]) else { continue }
+            results.append(TabDetail(
+                url: parts[0],
+                title: parts[1],
+                browserBundleID: browserBundleID,
+                windowIndex: wIdx,
+                tabIndex: tIdx
+            ))
+        }
+        return results
+    }
+
+    /// JSON representation of all tabs for injection into the JS runtime.
+    public static func allTabsJSON() -> String {
+        let tabs = allTabs()
+        let dicts: [[String: Any]] = tabs.map {
+            ["url": $0.url, "title": $0.title, "browserBundleID": $0.browserBundleID,
+             "windowIndex": $0.windowIndex, "tabIndex": $0.tabIndex]
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: dicts),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
+    }
+
     // MARK: - Close Active Tab
 
     /// Closes the active tab of the specified browser via AppleScript.
@@ -83,6 +199,49 @@ public enum BrowserTabReader {
             return false
         }
         return runAppleScript(entry.closeScript) != nil
+    }
+
+    // MARK: - Close Specific Tab
+
+    /// Closes a specific tab by window and tab index.
+    @discardableResult
+    public static func closeTab(browserBundleID: String, windowIndex: Int, tabIndex: Int) -> Bool {
+        let appName = appNameForBundleID(browserBundleID)
+        guard !appName.isEmpty else { return false }
+
+        let script: String
+        if browserBundleID == "com.apple.Safari" {
+            script = "tell application \"Safari\" to close tab \(tabIndex) of window \(windowIndex)"
+        } else {
+            script = "tell application \"\(appName)\" to close tab \(tabIndex) of window \(windowIndex)"
+        }
+        return runAppleScript(script) != nil
+    }
+
+    /// Closes all tabs matching a URL pattern across all running browsers.
+    /// Returns the number of tabs closed.
+    @discardableResult
+    public static func closeTabsMatching(pattern: String) -> Int {
+        let normalized = pattern.lowercased()
+            .replacingOccurrences(of: "https://", with: "")
+            .replacingOccurrences(of: "http://", with: "")
+            .replacingOccurrences(of: "www.", with: "")
+        guard !normalized.isEmpty else { return 0 }
+
+        let tabs = allTabs()
+        var closed = 0
+        // Close in reverse order so indices stay valid.
+        for tab in tabs.reversed() {
+            let host = URL(string: tab.url)?.host?.lowercased()
+                .replacingOccurrences(of: "www.", with: "") ?? ""
+            if host == normalized || host.hasSuffix("." + normalized) {
+                if closeTab(browserBundleID: tab.browserBundleID,
+                            windowIndex: tab.windowIndex, tabIndex: tab.tabIndex) {
+                    closed += 1
+                }
+            }
+        }
+        return closed
     }
 
     // MARK: - Navigate (redirect the current tab)
@@ -117,7 +276,7 @@ public enum BrowserTabReader {
         return result?.stringValue
     }
 
-    private static func appNameForBundleID(_ bundleID: String) -> String {
+    public static func appNameForBundleID(_ bundleID: String) -> String {
         switch bundleID {
         case "com.apple.Safari": return "Safari"
         case "com.google.Chrome": return "Google Chrome"

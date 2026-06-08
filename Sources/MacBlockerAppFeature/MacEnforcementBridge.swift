@@ -9,16 +9,21 @@ import MacBlockerMacControl
 /// Connects the web editor's saved groups to live macOS enforcement and the
 /// floating timer HUD.
 ///
-/// Events parallel customBlocker's extension model:
-///   - `tickEvent` — every tick (~1s) for all enabled groups
-///   - `openAppEvent` — an app launched (new process appeared)
-///   - `closeAppEvent` — an app terminated (process disappeared)
-///   - `switchAppEvent` — the frontmost app changed
-///   - `appChangedEvent` — superset: fires on any open/close/switch
-///   - `timerEnded` — synthesized by the JS runtime when a backward timer hits 0
-///   - `snoozePress` — user tapped snooze in the UI
-///   - `panelEvent` — user interacted with a web panel control
-///   - `localFileEvent` — a file operation completed
+/// Lifecycle events (notification-driven, real-time):
+///   - `openAppEvent`      — process launched (strong)
+///   - `closeAppEvent`     — process terminated (strong)
+///   - `focusEvent`        — app became frontmost
+///   - `unfocusEvent`      — app lost frontmost
+///   - `minimizeEvent`     — app hidden (Cmd+H)
+///   - `unminimizeEvent`   — app unhidden
+///
+/// Context events:
+///   - `switchAppEvent`    — frontmost changed non-null → non-null
+///   - `appChangedEvent`   — superset of all above + URL changes
+///   - `tickEvent`         — every ~1s
+///
+/// User-triggered:
+///   - `snoozePress` / `panelEvent` / `localFileEvent`
 @MainActor
 public final class MacEnforcementBridge: ObservableObject {
     /// Shared store the editor persists into and we read groups back out of.
@@ -41,8 +46,15 @@ public final class MacEnforcementBridge: ObservableObject {
     private var loadedRuleSources: [String: String] = [:]
     private var lastFrontmost: String?
 
-    // App lifecycle tracking (for openApp/closeApp detection)
-    private var lastRunningBundleIDs: Set<String> = []
+    // Notification-driven lifecycle event queue. NSWorkspace notifications
+    // push events here; the tick loop drains them.
+    private struct AppLifecycleEvent {
+        enum Kind: String { case launched, terminated, activated, deactivated, hidden, unhidden }
+        let kind: Kind
+        let bundleID: String
+    }
+    private var pendingLifecycleEvents: [AppLifecycleEvent] = []
+    private var workspaceObservers: [Any] = []
 
     // Browser tab + dynamic site blocklist
     private let focusObserver = BrowserFocusObserver()
@@ -130,8 +142,8 @@ public final class MacEnforcementBridge: ObservableObject {
         print("[MacEnforcementBridge] AppGroup.baseDirectory = \(AppGroup.baseDirectory().path)")
         webStore.seedIfNeeded()
         lastSampleAt = Date()
-        lastRunningBundleIDs = currentRunningBundleIDs()
         lastFrontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        registerWorkspaceObservers()
         tick()
         let timer = Timer.scheduledTimer(withTimeInterval: tickInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -156,16 +168,55 @@ public final class MacEnforcementBridge: ObservableObject {
         lastSampleAt = nil
         overlay.hide()
         focusObserver.stop()
+        unregisterWorkspaceObservers()
         #endif
     }
 
     #if os(macOS)
+    // MARK: - Workspace Notification Observers
+
+    private func registerWorkspaceObservers() {
+        let center = NSWorkspace.shared.notificationCenter
+        let mapping: [(NSNotification.Name, AppLifecycleEvent.Kind)] = [
+            (.init("NSWorkspaceDidLaunchApplicationNotification"), .launched),
+            (.init("NSWorkspaceDidTerminateApplicationNotification"), .terminated),
+            (.init("NSWorkspaceDidActivateApplicationNotification"), .activated),
+            (.init("NSWorkspaceDidDeactivateApplicationNotification"), .deactivated),
+            (.init("NSWorkspaceDidHideApplicationNotification"), .hidden),
+            (.init("NSWorkspaceDidUnhideApplicationNotification"), .unhidden),
+        ]
+        for (name, kind) in mapping {
+            let observer = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                      let bundleID = app.bundleIdentifier else { return }
+                // Only track GUI apps (regular activation policy).
+                if kind == .launched || kind == .terminated {
+                    guard app.activationPolicy == .regular else { return }
+                }
+                Task { @MainActor in
+                    self?.pendingLifecycleEvents.append(AppLifecycleEvent(kind: kind, bundleID: bundleID))
+                }
+            }
+            workspaceObservers.append(observer)
+        }
+    }
+
+    private func unregisterWorkspaceObservers() {
+        let center = NSWorkspace.shared.notificationCenter
+        for observer in workspaceObservers {
+            center.removeObserver(observer)
+        }
+        workspaceObservers.removeAll()
+        pendingLifecycleEvents.removeAll()
+    }
+
+    // MARK: - Tick
+
     private func tick() {
         let now = Date()
         let importResult = webStore.importedGroups()
         let groups = importResult?.groups ?? []
         let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        let currentRunning = currentRunningBundleIDs()
 
         // Read browser tab URL if frontmost is a browser.
         if let fm = frontmost, BrowserTabReader.isBrowser(fm) {
@@ -190,15 +241,16 @@ public final class MacEnforcementBridge: ObservableObject {
                       message: "Closed blocked site: \(tab.url)")
         }
 
-        // 2. Detect app lifecycle changes for openApp/closeApp events.
-        let launched = currentRunning.subtracting(lastRunningBundleIDs)
-        let terminated = lastRunningBundleIDs.subtracting(currentRunning)
+        // 2. Drain notification-driven lifecycle events.
+        let lifecycleEvents = pendingLifecycleEvents
+        pendingLifecycleEvents.removeAll()
+
         let switched = frontmost != lastFrontmost
 
         // 3. Build and dispatch events for ALL enabled groups, log each event.
         let ruleBlocked = dispatchEvents(
             groups: groups, frontmost: frontmost, usage: usage, now: now,
-            launched: launched, terminated: terminated, switched: switched
+            lifecycleEvents: lifecycleEvents, switched: switched
         )
 
         // 4. Enforce: block apps whose group says "blocked now" PLUS
@@ -226,7 +278,6 @@ public final class MacEnforcementBridge: ObservableObject {
 
         // Track state for next tick.
         lastFrontmost = frontmost
-        lastRunningBundleIDs = currentRunning
     }
 
     // MARK: - Event Dispatch
@@ -239,8 +290,7 @@ public final class MacEnforcementBridge: ObservableObject {
         frontmost: String?,
         usage: UsageSnapshot,
         now: Date,
-        launched: Set<String>,
-        terminated: Set<String>,
+        lifecycleEvents: [AppLifecycleEvent],
         switched: Bool
     ) -> Set<String> {
         let enabledGroups = groups.filter { $0.enabled }
@@ -260,19 +310,16 @@ public final class MacEnforcementBridge: ObservableObject {
             guard group.isActive(at: now) else { continue }
             if usage.snoozesByGroup[group.id]?.phase(at: now) == .active { continue }
 
-            let matchingTarget = frontmost.flatMap { fm in
-                group.targets.first(where: { $0.kind == .application && $0.id == fm })
-            }
-
             let events = buildEventsForGroup(
-                group: group, frontmost: frontmost,
-                matchingTarget: matchingTarget, now: now,
-                launched: launched, terminated: terminated, switched: switched
+                group: group, frontmost: frontmost, now: now,
+                lifecycleEvents: lifecycleEvents, switched: switched
             )
 
             for event in events {
-                appendLog(level: "log", group: group.name,
-                          message: "event fired: \(event.type) | target: \(event.target?.displayName ?? "none") | url: \(event.url.isEmpty ? "—" : event.url)")
+                if event.type != "tickEvent" {
+                    appendLog(level: "log", group: group.name,
+                              message: "event fired: \(event.type) | target: \(event.target?.displayName ?? "none") | app: \(event.data["appId"] ?? event.data["bundleId"] ?? "—") | url: \(event.url.isEmpty ? "—" : event.url)")
+                }
 
                 // Only dispatch to runtime if this group has a custom rule loaded.
                 guard !group.customRuleSource.isEmpty, let runtime = ruleRuntime else { continue }
@@ -323,10 +370,8 @@ public final class MacEnforcementBridge: ObservableObject {
     private func buildEventsForGroup(
         group: BlockGroup,
         frontmost: String?,
-        matchingTarget: BlockTarget?,
         now: Date,
-        launched: Set<String>,
-        terminated: Set<String>,
+        lifecycleEvents: [AppLifecycleEvent],
         switched: Bool
     ) -> [CustomRuleEvent] {
         var events: [CustomRuleEvent] = []
@@ -338,35 +383,43 @@ public final class MacEnforcementBridge: ObservableObject {
         // Always fire tickEvent.
         events.append(make(type: "tickEvent", data: ["intervalMs": "1000"]))
 
-        // openAppEvent: an app in this group's targets was launched.
-        let groupTargetIDs = Set(group.targets.filter { $0.kind == .application }.map(\.id))
-        let launchedTargets = launched.intersection(groupTargetIDs)
-        for appID in launchedTargets {
-            events.append(make(type: "openAppEvent", data: ["launchedAppId": appID]))
-            events.append(make(type: "appChangedEvent", data: ["reason": "open", "appId": appID]))
-        }
-
-        // closeAppEvent: an app in this group's targets was terminated.
-        let terminatedTargets = terminated.intersection(groupTargetIDs)
-        for appID in terminatedTargets {
-            events.append(make(type: "closeAppEvent", data: ["terminatedAppId": appID]))
-            events.append(make(type: "appChangedEvent", data: ["reason": "close", "appId": appID]))
-        }
-
-        // switchAppEvent: the frontmost app changed.
-        if switched {
-            events.append(make(type: "switchAppEvent", data: [
-                "previousAppId": lastFrontmost ?? "",
-                "currentAppId": frontmost ?? ""
-            ]))
-            // appChangedEvent always accompanies a switch.
-            if launchedTargets.isEmpty && terminatedTargets.isEmpty {
-                events.append(make(type: "appChangedEvent", data: [
-                    "reason": "switch",
-                    "previousAppId": lastFrontmost ?? "",
-                    "currentAppId": frontmost ?? ""
-                ]))
+        // Process notification-driven lifecycle events (no target filtering —
+        // rules decide what to act on).
+        for le in lifecycleEvents {
+            let bundleData = ["bundleId": le.bundleID]
+            switch le.kind {
+            case .launched:
+                events.append(make(type: "openAppEvent", data: bundleData))
+                events.append(make(type: "appChangedEvent", data: ["reason": "open", "bundleId": le.bundleID]))
+            case .terminated:
+                events.append(make(type: "closeAppEvent", data: bundleData))
+                events.append(make(type: "appChangedEvent", data: ["reason": "close", "bundleId": le.bundleID]))
+            case .activated:
+                events.append(make(type: "focusEvent", data: bundleData))
+                events.append(make(type: "appChangedEvent", data: ["reason": "focus", "bundleId": le.bundleID]))
+            case .deactivated:
+                events.append(make(type: "unfocusEvent", data: bundleData))
+                events.append(make(type: "appChangedEvent", data: ["reason": "unfocus", "bundleId": le.bundleID]))
+            case .hidden:
+                events.append(make(type: "minimizeEvent", data: bundleData))
+                events.append(make(type: "appChangedEvent", data: ["reason": "minimize", "bundleId": le.bundleID]))
+            case .unhidden:
+                events.append(make(type: "unminimizeEvent", data: bundleData))
+                events.append(make(type: "appChangedEvent", data: ["reason": "unminimize", "bundleId": le.bundleID]))
             }
+        }
+
+        // switchAppEvent: only fires on non-null → non-null frontmost change.
+        if switched, let prev = lastFrontmost, let curr = frontmost {
+            events.append(make(type: "switchAppEvent", data: [
+                "previousAppId": prev,
+                "currentAppId": curr
+            ]))
+            events.append(make(type: "appChangedEvent", data: [
+                "reason": "switch",
+                "previousAppId": prev,
+                "currentAppId": curr
+            ]))
         }
 
         return events
@@ -451,6 +504,8 @@ public final class MacEnforcementBridge: ObservableObject {
         if let rt = ruleRuntime { return rt }
         do {
             let rt = try CustomJavaScriptPolicyRuntime()
+            rt.tabProvider = { BrowserTabReader.allTabsJSON() }
+            rt.installTabProvider()
             ruleRuntime = rt
             return rt
         } catch {
@@ -500,12 +555,25 @@ public final class MacEnforcementBridge: ObservableObject {
                     MacProcessTerminator.terminate(bundleIdentifier: fm)
                 }
             case "closeTab":
-                if let fm = frontmost, BrowserTabReader.isBrowser(fm) {
+                if let bid = intent.browserBundleID,
+                   let wIdx = intent.windowIndex,
+                   let tIdx = intent.tabIndex {
+                    BrowserTabReader.closeTab(browserBundleID: bid, windowIndex: wIdx, tabIndex: tIdx)
+                } else if let fm = frontmost, BrowserTabReader.isBrowser(fm) {
                     BrowserTabReader.closeActiveTab(browserBundleID: fm)
+                }
+            case "closeTabsByPattern":
+                if let pattern = intent.pattern, !pattern.isEmpty {
+                    let closed = BrowserTabReader.closeTabsMatching(pattern: pattern)
+                    if closed > 0 {
+                        appendLog(level: "log", group: "system",
+                                  message: "Closed \(closed) tab(s) matching: \(pattern)")
+                    }
                 }
             case "blockSite":
                 if let pattern = intent.pattern, !pattern.isEmpty {
                     siteBlocklist.add(pattern)
+                    BrowserTabReader.closeTabsMatching(pattern: pattern)
                     appendLog(level: "log", group: "system",
                               message: "Site blocked: \(pattern)")
                 }
@@ -599,10 +667,6 @@ public final class MacEnforcementBridge: ObservableObject {
     }
 
     // MARK: - Helpers
-
-    private func currentRunningBundleIDs() -> Set<String> {
-        Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
-    }
 
     private func elapsedSinceLastSample(now: Date) -> TimeInterval {
         guard let lastSampleAt else { return 0 }
