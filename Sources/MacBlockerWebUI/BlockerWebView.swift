@@ -83,6 +83,7 @@ public struct BlockerWebView: _CBViewRepresentable {
         }
 
         let webView = WKWebView(frame: .zero, configuration: config)
+        webView.uiDelegate = context.coordinator
         context.coordinator.webView = webView
         context.coordinator.startUsagePush()
 
@@ -124,7 +125,7 @@ public struct BlockerWebView: _CBViewRepresentable {
 
     // MARK: Coordinator
 
-    public final class Coordinator: NSObject, WKScriptMessageHandler {
+    public final class Coordinator: NSObject, WKScriptMessageHandler, WKUIDelegate {
         weak var webView: WKWebView?
         var schemeHandler: WebAssetSchemeHandler?
         private let store: BlockerWebStore
@@ -207,6 +208,63 @@ public struct BlockerWebView: _CBViewRepresentable {
             default:
                 break
             }
+        }
+
+        // MARK: WKUIDelegate - JS dialogs
+
+        public func webView(
+            _ webView: WKWebView,
+            runJavaScriptAlertPanelWithMessage message: String,
+            initiatedByFrame frame: WKFrameInfo,
+            completionHandler: @escaping () -> Void
+        ) {
+            #if os(macOS)
+            let alert = NSAlert()
+            alert.messageText = message
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            #endif
+            completionHandler()
+        }
+
+        public func webView(
+            _ webView: WKWebView,
+            runJavaScriptConfirmPanelWithMessage message: String,
+            initiatedByFrame frame: WKFrameInfo,
+            completionHandler: @escaping (Bool) -> Void
+        ) {
+            #if os(macOS)
+            let alert = NSAlert()
+            alert.messageText = message
+            alert.addButton(withTitle: "OK")
+            alert.addButton(withTitle: "Cancel")
+            let response = alert.runModal()
+            completionHandler(response == .alertFirstButtonReturn)
+            #else
+            completionHandler(true)
+            #endif
+        }
+
+        public func webView(
+            _ webView: WKWebView,
+            runJavaScriptTextInputPanelWithPrompt prompt: String,
+            defaultText: String?,
+            initiatedByFrame frame: WKFrameInfo,
+            completionHandler: @escaping (String?) -> Void
+        ) {
+            #if os(macOS)
+            let alert = NSAlert()
+            alert.messageText = prompt
+            alert.addButton(withTitle: "OK")
+            alert.addButton(withTitle: "Cancel")
+            let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+            input.stringValue = defaultText ?? ""
+            alert.accessoryView = input
+            let response = alert.runModal()
+            completionHandler(response == .alertFirstButtonReturn ? input.stringValue : nil)
+            #else
+            completionHandler(defaultText)
+            #endif
         }
     }
 }

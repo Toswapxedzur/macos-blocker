@@ -134,9 +134,9 @@ public final class MacBlockerAppModel: ObservableObject {
                     target: selectedTarget
                 )
             )
-            decisions = result
-            status = result.compactMap(\.overlayStatus).last
-            appendLogEntries(for: result)
+            decisions = result.decisions
+            status = result.decisions.compactMap(\.overlayStatus).last
+            appendLogEntries(for: result.decisions)
             lastError = nil
         } catch {
             lastError = "Custom rule failed: \(error)"

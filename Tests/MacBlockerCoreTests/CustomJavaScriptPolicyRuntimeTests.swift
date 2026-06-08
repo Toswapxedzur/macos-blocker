@@ -22,7 +22,7 @@ final class CustomJavaScriptPolicyRuntimeTests: XCTestCase {
             displayName: "TikTok",
             normalizedValue: "com.zhiliaoapp.musically"
         )
-        let decisions = try runtime.dispatch(
+        let result = try runtime.dispatch(
             CustomRuleEvent(
                 type: "usageThresholdReached",
                 groupID: "group-1",
@@ -30,8 +30,8 @@ final class CustomJavaScriptPolicyRuntimeTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(decisions.first?.action, .shield)
-        XCTAssertEqual(decisions.first?.shieldMessage, "Go back to work")
-        XCTAssertEqual(decisions.first?.targetIDs, [target.id])
+        XCTAssertEqual(result.decisions.first?.action, .shield)
+        XCTAssertEqual(result.decisions.first?.shieldMessage, "Go back to work")
+        XCTAssertEqual(result.decisions.first?.targetIDs, [target.id])
     }
 }

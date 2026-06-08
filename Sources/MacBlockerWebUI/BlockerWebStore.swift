@@ -140,9 +140,15 @@ public final class BlockerWebStore: @unchecked Sendable {
     /// Bridges the editor's stored `blockedGroups` into the typed core model.
     public func importedGroups() -> ChromeExtensionImportResult? {
         guard let data = shared.readData(SharedAppGroupStore.webStoreFileName) else {
+            print("[BlockerWebStore] No web store file found.")
             return nil
         }
-        return try? ChromeExtensionImporter.importGroups(from: data)
+        do {
+            return try ChromeExtensionImporter.importGroups(from: data)
+        } catch {
+            print("[BlockerWebStore] importGroups failed: \(error)")
+            return nil
+        }
     }
 
     /// Recomputes the enforcement plan that the Screen Time extensions read,

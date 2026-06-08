@@ -432,6 +432,63 @@ var MacBlockerRuntime = (function () {
     return helper;
   }
 
+  // ------------------------------------------------- dynamic site blocklist
+
+  var dynamicBlocklist = {};  // pattern -> true
+
+  function windowHelper(rawEvent, pushIntent, logDecisionFn) {
+    return {
+      current: function () {
+        return {
+          id: rawEvent.data && rawEvent.data.appId || rawEvent.hostname || "",
+          name: rawEvent.data && rawEvent.data.appName || "",
+          url: rawEvent.url || "",
+          hostname: rawEvent.hostname || hostnameOf(rawEvent.url || ""),
+          title: rawEvent.data && rawEvent.data.tabTitle || "",
+          isBrowser: rawEvent.data && rawEvent.data.isBrowser === "true"
+        };
+      },
+      all: function () {
+        var list = rawEvent.data && rawEvent.data.allApps;
+        if (typeof list === "string") {
+          try { return JSON.parse(list); } catch (e) { return []; }
+        }
+        return [];
+      },
+      close: function (target) {
+        pushIntent({ kind: "window", action: "close", target: String(target || "") });
+      },
+      closeTab: function () {
+        pushIntent({ kind: "window", action: "closeTab" });
+      },
+      block: function (pattern) {
+        var p = String(pattern || "").trim().toLowerCase();
+        if (!p) return;
+        dynamicBlocklist[p] = true;
+        pushIntent({ kind: "window", action: "blockSite", pattern: p });
+      },
+      unblock: function (pattern) {
+        var p = String(pattern || "").trim().toLowerCase();
+        delete dynamicBlocklist[p];
+        pushIntent({ kind: "window", action: "unblockSite", pattern: p });
+      },
+      isBlocked: function (pattern) {
+        var p = String(pattern || "").trim().toLowerCase();
+        if (!p) return false;
+        if (dynamicBlocklist[p]) return true;
+        for (var key in dynamicBlocklist) {
+          if (p === key) return true;
+          var suffix = "." + key;
+          if (p.length > key.length && p.indexOf(suffix) === p.length - suffix.length) return true;
+        }
+        return false;
+      },
+      getBlocked: function () {
+        return Object.keys(dynamicBlocklist);
+      }
+    };
+  }
+
   // ------------------------------------------------- unsupported (browser) helpers
 
   function unsupportedHelper(name, logUnsupported) {
@@ -446,6 +503,7 @@ var MacBlockerRuntime = (function () {
 
   function makeContext(rawEvent) {
     var decisions = [];
+    var intents = [];
     var unsupportedSeen = {};
 
     function pushDecision(action, reason, shieldMessage, overlay, metadata, targetIDs) {
@@ -458,6 +516,10 @@ var MacBlockerRuntime = (function () {
         overlayStatus: overlay || null,
         metadata: metadata || {}
       });
+    }
+
+    function pushIntent(intent) {
+      intents.push(intent);
     }
 
     function logUnsupported(name) {
@@ -489,6 +551,8 @@ var MacBlockerRuntime = (function () {
     var ms = nowMs(rawEvent);
     var date = new Date(ms);
 
+    var win = windowHelper(rawEvent, pushIntent, logDecision);
+
     var helpers = {
       now: rawEvent.now,
       currentUrl: rawEvent.url || "",
@@ -508,8 +572,7 @@ var MacBlockerRuntime = (function () {
       getTimerHelper: function () { return timerHelper(groupId); },
       getPersistenceHelper: function () { return persistenceHelper(groupId); },
       getStorageHelper: function () { return storageHelper(groupId); },
-      // Redirection removed: app blocking has no URL to redirect to. Kept as an
-      // inert helper so existing rules that call it don't throw.
+      getWindowHelper: function () { return win; },
       getRedirectionHelper: function () { return unsupportedHelper("getRedirectionHelper", logUnsupported); },
       getPlatformHelper: function () { return platformHelper(logUnsupported); },
       getDOMHelper: function () { return unsupportedHelper("getDOMHelper", logUnsupported); },
@@ -530,6 +593,7 @@ var MacBlockerRuntime = (function () {
 
     return {
       decisions: decisions,
+      intents: intents,
       helpers: helpersProxy,
       logUnsupported: logUnsupported,
       pushDecision: pushDecision,
@@ -629,10 +693,9 @@ var MacBlockerRuntime = (function () {
       var factory = Function('"use strict"; return (' + source + "\n);");
       var rule = factory();
       if (typeof rule !== "function") throw new Error("Custom rule must evaluate to a function.");
-      // Provide a no-arg-safe helpers object at registration time too.
       var ctx = makeContext({ groupID: groupId, type: "_register", now: new Date().toISOString(), data: {} });
       rule(eventRegistry(groupId), ctx.helpers);
-      return countHandlers(groupId);
+      return JSON.stringify({ handlers: countHandlers(groupId), decisions: ctx.decisions });
     },
     unload: function (groupId) {
       delete handlersByGroup[groupId];
@@ -668,9 +731,10 @@ var MacBlockerRuntime = (function () {
         }
         previouslyExpired[rawEvent.groupID] = nowExpired;
       }
-      return JSON.stringify(ctx.decisions);
+      return JSON.stringify({ decisions: ctx.decisions, intents: ctx.intents });
     },
-    handlerCount: function (groupId) { return countHandlers(groupId); }
+    handlerCount: function (groupId) { return countHandlers(groupId); },
+    getDynamicBlocklist: function () { return Object.keys(dynamicBlocklist); }
   };
 
   function countHandlers(groupId) {

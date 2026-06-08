@@ -39,10 +39,43 @@ public enum CustomJavaScriptPolicyRuntimeError: Error, Equatable {
     case invalidResult
 }
 
+/// An intent emitted by a custom rule's helper (e.g. getWindowHelper().close()).
+public struct WindowIntent: Codable, Equatable, Sendable {
+    public var kind: String
+    public var action: String
+    public var target: String?
+    public var pattern: String?
+}
+
+/// The result of dispatching a custom rule event: decisions for enforcement
+/// plus intents for side-effects (close tab, block site, etc).
+public struct DispatchResult: Sendable {
+    public var decisions: [PolicyDecision]
+    public var intents: [WindowIntent]
+
+    public init(decisions: [PolicyDecision] = [], intents: [WindowIntent] = []) {
+        self.decisions = decisions
+        self.intents = intents
+    }
+}
+
+/// Result of loading a custom rule: handler count + any log decisions
+/// emitted during registration.
+public struct LoadResult: Sendable {
+    public var handlers: Int
+    public var decisions: [PolicyDecision]
+
+    public init(handlers: Int = 0, decisions: [PolicyDecision] = []) {
+        self.handlers = handlers
+        self.decisions = decisions
+    }
+}
+
 public protocol CustomPolicyRuntime {
-    func load(groupID: String, source: String) throws
+    @discardableResult
+    func load(groupID: String, source: String) throws -> LoadResult
     func unload(groupID: String)
-    func dispatch(_ event: CustomRuleEvent) throws -> [PolicyDecision]
+    func dispatch(_ event: CustomRuleEvent) throws -> DispatchResult
 }
 
 public final class CustomJavaScriptPolicyRuntime: CustomPolicyRuntime {
@@ -62,21 +95,34 @@ public final class CustomJavaScriptPolicyRuntime: CustomPolicyRuntime {
         #endif
     }
 
-    public func load(groupID: String, source: String) throws {
+    @discardableResult
+    public func load(groupID: String, source: String) throws -> LoadResult {
         #if canImport(JavaScriptCore)
         let groupLiteral = try Self.javaScriptStringLiteral(groupID)
         let sourceLiteral = try Self.javaScriptStringLiteral(source)
         let script = """
         MacBlockerRuntime.load(\(groupLiteral), \(sourceLiteral));
         """
-        context.evaluateScript(script)
+        guard let value = context.evaluateScript(script) else {
+            throw CustomJavaScriptPolicyRuntimeError.compileFailed("Script evaluation returned no value.")
+        }
         if let exception = context.exception {
             context.exception = nil
             throw CustomJavaScriptPolicyRuntimeError.compileFailed(exception.toString())
         }
+        guard let json = value.toString(), let data = json.data(using: .utf8) else {
+            return LoadResult()
+        }
+        let envelope = try JSONDecoder().decode(LoadEnvelope.self, from: data)
+        return LoadResult(handlers: envelope.handlers, decisions: envelope.decisions ?? [])
         #else
         throw CustomJavaScriptPolicyRuntimeError.javaScriptCoreUnavailable
         #endif
+    }
+
+    private struct LoadEnvelope: Codable {
+        var handlers: Int
+        var decisions: [PolicyDecision]?
     }
 
     public func unload(groupID: String) {
@@ -89,7 +135,7 @@ public final class CustomJavaScriptPolicyRuntime: CustomPolicyRuntime {
         #endif
     }
 
-    public func dispatch(_ event: CustomRuleEvent) throws -> [PolicyDecision] {
+    public func dispatch(_ event: CustomRuleEvent) throws -> DispatchResult {
         #if canImport(JavaScriptCore)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -111,10 +157,16 @@ public final class CustomJavaScriptPolicyRuntime: CustomPolicyRuntime {
         else {
             throw CustomJavaScriptPolicyRuntimeError.invalidResult
         }
-        return try JSONDecoder().decode([PolicyDecision].self, from: data)
+        let envelope = try JSONDecoder().decode(DispatchEnvelope.self, from: data)
+        return DispatchResult(decisions: envelope.decisions, intents: envelope.intents ?? [])
         #else
         throw CustomJavaScriptPolicyRuntimeError.javaScriptCoreUnavailable
         #endif
+    }
+
+    private struct DispatchEnvelope: Codable {
+        var decisions: [PolicyDecision]
+        var intents: [WindowIntent]?
     }
 
     #if canImport(JavaScriptCore)
