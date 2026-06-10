@@ -138,6 +138,7 @@
       ts: ts,
       level: e.level || "log",
       eventType: e.group || "",
+      groupName: e.group || "",
       message: e.message || ""
     };
   }

@@ -48,6 +48,153 @@ public struct WindowIntent: Codable, Equatable, Sendable {
     public var browserBundleID: String?
     public var windowIndex: Int?
     public var tabIndex: Int?
+    public var path: String?
+    public var text: String?
+    public var groupId: String?
+    public var requestId: String?
+}
+
+/// A timer snapshot emitted by dispatch, filtered by scope vs. the focused app.
+public struct CustomTimerSnapshot: Codable, Equatable, Sendable {
+    public var id: String
+    public var groupId: String
+    public var displayName: String
+    public var direction: String
+    public var currentMs: Double
+    public var isPaused: Bool
+}
+
+/// A panel control option (select/radio).
+public struct PanelControlOption: Codable, Equatable, Sendable {
+    public var value: String
+    public var label: String
+}
+
+/// A single control in a panel snapshot.
+public struct PanelControlSnapshot: Codable, Equatable, Sendable {
+    public var id: String
+    public var type: String
+    public var label: String?
+    public var text: String?
+    public var value: AnyCodableValue?
+    public var disabled: Bool?
+    public var placeholder: String?
+    public var options: [PanelControlOption]?
+    public var min: Double?
+    public var max: Double?
+    public var step: Double?
+    public var action: String?
+    public var timerId: String?
+    public var timer: CustomTimerSnapshot?
+    public var format: String?
+    public var showExpired: Bool?
+    public var controls: [PanelControlSnapshot]?
+    public var layout: String?
+    public var align: String?
+    public var priority: Int?
+    public var role: String?
+    public var autoFocus: Bool?
+    public var rows: Int?
+    public var width: String?
+    public var height: String?
+}
+
+/// Theme customization for a panel.
+public struct PanelTheme: Codable, Equatable, Sendable {
+    public var background: String?
+    public var foreground: String?
+    public var accent: String?
+    public var border: String?
+    public var muted: String?
+    public var fontSize: String?
+    public var titleSize: String?
+}
+
+/// A complete panel snapshot emitted by dispatch for rendering.
+public struct PanelSnapshot: Codable, Equatable, Sendable {
+    public var id: String
+    public var groupId: String?
+    public var title: String?
+    public var description: String?
+    public var position: String?
+    public var align: String?
+    public var layout: String?
+    public var priority: Int?
+    public var width: String?
+    public var textSize: String?
+    public var role: String?
+    public var autoFocus: Bool?
+    public var theme: PanelTheme?
+    public var controls: [PanelControlSnapshot]?
+    public var visible: Bool?
+    public var values: [String: AnyCodableValue]?
+}
+
+/// Type-erased JSON value for panel control values (Bool, String, Double, etc).
+public enum AnyCodableValue: Codable, Equatable, Sendable {
+    case bool(Bool)
+    case int(Int)
+    case double(Double)
+    case string(String)
+    case null
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let b = try? container.decode(Bool.self) {
+            self = .bool(b)
+        } else if let i = try? container.decode(Int.self) {
+            self = .int(i)
+        } else if let d = try? container.decode(Double.self) {
+            self = .double(d)
+        } else if let s = try? container.decode(String.self) {
+            self = .string(s)
+        } else {
+            self = .null
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .bool(let b): try container.encode(b)
+        case .int(let i): try container.encode(i)
+        case .double(let d): try container.encode(d)
+        case .string(let s): try container.encode(s)
+        case .null: try container.encodeNil()
+        }
+    }
+
+    public var stringValue: String {
+        switch self {
+        case .bool(let b): return b ? "true" : "false"
+        case .int(let i): return String(i)
+        case .double(let d): return String(d)
+        case .string(let s): return s
+        case .null: return ""
+        }
+    }
+
+    public var boolValue: Bool {
+        switch self {
+        case .bool(let b): return b
+        case .int(let i): return i != 0
+        case .double(let d): return d != 0
+        case .string(let s): return s == "true"
+        case .null: return false
+        }
+    }
+
+    public var doubleValue: Double {
+        switch self {
+        case .bool(let b): return b ? 1 : 0
+        case .int(let i): return Double(i)
+        case .double(let d): return d
+        case .string(let s): return Double(s) ?? 0
+        case .null: return 0
+        }
+    }
 }
 
 /// The result of dispatching a custom rule event: decisions for enforcement
@@ -55,10 +202,14 @@ public struct WindowIntent: Codable, Equatable, Sendable {
 public struct DispatchResult: Sendable {
     public var decisions: [PolicyDecision]
     public var intents: [WindowIntent]
+    public var timers: [CustomTimerSnapshot]
+    public var panels: [PanelSnapshot]
 
-    public init(decisions: [PolicyDecision] = [], intents: [WindowIntent] = []) {
+    public init(decisions: [PolicyDecision] = [], intents: [WindowIntent] = [], timers: [CustomTimerSnapshot] = [], panels: [PanelSnapshot] = []) {
         self.decisions = decisions
         self.intents = intents
+        self.timers = timers
+        self.panels = panels
     }
 }
 
@@ -175,7 +326,7 @@ public final class CustomJavaScriptPolicyRuntime: CustomPolicyRuntime {
             throw CustomJavaScriptPolicyRuntimeError.invalidResult
         }
         let envelope = try JSONDecoder().decode(DispatchEnvelope.self, from: data)
-        return DispatchResult(decisions: envelope.decisions, intents: envelope.intents ?? [])
+        return DispatchResult(decisions: envelope.decisions, intents: envelope.intents ?? [], timers: envelope.timers ?? [], panels: envelope.panels ?? [])
         #else
         throw CustomJavaScriptPolicyRuntimeError.javaScriptCoreUnavailable
         #endif
@@ -184,6 +335,8 @@ public final class CustomJavaScriptPolicyRuntime: CustomPolicyRuntime {
     private struct DispatchEnvelope: Codable {
         var decisions: [PolicyDecision]
         var intents: [WindowIntent]?
+        var timers: [CustomTimerSnapshot]?
+        var panels: [PanelSnapshot]?
     }
 
     #if canImport(JavaScriptCore)

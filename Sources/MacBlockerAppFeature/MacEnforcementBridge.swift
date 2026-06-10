@@ -37,6 +37,8 @@ public final class MacEnforcementBridge: ObservableObject {
     private let adapter: EndpointSecurityPolicyAdapter
     private let evaluator = PolicyEvaluator()
     private let overlay = TimerOverlayPanelController()
+    private let toastOverlay = ToastOverlayPanelController()
+    private let panelOverlay = PanelOverlayPanelController()
     private var timer: Timer?
     private let tickInterval: TimeInterval
     private var lastSampleAt: Date?
@@ -61,6 +63,11 @@ public final class MacEnforcementBridge: ObservableObject {
     private let siteBlocklist = DynamicSiteBlocklist()
     private var blockedAppBundleIDs: Set<String> = []
     private var lastBrowserTab: BrowserTabReader.TabInfo?
+
+    // Panel event throttle (leading-edge, trailing flush at tick)
+    private static let panelThrottleInterval: TimeInterval = 0.10
+    private var lastPanelFireAt: [String: Date] = [:]
+    private var pendingPanelEvents: [String: (groupID: String, data: [String: String])] = [:]
     #endif
 
     public init(webStore: BlockerWebStore = BlockerWebStore(), sweepInterval: TimeInterval = 1.0) {
@@ -145,6 +152,29 @@ public final class MacEnforcementBridge: ObservableObject {
         lastSampleAt = Date()
         lastFrontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         registerWorkspaceObservers()
+        panelOverlay.setEventHandler { [weak self] groupID, panelId, controlId, eventName, value, extra in
+            guard let self else { return }
+            let data: [String: String] = [
+                "panelId": panelId,
+                "controlId": controlId,
+                "eventName": eventName,
+                "value": value
+            ]
+            if eventName == "click" {
+                self.firePanelEvent(groupID: groupID, data: data)
+                return
+            }
+            let key = "\(groupID)|\(panelId)|\(controlId)"
+            let now = Date()
+            if let last = self.lastPanelFireAt[key],
+               now.timeIntervalSince(last) < Self.panelThrottleInterval {
+                self.pendingPanelEvents[key] = (groupID: groupID, data: data)
+                return
+            }
+            self.lastPanelFireAt[key] = now
+            self.pendingPanelEvents.removeValue(forKey: key)
+            self.firePanelEvent(groupID: groupID, data: data)
+        }
         tick()
         let timer = Timer.scheduledTimer(withTimeInterval: tickInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -168,6 +198,8 @@ public final class MacEnforcementBridge: ObservableObject {
         timer = nil
         lastSampleAt = nil
         overlay.hide()
+        toastOverlay.teardown()
+        panelOverlay.teardown()
         focusObserver.stop()
         unregisterWorkspaceObservers()
         #endif
@@ -214,6 +246,13 @@ public final class MacEnforcementBridge: ObservableObject {
     // MARK: - Tick
 
     private func tick() {
+        // Flush any throttled panel events (trailing edge).
+        for (_, pending) in pendingPanelEvents {
+            firePanelEvent(groupID: pending.groupID, data: pending.data)
+        }
+        pendingPanelEvents.removeAll()
+        lastPanelFireAt.removeAll()
+
         let now = Date()
         let importResult = webStore.importedGroups()
         let groups = importResult?.groups ?? []
@@ -256,14 +295,14 @@ public final class MacEnforcementBridge: ObservableObject {
         let switched = frontmost != lastFrontmost
 
         // 3. Build and dispatch events for ALL enabled groups, log each event.
-        let ruleBlocked = dispatchEvents(
+        let dispatchOutput = dispatchEvents(
             groups: groups, frontmost: frontmost, usage: usage, now: now,
             lifecycleEvents: lifecycleEvents, switched: switched
         )
 
         // 4. Enforce: block apps whose group says "blocked now" PLUS
         //    any apps shield-ed by custom-rule decisions.
-        Task { [adapter, ruleBlocked] in
+        Task { [adapter, ruleBlocked = dispatchOutput.shieldedBundleIDs] in
             try? await adapter.applyGroups(
                 groups, usage: usage, now: now,
                 customBlockedBundleIDs: ruleBlocked
@@ -279,10 +318,26 @@ public final class MacEnforcementBridge: ObservableObject {
             platform: .macOS
         )
         let result = evaluator.evaluate(groups: groups, usage: usage, context: context)
-        let rows = result.visibleTimerItems.map {
+        var rows = result.visibleTimerItems.map {
             TimerOverlayRow(id: $0.groupID, name: $0.name, remainingSeconds: $0.remainingSeconds)
         }
+        for timer in dispatchOutput.customTimers where !timer.isPaused {
+            let remainingSec = max(0, timer.currentMs / 1000)
+            rows.append(TimerOverlayRow(
+                id: "\(timer.groupId).\(timer.id)",
+                name: timer.displayName,
+                remainingSeconds: remainingSec
+            ))
+        }
         overlay.update(rows: rows)
+
+        // 6. Show popup/screen log messages as toasts (separate from the timer HUD).
+        for log in dispatchOutput.hudLogs {
+            toastOverlay.show(message: log.message, level: log.level)
+        }
+
+        // 7. Render interactive panels from getPanelHelper().
+        panelOverlay.update(panels: dispatchOutput.panels)
 
         // Track state for next tick.
         lastFrontmost = frontmost
@@ -293,6 +348,13 @@ public final class MacEnforcementBridge: ObservableObject {
     /// Builds events and dispatches them for all enabled groups. Groups with
     /// `customRuleSource` get dispatched to the JS runtime; all groups get
     /// their events logged regardless.
+    private struct DispatchOutput {
+        var shieldedBundleIDs: Set<String>
+        var customTimers: [CustomTimerSnapshot]
+        var hudLogs: [(message: String, level: String)]
+        var panels: [PanelSnapshot]
+    }
+
     private func dispatchEvents(
         groups: [BlockGroup],
         frontmost: String?,
@@ -300,7 +362,7 @@ public final class MacEnforcementBridge: ObservableObject {
         now: Date,
         lifecycleEvents: [AppLifecycleEvent],
         switched: Bool
-    ) -> Set<String> {
+    ) -> DispatchOutput {
         let enabledGroups = groups.filter { $0.enabled }
         let ruleGroups = enabledGroups.filter { !$0.customRuleSource.isEmpty }
 
@@ -313,6 +375,9 @@ public final class MacEnforcementBridge: ObservableObject {
 
         var shieldedBundleIDs: Set<String> = []
         var allowedBundleIDs: Set<String> = []
+        var collectedTimers: [CustomTimerSnapshot] = []
+        var hudLogs: [(message: String, level: String)] = []
+        var collectedPanels: [PanelSnapshot] = []
 
         for group in enabledGroups {
             guard group.isActive(at: now) else { continue }
@@ -361,10 +426,21 @@ public final class MacEnforcementBridge: ObservableObject {
                         }
                     case .log:
                         let level = decision.metadata["level"] ?? "log"
+                        let surface = decision.metadata["surface"] ?? "all"
                         appendLog(level: level, group: group.name, message: decision.reason)
+                        if surface == "popup" || surface == "screen" || surface == "all" {
+                            hudLogs.append((message: "[\(group.name)] \(decision.reason)", level: level))
+                        }
                     case .showStatus, .quarantine, .requestSnooze, .unshield:
                         break
                     }
+                }
+
+                // Collect visible timers and panels from the last event
+                // (tickEvent) to avoid duplicates from multiple events per group.
+                if event.type == "tickEvent" {
+                    collectedTimers.append(contentsOf: result.timers)
+                    collectedPanels.append(contentsOf: result.panels)
                 }
 
                 processWindowIntents(result.intents, frontmost: frontmost)
@@ -372,7 +448,7 @@ public final class MacEnforcementBridge: ObservableObject {
         }
 
         shieldedBundleIDs.subtract(allowedBundleIDs)
-        return shieldedBundleIDs
+        return DispatchOutput(shieldedBundleIDs: shieldedBundleIDs, customTimers: collectedTimers, hudLogs: hudLogs, panels: collectedPanels)
     }
 
     private func buildEventsForGroup(
@@ -459,6 +535,7 @@ public final class MacEnforcementBridge: ObservableObject {
         enrichedData["appId"] = frontmost ?? ""
         enrichedData["appName"] = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
         enrichedData["isBrowser"] = isBrowser ? "true" : "false"
+        enrichedData["groupName"] = group.name
         if let tab = lastBrowserTab {
             enrichedData["tabTitle"] = tab.title
         }
@@ -495,7 +572,11 @@ public final class MacEnforcementBridge: ObservableObject {
             switch decision.action {
             case .log:
                 let level = decision.metadata["level"] ?? "log"
+                let surface = decision.metadata["surface"] ?? "all"
                 appendLog(level: level, group: group.name, message: decision.reason)
+                if surface == "popup" || surface == "screen" || surface == "all" {
+                    toastOverlay.show(message: "[\(group.name)] \(decision.reason)", level: level)
+                }
             case .shield:
                 if let fm = frontmost {
                     MacProcessTerminator.terminate(bundleIdentifier: fm)
@@ -506,6 +587,10 @@ public final class MacEnforcementBridge: ObservableObject {
         }
 
         processWindowIntents(result.intents, frontmost: frontmost)
+
+        if !result.panels.isEmpty {
+            panelOverlay.update(panels: result.panels)
+        }
     }
 
     private func ensureRuntime() -> CustomJavaScriptPolicyRuntime? {
@@ -524,37 +609,90 @@ public final class MacEnforcementBridge: ObservableObject {
 
     private func reconcileRuleRuntime(runtime: CustomJavaScriptPolicyRuntime, groups: [BlockGroup]) {
         let currentGroupIDs = Set(groups.map(\.id))
+        let currentGroupNames = Set(groups.map(\.name))
 
+        // Clean groups that are no longer enabled or have been removed.
         for (groupID, _) in loadedRuleSources where !currentGroupIDs.contains(groupID) {
+            cleanRule(groupID: groupID)
+        }
+
+        // Purge log entries from groups that no longer exist.
+        ruleLog.removeAll { entry in
+            let g = entry.group
+            if g == "system" || g.isEmpty { return false }
+            return !currentGroupIDs.contains(g) && !currentGroupNames.contains(g)
+        }
+
+        // Build groups that are enabled but not yet loaded.
+        for group in groups {
+            if loadedRuleSources[group.id] != nil { continue }
+            buildRule(groupID: group.id)
+        }
+    }
+
+    /// Tear down a group's rule: unload JS, clear all per-group state
+    /// (handlers, timers, persistence, blocklist, log dedup).
+    /// Called on: disable group, or as the first half of Run.
+    public func cleanRule(groupID: String) {
+        #if os(macOS)
+        guard let runtime = ruleRuntime else { return }
+        if loadedRuleSources[groupID] != nil {
             runtime.unload(groupID: groupID)
             loadedRuleSources.removeValue(forKey: groupID)
         }
+        #endif
+    }
 
-        for group in groups {
-            let source = group.customRuleSource
-            if loadedRuleSources[group.id] == source { continue }
-            if loadedRuleSources[group.id] != nil {
-                runtime.unload(groupID: group.id)
-            }
-            do {
-                let loadResult = try runtime.load(groupID: group.id, source: source)
-                loadedRuleSources[group.id] = source
-                appendLog(level: "log", group: group.name,
-                          message: "Rule loaded: \(loadResult.handlers) handler(s)")
-                for decision in loadResult.decisions where decision.action == .log {
-                    let level = decision.metadata["level"] ?? "log"
-                    appendLog(level: level, group: group.name, message: decision.reason)
-                }
-            } catch {
-                loadedRuleSources.removeValue(forKey: group.id)
-                appendLog(level: "error", group: group.name,
-                          message: "Rule load failed: \(error.localizedDescription)")
-            }
+    /// Remove all log entries and overlay state associated with a group.
+    public func purgeGroup(groupID: String) {
+        #if os(macOS)
+        let groupName = (webStore.importedGroups()?.groups ?? []).first(where: { $0.id == groupID })?.name
+        cleanRule(groupID: groupID)
+        let names = Set([groupID] + (groupName.map { [$0] } ?? []))
+        ruleLog.removeAll { names.contains($0.group) }
+        #endif
+    }
+
+    /// Compile and load a group's current source. Assumes clean state
+    /// (call cleanRule first if reloading).
+    /// Called on: enable group, or as the second half of Run.
+    public func buildRule(groupID: String) {
+        #if os(macOS)
+        guard let runtime = ensureRuntime() else { return }
+        let groups = webStore.importedGroups()?.groups ?? []
+        guard let group = groups.first(where: { $0.id == groupID && !$0.customRuleSource.isEmpty }) else {
+            return
         }
+        guard loadedRuleSources[groupID] == nil else { return }
+        do {
+            let loadResult = try runtime.load(groupID: groupID, source: group.customRuleSource)
+            loadedRuleSources[groupID] = group.customRuleSource
+            appendLog(level: "log", group: group.name,
+                      message: "Rule built: \(loadResult.handlers) handler(s)")
+            for decision in loadResult.decisions where decision.action == .log {
+                let level = decision.metadata["level"] ?? "log"
+                appendLog(level: level, group: group.name, message: decision.reason)
+            }
+        } catch {
+            loadedRuleSources.removeValue(forKey: groupID)
+            appendLog(level: "error", group: group.name,
+                      message: "Rule build failed: \(error.localizedDescription)")
+        }
+        #endif
+    }
+
+    /// Run = clean + build. Called when the user clicks Run in the editor.
+    public func runRule(groupID: String) {
+        cleanRule(groupID: groupID)
+        buildRule(groupID: groupID)
     }
 
     private func processWindowIntents(_ intents: [WindowIntent], frontmost: String?) {
         for intent in intents {
+            if intent.kind == "localFile" {
+                processLocalFileIntent(intent)
+                continue
+            }
             switch intent.action {
             case "close":
                 if let target = intent.target, !target.isEmpty {
@@ -615,6 +753,109 @@ public final class MacEnforcementBridge: ObservableObject {
                 }
             default:
                 break
+            }
+        }
+    }
+
+    // MARK: - Local File I/O
+
+    private lazy var localFolderBaseURL: URL = {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let folder = appSupport.appendingPathComponent("MacBlocker/LocalFiles", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }()
+
+    private static let allowedExtensions: Set<String> = ["txt", "csv", "json"]
+
+    private func resolveLocalFilePath(_ relativePath: String) -> URL? {
+        let cleaned = relativePath.replacingOccurrences(of: "\\", with: "/")
+        guard !cleaned.contains("..") else { return nil }
+        let resolved = localFolderBaseURL.appendingPathComponent(cleaned).standardized
+        guard resolved.path.hasPrefix(localFolderBaseURL.path) else { return nil }
+        return resolved
+    }
+
+    private func processLocalFileIntent(_ intent: WindowIntent) {
+        guard let groupId = intent.groupId, !groupId.isEmpty,
+              let requestId = intent.requestId, !requestId.isEmpty else { return }
+        let action = intent.action
+        let path = intent.path ?? ""
+
+        Task { @MainActor in
+            var resultData: [String: String] = [
+                "requestId": requestId,
+                "eventName": action,
+                "path": path
+            ]
+
+            do {
+                switch action {
+                case "read", "readJson":
+                    guard let url = resolveLocalFilePath(path) else { throw LocalFileError.invalidPath }
+                    guard Self.allowedExtensions.contains(url.pathExtension.lowercased()) else { throw LocalFileError.unsupportedExtension }
+                    let text = try String(contentsOf: url, encoding: .utf8)
+                    resultData["text"] = text
+                    if action == "readJson" {
+                        resultData["value"] = text
+                    }
+
+                case "write", "writeJson":
+                    guard let url = resolveLocalFilePath(path) else { throw LocalFileError.invalidPath }
+                    guard Self.allowedExtensions.contains(url.pathExtension.lowercased()) else { throw LocalFileError.unsupportedExtension }
+                    let text = intent.text ?? ""
+                    let dir = url.deletingLastPathComponent()
+                    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                    try text.write(to: url, atomically: true, encoding: .utf8)
+                    resultData["eventName"] = action == "writeJson" ? "writeJson" : "write"
+
+                case "append":
+                    guard let url = resolveLocalFilePath(path) else { throw LocalFileError.invalidPath }
+                    guard Self.allowedExtensions.contains(url.pathExtension.lowercased()) else { throw LocalFileError.unsupportedExtension }
+                    let text = intent.text ?? ""
+                    let dir = url.deletingLastPathComponent()
+                    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                    if FileManager.default.fileExists(atPath: url.path) {
+                        let handle = try FileHandle(forWritingTo: url)
+                        handle.seekToEndOfFile()
+                        handle.write(Data(text.utf8))
+                        handle.closeFile()
+                    } else {
+                        try text.write(to: url, atomically: true, encoding: .utf8)
+                    }
+
+                case "list":
+                    let dirPath = path.isEmpty ? "" : path
+                    let url = dirPath.isEmpty ? localFolderBaseURL : (resolveLocalFilePath(dirPath) ?? localFolderBaseURL)
+                    guard url.path.hasPrefix(localFolderBaseURL.path) else { throw LocalFileError.invalidPath }
+                    let contents = try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)
+                    let names = contents.map { $0.lastPathComponent }
+                    resultData["entries"] = (try? String(data: JSONSerialization.data(withJSONObject: names), encoding: .utf8)) ?? "[]"
+                    resultData["directoryPath"] = dirPath
+
+                case "exists":
+                    guard let url = resolveLocalFilePath(path) else { throw LocalFileError.invalidPath }
+                    resultData["exists"] = FileManager.default.fileExists(atPath: url.path) ? "true" : "false"
+
+                default:
+                    resultData["eventName"] = "error"
+                    resultData["error"] = "Unknown action: \(action)"
+                }
+            } catch {
+                resultData["eventName"] = "error"
+                resultData["error"] = error.localizedDescription
+            }
+
+            fireLocalFileEvent(groupID: groupId, data: resultData)
+        }
+    }
+
+    private enum LocalFileError: LocalizedError {
+        case invalidPath, unsupportedExtension
+        var errorDescription: String? {
+            switch self {
+            case .invalidPath: return "Invalid or disallowed file path."
+            case .unsupportedExtension: return "Only .txt, .csv, and .json files are supported."
             }
         }
     }

@@ -431,4 +431,387 @@ final class CustomRuleEngineTests: XCTestCase {
         let openIntents = result.intents.filter { $0.action == "openApp" }
         XCTAssertTrue(openIntents.isEmpty)
     }
+
+    // MARK: - Per-group log independence
+
+    func testUnsupportedHelperLogIsPerGroup() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        let source = """
+        (event, helpers) => {
+          event.registerTickEvent("a", (ev, h) => {
+            h.getDOMHelper().hide(".x");
+          });
+        }
+        """
+        try runtime.load(groupID: "g1", source: source)
+        try runtime.load(groupID: "g2", source: source)
+
+        let r1 = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g1"))
+        let r2 = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g2"))
+
+        XCTAssertEqual(r1.decisions.filter { $0.reason.contains("getDOMHelper") }.count, 1,
+                       "g1 should emit its own unsupported-helper warning")
+        XCTAssertEqual(r2.decisions.filter { $0.reason.contains("getDOMHelper") }.count, 1,
+                       "g2 should emit its own warning independently of g1")
+    }
+
+    func testUnsupportedHelperLogPersistsAcrossDispatches() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(groupID: "g", source: """
+        (event, helpers) => {
+          event.registerTickEvent("a", (ev, h) => {
+            h.getDOMHelper().hide(".x");
+          });
+        }
+        """)
+
+        let first = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g"))
+        XCTAssertEqual(first.decisions.filter { $0.reason.contains("getDOMHelper") }.count, 1)
+
+        let second = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g"))
+        XCTAssertEqual(second.decisions.filter { $0.reason.contains("getDOMHelper") }.count, 0,
+                       "Same warning should not repeat on subsequent dispatch")
+    }
+
+    func testUnsupportedHelperLogResetsOnUnloadReload() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        let source = """
+        (event, helpers) => {
+          event.registerTickEvent("a", (ev, h) => {
+            h.getDOMHelper().hide(".x");
+          });
+        }
+        """
+        try runtime.load(groupID: "g", source: source)
+        _ = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g"))
+
+        runtime.unload(groupID: "g")
+        try runtime.load(groupID: "g", source: source)
+
+        let afterReload = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g"))
+        XCTAssertEqual(afterReload.decisions.filter { $0.reason.contains("getDOMHelper") }.count, 1,
+                       "After unload+reload, warning should appear again")
+    }
+
+    func testUnknownHelperLogIsPerGroup() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        let source = """
+        (event, helpers) => {
+          event.registerTickEvent("a", (ev, h) => {
+            h.getFooBarHelper().doSomething();
+          });
+        }
+        """
+        try runtime.load(groupID: "g1", source: source)
+        try runtime.load(groupID: "g2", source: source)
+
+        let r1 = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g1"))
+        let r2 = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g2"))
+        let r1b = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g1"))
+
+        XCTAssertEqual(r1.decisions.filter { $0.reason.contains("does not exist") }.count, 1)
+        XCTAssertEqual(r2.decisions.filter { $0.reason.contains("does not exist") }.count, 1,
+                       "g2 should get its own warning independently")
+        XCTAssertEqual(r1b.decisions.filter { $0.reason.contains("does not exist") }.count, 0,
+                       "g1's second dispatch should not repeat the warning")
+    }
+
+    // MARK: - No auto-reload on source change
+
+    func testUnloadThenReloadAppliesNewSource() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(groupID: "g", source: """
+        (event, helpers) => {
+          event.registerTickEvent("v1", (ev, h) => { h.log("old"); });
+        }
+        """)
+        let old = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g"))
+        XCTAssertTrue(old.decisions.contains(where: { $0.reason == "old" }))
+
+        runtime.unload(groupID: "g")
+        try runtime.load(groupID: "g", source: """
+        (event, helpers) => {
+          event.registerTickEvent("v2", (ev, h) => { h.log("new"); });
+        }
+        """)
+        let updated = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g"))
+        XCTAssertTrue(updated.decisions.contains(where: { $0.reason == "new" }))
+        XCTAssertFalse(updated.decisions.contains(where: { $0.reason == "old" }))
+    }
+
+    // MARK: - Timer auto-ticking
+
+    func testTimerAutoTicksOnTickEvent() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(groupID: "g", source: """
+        (event, helpers) => {
+          event.registerTickEvent("setup", (ev, h) => {
+            h.getTimerHelper().getOrCreateTimer({
+              id: "t", direction: "backward", currentMs: 5000
+            });
+          });
+        }
+        """)
+
+        // First dispatch creates the timer (auto-tick runs before handler,
+        // so the timer doesn't exist yet — no tick on this round).
+        let r0 = try runtime.dispatch(
+            CustomRuleEvent(type: "tickEvent", groupID: "g", data: ["intervalMs": "1000"])
+        )
+        let t0 = r0.timers.first { $0.id == "t" }
+        XCTAssertNotNil(t0)
+        XCTAssertEqual(t0!.currentMs, 5000, accuracy: 1)
+
+        // Second dispatch: auto-tick decrements 5000 → 4000, then handler
+        // getOrCreate is a no-op (already exists).
+        let r1 = try runtime.dispatch(
+            CustomRuleEvent(type: "tickEvent", groupID: "g", data: ["intervalMs": "1000"])
+        )
+        let t1 = r1.timers.first { $0.id == "t" }
+        XCTAssertEqual(t1!.currentMs, 4000, accuracy: 1)
+
+        // Third dispatch: 4000 → 3000.
+        let r2 = try runtime.dispatch(
+            CustomRuleEvent(type: "tickEvent", groupID: "g", data: ["intervalMs": "1000"])
+        )
+        let t2 = r2.timers.first { $0.id == "t" }
+        XCTAssertEqual(t2!.currentMs, 3000, accuracy: 1)
+    }
+
+    func testPausedTimerDoesNotAutoTick() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(groupID: "g", source: """
+        (event, helpers) => {
+          event.registerTickEvent("setup", (ev, h) => {
+            const tm = h.getTimerHelper();
+            tm.getOrCreateTimer({ id: "t", direction: "backward", currentMs: 5000 });
+            tm.pause("t");
+          });
+        }
+        """)
+
+        let r1 = try runtime.dispatch(
+            CustomRuleEvent(type: "tickEvent", groupID: "g", data: ["intervalMs": "1000"])
+        )
+        let r2 = try runtime.dispatch(
+            CustomRuleEvent(type: "tickEvent", groupID: "g", data: ["intervalMs": "1000"])
+        )
+        let t1 = r1.timers.first { $0.id == "t" }
+        let t2 = r2.timers.first { $0.id == "t" }
+        XCTAssertTrue(t1?.isPaused ?? false)
+        XCTAssertEqual(t1?.currentMs, t2?.currentMs,
+                       "Paused timer should not auto-decrement")
+    }
+
+    func testForwardTimerDoesNotAutoTick() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(groupID: "g", source: """
+        (event, helpers) => {
+          event.registerTickEvent("setup", (ev, h) => {
+            h.getTimerHelper().getOrCreateTimer({
+              id: "t", direction: "forward", currentMs: 0
+            });
+          });
+        }
+        """)
+
+        _ = try runtime.dispatch(
+            CustomRuleEvent(type: "tickEvent", groupID: "g", data: ["intervalMs": "1000"])
+        )
+        let r2 = try runtime.dispatch(
+            CustomRuleEvent(type: "tickEvent", groupID: "g", data: ["intervalMs": "1000"])
+        )
+        let t = r2.timers.first { $0.id == "t" }
+        XCTAssertNotNil(t)
+        XCTAssertEqual(t!.currentMs, 0, accuracy: 1,
+                       "Forward timer should not auto-tick")
+    }
+
+    func testAutoTickToZeroFiresTimerEndedOnce() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(groupID: "g", source: """
+        (event, helpers) => {
+          event.registerTickEvent("setup", (ev, h) => {
+            h.getTimerHelper().getOrCreateTimer({
+              id: "t", direction: "backward", currentMs: 3000
+            });
+          });
+          event.registerTimerEndedEvent("ended", (ev, h) => {
+            h.log("expired:" + ev.data.timerId);
+          });
+        }
+        """)
+
+        // Dispatch 1: creates timer at 3000 (auto-tick is no-op, timer didn't exist)
+        let r0 = try runtime.dispatch(
+            CustomRuleEvent(type: "tickEvent", groupID: "g", data: ["intervalMs": "1000"])
+        )
+        XCTAssertFalse(r0.decisions.contains(where: { $0.reason.contains("expired:t") }))
+
+        // Dispatch 2: auto-tick 3000→2000, not expired yet
+        let r1 = try runtime.dispatch(
+            CustomRuleEvent(type: "tickEvent", groupID: "g", data: ["intervalMs": "1000"])
+        )
+        XCTAssertFalse(r1.decisions.contains(where: { $0.reason.contains("expired:t") }),
+                       "Timer at 2000ms should not fire timerEnded yet")
+
+        // Dispatch 3: auto-tick 2000→1000, not expired yet
+        let r2 = try runtime.dispatch(
+            CustomRuleEvent(type: "tickEvent", groupID: "g", data: ["intervalMs": "1000"])
+        )
+        XCTAssertFalse(r2.decisions.contains(where: { $0.reason.contains("expired:t") }),
+                       "Timer at 1000ms should not fire timerEnded yet")
+
+        // Dispatch 4: auto-tick 1000→0, timerEnded fires!
+        let r3 = try runtime.dispatch(
+            CustomRuleEvent(type: "tickEvent", groupID: "g", data: ["intervalMs": "1000"])
+        )
+        XCTAssertEqual(r3.decisions.filter { $0.reason.contains("expired:t") }.count, 1,
+                       "timerEnded should fire exactly once when auto-tick reaches 0")
+
+        // Dispatch 5: already expired, should NOT re-fire
+        let r4 = try runtime.dispatch(
+            CustomRuleEvent(type: "tickEvent", groupID: "g", data: ["intervalMs": "1000"])
+        )
+        XCTAssertEqual(r4.decisions.filter { $0.reason.contains("expired:t") }.count, 0,
+                       "timerEnded should not re-fire on subsequent ticks")
+    }
+
+    func testNonTickEventDoesNotAutoTick() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(groupID: "g", source: """
+        (event, helpers) => {
+          event.registerTickEvent("setup", (ev, h) => {
+            h.getTimerHelper().getOrCreateTimer({
+              id: "t", direction: "backward", currentMs: 5000
+            });
+          });
+          event.registerWebChangedEvent("noop", (ev, h) => {});
+        }
+        """)
+
+        // Create the timer (5000ms)
+        _ = try runtime.dispatch(
+            CustomRuleEvent(type: "tickEvent", groupID: "g", data: ["intervalMs": "1000"])
+        )
+        // Tick once to bring it down to 4000ms
+        _ = try runtime.dispatch(
+            CustomRuleEvent(type: "tickEvent", groupID: "g", data: ["intervalMs": "1000"])
+        )
+        // webChangedEvent should NOT further decrement
+        let r = try runtime.dispatch(
+            CustomRuleEvent(type: "webChangedEvent", groupID: "g", data: ["intervalMs": "1000"])
+        )
+        let t = r.timers.first { $0.id == "t" }
+        XCTAssertNotNil(t)
+        XCTAssertEqual(t!.currentMs, 4000, accuracy: 1,
+                       "Non-tickEvent should not auto-decrement the timer")
+    }
+
+    // MARK: - Log surface metadata (popup / screen / all)
+
+    func testLogPopupHasSurfacePopup() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(groupID: "g", source: """
+        (event, helpers) => {
+          event.registerTickEvent("p", (ev, h) => { h.logPopup("hello popup"); });
+        }
+        """)
+
+        let result = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g"))
+        let logs = result.decisions.filter { $0.action == .log }
+        XCTAssertEqual(logs.count, 1)
+        XCTAssertEqual(logs.first?.reason, "hello popup")
+        XCTAssertEqual(logs.first?.metadata["surface"], "popup")
+        XCTAssertEqual(logs.first?.metadata["level"], "log")
+    }
+
+    func testWarnPopupHasSurfacePopup() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(groupID: "g", source: """
+        (event, helpers) => {
+          event.registerTickEvent("wp", (ev, h) => { h.warnPopup("warn msg"); });
+        }
+        """)
+
+        let result = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g"))
+        let logs = result.decisions.filter { $0.action == .log }
+        XCTAssertEqual(logs.first?.metadata["level"], "warn")
+        XCTAssertEqual(logs.first?.metadata["surface"], "popup")
+    }
+
+    func testErrorPopupHasSurfacePopup() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(groupID: "g", source: """
+        (event, helpers) => {
+          event.registerTickEvent("ep", (ev, h) => { h.errorPopup("bad thing"); });
+        }
+        """)
+
+        let result = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g"))
+        let logs = result.decisions.filter { $0.action == .log }
+        XCTAssertEqual(logs.first?.metadata["level"], "error")
+        XCTAssertEqual(logs.first?.metadata["surface"], "popup")
+    }
+
+    func testLogScreenHasSurfaceScreen() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(groupID: "g", source: """
+        (event, helpers) => {
+          event.registerTickEvent("sc", (ev, h) => { h.logScreen("screen msg"); });
+        }
+        """)
+
+        let result = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g"))
+        let logs = result.decisions.filter { $0.action == .log }
+        XCTAssertEqual(logs.first?.metadata["surface"], "screen")
+    }
+
+    func testPlainLogHasSurfaceAll() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(groupID: "g", source: """
+        (event, helpers) => {
+          event.registerTickEvent("plain", (ev, h) => { h.log("both surfaces"); });
+        }
+        """)
+
+        let result = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g"))
+        let logs = result.decisions.filter { $0.action == .log }
+        XCTAssertEqual(logs.first?.metadata["surface"], "all")
+    }
+
+    func testLogHelperSurfaceVariants() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(groupID: "g", source: """
+        (event, helpers) => {
+          event.registerTickEvent("lh", (ev, h) => {
+            const lg = h.getLogHelper();
+            lg.logPopup("lp");
+            lg.warnScreen("ws");
+            lg.errorPopup("ep");
+            lg.log("plain");
+          });
+        }
+        """)
+
+        let result = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "g"))
+        let logs = result.decisions.filter { $0.action == .log }
+        XCTAssertEqual(logs.count, 4)
+
+        let lp = logs.first { $0.reason == "lp" }
+        XCTAssertEqual(lp?.metadata["level"], "log")
+        XCTAssertEqual(lp?.metadata["surface"], "popup")
+
+        let ws = logs.first { $0.reason == "ws" }
+        XCTAssertEqual(ws?.metadata["level"], "warn")
+        XCTAssertEqual(ws?.metadata["surface"], "screen")
+
+        let ep = logs.first { $0.reason == "ep" }
+        XCTAssertEqual(ep?.metadata["level"], "error")
+        XCTAssertEqual(ep?.metadata["surface"], "popup")
+
+        let plain = logs.first { $0.reason == "plain" }
+        XCTAssertEqual(plain?.metadata["level"], "log")
+        XCTAssertEqual(plain?.metadata["surface"], "all")
+    }
 }
