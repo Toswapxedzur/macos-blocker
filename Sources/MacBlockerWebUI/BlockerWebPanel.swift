@@ -10,15 +10,16 @@ public struct BlockerWebPanel: View {
     private let appInventoryJSON: (() -> String?)?
     private let ruleLogJSON: (() -> String?)?
     private let onStorePersisted: (() -> Void)?
+    private let onRunCustomGroup: ((String, String) -> Void)?
     private let onSnoozePress: ((String) -> Void)?
     private let onPanelEvent: ((String, [String: String]) -> Void)?
-    @State private var lastRunMessage: String?
 
     public init(
         store: BlockerWebStore = BlockerWebStore(),
         appInventoryJSON: (() -> String?)? = nil,
         ruleLogJSON: (() -> String?)? = nil,
         onStorePersisted: (() -> Void)? = nil,
+        onRunCustomGroup: ((String, String) -> Void)? = nil,
         onSnoozePress: ((String) -> Void)? = nil,
         onPanelEvent: ((String, [String: String]) -> Void)? = nil
     ) {
@@ -26,6 +27,7 @@ public struct BlockerWebPanel: View {
         self.appInventoryJSON = appInventoryJSON
         self.ruleLogJSON = ruleLogJSON
         self.onStorePersisted = onStorePersisted
+        self.onRunCustomGroup = onRunCustomGroup
         self.onSnoozePress = onSnoozePress
         self.onPanelEvent = onPanelEvent
     }
@@ -36,23 +38,11 @@ public struct BlockerWebPanel: View {
             appInventoryJSON: appInventoryJSON,
             ruleLogJSON: ruleLogJSON,
             onStorePersisted: onStorePersisted,
-            onRunCustomGroup: { groupID, source in
-                loadIntoPolicyRuntime(groupID: groupID, source: source)
-            },
+            onRunCustomGroup: onRunCustomGroup,
             onSnoozePress: onSnoozePress,
             onPanelEvent: onPanelEvent
         )
         .ignoresSafeArea()
-    }
-
-    private func loadIntoPolicyRuntime(groupID: String, source: String) {
-        do {
-            let runtime = try CustomJavaScriptPolicyRuntime()
-            try runtime.load(groupID: groupID, source: source)
-            lastRunMessage = "Loaded rule for \(groupID)."
-        } catch {
-            lastRunMessage = "Rule load failed: \(error)"
-        }
     }
 }
 #endif
