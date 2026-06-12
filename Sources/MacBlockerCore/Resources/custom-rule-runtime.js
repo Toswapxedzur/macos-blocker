@@ -22,6 +22,9 @@
  */
 var MacBlockerRuntime = (function () {
   var MAX_POST_DEPTH = 16;
+  var MAX_HANDLERS_PER_GROUP = 1000;
+  var MAX_LOGS_PER_DISPATCH = 200;
+  var MAX_INTENTS_PER_DISPATCH = 256;
 
   var handlersByGroup = {};      // groupId -> [entry]
   var persistenceByGroup = {};   // groupId -> { key: jsonString }
@@ -30,6 +33,8 @@ var MacBlockerRuntime = (function () {
   var panelDisplayedByGroup = {}; // groupId -> Set-like { panelId: true }
   var panelPredicatesByGroup = {}; // groupId -> { panelId: { scope?, domain? } }
   var panelInlineHandlersByGroup = {}; // groupId -> { panelId -> [ { controlId, eventName, handler } ] }
+  var panelChangedByGroup = {};       // groupId -> boolean (shared across panelHelper instances)
+  var panelCreationByGroup = {};      // groupId -> { panelId: sanitized config from last create() } for idempotent re-create
   var previouslyExpired = {};    // groupId -> { timerId: true } for timerEnded dedup
   var logSeenByGroup = {};       // groupId -> { key: true } for per-group log dedup
   var activeDecisionsByGroup = {}; // groupId -> current dispatch's decisions array
@@ -41,16 +46,10 @@ var MacBlockerRuntime = (function () {
 
   var TYPED = {
     TickEvent: "tickEvent",
-    OpenWebEvent: "openWebEvent",
-    CloseWebEvent: "closeWebEvent",
-    SwitchWebEvent: "switchWebEvent",
-    SwitchDomainEvent: "switchDomainEvent",
-    WebChangedEvent: "webChangedEvent",
     TimerEnded: "timerEnded",
     SnoozePress: "snoozePress",
     PanelEvent: "panelEvent",
     LocalFileEvent: "localFileEvent",
-    PageHeartbeatEvent: "pageHeartbeatEvent",
     // macOS app lifecycle events (notification-driven)
     OpenAppEvent: "openAppEvent",
     CloseAppEvent: "closeAppEvent",
@@ -156,6 +155,7 @@ var MacBlockerRuntime = (function () {
       if (list[i].type === type && list[i].id === id) { existing = i; break; }
     }
     if (existing >= 0) list[existing] = entry;
+    else if (list.length >= MAX_HANDLERS_PER_GROUP) return false;
     else list.push(entry);
     list.sort(function (a, b) {
       return (b.priority - a.priority) || (a.registeredAt - b.registeredAt);
@@ -818,11 +818,27 @@ var MacBlockerRuntime = (function () {
     if (!panelDisplayedByGroup[groupId]) panelDisplayedByGroup[groupId] = {};
     if (!panelPredicatesByGroup[groupId]) panelPredicatesByGroup[groupId] = {};
     if (!panelInlineHandlersByGroup[groupId]) panelInlineHandlersByGroup[groupId] = {};
+    if (!panelCreationByGroup[groupId]) panelCreationByGroup[groupId] = {};
     var bucket = panelsByGroup[groupId];
     var displayed = panelDisplayedByGroup[groupId];
     var predicates = panelPredicatesByGroup[groupId];
     var inlineHandlers = panelInlineHandlersByGroup[groupId];
-    var panelRegistryChanged = false;
+    var creationConfigs = panelCreationByGroup[groupId];
+
+    var INLINE_PROPS = { onEvent:1, onChange:1, onClick:1, onInput:1, onFocus:1, onBlur:1, onSubmit:1, onClose:1, onMount:1, onUnmount:1, onKey:1, onKeyDown:1 };
+    function hasInlineProps(obj) {
+      if (!obj || typeof obj !== "object") return false;
+      for (var k in INLINE_PROPS) { if (typeof obj[k] === "function") return true; }
+      if (Array.isArray(obj.controls)) {
+        for (var i = 0; i < obj.controls.length; i++) {
+          var c = obj.controls[i];
+          if (c && typeof c === "object") {
+            for (var k2 in INLINE_PROPS) { if (typeof c[k2] === "function") return true; }
+          }
+        }
+      }
+      return false;
+    }
 
     function registerInlineHandlers(panelId, rawConfig) {
       if (!rawConfig || typeof rawConfig !== "object") return;
@@ -867,9 +883,14 @@ var MacBlockerRuntime = (function () {
     function invokeInlineHandlers(panelId, controlId, eventName, data) {
       var list = inlineHandlers[panelId];
       if (!list) return;
+      var actionName = data && data.value;
+      var matchSet = {};
+      matchSet[eventName] = true;
+      matchSet["*"] = true;
+      if (eventName === "click" && actionName && actionName !== "click") matchSet[actionName] = true;
       for (var i = 0; i < list.length; i++) {
         var h = list[i];
-        if (h.eventName !== "*" && h.eventName !== eventName) continue;
+        if (!matchSet[h.eventName]) continue;
         if (h.controlId !== null && h.controlId !== controlId) continue;
         try { h.handler(data); } catch (e) {}
       }
@@ -881,7 +902,7 @@ var MacBlockerRuntime = (function () {
       return p && typeof p === "object" ? p : null;
     }
 
-    function markChanged() { panelRegistryChanged = true; }
+    function markChanged() { panelChangedByGroup[groupId] = true; }
 
     function safePredicate(pred, appId) {
       if (typeof pred !== "function") return false;
@@ -969,7 +990,19 @@ var MacBlockerRuntime = (function () {
       var panel = sanitizePanelConfig(config);
       if (!panel) return null;
       var prev = getPanel(panel.id);
+      // Idempotent re-create: if the panel already exists and the incoming
+      // config is identical to the one it was last created from, treat this as
+      // a no-op so repeated create() calls (e.g. from a tickEvent handler)
+      // preserve the user's live input instead of resetting to source values.
+      // Inline handlers and scope are still refreshed (closures change each
+      // dispatch); only the panel's data/values are left untouched.
+      if (prev && panelStateEquals(creationConfigs[panel.id], panel)) {
+        applyScopeAndDomain(panel.id, config.scope, config.domain);
+        registerInlineHandlers(panel.id, config);
+        return panel.id;
+      }
       bucket[panel.id] = panel;
+      creationConfigs[panel.id] = clonePanelForSnapshot(panel);
       if (!panelStateEquals(prev, panel)) markChanged();
       applyScopeAndDomain(panel.id, config.scope, config.domain);
       registerInlineHandlers(panel.id, config);
@@ -1002,11 +1035,14 @@ var MacBlockerRuntime = (function () {
         if (patch.hasOwnProperty("scope") || patch.hasOwnProperty("domain")) {
           applyScopeAndDomain(panel.id, patch.scope, patch.domain);
         }
+        if (patch.controls || hasInlineProps(patch)) {
+          registerInlineHandlers(panel.id, patch);
+        }
         return true;
       },
       "delete": function (id) {
         if (!getPanel(id)) return false;
-        delete bucket[id]; delete predicates[id]; delete displayed[id]; delete inlineHandlers[id];
+        delete bucket[id]; delete predicates[id]; delete displayed[id]; delete inlineHandlers[id]; delete creationConfigs[id];
         markChanged();
         return true;
       },
@@ -1231,8 +1267,8 @@ var MacBlockerRuntime = (function () {
           }
         }
       },
-      __cb_hasChanged: function () { return panelRegistryChanged; },
-      __cb_resetChanged: function () { panelRegistryChanged = false; }
+      __cb_hasChanged: function () { return !!panelChangedByGroup[groupId]; },
+      __cb_resetChanged: function () { panelChangedByGroup[groupId] = false; }
     };
   }
 
@@ -1258,7 +1294,9 @@ var MacBlockerRuntime = (function () {
     var logSeen = logSeenByGroup[gid];
 
     function pushDecision(action, reason, shieldMessage, overlay, metadata, targetIDs) {
-      (activeDecisionsByGroup[gid] || decisions).push({
+      var sink = activeDecisionsByGroup[gid] || decisions;
+      if (action === "log" && sink.filter(function (d) { return d.action === "log"; }).length >= MAX_LOGS_PER_DISPATCH) return;
+      sink.push({
         action: action,
         groupID: gid,
         targetIDs: targetIDs || (rawEvent.target && rawEvent.target.id ? [rawEvent.target.id] : []),
@@ -1270,7 +1308,9 @@ var MacBlockerRuntime = (function () {
     }
 
     function pushIntent(intent) {
-      (activeIntentsByGroup[gid] || intents).push(intent);
+      var sink = activeIntentsByGroup[gid] || intents;
+      if (sink.length >= MAX_INTENTS_PER_DISPATCH) return;
+      sink.push(intent);
     }
 
     function logUnsupported(name) {
@@ -1407,7 +1447,6 @@ var MacBlockerRuntime = (function () {
       __reason: "",
       __stop: false
     };
-    ev.preventDefault = function () { ev.__prevented = true; };
     ev.stopPropagation = function () { ev.__stop = true; };
     ev.setResult = function (r) {
       // A string result used to mean "redirect"; redirection is gone, so any
@@ -1466,7 +1505,11 @@ var MacBlockerRuntime = (function () {
       ev.controlId = rawEvent.data.controlId || "";
       ev.eventName = rawEvent.data.eventName || "";
       ev.value = rawEvent.data.value;
-      ev.values = rawEvent.data.values && typeof rawEvent.data.values === "object" ? rawEvent.data.values : {};
+      var parsedValues = rawEvent.data.values;
+      if (!parsedValues && typeof rawEvent.data.valuesJSON === "string") {
+        try { parsedValues = JSON.parse(rawEvent.data.valuesJSON); } catch (e) { parsedValues = null; }
+      }
+      ev.values = parsedValues && typeof parsedValues === "object" ? parsedValues : {};
       ev.key = rawEvent.data.key || "";
       ev.code = rawEvent.data.code || "";
       ev.keyInfo = rawEvent.data.keyInfo && typeof rawEvent.data.keyInfo === "object" ? rawEvent.data.keyInfo : null;
@@ -1486,7 +1529,11 @@ var MacBlockerRuntime = (function () {
       if (panelBk && Object.keys(panelBk).length > 0) {
         var ph = panelHelper(rawEvent.groupID, function () { return timersByGroup[rawEvent.groupID] || {}; });
         if (typeof ph.__cb_applyPanelEvent === "function") {
-          try { ph.__cb_applyPanelEvent(rawEvent.data || {}); } catch (e) {}
+          var applyData = rawEvent.data || {};
+          if (!applyData.values && typeof applyData.valuesJSON === "string") {
+            try { applyData = JSON.parse(JSON.stringify(applyData)); applyData.values = JSON.parse(applyData.valuesJSON); } catch (e) {}
+          }
+          try { ph.__cb_applyPanelEvent(applyData); } catch (e) {}
         }
       }
     }
@@ -1540,6 +1587,8 @@ var MacBlockerRuntime = (function () {
       delete panelDisplayedByGroup[groupId];
       delete panelPredicatesByGroup[groupId];
       delete panelInlineHandlersByGroup[groupId];
+      delete panelChangedByGroup[groupId];
+      delete panelCreationByGroup[groupId];
       delete previouslyExpired[groupId];
       delete dynamicBlocklistByGroup[groupId];
       delete logSeenByGroup[groupId];
@@ -1634,14 +1683,18 @@ var MacBlockerRuntime = (function () {
           }
         }
       }
-      // Collect visible panel snapshots for all groups that have panels.
+      // Only collect panel snapshots when JS-side state actually changed,
+      // so the native UI keeps user's in-progress input between changes.
       var visiblePanels = [];
       var panelBucket = panelsByGroup[rawEvent.groupID];
       if (panelBucket && Object.keys(panelBucket).length > 0) {
         var ph = panelHelper(rawEvent.groupID, function () { return timersByGroup[rawEvent.groupID] || {}; });
-        var focusApp = (rawEvent.data && rawEvent.data.appId) || "";
-        ph.__cb_refreshDisplayedPanels(focusApp);
-        visiblePanels = ph.__cb_getDisplayedPanelSnapshots(focusApp);
+        if (ph.__cb_hasChanged()) {
+          var focusApp = (rawEvent.data && rawEvent.data.appId) || "";
+          ph.__cb_refreshDisplayedPanels(focusApp);
+          visiblePanels = ph.__cb_getDisplayedPanelSnapshots(focusApp);
+          ph.__cb_resetChanged();
+        }
       }
       return JSON.stringify({ decisions: ctx.decisions, intents: ctx.intents, timers: visibleTimers, panels: visiblePanels });
     },

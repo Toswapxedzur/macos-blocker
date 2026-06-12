@@ -154,12 +154,13 @@ public final class MacEnforcementBridge: ObservableObject {
         registerWorkspaceObservers()
         panelOverlay.setEventHandler { [weak self] groupID, panelId, controlId, eventName, value, extra in
             guard let self else { return }
-            let data: [String: String] = [
+            var data: [String: String] = [
                 "panelId": panelId,
                 "controlId": controlId,
                 "eventName": eventName,
                 "value": value
             ]
+            if !extra.isEmpty { data["valuesJSON"] = extra }
             if eventName == "click" {
                 self.firePanelEvent(groupID: groupID, data: data)
                 return
@@ -336,8 +337,12 @@ public final class MacEnforcementBridge: ObservableObject {
             toastOverlay.show(message: log.message, level: log.level)
         }
 
-        // 7. Render interactive panels from getPanelHelper().
-        panelOverlay.update(panels: dispatchOutput.panels)
+        // 7. Render interactive panels from getPanelHelper() — only when
+        //    the JS runtime signals a state change, so in-progress user
+        //    input isn't overwritten by stale tick snapshots.
+        if !dispatchOutput.panels.isEmpty {
+            panelOverlay.update(panels: dispatchOutput.panels)
+        }
 
         // Track state for next tick.
         lastFrontmost = frontmost
@@ -539,6 +544,7 @@ public final class MacEnforcementBridge: ObservableObject {
         if let tab = lastBrowserTab {
             enrichedData["tabTitle"] = tab.title
         }
+        enrichedData["allApps"] = Self.runningAppsJSON()
         return CustomRuleEvent(
             type: type, groupID: group.id,
             target: matchingTarget, now: Date(),
@@ -991,6 +997,23 @@ public final class MacEnforcementBridge: ObservableObject {
 
         webStore.writeUsage(timersMs: timerWrites, resetAtMs: resetWrites)
         return timers
+    }
+
+    private static func runningAppsJSON() -> String {
+        let apps = NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular }
+            .compactMap { app -> [String: Any]? in
+                guard let bid = app.bundleIdentifier else { return nil }
+                let isBrowser = BrowserTabReader.isBrowser(bid)
+                return [
+                    "id": bid,
+                    "name": app.localizedName ?? bid,
+                    "isBrowser": isBrowser
+                ]
+            }
+        guard let data = try? JSONSerialization.data(withJSONObject: apps),
+              let json = String(data: data, encoding: .utf8) else { return "[]" }
+        return json
     }
 
     private func matchingTargetIDs(groups: [BlockGroup], frontmost: String?) -> Set<String> {
