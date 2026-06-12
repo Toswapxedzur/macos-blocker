@@ -387,7 +387,10 @@ public final class ToastOverlayPanelController {
 struct PanelControlView: View {
     let control: PanelControlSnapshot
     let theme: PanelTheme?
+    /// (controlId, eventName, value, extra)
     let onEvent: (String, String, String, String) -> Void
+    /// All current control values in this panel, for batch sending.
+    let allValues: [String: String]
 
     private var accent: Color {
         if let a = theme?.accent, let c = Color(cssHex: a) { return c }
@@ -418,42 +421,34 @@ struct PanelControlView: View {
                 .disabled(control.disabled == true)
 
             case "checkbox":
-                Toggle(isOn: Binding(
-                    get: { control.value?.boolValue ?? false },
-                    set: { onEvent(control.id, "change", $0 ? "true" : "false", "") }
-                )) {
-                    Text(control.label ?? "")
-                        .font(.system(size: 13))
-                }
-                .toggleStyle(.checkbox)
-                .disabled(control.disabled == true)
+                PanelToggleControl(
+                    control: control,
+                    snapshotValue: control.value?.boolValue ?? false,
+                    isSwitch: false,
+                    onEvent: onEvent
+                )
 
             case "toggle":
-                Toggle(isOn: Binding(
-                    get: { control.value?.boolValue ?? false },
-                    set: { onEvent(control.id, "change", $0 ? "true" : "false", "") }
-                )) {
-                    Text(control.label ?? "")
-                        .font(.system(size: 13))
-                }
-                .toggleStyle(.switch)
-                .disabled(control.disabled == true)
+                PanelToggleControl(
+                    control: control,
+                    snapshotValue: control.value?.boolValue ?? false,
+                    isSwitch: true,
+                    onEvent: onEvent
+                )
 
             case "textInput":
                 VStack(alignment: .leading, spacing: 2) {
                     if let label = control.label, !label.isEmpty {
                         Text(label).font(.system(size: 11, weight: .medium)).opacity(0.7)
                     }
-                    TextField(
-                        control.placeholder ?? "",
-                        text: Binding(
-                            get: { control.value?.stringValue ?? "" },
-                            set: { onEvent(control.id, "change", $0, "") }
-                        )
+                    PanelTextFieldControl(
+                        control: control,
+                        snapshotValue: control.value?.stringValue ?? "",
+                        placeholder: control.placeholder ?? "",
+                        multiline: false,
+                        rows: 0,
+                        onEvent: onEvent
                     )
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 13))
-                    .disabled(control.disabled == true)
                 }
 
             case "textarea":
@@ -461,14 +456,14 @@ struct PanelControlView: View {
                     if let label = control.label, !label.isEmpty {
                         Text(label).font(.system(size: 11, weight: .medium)).opacity(0.7)
                     }
-                    TextEditor(text: Binding(
-                        get: { control.value?.stringValue ?? "" },
-                        set: { onEvent(control.id, "change", $0, "") }
-                    ))
-                    .font(.system(size: 13))
-                    .frame(height: CGFloat(control.rows ?? 3) * 20)
-                    .border(Color.gray.opacity(0.3), width: 1)
-                    .disabled(control.disabled == true)
+                    PanelTextFieldControl(
+                        control: control,
+                        snapshotValue: control.value?.stringValue ?? "",
+                        placeholder: "",
+                        multiline: true,
+                        rows: control.rows ?? 3,
+                        onEvent: onEvent
+                    )
                 }
 
             case "numberInput":
@@ -476,54 +471,37 @@ struct PanelControlView: View {
                     if let label = control.label, !label.isEmpty {
                         Text(label).font(.system(size: 11, weight: .medium)).opacity(0.7)
                     }
-                    TextField(
-                        "",
-                        text: Binding(
-                            get: { String(format: "%g", control.value?.doubleValue ?? 0) },
-                            set: { onEvent(control.id, "change", $0, "") }
-                        )
+                    PanelTextFieldControl(
+                        control: control,
+                        snapshotValue: String(format: "%g", control.value?.doubleValue ?? 0),
+                        placeholder: "",
+                        multiline: false,
+                        rows: 0,
+                        onEvent: onEvent
                     )
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 13))
-                    .disabled(control.disabled == true)
                 }
 
             case "range":
-                VStack(alignment: .leading, spacing: 2) {
-                    if let label = control.label, !label.isEmpty {
-                        HStack {
-                            Text(label).font(.system(size: 11, weight: .medium)).opacity(0.7)
-                            Spacer()
-                            Text(String(format: "%g", control.value?.doubleValue ?? 0))
-                                .font(.system(size: 11, design: .monospaced)).opacity(0.6)
-                        }
-                    }
-                    Slider(
-                        value: Binding(
-                            get: { control.value?.doubleValue ?? 0 },
-                            set: { onEvent(control.id, "change", String($0), "") }
-                        ),
-                        in: (control.min ?? 0)...(control.max ?? 100),
-                        step: control.step ?? 1
-                    )
-                    .disabled(control.disabled == true)
-                }
+                PanelSliderControl(
+                    control: control,
+                    snapshotValue: control.value?.doubleValue ?? 0,
+                    label: control.label,
+                    lower: control.min ?? 0,
+                    upper: control.max ?? 100,
+                    step: control.step ?? 1,
+                    onEvent: onEvent
+                )
 
             case "select":
                 VStack(alignment: .leading, spacing: 2) {
                     if let label = control.label, !label.isEmpty {
                         Text(label).font(.system(size: 11, weight: .medium)).opacity(0.7)
                     }
-                    Picker("", selection: Binding(
-                        get: { control.value?.stringValue ?? "" },
-                        set: { onEvent(control.id, "change", $0, "") }
-                    )) {
-                        ForEach(control.options ?? [], id: \.value) { opt in
-                            Text(opt.label).tag(opt.value)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .disabled(control.disabled == true)
+                    PanelSelectControl(
+                        control: control,
+                        snapshotValue: control.value?.stringValue ?? "",
+                        onEvent: onEvent
+                    )
                 }
 
             case "radio":
@@ -548,12 +526,11 @@ struct PanelControlView: View {
                     if let label = control.label, !label.isEmpty {
                         Text(label).font(.system(size: 11, weight: .medium)).opacity(0.7)
                     }
-                    ColorPicker("", selection: Binding(
-                        get: { Color(cssHex: control.value?.stringValue ?? "#000000") ?? .black },
-                        set: { onEvent(control.id, "change", $0.hexString, "") }
-                    ))
-                    .labelsHidden()
-                    .disabled(control.disabled == true)
+                    PanelColorControl(
+                        control: control,
+                        snapshotValue: control.value?.stringValue ?? "#000000",
+                        onEvent: onEvent
+                    )
                 }
 
             case "timer":
@@ -577,7 +554,7 @@ struct PanelControlView: View {
                             .opacity(0.7)
                     }
                     ForEach(control.controls ?? [], id: \.id) { child in
-                        PanelControlView(control: child, theme: theme, onEvent: onEvent)
+                        PanelControlView(control: child, theme: theme, onEvent: onEvent, allValues: allValues)
                     }
                 }
                 .padding(.leading, 4)
@@ -587,13 +564,14 @@ struct PanelControlView: View {
                     if let label = control.label, !label.isEmpty {
                         Text(label).font(.system(size: 11, weight: .medium)).opacity(0.7)
                     }
-                    TextField("YYYY-MM-DD", text: Binding(
-                        get: { control.value?.stringValue ?? "" },
-                        set: { onEvent(control.id, "change", $0, "") }
-                    ))
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 13))
-                    .disabled(control.disabled == true)
+                    PanelTextFieldControl(
+                        control: control,
+                        snapshotValue: control.value?.stringValue ?? "",
+                        placeholder: "YYYY-MM-DD",
+                        multiline: false,
+                        rows: 0,
+                        onEvent: onEvent
+                    )
                 }
 
             case "time":
@@ -601,13 +579,14 @@ struct PanelControlView: View {
                     if let label = control.label, !label.isEmpty {
                         Text(label).font(.system(size: 11, weight: .medium)).opacity(0.7)
                     }
-                    TextField("HH:MM", text: Binding(
-                        get: { control.value?.stringValue ?? "" },
-                        set: { onEvent(control.id, "change", $0, "") }
-                    ))
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 13))
-                    .disabled(control.disabled == true)
+                    PanelTextFieldControl(
+                        control: control,
+                        snapshotValue: control.value?.stringValue ?? "",
+                        placeholder: "HH:MM",
+                        multiline: false,
+                        rows: 0,
+                        onEvent: onEvent
+                    )
                 }
 
             default:
@@ -617,6 +596,252 @@ struct PanelControlView: View {
         }
     }
 
+}
+
+// MARK: - Local-state input controls
+//
+// Interactive controls keep their in-progress value in local @State instead of
+// reading directly from the panel snapshot. The snapshot is a remote source of
+// truth that updates asynchronously (native -> JS -> native, throttled), so a
+// fully-controlled binding reverts user input during that gap ("bounce back").
+// These subviews:
+//   - emit a change event only when the local value diverges from the snapshot
+//     (avoids echoing the value back to itself), and
+//   - adopt an external snapshot value only when the user is NOT actively
+//     editing (focused for text, dragging for slider).
+
+private struct PanelTextFieldControl: View {
+    let control: PanelControlSnapshot
+    let snapshotValue: String
+    let placeholder: String
+    let multiline: Bool
+    let rows: Int
+    let onEvent: (String, String, String, String) -> Void
+
+    @State private var text: String
+    @State private var suppressEmit = false
+    @FocusState private var focused: Bool
+
+    init(control: PanelControlSnapshot,
+         snapshotValue: String,
+         placeholder: String,
+         multiline: Bool,
+         rows: Int,
+         onEvent: @escaping (String, String, String, String) -> Void) {
+        self.control = control
+        self.snapshotValue = snapshotValue
+        self.placeholder = placeholder
+        self.multiline = multiline
+        self.rows = rows
+        self.onEvent = onEvent
+        _text = State(initialValue: snapshotValue)
+    }
+
+    var body: some View {
+        Group {
+            if multiline {
+                TextEditor(text: $text)
+                    .font(.system(size: 13))
+                    .frame(height: CGFloat(rows) * 20)
+                    .border(Color.gray.opacity(0.3), width: 1)
+            } else {
+                TextField(placeholder, text: $text)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 13))
+            }
+        }
+        .focused($focused)
+        .disabled(control.disabled == true)
+        .onChange(of: text) { newValue in
+            if suppressEmit { suppressEmit = false; return }
+            onEvent(control.id, "change", newValue, "")
+        }
+        .onChange(of: snapshotValue) { newValue in
+            if !focused && newValue != text {
+                suppressEmit = true
+                text = newValue
+            }
+        }
+    }
+}
+
+private struct PanelSliderControl: View {
+    let control: PanelControlSnapshot
+    let snapshotValue: Double
+    let label: String?
+    let onEvent: (String, String, String, String) -> Void
+
+    private let range: ClosedRange<Double>
+    private let step: Double
+
+    @State private var value: Double
+    @State private var editing = false
+    @State private var suppressEmit = false
+
+    init(control: PanelControlSnapshot,
+         snapshotValue: Double,
+         label: String?,
+         lower: Double,
+         upper: Double,
+         step: Double,
+         onEvent: @escaping (String, String, String, String) -> Void) {
+        self.control = control
+        self.snapshotValue = snapshotValue
+        self.label = label
+        self.onEvent = onEvent
+        let safeStep = step > 0 ? step : 1
+        let safeUpper = upper > lower ? upper : lower + safeStep
+        self.range = lower...safeUpper
+        self.step = safeStep
+        _value = State(initialValue: min(max(snapshotValue, lower), safeUpper))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if let label, !label.isEmpty {
+                HStack {
+                    Text(label).font(.system(size: 11, weight: .medium)).opacity(0.7)
+                    Spacer()
+                    Text(String(format: "%g", value))
+                        .font(.system(size: 11, design: .monospaced)).opacity(0.6)
+                }
+            }
+            Slider(value: $value, in: range, step: step, onEditingChanged: { editing = $0 })
+                .disabled(control.disabled == true)
+        }
+        .onChange(of: value) { newValue in
+            if suppressEmit { suppressEmit = false; return }
+            onEvent(control.id, "change", String(newValue), "")
+        }
+        .onChange(of: snapshotValue) { newValue in
+            guard !editing else { return }
+            let target = min(max(newValue, range.lowerBound), range.upperBound)
+            if target != value {
+                suppressEmit = true
+                value = target
+            }
+        }
+    }
+}
+
+private struct PanelToggleControl: View {
+    let control: PanelControlSnapshot
+    let snapshotValue: Bool
+    let isSwitch: Bool
+    let onEvent: (String, String, String, String) -> Void
+
+    @State private var value: Bool
+    @State private var suppressEmit = false
+
+    init(control: PanelControlSnapshot,
+         snapshotValue: Bool,
+         isSwitch: Bool,
+         onEvent: @escaping (String, String, String, String) -> Void) {
+        self.control = control
+        self.snapshotValue = snapshotValue
+        self.isSwitch = isSwitch
+        self.onEvent = onEvent
+        _value = State(initialValue: snapshotValue)
+    }
+
+    var body: some View {
+        Group {
+            if isSwitch {
+                Toggle(isOn: $value) {
+                    Text(control.label ?? "").font(.system(size: 13))
+                }
+                .toggleStyle(.switch)
+            } else {
+                Toggle(isOn: $value) {
+                    Text(control.label ?? "").font(.system(size: 13))
+                }
+                .toggleStyle(.checkbox)
+            }
+        }
+        .disabled(control.disabled == true)
+        .onChange(of: value) { newValue in
+            if suppressEmit { suppressEmit = false; return }
+            onEvent(control.id, "change", newValue ? "true" : "false", "")
+        }
+        .onChange(of: snapshotValue) { newValue in
+            if newValue != value {
+                suppressEmit = true
+                value = newValue
+            }
+        }
+    }
+}
+
+private struct PanelSelectControl: View {
+    let control: PanelControlSnapshot
+    let snapshotValue: String
+    let onEvent: (String, String, String, String) -> Void
+
+    @State private var selection: String
+    @State private var suppressEmit = false
+
+    init(control: PanelControlSnapshot,
+         snapshotValue: String,
+         onEvent: @escaping (String, String, String, String) -> Void) {
+        self.control = control
+        self.snapshotValue = snapshotValue
+        self.onEvent = onEvent
+        _selection = State(initialValue: snapshotValue)
+    }
+
+    var body: some View {
+        Picker("", selection: $selection) {
+            ForEach(control.options ?? [], id: \.value) { opt in
+                Text(opt.label).tag(opt.value)
+            }
+        }
+        .pickerStyle(.menu)
+        .disabled(control.disabled == true)
+        .onChange(of: selection) { newValue in
+            if suppressEmit { suppressEmit = false; return }
+            onEvent(control.id, "change", newValue, "")
+        }
+        .onChange(of: snapshotValue) { newValue in
+            if newValue != selection {
+                suppressEmit = true
+                selection = newValue
+            }
+        }
+    }
+}
+
+private struct PanelColorControl: View {
+    let control: PanelControlSnapshot
+    let snapshotValue: String
+    let onEvent: (String, String, String, String) -> Void
+
+    @State private var color: Color
+    @State private var suppressEmit = false
+
+    init(control: PanelControlSnapshot,
+         snapshotValue: String,
+         onEvent: @escaping (String, String, String, String) -> Void) {
+        self.control = control
+        self.snapshotValue = snapshotValue
+        self.onEvent = onEvent
+        _color = State(initialValue: Color(cssHex: snapshotValue) ?? .black)
+    }
+
+    var body: some View {
+        ColorPicker("", selection: $color)
+            .labelsHidden()
+            .disabled(control.disabled == true)
+            .onChange(of: color) { newValue in
+                if suppressEmit { suppressEmit = false; return }
+                onEvent(control.id, "change", newValue.hexString, "")
+            }
+            .onChange(of: snapshotValue) { newValue in
+                if newValue != color.hexString {
+                    suppressEmit = true
+                    color = Color(cssHex: newValue) ?? .black
+                }
+            }
+    }
 }
 
 private func formatTimerMs(_ ms: Double, format: String) -> String {
@@ -640,7 +865,25 @@ private func formatTimerMs(_ ms: Double, format: String) -> String {
 /// View for a complete panel.
 struct PanelCardView: View {
     let snapshot: PanelSnapshot
+    /// (panelId, controlId, eventName, value, extra)
     let onEvent: (String, String, String, String, String) -> Void
+
+    private func collectValues() -> [String: String] {
+        var out: [String: String] = [:]
+        func visit(_ controls: [PanelControlSnapshot]?) {
+            guard let controls else { return }
+            for c in controls {
+                switch c.type {
+                case "section": visit(c.controls)
+                case "button", "text", "timer": continue
+                default:
+                    if let v = c.value { out[c.id] = v.stringValue }
+                }
+            }
+        }
+        visit(snapshot.controls)
+        return out
+    }
 
     private var bg: Color {
         Color(cssHex: snapshot.theme?.background ?? "") ?? Color(red: 0.059, green: 0.090, blue: 0.165).opacity(0.96)
@@ -677,10 +920,12 @@ struct PanelCardView: View {
                     .opacity(0.82)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            let values = collectValues()
             ForEach(snapshot.controls ?? [], id: \.id) { control in
-                PanelControlView(control: control, theme: snapshot.theme) { controlId, eventName, value, extra in
-                    onEvent(snapshot.id, controlId, eventName, value, extra)
-                }
+                PanelControlView(control: control, theme: snapshot.theme, onEvent: { controlId, eventName, value, _ in
+                    let valuesJSON = (try? String(data: JSONSerialization.data(withJSONObject: values), encoding: .utf8)) ?? "{}"
+                    onEvent(snapshot.id, controlId, eventName, value, valuesJSON)
+                }, allValues: values)
             }
         }
         .padding(12)
@@ -796,9 +1041,17 @@ public final class PanelOverlayPanelController {
             let panel = slot.panel!
             if changed || !panel.isVisible {
                 resizeAndPosition(panel, position: pos)
-            }
-            if !panel.isVisible {
-                panel.orderFrontRegardless()
+                if !panel.isVisible {
+                    panel.orderFrontRegardless()
+                }
+                // Schedule a second resize after SwiftUI processes the
+                // @Published change — corrects the first-display case
+                // where fittingSize measured stale/empty content above.
+                if changed {
+                    DispatchQueue.main.async { [weak self] in
+                        self?.resizeAndPosition(panel, position: pos)
+                    }
+                }
             }
         }
     }

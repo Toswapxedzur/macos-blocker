@@ -161,6 +161,9 @@ public struct BlockerWebView: _CBViewRepresentable {
 
         deinit {
             usagePushTimer?.invalidate()
+            if let wv = webView {
+                wv.configuration.userContentController.removeScriptMessageHandler(forName: "cbBridge")
+            }
         }
 
         func startUsagePush() {

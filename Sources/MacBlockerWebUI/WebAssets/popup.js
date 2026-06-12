@@ -5673,6 +5673,7 @@ const logFeedList = document.getElementById("logFeedList");
 const logFeedEmpty = document.getElementById("logFeedEmpty");
 const logFeedCount = document.getElementById("logFeedCount");
 const logFeedClear = document.getElementById("logFeedClear");
+const logFeedDownload = document.getElementById("logFeedDownload");
 const logFeedSeenIds = new Set();
 
 function formatLogFeedTime(ts) {
@@ -5764,6 +5765,27 @@ function clearLogFeed() {
 
 if (logFeedClear) {
   logFeedClear.addEventListener("click", clearLogFeed);
+}
+
+if (logFeedDownload) {
+  logFeedDownload.addEventListener("click", () => {
+    const entries = [];
+    if (logFeedList) {
+      logFeedList.querySelectorAll(".log-feed-entry").forEach((el) => {
+        const meta = el.querySelector(".log-feed-entry-meta");
+        const msg = el.querySelector(".log-feed-entry-message");
+        entries.push((meta ? meta.textContent : "") + " " + (msg ? msg.textContent : ""));
+      });
+    }
+    if (entries.length === 0) { entries.push("(no log entries)"); }
+    const blob = new Blob([entries.join("\n")], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "blocker-logs-" + new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19) + ".txt";
+    a.click();
+    URL.revokeObjectURL(url);
+  });
 }
 
 if (chrome.runtime && chrome.runtime.onMessage) {

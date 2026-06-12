@@ -8,14 +8,14 @@ final class CustomRuleEngineTests: XCTestCase {
         let runtime = try CustomJavaScriptPolicyRuntime()
         try runtime.load(groupID: "g", source: """
         (event, helpers) => {
-          event.registerOpenWebEvent("yt", (ev, h) => {
+          event.registerAppChangedEvent("yt", (ev, h) => {
             if (h.getDomainHelper().isYouTubeHost(ev.hostname)) ev.block();
           });
         }
         """)
 
         let result = try runtime.dispatch(
-            CustomRuleEvent(type: "openWebEvent", groupID: "g",
+            CustomRuleEvent(type: "appChangedEvent", groupID: "g",
                             hostname: "www.youtube.com",
                             data: ["isBrowser": "true"])
         )
@@ -23,7 +23,7 @@ final class CustomRuleEngineTests: XCTestCase {
         XCTAssertFalse(blockIntents.isEmpty)
 
         let allowedResult = try runtime.dispatch(
-            CustomRuleEvent(type: "openWebEvent", groupID: "g", hostname: "example.com")
+            CustomRuleEvent(type: "appChangedEvent", groupID: "g", hostname: "example.com")
         )
         let allowedBlocks = allowedResult.intents.filter { $0.action == "blockSite" || $0.action == "blockApp" }
         XCTAssertTrue(allowedBlocks.isEmpty)
@@ -52,7 +52,7 @@ final class CustomRuleEngineTests: XCTestCase {
         let runtime = try CustomJavaScriptPolicyRuntime()
         try runtime.load(groupID: "g", source: """
         (event, helpers) => {
-          event.registerWebChangedEvent("count", (ev, h) => {
+          event.registerAppChangedEvent("count", (ev, h) => {
             const p = h.getPersistenceHelper();
             const n = (p.get("n", 0)) + 1;
             p.set("n", n);
@@ -61,9 +61,9 @@ final class CustomRuleEngineTests: XCTestCase {
         }
         """)
 
-        XCTAssertTrue(try runtime.dispatch(CustomRuleEvent(type: "webChangedEvent", groupID: "g")).intents.filter { $0.action == "blockSite" }.isEmpty)
-        XCTAssertTrue(try runtime.dispatch(CustomRuleEvent(type: "webChangedEvent", groupID: "g")).intents.filter { $0.action == "blockSite" }.isEmpty)
-        let third = try runtime.dispatch(CustomRuleEvent(type: "webChangedEvent", groupID: "g"))
+        XCTAssertTrue(try runtime.dispatch(CustomRuleEvent(type: "appChangedEvent", groupID: "g")).intents.filter { $0.action == "blockSite" }.isEmpty)
+        XCTAssertTrue(try runtime.dispatch(CustomRuleEvent(type: "appChangedEvent", groupID: "g")).intents.filter { $0.action == "blockSite" }.isEmpty)
+        let third = try runtime.dispatch(CustomRuleEvent(type: "appChangedEvent", groupID: "g"))
         let blockIntents = third.intents.filter { $0.action == "blockSite" }
         XCTAssertEqual(blockIntents.count, 1)
     }
@@ -72,14 +72,14 @@ final class CustomRuleEngineTests: XCTestCase {
         let runtime = try CustomJavaScriptPolicyRuntime()
         try runtime.load(groupID: "g", source: """
         (event, helpers) => {
-          event.registerOpenWebEvent("r", (ev, h) => {
+          event.registerAppChangedEvent("r", (ev, h) => {
             ev.setRedirectLink("https://example.com/focus");
             ev.setResult(-1);
           });
         }
         """)
 
-        let decisions = try runtime.dispatch(CustomRuleEvent(type: "openWebEvent", groupID: "g")).decisions
+        let decisions = try runtime.dispatch(CustomRuleEvent(type: "appChangedEvent", groupID: "g")).decisions
         XCTAssertEqual(decisions.first?.action, .shield)
         XCTAssertNil(decisions.first?.metadata["redirect"])
     }
@@ -88,13 +88,13 @@ final class CustomRuleEngineTests: XCTestCase {
         let runtime = try CustomJavaScriptPolicyRuntime()
         try runtime.load(groupID: "g", source: """
         (event, helpers) => {
-          event.registerWebChangedEvent("dom", (ev, h) => {
+          event.registerAppChangedEvent("dom", (ev, h) => {
             h.getDOMHelper().hide(".feed");
           });
         }
         """)
 
-        let decisions = try runtime.dispatch(CustomRuleEvent(type: "webChangedEvent", groupID: "g")).decisions
+        let decisions = try runtime.dispatch(CustomRuleEvent(type: "appChangedEvent", groupID: "g")).decisions
         XCTAssertEqual(decisions.first?.action, .log)
         XCTAssertTrue(decisions.first?.reason.contains("getDOMHelper") ?? false)
     }
@@ -103,7 +103,7 @@ final class CustomRuleEngineTests: XCTestCase {
         let runtime = try CustomJavaScriptPolicyRuntime()
         try runtime.load(groupID: "g", source: """
         (event, helpers) => {
-          event.registerOpenWebEvent("shorts", (ev, h) => {
+          event.registerAppChangedEvent("shorts", (ev, h) => {
             const yt = h.getPlatformHelper().youtube();
             if (yt.isShortUrl(ev.url)) ev.block("youtube.com");
           }, { priority: 5 });
@@ -111,7 +111,7 @@ final class CustomRuleEngineTests: XCTestCase {
         """)
 
         let result = try runtime.dispatch(
-            CustomRuleEvent(type: "openWebEvent", groupID: "g", url: "https://youtube.com/shorts/abc123")
+            CustomRuleEvent(type: "appChangedEvent", groupID: "g", url: "https://youtube.com/shorts/abc123")
         )
         let blockIntents = result.intents.filter { $0.action == "blockSite" }
         XCTAssertFalse(blockIntents.isEmpty)
@@ -122,7 +122,7 @@ final class CustomRuleEngineTests: XCTestCase {
         try runtime.load(groupID: "g", source: """
         (event, helpers) => {
           event.registerTickEvent("a", () => {});
-          event.registerWebChangedEvent("b", () => {});
+          event.registerAppChangedEvent("b", () => {});
         }
         """)
         XCTAssertTrue(try runtime.dispatch(CustomRuleEvent(type: "snoozePress", groupID: "g")).decisions.isEmpty)
@@ -242,7 +242,7 @@ final class CustomRuleEngineTests: XCTestCase {
         let runtime = try CustomJavaScriptPolicyRuntime()
         try runtime.load(groupID: "g", source: """
         (event, helpers) => {
-          event.registerOpenWebEvent("close-yt", (ev, h) => {
+          event.registerAppChangedEvent("close-yt", (ev, h) => {
             const win = h.getWindowHelper();
             if (ev.hostname.includes("youtube.com")) {
               win.closeTab();
@@ -252,7 +252,7 @@ final class CustomRuleEngineTests: XCTestCase {
         """)
 
         let result = try runtime.dispatch(
-            CustomRuleEvent(type: "openWebEvent", groupID: "g",
+            CustomRuleEvent(type: "appChangedEvent", groupID: "g",
                             url: "https://youtube.com/watch?v=123", hostname: "youtube.com")
         )
         let closeIntents = result.intents.filter { $0.action == "closeTab" }
@@ -686,7 +686,7 @@ final class CustomRuleEngineTests: XCTestCase {
               id: "t", direction: "backward", currentMs: 5000
             });
           });
-          event.registerWebChangedEvent("noop", (ev, h) => {});
+          event.registerAppChangedEvent("noop", (ev, h) => {});
         }
         """)
 
@@ -698,9 +698,9 @@ final class CustomRuleEngineTests: XCTestCase {
         _ = try runtime.dispatch(
             CustomRuleEvent(type: "tickEvent", groupID: "g", data: ["intervalMs": "1000"])
         )
-        // webChangedEvent should NOT further decrement
+        // appChangedEvent should NOT further decrement
         let r = try runtime.dispatch(
-            CustomRuleEvent(type: "webChangedEvent", groupID: "g", data: ["intervalMs": "1000"])
+            CustomRuleEvent(type: "appChangedEvent", groupID: "g", data: ["intervalMs": "1000"])
         )
         let t = r.timers.first { $0.id == "t" }
         XCTAssertNotNil(t)

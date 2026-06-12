@@ -14,44 +14,46 @@ enum ScreenTimeScheduler {
         center.stopMonitoring()
 
         for entry in plan.entries where !entry.allTargetIDs.isEmpty {
-            let activity = DeviceActivityName(entry.groupID)
-            let schedule = makeSchedule(for: entry)
+            let schedules = makeSchedules(for: entry)
 
-            do {
-                if let threshold = entry.thresholdMinutes, threshold > 0 {
-                    let eventName = DeviceActivityEvent.Name("\(entry.groupID).threshold")
-                    let event = makeThresholdEvent(for: entry, minutes: threshold)
-                    try center.startMonitoring(
-                        activity,
-                        during: schedule,
-                        events: [eventName: event]
-                    )
-                } else {
-                    try center.startMonitoring(activity, during: schedule)
+            for (windowIndex, schedule) in schedules.enumerated() {
+                let suffix = schedules.count > 1 ? ".\(windowIndex)" : ""
+                let activity = DeviceActivityName("\(entry.groupID)\(suffix)")
+
+                do {
+                    if let threshold = entry.thresholdMinutes, threshold > 0 {
+                        let eventName = DeviceActivityEvent.Name("\(entry.groupID).threshold\(suffix)")
+                        let event = makeThresholdEvent(for: entry, minutes: threshold)
+                        try center.startMonitoring(
+                            activity,
+                            during: schedule,
+                            events: [eventName: event]
+                        )
+                    } else {
+                        try center.startMonitoring(activity, during: schedule)
+                    }
+                } catch {
+                    continue
                 }
-            } catch {
-                // A malformed window or unauthorized target should not abort
-                // the rest of the schedule sync.
-                continue
             }
         }
     }
 
-    private static func makeSchedule(for entry: EnforcementPlanEntry) -> DeviceActivitySchedule {
-        // Use the first window when present; otherwise monitor all day. A fuller
-        // build would create one activity per window.
-        if let window = entry.windows.first {
-            return DeviceActivitySchedule(
+    private static func makeSchedules(for entry: EnforcementPlanEntry) -> [DeviceActivitySchedule] {
+        guard !entry.windows.isEmpty else {
+            return [DeviceActivitySchedule(
+                intervalStart: DateComponents(hour: 0, minute: 0),
+                intervalEnd: DateComponents(hour: 23, minute: 59),
+                repeats: true
+            )]
+        }
+        return entry.windows.map { window in
+            DeviceActivitySchedule(
                 intervalStart: DateComponents(hour: window.start.hour, minute: window.start.minute),
                 intervalEnd: DateComponents(hour: window.end.hour, minute: window.end.minute),
                 repeats: true
             )
         }
-        return DeviceActivitySchedule(
-            intervalStart: DateComponents(hour: 0, minute: 0),
-            intervalEnd: DateComponents(hour: 23, minute: 59),
-            repeats: true
-        )
     }
 
     private static func makeThresholdEvent(

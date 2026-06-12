@@ -290,15 +290,22 @@
       countRegistered: function () { return 0; },
       post: noop
     };
+    var MAX_HANDLERS = 1000;
+    var registered = 0;
     var typed = [
-      "TickEvent", "OpenWebEvent", "CloseWebEvent", "SwitchWebEvent",
-      "SwitchDomainEvent", "WebChangedEvent", "TimerEnded", "SnoozePress",
-      "PanelEvent", "LocalFileEvent", "PageHeartbeatEvent",
+      "TickEvent", "TimerEnded", "SnoozePress",
+      "PanelEvent", "LocalFileEvent",
+      "OpenAppEvent", "CloseAppEvent", "FocusEvent", "UnfocusEvent",
+      "MinimizeEvent", "UnminimizeEvent", "SwitchAppEvent", "AppChangedEvent",
       "UsageThresholdReached", "ScheduleChanged", "ShieldAction"
     ];
+    function cappedRegister() {
+      if (registered < MAX_HANDLERS) { registered++; onRegister(); return true; }
+      return false;
+    }
     typed.forEach(function (name) {
-      api["register" + name] = function () { onRegister(); return true; };
-      api["register" + name + "Event"] = function () { onRegister(); return true; };
+      api["register" + name] = cappedRegister;
+      api["register" + name + "Event"] = cappedRegister;
       api["get" + name] = function () { return null; };
       api["get" + name + "s"] = function () { return {}; };
       api["get" + name + "Event"] = function () { return null; };
@@ -310,7 +317,7 @@
       get: function (target, prop) {
         if (prop in target) return target[prop];
         if (typeof prop === "string" && prop.indexOf("register") === 0) {
-          return function () { onRegister(); return true; };
+          return cappedRegister;
         }
         return noop;
       }
