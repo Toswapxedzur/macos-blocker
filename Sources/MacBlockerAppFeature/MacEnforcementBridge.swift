@@ -42,6 +42,12 @@ public final class MacEnforcementBridge: ObservableObject {
     private var timer: Timer?
     private let tickInterval: TimeInterval
     private var lastSampleAt: Date?
+    /// Group ids whose current local usage total has already been seeded to the
+    /// web-app bridge cluster. The first report after a group joins a cluster
+    /// carries a delta-free seed (its existing local total) so prior Mac usage
+    /// isn't lost when it links; subsequent reports carry only fresh increments.
+    /// Cleared when a group leaves its cluster so a re-link re-seeds.
+    private var clusterSeededGroups: Set<String> = []
 
     // Custom-rule runtime state
     private var ruleRuntime: CustomJavaScriptPolicyRuntime?
@@ -68,6 +74,10 @@ public final class MacEnforcementBridge: ObservableObject {
     private static let panelThrottleInterval: TimeInterval = 0.10
     private var lastPanelFireAt: [String: Date] = [:]
     private var pendingPanelEvents: [String: (groupID: String, data: [String: String])] = [:]
+
+    // System overlay panel events (e.g. parental PIN entry) buffered for the
+    // web editor to poll via drainSystemPanelEventsJSON().
+    private var systemPanelEvents: [[String: String]] = []
     #endif
 
     public init(webStore: BlockerWebStore = BlockerWebStore(), sweepInterval: TimeInterval = 1.0) {
@@ -128,6 +138,38 @@ public final class MacEnforcementBridge: ObservableObject {
         #endif
     }
 
+    /// Show a system overlay panel (e.g. parental PIN entry) requested by the
+    /// web editor. `json` is a serialized `PanelSnapshot`.
+    public func showSystemPanel(json: String) {
+        #if os(macOS)
+        guard let data = json.data(using: .utf8),
+              let snapshot = try? JSONDecoder().decode(PanelSnapshot.self, from: data) else { return }
+        panelOverlay.showSystemPanel(snapshot)
+        #endif
+    }
+
+    /// Dismiss a system overlay panel by id (empty id dismisses all).
+    public func dismissSystemPanel(id: String) {
+        #if os(macOS)
+        panelOverlay.dismissSystemPanel(id: id)
+        #endif
+    }
+
+    /// Drains buffered system-panel interaction events as a JSON array string
+    /// (or nil when empty). Polled by the web editor each second.
+    public func drainSystemPanelEventsJSON() -> String? {
+        #if os(macOS)
+        guard !systemPanelEvents.isEmpty else { return nil }
+        let events = systemPanelEvents
+        systemPanelEvents.removeAll()
+        guard let data = try? JSONSerialization.data(withJSONObject: events),
+              let json = String(data: data, encoding: .utf8) else { return nil }
+        return json
+        #else
+        return nil
+        #endif
+    }
+
     /// Fire a `localFileEvent` for the given group. Called after a file
     /// operation initiated by a custom rule completes.
     public func fireLocalFileEvent(groupID: String, data: [String: String]) {
@@ -161,6 +203,12 @@ public final class MacEnforcementBridge: ObservableObject {
                 "value": value
             ]
             if !extra.isEmpty { data["valuesJSON"] = extra }
+            // System panels are driven by the web editor (parental PIN entry),
+            // not a custom rule: buffer their events for the editor to poll.
+            if groupID == PanelOverlayPanelController.systemGroupID {
+                self.systemPanelEvents.append(data)
+                return
+            }
             if eventName == "click" {
                 self.firePanelEvent(groupID: groupID, data: data)
                 return
@@ -337,12 +385,17 @@ public final class MacEnforcementBridge: ObservableObject {
             toastOverlay.show(message: log.message, level: log.level)
         }
 
-        // 7. Render interactive panels from getPanelHelper() — only when
-        //    the JS runtime signals a state change, so in-progress user
-        //    input isn't overwritten by stale tick snapshots.
-        if !dispatchOutput.panels.isEmpty {
-            panelOverlay.update(panels: dispatchOutput.panels)
+        // 7. Render interactive panels from getPanelHelper(). The overlay is
+        //    an authoritative mirror of every enabled group's current panels,
+        //    so panels from a disabled or no-longer-active group disappear.
+        //    In-progress user input is preserved on the native side (the
+        //    overlay dedupes identical snapshots and controls hold edits in
+        //    local view state).
+        var panelsByGroupID: [String: [PanelSnapshot]] = [:]
+        for panel in dispatchOutput.panels {
+            panelsByGroupID[panel.groupId ?? "", default: []].append(panel)
         }
+        panelOverlay.replaceAll(panelsByGroupID)
 
         // Track state for next tick.
         lastFrontmost = frontmost
@@ -594,9 +647,7 @@ public final class MacEnforcementBridge: ObservableObject {
 
         processWindowIntents(result.intents, frontmost: frontmost)
 
-        if !result.panels.isEmpty {
-            panelOverlay.update(panels: result.panels)
-        }
+        panelOverlay.update(panels: result.panels, forGroup: group.id)
     }
 
     private func ensureRuntime() -> CustomJavaScriptPolicyRuntime? {
@@ -646,6 +697,10 @@ public final class MacEnforcementBridge: ObservableObject {
             runtime.unload(groupID: groupID)
             loadedRuleSources.removeValue(forKey: groupID)
         }
+        // Immediately drop any panels this group rendered so they don't
+        // linger on screen until the next tick (or forever if no other
+        // group triggers a panel refresh).
+        panelOverlay.removePanels(forGroup: groupID)
         #endif
     }
 
@@ -988,10 +1043,62 @@ public final class MacEnforcementBridge: ObservableObject {
                 }
             }
 
+            var addedMs: Double = 0
             if let frontmost, elapsed > 0, group.isActive(at: now),
                group.targets.contains(where: { $0.kind == .application && $0.id == frontmost }) {
-                timers[gid, default: 0] += elapsed * 1000
+                addedMs = elapsed * 1000
+                timers[gid, default: 0] += addedMs
                 timerWrites[gid] = timers[gid]
+            }
+
+            // Web-app bridge: a clustered Default group shares ONE live budget.
+            // We are the accrual owner for app-time, so report this tick's
+            // increment to the hub (the single accumulator) and fold the
+            // authoritative shared total back into the local timer so the Mac
+            // display + enforcement reflect time spent on every linked member
+            // (browser website time included). reportLocalUsage is a no-op when
+            // the group isn't clustered, so the gate keeps non-bridge groups
+            // entirely local.
+            if ConnectionHub.shared.sharedUsage(groupName: group.name) != nil {
+                // We report resetAtMs:0 (no rollover signal) because the Mac's
+                // local window anchor (nowMs-based) is NOT comparable to the
+                // browser's; letting it drive the hub's rollover would wipe the
+                // shared budget on first report. The browser is the reset
+                // authority; we just adopt the hub's anchor on fold so our local
+                // enforcement window stays aligned.
+                if clusterSeededGroups.contains(gid) {
+                    ConnectionHub.shared.reportLocalUsage(
+                        groupName: group.name,
+                        deltaMs: addedMs,
+                        resetAtMs: 0
+                    )
+                } else {
+                    // First report since joining: seed our current local total
+                    // (which already includes this tick's accrual) with no delta,
+                    // so prior Mac usage is preserved on the shared budget.
+                    ConnectionHub.shared.reportLocalUsage(
+                        groupName: group.name,
+                        deltaMs: 0,
+                        resetAtMs: 0,
+                        seedMs: timers[gid] ?? 0
+                    )
+                    clusterSeededGroups.insert(gid)
+                }
+                if let shared = ConnectionHub.shared.sharedUsage(groupName: group.name) {
+                    let total = max(0, shared.ms)
+                    if timers[gid] != total {
+                        timers[gid] = total
+                        timerWrites[gid] = total
+                    }
+                    if shared.resetAtMs > 0, resetAt[gid] != shared.resetAtMs {
+                        resetAt[gid] = shared.resetAtMs
+                        resetWrites[gid] = shared.resetAtMs
+                    }
+                }
+            } else {
+                // Group isn't clustered: forget any seed flag so a future re-link
+                // re-seeds its then-current local total.
+                clusterSeededGroups.remove(gid)
             }
         }
 

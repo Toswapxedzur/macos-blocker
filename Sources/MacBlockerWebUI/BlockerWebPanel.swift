@@ -13,6 +13,21 @@ public struct BlockerWebPanel: View {
     private let onRunCustomGroup: ((String, String) -> Void)?
     private let onSnoozePress: ((String) -> Void)?
     private let onPanelEvent: ((String, [String: String]) -> Void)?
+    private let onShowSystemPanel: ((String) -> Void)?
+    private let onDismissSystemPanel: ((String) -> Void)?
+    private let systemPanelEventsJSON: (() -> String?)?
+    private let permissionStateJSON: (() -> String?)?
+    private let onRequestAppBlockingPermission: (() -> Void)?
+    private let onOpenPermissionSettings: (() -> Void)?
+    private let connectionStatusJSON: (() -> String?)?
+    private let onConnectionServerStart: ((Int) -> Void)?
+    private let onConnectionServerStop: (() -> Void)?
+    private let clustersJSON: (() -> String?)?
+    private let groupRejectionJSON: (() -> String?)?
+    private let onGroupsAnnounce: ((String) -> Void)?
+    private let onGroupConnect: ((String) -> Void)?
+    private let onGroupDisconnect: ((String) -> Void)?
+    private let onGroupSync: ((String) -> Void)?
 
     public init(
         store: BlockerWebStore = BlockerWebStore(),
@@ -21,7 +36,22 @@ public struct BlockerWebPanel: View {
         onStorePersisted: (() -> Void)? = nil,
         onRunCustomGroup: ((String, String) -> Void)? = nil,
         onSnoozePress: ((String) -> Void)? = nil,
-        onPanelEvent: ((String, [String: String]) -> Void)? = nil
+        onPanelEvent: ((String, [String: String]) -> Void)? = nil,
+        onShowSystemPanel: ((String) -> Void)? = nil,
+        onDismissSystemPanel: ((String) -> Void)? = nil,
+        systemPanelEventsJSON: (() -> String?)? = nil,
+        permissionStateJSON: (() -> String?)? = nil,
+        onRequestAppBlockingPermission: (() -> Void)? = nil,
+        onOpenPermissionSettings: (() -> Void)? = nil,
+        connectionStatusJSON: (() -> String?)? = nil,
+        onConnectionServerStart: ((Int) -> Void)? = nil,
+        onConnectionServerStop: (() -> Void)? = nil,
+        clustersJSON: (() -> String?)? = nil,
+        groupRejectionJSON: (() -> String?)? = nil,
+        onGroupsAnnounce: ((String) -> Void)? = nil,
+        onGroupConnect: ((String) -> Void)? = nil,
+        onGroupDisconnect: ((String) -> Void)? = nil,
+        onGroupSync: ((String) -> Void)? = nil
     ) {
         self.store = store
         self.appInventoryJSON = appInventoryJSON
@@ -30,6 +60,21 @@ public struct BlockerWebPanel: View {
         self.onRunCustomGroup = onRunCustomGroup
         self.onSnoozePress = onSnoozePress
         self.onPanelEvent = onPanelEvent
+        self.onShowSystemPanel = onShowSystemPanel
+        self.onDismissSystemPanel = onDismissSystemPanel
+        self.systemPanelEventsJSON = systemPanelEventsJSON
+        self.permissionStateJSON = permissionStateJSON
+        self.onRequestAppBlockingPermission = onRequestAppBlockingPermission
+        self.onOpenPermissionSettings = onOpenPermissionSettings
+        self.connectionStatusJSON = connectionStatusJSON
+        self.onConnectionServerStart = onConnectionServerStart
+        self.onConnectionServerStop = onConnectionServerStop
+        self.clustersJSON = clustersJSON
+        self.groupRejectionJSON = groupRejectionJSON
+        self.onGroupsAnnounce = onGroupsAnnounce
+        self.onGroupConnect = onGroupConnect
+        self.onGroupDisconnect = onGroupDisconnect
+        self.onGroupSync = onGroupSync
     }
 
     public var body: some View {
@@ -40,7 +85,22 @@ public struct BlockerWebPanel: View {
             onStorePersisted: onStorePersisted,
             onRunCustomGroup: onRunCustomGroup,
             onSnoozePress: onSnoozePress,
-            onPanelEvent: onPanelEvent
+            onPanelEvent: onPanelEvent,
+            onShowSystemPanel: onShowSystemPanel,
+            onDismissSystemPanel: onDismissSystemPanel,
+            systemPanelEventsJSON: systemPanelEventsJSON,
+            permissionStateJSON: permissionStateJSON,
+            onRequestAppBlockingPermission: onRequestAppBlockingPermission,
+            onOpenPermissionSettings: onOpenPermissionSettings,
+            connectionStatusJSON: connectionStatusJSON,
+            onConnectionServerStart: onConnectionServerStart,
+            onConnectionServerStop: onConnectionServerStop,
+            clustersJSON: clustersJSON,
+            groupRejectionJSON: groupRejectionJSON,
+            onGroupsAnnounce: onGroupsAnnounce,
+            onGroupConnect: onGroupConnect,
+            onGroupDisconnect: onGroupDisconnect,
+            onGroupSync: onGroupSync
         )
         .ignoresSafeArea()
     }

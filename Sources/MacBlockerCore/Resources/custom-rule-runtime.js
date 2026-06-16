@@ -597,7 +597,7 @@ var MacBlockerRuntime = (function () {
   var PANEL_WIDTHS = { small:1, medium:1, large:1 };
   var PANEL_LAYOUTS = { vertical:1, compact:1, comfortable:1, spacious:1, inline:1, row:1, wrap:1, twoColumn:1, grid:1, split:1, form:1, toolbar:1, stack:1 };
   var PANEL_ROLES = { region:1, dialog:1, alert:1, status:1, form:1, group:1 };
-  var PANEL_CONTROL_TYPES = { text:1, checkbox:1, select:1, textInput:1, textarea:1, button:1, section:1, timer:1, numberInput:1, range:1, toggle:1, radio:1, date:1, time:1, color:1 };
+  var PANEL_CONTROL_TYPES = { text:1, checkbox:1, select:1, textInput:1, textarea:1, button:1, section:1, timer:1, numberInput:1, range:1, toggle:1, radio:1, date:1, time:1, color:1, pin:1 };
   var PANEL_CONTROL_ACTIONS = { submit:1, cancel:1, close:1 };
 
   function truncateText(value, max) {
@@ -701,6 +701,10 @@ var MacBlockerRuntime = (function () {
     if (type === "date") { var t = String(value == null ? "" : value).trim(); return /^\d{4}-\d{2}-\d{2}$/.test(t) ? t : ""; }
     if (type === "time") { var t2 = String(value == null ? "" : value).trim(); return /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(t2) ? t2 : ""; }
     if (type === "color") { var t3 = String(value == null ? "" : value).trim(); return /^#[0-9a-f]{6}$/i.test(t3) ? t3 : "#000000"; }
+    if (type === "pin") {
+      var len = (control && control.length) ? Math.max(3, Math.min(12, Math.floor(Number(control.length)) || 6)) : 6;
+      return String(value == null ? "" : value).replace(/\D/g, "").slice(0, len);
+    }
     if (type === "section" || type === "timer") return "";
     return truncateText(value, 512);
   }
@@ -764,6 +768,12 @@ var MacBlockerRuntime = (function () {
       }
     }
     if (type === "textInput" || type === "textarea") out.placeholder = truncateText(control.placeholder || "", 500);
+    if (type === "pin") {
+      out.length = Math.max(3, Math.min(12, Math.floor(Number(control.length)) || 6));
+      out.masked = control.masked !== false;
+      out.value = sanitizePanelValue(type, value, out);
+      if (control.autoSubmit === true) out.autoSubmit = true;
+    }
     if (type === "select" || type === "radio") out.options = sanitizePanelOptions(control.options, value);
     if (type === "timer") {
       var timerId = sanitizePanelId(control.timerId || (control.timer && control.timer.id));
@@ -1683,18 +1693,20 @@ var MacBlockerRuntime = (function () {
           }
         }
       }
-      // Only collect panel snapshots when JS-side state actually changed,
-      // so the native UI keeps user's in-progress input between changes.
+      // Always report this group's CURRENT panel snapshots. The native
+      // overlay is an authoritative mirror of JS panel state, so it can
+      // remove panels that are gone (e.g. a disabled group reports none).
+      // In-progress user input is preserved on the native side: the overlay
+      // dedupes identical snapshots and the controls hold edits in local
+      // view state, so re-emitting unchanged panels every tick is safe.
       var visiblePanels = [];
       var panelBucket = panelsByGroup[rawEvent.groupID];
       if (panelBucket && Object.keys(panelBucket).length > 0) {
         var ph = panelHelper(rawEvent.groupID, function () { return timersByGroup[rawEvent.groupID] || {}; });
-        if (ph.__cb_hasChanged()) {
-          var focusApp = (rawEvent.data && rawEvent.data.appId) || "";
-          ph.__cb_refreshDisplayedPanels(focusApp);
-          visiblePanels = ph.__cb_getDisplayedPanelSnapshots(focusApp);
-          ph.__cb_resetChanged();
-        }
+        var focusApp = (rawEvent.data && rawEvent.data.appId) || "";
+        ph.__cb_refreshDisplayedPanels(focusApp);
+        visiblePanels = ph.__cb_getDisplayedPanelSnapshots(focusApp);
+        ph.__cb_resetChanged();
       }
       return JSON.stringify({ decisions: ctx.decisions, intents: ctx.intents, timers: visibleTimers, panels: visiblePanels });
     },

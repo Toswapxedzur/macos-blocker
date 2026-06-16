@@ -97,6 +97,9 @@ public struct PanelControlSnapshot: Codable, Equatable, Sendable {
     public var rows: Int?
     public var width: String?
     public var height: String?
+    public var length: Int?
+    public var masked: Bool?
+    public var autoSubmit: Bool?
 }
 
 /// Theme customization for a panel.
