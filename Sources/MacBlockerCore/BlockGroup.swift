@@ -28,6 +28,7 @@ public enum FreezeMode: String, Codable, Sendable {
     case none
     case normal
     case strict
+    case parental
 }
 
 public struct BlockTarget: Codable, Equatable, Identifiable, Sendable {
@@ -78,6 +79,8 @@ public struct BlockGroup: Codable, Identifiable, Equatable, Sendable {
     public var freezeMode: FreezeMode
     public var strictFreezeHours: Int
     public var frozenAt: Date?
+    public var parentalPasswordHash: String?
+    public var parentalPasswordSalt: String?
     public var fallbackMessage: String
     public var customRuleSource: String
     public var targets: [BlockTarget]
@@ -101,6 +104,8 @@ public struct BlockGroup: Codable, Identifiable, Equatable, Sendable {
         freezeMode: FreezeMode = .none,
         strictFreezeHours: Int = 24,
         frozenAt: Date? = nil,
+        parentalPasswordHash: String? = nil,
+        parentalPasswordSalt: String? = nil,
         fallbackMessage: String = "",
         customRuleSource: String = "",
         targets: [BlockTarget] = [],
@@ -123,6 +128,8 @@ public struct BlockGroup: Codable, Identifiable, Equatable, Sendable {
         self.freezeMode = freezeMode
         self.strictFreezeHours = strictFreezeHours
         self.frozenAt = frozenAt
+        self.parentalPasswordHash = parentalPasswordHash
+        self.parentalPasswordSalt = parentalPasswordSalt
         self.fallbackMessage = fallbackMessage
         self.customRuleSource = customRuleSource
         self.targets = targets

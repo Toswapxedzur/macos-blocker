@@ -160,6 +160,20 @@
                 Clear Apps
               </button>
             </div>
+
+            <!-- Read-only mirror of the blocked-list type owned by the linked
+                 browser (websites here on the Mac). Shown only for clustered
+                 Default groups; styled translucent because it is not editable
+                 from this side. -->
+            <div id="bridgeMirrorSection" class="bridge-mirror-section hidden">
+              <label class="label" id="bridgeMirrorLabel" data-i18n="connectionGroup.mirrorSites">
+                Blocked websites
+              </label>
+              <p class="field-help" id="bridgeMirrorHint" data-i18n="connectionGroup.mirrorSitesHint">
+                Managed on the linked app. Shown here read-only.
+              </p>
+              <div id="bridgeMirrorList" class="bridge-mirror-list" role="list"></div>
+            </div>
           </section>
 
           <div id="timedSettings" class="timed-settings">
@@ -428,6 +442,10 @@
               </button>
             </div>
 
+            <p id="freezeBridgeNotice" class="field-help bridge-offline-notice hidden" data-i18n="freeze.bridgeOffline">
+              Freeze can't be changed while a linked program is offline.
+            </p>
+
             <div id="freezeSetup" class="freeze-setup">
               <div class="settings-grid">
                 <div>
@@ -435,6 +453,7 @@
                   <select id="freezeMode">
                     <option value="frozen" data-i18n="freeze.frozenOption">Frozen</option>
                     <option value="strict" data-i18n="freeze.strictOption">Strict frozen</option>
+                    <option value="parental" data-i18n="freeze.parentalOption">Parental frozen</option>
                   </select>
                 </div>
 
@@ -454,6 +473,14 @@
               </div>
 
               <div class="actions">
+                <button
+                  id="parentalSettingsButton"
+                  type="button"
+                  class="secondary hidden parental-settings-button"
+                  data-i18n-title="freeze.parentalSettings"
+                  title="Guardian password settings"
+                  aria-label="Guardian password settings"
+                >&#9881;</button>
                 <button id="applyFreezeButton" type="button" data-i18n="freeze.applyButton">Freeze Group</button>
               </div>
             </div>
@@ -536,6 +563,39 @@
             </div>
             <p id="snoozeWarning" class="inline-warning"></p>
           </section>
+
+          <section id="connectionGroupSection" class="section-card connection-group-section hidden">
+            <div class="section-header">
+              <div>
+                <h3 data-i18n="connectionGroup.title">Web-app Bridge</h3>
+                <p class="section-copy" data-i18n="connectionGroup.copy">
+                  Link this group with a same-named group on another connected program. Linked groups form one shared cluster.
+                </p>
+              </div>
+            </div>
+
+            <p id="connectionGroupHint" class="field-help"></p>
+
+            <div id="connectionGroupDisconnected" class="connection-group-connect hidden">
+              <div class="settings-grid">
+                <div>
+                  <label class="label" for="connectionGroupProgram" data-i18n="connectionGroup.programLabel">Designated program</label>
+                  <select id="connectionGroupProgram"></select>
+                </div>
+              </div>
+              <div class="actions">
+                <button id="connectionGroupConnectButton" type="button" data-i18n="connectionGroup.connect">Connect group</button>
+              </div>
+            </div>
+
+            <div id="connectionGroupConnected" class="connection-group-cluster hidden">
+              <p class="field-help" data-i18n="connectionGroup.membersLabel">Connected cluster</p>
+              <div id="connectionGroupMembers" class="connection-peer-list"></div>
+              <div class="actions">
+                <button id="connectionGroupDisconnectButton" type="button" class="secondary" data-i18n="connectionGroup.disconnect">Disconnect</button>
+              </div>
+            </div>
+          </section>
         </section>
       </section>
 
@@ -552,6 +612,19 @@
         <div class="modal-actions">
           <button id="confirmCancelButton" type="button" class="secondary" data-i18n="modal.cancel">Cancel</button>
           <button id="confirmProceedButton" type="button" disabled data-i18n="modal.confirm">Confirm</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="permissionModal" class="modal hidden">
+      <div class="modal-card">
+        <h3 data-i18n="permission.title">Enable necessary control</h3>
+        <p class="modal-copy" data-i18n="permission.message">
+          Grant Accessibility permission so the app can enforce app blocking. Without it, blocking cannot run.
+        </p>
+        <div class="modal-actions">
+          <button id="permissionCancelButton" type="button" class="secondary" data-i18n="permission.cancel">Cancel</button>
+          <button id="permissionGrantButton" type="button" data-i18n="permission.grant">Grant access</button>
         </div>
       </div>
     </div>
@@ -589,24 +662,6 @@
 
         <div class="settings-grid">
           <div>
-            <label class="label" for="settingsTickRate" data-i18n="settings.tickRate">
-              Tick rate (ms)
-            </label>
-            <input
-              id="settingsTickRate"
-              type="number"
-              min="250"
-              max="60000"
-              step="50"
-              inputmode="numeric"
-              placeholder="1000"
-              data-i18n-placeholder="settings.tickRatePlaceholder"
-            />
-            <p class="field-help" data-i18n="settings.tickRateHelp">
-              How often the shared tickEvent fires across all tabs. Lower values are more responsive but use more CPU.
-            </p>
-          </div>
-          <div>
             <label class="label" for="settingsAutosaveDebounce" data-i18n="settings.autosaveDebounce">
               Autosave debounce (ms)
             </label>
@@ -641,20 +696,6 @@
               Snooze length used when creating new non-custom groups.
             </p>
           </div>
-          <div>
-            <label class="label" for="settingsDefaultFallbackUrl" data-i18n="settings.defaultFallbackUrl">
-              Default fallback URL
-            </label>
-            <input
-              id="settingsDefaultFallbackUrl"
-              type="text"
-              placeholder="about:blank"
-              data-i18n-placeholder="settings.defaultFallbackUrlPlaceholder"
-            />
-            <p class="field-help" data-i18n="settings.defaultFallbackUrlHelp">
-              Used when a group does not specify its own fallback URL.
-            </p>
-          </div>
         </div>
 
         <label class="checkbox-row compact" for="settingsDebugMode">
@@ -662,16 +703,53 @@
           <span data-i18n="settings.debugMode">Debug mode</span>
         </label>
         <p class="field-help" data-i18n="settings.debugModeHelp">
-          When on, shows the on-page debug overlay for custom rules and emits verbose [CustomBlocker] / [CustomBlocker:trace] console output. Your own helpers.log() calls always work regardless.
+          When on, emits verbose [CustomBlocker] / [CustomBlocker:trace] console output. Your own helpers.log() calls always work regardless.
         </p>
 
-        <label class="checkbox-row compact" for="settingsShowOnPageLogToasts">
-          <input id="settingsShowOnPageLogToasts" type="checkbox" />
-          <span data-i18n="settings.showOnPageLogToasts">Show custom rule logs on web pages</span>
-        </label>
-        <p class="field-help" data-i18n="settings.showOnPageLogToastsHelp">
-          When off, helpers.log(), warn(), and error() still appear in the popup Log panel but do not show page toasts. Rules can use logScreen() for screen-only toasts.
-        </p>
+        <section id="connectionSection" class="section-card settings-section-card">
+          <div class="section-header">
+            <div>
+              <h3 data-i18n="connection.title">Web-app bridge</h3>
+              <p class="section-copy" data-i18n="connection.copy">
+                Connect this app to the macOS app so Default and Custom groups can be linked and kept in sync.
+              </p>
+            </div>
+          </div>
+
+          <div class="connection-status-row">
+            <span id="connectionStatusDot" class="connection-dot off"></span>
+            <span id="connectionStatusText" data-i18n="connection.statusOff">Off</span>
+          </div>
+          <p class="field-help">
+            <span data-i18n="connection.addressLabel">Address</span>:
+            <code id="connectionAddressReadout">—</code>
+          </p>
+
+          <div id="connectionServerControls" class="hidden">
+            <label class="checkbox-row compact" for="connectionServerToggle">
+              <input id="connectionServerToggle" type="checkbox" />
+              <span data-i18n="connection.serverToggle">Run local server (hub)</span>
+            </label>
+            <p class="field-help" data-i18n="connection.serverToggleHelp">
+              Other apps on this Mac can connect to this hub over a fixed local address.
+            </p>
+            <div id="connectionPeerList" class="connection-peer-list"></div>
+          </div>
+
+          <div id="connectionClientControls" class="hidden">
+            <p class="field-help" data-i18n="connection.clientHelp">
+              Connect this browser to the macOS app over the fixed local address.
+            </p>
+            <div class="field-actions">
+              <button id="connectionConnectButton" type="button" class="secondary" data-i18n="connection.connect">
+                Connect
+              </button>
+              <button id="connectionDisconnectButton" type="button" class="secondary danger hidden" data-i18n="connection.disconnect">
+                Disconnect
+              </button>
+            </div>
+          </div>
+        </section>
 
         <section class="section-card settings-section-card">
           <div class="section-header">
@@ -692,6 +770,25 @@
           </div>
           <p id="localFolderStatus" class="field-help" data-i18n="settings.localFolderStatusNone">
             No folder connected.
+          </p>
+        </section>
+
+        <section class="section-card settings-section-card">
+          <div class="section-header">
+            <div>
+              <h3 data-i18n="settings.deviceControlTitle">Device Control</h3>
+              <p id="deviceControlCopy" class="section-copy" data-i18n="settings.deviceControlCopyMissing">
+                App blocking needs Accessibility permission. Grant it so blocking can run.
+              </p>
+            </div>
+          </div>
+          <div class="field-actions">
+            <button id="deviceControlButton" type="button" class="secondary" data-i18n="settings.deviceControlManage">
+              Manage permission
+            </button>
+          </div>
+          <p id="deviceControlStatus" class="field-help" data-i18n="settings.deviceControlStatusMissing">
+            Accessibility permission missing. App blocking cannot run.
           </p>
         </section>
 

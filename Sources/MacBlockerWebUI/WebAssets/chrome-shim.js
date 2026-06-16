@@ -143,6 +143,23 @@
     };
   }
 
+  // System overlay panel events pushed from the native host (e.g. parental PIN
+  // entry). The web editor registers handlers via window.__cbSystemPanelHandlers
+  // (see openOverlayPanel in popup.js).
+  window.__cbSystemPanelHandlers = window.__cbSystemPanelHandlers || [];
+  window.__cbSystemPanelEvent = function (json) {
+    try {
+      var events = typeof json === "string" ? JSON.parse(json) : json;
+      if (!Array.isArray(events)) events = [events];
+      var handlers = window.__cbSystemPanelHandlers.slice();
+      for (var i = 0; i < events.length; i++) {
+        for (var j = 0; j < handlers.length; j++) {
+          try { handlers[j](events[i]); } catch (_) {}
+        }
+      }
+    } catch (_) {}
+  };
+
   window.__cbApplyNativeRuleLog = function (json) {
     try {
       var entries = typeof json === "string" ? JSON.parse(json) : json;
@@ -389,10 +406,38 @@
         return bridgeOrResolve("fire-snooze-press", message, { ok: true });
       case "custom-panel-event":
         return bridgeOrResolve("custom-panel-event", message, { ok: true });
+      case "show-system-panel":
+        return bridgeOrResolve("show-system-panel", message, { ok: true });
+      case "dismiss-system-panel":
+        return bridgeOrResolve("dismiss-system-panel", message, { ok: true });
+      case "request-app-blocking-permission":
+        return bridgeOrResolve("request-app-blocking-permission", message, { ok: true });
+      case "open-permission-settings":
+        return bridgeOrResolve("open-permission-settings", message, { ok: true });
       case "refresh-blocking-rules":
         return bridgeOrResolve("refresh-blocking-rules", message, { ok: true });
       case "unload-custom-group":
         return bridgeOrResolve("unload-custom-group", message, { ok: true });
+      case "connection-server-start":
+        return bridgeOrResolve("connection-server-start", message, { ok: true });
+      case "connection-server-stop":
+        return bridgeOrResolve("connection-server-stop", message, { ok: true });
+      case "connection-connect":
+        return bridgeOrResolve("connection-connect", message, { ok: true });
+      case "connection-disconnect":
+        return bridgeOrResolve("connection-disconnect", message, { ok: true });
+      case "connection-status":
+        return bridgeOrResolve("connection-status", message, { ok: true });
+      case "group-connect":
+        return bridgeOrResolve("group-connect", message, { ok: true });
+      case "group-disconnect":
+        return bridgeOrResolve("group-disconnect", message, { ok: true });
+      case "group-sync":
+        return bridgeOrResolve("group-sync", message, { ok: true });
+      case "groups-announce":
+        return bridgeOrResolve("groups-announce", message, { ok: true });
+      case "clusters-status":
+        return bridgeOrResolve("clusters-status", message, { ok: true });
       default:
         return Promise.resolve({ ok: true });
     }

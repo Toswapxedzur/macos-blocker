@@ -589,6 +589,21 @@ struct PanelControlView: View {
                     )
                 }
 
+            case "pin":
+                VStack(alignment: .leading, spacing: 4) {
+                    if let label = control.label, !label.isEmpty {
+                        Text(label).font(.system(size: 11, weight: .medium)).opacity(0.7)
+                    }
+                    PanelPinControl(
+                        control: control,
+                        snapshotValue: control.value?.stringValue ?? "",
+                        length: control.length ?? 6,
+                        masked: control.masked ?? true,
+                        autoSubmit: control.autoSubmit ?? false,
+                        onEvent: onEvent
+                    )
+                }
+
             default:
                 Text(control.label ?? control.text ?? "")
                     .font(.system(size: 13))
@@ -844,6 +859,88 @@ private struct PanelColorControl: View {
     }
 }
 
+private struct PanelPinControl: View {
+    let control: PanelControlSnapshot
+    let snapshotValue: String
+    let length: Int
+    let masked: Bool
+    let autoSubmit: Bool
+    let onEvent: (String, String, String, String) -> Void
+
+    @State private var pin: String
+    @State private var suppressEmit = false
+    @FocusState private var focused: Bool
+
+    init(control: PanelControlSnapshot,
+         snapshotValue: String,
+         length: Int,
+         masked: Bool,
+         autoSubmit: Bool,
+         onEvent: @escaping (String, String, String, String) -> Void) {
+        self.control = control
+        self.snapshotValue = snapshotValue
+        self.length = max(3, min(12, length))
+        self.masked = masked
+        self.autoSubmit = autoSubmit
+        self.onEvent = onEvent
+        _pin = State(initialValue: String(snapshotValue.prefix(max(3, min(12, length)))))
+    }
+
+    private func boxView(_ index: Int) -> some View {
+        let chars = Array(pin)
+        let filledIndex = min(chars.count, length - 1)
+        let display: String = index < chars.count ? (masked ? "\u{2022}" : String(chars[index])) : ""
+        let isActive = focused && index == filledIndex
+        return RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(Color.gray.opacity(0.22))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(isActive ? Color.accentColor : Color.gray.opacity(0.4), lineWidth: 1)
+            )
+            .overlay(Text(display).font(.system(size: 18, weight: .semibold, design: .monospaced)))
+            .frame(width: 32, height: 40)
+    }
+
+    var body: some View {
+        ZStack {
+            HStack(spacing: 6) {
+                ForEach(0..<length, id: \.self) { boxView($0) }
+            }
+            // Transparent field that actually captures keyboard input.
+            TextField("", text: $pin)
+                .textFieldStyle(.plain)
+                .foregroundColor(.clear)
+                .accentColor(.clear)
+                .multilineTextAlignment(.center)
+                .focused($focused)
+                .frame(width: CGFloat(length) * 38, height: 40)
+                .opacity(0.02)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { focused = true }
+        .disabled(control.disabled == true)
+        .onChange(of: pin) { newValue in
+            let filtered = String(newValue.filter { $0.isNumber }.prefix(length))
+            if filtered != newValue {
+                pin = filtered
+                return
+            }
+            if suppressEmit { suppressEmit = false; return }
+            onEvent(control.id, "change", filtered, "")
+            if autoSubmit && filtered.count == length {
+                onEvent(control.id, "submit", filtered, "")
+            }
+        }
+        .onChange(of: snapshotValue) { newValue in
+            let clamped = String(newValue.prefix(length))
+            if !focused && clamped != pin {
+                suppressEmit = true
+                pin = clamped
+            }
+        }
+    }
+}
+
 private func formatTimerMs(_ ms: Double, format: String) -> String {
     let totalMs = max(0, Int(ms))
     let totalSec = totalMs / 1000
@@ -1006,6 +1103,10 @@ public final class PanelOverlayPanelController {
     private var slots: [String: PositionSlot] = [:]
     private let screenInset: CGFloat = 16
     private var eventHandler: ((String, String, String, String, String, String) -> Void)?
+    /// Authoritative panel state keyed by groupId. The rendered overlay is
+    /// always the merge of every group's panels, so when a group is disabled
+    /// or stops reporting a panel, it disappears on the next render.
+    private var panelsByGroup: [String: [PanelSnapshot]] = [:]
 
     public init() {}
 
@@ -1016,11 +1117,75 @@ public final class PanelOverlayPanelController {
         }
     }
 
-    public func update(panels: [PanelSnapshot]) {
+    /// Replace the panels for a single group (per-event dispatch). An empty
+    /// array removes the group's panels entirely.
+    public func update(panels: [PanelSnapshot], forGroup groupID: String) {
+        if panels.isEmpty {
+            if panelsByGroup.removeValue(forKey: groupID) == nil { return }
+        } else {
+            if panelsByGroup[groupID] == panels { return }
+            panelsByGroup[groupID] = panels
+        }
+        render()
+    }
+
+    /// Replace the entire panel set across all groups at once (tick loop).
+    /// Any group not present is treated as having no panels and is cleared.
+    public func replaceAll(_ panelsByGroupID: [String: [PanelSnapshot]]) {
+        var next = panelsByGroupID.filter { !$0.value.isEmpty }
+        // System panels are driven by the web editor (parental PIN entry), not
+        // the rule tick loop, so preserve them across full replacements.
+        if let system = panelsByGroup[Self.systemGroupID] {
+            next[Self.systemGroupID] = system
+        }
+        if next == panelsByGroup { return }
+        panelsByGroup = next
+        render()
+    }
+
+    /// Immediately drop a group's panels (called when a group is disabled).
+    public func removePanels(forGroup groupID: String) {
+        if panelsByGroup.removeValue(forKey: groupID) != nil { render() }
+    }
+
+    /// Reserved group key for "system" overlay panels (e.g. parental PIN entry)
+    /// that are not produced by a custom rule but driven by the web editor.
+    public static let systemGroupID = "__system__"
+
+    /// Show (or replace by id) a system overlay panel. Multiple system panels
+    /// can coexist; each is keyed by its snapshot id.
+    public func showSystemPanel(_ snapshot: PanelSnapshot) {
+        var snap = snapshot
+        snap.groupId = Self.systemGroupID
+        var panels = panelsByGroup[Self.systemGroupID] ?? []
+        if let idx = panels.firstIndex(where: { $0.id == snap.id }) {
+            panels[idx] = snap
+        } else {
+            panels.append(snap)
+        }
+        update(panels: panels, forGroup: Self.systemGroupID)
+    }
+
+    /// Remove a single system panel by id (or all system panels when id is empty).
+    public func dismissSystemPanel(id: String) {
+        if id.isEmpty {
+            removePanels(forGroup: Self.systemGroupID)
+            return
+        }
+        var panels = panelsByGroup[Self.systemGroupID] ?? []
+        panels.removeAll { $0.id == id }
+        update(panels: panels, forGroup: Self.systemGroupID)
+    }
+
+    private func render() {
+        // Deterministic group ordering so identical state always produces an
+        // identical layout (avoids needless re-renders / input churn).
         var byPosition: [String: [PanelSnapshot]] = [:]
-        for panel in panels {
-            let pos = panel.position ?? "bottom-right"
-            byPosition[pos, default: []].append(panel)
+        for groupID in panelsByGroup.keys.sorted() {
+            for panel in panelsByGroup[groupID] ?? [] {
+                let pos = panel.position ?? "bottom-right"
+                byPosition[pos, default: []].append(panel)
+            }
         }
 
         let allPositions = Set(byPosition.keys).union(Set(slots.keys))
@@ -1057,6 +1222,7 @@ public final class PanelOverlayPanelController {
     }
 
     public func teardown() {
+        panelsByGroup.removeAll()
         for (_, slot) in slots {
             slot.panel?.orderOut(nil)
             slot.model.panels = []

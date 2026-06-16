@@ -7,14 +7,14 @@ import AppKit
 /// A SwiftPM executable is launched as a background "agent" process, so AppKit
 /// never shows the window or a Dock icon. Promoting the activation policy to
 /// `.regular` and activating makes the panel window appear.
-final class PanelAppDelegate: NSObject, NSApplicationDelegate {
-    func applicationDidFinishLaunching(_ notification: Notification) {
+///
+/// Inherits the process-level lifecycle (bridge hub ownership + login item +
+/// keep-running-after-last-window-close) from `BlockerAppDelegate`.
+final class PanelAppDelegate: BlockerAppDelegate {
+    override func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-    }
-
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        false
+        super.applicationDidFinishLaunching(notification)
     }
 }
 #endif

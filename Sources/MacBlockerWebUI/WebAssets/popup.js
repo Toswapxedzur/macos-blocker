@@ -24,21 +24,61 @@ function cbDebugError(...args) { if (cbDebugMode) { try { console.error(...args)
 
 // Extension-wide preferences. Keep these defaults in sync with the
 // placeholder text in popup.html's Settings modal.
+// Web-app bridge (connection) defaults. The macOS app is the only endpoint
+// that can host the local hub (a browser extension cannot listen on a socket),
+// so `server*` fields are honored only on the native host and `client*` fields
+// only in the browser extensions. Both are persisted in globalSettings so the
+// transport layer (background service worker / native server) can read them.
+const CONNECTION_PROTOCOL_VERSION = 1;
+const CONNECTION_DEFAULT_PORT = 8787;
+const CONNECTION_DEFAULT_ADDRESS = `ws://127.0.0.1:${CONNECTION_DEFAULT_PORT}`;
+const DEFAULT_CONNECTION_SETTINGS = {
+  // macOS hub
+  serverEnabled: false,
+  // browser client
+  clientEnabled: false
+};
+
 const DEFAULT_GLOBAL_SETTINGS = {
-  tickRateMs: 1000,
   autosaveDebounceMs: 400,
-  // Debug mode is off by default. When on it (a) shows the on-page
-  // debug log overlay for custom rules and (b) emits the
+  // Debug mode is off by default. When on it emits the
   // [CustomBlocker:trace] / [CustomBlocker] dispatch console lines.
   // The user-facing helpers.log() output continues to flow regardless.
   debugMode: false,
-  showOnPageLogToasts: true,
   defaultSnoozeMinutes: 30,
-  defaultFallbackUrl: "about:blank"
+  connection: { ...DEFAULT_CONNECTION_SETTINGS }
 };
-const TICK_RATE_MIN_MS = 250;
-const TICK_RATE_MAX_MS = 60_000;
 const AUTOSAVE_DEBOUNCE_MAX_MS = 5_000;
+
+// True when running inside the macOS app's WKWebView (the native chrome shim),
+// false in a real browser extension. Used to decide whether this endpoint is
+// the connection HUB (macOS, hosts the server) or a CLIENT (browser).
+function isNativeHost() {
+  try {
+    return !!(window.chrome && window.chrome.__cbShim);
+  } catch (_) {
+    return false;
+  }
+}
+
+// Stable identifier for this endpoint's "program", shown in the per-group
+// connection panel's program picker (macapp / chrome / edge / firefox / ...).
+function detectProgramId() {
+  if (isNativeHost()) return "macapp";
+  let ua = "";
+  try {
+    ua = navigator.userAgent || "";
+  } catch (_) {}
+  if (/\bEdg\//.test(ua)) return "edge";
+  if (/\bFirefox\//.test(ua)) return "firefox";
+  if (/\bOPR\//.test(ua) || /\bOpera\//.test(ua)) return "opera";
+  if (/\bChrome\//.test(ua)) return "chrome";
+  if (/\bSafari\//.test(ua)) return "safari";
+  return "browser";
+}
+
+const LOCAL_PROGRAM_ID = detectProgramId();
+const IS_CONNECTION_HUB = isNativeHost();
 
 const DEFAULT_ALLOWED_MINUTES = 15;
 const DEFAULT_RESET_INTERVAL_HOURS = 24;
@@ -139,6 +179,8 @@ const strictFreezeSettings = document.getElementById("strictFreezeSettings");
 const strictFreezeHoursField = document.getElementById("strictFreezeHours");
 const applyFreezeButton = document.getElementById("applyFreezeButton");
 const unfreezeButton = document.getElementById("unfreezeButton");
+const freezeBridgeNotice = document.getElementById("freezeBridgeNotice");
+const parentalSettingsButton = document.getElementById("parentalSettingsButton");
 const snoozeSummary = document.getElementById("snoozeSummary");
 const allowSnoozeField = document.getElementById("allowSnooze");
 const snoozeMinutesField = document.getElementById("snoozeMinutes");
@@ -188,18 +230,39 @@ const templateApplyButton = document.getElementById("templateApplyButton");
 const settingsButton = document.getElementById("settingsButton");
 const settingsModal = document.getElementById("settingsModal");
 const settingsCloseButton = document.getElementById("settingsCloseButton");
-const settingsTickRateField = document.getElementById("settingsTickRate");
 const settingsAutosaveDebounceField = document.getElementById("settingsAutosaveDebounce");
 const settingsDebugModeField = document.getElementById("settingsDebugMode");
-const settingsShowOnPageLogToastsField = document.getElementById("settingsShowOnPageLogToasts");
 const settingsDefaultSnoozeMinutesField = document.getElementById("settingsDefaultSnoozeMinutes");
-const settingsDefaultFallbackUrlField = document.getElementById("settingsDefaultFallbackUrl");
 const localFolderChooseButton = document.getElementById("localFolderChooseButton");
 const localFolderRevokeButton = document.getElementById("localFolderRevokeButton");
 const localFolderStatus = document.getElementById("localFolderStatus");
 const settingsResetButton = document.getElementById("settingsResetButton");
 const settingsSaveButton = document.getElementById("settingsSaveButton");
 const settingsStatus = document.getElementById("settingsStatus");
+const connectionSection = document.getElementById("connectionSection");
+const connectionServerControls = document.getElementById("connectionServerControls");
+const connectionClientControls = document.getElementById("connectionClientControls");
+const connectionServerToggle = document.getElementById("connectionServerToggle");
+const connectionConnectButton = document.getElementById("connectionConnectButton");
+const connectionDisconnectButton = document.getElementById("connectionDisconnectButton");
+const connectionStatusDot = document.getElementById("connectionStatusDot");
+const connectionStatusText = document.getElementById("connectionStatusText");
+const connectionAddressReadout = document.getElementById("connectionAddressReadout");
+const connectionPeerList = document.getElementById("connectionPeerList");
+const connectionGroupSection = document.getElementById("connectionGroupSection");
+const connectionGroupHint = document.getElementById("connectionGroupHint");
+const connectionGroupDisconnected = document.getElementById("connectionGroupDisconnected");
+const connectionGroupConnected = document.getElementById("connectionGroupConnected");
+const connectionGroupProgram = document.getElementById("connectionGroupProgram");
+const connectionGroupConnectButton = document.getElementById("connectionGroupConnectButton");
+const connectionGroupDisconnectButton = document.getElementById("connectionGroupDisconnectButton");
+const connectionGroupMembers = document.getElementById("connectionGroupMembers");
+const deviceControlButton = document.getElementById("deviceControlButton");
+const deviceControlCopy = document.getElementById("deviceControlCopy");
+const deviceControlStatus = document.getElementById("deviceControlStatus");
+const permissionModal = document.getElementById("permissionModal");
+const permissionGrantButton = document.getElementById("permissionGrantButton");
+const permissionCancelButton = document.getElementById("permissionCancelButton");
 const dayCheckboxes = Array.from(daysGrid.querySelectorAll('input[type="checkbox"]'));
 
 const state = {
@@ -231,7 +294,35 @@ const state = {
   aiPromptGroupId: null,
   language: "en",
   translationMessages: {},
-  translationLoadPromises: {}
+  translationLoadPromises: {},
+  // Runtime web-app bridge status, pushed by the transport layer (native server
+  // on macOS via window.__cbConnectionState). Never persisted.
+  connectionStatus: {
+    running: false,
+    state: "off",
+    address: "",
+    peers: [],
+    error: ""
+  },
+  // Live web-app bridge clusters that involve this endpoint, supplied by the
+  // transport layer (hub is the single source of truth). Never persisted: a
+  // group is "connected" when a cluster lists {program: LOCAL_PROGRAM_ID,
+  // groupName: <this group's name>}. Each entry:
+  //   { id, groupName, groupType, members: [{ program, groupName }], shared }
+  clusters: [],
+  // Read-only mirror of the shared pools per clustered group:
+  //   { [groupId]: { sites: [...], apps: [...] } }
+  clusterMirror: {},
+  // Last contribution JSON we sent per group, so we don't echo applied state
+  // back to the hub (loop suppression mirrors the hub's broadcast-on-change).
+  clusterSyncSent: {},
+  // Logical edit timestamp per group, used for scalar last-writer-wins.
+  groupEditTs: {},
+  // Group ids whose next sync should win the merge (the initiator of a link).
+  pendingPriorityGroups: new Set(),
+  // Serialized last-applied cluster list, so repeated identical pushes (the Mac
+  // hub re-pushes every second) don't trigger needless re-renders.
+  clustersLastJSON: ""
 };
 
 function getAiPromptStorageKey(groupId) {
@@ -470,8 +561,37 @@ async function localFolderDbDelete(key) {
   });
 }
 
+// True when running inside the macOS app's WKWebView (native bridge present).
+// There the File System Access API doesn't exist; custom rules instead use a
+// fixed, always-granted native folder managed by the app.
+function cbHasNativeBridge() {
+  try {
+    return !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.cbBridge);
+  } catch (_) {
+    return false;
+  }
+}
+
+function revealLocalFolderNative() {
+  try {
+    window.webkit.messageHandlers.cbBridge.postMessage({ kind: "local-folder-reveal" });
+  } catch (_) {}
+}
+
 async function renderLocalFolderStatus() {
   if (!localFolderStatus) return;
+  // macOS: the local folder is a fixed native folder that is always available.
+  // Present it as connected with a Reveal-in-Finder action instead of the
+  // (unsupported in WKWebView) directory picker.
+  if (cbHasNativeBridge()) {
+    localFolderStatus.textContent = t("settings.localFolderStatusManaged");
+    if (localFolderChooseButton) {
+      localFolderChooseButton.disabled = false;
+      localFolderChooseButton.textContent = t("settings.localFolderReveal");
+    }
+    if (localFolderRevokeButton) localFolderRevokeButton.classList.add("hidden");
+    return;
+  }
   if (!("showDirectoryPicker" in window)) {
     localFolderStatus.textContent = t("settings.localFolderUnsupported");
     if (localFolderChooseButton) localFolderChooseButton.disabled = true;
@@ -540,20 +660,724 @@ async function revokeLocalFolder() {
   await renderLocalFolderStatus();
 }
 
+function getConnectionSettings() {
+  const s = state.globalSettings || DEFAULT_GLOBAL_SETTINGS;
+  return sanitizeConnectionSettings(s.connection);
+}
+
+// Persist a partial change to the connection block of globalSettings, then ask
+// the transport layer to apply it. Used by the server toggle / connect buttons.
+async function updateConnectionSettings(patch) {
+  const current = getConnectionSettings();
+  const next = sanitizeConnectionSettings({ ...current, ...patch });
+  state.globalSettings = sanitizeGlobalSettings({
+    ...(state.globalSettings || DEFAULT_GLOBAL_SETTINGS),
+    connection: next
+  });
+  try {
+    await chrome.storage.local.set({ [GLOBAL_SETTINGS_KEY]: state.globalSettings });
+  } catch (_) {}
+  return next;
+}
+
+function connectionStatusLabel(status) {
+  switch (status && status.state) {
+    case "running":
+      return t("connection.statusRunning");
+    case "connected":
+      return t("connection.statusConnected");
+    case "connecting":
+      return t("connection.statusConnecting");
+    case "error":
+      return status.error
+        ? t("connection.statusError") + ": " + status.error
+        : t("connection.statusError");
+    case "disconnected":
+      return t("connection.statusDisconnected");
+    default:
+      return t("connection.statusOff");
+  }
+}
+
+function renderConnectionSettings() {
+  if (!connectionSection) return;
+  const conn = getConnectionSettings();
+  const status = state.connectionStatus || {};
+
+  if (connectionServerControls) {
+    connectionServerControls.classList.toggle("hidden", !IS_CONNECTION_HUB);
+  }
+  if (connectionClientControls) {
+    connectionClientControls.classList.toggle("hidden", IS_CONNECTION_HUB);
+  }
+
+  if (IS_CONNECTION_HUB) {
+    if (connectionServerToggle) connectionServerToggle.checked = Boolean(conn.serverEnabled);
+  } else {
+    const connected = status.state === "connected" || status.state === "connecting";
+    if (connectionConnectButton) connectionConnectButton.classList.toggle("hidden", connected);
+    if (connectionDisconnectButton)
+      connectionDisconnectButton.classList.toggle("hidden", !connected);
+  }
+
+  const activeState = status.state || "off";
+  if (connectionStatusDot) {
+    connectionStatusDot.className = "connection-dot " + activeState;
+  }
+  if (connectionStatusText) {
+    connectionStatusText.textContent = connectionStatusLabel(status);
+  }
+  if (connectionAddressReadout) {
+    connectionAddressReadout.textContent = status.address || CONNECTION_DEFAULT_ADDRESS;
+  }
+
+  if (connectionPeerList) {
+    connectionPeerList.textContent = "";
+    const peers = Array.isArray(status.peers) ? status.peers : [];
+    if (peers.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "field-help";
+      empty.textContent = t("connection.noPeers");
+      connectionPeerList.appendChild(empty);
+    } else {
+      for (const peer of peers) {
+        const row = document.createElement("div");
+        row.className = "connection-peer";
+        const dot = document.createElement("span");
+        dot.className = "connection-dot " + (peer.connected ? "connected" : "off");
+        const label = document.createElement("span");
+        label.textContent = peer.program || peer.id || "?";
+        row.appendChild(dot);
+        row.appendChild(label);
+        connectionPeerList.appendChild(row);
+      }
+    }
+  }
+}
+
+// The transport layer pushes the live connection status here (native server on
+// macOS via window.__cbConnectionState).
+function applyConnectionStatus(raw) {
+  const incoming = raw && typeof raw === "object" ? raw : {};
+  const wasOnline = bridgeIsOnline();
+  state.connectionStatus = {
+    running: Boolean(incoming.running),
+    state: typeof incoming.state === "string" ? incoming.state : "off",
+    address: typeof incoming.address === "string" ? incoming.address : "",
+    peers: Array.isArray(incoming.peers) ? incoming.peers : [],
+    error: typeof incoming.error === "string" ? incoming.error : ""
+  };
+  if (state.isSettingsOpen) renderConnectionSettings();
+  // The per-group panel lives in the editor (always visible), so keep it fresh.
+  refreshConnectionGroupPanel();
+  if (!wasOnline && bridgeIsOnline()) {
+    announceGroups();
+    requestClusters();
+  }
+}
+
+window.__cbConnectionState = function (json) {
+  try {
+    const incoming = typeof json === "string" ? JSON.parse(json) : json;
+    applyConnectionStatus(incoming);
+  } catch (_) {}
+};
+
+function requestConnectionStatus() {
+  try {
+    chrome.runtime
+      .sendMessage({ type: "connection-status" })
+      .then((res) => {
+        if (res && res.status) applyConnectionStatus(res.status);
+      })
+      .catch(() => {});
+  } catch (_) {}
+}
+
+// ---------------------------------------------------------------------------
+// Per-group web-app bridge: link a Default/Custom group with the same-named
+// group on another connected program (a "cluster"). The hub is the single
+// source of truth for cluster membership; this layer only renders it and sends
+// connect/disconnect intents.
+// ---------------------------------------------------------------------------
+
+const CONNECTION_PROGRAM_LABELS = {
+  macapp: "Mac app",
+  chrome: "Chrome",
+  edge: "Edge",
+  firefox: "Firefox",
+  safari: "Safari",
+  opera: "Opera",
+  browser: "Browser"
+};
+
+function connectionProgramLabel(programId) {
+  return CONNECTION_PROGRAM_LABELS[programId] || programId || "?";
+}
+
+function bridgeIsOnline() {
+  const s = state.connectionStatus || {};
+  return s.state === "connected" || s.state === "running";
+}
+
+function isBridgeEligibleGroup(group) {
+  return Boolean(group) && (group.groupType === "site" || group.groupType === "custom");
+}
+
+// A cluster is "fully online" only when our own bridge link is live AND every
+// member program reports online in the hub snapshot. When any member is offline
+// the cluster's shared memory can't be reconciled, so we lock down actions that
+// must not diverge while disconnected (notably freeze state changes).
+function clusterAllOnline(cluster) {
+  if (!cluster) return false;
+  if (!bridgeIsOnline()) return false;
+  if (cluster.allOnline === false) return false;
+  const members = Array.isArray(cluster.members) ? cluster.members : [];
+  if (members.length === 0) return false;
+  return members.every((m) => m && m.online !== false);
+}
+
+// Offline member programs in this group's cluster (for the UI indicator).
+function clusterOfflineMembers(cluster) {
+  if (!cluster) return [];
+  const members = Array.isArray(cluster.members) ? cluster.members : [];
+  return members.filter((m) => {
+    if (!m) return false;
+    if (m.program === LOCAL_PROGRAM_ID) return false; // we are obviously here
+    return m.online === false || !bridgeIsOnline();
+  });
+}
+
+// The cluster (if any) this group currently belongs to, matched by this
+// endpoint's program id + the group's saved name.
+function groupConnectionCluster(group) {
+  if (!group) return null;
+  const clusters = Array.isArray(state.clusters) ? state.clusters : [];
+  return (
+    clusters.find((cluster) =>
+      Array.isArray(cluster.members) &&
+      cluster.members.some(
+        (m) => m && m.program === LOCAL_PROGRAM_ID && m.groupName === group.name
+      )
+    ) || null
+  );
+}
+
+// Programs the user can link to right now (other connected endpoints). A client
+// is always implicitly connected to the Mac hub; the hub sees its peers.
+function bridgeConnectablePrograms() {
+  if (!bridgeIsOnline()) return [];
+  const status = state.connectionStatus || {};
+  const peers = Array.isArray(status.peers) ? status.peers : [];
+  const programs = new Set();
+  for (const peer of peers) {
+    if (peer && peer.connected !== false && peer.program) programs.add(peer.program);
+  }
+  if (!IS_CONNECTION_HUB) programs.add("macapp");
+  programs.delete(LOCAL_PROGRAM_ID);
+  programs.delete("browser");
+  programs.delete("");
+  return Array.from(programs);
+}
+
+function renderConnectionGroupPanel(group, freezeStatus) {
+  if (!connectionGroupSection) return;
+  if (!isBridgeEligibleGroup(group)) {
+    connectionGroupSection.classList.add("hidden");
+    return;
+  }
+  connectionGroupSection.classList.remove("hidden");
+
+  const cluster = groupConnectionCluster(group);
+  connectionGroupSection.classList.toggle("bridge-linked", Boolean(cluster));
+
+  if (connectionGroupConnected) connectionGroupConnected.classList.toggle("hidden", !cluster);
+  if (connectionGroupDisconnected) connectionGroupDisconnected.classList.toggle("hidden", Boolean(cluster));
+
+  if (cluster) {
+    const allOnline = clusterAllOnline(cluster);
+    connectionGroupSection.classList.toggle("bridge-offline", !allOnline);
+    if (connectionGroupMembers) {
+      connectionGroupMembers.textContent = "";
+      const members = Array.isArray(cluster.members) ? cluster.members : [];
+      for (const member of members) {
+        const isSelf = member.program === LOCAL_PROGRAM_ID;
+        // We always know our own side is present; remote members are online
+        // only when the hub says so AND our link to the hub is live.
+        const memberOnline = isSelf
+          ? true
+          : member.online !== false && bridgeIsOnline();
+        const row = document.createElement("div");
+        row.className = "connection-peer" + (memberOnline ? "" : " offline");
+        const dot = document.createElement("span");
+        dot.className = "connection-dot " + (memberOnline ? "connected" : "error");
+        const label = document.createElement("span");
+        const self = isSelf ? " (this app)" : "";
+        const offlineTag = memberOnline ? "" : " — " + t("connectionGroup.memberOffline");
+        label.textContent =
+          connectionProgramLabel(member.program) + ": " + (member.groupName || group.name) + self + offlineTag;
+        row.appendChild(dot);
+        row.appendChild(label);
+        connectionGroupMembers.appendChild(row);
+      }
+    }
+    if (connectionGroupHint) {
+      connectionGroupHint.textContent = allOnline ? "" : t("connectionGroup.clusterOffline");
+    }
+    return;
+  }
+  connectionGroupSection.classList.remove("bridge-offline");
+
+  const online = bridgeIsOnline();
+  const frozen = Boolean(freezeStatus && freezeStatus.isFrozen);
+  const programs = bridgeConnectablePrograms();
+
+  if (connectionGroupProgram) {
+    const previous = connectionGroupProgram.value;
+    connectionGroupProgram.textContent = "";
+    for (const programId of programs) {
+      const option = document.createElement("option");
+      option.value = programId;
+      option.textContent = connectionProgramLabel(programId);
+      connectionGroupProgram.appendChild(option);
+    }
+    if (programs.includes(previous)) connectionGroupProgram.value = previous;
+  }
+
+  const disabled = !online || frozen || programs.length === 0;
+  if (connectionGroupConnectButton) connectionGroupConnectButton.disabled = disabled;
+  if (connectionGroupProgram) connectionGroupProgram.disabled = disabled;
+  if (connectionGroupHint) {
+    connectionGroupHint.textContent = !online
+      ? t("connectionGroup.offline")
+      : frozen
+        ? t("connectionGroup.frozen")
+        : programs.length === 0
+          ? t("connectionGroup.noPrograms")
+          : t("connectionGroup.ready");
+  }
+}
+
+// For a clustered Default (site) group, renders the blocked-list type this
+// endpoint does NOT own as a read-only, translucent mirror beside the editable
+// list. Browsers own websites and mirror the shared apps; the Mac owns apps and
+// mirrors the shared websites. Both platforms use the same chip styling so the
+// linked group looks identical on either side.
+function renderBridgeMirror(group) {
+  const section = document.getElementById("bridgeMirrorSection");
+  if (!section) return;
+  const cluster = group ? groupConnectionCluster(group) : null;
+  if (!group || group.groupType !== "site" || !cluster) {
+    section.classList.add("hidden");
+    return;
+  }
+  const shared = (cluster && cluster.shared) || state.clusterMirror[group.id] || {};
+  const showApps = !bridgeOwnsApps(); // the Mac owns apps, so it mirrors sites
+  const items = showApps
+    ? (Array.isArray(shared.apps) ? shared.apps : [])
+    : (Array.isArray(shared.sites) ? shared.sites : []);
+
+  const labelEl = document.getElementById("bridgeMirrorLabel");
+  const hintEl = document.getElementById("bridgeMirrorHint");
+  if (labelEl) {
+    labelEl.textContent = showApps
+      ? t("connectionGroup.mirrorApps")
+      : t("connectionGroup.mirrorSites");
+  }
+  if (hintEl) {
+    hintEl.textContent = showApps
+      ? t("connectionGroup.mirrorAppsHint")
+      : t("connectionGroup.mirrorSitesHint");
+  }
+
+  section.classList.remove("hidden");
+  const list = document.getElementById("bridgeMirrorList");
+  if (!list) return;
+  list.innerHTML = "";
+  if (items.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "bridge-mirror-empty";
+    empty.textContent = t("connectionGroup.mirrorEmpty");
+    list.appendChild(empty);
+    return;
+  }
+  for (const item of items) {
+    const isObj = item && typeof item === "object";
+    const name = typeof item === "string" ? item : (isObj && item.name) || "";
+    if (!name) continue;
+    const chip = document.createElement("div");
+    chip.className = "bridge-mirror-chip";
+    chip.setAttribute("role", "listitem");
+    chip.title = name;
+
+    // Icon: app mirrors carry a shared icon data URL from the owning Mac (fall
+    // back to a monogram); site mirrors resolve a favicon locally where a helper
+    // exists. Keeps the mirror visually consistent with the native lists.
+    let iconEl = null;
+    if (showApps) {
+      const iconUrl = isObj && typeof item.icon === "string" ? item.icon : "";
+      if (iconUrl) {
+        iconEl = document.createElement("img");
+        iconEl.className = "bridge-mirror-icon";
+        iconEl.src = iconUrl;
+        iconEl.alt = "";
+      } else {
+        iconEl = document.createElement("span");
+        iconEl.className = "bridge-mirror-icon bridge-mirror-monogram";
+        iconEl.textContent = name.charAt(0).toUpperCase();
+      }
+    } else if (typeof makeSiteIconElement === "function") {
+      iconEl = makeSiteIconElement(name);
+      iconEl.classList.add("bridge-mirror-icon");
+    }
+    if (iconEl) chip.appendChild(iconEl);
+
+    const label = document.createElement("span");
+    label.className = "bridge-mirror-name";
+    label.textContent = name;
+    chip.appendChild(label);
+
+    list.appendChild(chip);
+  }
+}
+
+function refreshConnectionGroupPanel() {
+  const group = getSelectedGroup();
+  const now = Date.now();
+  renderConnectionGroupPanel(group, group ? getFreezeStatus(group, now) : null);
+  renderBridgeMirror(group);
+}
+
+// Re-tag group cards with the bridge-linked cluster indicator without a full rebuild.
+function updateGroupCardBridgeBadges() {
+  const cards = groupList.querySelectorAll(".group-card");
+  cards.forEach((card) => {
+    const group = state.groups.find((g) => g.id === card.dataset.groupId);
+    card.classList.toggle("bridge-connected", Boolean(group && groupConnectionCluster(group)));
+  });
+}
+
+// One-shot bridge warnings: surface a notice the first time a condition occurs
+// (e.g. a linked member goes offline) and reset it once the condition clears, so
+// the user is warned once per episode instead of on every render tick.
+const bridgeWarned = new Set();
+function warnBridgeOnce(key, message) {
+  if (bridgeWarned.has(key)) return;
+  bridgeWarned.add(key);
+  setStatus(message, true);
+}
+function clearBridgeWarn(key) {
+  bridgeWarned.delete(key);
+}
+
+function applyClusters(list) {
+  const incoming = Array.isArray(list) ? list : Array.isArray(list?.clusters) ? list.clusters : [];
+  const incomingJSON = JSON.stringify(incoming);
+  if (incomingJSON === state.clustersLastJSON) return;
+  state.clustersLastJSON = incomingJSON;
+  state.clusters = incoming;
+  // Apply hub-authoritative shared settings to each of our member groups.
+  for (const cluster of state.clusters) {
+    if (!cluster || !Array.isArray(cluster.members)) continue;
+    if (!cluster.members.some((m) => m && m.program === LOCAL_PROGRAM_ID)) continue;
+    const group = state.groups.find((g) => g.name === cluster.groupName);
+    if (!group) continue;
+    if (cluster.shared) {
+      applyClusterShared(group, cluster.shared);
+    } else {
+      // Freshly-formed cluster: the hub's first snapshot carries no `shared`
+      // until each member has contributed its owned list. Force our owned-list
+      // contribution to be (re)sent so the peer's mirror fills on the FIRST
+      // connect instead of staying blank until a later edit.
+      delete state.clusterSyncSent[group.id];
+    }
+  }
+  // Drop mirrors for groups no longer clustered.
+  for (const groupId of Object.keys(state.clusterMirror)) {
+    const group = state.groups.find((g) => g.id === groupId);
+    if (!group || !groupConnectionCluster(group)) delete state.clusterMirror[groupId];
+  }
+  updateGroupCardBridgeBadges();
+  // Re-render the editor so synced scalar changes show, unless the user is
+  // actively typing in a field (don't clobber in-progress input).
+  const active = document.activeElement;
+  const editing =
+    active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT");
+  if (getSelectedGroup() && !editing) {
+    renderEditor();
+  } else {
+    refreshConnectionGroupPanel();
+  }
+  // Warn once per offline episode: if we're linked but a cluster member is
+  // offline (e.g. the Mac app isn't open), shared changes won't sync until it's
+  // back. The warning resets when every member is online again.
+  for (const cluster of state.clusters) {
+    if (!cluster || !Array.isArray(cluster.members)) continue;
+    if (!cluster.members.some((m) => m && m.program === LOCAL_PROGRAM_ID)) continue;
+    const key = "offline:" + cluster.groupName;
+    if (cluster.allOnline === false) {
+      warnBridgeOnce(key, t("connectionGroup.warnMemberOffline"));
+    } else {
+      clearBridgeWarn(key);
+    }
+  }
+  // Propagated freeze may have changed our frozen status; refresh the roster
+  // so future link validation sees it, then push our own contributions.
+  announceGroups();
+  syncAllClusters();
+}
+
+function applyGroupRejection(reason) {
+  if (connectionGroupHint) {
+    connectionGroupHint.textContent = t("connectionGroup.rejected") + (reason || "");
+  }
+}
+
+// Native (macOS) pushes cluster membership here; the browser uses the
+// "clusters-push" runtime message instead.
+window.__cbClustersState = function (json) {
+  try {
+    const incoming = typeof json === "string" ? JSON.parse(json) : json;
+    applyClusters(incoming);
+  } catch (_) {}
+};
+
+window.__cbGroupRejected = function (json) {
+  try {
+    const incoming = typeof json === "string" ? JSON.parse(json) : json;
+    applyGroupRejection(incoming && incoming.reason);
+  } catch (_) {}
+};
+
+function requestClusters() {
+  try {
+    chrome.runtime
+      .sendMessage({ type: "clusters-status" })
+      .then((res) => {
+        if (res && res.clusters) applyClusters(res.clusters);
+      })
+      .catch(() => {});
+  } catch (_) {}
+}
+
+// Tell the hub which Default/Custom groups exist here (by saved name + type +
+// freeze state) so it can validate connection requests against same-named
+// groups. Sent on load, after group edits, and when the bridge comes online.
+function announceGroups() {
+  const groups = (Array.isArray(state.groups) ? state.groups : [])
+    .filter(isBridgeEligibleGroup)
+    .map((g) => ({
+      name: g.name,
+      type: g.groupType,
+      frozen: getFreezeStatus(g, Date.now()).isFrozen
+    }));
+  try {
+    chrome.runtime.sendMessage({ type: "groups-announce", program: LOCAL_PROGRAM_ID, groups });
+  } catch (_) {}
+}
+
+// ---------------------------------------------------------------------------
+// Settings sync: clustered groups share a single set of settings. The hub is
+// the authority — scalars are last-writer-wins, blocked-domain / blocked-app
+// pools are a union of each owner's list (browsers own domains, the Mac owns
+// apps), and freeze state propagates as a scalar. The live elapsed usage
+// counter is also shared for Default groups: each side reports its absolute
+// local counter and the hub accumulates deltas into one shared budget that is
+// folded back into every member's local timer (see applyClusterShared).
+// ---------------------------------------------------------------------------
+
+const SYNC_SCALAR_FIELDS = [
+  "mode",
+  "allowedMinutes",
+  "resetIntervalHours",
+  "allowSnooze",
+  "snoozeMinutes",
+  "snoozeActivationDelayMinutes",
+  "snoozeCooldownMinutes",
+  "snoozeConfirmations",
+  "activeDays",
+  "timeWindowsText",
+  "freezeMode",
+  "freezeModeChoice",
+  "strictFreezeHours",
+  "frozenAtMs",
+  "blockHomePage",
+  "fallbackUrl",
+  "skipToNextOnBlock"
+];
+
+// This endpoint owns (can edit + contributes) one blocked-list type: the Mac
+// owns apps, browsers own domains. The other type is a read-only mirror.
+function bridgeOwnsApps() {
+  return IS_CONNECTION_HUB;
+}
+
+function buildSyncContribution(group) {
+  const scalars = {};
+  for (const field of SYNC_SCALAR_FIELDS) scalars[field] = group[field];
+  const contribution = { scalars };
+  if (group.groupType === "site") {
+    if (bridgeOwnsApps()) {
+      // The Mac owns apps as { id, name } objects. The shared pool carries
+      // { name, icon } so the browser mirror can show real app icons (browsers
+      // can't resolve macOS app icons themselves). icon is a data URL resolved
+      // from the local app inventory; "" when unknown (mirror shows a monogram).
+      contribution.apps = (Array.isArray(group.apps) ? group.apps : [])
+        .map((app) => {
+          if (typeof app === "string") return { name: app, icon: "" };
+          if (!app) return null;
+          const inv = findInventoryApp(app.id) || app;
+          const name = appDisplayName(app) || app.name || app.id || "";
+          const icon = inv && typeof inv.icon === "string" ? inv.icon : "";
+          return name ? { name, icon } : null;
+        })
+        .filter(Boolean);
+    } else {
+      contribution.sites = Array.isArray(group.sites) ? group.sites : [];
+    }
+    // NOTE: the live usage budget is reported as deltas by the accrual owner
+    // only — the browser's background heartbeat (cbReportClusterUsage) and the
+    // Mac's in-process frontmost-app sampler (reportLocalUsage). The popup is
+    // display-only for usage: it folds the hub's shared total back into the
+    // local counter (applyClusterShared) but never reports it, so the popup and
+    // background can't double-count the same accrual.
+  }
+  // Active snooze runtime is shared so a snooze started on any member applies to
+  // every linked member (newest start wins). The entry carries all of its own
+  // timing (start/until/cooldown), so each side enforces and expires it
+  // identically without needing to propagate the eventual clear.
+  const snoozeEntry = state.groupSnoozes[group.id];
+  if (snoozeEntry && Number.isFinite(Number(snoozeEntry.startsAtMs))) {
+    contribution.snooze = snoozeEntry;
+    contribution.snoozeTs = Number(snoozeEntry.startsAtMs) || 0;
+  }
+  return contribution;
+}
+
+// Validates a snooze record received from the hub for a specific group and
+// returns a sanitized entry, or null if invalid or already fully expired (we
+// never re-adopt a snooze whose cooldown has passed — that would fight local
+// expiry and flip-flop the state).
+function adoptSharedSnooze(group, raw, now = Date.now()) {
+  if (!group || !raw || typeof raw !== "object") return null;
+  const sanitized = sanitizeSnoozes({ [group.id]: raw }, [group]);
+  const entry = sanitized[group.id];
+  if (!entry) return null;
+  if (Number(entry.cooldownUntilMs) <= now) return null;
+  return entry;
+}
+
+// Writes the hub's shared settings onto a local member group (scalars + freeze)
+// and records the shared list pools as a read-only mirror. The owned list is
+// never overwritten (the user keeps editing their own type).
+function applyClusterShared(group, shared) {
+  if (!group || !shared || typeof shared !== "object") return;
+  const scalars = shared.scalars && typeof shared.scalars === "object" ? shared.scalars : {};
+  const idx = state.groups.findIndex((g) => g.id === group.id);
+  if (idx < 0) return;
+  const next = { ...state.groups[idx] };
+  let changed = false;
+  for (const field of SYNC_SCALAR_FIELDS) {
+    if (
+      Object.prototype.hasOwnProperty.call(scalars, field) &&
+      JSON.stringify(next[field]) !== JSON.stringify(scalars[field])
+    ) {
+      next[field] = scalars[field];
+      changed = true;
+    }
+  }
+  state.groups[idx] = next;
+  state.clusterMirror[group.id] = {
+    sites: Array.isArray(shared.sites) ? shared.sites : [],
+    apps: Array.isArray(shared.apps) ? shared.apps : []
+  };
+  if (Number.isFinite(shared.ts)) state.groupEditTs[group.id] = shared.ts;
+
+  // Fold the hub's shared usage budget into our local counter so the live
+  // elapsed timer (display + enforcement) reflects time spent on every member.
+  // We never overwrite our own future accrual — the native app keeps adding to
+  // this value and reporting it back, and the hub measures only the new delta.
+  if (next.groupType === "site" && Number.isFinite(shared.usageMs)) {
+    const incomingUsage = Math.max(0, Number(shared.usageMs) || 0);
+    if ((Number(state.usageTimersMs[group.id]) || 0) !== incomingUsage) {
+      state.usageTimersMs[group.id] = incomingUsage;
+      chrome.storage.local.set({ [USAGE_TIMERS_KEY]: state.usageTimersMs }).catch(() => {});
+    }
+    if (
+      Number.isFinite(shared.usageResetAtMs) &&
+      shared.usageResetAtMs > 0 &&
+      (Number(state.usageResetAtMs[group.id]) || 0) !== Number(shared.usageResetAtMs)
+    ) {
+      state.usageResetAtMs[group.id] = Number(shared.usageResetAtMs);
+      chrome.storage.local.set({ [USAGE_RESET_AT_KEY]: state.usageResetAtMs }).catch(() => {});
+    }
+  }
+
+  // Adopt a newer shared snooze (newest start wins) so a snooze started on a
+  // linked member activates here too. Liveness is checked inside adoptSharedSnooze.
+  const sharedSnoozeTs = Number(shared.snoozeTs) || 0;
+  if (sharedSnoozeTs > 0 && shared.snooze && typeof shared.snooze === "object") {
+    const localEntry = state.groupSnoozes[group.id];
+    const localTs = localEntry ? Number(localEntry.startsAtMs) || 0 : 0;
+    if (sharedSnoozeTs > localTs) {
+      const adopted = adoptSharedSnooze(next, shared.snooze);
+      if (adopted) {
+        state.groupSnoozes[group.id] = adopted;
+        chrome.storage.local.set({ [GROUP_SNOOZES_KEY]: state.groupSnoozes }).catch(() => {});
+      }
+    }
+  }
+
+  // Mark our contribution as up to date so we don't echo it back to the hub.
+  state.clusterSyncSent[group.id] = JSON.stringify(buildSyncContribution(next));
+  if (changed) {
+    chrome.storage.local.set({ [BLOCKED_GROUPS_KEY]: state.groups }).catch(() => {});
+  }
+}
+
+function syncClusterForGroup(group) {
+  if (!group || !isBridgeEligibleGroup(group)) return;
+  if (!groupConnectionCluster(group)) {
+    delete state.clusterSyncSent[group.id];
+    return;
+  }
+  const contribution = buildSyncContribution(group);
+  const json = JSON.stringify(contribution);
+  const priority = state.pendingPriorityGroups.has(group.id);
+  if (json === state.clusterSyncSent[group.id] && !priority) return;
+  state.clusterSyncSent[group.id] = json;
+  state.pendingPriorityGroups.delete(group.id);
+  state.groupEditTs[group.id] = Date.now();
+  try {
+    chrome.runtime.sendMessage({
+      type: "group-sync",
+      program: LOCAL_PROGRAM_ID,
+      groupName: group.name,
+      groupType: group.groupType,
+      ts: state.groupEditTs[group.id],
+      priority,
+      ...contribution
+    });
+  } catch (_) {}
+}
+
+function syncAllClusters() {
+  for (const group of state.groups) syncClusterForGroup(group);
+}
+
 function syncSettingsFormFromState() {
   const s = state.globalSettings || DEFAULT_GLOBAL_SETTINGS;
-  if (settingsTickRateField) settingsTickRateField.value = String(s.tickRateMs);
+  renderConnectionSettings();
   if (settingsAutosaveDebounceField) settingsAutosaveDebounceField.value = String(s.autosaveDebounceMs);
   if (settingsDebugModeField) settingsDebugModeField.checked = Boolean(s.debugMode);
-  if (settingsShowOnPageLogToastsField) settingsShowOnPageLogToastsField.checked = s.showOnPageLogToasts !== false;
   if (settingsDefaultSnoozeMinutesField) settingsDefaultSnoozeMinutesField.value = String(s.defaultSnoozeMinutes);
-  if (settingsDefaultFallbackUrlField) settingsDefaultFallbackUrlField.value = s.defaultFallbackUrl ?? "";
   if (settingsStatus) settingsStatus.textContent = "";
 }
 
 function openSettings() {
   state.isSettingsOpen = true;
   syncSettingsFormFromState();
+  requestConnectionStatus();
   settingsModal.classList.remove("hidden");
   renderLocalFolderStatus().catch((error) => {
     if (localFolderStatus) localFolderStatus.textContent = String(error?.message ?? error);
@@ -568,12 +1392,9 @@ function closeSettings() {
 
 async function saveSettingsFromForm() {
   const draft = {
-    tickRateMs: settingsTickRateField?.value,
     autosaveDebounceMs: settingsAutosaveDebounceField?.value,
     debugMode: settingsDebugModeField?.checked ?? false,
-    showOnPageLogToasts: settingsShowOnPageLogToastsField?.checked ?? true,
-    defaultSnoozeMinutes: settingsDefaultSnoozeMinutesField?.value,
-    defaultFallbackUrl: settingsDefaultFallbackUrlField?.value
+    defaultSnoozeMinutes: settingsDefaultSnoozeMinutesField?.value
   };
   const sanitized = sanitizeGlobalSettings(draft);
   state.globalSettings = sanitized;
@@ -1137,9 +1958,6 @@ function clampNumber(value, min, max, fallback) {
 
 function sanitizeGlobalSettings(raw) {
   const src = raw && typeof raw === "object" ? raw : {};
-  const tickRateMs = Math.round(
-    clampNumber(src.tickRateMs, TICK_RATE_MIN_MS, TICK_RATE_MAX_MS, DEFAULT_GLOBAL_SETTINGS.tickRateMs)
-  );
   const autosaveDebounceMs = Math.round(
     clampNumber(src.autosaveDebounceMs, 0, AUTOSAVE_DEBOUNCE_MAX_MS, DEFAULT_GLOBAL_SETTINGS.autosaveDebounceMs)
   );
@@ -1147,8 +1965,6 @@ function sanitizeGlobalSettings(raw) {
     const parsed = Number.parseFloat(src.defaultSnoozeMinutes);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_GLOBAL_SETTINGS.defaultSnoozeMinutes;
   })();
-  const defaultFallbackUrl =
-    typeof src.defaultFallbackUrl === "string" ? src.defaultFallbackUrl.trim() : "";
   // Migrate the old `showDebugOverlay` key (which defaulted to true)
   // to the new `debugMode` key (which defaults to false). If the user
   // had previously SET showDebugOverlay we honor it; otherwise we
@@ -1156,14 +1972,19 @@ function sanitizeGlobalSettings(raw) {
   const debugMode =
     src.debugMode === true ||
     (src.debugMode === undefined && src.showDebugOverlay === true);
-  const showOnPageLogToasts = src.showOnPageLogToasts !== false;
   return {
-    tickRateMs,
     autosaveDebounceMs,
     debugMode,
-    showOnPageLogToasts,
     defaultSnoozeMinutes,
-    defaultFallbackUrl
+    connection: sanitizeConnectionSettings(src.connection)
+  };
+}
+
+function sanitizeConnectionSettings(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  return {
+    serverEnabled: src.serverEnabled === true,
+    clientEnabled: src.clientEnabled === true
   };
 }
 
@@ -2499,14 +3320,50 @@ function createDefaultGroup(groupType = DEFAULT_GROUP_TYPE) {
     blockingRulesText: t("custom.defaultRule"),
     activeEventSource: "",
     freezeMode: "none",
+    freezeModeChoice: "frozen",
     strictFreezeHours: DEFAULT_STRICT_FREEZE_HOURS,
     frozenAtMs: null,
+    parentalPasswordHash: null,
+    parentalPasswordSalt: null,
     sites: [],
     apps: [],
     blockHomePage: false,
-    fallbackUrl: state.globalSettings?.defaultFallbackUrl ?? "",
+    fallbackUrl: "",
     skipToNextOnBlock: false
   };
+}
+
+// The freeze-mode dropdown is the user's chosen mode to apply on the NEXT
+// freeze. It is persisted per-group and kept SEPARATE from `freezeMode`
+// (the active-frozen state), so selecting a mode never freezes the group on
+// its own. Falls back to the active mode, then to a parental hint, then frozen.
+const FREEZE_MODE_CHOICES = ["frozen", "strict", "parental"];
+function normalizeFreezeModeChoice(group) {
+  const choice = group?.freezeModeChoice;
+  if (FREEZE_MODE_CHOICES.includes(choice)) return choice;
+  if (FREEZE_MODE_CHOICES.includes(group?.freezeMode)) return group.freezeMode;
+  if (typeof group?.parentalPasswordHash === "string" && group.parentalPasswordHash) {
+    return "parental";
+  }
+  return "frozen";
+}
+
+// Group names must be unique per endpoint so the web-app bridge can link
+// groups by name. On load we repair any pre-existing duplicates by suffixing
+// " (2)", " (3)", … to all but the first occurrence (case-insensitive).
+function dedupeGroupNames(groups) {
+  const seen = new Set();
+  return groups.map((group) => {
+    const base = (group.name || "").trim() || group.name || "";
+    let candidate = base;
+    let counter = 2;
+    while (seen.has(candidate.toLowerCase())) {
+      candidate = `${base} (${counter})`;
+      counter += 1;
+    }
+    seen.add(candidate.toLowerCase());
+    return candidate === group.name ? group : { ...group, name: candidate };
+  });
 }
 
 function sanitizeGroups(groups) {
@@ -2514,7 +3371,7 @@ function sanitizeGroups(groups) {
     return [];
   }
 
-  return groups.map((group) => {
+  const sanitized = groups.map((group) => {
     const baseGroup = createDefaultGroup(normalizeGroupType(group?.groupType));
     const normalizedGroupType = normalizeGroupType(group?.groupType);
     const rawTimeWindowsText =
@@ -2593,14 +3450,25 @@ function sanitizeGroups(groups) {
       activeEventSource:
         typeof group?.activeEventSource === "string" ? group.activeEventSource : "",
       freezeMode:
-        group?.freezeMode === "strict" || group?.freezeMode === "frozen"
+        group?.freezeMode === "strict" ||
+        group?.freezeMode === "frozen" ||
+        group?.freezeMode === "parental"
           ? group.freezeMode
           : "none",
+      freezeModeChoice: normalizeFreezeModeChoice(group),
       strictFreezeHours:
         parseStrictFreezeHours(group?.strictFreezeHours) ?? DEFAULT_STRICT_FREEZE_HOURS,
       frozenAtMs:
         Number.isFinite(Number(group?.frozenAtMs)) && Number(group.frozenAtMs) > 0
           ? Number(group.frozenAtMs)
+          : null,
+      parentalPasswordHash:
+        typeof group?.parentalPasswordHash === "string" && group.parentalPasswordHash
+          ? group.parentalPasswordHash
+          : null,
+      parentalPasswordSalt:
+        typeof group?.parentalPasswordSalt === "string" && group.parentalPasswordSalt
+          ? group.parentalPasswordSalt
           : null,
       sites: Array.isArray(group?.sites)
         ? [...new Set(group.sites.map(normalizeSiteInput).filter(Boolean))]
@@ -2611,6 +3479,8 @@ function sanitizeGroups(groups) {
       skipToNextOnBlock: Boolean(group?.skipToNextOnBlock)
     };
   });
+
+  return dedupeGroupNames(sanitized);
 }
 
 function sanitizeUsageTimers(value, groups) {
@@ -2650,7 +3520,9 @@ function sanitizeSnoozes(value, groups) {
     const confirmationCount = parseSnoozeConfirmations(snooze?.confirmationCount);
     const activeMsApplied = Boolean(snooze?.activeMsApplied);
     const refreezeMode =
-      snooze?.refreezeMode === "strict" || snooze?.refreezeMode === "frozen"
+      snooze?.refreezeMode === "strict" ||
+      snooze?.refreezeMode === "frozen" ||
+      snooze?.refreezeMode === "parental"
         ? snooze.refreezeMode
         : "frozen";
 
@@ -2708,8 +3580,11 @@ function getSerializableGroupSnapshot(group) {
     discordTargets: [...group.discordTargets],
     blockingRulesText: group.blockingRulesText,
     freezeMode: group.freezeMode,
+    freezeModeChoice: normalizeFreezeModeChoice(group),
     strictFreezeHours: group.strictFreezeHours,
     frozenAtMs: group.freezeMode === "none" ? null : group.frozenAtMs,
+    parentalPasswordHash: group.parentalPasswordHash ?? null,
+    parentalPasswordSalt: group.parentalPasswordSalt ?? null,
     sites: [...group.sites],
     apps: (group.apps || []).map((app) => ({ id: app.id, name: app.name })),
     blockHomePage: Boolean(group.blockHomePage),
@@ -2828,7 +3703,8 @@ function groupToDraft(group) {
     blockingRulesText: group.blockingRulesText,
     blockHomePage: Boolean(group.blockHomePage),
     fallbackUrl: group.fallbackUrl ?? "",
-    skipToNextOnBlock: Boolean(group.skipToNextOnBlock)
+    skipToNextOnBlock: Boolean(group.skipToNextOnBlock),
+    freezeModeChoice: normalizeFreezeModeChoice(group)
   };
 }
 
@@ -2929,6 +3805,7 @@ function getDisplayedSnoozeTotalMs(groupId, now = Date.now()) {
 function getFreezeStatus(group, now = Date.now()) {
   const isFrozen = group.freezeMode !== "none";
   const isStrict = group.freezeMode === "strict";
+  const isParental = group.freezeMode === "parental";
   const unlockedAtMs =
     isStrict && group.frozenAtMs
       ? group.frozenAtMs + group.strictFreezeHours * MS_PER_HOUR
@@ -2939,14 +3816,335 @@ function getFreezeStatus(group, now = Date.now()) {
   return {
     isFrozen,
     isStrict,
+    isParental,
+    hasParentalPassword: Boolean(group.parentalPasswordHash),
     unlockedAtMs,
     lockedRemainingMs,
+    // Parental groups are gated by password (verified separately), not by a
+    // time lock or the multi-step ritual.
     canUnfreeze: isFrozen && (!isStrict || lockedRemainingMs <= 0)
   };
 }
 
 function isGroupEditable(group, now = Date.now()) {
   return !getFreezeStatus(group, now).isFrozen;
+}
+
+// --- Parental password (per-group 6-digit PIN) ---------------------------
+const PARENTAL_PIN_LENGTH = 6;
+
+function isValidParentalPin(pin) {
+  return typeof pin === "string" && new RegExp(`^\\d{${PARENTAL_PIN_LENGTH}}$`).test(pin);
+}
+
+function randomSaltHex(bytes = 16) {
+  const arr = new Uint8Array(bytes);
+  if (globalThis.crypto && crypto.getRandomValues) {
+    crypto.getRandomValues(arr);
+  } else {
+    for (let i = 0; i < bytes; i++) arr[i] = Math.floor(Math.random() * 256);
+  }
+  return [...arr].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Non-crypto fallback hash (cyrb53) for contexts without crypto.subtle
+// (e.g. WKWebView custom-scheme pages are not secure contexts). Only used
+// to avoid storing the raw PIN; the real protection is the salted SHA-256.
+function fallbackHashHex(str) {
+  let h1 = 0xdeadbeef ^ 0;
+  let h2 = 0x41c6ce57 ^ 0;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  const out = 4294967296 * (2097151 & h2) + (h1 >>> 0);
+  return "fb" + out.toString(16).padStart(14, "0");
+}
+
+async function hashParentalPin(pin, saltHex) {
+  const data = String(saltHex) + ":" + String(pin);
+  if (globalThis.crypto && crypto.subtle && crypto.subtle.digest) {
+    try {
+      const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(data));
+      return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+    } catch (err) {
+      // fall through to fallback
+    }
+  }
+  return fallbackHashHex(data);
+}
+
+function constantTimeEqual(a, b) {
+  const sa = String(a);
+  const sb = String(b);
+  if (sa.length !== sb.length) return false;
+  let diff = 0;
+  for (let i = 0; i < sa.length; i++) diff |= sa.charCodeAt(i) ^ sb.charCodeAt(i);
+  return diff === 0;
+}
+
+async function setGroupParentalPin(group, pin) {
+  if (!group || !isValidParentalPin(pin)) return false;
+  const salt = randomSaltHex();
+  group.parentalPasswordSalt = salt;
+  group.parentalPasswordHash = await hashParentalPin(pin, salt);
+  return true;
+}
+
+function clearGroupParentalPin(group) {
+  if (!group) return;
+  group.parentalPasswordHash = null;
+  group.parentalPasswordSalt = null;
+}
+
+async function verifyGroupParentalPin(group, pin) {
+  if (!group || !group.parentalPasswordHash || !group.parentalPasswordSalt) return false;
+  if (!isValidParentalPin(pin)) return false;
+  const hash = await hashParentalPin(pin, group.parentalPasswordSalt);
+  return constantTimeEqual(hash, group.parentalPasswordHash);
+}
+
+// --- Overlay panel channel ----------------------------------------------
+// Opens an overlay panel (built from panel-control snapshots) and routes its
+// interaction events to `onEvent`. On macOS this renders as a true native
+// NSPanel overlay via the system-panel bridge; on the extensions / plain
+// Safari it falls back to an in-popup overlay rendered here.
+// Returns { update(nextSnapshot), close() }.
+let __cbOverlayPanelSeq = 0;
+
+function __cbIsNativeOverlayHost() {
+  return (
+    typeof window.__cbSystemPanelEvent === "function" &&
+    typeof chrome !== "undefined" &&
+    chrome.runtime &&
+    typeof chrome.runtime.sendMessage === "function"
+  );
+}
+
+function openOverlayPanel(snapshot, onEvent, opts = {}) {
+  const panelId = snapshot.id || "cb-overlay-" + ++__cbOverlayPanelSeq;
+  const snap = { ...snapshot, id: panelId };
+  if (!opts.internal && __cbIsNativeOverlayHost()) {
+    return __cbOpenNativeOverlay(panelId, snap, onEvent);
+  }
+  return __cbOpenInPopupOverlay(panelId, snap, onEvent);
+}
+
+function __cbOpenNativeOverlay(panelId, snap, onEvent) {
+  const handler = (ev) => {
+    if (!ev || ev.panelId !== panelId) return;
+    let values = {};
+    if (ev.valuesJSON) {
+      try {
+        values = JSON.parse(ev.valuesJSON);
+      } catch (_) {}
+    }
+    onEvent({
+      controlId: ev.controlId || "",
+      eventName: ev.eventName || "",
+      value: ev.value,
+      values
+    });
+  };
+  window.__cbSystemPanelHandlers = window.__cbSystemPanelHandlers || [];
+  window.__cbSystemPanelHandlers.push(handler);
+  try {
+    chrome.runtime.sendMessage({ type: "show-system-panel", snapshot: snap });
+  } catch (_) {}
+  let closed = false;
+  return {
+    update(nextSnapshot) {
+      try {
+        chrome.runtime.sendMessage({
+          type: "show-system-panel",
+          snapshot: { ...nextSnapshot, id: panelId }
+        });
+      } catch (_) {}
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      const arr = window.__cbSystemPanelHandlers || [];
+      const i = arr.indexOf(handler);
+      if (i >= 0) arr.splice(i, 1);
+      try {
+        chrome.runtime.sendMessage({ type: "dismiss-system-panel", id: panelId });
+      } catch (_) {}
+    }
+  };
+}
+
+function __cbEnsureOverlayStyles() {
+  if (document.getElementById("cb-overlay-styles")) return;
+  const style = document.createElement("style");
+  style.id = "cb-overlay-styles";
+  style.textContent = [
+    ".cb-overlay-backdrop{position:fixed;inset:0;background:rgba(15,23,42,0.42);display:flex;align-items:center;justify-content:center;z-index:2147483647;padding:20px;box-sizing:border-box;animation:cbOverlayFade .15s ease;}",
+    ".cb-overlay-card{width:min(360px,100%);box-sizing:border-box;background:var(--surface,#fff);color:var(--text,#0f172a);border-radius:16px;padding:20px;box-shadow:0 18px 40px rgba(15,23,42,0.22);display:flex;flex-direction:column;gap:14px;animation:cbOverlayPop .18s cubic-bezier(.2,.8,.3,1);}",
+    ".cb-overlay-title{font-size:18px;font-weight:600;margin:0;}",
+    ".cb-overlay-text{font-size:13px;color:#475569;line-height:1.45;}",
+    ".cb-overlay-label{font-size:11px;font-weight:600;color:#64748b;margin-bottom:6px;}",
+    ".cb-overlay-row{display:flex;flex-direction:column;}",
+    ".cb-overlay-pin{display:flex;gap:10px;align-items:center;justify-content:center;cursor:text;}",
+    ".cb-overlay-pin-box{width:40px;height:50px;border-radius:10px;background:#f1f5f9;border:1.5px solid #e2e8f0;display:flex;align-items:center;justify-content:center;font:600 22px ui-monospace,Menlo,monospace;color:#0f172a;transition:border-color .12s,background .12s,box-shadow .12s;}",
+    ".cb-overlay-pin-box.filled{background:#fff;border-color:#cbd5e1;}",
+    ".cb-overlay-pin-box.active{border-color:var(--navy-700,#1e3a8a);box-shadow:0 0 0 3px rgba(30,58,138,0.16);}",
+    ".cb-overlay-pin-input{position:absolute;opacity:0;width:1px;height:1px;border:0;padding:0;}",
+    ".cb-overlay-input{box-sizing:border-box;width:100%;border:1.5px solid #e2e8f0;border-radius:10px;padding:8px 10px;font-size:13px;}",
+    ".cb-overlay-input:focus{outline:none;border-color:var(--navy-700,#1e3a8a);box-shadow:0 0 0 3px rgba(30,58,138,0.16);}",
+    ".cb-overlay-buttons{display:flex;gap:8px;justify-content:flex-end;margin-top:6px;}",
+    ".cb-overlay-button{border:none;border-radius:10px;padding:8px 16px;font-size:13px;font-weight:700;cursor:pointer;background:#e2e8f0;color:#0f172a;transition:filter .12s;}",
+    ".cb-overlay-button:hover{filter:brightness(0.96);}",
+    ".cb-overlay-button-primary{background:var(--navy-700,#1e3a8a);color:#fff;}",
+    "@keyframes cbOverlayFade{from{opacity:0}to{opacity:1}}",
+    "@keyframes cbOverlayPop{from{opacity:0;transform:translateY(8px) scale(.97)}to{opacity:1;transform:none}}"
+  ].join("");
+  document.head.appendChild(style);
+}
+
+function __cbOpenInPopupOverlay(panelId, snap, onEvent) {
+  __cbEnsureOverlayStyles();
+  let backdrop = document.getElementById(panelId + "-backdrop");
+  if (backdrop) backdrop.remove();
+  backdrop = document.createElement("div");
+  backdrop.id = panelId + "-backdrop";
+  backdrop.className = "cb-overlay-backdrop";
+  const card = document.createElement("div");
+  card.className = "cb-overlay-card";
+  backdrop.appendChild(card);
+  document.body.appendChild(backdrop);
+
+  const values = {};
+  const collect = () => ({ ...values });
+
+  function renderControl(control) {
+    const type = control.type;
+    const row = document.createElement("div");
+    row.className = "cb-overlay-row";
+    if (type === "text" || type === "section") {
+      const p = document.createElement("div");
+      p.className = "cb-overlay-text";
+      p.textContent = control.text || control.label || "";
+      row.appendChild(p);
+    } else if (type === "pin") {
+      const len = Math.max(3, Math.min(12, Math.floor(Number(control.length)) || 6));
+      const masked = control.masked !== false;
+      values[control.id] = String(control.value || "").replace(/\D/g, "").slice(0, len);
+      if (control.label) {
+        const lbl = document.createElement("div");
+        lbl.className = "cb-overlay-label";
+        lbl.textContent = control.label;
+        row.appendChild(lbl);
+      }
+      const wrap = document.createElement("div");
+      wrap.className = "cb-overlay-pin";
+      const input = document.createElement("input");
+      input.type = "text";
+      input.inputMode = "numeric";
+      input.maxLength = len;
+      input.className = "cb-overlay-pin-input";
+      input.value = values[control.id];
+      const boxes = [];
+      for (let i = 0; i < len; i++) {
+        const b = document.createElement("div");
+        b.className = "cb-overlay-pin-box";
+        boxes.push(b);
+        wrap.appendChild(b);
+      }
+      const draw = () => {
+        const v = values[control.id];
+        for (let i = 0; i < len; i++) {
+          boxes[i].textContent = i < v.length ? (masked ? "\u2022" : v[i]) : "";
+          boxes[i].classList.toggle("filled", i < v.length);
+          boxes[i].classList.toggle("active", i === Math.min(v.length, len - 1));
+        }
+      };
+      draw();
+      input.addEventListener("input", () => {
+        const d = input.value.replace(/\D/g, "").slice(0, len);
+        if (d !== input.value) input.value = d;
+        values[control.id] = d;
+        draw();
+        onEvent({ controlId: control.id, eventName: "change", value: d, values: collect() });
+        if (control.autoSubmit === true && d.length === len) {
+          onEvent({ controlId: control.id, eventName: "submit", value: d, values: collect() });
+        }
+      });
+      wrap.addEventListener("click", () => input.focus());
+      row.appendChild(wrap);
+      row.appendChild(input);
+      setTimeout(() => input.focus(), 30);
+    } else if (type === "textInput") {
+      if (control.label) {
+        const lbl = document.createElement("div");
+        lbl.className = "cb-overlay-label";
+        lbl.textContent = control.label;
+        row.appendChild(lbl);
+      }
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "cb-overlay-input";
+      input.placeholder = control.placeholder || "";
+      input.value = control.value || "";
+      values[control.id] = input.value;
+      input.addEventListener("input", () => {
+        values[control.id] = input.value;
+        onEvent({ controlId: control.id, eventName: "change", value: input.value, values: collect() });
+      });
+      row.appendChild(input);
+    } else if (type === "button") {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "cb-overlay-button";
+      if (control.action === "submit") btn.classList.add("cb-overlay-button-primary");
+      btn.textContent = control.label || "Button";
+      btn.addEventListener("click", () => {
+        const action =
+          control.action === "submit" || control.action === "cancel" || control.action === "close"
+            ? control.action
+            : "click";
+        onEvent({ controlId: control.id, eventName: action, value: control.value ?? true, values: collect() });
+      });
+      row.appendChild(btn);
+    }
+    return row;
+  }
+
+  function build(snapshot) {
+    card.innerHTML = "";
+    for (const k of Object.keys(values)) delete values[k];
+    if (snapshot.title) {
+      const h = document.createElement("div");
+      h.className = "cb-overlay-title";
+      h.textContent = snapshot.title;
+      card.appendChild(h);
+    }
+    const buttonRow = document.createElement("div");
+    buttonRow.className = "cb-overlay-buttons";
+    for (const control of Array.isArray(snapshot.controls) ? snapshot.controls : []) {
+      const el = renderControl(control);
+      if (control.type === "button") buttonRow.appendChild(el);
+      else card.appendChild(el);
+    }
+    if (buttonRow.childNodes.length) card.appendChild(buttonRow);
+  }
+
+  build(snap);
+  let closed = false;
+  return {
+    update(nextSnapshot) {
+      build({ ...nextSnapshot, id: panelId });
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      const el = document.getElementById(panelId + "-backdrop");
+      if (el) el.remove();
+    }
+  };
 }
 
 function collectSelectedDays() {
@@ -3118,6 +4316,14 @@ function renderGroupList(now = Date.now()) {
       card.classList.add("dragging");
     }
 
+    if (groupConnectionCluster(group)) {
+      card.classList.add("bridge-connected");
+    }
+
+    if (group.groupType === "custom") {
+      card.classList.add("custom-card");
+    }
+
     const header = document.createElement("div");
     header.className = "group-card-header";
 
@@ -3215,6 +4421,7 @@ function updateFreezeUI(group, now = Date.now()) {
     freezeSummary.textContent = "";
     freezeSetup.classList.add("hidden");
     strictFreezeSettings.classList.add("hidden");
+    if (parentalSettingsButton) parentalSettingsButton.classList.add("hidden");
     applyFreezeButton.disabled = true;
     unfreezeButton.classList.add("hidden");
     unfreezeButton.disabled = true;
@@ -3224,12 +4431,36 @@ function updateFreezeUI(group, now = Date.now()) {
   const freezeStatus = getFreezeStatus(group, now);
   const strictDraftHours = parseStrictFreezeHours(strictFreezeHoursField.value);
 
+  // When a group is linked into a cluster but any member is offline, freeze
+  // state must NOT change (it can't be reconciled safely while disconnected).
+  // Lock the whole freeze control set and explain why.
+  const freezeCluster = groupConnectionCluster(group);
+  const freezeBridgeLocked = Boolean(freezeCluster) && !clusterAllOnline(freezeCluster);
+  if (freezeBridgeNotice) freezeBridgeNotice.classList.toggle("hidden", !freezeBridgeLocked);
+  if (freezeBridgeLocked) {
+    freezeSummary.textContent = freezeStatus.isFrozen
+      ? t("freeze.summary.frozen")
+      : t("freeze.summary.notFrozen");
+    freezeSetup.classList.add("hidden");
+    strictFreezeSettings.classList.add("hidden");
+    if (parentalSettingsButton) parentalSettingsButton.classList.add("hidden");
+    applyFreezeButton.disabled = true;
+    unfreezeButton.classList.toggle("hidden", !freezeStatus.isFrozen);
+    unfreezeButton.disabled = true;
+    freezeModeField.disabled = true;
+    return;
+  }
+  freezeModeField.disabled = false;
+
   if (!freezeStatus.isFrozen) {
+    const draftMode = freezeModeField.value;
     freezeSummary.textContent = t("freeze.summary.notFrozen");
     freezeSetup.classList.remove("hidden");
-    strictFreezeSettings.classList.toggle("hidden", freezeModeField.value !== "strict");
-    applyFreezeButton.disabled =
-      freezeModeField.value === "strict" && strictDraftHours === null;
+    strictFreezeSettings.classList.toggle("hidden", draftMode !== "strict");
+    if (parentalSettingsButton) {
+      parentalSettingsButton.classList.toggle("hidden", draftMode !== "parental");
+    }
+    applyFreezeButton.disabled = draftMode === "strict" && strictDraftHours === null;
     unfreezeButton.classList.add("hidden");
     unfreezeButton.disabled = true;
     return;
@@ -3238,6 +4469,9 @@ function updateFreezeUI(group, now = Date.now()) {
   freezeSetup.classList.add("hidden");
   unfreezeButton.classList.remove("hidden");
   unfreezeButton.disabled = !freezeStatus.canUnfreeze;
+  if (parentalSettingsButton) {
+    parentalSettingsButton.classList.toggle("hidden", !freezeStatus.isParental);
+  }
 
   if (freezeStatus.isStrict && freezeStatus.lockedRemainingMs > 0) {
     freezeSummary.textContent = t("freeze.summary.strictLocked", {
@@ -3246,9 +4480,11 @@ function updateFreezeUI(group, now = Date.now()) {
     return;
   }
 
-  freezeSummary.textContent = freezeStatus.isStrict
-    ? t("freeze.summary.strictReady")
-    : t("freeze.summary.ready");
+  freezeSummary.textContent = freezeStatus.isParental
+    ? t("freeze.summary.parental")
+    : freezeStatus.isStrict
+      ? t("freeze.summary.strictReady")
+      : t("freeze.summary.ready");
 }
 
 function updateSnoozeUI(group, now = Date.now()) {
@@ -3429,6 +4665,7 @@ function renderEditor(now = Date.now()) {
     updateSnoozeUI(null, now);
     setSnoozeWarning("");
     updateBlockingRulesEditor();
+    if (connectionGroupSection) connectionGroupSection.classList.add("hidden");
     return;
   }
 
@@ -3505,7 +4742,14 @@ function renderEditor(now = Date.now()) {
   skipToNextOnBlockRow.classList.toggle("hidden", !isPlatformVideoGroup || !isScrollPlatform);
   skipToNextOnBlockField.checked = Boolean(draft?.skipToNextOnBlock ?? group.skipToNextOnBlock);
 
-  freezeModeField.value = freezeStatus.isStrict ? "strict" : "frozen";  strictFreezeHoursField.value = String(group.strictFreezeHours);
+  freezeModeField.value = freezeStatus.isFrozen
+    ? freezeStatus.isParental
+      ? "parental"
+      : freezeStatus.isStrict
+        ? "strict"
+        : "frozen"
+    : draft?.freezeModeChoice ?? normalizeFreezeModeChoice(group);
+  strictFreezeHoursField.value = String(group.strictFreezeHours);
 
   blockModeSection.classList.toggle("hidden", isCustomGroup);
   timedSettings.classList.toggle("hidden", !isTimedMode || isCustomGroup);
@@ -3591,6 +4835,8 @@ function renderEditor(now = Date.now()) {
   updateUsageSummary(group, draft, now);
   updateFreezeUI(group, now);
   updateSnoozeUI(group, now);
+  renderConnectionGroupPanel(group, freezeStatus);
+  renderBridgeMirror(group);
   updateBlockingRulesEditor();
 }
 
@@ -3618,6 +4864,9 @@ function renderDynamicView() {
   updateFreezeUI(group, now);
   updateSnoozeUI(group, now);
   renderUnfreezeModal(now);
+  // Push the latest local usage to the hub so clustered Default groups keep a
+  // shared live counter. syncClusterForGroup only sends when something changed.
+  syncAllClusters();
 }
 
 // Mutate the existing group cards in place instead of tearing them down and
@@ -3835,6 +5084,11 @@ async function persistState(message) {
   if (message) {
     setStatus(message);
   }
+
+  // Keep the hub's roster current so name-based linking validates correctly,
+  // and push any settings changes to clustered peers.
+  announceGroups();
+  syncAllClusters();
 }
 
 async function loadGroups() {
@@ -4052,6 +5306,15 @@ function buildUpdatedGroupFromDraft(group, draft) {
     throw new Error(t("status.invalidName"));
   }
 
+  // Names must be unique per endpoint (the web-app bridge links groups by name).
+  const nameClash = state.groups.some(
+    (other) =>
+      other.id !== group.id && (other.name || "").trim().toLowerCase() === name.toLowerCase()
+  );
+  if (nameClash) {
+    throw new Error(t("status.duplicateName"));
+  }
+
   const mode = normalizeBlockingMode(draft.mode);
   const allowedMinutes = parseAllowedMinutes(draft.allowedMinutes);
   const resetIntervalHours = parseResetIntervalHours(draft.resetIntervalHours);
@@ -4168,7 +5431,12 @@ function buildUpdatedGroupFromDraft(group, draft) {
         : typeof draft.fallbackUrl === "string"
         ? draft.fallbackUrl.trim()
         : "",
-      skipToNextOnBlock: Boolean(draft.skipToNextOnBlock)
+      skipToNextOnBlock: Boolean(draft.skipToNextOnBlock),
+      freezeModeChoice: normalizeFreezeModeChoice({
+        freezeModeChoice: draft.freezeModeChoice,
+        freezeMode: group.freezeMode,
+        parentalPasswordHash: group.parentalPasswordHash
+      })
     },
     modeChanged: nextMode !== group.mode,
     resetIntervalChanged:
@@ -4294,6 +5562,11 @@ async function applyFreeze() {
 
   await flushAutosave();
 
+  if (freezeModeField.value === "parental") {
+    await applyParentalFreeze(group);
+    return;
+  }
+
   const freezeMode = freezeModeField.value === "strict" ? "strict" : "frozen";
   const strictFreezeHours =
     freezeMode === "strict"
@@ -4334,6 +5607,11 @@ function openUnfreezeFlow() {
     return;
   }
 
+  if (freezeStatus.isParental) {
+    openParentalUnfreezeFlow(group);
+    return;
+  }
+
   if (!freezeStatus.canUnfreeze) {
     setStatus(t("status.strictLocked"), true);
     render();
@@ -4359,6 +5637,252 @@ function openUnfreezeFlow() {
   renderUnfreezeModal();
 }
 
+// --- Parental (password-gated) freeze flow ------------------------------
+
+async function persistGroupFields(groupId, fields, statusMsg) {
+  state.groups = state.groups.map((item) =>
+    item.id === groupId ? { ...item, ...fields } : item
+  );
+  await persistState(statusMsg);
+  render();
+}
+
+function buildPinPanelSnapshot({ id, title, description, pinId, autoSubmit, submitLabel }) {
+  const controls = [];
+  if (description) {
+    controls.push({ id: id + "-desc", type: "text", text: description });
+  }
+  controls.push({
+    id: pinId,
+    type: "pin",
+    label: "",
+    length: PARENTAL_PIN_LENGTH,
+    masked: true,
+    value: "",
+    autoSubmit: autoSubmit === true
+  });
+  controls.push({
+    id: id + "-submit",
+    type: "button",
+    label: submitLabel || t("freeze.pin.submit"),
+    action: "submit"
+  });
+  controls.push({
+    id: id + "-cancel",
+    type: "button",
+    label: t("freeze.pin.cancel"),
+    action: "cancel"
+  });
+  return { id, title, position: "center", controls };
+}
+
+// Opens a PIN-entry overlay. `onSubmit(pin)` returns true to close, false to
+// keep the panel open (e.g. wrong PIN) so the guardian can retry.
+function openPinEntry({ title, description, onSubmit }) {
+  const pinId = "pin-input";
+  const vals = {};
+  let handle = null;
+  let busy = false;
+
+  const trySubmit = async () => {
+    if (busy) return;
+    const pin = String(vals[pinId] || "");
+    if (!isValidParentalPin(pin)) {
+      setStatus(t("freeze.pin.invalid"), true);
+      return;
+    }
+    busy = true;
+    let ok = false;
+    try {
+      ok = await onSubmit(pin);
+    } finally {
+      busy = false;
+    }
+    if (ok && handle) handle.close();
+  };
+
+  handle = openOverlayPanel(
+    buildPinPanelSnapshot({
+      id: "parental-pin-entry",
+      title,
+      description,
+      pinId,
+      autoSubmit: true
+    }),
+    (ev) => {
+      if (ev.values) {
+        for (const k in ev.values) if (ev.values[k]) vals[k] = ev.values[k];
+      }
+      if (ev.controlId === pinId && (ev.eventName === "change" || ev.eventName === "submit")) {
+        vals[pinId] = ev.value;
+      }
+      const isCancel =
+        ev.eventName === "cancel" || (ev.eventName === "click" && ev.value === "cancel");
+      const isSubmit =
+        ev.eventName === "submit" || (ev.eventName === "click" && ev.value === "submit");
+      if (isCancel) {
+        if (handle) handle.close();
+        return;
+      }
+      if (isSubmit) {
+        trySubmit();
+      }
+    },
+    { internal: true }
+  );
+  return handle;
+}
+
+async function applyParentalFreeze(group) {
+  if (!group.parentalPasswordHash) {
+    setStatus(t("freeze.pin.needPassword"), true);
+    openParentalSettings(group);
+    return;
+  }
+  openPinEntry({
+    title: t("freeze.pin.freezeTitle"),
+    description: t("freeze.pin.freezePrompt"),
+    onSubmit: async (pin) => {
+      const ok = await verifyGroupParentalPin(group, pin);
+      if (!ok) {
+        setStatus(t("freeze.pin.wrong"), true);
+        return false;
+      }
+      await persistGroupFields(
+        group.id,
+        { freezeMode: "parental", frozenAtMs: Date.now() },
+        t("status.frozen", { name: group.name })
+      );
+      return true;
+    }
+  });
+}
+
+function openParentalUnfreezeFlow(group) {
+  if (!group.parentalPasswordHash) {
+    // No password set: nothing to gate against, just unfreeze.
+    persistGroupFields(
+      group.id,
+      { freezeMode: "none", frozenAtMs: null },
+      t("status.unfrozen", { name: group.name })
+    );
+    return;
+  }
+  openPinEntry({
+    title: t("freeze.pin.unfreezeTitle"),
+    description: t("freeze.pin.unfreezePrompt"),
+    onSubmit: async (pin) => {
+      const ok = await verifyGroupParentalPin(group, pin);
+      if (!ok) {
+        setStatus(t("freeze.pin.wrong"), true);
+        return false;
+      }
+      await persistGroupFields(
+        group.id,
+        { freezeMode: "none", frozenAtMs: null },
+        t("status.unfrozen", { name: group.name })
+      );
+      return true;
+    }
+  });
+}
+
+// Guardian settings overlay: set / verify / clear the group's password.
+function openParentalSettings(group) {
+  const pinId = "settings-pin";
+  const vals = {};
+  let handle = null;
+
+  const snapshotFor = (hasPassword) => {
+    const controls = [];
+    controls.push({
+      id: "settings-desc",
+      type: "text",
+      text: hasPassword
+        ? t("freeze.settings.managePrompt")
+        : t("freeze.settings.setPrompt")
+    });
+    controls.push({
+      id: pinId,
+      type: "pin",
+      label: "",
+      length: PARENTAL_PIN_LENGTH,
+      masked: true,
+      value: ""
+    });
+    if (hasPassword) {
+      controls.push({ id: "settings-verify", type: "button", label: t("freeze.settings.verify") });
+      controls.push({ id: "settings-clear", type: "button", label: t("freeze.settings.clear") });
+    } else {
+      controls.push({ id: "settings-save", type: "button", label: t("freeze.settings.save"), action: "submit" });
+    }
+    controls.push({ id: "settings-close", type: "button", label: t("freeze.settings.close"), action: "cancel" });
+    return { id: "parental-settings", title: t("freeze.settings.title"), position: "center", controls };
+  };
+
+  const currentGroup = () => state.groups.find((g) => g.id === group.id) || group;
+
+  const rebuild = () => {
+    vals[pinId] = "";
+    const snap = snapshotFor(Boolean(currentGroup().parentalPasswordHash));
+    if (handle) handle.update(snap);
+  };
+
+  const onEvent = async (ev) => {
+    if (ev.values) {
+      for (const k in ev.values) if (ev.values[k]) vals[k] = ev.values[k];
+    }
+    if (ev.controlId === pinId && ev.eventName === "change") vals[pinId] = ev.value;
+    const id = ev.controlId;
+    const pin = String(vals[pinId] || "");
+    const g = currentGroup();
+
+    if (id === "settings-close" || ev.eventName === "cancel" || (ev.eventName === "click" && ev.value === "cancel")) {
+      if (handle) handle.close();
+      return;
+    }
+    if (id === "settings-save") {
+      if (!isValidParentalPin(pin)) {
+        setStatus(t("freeze.pin.invalid"), true);
+        return;
+      }
+      const updated = { ...g };
+      await setGroupParentalPin(updated, pin);
+      await persistGroupFields(
+        g.id,
+        {
+          parentalPasswordHash: updated.parentalPasswordHash,
+          parentalPasswordSalt: updated.parentalPasswordSalt
+        },
+        t("freeze.settings.saved")
+      );
+      rebuild();
+      return;
+    }
+    if (id === "settings-verify") {
+      const ok = await verifyGroupParentalPin(g, pin);
+      setStatus(ok ? t("freeze.settings.verifyOk") : t("freeze.settings.verifyFail"), !ok);
+      return;
+    }
+    if (id === "settings-clear") {
+      const ok = await verifyGroupParentalPin(g, pin);
+      if (!ok) {
+        setStatus(t("freeze.pin.wrong"), true);
+        return;
+      }
+      await persistGroupFields(
+        g.id,
+        { parentalPasswordHash: null, parentalPasswordSalt: null },
+        t("freeze.settings.cleared")
+      );
+      rebuild();
+      return;
+    }
+  };
+
+  handle = openOverlayPanel(snapshotFor(Boolean(currentGroup().parentalPasswordHash)), onEvent, { internal: true });
+}
+
 function closeUnfreezeFlow() {
   state.unfreezeFlow = null;
   confirmModal.classList.add("hidden");
@@ -4382,7 +5906,10 @@ function createSnoozeEntry(
     cooldownUntilMs: untilMs + cooldownMinutes * MS_PER_MINUTE,
     confirmationCount,
     activeMsApplied: false,
-    refreezeMode: group.freezeMode === "strict" ? "strict" : "frozen"
+    refreezeMode:
+      group.freezeMode === "strict" || group.freezeMode === "parental"
+        ? group.freezeMode
+        : "frozen"
   };
 }
 
@@ -4393,7 +5920,10 @@ function maybeRefreezeGroupAfterSnooze(groupId, snooze, now = Date.now()) {
   }
   const nextGroup = {
     ...group,
-    freezeMode: snooze?.refreezeMode === "strict" ? "strict" : "frozen",
+    freezeMode:
+      snooze?.refreezeMode === "strict" || snooze?.refreezeMode === "parental"
+        ? snooze.refreezeMode
+        : "frozen",
     frozenAtMs: now
   };
   state.groups = state.groups.map((item) => (item.id === groupId ? nextGroup : item));
@@ -5431,8 +6961,16 @@ dayCheckboxes.forEach((checkbox) => {
 });
 
 freezeModeField.addEventListener("change", () => {
+  const selected = getSelectedGroup();
+  if (selected) {
+    state.drafts[selected.id] = {
+      ...(state.drafts[selected.id] ?? groupToDraft(selected)),
+      freezeModeChoice: freezeModeField.value
+    };
+    scheduleAutosave();
+  }
   strictFreezeSettings.classList.toggle("hidden", freezeModeField.value !== "strict");
-  updateFreezeUI(getSelectedGroup());
+  updateFreezeUI(selected);
 });
 
 strictFreezeHoursField.addEventListener("input", () => {
@@ -5478,8 +7016,91 @@ if (settingsSaveButton) {
   });
 }
 
+if (connectionServerToggle) {
+  connectionServerToggle.addEventListener("change", () => {
+    const enabled = connectionServerToggle.checked;
+    updateConnectionSettings({ serverEnabled: enabled })
+      .then(() => {
+        try {
+          chrome.runtime.sendMessage({
+            type: enabled ? "connection-server-start" : "connection-server-stop"
+          });
+        } catch (_) {}
+      })
+      .catch(() => {});
+  });
+}
+
+if (connectionConnectButton) {
+  connectionConnectButton.addEventListener("click", () => {
+    updateConnectionSettings({ clientEnabled: true })
+      .then(() => {
+        try {
+          chrome.runtime.sendMessage({ type: "connection-connect" });
+        } catch (_) {}
+        applyConnectionStatus({ ...state.connectionStatus, state: "connecting" });
+      })
+      .catch(() => {});
+  });
+}
+
+if (connectionDisconnectButton) {
+  connectionDisconnectButton.addEventListener("click", () => {
+    updateConnectionSettings({ clientEnabled: false })
+      .then(() => {
+        try {
+          chrome.runtime.sendMessage({ type: "connection-disconnect" });
+        } catch (_) {}
+        applyConnectionStatus({ state: "off" });
+      })
+      .catch(() => {});
+  });
+}
+
+if (connectionGroupConnectButton) {
+  connectionGroupConnectButton.addEventListener("click", () => {
+    const group = getSelectedGroup();
+    if (!group || !isBridgeEligibleGroup(group)) return;
+    const toProgram = connectionGroupProgram?.value || "";
+    if (!toProgram) return;
+    // The initiator's settings win the first merge for this group.
+    state.pendingPriorityGroups.add(group.id);
+    try {
+      chrome.runtime.sendMessage({
+        type: "group-connect",
+        groupName: group.name,
+        groupType: group.groupType,
+        fromProgram: LOCAL_PROGRAM_ID,
+        toProgram
+      });
+    } catch (_) {}
+    if (connectionGroupHint) connectionGroupHint.textContent = t("connectionGroup.connecting");
+  });
+}
+
+if (connectionGroupDisconnectButton) {
+  connectionGroupDisconnectButton.addEventListener("click", () => {
+    const group = getSelectedGroup();
+    const cluster = group ? groupConnectionCluster(group) : null;
+    if (!cluster) return;
+    try {
+      chrome.runtime.sendMessage({
+        type: "group-disconnect",
+        clusterId: cluster.id,
+        groupName: group.name,
+        program: LOCAL_PROGRAM_ID
+      });
+    } catch (_) {}
+  });
+}
+
 if (localFolderChooseButton) {
   localFolderChooseButton.addEventListener("click", () => {
+    // On macOS the folder is fixed/native — the button reveals it in Finder.
+    if (cbHasNativeBridge()) {
+      revealLocalFolderNative();
+      return;
+    }
     chooseLocalFolder().catch((error) => {
       if (localFolderStatus) localFolderStatus.textContent = String(error?.message ?? error);
     });
@@ -5497,6 +7118,71 @@ if (localFolderRevokeButton) {
 if (settingsResetButton) {
   settingsResetButton.addEventListener("click", () => {
     resetSettingsToDefaults();
+  });
+}
+
+// --- App-blocking (Accessibility) permission gate ---------------------------
+// The native host pushes the current permission state (~1x/second) via
+// window.__cbPermissionState(json), which only keeps the Device Control section
+// (description + status line) in sync. The grant modal is NOT shown on every
+// push: it is opened only when the app is (re)opened, via the native
+// window.__cbPromptPermissionOnOpen() hook below.
+let __cbAppBlockingGranted = null;
+
+function applyPermissionState(granted) {
+  __cbAppBlockingGranted = granted;
+  const isGranted = granted === true;
+  if (deviceControlCopy) {
+    deviceControlCopy.textContent = isGranted
+      ? t("settings.deviceControlCopyGranted")
+      : t("settings.deviceControlCopyMissing");
+  }
+  if (deviceControlStatus) {
+    deviceControlStatus.textContent = isGranted
+      ? t("settings.deviceControlStatusGranted")
+      : t("settings.deviceControlStatusMissing");
+  }
+}
+
+// Shows the grant modal only when permission is currently missing. Invoked by
+// the native host when the app is opened/activated (see BlockerWebView).
+function showPermissionModalIfMissing() {
+  if (permissionModal && __cbAppBlockingGranted === false) {
+    permissionModal.classList.remove("hidden");
+  }
+}
+window.__cbPromptPermissionOnOpen = showPermissionModalIfMissing;
+
+window.__cbPermissionState = (payload) => {
+  try {
+    const data = typeof payload === "string" ? JSON.parse(payload) : payload;
+    const granted =
+      data?.appBlockingGranted === true
+        ? true
+        : data?.appBlockingGranted === false
+          ? false
+          : null;
+    applyPermissionState(granted);
+  } catch (error) {
+    console.error("Failed to apply permission state.", error);
+  }
+};
+
+if (permissionGrantButton) {
+  permissionGrantButton.addEventListener("click", () => {
+    chrome.runtime.sendMessage({ type: "request-app-blocking-permission" });
+  });
+}
+
+if (permissionCancelButton) {
+  permissionCancelButton.addEventListener("click", () => {
+    if (permissionModal) permissionModal.classList.add("hidden");
+  });
+}
+
+if (deviceControlButton) {
+  deviceControlButton.addEventListener("click", () => {
+    chrome.runtime.sendMessage({ type: "open-permission-settings" });
   });
 }
 
@@ -5542,6 +7228,13 @@ applyFreezeButton.addEventListener("click", () => {
 unfreezeButton.addEventListener("click", () => {
   openUnfreezeFlow();
 });
+
+if (parentalSettingsButton) {
+  parentalSettingsButton.addEventListener("click", () => {
+    const group = getSelectedGroup();
+    if (group) openParentalSettings(group);
+  });
+}
 
 startSnoozeButton.addEventListener("click", () => {
   startSnooze().catch((error) => {
@@ -5902,6 +7595,12 @@ async function initializePopupApp() {
   state.tickIntervalId = window.setInterval(() => {
     renderDynamicView();
   }, 1000);
+
+  // Bring up the per-group web-app bridge panel state: current transport
+  // status, current clusters, and announce our groups to the hub.
+  requestConnectionStatus();
+  requestClusters();
+  announceGroups();
 }
 
 initializePopupApp().catch((error) => {
