@@ -9,6 +9,7 @@ public enum BlockGroupType: String, Codable, CaseIterable, Sendable {
     case twitch
     case reddit
     case discord
+    case twitter
     case custom
     case app
     case category
