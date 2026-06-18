@@ -68,6 +68,11 @@ final class ConnectionHub: ObservableObject {
         /// identically; `sharedSnoozeTs` is the originating start time.
         var sharedSnooze: [String: Any] = [:]
         var sharedSnoozeTs: Double = 0
+        /// Shared cumulative snooze total (display only on each member). We keep
+        /// the max reported across members so the figure reflects time accrued on
+        /// any endpoint; members never merge it into their own accumulator, so a
+        /// max is safe and monotonic.
+        var sharedSnoozeTotalMs: Double = 0
 
         init(id: String, groupName: String, groupType: String) {
             self.id = id
@@ -490,6 +495,11 @@ final class ConnectionHub: ObservableObject {
             }
         }
 
+        // Cumulative snooze total: keep the max across members (display only).
+        if let total = contribution["snoozeTotalMs"] as? Double, total > cluster.sharedSnoozeTotalMs {
+            cluster.sharedSnoozeTotalMs = total
+        }
+
         // Persist only on config-bearing syncs (scalars/sites/apps/snooze), not
         // on per-tick usage pings, so the on-disk registry tracks structural and
         // settings changes without hammering the disk every second.
@@ -666,7 +676,8 @@ final class ConnectionHub: ObservableObject {
                 "sharedScalars": c.sharedScalars,
                 "sharedTs": c.sharedTs,
                 "sharedSnooze": c.sharedSnooze,
-                "sharedSnoozeTs": c.sharedSnoozeTs
+                "sharedSnoozeTs": c.sharedSnoozeTs,
+                "sharedSnoozeTotalMs": c.sharedSnoozeTotalMs
             ]
         }
         if let data = try? JSONSerialization.data(withJSONObject: arr) {
@@ -693,6 +704,7 @@ final class ConnectionHub: ObservableObject {
             cluster.sharedTs = (obj["sharedTs"] as? Double) ?? 0
             if let snooze = obj["sharedSnooze"] as? [String: Any] { cluster.sharedSnooze = snooze }
             cluster.sharedSnoozeTs = (obj["sharedSnoozeTs"] as? Double) ?? 0
+            cluster.sharedSnoozeTotalMs = (obj["sharedSnoozeTotalMs"] as? Double) ?? 0
             // Only restore clusters that still have ≥2 members (a 1-member
             // cluster is meaningless and would never broadcast).
             if cluster.members.count >= 2 { clusters[id] = cluster }
@@ -755,7 +767,8 @@ final class ConnectionHub: ObservableObject {
                 ["program": $0, "groupName": cluster.groupName, "online": online.contains($0)] as [String: Any]
             }
         ]
-        if hasShared || !sites.isEmpty || !appsArray.isEmpty || cluster.sharedUsageMs > 0 || cluster.sharedSnoozeTs > 0 {
+        if hasShared || !sites.isEmpty || !appsArray.isEmpty || cluster.sharedUsageMs > 0
+            || cluster.sharedSnoozeTs > 0 || cluster.sharedSnoozeTotalMs > 0 {
             dict["shared"] = [
                 "scalars": cluster.sharedScalars,
                 "ts": cluster.sharedTs,
@@ -764,7 +777,8 @@ final class ConnectionHub: ObservableObject {
                 "usageMs": cluster.sharedUsageMs,
                 "usageResetAtMs": cluster.sharedUsageResetAtMs,
                 "snooze": cluster.sharedSnooze,
-                "snoozeTs": cluster.sharedSnoozeTs
+                "snoozeTs": cluster.sharedSnoozeTs,
+                "snoozeTotalMs": cluster.sharedSnoozeTotalMs
             ] as [String: Any]
         }
         return dict
