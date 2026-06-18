@@ -92,7 +92,7 @@ const MAX_SNOOZE_COOLDOWN_MINUTES = 5;
 const MS_PER_SECOND = 1000;
 const MS_PER_MINUTE = 60 * MS_PER_SECOND;
 const MS_PER_HOUR = 60 * MS_PER_MINUTE;
-const UNFREEZE_CONFIRMATIONS_REQUIRED = 20;
+const UNFREEZE_CONFIRMATIONS_REQUIRED = 1;
 const UNFREEZE_CONFIRMATION_INTERVAL_MS = 5000;
 const DEFAULT_SNOOZE_CONFIRMATIONS = 0;
 const MIN_GROUP_PANEL_WIDTH = 260;
@@ -237,7 +237,6 @@ const localFolderChooseButton = document.getElementById("localFolderChooseButton
 const localFolderRevokeButton = document.getElementById("localFolderRevokeButton");
 const localFolderStatus = document.getElementById("localFolderStatus");
 const settingsResetButton = document.getElementById("settingsResetButton");
-const settingsSaveButton = document.getElementById("settingsSaveButton");
 const settingsStatus = document.getElementById("settingsStatus");
 const connectionSection = document.getElementById("connectionSection");
 const connectionServerControls = document.getElementById("connectionServerControls");
@@ -313,6 +312,10 @@ const state = {
   // Read-only mirror of the shared pools per clustered group:
   //   { [groupId]: { sites: [...], apps: [...] } }
   clusterMirror: {},
+  // Hub's shared cumulative snooze total per clustered group (display only). We
+  // show max(local total, this) so the figure reflects snoozes accrued on any
+  // member without merging into — and thus double-counting — the local counter.
+  clusterSnoozeTotalsMs: {},
   // Last contribution JSON we sent per group, so we don't echo applied state
   // back to the hub (loop suppression mirrors the hub's broadcast-on-change).
   clusterSyncSent: {},
@@ -1097,6 +1100,10 @@ function applyClusters(list) {
     const group = state.groups.find((g) => g.id === groupId);
     if (!group || !groupConnectionCluster(group)) delete state.clusterMirror[groupId];
   }
+  for (const groupId of Object.keys(state.clusterSnoozeTotalsMs)) {
+    const group = state.groups.find((g) => g.id === groupId);
+    if (!group || !groupConnectionCluster(group)) delete state.clusterSnoozeTotalsMs[groupId];
+  }
   updateGroupCardBridgeBadges();
   // Re-render the editor so synced scalar changes show, unless the user is
   // actively typing in a field (don't clobber in-progress input).
@@ -1251,6 +1258,10 @@ function buildSyncContribution(group) {
     contribution.snooze = snoozeEntry;
     contribution.snoozeTs = Number(snoozeEntry.startsAtMs) || 0;
   }
+  // Cumulative snooze total is shared so every member can display the combined
+  // figure. The hub keeps the max across members; folding is display-only
+  // (see applyClusterShared / getDisplayedSnoozeTotalMs) to avoid double-count.
+  contribution.snoozeTotalMs = Math.max(0, Number(state.groupSnoozeTotalsMs[group.id]) || 0);
   return contribution;
 }
 
@@ -1292,6 +1303,13 @@ function applyClusterShared(group, shared) {
     apps: Array.isArray(shared.apps) ? shared.apps : []
   };
   if (Number.isFinite(shared.ts)) state.groupEditTs[group.id] = shared.ts;
+
+  // Display-only shared snooze total (max across the cluster). Never written
+  // into the local accumulator so concurrent expiry can't double-count.
+  state.clusterSnoozeTotalsMs[group.id] = Math.max(
+    0,
+    Number(shared.snoozeTotalMs) || 0
+  );
 
   // Fold the hub's shared usage budget into our local counter so the live
   // elapsed timer (display + enforcement) reflects time spent on every member.
@@ -1418,6 +1436,10 @@ async function saveSettingsFromForm() {
 function resetSettingsToDefaults() {
   state.globalSettings = { ...DEFAULT_GLOBAL_SETTINGS };
   syncSettingsFormFromState();
+  // No Save button anymore: persist the reset immediately.
+  saveSettingsFromForm().catch((error) => {
+    console.error("Failed to persist reset settings.", error);
+  });
 }
 
 function applyStaticTranslations() {
@@ -3519,12 +3541,14 @@ function sanitizeSnoozes(value, groups) {
     const cooldownUntilMs = Number.parseInt(snooze?.cooldownUntilMs, 10);
     const confirmationCount = parseSnoozeConfirmations(snooze?.confirmationCount);
     const activeMsApplied = Boolean(snooze?.activeMsApplied);
+    // "none" means the group was not frozen when it was snoozed, so it must NOT
+    // be refrozen on expiry. Preserve it (and default missing values to "none").
     const refreezeMode =
       snooze?.refreezeMode === "strict" ||
       snooze?.refreezeMode === "frozen" ||
       snooze?.refreezeMode === "parental"
         ? snooze.refreezeMode
-        : "frozen";
+        : "none";
 
     if (
       Number.isFinite(startsAtMs) &&
@@ -3794,7 +3818,10 @@ function getActiveSnooze(groupId, now = Date.now()) {
 }
 
 function getDisplayedSnoozeTotalMs(groupId, now = Date.now()) {
-  const baseTotal = Math.max(0, Number(state.groupSnoozeTotalsMs[groupId]) || 0);
+  const baseTotal = Math.max(
+    Math.max(0, Number(state.groupSnoozeTotalsMs[groupId]) || 0),
+    Math.max(0, Number(state.clusterSnoozeTotalsMs[groupId]) || 0)
+  );
   const snooze = state.groupSnoozes[groupId];
   if (getSnoozePhase(snooze, now) !== "active") {
     return baseTotal;
@@ -4318,10 +4345,6 @@ function renderGroupList(now = Date.now()) {
 
     if (groupConnectionCluster(group)) {
       card.classList.add("bridge-connected");
-    }
-
-    if (group.groupType === "custom") {
-      card.classList.add("custom-card");
     }
 
     const header = document.createElement("div");
@@ -5906,10 +5929,14 @@ function createSnoozeEntry(
     cooldownUntilMs: untilMs + cooldownMinutes * MS_PER_MINUTE,
     confirmationCount,
     activeMsApplied: false,
+    // Remember the freeze state at snooze time so we restore exactly that on
+    // expiry. "none" means the group was unfrozen and must stay unfrozen.
     refreezeMode:
-      group.freezeMode === "strict" || group.freezeMode === "parental"
+      group.freezeMode === "strict" ||
+      group.freezeMode === "parental" ||
+      group.freezeMode === "frozen"
         ? group.freezeMode
-        : "frozen"
+        : "none"
   };
 }
 
@@ -5918,12 +5945,18 @@ function maybeRefreezeGroupAfterSnooze(groupId, snooze, now = Date.now()) {
   if (!group || group.freezeMode !== "none") {
     return;
   }
+  // Only refreeze if the group was actually frozen when it was snoozed.
+  const refreezeMode = snooze?.refreezeMode;
+  if (
+    refreezeMode !== "strict" &&
+    refreezeMode !== "parental" &&
+    refreezeMode !== "frozen"
+  ) {
+    return;
+  }
   const nextGroup = {
     ...group,
-    freezeMode:
-      snooze?.refreezeMode === "strict" || snooze?.refreezeMode === "parental"
-        ? snooze.refreezeMode
-        : "frozen",
+    freezeMode: refreezeMode,
     frozenAtMs: now
   };
   state.groups = state.groups.map((item) => (item.id === groupId ? nextGroup : item));
@@ -7008,12 +7041,22 @@ if (settingsModal) {
   });
 }
 
-if (settingsSaveButton) {
-  settingsSaveButton.addEventListener("click", () => {
+// Global settings auto-save: persist on every committed edit (no Save button).
+{
+  const settingsAutoSaveFields = [
+    settingsAutosaveDebounceField,
+    settingsDebugModeField,
+    settingsDefaultSnoozeMinutesField
+  ];
+  const autoSaveSettings = () => {
     saveSettingsFromForm().catch((error) => {
       console.error("Failed to save global settings.", error);
     });
-  });
+  };
+  for (const field of settingsAutoSaveFields) {
+    if (!field) continue;
+    field.addEventListener("change", autoSaveSettings);
+  }
 }
 
 if (connectionServerToggle) {
