@@ -122,7 +122,7 @@ public enum ChromeExtensionImporter {
     /// group types collapse to the generic `.app` type natively.
     private static func mapGroupType(_ groupType: BlockGroupType) -> BlockGroupType {
         switch groupType {
-        case .youtube, .tiktok, .facebook, .instagram, .twitch, .reddit, .discord:
+        case .youtube, .tiktok, .facebook, .instagram, .twitch, .reddit, .discord, .twitter:
             return .app
         default:
             return groupType
@@ -135,7 +135,7 @@ public enum ChromeExtensionImporter {
             return ["social", "shortVideo", groupType.rawValue]
         case .twitch:
             return ["video", "streaming", groupType.rawValue]
-        case .reddit, .discord:
+        case .reddit, .discord, .twitter:
             return ["social", groupType.rawValue]
         default:
             return []
