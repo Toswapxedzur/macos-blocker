@@ -2479,7 +2479,19 @@ function renderSurfaceHides(group, draft, editable) {
     input.value = entry.id;
     input.checked = enabled.has(entry.id);
     input.disabled = !editable;
-    input.addEventListener("change", () => handleSurfaceHideChange(group.id));
+    input.addEventListener("change", () => {
+      // Some hides (e.g. hiding ads) can violate platform Terms of Service and
+      // risk the account — warn and require confirmation every time they're
+      // turned on. Cancelling reverts the checkbox without saving.
+      if (input.checked && entry.warnOnEnableKey) {
+        const accepted = window.confirm(t(entry.warnOnEnableKey));
+        if (!accepted) {
+          input.checked = false;
+          return;
+        }
+      }
+      handleSurfaceHideChange(group.id);
+    });
 
     const text = document.createElement("span");
     text.textContent = t(entry.labelKey);
@@ -3419,6 +3431,7 @@ function createDefaultGroup(groupType = DEFAULT_GROUP_TYPE) {
     sites: [],
     apps: [],
     blockHomePage: false,
+    effect: "block",
     fallbackUrl: "",
     skipToNextOnBlock: false
   };
@@ -3572,6 +3585,7 @@ function sanitizeGroups(groups) {
         : [],
       apps: sanitizeApps(group?.apps),
       blockHomePage: Boolean(group?.blockHomePage),
+      effect: group?.effect === "allow" ? "allow" : "block",
       fallbackUrl: typeof group?.fallbackUrl === "string" ? group.fallbackUrl.trim() : "",
       skipToNextOnBlock: Boolean(group?.skipToNextOnBlock)
     };
@@ -4348,9 +4362,9 @@ function getGroupMetaText(group, draft, now = Date.now()) {
   } else if (effectiveGroup.mode === "instant") {
     pieces.push(t("meta.instantBlock"));
   } else if (effectiveGroup.mode === "timer") {
+    // Count-up stopwatch: show elapsed time, not a countdown.
     const usageState = getDisplayUsageState(effectiveGroup, now);
-    const remainingMs = Math.max(effectiveGroup.resetIntervalHours * MS_PER_HOUR - usageState.usedMs, 0);
-    pieces.push(`${formatDurationMs(remainingMs)} ${t("meta.left")}`);
+    pieces.push(`${formatDurationMs(usageState.usedMs)} ${t("meta.elapsed")}`);
   } else {
     const remainingMs = Math.max(
       effectiveGroup.allowedMinutes * MS_PER_MINUTE - getDisplayUsageState(effectiveGroup, now).usedMs,
@@ -4512,9 +4526,9 @@ function updateUsageSummary(group, draft, now = Date.now()) {
   const displayGroup = getEffectiveGroup(group, draft);
   const usageState = getDisplayUsageState(displayGroup, now);
   if (mode === "timer") {
-    const remainingMs = Math.max(displayGroup.resetIntervalHours * MS_PER_HOUR - usageState.usedMs, 0);
+    // Count-up stopwatch: show elapsed time used this window.
     usageSummary.textContent = t("timed.summaryTimer", {
-      time: formatDurationMs(remainingMs),
+      time: formatDurationMs(usageState.usedMs),
       hours: formatHours(displayGroup.resetIntervalHours),
       suffix: displayGroup.resetIntervalHours === 1 ? "" : "s"
     });
