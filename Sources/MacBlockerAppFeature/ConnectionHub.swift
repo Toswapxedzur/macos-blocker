@@ -338,6 +338,17 @@ final class ConnectionHub: ObservableObject {
     // MARK: Cluster registry API (called from the WS path and the web bridge)
 
     /// Records an endpoint's eligible groups. `program` "macapp" is this Mac.
+    ///
+    /// A roster announcement is the full, current set of bridge-eligible groups
+    /// for that program (it is re-sent after every edit, delete, and reconnect),
+    /// so it doubles as the authoritative "decouple on delete" signal: any
+    /// cluster this program belongs to whose group name+type is no longer in the
+    /// roster was deleted (or renamed) on that endpoint, and the program must
+    /// leave it. This works even when the *peer* is offline — the cluster is
+    /// updated/dissolved in the hub registry now, and the peer reconciles from
+    /// the clusters snapshot on its next reconnect — and it stops a same-named
+    /// group created later from silently re-joining a stale cluster, because the
+    /// cluster is gone once it drops below two members.
     func setRoster(program: String, groups: [[String: Any]]) {
         guard !program.isEmpty else { return }
         let infos = groups.map {
@@ -347,9 +358,31 @@ final class ConnectionHub: ObservableObject {
                 frozen: ($0["frozen"] as? Bool) ?? false
             )
         }
+        // Frozen groups stay in the roster (they still exist, just locked), so a
+        // freeze never decouples — only a genuine delete/rename drops the key.
+        let eligibleKeys = Set(infos.compactMap { info -> String? in
+            info.name.isEmpty ? nil : info.name + "\u{1f}" + info.type
+        })
         lock.lock()
         rosters[program] = infos
+        // Snapshot the affected clusters first so we can mutate `clusters` safely
+        // inside the loop (ClusterState is a class, so these are live references).
+        let affected = clusters.values.filter { $0.members.contains(program) }
+        var snapshots: [[String: Any]] = []
+        for cluster in affected {
+            let key = cluster.groupName + "\u{1f}" + cluster.groupType
+            if eligibleKeys.contains(key) { continue }
+            cluster.members.remove(program)
+            cluster.contributions.removeValue(forKey: program)
+            if cluster.members.count < 2 {
+                clusters.removeValue(forKey: cluster.id)
+                cluster.members.removeAll()
+            }
+            snapshots.append(clusterJSONObject(cluster))
+        }
+        if !snapshots.isEmpty { persistClustersLocked() }
         lock.unlock()
+        for snapshot in snapshots { broadcastCluster(snapshot) }
     }
 
     /// Number of live clusters (≥2 members). Used to warn the user before
