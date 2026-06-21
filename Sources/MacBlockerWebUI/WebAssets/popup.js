@@ -3431,6 +3431,7 @@ function createDefaultGroup(groupType = DEFAULT_GROUP_TYPE) {
     sites: [],
     apps: [],
     blockHomePage: false,
+    effect: "block",
     fallbackUrl: "",
     skipToNextOnBlock: false
   };
@@ -3584,6 +3585,7 @@ function sanitizeGroups(groups) {
         : [],
       apps: sanitizeApps(group?.apps),
       blockHomePage: Boolean(group?.blockHomePage),
+      effect: group?.effect === "allow" ? "allow" : "block",
       fallbackUrl: typeof group?.fallbackUrl === "string" ? group.fallbackUrl.trim() : "",
       skipToNextOnBlock: Boolean(group?.skipToNextOnBlock)
     };
