@@ -860,7 +860,10 @@ function clusterOfflineMembers(cluster) {
 }
 
 // The cluster (if any) this group currently belongs to, matched by this
-// endpoint's program id + the group's saved name.
+// endpoint's program id + the member's pinned group id. Membership is pinned to
+// the specific group instance that was linked, so deleting a group and later
+// re-creating one with the same name does NOT re-adopt the old cluster. Falls
+// back to the saved name for pre-id-pinning hubs that don't send a groupId.
 function groupConnectionCluster(group) {
   if (!group) return null;
   const clusters = Array.isArray(state.clusters) ? state.clusters : [];
@@ -868,10 +871,26 @@ function groupConnectionCluster(group) {
     clusters.find((cluster) =>
       Array.isArray(cluster.members) &&
       cluster.members.some(
-        (m) => m && m.program === LOCAL_PROGRAM_ID && m.groupName === group.name
+        (m) =>
+          m &&
+          m.program === LOCAL_PROGRAM_ID &&
+          (m.groupId ? m.groupId === group.id : m.groupName === group.name)
       )
     ) || null
   );
+}
+
+// This endpoint's local group for a cluster, resolved via the member's pinned
+// group id (falling back to the saved name for pre-id-pinning hubs).
+function clusterLocalGroup(cluster) {
+  if (!cluster || !Array.isArray(cluster.members)) return null;
+  const self = cluster.members.find((m) => m && m.program === LOCAL_PROGRAM_ID);
+  if (!self) return null;
+  if (self.groupId) {
+    const byId = state.groups.find((g) => g.id === self.groupId);
+    if (byId) return byId;
+  }
+  return state.groups.find((g) => g.name === (self.groupName || cluster.groupName)) || null;
 }
 
 // Programs the user can link to right now (other connected endpoints). A client
@@ -1091,7 +1110,7 @@ function applyClusters(list) {
   for (const cluster of state.clusters) {
     if (!cluster || !Array.isArray(cluster.members)) continue;
     if (!cluster.members.some((m) => m && m.program === LOCAL_PROGRAM_ID)) continue;
-    const group = state.groups.find((g) => g.name === cluster.groupName);
+    const group = clusterLocalGroup(cluster);
     if (!group) continue;
     if (cluster.shared) {
       applyClusterShared(group, cluster.shared);
@@ -1182,6 +1201,9 @@ function announceGroups() {
   const groups = (Array.isArray(state.groups) ? state.groups : [])
     .filter(isBridgeEligibleGroup)
     .map((g) => ({
+      // The stable per-program group id pins cluster membership to this
+      // instance, so a same-named group created after a delete won't re-join.
+      id: g.id,
       name: g.name,
       type: g.groupType,
       frozen: getFreezeStatus(g, Date.now()).isFrozen
