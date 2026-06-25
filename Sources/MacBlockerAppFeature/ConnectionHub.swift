@@ -38,6 +38,7 @@ final class ConnectionHub: ObservableObject {
     // MARK: Cluster registry (per-group web-app bridge linking)
 
     private struct GroupInfo {
+        let id: String
         let name: String
         let type: String
         let frozen: Bool
@@ -50,6 +51,13 @@ final class ConnectionHub: ObservableObject {
         let groupName: String
         let groupType: String
         var members: Set<String> = []
+        /// Per-program local group id: the specific group *instance* that program
+        /// linked. Membership is pinned to this id so deleting a group and later
+        /// re-creating one with the same name does NOT silently re-join the old
+        /// cluster (the new group carries a fresh id). Empty for clusters formed
+        /// before id pinning; those fall back to name+type matching and are
+        /// backfilled from the roster on the next announce.
+        var memberGroupIds: [String: String] = [:]
         /// Per-program contribution: { scalars: {...}, sites?: [...], apps?: [...] }.
         var contributions: [String: [String: Any]] = [:]
         // Hub-authoritative shared state.
@@ -353,34 +361,62 @@ final class ConnectionHub: ObservableObject {
         guard !program.isEmpty else { return }
         let infos = groups.map {
             GroupInfo(
+                id: ($0["id"] as? String) ?? "",
                 name: ($0["name"] as? String) ?? "",
                 type: ($0["type"] as? String) ?? "",
                 frozen: ($0["frozen"] as? Bool) ?? false
             )
         }
-        // Frozen groups stay in the roster (they still exist, just locked), so a
-        // freeze never decouples — only a genuine delete/rename drops the key.
-        let eligibleKeys = Set(infos.compactMap { info -> String? in
-            info.name.isEmpty ? nil : info.name + "\u{1f}" + info.type
-        })
         lock.lock()
         rosters[program] = infos
         // Snapshot the affected clusters first so we can mutate `clusters` safely
         // inside the loop (ClusterState is a class, so these are live references).
         let affected = clusters.values.filter { $0.members.contains(program) }
         var snapshots: [[String: Any]] = []
+        var changed = false
         for cluster in affected {
-            let key = cluster.groupName + "\u{1f}" + cluster.groupType
-            if eligibleKeys.contains(key) { continue }
+            // Membership is pinned to the group *instance* this program linked.
+            // Backfill the id for clusters formed before id pinning (or restored
+            // from disk) by matching name+type once; this auto-migrates old links.
+            var pinnedId = cluster.memberGroupIds[program] ?? ""
+            if pinnedId.isEmpty,
+               let legacy = infos.first(where: {
+                   $0.name == cluster.groupName && $0.type == cluster.groupType
+               }), !legacy.id.isEmpty {
+                pinnedId = legacy.id
+                cluster.memberGroupIds[program] = pinnedId
+                changed = true
+            }
+            // Keep the member only if its pinned instance is still present under
+            // the same name+type. A delete removes the id; a re-create under the
+            // same name yields a NEW id (so it can't silently re-join); a rename
+            // changes the name (so it decouples, matching the name-based UX).
+            // Frozen groups stay in the roster, so a freeze never decouples.
+            let stillPresent: Bool
+            if pinnedId.isEmpty {
+                // No id to pin against (pre-id-pinning client): name+type only.
+                stillPresent = infos.contains {
+                    $0.name == cluster.groupName && $0.type == cluster.groupType
+                }
+            } else {
+                stillPresent = infos.contains {
+                    $0.id == pinnedId &&
+                    $0.name == cluster.groupName &&
+                    $0.type == cluster.groupType
+                }
+            }
+            if stillPresent { continue }
             cluster.members.remove(program)
+            cluster.memberGroupIds.removeValue(forKey: program)
             cluster.contributions.removeValue(forKey: program)
             if cluster.members.count < 2 {
                 clusters.removeValue(forKey: cluster.id)
                 cluster.members.removeAll()
             }
+            changed = true
             snapshots.append(clusterJSONObject(cluster))
         }
-        if !snapshots.isEmpty { persistClustersLocked() }
+        if changed { persistClustersLocked() }
         lock.unlock()
         for snapshot in snapshots { broadcastCluster(snapshot) }
     }
@@ -415,6 +451,14 @@ final class ConnectionHub: ObservableObject {
             }()
         cluster.members.insert(from)
         cluster.members.insert(to)
+        // Pin each member to the specific local group instance it linked, so a
+        // later delete + same-name re-create can't silently re-join this cluster.
+        if let fromId = rosterGroupIdLocked(from, name: groupName, type: groupType), !fromId.isEmpty {
+            cluster.memberGroupIds[from] = fromId
+        }
+        if let toId = rosterGroupIdLocked(to, name: groupName, type: groupType), !toId.isEmpty {
+            cluster.memberGroupIds[to] = toId
+        }
         persistClustersLocked()
         let snapshot = clusterJSONObject(cluster)
         lock.unlock()
@@ -427,6 +471,7 @@ final class ConnectionHub: ObservableObject {
         if target == nil { target = clusters.values.first { $0.groupName == groupName } }
         guard let cluster = target else { lock.unlock(); return }
         cluster.members.remove(program)
+        cluster.memberGroupIds.removeValue(forKey: program)
         cluster.contributions.removeValue(forKey: program)
         if cluster.members.count < 2 {
             clusters.removeValue(forKey: cluster.id)
@@ -705,6 +750,7 @@ final class ConnectionHub: ObservableObject {
                 "groupName": c.groupName,
                 "groupType": c.groupType,
                 "members": Array(c.members),
+                "memberGroupIds": c.memberGroupIds,
                 "contributions": c.contributions,
                 "sharedScalars": c.sharedScalars,
                 "sharedTs": c.sharedTs,
@@ -730,6 +776,7 @@ final class ConnectionHub: ObservableObject {
                   let groupType = obj["groupType"] as? String else { continue }
             let cluster = ClusterState(id: id, groupName: groupName, groupType: groupType)
             if let members = obj["members"] as? [String] { cluster.members = Set(members) }
+            if let ids = obj["memberGroupIds"] as? [String: String] { cluster.memberGroupIds = ids }
             if let contributions = obj["contributions"] as? [String: [String: Any]] {
                 cluster.contributions = contributions
             }
@@ -748,6 +795,13 @@ final class ConnectionHub: ObservableObject {
     private func rosterHasEligibleLocked(_ program: String, name: String, type: String) -> Bool {
         guard let infos = rosters[program] else { return false }
         return infos.contains { $0.name == name && $0.type == type && !$0.frozen }
+    }
+
+    /// Caller must hold `lock`. The local group id for an eligible (unfrozen)
+    /// same-named group, used to pin cluster membership to a specific instance.
+    private func rosterGroupIdLocked(_ program: String, name: String, type: String) -> String? {
+        guard let infos = rosters[program] else { return nil }
+        return infos.first { $0.name == name && $0.type == type && !$0.frozen }?.id
     }
 
     /// Caller must hold `lock`. Programs with a live connected peer, plus the Mac
@@ -797,7 +851,12 @@ final class ConnectionHub: ObservableObject {
             "groupType": cluster.groupType,
             "allOnline": allOnline,
             "members": cluster.members.sorted().map {
-                ["program": $0, "groupName": cluster.groupName, "online": online.contains($0)] as [String: Any]
+                [
+                    "program": $0,
+                    "groupName": cluster.groupName,
+                    "groupId": cluster.memberGroupIds[$0] ?? "",
+                    "online": online.contains($0)
+                ] as [String: Any]
             }
         ]
         if hasShared || !sites.isEmpty || !appsArray.isEmpty || cluster.sharedUsageMs > 0
