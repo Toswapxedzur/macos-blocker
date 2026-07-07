@@ -221,13 +221,43 @@ public final class SafariCustomRuleBridge {
     // MARK: - Helpers
 
     private static func loadResource(_ name: String, ext: String) throws -> String {
-        let url = Bundle.module.url(forResource: name, withExtension: ext, subdirectory: "Resources")
-            ?? Bundle.module.url(forResource: name, withExtension: ext)
+        let url = bundledResourceURL(name: name, ext: ext)
         guard let url else { throw BridgeError.resourcesMissing("\(name).\(ext)") }
         guard let text = try? String(contentsOf: url, encoding: .utf8) else {
             throw BridgeError.resourcesMissing("\(name).\(ext) (unreadable)")
         }
         return text
+    }
+
+    private static func bundledResourceURL(name: String, ext: String) -> URL? {
+        let bundleName = "macosBlocker_MacBlockerCore.bundle"
+        for baseURL in runtimeResourceBaseURLs() {
+            let bundleURL = baseURL.appendingPathComponent(bundleName, isDirectory: true)
+            let nested = bundleURL
+                .appendingPathComponent("Resources", isDirectory: true)
+                .appendingPathComponent("\(name).\(ext)", isDirectory: false)
+            if FileManager.default.fileExists(atPath: nested.path) {
+                return nested
+            }
+            let flat = bundleURL.appendingPathComponent("\(name).\(ext)", isDirectory: false)
+            if FileManager.default.fileExists(atPath: flat.path) {
+                return flat
+            }
+        }
+        return Bundle.module.url(forResource: name, withExtension: ext, subdirectory: "Resources")
+            ?? Bundle.module.url(forResource: name, withExtension: ext)
+    }
+
+    private static func runtimeResourceBaseURLs() -> [URL] {
+        var urls: [URL] = []
+        if let resourceURL = Bundle.main.resourceURL {
+            urls.append(resourceURL)
+        }
+        urls.append(Bundle.main.bundleURL)
+        if let executableURL = Bundle.main.executableURL {
+            urls.append(executableURL.deletingLastPathComponent())
+        }
+        return urls
     }
 
     private static func jsLiteral(_ value: String) throws -> String {

@@ -14,6 +14,12 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
     public override init() { super.init() }
 
     open func applicationDidFinishLaunching(_ notification: Notification) {
+        if CommandLine.arguments.contains("--unregister-login-item") {
+            unregisterLoginItemForUninstall()
+            NSApp.terminate(nil)
+            return
+        }
+
         // Bring the bridge up at the process level, independent of any window.
         let enabled = BlockerWebStore().loadConnectionServerEnabled()
         if enabled {
@@ -70,6 +76,17 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
             // register, and the user may have overridden the item in System
             // Settings ▸ Login Items.
             NSLog("[ConnectionHub] login-item sync failed: \(error)")
+        }
+    }
+
+    private func unregisterLoginItemForUninstall() {
+        guard #available(macOS 13.0, *) else { return }
+        do {
+            if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            NSLog("[ConnectionHub] uninstall login-item unregister failed: \(error)")
         }
     }
 }

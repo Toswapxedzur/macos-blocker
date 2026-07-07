@@ -5,5 +5,5 @@ import Foundation
 /// your real App Group (it must match the entitlements). Each target calls
 /// `AppGroup.identifier = AppGroupIdentifier.value` at startup.
 enum AppGroupIdentifier {
-    static let value = "group.com.example.macosBlocker"
+    static let value = "group.com.adamancia.vault"
 }

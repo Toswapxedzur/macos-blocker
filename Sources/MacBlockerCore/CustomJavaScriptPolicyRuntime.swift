@@ -553,14 +553,41 @@ public final class CustomJavaScriptPolicyRuntime: CustomPolicyRuntime {
     }
 
     private static func bundledRuntimeSource() -> String? {
-        guard let url = Bundle.module.url(
-            forResource: "custom-rule-runtime",
-            withExtension: "js",
-            subdirectory: "Resources"
-        ) ?? Bundle.module.url(forResource: "custom-rule-runtime", withExtension: "js") else {
+        guard let url = bundledResourceURL(name: "custom-rule-runtime", ext: "js") else {
             return nil
         }
         return try? String(contentsOf: url, encoding: .utf8)
+    }
+
+    private static func bundledResourceURL(name: String, ext: String) -> URL? {
+        let bundleName = "macosBlocker_MacBlockerCore.bundle"
+        for baseURL in runtimeResourceBaseURLs() {
+            let bundleURL = baseURL.appendingPathComponent(bundleName, isDirectory: true)
+            let nested = bundleURL
+                .appendingPathComponent("Resources", isDirectory: true)
+                .appendingPathComponent("\(name).\(ext)", isDirectory: false)
+            if FileManager.default.fileExists(atPath: nested.path) {
+                return nested
+            }
+            let flat = bundleURL.appendingPathComponent("\(name).\(ext)", isDirectory: false)
+            if FileManager.default.fileExists(atPath: flat.path) {
+                return flat
+            }
+        }
+        return Bundle.module.url(forResource: name, withExtension: ext, subdirectory: "Resources")
+            ?? Bundle.module.url(forResource: name, withExtension: ext)
+    }
+
+    private static func runtimeResourceBaseURLs() -> [URL] {
+        var urls: [URL] = []
+        if let resourceURL = Bundle.main.resourceURL {
+            urls.append(resourceURL)
+        }
+        urls.append(Bundle.main.bundleURL)
+        if let executableURL = Bundle.main.executableURL {
+            urls.append(executableURL.deletingLastPathComponent())
+        }
+        return urls
     }
     #endif
 }
