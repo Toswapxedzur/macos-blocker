@@ -9,18 +9,19 @@ name: macosBlocker
 #   3. Request Apple's Family Controls (Distribution) entitlement.
 
 options:
-  bundleIdPrefix: com.example
+  bundleIdPrefix: com.adamancia.vault
   deploymentTarget:
     iOS: "16.0"
+    macOS: "13.0"
   createIntermediateGroups: true
 
 settings:
   base:
-    MARKETING_VERSION: "1.0.0"
+    MARKETING_VERSION: "0.0.1"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
     CODE_SIGN_STYLE: Automatic
-    # DEVELOPMENT_TEAM: ABCDE12345   # <- set your team here or in Xcode
+    DEVELOPMENT_TEAM: 9KCD8QL2LN
     TARGETED_DEVICE_FAMILY: "1,2"     # iPhone + iPad
 
 packages:
@@ -29,6 +30,31 @@ packages:
     path: ..
 
 targets:
+  # --------------------------------------------------------- macOS App Store app
+  AdamanciaVaultMac:
+    type: application
+    platform: macOS
+    deploymentTarget: "13.0"
+    sources:
+      - path: ../Sources/MacBlockerPanel
+    info:
+      path: Info/AdamanciaVaultMac-Info.plist
+      properties:
+        CFBundleDisplayName: Adamancia Vault
+        LSApplicationCategoryType: public.app-category.productivity
+        LSMinimumSystemVersion: "13.0"
+        NSHighResolutionCapable: true
+        NSSupportsAutomaticTermination: false
+    entitlements:
+      path: ../XcodeScaffold/Entitlements/AdamanciaVaultMacStore.entitlements
+    settings:
+      base:
+        PRODUCT_NAME: AdamanciaVault
+        PRODUCT_BUNDLE_IDENTIFIER: com.adamancia.vault.mac
+    dependencies:
+      - package: MacBlocker
+        product: MacBlockerAppFeature
+
   # ---------------------------------------------------------------- app
   macosBlocker:
     type: application
@@ -39,16 +65,16 @@ targets:
     info:
       path: Info/App-Info.plist
       properties:
-        CFBundleDisplayName: macosBlocker
+        CFBundleDisplayName: Mac Vault
         UILaunchScreen: {}
         NSFamilyControlsUsageDescription: >-
-          macosBlocker uses Screen Time to shield the apps, categories, and
+          Mac Vault uses Screen Time to shield the apps, categories, and
           websites you choose to block for yourself.
     entitlements:
       path: ../XcodeScaffold/Entitlements/macosBlockerApp.entitlements
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.macosBlocker
+        PRODUCT_BUNDLE_IDENTIFIER: com.adamancia.vault.ios
     dependencies:
       - package: MacBlocker
         product: MacBlockerAppFeature
@@ -79,7 +105,7 @@ targets:
       path: ../XcodeScaffold/Entitlements/macosBlockerExtensions.entitlements
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.macosBlocker.DeviceActivityMonitor
+        PRODUCT_BUNDLE_IDENTIFIER: com.adamancia.vault.ios.DeviceActivityMonitor
     dependencies:
       - package: MacBlocker
         product: MacBlockerCore
@@ -102,7 +128,7 @@ targets:
       path: ../XcodeScaffold/Entitlements/macosBlockerExtensions.entitlements
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.macosBlocker.ShieldConfiguration
+        PRODUCT_BUNDLE_IDENTIFIER: com.adamancia.vault.ios.ShieldConfiguration
 
   # ---------------------------------------- ShieldAction extension
   macosBlockerShieldAction:
@@ -121,7 +147,7 @@ targets:
       path: ../XcodeScaffold/Entitlements/macosBlockerExtensions.entitlements
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.macosBlocker.ShieldAction
+        PRODUCT_BUNDLE_IDENTIFIER: com.adamancia.vault.ios.ShieldAction
     dependencies:
       - package: MacBlocker
         product: MacBlockerCore

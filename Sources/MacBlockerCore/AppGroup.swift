@@ -6,7 +6,7 @@ import Foundation
 /// value) before any store access. Replace the placeholder with your real
 /// App Group when you create the Xcode targets.
 public enum AppGroup {
-    public static let placeholderIdentifier = "group.com.example.macosBlocker"
+    public static let placeholderIdentifier = "group.com.adamancia.vault"
 
     /// Mutable so the app can override it at launch. Defaults to the
     /// placeholder used throughout the scaffold entitlements.
