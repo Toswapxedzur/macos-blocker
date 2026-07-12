@@ -11,7 +11,7 @@
 
 ## ਵੈੱਬਸਾਈਟ DMG ਪਾਈਪਲਾਈਨ
 
-ਸਕ੍ਰਿਪਟਾਂ `scripts/release/` ਵਿੱਚ ਰਹਿੰਦੀਆਂ ਹਨ। ਉਹਨਾਂ ਦੇ ਡਿਫਾਲਟ ਨੂੰ ਵਾਤਾਵਰਣ ਵੇਰੀਏਬਲਾਂ ਨਾਲ ਓਵਰਰਾਈਡ ਕੀਤਾ ਜਾ ਸਕਦਾ ਹੈ, ਜਿਸ ਵਿੱਚ `APP_NAME`, `BUNDLE_ID`, `TEAM_ID`, `SIGNING_IDENTITY`, `NOTARY_PROFILE`, `NOTARY_PROFILE`, @@@KEEP0006, @`VERSION`@@0.
+ਸਕ੍ਰਿਪਟਾਂ `scripts/release/` ਵਿੱਚ ਹਨ। ਵਾਤਾਵਰਣ ਵੇਰੀਏਬਲਾਂ ਨਾਲ ਉਹਨਾਂ ਦੇ ਡਿਫਾਲਟ ਬਦਲੇ ਜਾ ਸਕਦੇ ਹਨ, ਜਿਨ੍ਹਾਂ ਵਿੱਚ `APP_NAME`, `BUNDLE_ID`, `TEAM_ID`, `SIGNING_IDENTITY`, `NOTARY_PROFILE`, `VERSION` ਅਤੇ `BUILD_NUMBER` ਸ਼ਾਮਲ ਹਨ।
 
 ਪੂਰੀ ਪਾਈਪਲਾਈਨ ਨੂੰ ਸਿਰਫ਼ ਕੌਂਫਿਗਰ ਕੀਤੀ ਸਾਈਨਿੰਗ ਮਸ਼ੀਨ 'ਤੇ ਚਲਾਓ:
 

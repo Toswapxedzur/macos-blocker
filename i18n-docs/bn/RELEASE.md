@@ -11,7 +11,7 @@
 
 ## ওয়েবসাইট ডিএমজি পাইপলাইন
 
-স্ক্রিপ্টগুলি `scripts/release/`-এ থাকে৷ তাদের ডিফল্টগুলি `APP_NAME`, `BUNDLE_ID`, `TEAM_ID`, `SIGNING_IDENTITY`, `NOTARY_PROFILE`, `NOTARY_PROFILE`, `NOTARY_PROFILE`, `VERSION`@@@006@@@@@@@@@@@@@@@@@@@@@@@`BUNDLE_ID``BUNDLE_ID`
+স্ক্রিপ্টগুলি `scripts/release/`-এ থাকে। পরিবেশ ভেরিয়েবল দিয়ে তাদের ডিফল্ট মান বদলানো যায়, যার মধ্যে `APP_NAME`, `BUNDLE_ID`, `TEAM_ID`, `SIGNING_IDENTITY`, `NOTARY_PROFILE`, `VERSION` এবং `BUILD_NUMBER` রয়েছে।
 
 সম্পূর্ণ পাইপলাইনটি শুধুমাত্র একটি কনফিগার করা সাইনিং মেশিনে চালান:
 

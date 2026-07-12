@@ -6,7 +6,7 @@ Deze voorwaarden zijn van toepassing op de macOS-app-release van Adamancia Vault
 
 ## Alpha-software
 
-Versie `0.0.1` is alfasoftware. Het kan onstabiel, onvolledig of ongeschikt zijn voor kritisch gebruik. Gebruik het alleen als u vertrouwd bent met het testen van vroege software en het melden van problemen.
+Versie `0.0.2` is alfasoftware. Het kan onstabiel, onvolledig of ongeschikt zijn voor kritisch gebruik. Gebruik het alleen als u vertrouwd bent met het testen van vroege software en het melden van problemen.
 
 ## Beoogd gebruik
 

@@ -6,7 +6,7 @@ These terms apply to the macOS app release of Adamancia Vault.
 
 ## Alpha Software
 
-Version `0.0.1` is alpha software. It may be unstable, incomplete, or unsuitable for critical use. Use it only if you are comfortable testing early software and reporting issues.
+Version `0.0.2` is alpha software. It may be unstable, incomplete, or unsuitable for critical use. Use it only if you are comfortable testing early software and reporting issues.
 
 ## Intended Use
 

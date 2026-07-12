@@ -6,7 +6,7 @@ Ces conditions s'appliquent à la version de l'application macOS d'Adamancia Vau
 
 ## Logiciel Alpha
 
-La version `0.0.1` est un logiciel alpha. Il peut être instable, incomplet ou inadapté à une utilisation critique. Utilisez-le uniquement si vous êtes à l’aise pour tester les premiers logiciels et signaler les problèmes.
+La version `0.0.2` est un logiciel alpha. Il peut être instable, incomplet ou inadapté à une utilisation critique. Utilisez-le uniquement si vous êtes à l’aise pour tester les premiers logiciels et signaler les problèmes.
 
 ## Utilisation prévue
 

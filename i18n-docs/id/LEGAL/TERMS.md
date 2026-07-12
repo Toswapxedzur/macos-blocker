@@ -6,7 +6,7 @@ Ketentuan ini berlaku untuk rilis aplikasi macOS Adamancia Vault.
 
 ## Perangkat Lunak Alfa
 
-Versi `0.0.1` adalah perangkat lunak alfa. Ini mungkin tidak stabil, tidak lengkap, atau tidak cocok untuk penggunaan kritis. Gunakan hanya jika Anda merasa nyaman menguji perangkat lunak awal dan melaporkan masalah.
+Versi `0.0.2` adalah perangkat lunak alfa. Ini mungkin tidak stabil, tidak lengkap, atau tidak cocok untuk penggunaan kritis. Gunakan hanya jika Anda merasa nyaman menguji perangkat lunak awal dan melaporkan masalah.
 
 ## Tujuan Penggunaan
 
