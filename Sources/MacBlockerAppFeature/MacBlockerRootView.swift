@@ -102,7 +102,7 @@ private struct DetailView: View {
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .navigationTitle(model.selectedGroup?.name ?? "macosBlocker")
+        .navigationTitle(model.selectedGroup?.name ?? "Mac Vault")
     }
 }
 

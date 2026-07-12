@@ -1,4 +1,5 @@
 #if canImport(WebKit)
+import Foundation
 import SwiftUI
 import WebKit
 import MacBlockerCore
@@ -133,6 +134,19 @@ public struct BlockerWebView: _CBViewRepresentable {
             controller.addUserScript(userScript)
         }
 
+        // Ship the localized catalogs and manuals into the page before the
+        // popup starts. This keeps localization available even if a WKWebView
+        // fetch of a bundled custom-scheme resource is interrupted.
+        if let assetBootstrap = Self.nativeAssetBootstrapScript() {
+            controller.addUserScript(
+                WKUserScript(
+                    source: assetBootstrap,
+                    injectionTime: .atDocumentStart,
+                    forMainFrameOnly: true
+                )
+            )
+        }
+
         let config = WKWebViewConfiguration()
         config.userContentController = controller
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
@@ -168,6 +182,68 @@ public struct BlockerWebView: _CBViewRepresentable {
     private static func javaScriptStringLiteral(_ value: String) -> String {
         let data = (try? JSONEncoder().encode(value)) ?? Data("\"\"".utf8)
         return String(data: data, encoding: .utf8) ?? "\"\""
+    }
+
+    private static func nativeAssetBootstrapScript() -> String? {
+        guard let assetsDirectory = WebAssetsLocator.assetsDirectory else {
+            return nil
+        }
+
+        var statements: [String] = []
+        if let catalogs = jsonObjects(in: assetsDirectory.appendingPathComponent("translation")),
+           let json = jsonString(catalogs) {
+            statements.append("window.CUSTOM_BLOCKER_INLINE_MESSAGES = \(json);")
+        }
+        if let manuals = textFiles(in: assetsDirectory.appendingPathComponent("manual")),
+           let json = jsonString(manuals) {
+            statements.append("window.CUSTOM_BLOCKER_INLINE_MANUALS = \(json);")
+        }
+        return statements.isEmpty ? nil : statements.joined(separator: "\n")
+    }
+
+    private static func jsonObjects(in directory: URL) -> [String: Any]? {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ) else {
+            return nil
+        }
+        var result: [String: Any] = [:]
+        for file in files where file.pathExtension == "json" {
+            guard let data = try? Data(contentsOf: file),
+                  let object = try? JSONSerialization.jsonObject(with: data),
+                  let dictionary = object as? [String: Any] else {
+                continue
+            }
+            result[file.deletingPathExtension().lastPathComponent] = dictionary
+        }
+        return result.isEmpty ? nil : result
+    }
+
+    private static func textFiles(in directory: URL) -> [String: String]? {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ) else {
+            return nil
+        }
+        var result: [String: String] = [:]
+        for file in files where file.pathExtension == "md" {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else {
+                continue
+            }
+            result[file.deletingPathExtension().lastPathComponent] = text
+        }
+        return result.isEmpty ? nil : result
+    }
+
+    private static func jsonString(_ object: Any) -> String? {
+        guard JSONSerialization.isValidJSONObject(object),
+              let data = try? JSONSerialization.data(withJSONObject: object),
+              let text = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return text
     }
 
     private static let missingAssetsHTML = """

@@ -40,7 +40,7 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
         self.store = store
         self.client = client
         self.defaultMode = defaultMode
-        self.protectedBundleIdentifiers = protectedBundleIdentifiers
+        self.protectedBundleIdentifiers = protectedBundleIdentifiers.union(MacProcessTerminator.browserBundleIdentifiers)
         self.runTerminationSweep = runTerminationSweep
     }
 
@@ -50,6 +50,7 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
             case .shield:
                 let mode = Self.mode(from: decision, default: defaultMode)
                 for id in decision.targetIDs {
+                    guard !MacProcessTerminator.isBrowserBundleIdentifier(id) else { continue }
                     activeModes[id] = mode
                 }
             case .allow, .unshield:
@@ -102,6 +103,7 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
 
         // Merge in bundle IDs shielded by custom-rule decisions.
         for bundleID in customBlockedBundleIDs {
+            guard !MacProcessTerminator.isBrowserBundleIdentifier(bundleID) else { continue }
             modes[bundleID] = resolved
         }
 
@@ -157,6 +159,7 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
             guard shouldBlock else { continue }
 
             for target in group.targets where target.kind == .application {
+                guard !MacProcessTerminator.isBrowserBundleIdentifier(target.id) else { continue }
                 modes[target.id] = mode
             }
         }
@@ -213,7 +216,9 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
         )
         #endif
 
-        return modes.map { bundleID, mode in
+        return modes
+            .filter { !MacProcessTerminator.isBrowserBundleIdentifier($0.key) }
+            .map { bundleID, mode in
             #if os(macOS)
             if let app = byBundleID[bundleID] {
                 let signing = MacCodeSigning.info(forItemAt: app.path)
@@ -234,7 +239,7 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
                 enforcementMode: mode,
                 displayName: bundleID
             )
-        }
-        .sorted { $0.bundleIdentifier < $1.bundleIdentifier }
+            }
+            .sorted { $0.bundleIdentifier < $1.bundleIdentifier }
     }
 }

@@ -18,8 +18,8 @@ final class SafariCustomRuleBridgeTests: XCTestCase {
             groupID: "group-1",
             source: """
             (events, helpers) => {
-              events.registerTickEvent("tick-a", (ev, h) => {});
-              events.registerWebChangedEvent("web-a", (ev, h) => {});
+              events.on("tickEvent", "tick-a", (ev, h) => {});
+              events.on("webChangedEvent", "web-a", (ev, h) => {});
             }
             """
         )
@@ -48,7 +48,7 @@ final class SafariCustomRuleBridgeTests: XCTestCase {
             groupID: "group-1",
             source: """
             (events, helpers) => {
-              events.registerTickEvent("tick-a", (ev, h) => { h.getLogHelper().log("tick"); });
+              events.on("tickEvent", "tick-a", (ev, h) => { h.getLogHelper().log("tick"); });
             }
             """
         )

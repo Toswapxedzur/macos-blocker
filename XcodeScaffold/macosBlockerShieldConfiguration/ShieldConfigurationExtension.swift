@@ -6,8 +6,8 @@ final class ShieldConfigurationExtension: ShieldConfigurationDataSource {
     override func configuration(shielding application: Application) -> ShieldConfiguration {
         configuration(
             title: "Blocked",
-            subtitle: "macosBlocker is shielding this app.",
-            primaryButton: "Open macosBlocker",
+            subtitle: "Mac Vault is shielding this app.",
+            primaryButton: "Open Mac Vault",
             secondaryButton: "Request Snooze"
         )
     }
@@ -15,8 +15,8 @@ final class ShieldConfigurationExtension: ShieldConfigurationDataSource {
     override func configuration(shielding application: Application, in category: ActivityCategory) -> ShieldConfiguration {
         configuration(
             title: "Category Blocked",
-            subtitle: "This category is currently blocked by macosBlocker.",
-            primaryButton: "Open macosBlocker",
+            subtitle: "This category is currently blocked by Mac Vault.",
+            primaryButton: "Open Mac Vault",
             secondaryButton: "Request Snooze"
         )
     }
@@ -24,8 +24,8 @@ final class ShieldConfigurationExtension: ShieldConfigurationDataSource {
     override func configuration(shielding webDomain: WebDomain) -> ShieldConfiguration {
         configuration(
             title: "Website Blocked",
-            subtitle: "This website is currently blocked by macosBlocker.",
-            primaryButton: "Open macosBlocker",
+            subtitle: "This website is currently blocked by Mac Vault.",
+            primaryButton: "Open Mac Vault",
             secondaryButton: "Request Snooze"
         )
     }

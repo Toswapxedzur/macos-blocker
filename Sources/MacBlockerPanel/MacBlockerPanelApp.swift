@@ -26,7 +26,7 @@ struct MacBlockerPanelApp: App {
     #endif
 
     var body: some Scene {
-        WindowGroup("macosBlocker Panel") {
+        WindowGroup("Mac Vault") {
             BlockerMainView()
                 .frame(minWidth: 720, minHeight: 560)
         }
@@ -37,7 +37,7 @@ struct MacBlockerPanelApp: App {
         #if os(macOS)
         Settings {
             VStack(alignment: .leading, spacing: 12) {
-                Text("macosBlocker")
+                Text("Mac Vault")
                     .font(.title2.bold())
                 Text("The macOS panel runs the shared editor and status-window replacement. iOS shielding still requires an Xcode app target with Screen Time entitlements.")
                     .foregroundStyle(.secondary)

@@ -6,6 +6,28 @@ const GROUP_SNOOZE_TOTALS_KEY = "groupSnoozeTotalsMs";
 const GLOBAL_SETTINGS_KEY = "globalSettings";
 const LAYOUT_WIDTH_STORAGE_KEY = "custom-blocker-groups-panel-width";
 const LANGUAGE_STORAGE_KEY = "custom-blocker-language";
+const LANGUAGE_FALLBACKS = Object.freeze({
+  en: { label: "English", nativeLabel: "English" },
+  zh: { label: "Chinese (Simplified)", nativeLabel: "简体中文" },
+  es: { label: "Spanish", nativeLabel: "Espanol" },
+  hi: { label: "Hindi", nativeLabel: "हिन्दी" },
+  ar: { label: "Arabic", nativeLabel: "العربية" },
+  bn: { label: "Bengali", nativeLabel: "বাংলা" },
+  pt: { label: "Portuguese", nativeLabel: "Portugues" },
+  ru: { label: "Russian", nativeLabel: "Русский" },
+  ja: { label: "Japanese", nativeLabel: "日本語" },
+  pa: { label: "Punjabi", nativeLabel: "ਪੰਜਾਬੀ" },
+  de: { label: "German", nativeLabel: "Deutsch" },
+  fr: { label: "French", nativeLabel: "Francais" },
+  ko: { label: "Korean", nativeLabel: "한국어" },
+  tr: { label: "Turkish", nativeLabel: "Turkce" },
+  vi: { label: "Vietnamese", nativeLabel: "Tieng Viet" },
+  it: { label: "Italian", nativeLabel: "Italiano" },
+  th: { label: "Thai", nativeLabel: "ไทย" },
+  nl: { label: "Dutch", nativeLabel: "Nederlands" },
+  pl: { label: "Polish", nativeLabel: "Polski" },
+  id: { label: "Indonesian", nativeLabel: "Bahasa Indonesia" }
+});
 const AI_PROMPT_STORAGE_PREFIX = "custom-blocker-ai-prompt:";
 const GROUP_TRANSFER_PREFIX = "custom-blocker-group:v1:";
 const LOCAL_FOLDER_DB_NAME = "custom-blocker-local-folder";
@@ -499,17 +521,15 @@ function getTranslationsConfig() {
   return window.CUSTOM_BLOCKER_I18N ?? {
     defaultLanguage: "en",
     translationDirectory: "translation",
-    languages: {
-      en: {
-        label: "English",
-        nativeLabel: "English"
-      }
-    }
+    languages: LANGUAGE_FALLBACKS
   };
 }
 
 function getAvailableLanguages() {
-  return getTranslationsConfig().languages;
+  const languages = getTranslationsConfig().languages;
+  return languages && typeof languages === "object" && Object.keys(languages).length
+    ? languages
+    : LANGUAGE_FALLBACKS;
 }
 
 function getDefaultLanguageCode() {
@@ -523,6 +543,11 @@ function getTranslationDirectory() {
 }
 
 async function fetchLanguageMessages(languageCode) {
+  const inlineMessages = window.CUSTOM_BLOCKER_INLINE_MESSAGES?.[languageCode];
+  if (inlineMessages && typeof inlineMessages === "object") {
+    return inlineMessages;
+  }
+
   const response = await fetch(
     chrome.runtime.getURL(`${getTranslationDirectory()}/${languageCode}.json`)
   );
@@ -588,25 +613,21 @@ function loadLanguage() {
 
 async function fetchManualMarkdown(languageCode) {
   const candidates = languageCode === "en" ? ["en"] : [languageCode, "en"];
-
   for (const candidate of candidates) {
-    if (state.manualCache[candidate]) {
-      return state.manualCache[candidate];
+    if (state.manualCache[candidate]) return state.manualCache[candidate];
+    const inlineManual = window.CUSTOM_BLOCKER_INLINE_MANUALS?.[candidate];
+    if (typeof inlineManual === "string" && inlineManual) {
+      state.manualCache[candidate] = inlineManual;
+      return inlineManual;
     }
-
     try {
       const response = await fetch(chrome.runtime.getURL(`manual/${candidate}.md`));
-
-      if (!response.ok) {
-        continue;
-      }
-
+      if (!response.ok) continue;
       const markdown = await response.text();
       state.manualCache[candidate] = markdown;
       return markdown;
     } catch {}
   }
-
   throw new Error(t("manual.error"));
 }
 
@@ -618,13 +639,8 @@ async function loadManualContent() {
     const markdown = await fetchManualMarkdown(state.language);
     manualStatus.textContent = "";
     let html = renderMarkdownToHtml(markdown);
-    // Non-English manuals are machine-translated. Surface that up-front
-    // so a reader does not mistake an MT artefact for an authoritative
-    // statement. The banner itself is localized via the standard
-    // translation pipeline.
     if (state.language && state.language !== "en") {
-      const bannerText = escapeHtml(t("manual.mtBanner"));
-      html = `<blockquote class="mt-banner">${bannerText}</blockquote>${html}`;
+      html = `<blockquote class="mt-banner">${escapeHtml(t("manual.mtBanner"))}</blockquote>${html}`;
     }
     manualContent.innerHTML = html;
   } catch (error) {
@@ -1645,11 +1661,22 @@ function populateLanguageOptions() {
   for (const [code, language] of Object.entries(languages)) {
     const option = document.createElement("option");
     option.value = code;
+    option.setAttribute("translate", "no");
+    option.classList.add("notranslate");
     option.textContent = language.nativeLabel || language.label || code;
     languageSelect.appendChild(option);
   }
 
-  languageSelect.value = state.language;
+  const selectedLanguage = languages[state.language]
+    ? state.language
+    : getDefaultLanguageCode();
+  languageSelect.value = selectedLanguage;
+
+  // A browser can discard an invalid selected value. Keep a visible option in
+  // that case rather than leaving the language control blank.
+  if (!languageSelect.value) {
+    languageSelect.value = Object.keys(languages)[0] || "en";
+  }
 }
 
 async function setLanguage(languageCode) {
@@ -6897,39 +6924,34 @@ function buildCustomRuleAiPrompt(userRequest, currentRule) {
   const existingRule = String(currentRule || "").trim() || "(No current rule.)";
 
   return [
-    "TASK: generate custom-rule JavaScript for Chrome extension Screen Time Limiter: Custom Website Blocker & Focus Timer.",
+    "TASK: generate custom-rule JavaScript for Chrome extension Adamancia Vault — Website Blocker & Focus Timer.",
     "OUTPUT_CONTRACT: put only the final valid JavaScript source inside one copyable fenced code block labeled javascript; no prose before or after the code block.",
     "TOP_LEVEL_SHAPE: (event, helpers) => { /* register handlers here */ }",
-    "EXECUTION_MODEL: top-level function runs once per Run click or enable; it must register persistent handlers. Do not do the blocking work only at top level. Handlers persist until Run again, disable, delete, or same (type,id) re-register. Sandbox is long-lived and shared by groups. Keep synchronous work bounded. No infinite loops, network fetches, external packages, eval/new Function, DOM globals, chrome APIs, timers like setInterval for rule logic, or assumptions that browser/page globals exist.",
+    "EXECUTION_MODEL: top-level function runs once per Run click or enable; it must register persistent handlers. Do not do the blocking work only at top level. Handlers persist until Run again, disable, delete, or same (type,id) re-register. Custom rules ALWAYS run (no built-in schedule). Sandbox is long-lived and shared by groups. Keep synchronous work bounded. No infinite loops, network fetches, external packages, eval/new Function, DOM globals, chrome APIs, timers like setInterval for rule logic, or assumptions that browser/page globals exist.",
     "USER_REQUEST_BEGIN",
     demand,
     "USER_REQUEST_END",
     "API.EVENT_REGISTRY:",
-    "event.register(type,id,handler,options?) -> boolean; event.getEvent(type,id) -> function|null; event.getEvents(type) -> object; event.countRegistered(type) -> number; event.unregister(type,id) -> boolean; event.unregisterAll(type) -> number; event.post(type,data?,{scope?}) -> void. Reserved event names starting '_' are rejected. options.priority default 0, higher runs first. options.intervalMs throttles tickEvent/pageHeartbeat-style frequent handlers. Same type+id replaces.",
-    "BUILTIN_EVENT_TYPES: tickEvent, openWebEvent, closeWebEvent, switchWebEvent, switchDomainEvent, webChangedEvent, timerEnded, snoozePress, panelEvent, localFileEvent, pageHeartbeatEvent.",
-    "TYPED_EVENT_METHODS: for each built-in type suffix S = TickEvent/OpenWebEvent/CloseWebEvent/SwitchWebEvent/SwitchDomainEvent/WebChangedEvent/TimerEnded/SnoozePress/PanelEvent/LocalFileEvent/PageHeartbeatEvent: event.registerS(id,handler,opts), event.getS(id), event.getSs(), count name as event.countTickRegistered/countOpenWebRegistered/countCloseWebRegistered/countSwitchWebRegistered/countSwitchDomainRegistered/countWebChangedRegistered/countTimerEndedRegistered/countSnoozePressRegistered/countPanelRegistered/countLocalFileRegistered/countPageHeartbeatRegistered. Also aliases: registerTimerEndedEvent/getTimerEndedEvent/getTimerEndedEvents/countTimerEndedEventRegistered; registerSnoozePressEvent/getSnoozePressEvent/getSnoozePressEvents/countSnoozePressEventRegistered; registerPanelEvent/getPanelEvent/getPanelEvents/countPanelEventRegistered; registerLocalFileEvent/getLocalFileEvent/getLocalFileEvents/countLocalFileEventRegistered.",
-    "EVENT_SEMANTICS: tickEvent per-open-tab 1s tick data {intervalMs} with at most one tick per tab per second; pageHeartbeatEvent active visible tab heartbeat data {elapsedMs}; openWebEvent new tab created data {previousUrl,isNewTab}; closeWebEvent tab close data {reason,nextUrl}; switchWebEvent same-tab committed URL change data {previousUrl,previousHostname,sameDomain}; switchDomainEvent committed hostname boundary data {previousUrl,previousHostname}; webChangedEvent one committed top-level navigation/reload data {previousUrl,previousHostname,sameDomain,isFirstLoad,isReload,transition:'commit'}; timerEnded owning group only data {timerId,displayName,direction,currentMs}; snoozePress custom group only when Start Snooze clicked data {triggeredAt}; panelEvent owning group only data {panelId,controlId,eventName,value,values,key,code,keyInfo} and ev.panelId/ev.controlId/ev.eventName/ev.value/ev.values/ev.key/ev.code/ev.keyInfo shortcuts; localFileEvent owning group only data {eventName,action,path,directoryPath,requestId,ok,text,value,entries,exists,bytes,error} and same-name ev shortcuts. New tab/about blank exposed as ev.url === ''.",
+    "event.on(type,id,handler,options?) -> boolean (register or replace by type+id); event.off(type,id) -> boolean; event.emit(type,data?,{scope?}) -> void. Raw aliases also exist: event.register/unregister/post, event.getEvent(type,id), event.getEvents(type), event.countRegistered(type), event.unregisterAll(type). Reserved types starting '_' are rejected. options.priority default 0 (higher runs first). options.intervalMs throttles frequent handlers. There are NO per-type convenience methods (no registerTickEvent/countTickRegistered etc.) — always pass the raw type string, e.g. event.on('tickEvent','my-id',(ev,h)=>{}).",
+    "BUILTIN_EVENT_TYPES: tickEvent, openWebEvent, closeWebEvent, webChangedEvent, timerEnded, snoozePress, panelEvent, localFileEvent, pageHeartbeatEvent. (There are no switch/refresh events: webChangedEvent + its flags cover same-tab URL changes, cross-domain hops, first load, and reloads.)",
+    "EVENT_SEMANTICS: tickEvent per-open-tab 1s tick data {intervalMs} with at most one tick per tab per second; pageHeartbeatEvent active visible tab heartbeat data {elapsedMs}; openWebEvent new tab created data {previousUrl,isNewTab}; closeWebEvent tab close (no post-URL; the tab is gone) data {reason,nextUrl}; webChangedEvent one committed top-level navigation/reload data {previousUrl,previousHostname,sameDomain,isFirstLoad,isReload,transition:'commit'} — derive same-tab URL change (!isFirstLoad && url!==previousUrl), cross-domain hop (!sameDomain), first load (isFirstLoad), and refresh (isReload) from these flags; timerEnded owning group only data {timerId,displayName,direction,currentMs}; snoozePress custom group only when Start Snooze clicked data {triggeredAt}; panelEvent owning group only data {panelId,controlId,eventName,value,values,key,code,keyInfo} and ev.panelId/ev.controlId/ev.eventName/ev.value/ev.values/ev.key/ev.code/ev.keyInfo shortcuts; localFileEvent owning group only data {eventName,action,path,directoryPath,requestId,ok,text,value,entries,exists,bytes,error} and same-name ev shortcuts. New tab/about blank exposed as ev.url === ''.",
     "HANDLER_SHAPE: (ev, helpers) => void. ev fields: type, groupId, tabId, pageId, url, hostname, time:{now,month,dayOfMonth,dayName,hour,minute}, data. ev methods: preventDefault(), stopPropagation(), setResult(number|string), getResult(), post(type,data,{scope?}), setRedirectLink(url), getRedirectLink(). setResult(-1)=block, 0=neutral/pass, 1=allow override; string result is redirect URL; setRedirectLink sets redirect target for blocked result; stopPropagation halts all later handlers across groups. ev is Proxy: custom fields can be assigned/read during same dispatch.",
-    "HELPERS.TOP: helpers.now, helpers.currentUrl, helpers.groupId, helpers.log(...), helpers.warn(...), helpers.error(...), helpers.logScreen(...), helpers.warnScreen(...), helpers.errorScreen(...), helpers.logPopup(...), helpers.warnPopup(...), helpers.errorPopup(...), getLogHelper, getDomainHelper, getDomainUtility, getTimerHelper, getPanelHelper, getPersistenceHelper, getRedirectionHelper, getDOMHelper, getNavigationHelper, getStorageHelper, getLocalFolderHelper, getTabHelper, getPlatformHelper.",
+    "HELPERS.TOP: helpers.now, helpers.currentUrl, helpers.groupId, helpers.platform(name?) (raw platform feed control — see HELPERS.PLATFORM), helpers.log(...), helpers.warn(...), helpers.error(...), helpers.logScreen(...), helpers.warnScreen(...), helpers.errorScreen(...), helpers.logPopup(...), helpers.warnPopup(...), helpers.errorPopup(...), getLogHelper, getDomainHelper, getDomainUtility, getTimerHelper, getPanelHelper, getPersistenceHelper, getRedirectionHelper, getDOMHelper, getNavigationHelper, getStorageHelper, getLocalFolderHelper, getTabHelper, getPlatformHelper.",
     "HELPERS.LOG: log=helpers.getLogHelper(); log.log/warn/error write popup Log panel and follow Settings → Show custom rule logs on web pages for page toasts. log.logScreen/warnScreen/errorScreen write screen/page toast only. log.logPopup/warnPopup/errorPopup write popup only. Top-level helpers.log*, warn*, error* shortcuts mirror these. Logs are capped/rate-limited.",
     "HELPERS.DOMAIN: d=helpers.getDomainHelper(); d.hostnameOf(url); d.pathnameOf(url); d.matches(hostname,site); d.getPlatform(url); d.isYouTubeHost(host); d.isTikTokHost(host); d.isInstagramHost(host); d.isFacebookHost(host); d.isTwitchHost(host); d.isRedditHost(host); d.isDiscordHost(host); d.isEmptyStartPage(url); d.matchesAny(url,regexOrArrayOrString); d.pathStartsWith(url,path); d.queryHas(url,key,value?); d.queryGet(url,key); d.isSearchPage(url); d.isInfiniteFeedUrl(url); d.sameSection(a,b). Platform URL classifiers: d.youtube()/tiktok()/instagram()/facebook()/twitch() each expose isPlatformUrl(url), isShortUrl(url), isVideoUrl(url), isPostUrl(url), isHomePage(url), extractAuthor(url), extractVideoId(url).",
-    "HELPERS.TIMER: tm=helpers.getTimerHelper(); tm.groupId; tm.create({id,displayName?,direction?,currentMs?,scope?,domain?}) resets; tm.getOrCreateTimer({id,displayName?,direction?,currentMs?,scope?,domain?}) creates only when missing and otherwise returns existing timer unchanged; init fields including scope/domain apply only on creation. direction forward/backward; currentMs ms; scope(url) auto-ticks on visible page heartbeat; domain(url) controls overlay display. To change an existing timer use setDirection/setCurrentMs/addMs/setDisplayName or create() to reset. tm.delete(id), pause(id), resume(id), setDirection(id,dir), setCurrentMs(id,ms), addMs(id,deltaMs), setDisplayName(id,name), getCurrentMs(id), isExpired(id), isPaused(id), getDirection(id), getDisplayName(id), exists(id), getState(id)->{id,displayName,direction,isPaused,currentMs,isExpired}|null, list()->array. Timers do not block by themselves; check isExpired in open/switch/webChanged handler and then block.",
-    "HELPERS.PANEL: pn=helpers.getPanelHelper(); pn.create({id,title?,description?,position?,align?,layout?,priority?,width?,textSize?,theme?,ariaLabel?,role?,autoFocus?,scope?,domain?,controls?,onEvent?,onChange?,onClick?,onInput?,onFocus?,onBlur?,onSubmit?,onClose?,onMount?,onUnmount?,onKey?}) replaces/resets; pn.getOrCreatePanel(config) creates only when missing and otherwise returns existing panel unchanged; pn.update(id,patch), delete(id), show(id), hide(id), setValue(panelId,controlId,value), updateControl(panelId,controlId,patch), enable/disable(panelId,controlId), setOptions(panelId,controlId,options), setText(panelId,controlId,text), setTheme(panelId,theme), setTitle(panelId,title), setDescription(panelId,text), getValue(panelId,controlId), getValues(panelId), getState(id), list(); builders: notice(config), confirm(config), checklist(config), form(config). Controls: {id,type,label?,text?,placeholder?,value?,options?,min?,max?,step?,timerId?,timer?,format?,showExpired?,action?,layout?,priority?,width?,height?,rows?,disabled?,ariaLabel?,autoFocus?,onEvent?,onChange?,onClick?,onInput?,onFocus?,onBlur?,onSubmit?,onClose?,onMount?,onUnmount?,onKey?}; types text, checkbox, select, textInput, textarea, button, section, timer, numberInput, range, toggle, radio, date, time, color. section has nested controls and its own layout/priority. timer is display-only: use timerId to hydrate from getTimerHelper state, or timer: tm.getState(id) for a snapshot. numberInput/range support min/max/step; radio uses options; toggle is boolean. Layout presets: vertical, compact, comfortable, spacious, inline, row, wrap, twoColumn, grid, split, form, toolbar, stack. Higher priority panels/controls/sections appear earlier/closer to corner. Per-control width accepts px/%, full, auto; height accepts px/auto; rows affects textarea. If panel width is omitted, the outer panel auto-fits content tightly. Panel events include change/click/input/focus/blur/submit/close/mount/unmount/key; key events expose ev.key/ev.code/ev.keyInfo. scope/domain decide where shown.",
+    "HELPERS.TIMER: tm=helpers.getTimerHelper(); tm.groupId; tm.create({id,displayName?,direction?,currentMs?,minMs?,maxMs?,stepMs?,overlayStyle?,scope?,domain?,accrueWhen?}) resets; tm.getOrCreateTimer({...same...}) creates only when missing and otherwise returns the existing timer unchanged (predicates not replaced); init fields apply only on creation. direction forward/backward; currentMs ms. OPTIONS: minMs/maxMs clamp currentMs (forward stops at maxMs, backward stops at minMs); stepMs quantizes each auto-tick (e.g. 60000 = whole-minute accrual); overlayStyle is a JSON style object for the on-page chip (known string keys color,background,fontSize,fontWeight,border,borderRadius,padding,opacity,icon). PREDICATES: scope(url) auto-ticks on the visible page heartbeat; domain(url) controls overlay display; accrueWhen(url) is an extra gate so the timer ticks only when BOTH scope and accrueWhen are true (e.g. only while a video plays). Mutators: setDirection(id,dir), setCurrentMs(id,ms), addMs(id,deltaMs), subMs(id,deltaMs), setBounds(id,minMs,maxMs), setStep(id,stepMs), setOverlayStyle(id,style), setDisplayName(id,name). Reads: getCurrentMs(id), isExpired(id), isPaused(id), getDirection(id), getDisplayName(id), exists(id), getState(id)->{id,displayName,direction,isPaused,currentMs,isExpired,minMs?,maxMs?,stepMs?,overlayStyle?}|null, list()->array. tm.delete(id), pause(id), resume(id). Timers do not block by themselves; check isExpired in an open/switch/webChanged handler and then redirect.",
+    "HELPERS.PANEL: pn=helpers.getPanelHelper(); pn.create({id,title?,description?,position?,align?,layout?,priority?,width?,textSize?,theme?,ariaLabel?,role?,autoFocus?,scope?,domain?,controls?,onEvent?,onChange?,onClick?,onInput?,onFocus?,onBlur?,onSubmit?,onClose?,onMount?,onUnmount?,onKey?}) replaces/resets; pn.getOrCreatePanel(config) creates only when missing and otherwise returns existing panel unchanged; pn.update(id,patch), delete(id), show(id), hide(id), setValue(panelId,controlId,value), updateControl(panelId,controlId,patch), enable/disable(panelId,controlId), setOptions(panelId,controlId,options), setText(panelId,controlId,text), setTheme(panelId,theme), setTitle(panelId,title), setDescription(panelId,text), getValue(panelId,controlId), getValues(panelId), getState(id), list(); builders: notice(config), confirm(config), checklist(config), form(config). Controls: {id,type,label?,text?,placeholder?,value?,options?,min?,max?,step?,timerId?,timer?,format?,showExpired?,action?,layout?,priority?,width?,height?,rows?,disabled?,ariaLabel?,autoFocus?,onEvent?,onChange?,onClick?,onInput?,onFocus?,onBlur?,onSubmit?,onClose?,onMount?,onUnmount?,onKey?}; types text, checkbox, select, textInput, textarea, button, section, timer, numberInput, range, toggle, radio, date, time, color, pin, html. html mounts raw markup via control.html (sanitized: <script> and on* handlers stripped, javascript: URLs neutralized) — use it for custom layouts/icons. Read/write any control with getValue/getValues/setValue/updateControl. section has nested controls and its own layout/priority. timer is display-only: use timerId to hydrate from getTimerHelper state, or timer: tm.getState(id) for a snapshot. numberInput/range support min/max/step; radio uses options; toggle is boolean. Layout presets: vertical, compact, comfortable, spacious, inline, row, wrap, twoColumn, grid, split, form, toolbar, stack. Higher priority panels/controls/sections appear earlier/closer to corner. Per-control width accepts px/%, full, auto; height accepts px/auto; rows affects textarea. If panel width is omitted, the outer panel auto-fits content tightly. Panel events include change/click/input/focus/blur/submit/close/mount/unmount/key; key events expose ev.key/ev.code/ev.keyInfo. scope/domain decide where shown.",
     "HELPERS.PERSISTENCE: p=helpers.getPersistenceHelper(); p.get(key,defaultValue?), set(key,valueJSON), delete(key), has(key), keys(), entries(), clear(), size(). Values JSON-serializable; scoped to group.",
     "HELPERS.REDIRECT: r=helpers.getRedirectionHelper(); r.get(); r.set(url); r.setRedirectLink(url); r.getRedirectLink(); r.createMessageUrl(message). ev.setRedirectLink can also be used directly.",
     "HELPERS.DOM: dom=helpers.getDOMHelper(); dom.hide(selector), show(selector), addClass(selector,className), removeClass(selector,className), setText(selector,text), click(selector), injectCss(css,id?), removeInjectedCss(id), scrollTo(selector). These enqueue content-script DOM intents, applied after handler returns.",
     "HELPERS.NAVIGATION: nav=helpers.getNavigationHelper(); nav.back(), forward(), reload(), goTo(url), closeTab(). These enqueue tab navigation intents for current event tab.",
     "HELPERS.STORAGE: s=helpers.getStorageHelper(); includes persistence methods plus s.requestAsyncGet(key), s.requestAsyncSet(key,valueJSON). Async results arrive via follow-up custom storage events; do not await.",
-    "HELPERS.LOCAL_FOLDER: lf=helpers.getLocalFolderHelper(); requires Settings → Local File Folder. Supported files: .txt, .csv, .json inside the granted folder only. Request methods are async and return requestId: requestRead(path), requestWrite(path,text), requestAppend(path,text), requestList(directoryPath?), requestExists(path), requestReadJson(path), requestWriteJson(path,valueJSON). Results arrive via event.registerLocalFileEvent(id,(ev,h)=>{}) with ev.eventName read/write/append/list/exists/error, ev.path, ev.directoryPath, ev.requestId, ev.text, ev.value, ev.entries, ev.exists, ev.error.",
+    "HELPERS.LOCAL_FOLDER: lf=helpers.getLocalFolderHelper(); requires Settings → Local File Folder. Supported files: .txt, .csv, .json inside the granted folder only. Request methods are async and return requestId: requestRead(path), requestWrite(path,text), requestAppend(path,text), requestList(directoryPath?), requestExists(path), requestReadJson(path), requestWriteJson(path,valueJSON). Results arrive via event.on('localFileEvent',id,(ev,h)=>{}) with ev.eventName read/write/append/list/exists/error, ev.path, ev.directoryPath, ev.requestId, ev.text, ev.value, ev.entries, ev.exists, ev.error.",
     "HELPERS.TAB: tab=helpers.getTabHelper(); tab.list(), getActiveTab(), getById(id), countOpen(), requestRefresh(). Uses snapshot bundled with dispatch.",
-    "HELPERS.PLATFORM: ph=helpers.getPlatformHelper(); ph.youtube(), ph.tiktok(), ph.instagram(), ph.facebook(), ph.twitch(); ph.listMethods(platform); ph.hasMethod(platform,methodName). Each platform API always has URL classifiers isPlatformUrl,isShortUrl,isVideoUrl,isPostUrl,isHomePage,extractAuthor,extractVideoId.",
-    "PLATFORM_METHODS.YOUTUBE: hideShorts(predicate,{blockPageOnVisit?}), showShorts(), hideVideos(predicate,opts), showVideos(), hidePosts(predicate,opts), showPosts(), hideShortButton(), showShortButton(), hideHomePage(), showHomePage(), hideComments(), showComments(), filterComments(predicate,opts), hideLive(), showLive(), filterLive(predicate,opts), isCurrentChannelSubscribed(), isChannelSubscribed(id), isCurrentChannelVerified(), isLiveNow(), isItemLive(item), isAlgorithmicRecommendation(item), isSponsored(item), setShortsTimer(opts), setVideosTimer(opts), setPostsTimer(opts).",
-    "PLATFORM_METHODS.TIKTOK: hideVideos(predicate,opts), showVideos(), hideHomePage(), showHomePage(), hideComments(), showComments(), filterComments(predicate,opts), hideLive(), showLive(), filterLive(predicate,opts), isLiveNow(), isItemLive(item), isAlgorithmicRecommendation(item), isSponsored(item), setVideosTimer(opts).",
-    "PLATFORM_METHODS.INSTAGRAM: hideReels(predicate,opts), showReels(), hidePosts(predicate,opts), showPosts(), hideHomePage(), showHomePage(), hideComments(), showComments(), filterComments(predicate,opts), isAlgorithmicRecommendation(item), isSponsored(item), setReelsTimer(opts), setPostsTimer(opts).",
-    "PLATFORM_METHODS.FACEBOOK: hideReels(predicate,opts), showReels(), hideVideos(predicate,opts), showVideos(), hidePosts(predicate,opts), showPosts(), hideHomePage(), showHomePage(), hideComments(), showComments(), filterComments(predicate,opts), hideLive(), showLive(), filterLive(predicate,opts), isLiveNow(), isItemLive(item), isAlgorithmicRecommendation(item), isSponsored(item), setReelsTimer(opts), setVideosTimer(opts), setPostsTimer(opts).",
-    "PLATFORM_METHODS.TWITCH: hideComments(), showComments(), hideClips(predicate,opts), showClips(), hideStreams(predicate,opts), showStreams(), hideVideos(predicate,opts), showVideos(), hideHomePage(), showHomePage(), hideLive(), showLive(), filterLive(predicate,opts), isCurrentChannelSubscribed(), isChannelSubscribed(id), isLiveNow(), isItemLive(item), isAlgorithmicRecommendation(item), setClipsTimer(opts), setStreamsTimer(opts), setVideosTimer(opts).",
-    "PLATFORM_PREDICATE_ITEM: item={url,name,author,length,views,publishedAt,description,live?,sponsored?,algorithmic?}; fields may be null. Predicate methods keep one persistent predicate per group+platform+slot; each call replaces previous predicate; show* clears. opts.blockPageOnVisit can block page visits when predicate matches.",
-    "COMMON_PATTERNS: immediate block -> registerOpenWebEvent and registerSwitchWebEvent or registerWebChangedEvent; if condition matches ev.url then ev.setRedirectLink(optional), ev.preventDefault(), ev.setResult(-1). Reload-sensitive logic -> webChangedEvent. Time budgets -> getOrCreateTimer with scope/domain plus block handler checking isExpired. DOM hiding -> run on open/switch/webChanged and call platform/DOM helper.",
+    "HELPERS.PLATFORM (RAW): p=helpers.platform('youtube') OR helpers.platform().youtube(). Platforms: youtube, tiktok, instagram, facebook, twitch. Raw methods on each: p.hide(slot,predicate,opts?) installs a per-(group,platform,slot) hide predicate; p.hide(predicate,opts?) (no slot) applies to every feed slot; p.allow(slot,predicate,opts?) / p.allow(predicate,opts?) installs a RESCUE predicate (effect 'allow') that overrides lower-priority block groups in the shared cascade; p.show(slot?) clears one slot's predicate (or all when slot omitted); p.surface(name,'hide'|'show') toggles a whole region; p.timer(slot,opts) caps subsection time and returns its id; p.snapshot() returns the raw per-platform snapshot or null; introspection p.slots()/p.surfaces()/p.timerSlots(); URL classifiers p.isPlatformUrl/isShortUrl/isVideoUrl/isPostUrl/isHomePage/extractAuthor/extractVideoId. opts: {blockPageOnVisit?} (redirect the page when a block predicate matches). Calling hide/show/timer with a slot the platform doesn't support throws TypeError. One predicate per (group,platform,slot); each call replaces it.",
+    "PLATFORM_SLOTS: youtube slots=shorts,videos,posts,comments,live surfaces=home,comments,shortButton,live timerSlots=shorts,videos,posts. tiktok slots=videos,comments,live surfaces=home,comments,live timerSlots=videos. instagram slots=shorts(Reels),posts,comments surfaces=home,comments timerSlots=shorts,posts. facebook slots=shorts(Reels),videos,posts,comments,live surfaces=home,comments,live timerSlots=shorts,videos,posts. twitch slots=shorts(Clips),streams,videos,live surfaces=home,comments,live timerSlots=shorts,streams,videos.",
+    "PLATFORM_PREDICATE_ITEM: the predicate receives a raw feed-card item={url,name,title,author,channelId,length,views,publishedAt,description,live,sponsored,algorithmic,videoForm}; most fields may be null/false. On YouTube the item is enriched with item.creator={id,subCount,tags,[],name,handle} (subCount may be null until the channel resolves — null-check and fail open). videoForm is one of short/long/post. Predicates run async in the sandbox over batches of cards; keep them pure and fast. Example: helpers.platform('youtube').hide('videos', it => it.creator && typeof it.creator.subCount==='number' && it.creator.subCount < 100000).",
+    "COMMON_PATTERNS: hide feed cards by creator/tag/subcount -> helpers.platform(site).hide(slot,predicate) (re-installs on each Run; persists across navigations). Rescue/whitelist -> helpers.platform(site).allow(slot,predicate). Whole-page block -> in event.on('webChangedEvent'[,'openWebEvent']) handler, if the URL matches, call ev.setRedirectLink(url?) then ev.setResult(-1) (network-level blocking no longer exists; blocking is redirect-based). Time budgets -> getOrCreateTimer with scope/domain plus a handler that checks isExpired and redirects. Hide whole regions -> helpers.platform(site).surface('home','hide').",
     "CURRENT_RULE_BEGIN",
     "BEGIN_CURRENT_RULE",
     existingRule,
@@ -6993,9 +7015,7 @@ async function runSelectedCustomGroup() {
     ]);
     if (response && response.__timedOut) {
       if (runCustomGroupStatus) {
-        runCustomGroupStatus.textContent =
-          "Halted: the rule took too long to load and was force-aborted. " +
-          "Check the Log panel for details.";
+        runCustomGroupStatus.textContent = t("custom.runStatusHalted");
         runCustomGroupStatus.className = "run-status error";
       }
       setStatus(t("status.customRunHaltedTimeBudget"), true);
@@ -7751,14 +7771,17 @@ function renderLogFeedEntry(entry) {
   if (entry.id != null && logFeedSeenIds.has(entry.id)) return;
   if (entry.id != null) logFeedSeenIds.add(entry.id);
 
-  const gn = entry.groupName || entry.eventType || "";
-  const selectedGroup = getSelectedGroup();
-  const selectedName = selectedGroup ? selectedGroup.name : "";
+  // Feed entries are tagged with the originating group's id (plus the
+  // eventType), never its display name — so filter by id against the
+  // selected group. The previous name-based match fell back to eventType
+  // (e.g. "load-source"/"webChangedEvent"), which never equals a group
+  // name, so every entry was hidden whenever a group was selected.
+  const gid = entry.groupId || "";
 
   const row = document.createElement("div");
   row.className = "log-feed-entry " + (entry.level === "warn" ? "warn" : entry.level === "error" ? "error" : "");
-  if (gn) row.setAttribute("data-group-name", gn);
-  if (gn && selectedName && gn !== selectedName) {
+  if (gid) row.setAttribute("data-group-id", gid);
+  if (gid && state.selectedGroupId && gid !== state.selectedGroupId) {
     row.style.display = "none";
   }
   const meta = document.createElement("span");
@@ -7792,11 +7815,9 @@ function updateLogFeedVisibleCount() {
 
 function filterLogFeedByGroup() {
   if (!logFeedList) return;
-  const selectedGroup = getSelectedGroup();
-  const selectedName = selectedGroup ? selectedGroup.name : "";
   for (const row of logFeedList.children) {
-    const gn = row.getAttribute("data-group-name") || "";
-    if (!gn || !selectedName || gn === selectedName) {
+    const gid = row.getAttribute("data-group-id") || "";
+    if (!gid || !state.selectedGroupId || gid === state.selectedGroupId) {
       row.style.display = "";
     } else {
       row.style.display = "none";
@@ -7936,6 +7957,8 @@ async function initializeSiteAccessBanner() {
 async function initializePopupApp() {
   const defaultLanguage = getDefaultLanguageCode();
   state.language = loadLanguage();
+  // The language picker must be usable while translation files are loading.
+  populateLanguageOptions();
 
   await ensureLanguageMessages(defaultLanguage).catch(() => {
     state.translationMessages[defaultLanguage] = {};
