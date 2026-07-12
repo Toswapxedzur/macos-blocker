@@ -9,6 +9,14 @@ import MacBlockerMacControl
 /// Connects the web editor's saved groups to live macOS enforcement and the
 /// floating timer HUD.
 ///
+/// Scope boundary — the native app enforces **whole apps only** and never
+/// touches in-browser affairs at any level: it does not read browser tabs
+/// (no `__nativeGetAllTabs` provider is installed, so `getAllTabs()` returns
+/// `[]`), and it ignores every web-level intent (`closeTab`,
+/// `closeTabsByPattern`, `blockSite`, `unblockSite`). Site/tab/DOM enforcement
+/// belongs entirely to the customBlocker browser extension, matching the
+/// Windows port. `isBrowser` is always reported `false`.
+///
 /// Lifecycle events (notification-driven, real-time):
 ///   - `openAppEvent`      — process launched (strong)
 ///   - `closeAppEvent`     — process terminated (strong)
@@ -64,11 +72,12 @@ public final class MacEnforcementBridge: ObservableObject {
     private var pendingLifecycleEvents: [AppLifecycleEvent] = []
     private var workspaceObservers: [Any] = []
 
-    // Browser tab + dynamic site blocklist + persistent app blocklist
-    private let focusObserver = BrowserFocusObserver()
-    private let siteBlocklist = DynamicSiteBlocklist()
+    // Persistent (rule-driven) app blocklist — whole-app enforcement only.
+    // The native app deliberately does NOT read or control browser tabs/sites:
+    // site/tab/DOM enforcement belongs entirely to the customBlocker browser
+    // extension. There is no browser tab reader, focus observer, or dynamic
+    // site blocklist here on purpose (see the boundary note above the class).
     private var blockedAppBundleIDs: Set<String> = []
-    private var lastBrowserTab: BrowserTabReader.TabInfo?
 
     // Panel event throttle (leading-edge, trailing flush at tick)
     private static let panelThrottleInterval: TimeInterval = 0.10
@@ -231,13 +240,6 @@ public final class MacEnforcementBridge: ObservableObject {
             }
         }
         self.timer = timer
-
-        focusObserver.onFocusEvent = { [weak self] event in
-            Task { @MainActor in
-                self?.handleBrowserFocusEvent(event)
-            }
-        }
-        focusObserver.start()
         #endif
     }
 
@@ -249,7 +251,6 @@ public final class MacEnforcementBridge: ObservableObject {
         overlay.hide()
         toastOverlay.teardown()
         panelOverlay.teardown()
-        focusObserver.stop()
         unregisterWorkspaceObservers()
         #endif
     }
@@ -270,7 +271,8 @@ public final class MacEnforcementBridge: ObservableObject {
         for (name, kind) in mapping {
             let observer = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
                 guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-                      let bundleID = app.bundleIdentifier else { return }
+                      let bundleID = app.bundleIdentifier,
+                      !MacProcessTerminator.isBrowserBundleIdentifier(bundleID) else { return }
                 // Only track GUI apps (regular activation policy).
                 if kind == .launched || kind == .terminated {
                     guard app.activationPolicy == .regular else { return }
@@ -305,14 +307,8 @@ public final class MacEnforcementBridge: ObservableObject {
         let now = Date()
         let importResult = webStore.importedGroups()
         let groups = importResult?.groups ?? []
-        let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-
-        // Read browser tab URL if frontmost is a browser.
-        if let fm = frontmost, BrowserTabReader.isBrowser(fm) {
-            lastBrowserTab = BrowserTabReader.currentTab(browserBundleID: fm)
-        } else {
-            lastBrowserTab = nil
-        }
+        let observedFrontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let frontmost = MacProcessTerminator.isBrowserBundleIdentifier(observedFrontmost) ? nil : observedFrontmost
 
         // 1. Reconcile reset windows + accrue time spent in the frontmost app.
         let elapsed = elapsedSinceLastSample(now: now)
@@ -322,13 +318,6 @@ public final class MacEnforcementBridge: ObservableObject {
             usageByGroupSeconds: timersMs.mapValues { $0 / 1000 },
             snoozesByGroup: webStore.loadSnoozes()
         )
-
-        // Check dynamic site blocklist against current tab.
-        if let tab = lastBrowserTab, siteBlocklist.isBlocked(tab.url) {
-            BrowserTabReader.closeActiveTab(browserBundleID: tab.browserBundleID)
-            appendLog(level: "log", group: "system",
-                      message: "Closed blocked site: \(tab.url)")
-        }
 
         // Enforce persistent app blocklist: kill any blocked app that's running.
         if !blockedAppBundleIDs.isEmpty, let fm = frontmost, blockedAppBundleIDs.contains(fm) {
@@ -574,17 +563,12 @@ public final class MacEnforcementBridge: ObservableObject {
         frontmost: String?,
         data: [String: String] = [:]
     ) -> CustomRuleEvent {
-        let url: String
-        let hostname: String
-        if let tab = lastBrowserTab {
-            url = tab.url
-            hostname = URL(string: tab.url)?.host ?? frontmost ?? ""
-        } else {
-            url = frontmost.map { "app://\($0)" } ?? ""
-            hostname = frontmost ?? ""
-        }
+        // App-level only: never derived from browser tab state. URL is a synthetic
+        // app:// scheme and isBrowser is always false (site/tab/DOM is the
+        // extension's domain).
+        let url = frontmost.map { "app://\($0)" } ?? ""
+        let hostname = frontmost ?? ""
 
-        let isBrowser = frontmost.map { BrowserTabReader.isBrowser($0) } ?? false
         let matchingTarget = frontmost.flatMap { fm in
             group.targets.first(where: { $0.kind == .application && $0.id == fm })
         }
@@ -592,11 +576,8 @@ public final class MacEnforcementBridge: ObservableObject {
         var enrichedData = data
         enrichedData["appId"] = frontmost ?? ""
         enrichedData["appName"] = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
-        enrichedData["isBrowser"] = isBrowser ? "true" : "false"
+        enrichedData["isBrowser"] = "false"
         enrichedData["groupName"] = group.name
-        if let tab = lastBrowserTab {
-            enrichedData["tabTitle"] = tab.title
-        }
         enrichedData["allApps"] = Self.runningAppsJSON()
         return CustomRuleEvent(
             type: type, groupID: group.id,
@@ -654,8 +635,9 @@ public final class MacEnforcementBridge: ObservableObject {
         if let rt = ruleRuntime { return rt }
         do {
             let rt = try CustomJavaScriptPolicyRuntime()
-            rt.tabProvider = { BrowserTabReader.allTabsJSON() }
-            rt.installTabProvider()
+            // No tab provider is installed on purpose: __nativeGetAllTabs stays
+            // undefined so the runtime's getAllTabs() returns []. The native app
+            // never reads browser tabs; that's the extension's job.
             ruleRuntime = rt
             return rt
         } catch {
@@ -756,42 +738,22 @@ public final class MacEnforcementBridge: ObservableObject {
             }
             switch intent.action {
             case "close":
-                if let target = intent.target, !target.isEmpty {
+                if let target = intent.target, !target.isEmpty,
+                   !MacProcessTerminator.isBrowserBundleIdentifier(target) {
                     MacProcessTerminator.terminate(bundleIdentifier: target)
-                } else if let fm = frontmost {
+                } else if let fm = frontmost,
+                          !MacProcessTerminator.isBrowserBundleIdentifier(fm) {
                     MacProcessTerminator.terminate(bundleIdentifier: fm)
                 }
-            case "closeTab":
-                if let bid = intent.browserBundleID,
-                   let wIdx = intent.windowIndex,
-                   let tIdx = intent.tabIndex {
-                    BrowserTabReader.closeTab(browserBundleID: bid, windowIndex: wIdx, tabIndex: tIdx)
-                } else if let fm = frontmost, BrowserTabReader.isBrowser(fm) {
-                    BrowserTabReader.closeActiveTab(browserBundleID: fm)
-                }
-            case "closeTabsByPattern":
-                if let pattern = intent.pattern, !pattern.isEmpty {
-                    let closed = BrowserTabReader.closeTabsMatching(pattern: pattern)
-                    if closed > 0 {
-                        appendLog(level: "log", group: "system",
-                                  message: "Closed \(closed) tab(s) matching: \(pattern)")
-                    }
-                }
-            case "blockSite":
-                if let pattern = intent.pattern, !pattern.isEmpty {
-                    siteBlocklist.add(pattern)
-                    BrowserTabReader.closeTabsMatching(pattern: pattern)
-                    appendLog(level: "log", group: "system",
-                              message: "Site blocked: \(pattern)")
-                }
-            case "unblockSite":
-                if let pattern = intent.pattern, !pattern.isEmpty {
-                    siteBlocklist.remove(pattern)
-                    appendLog(level: "log", group: "system",
-                              message: "Site unblocked: \(pattern)")
-                }
+            // Web-level intents (closeTab / closeTabsByPattern / blockSite /
+            // unblockSite) are deliberately ignored — neither acted on nor
+            // logged. Site/tab/DOM enforcement belongs entirely to the
+            // customBlocker browser extension, which runs the same rule against
+            // its own web events. The native app must not touch in-browser
+            // affairs at any level; it only enforces whole-app intents.
             case "blockApp":
-                if let target = intent.target, !target.isEmpty {
+                if let target = intent.target, !target.isEmpty,
+                   !MacProcessTerminator.isBrowserBundleIdentifier(target) {
                     blockedAppBundleIDs.insert(target)
                     MacProcessTerminator.terminate(bundleIdentifier: target)
                     appendLog(level: "log", group: "system",
@@ -804,7 +766,8 @@ public final class MacEnforcementBridge: ObservableObject {
                               message: "App unblocked: \(target)")
                 }
             case "openApp":
-                if let target = intent.target, !target.isEmpty {
+                if let target = intent.target, !target.isEmpty,
+                   !MacProcessTerminator.isBrowserBundleIdentifier(target) {
                     if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: target) {
                         NSWorkspace.shared.openApplication(at: url,
                                                            configuration: NSWorkspace.OpenConfiguration())
@@ -820,22 +783,11 @@ public final class MacEnforcementBridge: ObservableObject {
 
     // MARK: - Local File I/O
 
-    private lazy var localFolderBaseURL: URL = {
+    private lazy var localFileBroker: LocalFileBroker = {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let folder = appSupport.appendingPathComponent("MacBlocker/LocalFiles", isDirectory: true)
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        return folder
+        return LocalFileBroker(baseURL: folder)
     }()
-
-    private static let allowedExtensions: Set<String> = ["txt", "csv", "json"]
-
-    private func resolveLocalFilePath(_ relativePath: String) -> URL? {
-        let cleaned = relativePath.replacingOccurrences(of: "\\", with: "/")
-        guard !cleaned.contains("..") else { return nil }
-        let resolved = localFolderBaseURL.appendingPathComponent(cleaned).standardized
-        guard resolved.path.hasPrefix(localFolderBaseURL.path) else { return nil }
-        return resolved
-    }
 
     private func processLocalFileIntent(_ intent: WindowIntent) {
         guard let groupId = intent.groupId, !groupId.isEmpty,
@@ -844,140 +796,13 @@ public final class MacEnforcementBridge: ObservableObject {
         let path = intent.path ?? ""
 
         Task { @MainActor in
-            var resultData: [String: String] = [
-                "requestId": requestId,
-                "eventName": action,
-                "path": path
-            ]
-
-            do {
-                switch action {
-                case "read", "readJson":
-                    guard let url = resolveLocalFilePath(path) else { throw LocalFileError.invalidPath }
-                    guard Self.allowedExtensions.contains(url.pathExtension.lowercased()) else { throw LocalFileError.unsupportedExtension }
-                    let text = try String(contentsOf: url, encoding: .utf8)
-                    resultData["text"] = text
-                    if action == "readJson" {
-                        resultData["value"] = text
-                    }
-
-                case "write", "writeJson":
-                    guard let url = resolveLocalFilePath(path) else { throw LocalFileError.invalidPath }
-                    guard Self.allowedExtensions.contains(url.pathExtension.lowercased()) else { throw LocalFileError.unsupportedExtension }
-                    let text = intent.text ?? ""
-                    let dir = url.deletingLastPathComponent()
-                    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                    try text.write(to: url, atomically: true, encoding: .utf8)
-                    resultData["eventName"] = action == "writeJson" ? "writeJson" : "write"
-
-                case "append":
-                    guard let url = resolveLocalFilePath(path) else { throw LocalFileError.invalidPath }
-                    guard Self.allowedExtensions.contains(url.pathExtension.lowercased()) else { throw LocalFileError.unsupportedExtension }
-                    let text = intent.text ?? ""
-                    let dir = url.deletingLastPathComponent()
-                    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                    if FileManager.default.fileExists(atPath: url.path) {
-                        let handle = try FileHandle(forWritingTo: url)
-                        handle.seekToEndOfFile()
-                        handle.write(Data(text.utf8))
-                        handle.closeFile()
-                    } else {
-                        try text.write(to: url, atomically: true, encoding: .utf8)
-                    }
-
-                case "list":
-                    let dirPath = path.isEmpty ? "" : path
-                    let url = dirPath.isEmpty ? localFolderBaseURL : (resolveLocalFilePath(dirPath) ?? localFolderBaseURL)
-                    guard url.path.hasPrefix(localFolderBaseURL.path) else { throw LocalFileError.invalidPath }
-                    let contents = try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)
-                    let names = contents.map { $0.lastPathComponent }
-                    resultData["entries"] = (try? String(data: JSONSerialization.data(withJSONObject: names), encoding: .utf8)) ?? "[]"
-                    resultData["directoryPath"] = dirPath
-
-                case "exists":
-                    guard let url = resolveLocalFilePath(path) else { throw LocalFileError.invalidPath }
-                    resultData["exists"] = FileManager.default.fileExists(atPath: url.path) ? "true" : "false"
-
-                default:
-                    resultData["eventName"] = "error"
-                    resultData["error"] = "Unknown action: \(action)"
-                }
-            } catch {
-                resultData["eventName"] = "error"
-                resultData["error"] = error.localizedDescription
-            }
-
-            fireLocalFileEvent(groupID: groupId, data: resultData)
-        }
-    }
-
-    private enum LocalFileError: LocalizedError {
-        case invalidPath, unsupportedExtension
-        var errorDescription: String? {
-            switch self {
-            case .invalidPath: return "Invalid or disallowed file path."
-            case .unsupportedExtension: return "Only .txt, .csv, and .json files are supported."
-            }
-        }
-    }
-
-    /// Handles a chokepoint event from the browser focus observer.
-    /// Fires appChangedEvent immediately (instead of waiting for the next tick).
-    private func handleBrowserFocusEvent(_ event: BrowserFocusObserver.FocusEvent) {
-        lastBrowserTab = event.tab
-
-        if let tab = event.tab, siteBlocklist.isBlocked(tab.url) {
-            BrowserTabReader.closeActiveTab(browserBundleID: tab.browserBundleID)
-            appendLog(level: "log", group: "system",
-                      message: "Closed blocked site (chokepoint): \(tab.url)")
-            return
-        }
-
-        let now = Date()
-        let groups = webStore.importedGroups()?.groups ?? []
-        let frontmost = event.browserBundleID
-        let ruleGroups = groups.filter { $0.enabled && !$0.customRuleSource.isEmpty }
-        guard !ruleGroups.isEmpty, let runtime = ensureRuntime() else { return }
-
-        for group in ruleGroups {
-            guard group.isActive(at: now) else { continue }
-            // Only fire appChangedEvent from the chokepoint — switchAppEvent is
-            // handled by the tick loop to avoid duplicates.
-            guard event.trigger == .urlChanged else { continue }
-            let url = event.tab?.url ?? ""
-            let hostname = URL(string: url)?.host ?? frontmost
-
-            var data: [String: String] = [
-                "appId": frontmost,
-                "appName": BrowserTabReader.isBrowser(frontmost) ? frontmost : "",
-                "isBrowser": "true",
-                "reason": "urlChanged"
-            ]
-            if let tab = event.tab { data["tabTitle"] = tab.title }
-
-            let matchingTarget = group.targets.first(where: { $0.kind == .application && $0.id == frontmost })
-            let ruleEvent = CustomRuleEvent(
-                type: "appChangedEvent", groupID: group.id,
-                target: matchingTarget, now: now,
-                url: url, hostname: hostname, data: data
+            let resultData = localFileBroker.handle(
+                action: action,
+                path: path,
+                text: intent.text,
+                requestID: requestId
             )
-            appendLog(level: "log", group: group.name,
-                      message: "event fired: appChangedEvent | target: \(matchingTarget?.displayName ?? "none") | url: \(url.isEmpty ? "—" : url)")
-            do {
-                let result = try runtime.dispatch(ruleEvent)
-                for decision in result.decisions where decision.action == .shield {
-                    if BrowserTabReader.isBrowser(frontmost) {
-                        BrowserTabReader.closeActiveTab(browserBundleID: frontmost)
-                        appendLog(level: "log", group: group.name,
-                                  message: "Blocked tab (chokepoint): \(url)")
-                    }
-                    break
-                }
-                processWindowIntents(result.intents, frontmost: frontmost)
-            } catch {
-                appendLog(level: "error", group: group.name,
-                          message: "chokepoint dispatch failed: \(error.localizedDescription)")
-            }
+            fireLocalFileEvent(groupID: groupId, data: resultData)
         }
     }
 
@@ -1111,11 +936,13 @@ public final class MacEnforcementBridge: ObservableObject {
             .filter { $0.activationPolicy == .regular }
             .compactMap { app -> [String: Any]? in
                 guard let bid = app.bundleIdentifier else { return nil }
-                let isBrowser = BrowserTabReader.isBrowser(bid)
+                guard !MacProcessTerminator.isBrowserBundleIdentifier(bid) else { return nil }
+                // The native app does not distinguish browsers — it never reads
+                // tabs, so every app is reported as a plain app (isBrowser:false).
                 return [
                     "id": bid,
                     "name": app.localizedName ?? bid,
-                    "isBrowser": isBrowser
+                    "isBrowser": false
                 ]
             }
         guard let data = try? JSONSerialization.data(withJSONObject: apps),

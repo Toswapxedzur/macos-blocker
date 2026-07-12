@@ -1,0 +1,25 @@
+<!-- Dark-surface companion asset. It is not the active macOS application icon. -->
+<svg viewBox="-3 -3 70 70" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Mac Vault dark-background icon">
+  <defs>
+    <linearGradient id="outer" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#c2dbfa"/>
+    </linearGradient>
+    <linearGradient id="inner" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#22344f"/><stop offset="1" stop-color="#070d18"/>
+    </linearGradient>
+    <linearGradient id="glyph" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#c2dbfa"/>
+    </linearGradient>
+    <filter id="shadow" x="-45%" y="-45%" width="190%" height="190%">
+      <feDropShadow dx="0" dy="1.5" stdDeviation="1.7" flood-color="#03101f" flood-opacity=".42"/>
+    </filter>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#outer)"/>
+  <rect x="2" y="2" width="60" height="26" rx="16" fill="#fff" opacity=".52"/>
+  <rect x="2.75" y="2.75" width="58.5" height="58.5" rx="15" fill="none" stroke="#1c5ca8" stroke-opacity=".18"/>
+  <g filter="url(#shadow)"><path d="M32 13 16 19v13.2c0 9.4 6.6 15.3 16 17.8 9.4-2.5 16-8.4 16-17.8V19L32 13Z" fill="url(#inner)"/></g>
+  <g transform="translate(32 31) scale(.58) translate(-32 -32)" fill="none" stroke="url(#glyph)" stroke-width="3.9" stroke-linejoin="round" stroke-linecap="round">
+    <rect x="27" y="27" width="10" height="10"/>
+    <path d="M27 27h-3a4 4 0 1 1 4-4v4M37 27h3a4 4 0 1 0-4-4v4M27 37h-3a4 4 0 1 0 4 4v-4M37 37h3a4 4 0 1 1-4 4v-4"/>
+  </g>
+</svg>

@@ -62,6 +62,24 @@ final class GuardEngineTests: XCTestCase {
         XCTAssertNil(policy.match(bundleIdentifier: "com.example.App"))
     }
 
+    func testNativeTerminatorNeverSelectsBrowserProcesses() {
+        XCTAssertTrue(MacProcessTerminator.isBrowserBundleIdentifier("com.google.Chrome"))
+        XCTAssertTrue(MacProcessTerminator.isBrowserBundleIdentifier("com.google.Chrome.helper"))
+        XCTAssertTrue(MacProcessTerminator.isBrowserBundleIdentifier("org.mozilla.firefox"))
+        XCTAssertFalse(MacProcessTerminator.isBrowserBundleIdentifier("com.example.FocusApp"))
+
+        let policy = GuardPolicy(targets: [
+            GuardTarget(bundleIdentifier: "com.google.Chrome", enforcementMode: .forceTerminate),
+            GuardTarget(bundleIdentifier: "com.example.FocusApp", enforcementMode: .forceTerminate)
+        ])
+        let plan = MacProcessTerminator.plan(policy: policy, running: [
+            RunningProcessSnapshot(processIdentifier: 100, bundleIdentifier: "com.google.Chrome"),
+            RunningProcessSnapshot(processIdentifier: 200, bundleIdentifier: "com.example.FocusApp")
+        ])
+
+        XCTAssertEqual(plan.map(\.bundleIdentifier), ["com.example.FocusApp"])
+    }
+
     // MARK: - preventsLaunch / runningAction layering
 
     func testEnforcementModeLayers() {
@@ -203,6 +221,14 @@ final class GuardEngineTests: XCTestCase {
             groups: [group], usage: UsageSnapshot(), now: Date(), mode: .forceTerminate
         )
         XCTAssertEqual(modes["com.hnc.Discord"], .forceTerminate)
+    }
+
+    func testBrowserGroupsAreExcludedFromNativePolicy() {
+        let group = appGroup(id: "g", bundleID: "com.google.Chrome", mode: .instant)
+        let modes = EndpointSecurityPolicyAdapter.blockedApplicationModes(
+            groups: [group], usage: UsageSnapshot(), now: Date(), mode: .forceTerminate
+        )
+        XCTAssertTrue(modes.isEmpty)
     }
 
     func testTimerGroupDoesNotBlockBeforeLimit() {

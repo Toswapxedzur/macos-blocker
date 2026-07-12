@@ -1,9 +1,9 @@
 /*
- * macosBlocker custom-rule runtime (iOS-portable subset).
+ * macosBlocker native-app custom-rule runtime.
  *
  * Runs inside JavaScriptCore (no DOM, no Web APIs, no chrome.*). It reimplements
  * the customBlocker custom-rule contract for the parts that make sense when the
- * blocker controls native apps via Screen Time:
+ * blocker controls native applications:
  *
  *   - the full event registry (11 built-in types + typed registrars, priorities,
  *     intervalMs throttling, post(), unregister, counts)
@@ -13,10 +13,8 @@
  *     getPersistenceHelper, getStorageHelper, getPanelHelper,
  *     getLocalFolderHelper, getPlatformHelper (URL classifiers)
  *
- * Browser-only helpers (getDOMHelper, getNavigationHelper) are present but
- * inert: every call is a no-op that emits ONE log decision noting it is
- * unsupported on iOS, so existing rules/templates load and run instead of
- * throwing.
+ * Browser events and browser-control helpers are intentionally unavailable.
+ * Website, DOM, and tab control belong only to the browser extensions.
  *
  * dispatch() returns a JSON array of PolicyDecision objects for Swift.
  */
@@ -59,6 +57,14 @@ var MacBlockerRuntime = (function () {
     UnminimizeEvent: "unminimizeEvent",
     SwitchAppEvent: "switchAppEvent",
     AppChangedEvent: "appChangedEvent"
+  };
+  var BROWSER_EVENT_TYPES = {
+    openWebEvent: true,
+    closeWebEvent: true,
+    switchWebEvent: true,
+    switchDomainEvent: true,
+    webChangedEvent: true,
+    pageHeartbeatEvent: true
   };
 
   // ----------------------------------------------------------------- utils
@@ -137,6 +143,7 @@ var MacBlockerRuntime = (function () {
 
   function register(groupId, type, id, handler, options) {
     if (typeof type !== "string" || !type) return false;
+    if (BROWSER_EVENT_TYPES[type]) return false;
     if (typeof id !== "string" || !id) return false;
     if (typeof handler !== "function") return false;
     var list = ensureGroup(groupId);
@@ -196,6 +203,10 @@ var MacBlockerRuntime = (function () {
 
   function eventRegistry(groupId) {
     var api = {
+      // Raw primitives (mirror customBlocker event-sandbox): on/off/emit.
+      on: function (type, id, handler, options) { return register(groupId, type, id, handler, options || {}); },
+      off: function (type, id) { return unregister(groupId, type, id); },
+      emit: function () { /* top-level emit is ignored; use ev.post inside handlers */ },
       register: function (type, id, handler, options) { return register(groupId, type, id, handler, options || {}); },
       unregister: function (type, id) { return unregister(groupId, type, id); },
       unregisterAll: function (type) { return unregisterAll(groupId, type); },
@@ -250,16 +261,42 @@ var MacBlockerRuntime = (function () {
 
   function timerHelper(groupId) {
     var store = timerStore(groupId);
+    function sanitizeOverlayStyle(style) {
+      if (!style || typeof style !== "object") return null;
+      var keys = ["color", "background", "fontSize", "fontWeight", "border", "borderRadius", "padding", "opacity", "icon"];
+      var out = {};
+      for (var i = 0; i < keys.length; i++) {
+        var v = style[keys[i]];
+        if (typeof v === "string" && v) out[keys[i]] = v.slice(0, 120);
+        else if (keys[i] === "opacity" && isFinite(Number(v))) out[keys[i]] = String(Number(v));
+      }
+      var has = false; for (var k in out) { has = true; break; }
+      return has ? out : null;
+    }
+    function clamp(t, ms) {
+      var v = Math.max(0, Math.floor(Number(ms) || 0));
+      if (isFinite(t.maxMs)) v = Math.min(t.maxMs, v);
+      if (isFinite(t.minMs)) v = Math.max(t.minMs, v);
+      return v;
+    }
     function make(init) {
-      return {
+      var t = {
         id: String(init.id),
         displayName: String(init.displayName || init.id),
         direction: init.direction === "forward" ? "forward" : "backward",
         currentMs: Number(init.currentMs) || 0,
         isPaused: false,
         scope: init.scope || null,
-        domain: init.domain || null
+        domain: init.domain || null,
+        accrueWhen: init.accrueWhen || null
       };
+      if (isFinite(Number(init.minMs)) && Number(init.minMs) > 0) t.minMs = Math.floor(Number(init.minMs));
+      if (isFinite(Number(init.maxMs)) && Number(init.maxMs) > 0) t.maxMs = Math.floor(Number(init.maxMs));
+      if (isFinite(Number(init.stepMs)) && Number(init.stepMs) > 0) t.stepMs = Math.floor(Number(init.stepMs));
+      var os = sanitizeOverlayStyle(init.overlayStyle);
+      if (os) t.overlayStyle = os;
+      t.currentMs = clamp(t, t.currentMs);
+      return t;
     }
     return {
       groupId: groupId,
@@ -273,8 +310,24 @@ var MacBlockerRuntime = (function () {
       pause: function (id) { if (store[id]) store[id].isPaused = true; },
       resume: function (id) { if (store[id]) store[id].isPaused = false; },
       setDirection: function (id, dir) { if (store[id]) store[id].direction = dir === "forward" ? "forward" : "backward"; },
-      setCurrentMs: function (id, ms) { if (store[id]) store[id].currentMs = Number(ms) || 0; },
-      addMs: function (id, delta) { if (store[id]) store[id].currentMs += Number(delta) || 0; },
+      setCurrentMs: function (id, ms) { if (store[id]) store[id].currentMs = clamp(store[id], ms); },
+      addMs: function (id, delta) { if (store[id]) store[id].currentMs = clamp(store[id], store[id].currentMs + (Number(delta) || 0)); },
+      subMs: function (id, delta) { if (store[id]) store[id].currentMs = clamp(store[id], store[id].currentMs - (Number(delta) || 0)); },
+      setBounds: function (id, minMs, maxMs) {
+        var t = store[id]; if (!t) return;
+        if (isFinite(Number(minMs)) && Number(minMs) > 0) t.minMs = Math.floor(Number(minMs)); else if (minMs === null) delete t.minMs;
+        if (isFinite(Number(maxMs)) && Number(maxMs) > 0) t.maxMs = Math.floor(Number(maxMs)); else if (maxMs === null) delete t.maxMs;
+        t.currentMs = clamp(t, t.currentMs);
+      },
+      setStep: function (id, stepMs) {
+        var t = store[id]; if (!t) return;
+        if (isFinite(Number(stepMs)) && Number(stepMs) > 0) t.stepMs = Math.floor(Number(stepMs)); else delete t.stepMs;
+      },
+      setOverlayStyle: function (id, style) {
+        var t = store[id]; if (!t) return;
+        var os = sanitizeOverlayStyle(style);
+        if (os) t.overlayStyle = os; else delete t.overlayStyle;
+      },
       setDisplayName: function (id, name) { if (store[id]) store[id].displayName = String(name); },
       getCurrentMs: function (id) { return store[id] ? store[id].currentMs : 0; },
       isExpired: function (id) {
@@ -289,7 +342,12 @@ var MacBlockerRuntime = (function () {
       getState: function (id) {
         var t = store[id];
         if (!t) return null;
-        return { id: t.id, displayName: t.displayName, direction: t.direction, isPaused: t.isPaused, currentMs: t.currentMs, isExpired: t.direction === "backward" ? t.currentMs <= 0 : false };
+        var s = { id: t.id, displayName: t.displayName, direction: t.direction, isPaused: t.isPaused, currentMs: t.currentMs, isExpired: t.direction === "backward" ? t.currentMs <= 0 : false };
+        if (isFinite(t.minMs)) s.minMs = t.minMs;
+        if (isFinite(t.maxMs)) s.maxMs = t.maxMs;
+        if (isFinite(t.stepMs)) s.stepMs = t.stepMs;
+        if (t.overlayStyle) s.overlayStyle = t.overlayStyle;
+        return s;
       },
       list: function () { return Object.keys(store).map(function (k) { return store[k]; }); }
     };
@@ -323,30 +381,58 @@ var MacBlockerRuntime = (function () {
   // ------------------------------------------------------------- local folder
 
   var localFolderRequestCounter = 0;
+  var LOCAL_FOLDER_EXTENSIONS = { ".txt": true, ".csv": true, ".json": true };
+
+  function localFolderExtensionOf(path) {
+    var match = String(path || "").toLowerCase().match(/(\.[a-z0-9]+)$/);
+    return match ? match[1] : "";
+  }
+
+  function safeLocalFolderPath(path, allowDirectory) {
+    var raw = String(path == null ? "" : path)
+      .trim()
+      .replace(/\\/g, "/")
+      .replace(/\/+/g, "/")
+      .replace(/\/$/, "");
+    if (!raw && allowDirectory) return "";
+    if (!raw || raw.charAt(0) === "/" || /^[a-z]:\//i.test(raw) || /^[a-z][a-z0-9+.-]*:/i.test(raw)) return null;
+    var parts = raw.split("/").filter(function (part) { return !!part; });
+    if (parts.length === 0) return null;
+    for (var i = 0; i < parts.length; i++) {
+      var part = parts[i];
+      if (part === "." || part === ".." || part.charAt(0) === "." || !/^[A-Za-z0-9 _.,@()\-]+$/.test(part)) return null;
+    }
+    var normalized = parts.join("/");
+    return allowDirectory || LOCAL_FOLDER_EXTENSIONS[localFolderExtensionOf(normalized)] ? normalized : null;
+  }
 
   function localFolderHelper(groupId, pushIntent) {
-    function safePath(p) {
-      var s = String(p || "").trim();
-      if (!s || s.indexOf("..") >= 0) return null;
-      return s;
-    }
     function request(action, path, extra) {
-      var sp = safePath(path);
-      if (!sp && action !== "list") return null;
+      var allowDirectory = action === "list";
+      var sp = safeLocalFolderPath(path || "", allowDirectory);
+      if (sp === null) return "";
       var reqId = "lf-" + groupId + "-" + (++localFolderRequestCounter);
-      var intent = { kind: "localFile", action: action, path: sp || "", groupId: groupId, requestId: reqId };
+      var intent = { kind: "localFile", action: action, path: sp, groupId: groupId, requestId: reqId };
       if (extra) { for (var k in extra) intent[k] = extra[k]; }
       pushIntent(intent);
       return reqId;
     }
     return {
+      isAvailable: function () { return true; },
       requestRead: function (path) { return request("read", path); },
-      requestWrite: function (path, text) { return request("write", path, { text: String(text || "") }); },
-      requestAppend: function (path, text) { return request("append", path, { text: String(text || "") }); },
+      requestWrite: function (path, text) { return typeof text === "string" ? request("write", path, { text: text }) : ""; },
+      requestAppend: function (path, text) { return typeof text === "string" ? request("append", path, { text: text }) : ""; },
       requestList: function (dirPath) { return request("list", dirPath || ""); },
       requestExists: function (path) { return request("exists", path); },
-      requestReadJson: function (path) { return request("readJson", path); },
-      requestWriteJson: function (path, value) { return request("writeJson", path, { text: JSON.stringify(value) }); }
+      requestReadJson: function (path) {
+        return localFolderExtensionOf(path) === ".json" ? request("readJson", path) : "";
+      },
+      requestWriteJson: function (path, value) {
+        if (localFolderExtensionOf(path) !== ".json") return "";
+        var text;
+        try { text = JSON.stringify(value); } catch (e) { return ""; }
+        return typeof text === "string" ? request("writeJson", path, { text: text }) : "";
+      }
     };
   }
 
@@ -366,6 +452,7 @@ var MacBlockerRuntime = (function () {
     return {
       isPlatformUrl: function (u) { return hostMatches(hostnameOf(u), PLATFORM_HOSTS[platform] || []); },
       isShortUrl: function (u) {
+        if (!hostMatches(hostnameOf(u), PLATFORM_HOSTS[platform] || [])) return false;
         var p = pathnameOf(u);
         if (platform === "youtube") return p.indexOf("/shorts/") === 0;
         if (platform === "instagram") return p.indexOf("/reels/") === 0 || p.indexOf("/reel/") === 0;
@@ -373,19 +460,23 @@ var MacBlockerRuntime = (function () {
         return false;
       },
       isVideoUrl: function (u) {
+        if (!hostMatches(hostnameOf(u), PLATFORM_HOSTS[platform] || [])) return false;
         var p = pathnameOf(u);
         if (platform === "youtube") return p.indexOf("/watch") === 0 || p.indexOf("/shorts/") === 0;
         return /\/video\//.test(p) || /\/watch/.test(p);
       },
       isPostUrl: function (u) {
+        if (!hostMatches(hostnameOf(u), PLATFORM_HOSTS[platform] || [])) return false;
         var p = pathnameOf(u);
         return /\/p\//.test(p) || /\/post/.test(p) || /\/status\//.test(p);
       },
       isHomePage: function (u) {
+        if (!hostMatches(hostnameOf(u), PLATFORM_HOSTS[platform] || [])) return false;
         var p = pathnameOf(u);
         return p === "/" || p === "";
       },
       extractAuthor: function (u) {
+        if (!hostMatches(hostnameOf(u), PLATFORM_HOSTS[platform] || [])) return null;
         var p = pathnameOf(u);
         var at = p.match(/\/@([^\/?#]+)/);
         if (at) return at[1];
@@ -394,6 +485,7 @@ var MacBlockerRuntime = (function () {
         return null;
       },
       extractVideoId: function (u) {
+        if (!hostMatches(hostnameOf(u), PLATFORM_HOSTS[platform] || [])) return null;
         if (platform === "youtube") {
           var v = queryGet(u, "v");
           if (v) return v;
@@ -455,92 +547,64 @@ var MacBlockerRuntime = (function () {
 
   // --------------------------------------------------------------- platform
 
-  var PLATFORM_DOM_METHODS = [
-    "hideShorts", "showShorts", "hideVideos", "showVideos", "hidePosts", "showPosts",
-    "hideReels", "showReels", "hideShortButton", "showShortButton", "hideHomePage",
-    "showHomePage", "hideComments", "showComments", "filterComments", "hideLive",
-    "showLive", "filterLive", "hideClips", "showClips", "hideStreams", "showStreams",
-    "isCurrentChannelSubscribed", "isChannelSubscribed", "isCurrentChannelVerified",
-    "isLiveNow", "isItemLive", "isAlgorithmicRecommendation", "isSponsored",
-    "setShortsTimer", "setVideosTimer", "setPostsTimer", "setReelsTimer",
-    "setClipsTimer", "setStreamsTimer"
-  ];
-
+  // Raw platform API. Feed-level DOM control (hide/allow/show/surface) has no
+  // meaning on native (there is no page DOM), so these are inert no-ops that
+  // log once as unsupported. URL classifiers remain functional. This mirrors
+  // the customBlocker raw API surface: platform(name).hide(slot?,pred,opts)
+  // etc. — there are no named convenience methods anymore.
   function platformApi(name, logUnsupported) {
     var api = urlClassifiers(name);
-    PLATFORM_DOM_METHODS.forEach(function (m) {
-      api[m] = function () { logUnsupported("platform." + name + "." + m); return undefined; };
-    });
+    function noop(method) {
+      return function () { logUnsupported("platform." + name + "." + method); return undefined; };
+    }
+    api.hide = noop("hide");
+    api.allow = noop("allow");
+    api.show = noop("show");
+    api.surface = noop("surface");
+    api.timer = noop("timer");
+    api.snapshot = function () { return null; };
+    api.slots = function () { return []; };
+    api.surfaces = function () { return []; };
+    api.timerSlots = function () { return []; };
     return api;
   }
 
   function platformHelper(logUnsupported) {
-    var helper = { listMethods: function () { return PLATFORM_DOM_METHODS.slice(); }, hasMethod: function (_p, m) { return PLATFORM_DOM_METHODS.indexOf(m) >= 0; } };
+    var helper = {};
     ["youtube", "tiktok", "instagram", "facebook", "twitch"].forEach(function (name) {
       helper[name] = function () { return platformApi(name, logUnsupported); };
     });
     return helper;
   }
 
-  // ------------------------------------------------- tab helper
-
-  function tabHelper(rawEvent, pushIntent) {
-    return {
-      getAllTabs: function () {
-        if (typeof __nativeGetAllTabs === "function") {
-          try {
-            var json = __nativeGetAllTabs();
-            return typeof json === "string" ? JSON.parse(json) : json;
-          } catch (e) { return []; }
-        }
-        return [];
-      },
-      closeTab: function (tab) {
-        if (!tab) return;
-        pushIntent({
-          kind: "window", action: "closeTab",
-          browserBundleID: tab.browserBundleID || "",
-          windowIndex: Number(tab.windowIndex) || 0,
-          tabIndex: Number(tab.tabIndex) || 0
-        });
-      },
-      closeTabsByPattern: function (pattern) {
-        var p = String(pattern || "").trim().toLowerCase();
-        if (!p) return;
-        pushIntent({ kind: "window", action: "closeTabsByPattern", pattern: p });
-      },
-      currentTab: function () {
-        return {
-          url: rawEvent.url || "",
-          title: rawEvent.data && rawEvent.data.tabTitle || "",
-          browserBundleID: rawEvent.data && rawEvent.data.appId || "",
-          windowIndex: 1,
-          tabIndex: 1
-        };
-      }
-    };
+  // Top-level helpers.platform(name?) accessor: with a name returns the raw
+  // platform api directly; without one returns the {youtube(),tiktok(),...}
+  // selector object.
+  function platformAccessor(name, logUnsupported) {
+    if (typeof name === "string" && name) return platformApi(name, logUnsupported);
+    return platformHelper(logUnsupported);
   }
 
-  // ------------------------------------------------- dynamic site blocklist (per-group)
+  // ------------------------------------------------- dynamic app blocklist (per-group)
 
-  var dynamicBlocklistByGroup = {};  // groupId -> { pattern -> true }
+  var dynamicAppBlocklistByGroup = {};  // groupId -> { bundleId -> true }
 
-  function groupBlocklist(groupId) {
-    if (!dynamicBlocklistByGroup[groupId]) dynamicBlocklistByGroup[groupId] = {};
-    return dynamicBlocklistByGroup[groupId];
+  function groupAppBlocklist(groupId) {
+    if (!dynamicAppBlocklistByGroup[groupId]) dynamicAppBlocklistByGroup[groupId] = {};
+    return dynamicAppBlocklistByGroup[groupId];
   }
 
-  function windowHelper(rawEvent, pushIntent, logDecisionFn) {
-    var bl = groupBlocklist(rawEvent.groupID);
+  function windowHelper(rawEvent, pushIntent) {
+    var blockedApps = groupAppBlocklist(rawEvent.groupID);
+    var currentAppId = rawEvent.data && rawEvent.data.isBrowser === "true"
+      ? ""
+      : (rawEvent.data && rawEvent.data.appId || "");
     return {
       current: function () {
         return {
-          id: rawEvent.data && rawEvent.data.appId || rawEvent.hostname || "",
+          id: currentAppId,
           name: rawEvent.data && rawEvent.data.appName || "",
-          url: rawEvent.url || "",
-          hostname: rawEvent.hostname || hostnameOf(rawEvent.url || ""),
-          title: rawEvent.data && rawEvent.data.tabTitle || "",
-          isBrowser: rawEvent.data && rawEvent.data.isBrowser === "true"
+          isBrowser: false
         };
       },
       all: function () {
@@ -553,39 +617,22 @@ var MacBlockerRuntime = (function () {
       close: function (target) {
         pushIntent({ kind: "window", action: "close", target: String(target || "") });
       },
-      closeTab: function (tab) {
-        if (tab && tab.browserBundleID && tab.windowIndex && tab.tabIndex) {
-          pushIntent({ kind: "window", action: "closeTab",
-            browserBundleID: tab.browserBundleID,
-            windowIndex: Number(tab.windowIndex), tabIndex: Number(tab.tabIndex) });
-        } else {
-          pushIntent({ kind: "window", action: "closeTab" });
-        }
+      block: function (bundleID) {
+        var id = String(bundleID || "").trim();
+        if (!id) return;
+        blockedApps[id] = true;
+        pushIntent({ kind: "window", action: "blockApp", target: id });
       },
-      block: function (pattern) {
-        var p = String(pattern || "").trim().toLowerCase();
-        if (!p) return;
-        bl[p] = true;
-        pushIntent({ kind: "window", action: "blockSite", pattern: p });
+      unblock: function (bundleID) {
+        var id = String(bundleID || "").trim();
+        delete blockedApps[id];
+        pushIntent({ kind: "window", action: "unblockApp", target: id });
       },
-      unblock: function (pattern) {
-        var p = String(pattern || "").trim().toLowerCase();
-        delete bl[p];
-        pushIntent({ kind: "window", action: "unblockSite", pattern: p });
-      },
-      isBlocked: function (pattern) {
-        var p = String(pattern || "").trim().toLowerCase();
-        if (!p) return false;
-        if (bl[p]) return true;
-        for (var key in bl) {
-          if (p === key) return true;
-          var suffix = "." + key;
-          if (p.length > key.length && p.indexOf(suffix) === p.length - suffix.length) return true;
-        }
-        return false;
+      isBlocked: function (bundleID) {
+        return Boolean(blockedApps[String(bundleID || "").trim()]);
       },
       getBlocked: function () {
-        return Object.keys(bl);
+        return Object.keys(blockedApps);
       }
     };
   }
@@ -597,7 +644,19 @@ var MacBlockerRuntime = (function () {
   var PANEL_WIDTHS = { small:1, medium:1, large:1 };
   var PANEL_LAYOUTS = { vertical:1, compact:1, comfortable:1, spacious:1, inline:1, row:1, wrap:1, twoColumn:1, grid:1, split:1, form:1, toolbar:1, stack:1 };
   var PANEL_ROLES = { region:1, dialog:1, alert:1, status:1, form:1, group:1 };
-  var PANEL_CONTROL_TYPES = { text:1, checkbox:1, select:1, textInput:1, textarea:1, button:1, section:1, timer:1, numberInput:1, range:1, toggle:1, radio:1, date:1, time:1, color:1, pin:1 };
+  var PANEL_CONTROL_TYPES = { text:1, checkbox:1, select:1, textInput:1, textarea:1, button:1, section:1, timer:1, numberInput:1, range:1, toggle:1, radio:1, date:1, time:1, color:1, pin:1, html:1 };
+
+  function sanitizePanelHtml(value) {
+    var html = truncateText(value, 20000);
+    if (!html) return "";
+    html = html.replace(/<\s*script\b[\s\S]*?<\s*\/\s*script\s*>/gi, "");
+    html = html.replace(/<\s*script\b[^>]*>/gi, "");
+    html = html.replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, "");
+    html = html.replace(/\son[a-z]+\s*=\s*'[^']*'/gi, "");
+    html = html.replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, "");
+    html = html.replace(/(href|src)\s*=\s*("|')\s*javascript:[^"']*\2/gi, "$1=$2#$2");
+    return html;
+  }
   var PANEL_CONTROL_ACTIONS = { submit:1, cancel:1, close:1 };
 
   function truncateText(value, max) {
@@ -612,6 +671,7 @@ var MacBlockerRuntime = (function () {
     if (type === "number") return "numberInput";
     if (type === "slider") return "range";
     if (type === "switch") return "toggle";
+    if (type === "raw" || type === "markup") return "html";
     return PANEL_CONTROL_TYPES[type] ? type : "text";
   }
 
@@ -755,6 +815,7 @@ var MacBlockerRuntime = (function () {
       out.value = sanitizePanelValue(type, value, out);
     }
     if (type === "text") out.text = truncateText(control.text || control.label || "", 1000);
+    if (type === "html") out.html = sanitizePanelHtml(control.html || control.text || "");
     if (type === "section") {
       out.text = truncateText(control.text || control.description || "", 1000);
       out.role = PANEL_ROLES[control.role] ? control.role : "group";
@@ -963,7 +1024,7 @@ var MacBlockerRuntime = (function () {
         for (var i = 0; i < (controls || []).length; i++) {
           var c = controls[i];
           if (c.type === "section") { visit(c.controls); continue; }
-          if (c.type === "button" || c.type === "text" || c.type === "timer") continue;
+          if (c.type === "button" || c.type === "text" || c.type === "timer" || c.type === "html") continue;
           out[c.id] = c.value;
         }
       };
@@ -1075,7 +1136,7 @@ var MacBlockerRuntime = (function () {
         var panel = getPanel(panelId);
         if (!panel || typeof controlId !== "string") return false;
         var control = findControl(panel, controlId);
-        if (!control || control.type === "button" || control.type === "text" || control.type === "timer") return false;
+        if (!control || control.type === "button" || control.type === "text" || control.type === "timer" || control.type === "html") return false;
         var next = sanitizePanelValue(control.type, value, control);
         if (JSON.stringify(control.value) === JSON.stringify(next)) return true;
         control.value = next;
@@ -1222,7 +1283,7 @@ var MacBlockerRuntime = (function () {
             for (var i = 0; i < (controls || []).length; i++) {
               var c = controls[i];
               if (c.type === "section") { applyValues(c.controls); continue; }
-              if (c.type === "button" || c.type === "text" || c.type === "timer") continue;
+              if (c.type === "button" || c.type === "text" || c.type === "timer" || c.type === "html") continue;
               if (!values.hasOwnProperty(c.id)) continue;
               var nv = sanitizePanelValue(c.type, values[c.id], c);
               if (JSON.stringify(c.value) !== JSON.stringify(nv)) { c.value = nv; changed = true; }
@@ -1353,7 +1414,7 @@ var MacBlockerRuntime = (function () {
     var ms = nowMs(rawEvent);
     var date = new Date(ms);
 
-    var win = windowHelper(rawEvent, pushIntent, logDecision);
+    var win = windowHelper(rawEvent, pushIntent);
 
     var helpers = {
       now: rawEvent.now,
@@ -1377,9 +1438,10 @@ var MacBlockerRuntime = (function () {
       getWindowHelper: function () { return win; },
       getRedirectionHelper: function () { return unsupportedHelper("getRedirectionHelper", logUnsupported); },
       getPlatformHelper: function () { return platformHelper(logUnsupported); },
+      platform: function (name) { return platformAccessor(name, logUnsupported); },
       getDOMHelper: function () { return unsupportedHelper("getDOMHelper", logUnsupported); },
       getNavigationHelper: function () { return unsupportedHelper("getNavigationHelper", logUnsupported); },
-      getTabHelper: function () { return tabHelper(rawEvent, pushIntent); },
+      getTabHelper: function () { return unsupportedHelper("getTabHelper", logUnsupported); },
       getPanelHelper: function () { return panelHelper(groupId, function () { return timersByGroup[groupId] || {}; }); },
       getLocalFolderHelper: function () { return localFolderHelper(groupId, pushIntent); },
       overlay: {
@@ -1400,7 +1462,7 @@ var MacBlockerRuntime = (function () {
       }
     };
     var BROWSER_ONLY_HELPERS = {
-      getDOMHelper: true, getNavigationHelper: true, getRedirectionHelper: true
+      getDOMHelper: true, getNavigationHelper: true, getRedirectionHelper: true, getTabHelper: true
     };
     // Unknown helper getters resolve to inert helpers instead of throwing.
     var helpersProxy = new Proxy(helpers, {
@@ -1469,37 +1531,29 @@ var MacBlockerRuntime = (function () {
     ev.setRedirectLink = function () {};
     ev.getRedirectLink = function () { return null; };
     // Resolve the focused app's identity from event context.
-    var focusedAppId = (rawEvent.data && rawEvent.data.appId) || "";
-    var focusedIsBrowser = (rawEvent.data && rawEvent.data.isBrowser) === "true";
-    var focusedHostname = ev.hostname || "";
-
+    var focusedAppId = rawEvent.data && rawEvent.data.isBrowser === "true"
+      ? ""
+      : (rawEvent.data && rawEvent.data.appId) || "";
     function pushIntent(intent) { ctx.intents.push(intent); }
 
     ev.close = function (id) {
       if (typeof id === "string" && id) {
         pushIntent({ kind: "window", action: "close", target: id });
-        pushIntent({ kind: "window", action: "closeTabsByPattern", pattern: id });
-      } else {
-        if (focusedIsBrowser) {
-          pushIntent({ kind: "window", action: "closeTab" });
-        } else if (focusedAppId) {
-          pushIntent({ kind: "window", action: "close", target: focusedAppId });
-        }
+      } else if (focusedAppId) {
+        pushIntent({ kind: "window", action: "close", target: focusedAppId });
       }
     };
 
     ev.block = function (id) {
-      var pattern = typeof id === "string" && id ? id : (focusedIsBrowser ? focusedHostname : focusedAppId);
-      if (!pattern) return;
-      pushIntent({ kind: "window", action: "blockSite", pattern: pattern });
-      pushIntent({ kind: "window", action: "blockApp", target: pattern });
+      var appId = typeof id === "string" && id ? id : focusedAppId;
+      if (!appId) return;
+      pushIntent({ kind: "window", action: "blockApp", target: appId });
     };
 
     ev.unblock = function (id) {
-      var pattern = typeof id === "string" && id ? id : (focusedIsBrowser ? focusedHostname : focusedAppId);
-      if (!pattern) return;
-      pushIntent({ kind: "window", action: "unblockSite", pattern: pattern });
-      pushIntent({ kind: "window", action: "unblockApp", target: pattern });
+      var appId = typeof id === "string" && id ? id : focusedAppId;
+      if (!appId) return;
+      pushIntent({ kind: "window", action: "unblockApp", target: appId });
     };
 
     ev.open = function (id) {
@@ -1523,6 +1577,30 @@ var MacBlockerRuntime = (function () {
       ev.key = rawEvent.data.key || "";
       ev.code = rawEvent.data.code || "";
       ev.keyInfo = rawEvent.data.keyInfo && typeof rawEvent.data.keyInfo === "object" ? rawEvent.data.keyInfo : null;
+    }
+    if (rawEvent.type === "localFileEvent" && rawEvent.data && typeof rawEvent.data === "object") {
+      var localData = rawEvent.data;
+      ev.eventName = localData.eventName || "";
+      ev.action = localData.action || ev.eventName || "";
+      ev.path = localData.path || "";
+      ev.directoryPath = localData.directoryPath || "";
+      ev.requestId = localData.requestId || "";
+      ev.ok = localData.ok === true || localData.ok === "true";
+      ev.text = typeof localData.text === "string" ? localData.text : "";
+      ev.value = localData.value;
+      if (typeof localData.valueJSON === "string") {
+        try { ev.value = JSON.parse(localData.valueJSON); } catch (e) { ev.value = undefined; }
+      }
+      var entries = localData.entries;
+      if (typeof localData.entriesJSON === "string") {
+        try { entries = JSON.parse(localData.entriesJSON); } catch (e2) { entries = []; }
+      } else if (typeof entries === "string") {
+        try { entries = JSON.parse(entries); } catch (e3) { entries = []; }
+      }
+      ev.entries = Array.isArray(entries) ? entries : [];
+      ev.exists = localData.exists === true || localData.exists === "true";
+      ev.bytes = isFinite(Number(localData.bytes)) ? Number(localData.bytes) : 0;
+      ev.error = typeof localData.error === "string" ? localData.error : "";
     }
     ev.post = function (type, data, options) {
       if (depth >= MAX_POST_DEPTH) return;
@@ -1600,7 +1678,7 @@ var MacBlockerRuntime = (function () {
       delete panelChangedByGroup[groupId];
       delete panelCreationByGroup[groupId];
       delete previouslyExpired[groupId];
-      delete dynamicBlocklistByGroup[groupId];
+      delete dynamicAppBlocklistByGroup[groupId];
       delete logSeenByGroup[groupId];
       delete activeDecisionsByGroup[groupId];
       delete activeIntentsByGroup[groupId];

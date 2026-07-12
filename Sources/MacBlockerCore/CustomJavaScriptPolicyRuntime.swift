@@ -240,10 +240,6 @@ public final class CustomJavaScriptPolicyRuntime: CustomPolicyRuntime {
     private let context: JSContext
     #endif
 
-    /// Optional closure that returns a JSON array of all browser tabs.
-    /// Injected into the JSContext as `__nativeGetAllTabs()`.
-    public var tabProvider: (() -> String)?
-
     public init() throws {
         #if canImport(JavaScriptCore)
         guard let context = JSContext() else {
@@ -253,16 +249,6 @@ public final class CustomJavaScriptPolicyRuntime: CustomPolicyRuntime {
         installBootstrap()
         #else
         throw CustomJavaScriptPolicyRuntimeError.javaScriptCoreUnavailable
-        #endif
-    }
-
-    /// Injects the tab provider closure into the JSContext so JS can call
-    /// `__nativeGetAllTabs()` synchronously.
-    public func installTabProvider() {
-        #if canImport(JavaScriptCore)
-        guard let provider = tabProvider else { return }
-        let block: @convention(block) () -> String = { provider() }
-        context.setObject(block, forKeyedSubscript: "__nativeGetAllTabs" as NSString)
         #endif
     }
 
@@ -467,30 +453,25 @@ public final class CustomJavaScriptPolicyRuntime: CustomPolicyRuntime {
                 const ev = Object.assign({}, rawEvent);
                 ev.__decisions = [];
                 ev.__intents = [];
-                const focusedAppId = (rawEvent.data && rawEvent.data.appId) || "";
-                const focusedIsBrowser = (rawEvent.data && rawEvent.data.isBrowser) === "true";
-                const focusedHostname = rawEvent.hostname || "";
+                const focusedAppId = rawEvent.data && rawEvent.data.isBrowser === "true"
+                  ? ""
+                  : (rawEvent.data && rawEvent.data.appId) || "";
                 ev.close = function(id) {
                   if (typeof id === "string" && id) {
                     ev.__intents.push({ kind: "window", action: "close", target: id });
-                    ev.__intents.push({ kind: "window", action: "closeTabsByPattern", pattern: id });
-                  } else if (focusedIsBrowser) {
-                    ev.__intents.push({ kind: "window", action: "closeTab" });
                   } else if (focusedAppId) {
                     ev.__intents.push({ kind: "window", action: "close", target: focusedAppId });
                   }
                 };
                 ev.block = function(id) {
-                  const pattern = typeof id === "string" && id ? id : (focusedIsBrowser ? focusedHostname : focusedAppId);
-                  if (!pattern) return;
-                  ev.__intents.push({ kind: "window", action: "blockSite", pattern: pattern });
-                  ev.__intents.push({ kind: "window", action: "blockApp", target: pattern });
+                  const appId = typeof id === "string" && id ? id : focusedAppId;
+                  if (!appId) return;
+                  ev.__intents.push({ kind: "window", action: "blockApp", target: appId });
                 };
                 ev.unblock = function(id) {
-                  const pattern = typeof id === "string" && id ? id : (focusedIsBrowser ? focusedHostname : focusedAppId);
-                  if (!pattern) return;
-                  ev.__intents.push({ kind: "window", action: "unblockSite", pattern: pattern });
-                  ev.__intents.push({ kind: "window", action: "unblockApp", target: pattern });
+                  const appId = typeof id === "string" && id ? id : focusedAppId;
+                  if (!appId) return;
+                  ev.__intents.push({ kind: "window", action: "unblockApp", target: appId });
                 };
                 ev.open = function(id) {
                   if (typeof id !== "string" || !id) return;

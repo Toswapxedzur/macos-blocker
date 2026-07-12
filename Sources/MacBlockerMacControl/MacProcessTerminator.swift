@@ -52,6 +52,30 @@ public struct TerminationAction: Equatable, Sendable {
 /// launch-prevention: it catches apps that were already running when a block
 /// turned on (schedule start, limit exceeded, rule fired).
 public enum MacProcessTerminator {
+    /// Browsers are owned by their extensions. The native app never blocks,
+    /// closes, hides, suspends, or kills them or their helper processes.
+    public static let browserBundleIdentifiers: Set<String> = [
+        "com.apple.Safari",
+        "com.apple.SafariTechnologyPreview",
+        "com.google.Chrome",
+        "com.google.Chrome.beta",
+        "com.google.Chrome.canary",
+        "com.google.Chrome.dev",
+        "com.microsoft.edgemac",
+        "com.brave.Browser",
+        "com.operasoftware.Opera",
+        "com.vivaldi.Vivaldi",
+        "company.thebrowser.Browser",
+        "org.mozilla.firefox",
+        "org.mozilla.firefoxdeveloperedition"
+    ]
+
+    public static func isBrowserBundleIdentifier(_ bundleIdentifier: String?) -> Bool {
+        guard let bundleIdentifier, !bundleIdentifier.isEmpty else { return false }
+        return browserBundleIdentifiers.contains(bundleIdentifier) ||
+            browserBundleIdentifiers.contains { bundleIdentifier.hasPrefix($0 + ".") }
+    }
+
     /// Pure selection: given a policy and a set of running processes, decide
     /// which to act on and how. No side effects — safe to unit test.
     public static func plan(
@@ -59,6 +83,9 @@ public enum MacProcessTerminator {
         running: [RunningProcessSnapshot]
     ) -> [TerminationAction] {
         running.compactMap { proc -> TerminationAction? in
+            guard !isBrowserBundleIdentifier(proc.bundleIdentifier) else {
+                return nil
+            }
             guard let target = policy.match(
                 bundleIdentifier: proc.bundleIdentifier,
                 teamIdentifier: proc.teamIdentifier,
@@ -104,6 +131,9 @@ public enum MacProcessTerminator {
         var taken: [TerminationAction] = []
         let needsSigning = policy.usesCodeSigningMatch
         for (app, snapshot) in snapshotRunningApplications() {
+            guard !isBrowserBundleIdentifier(snapshot.bundleIdentifier) else {
+                continue
+            }
             // Resolve signing info only if some target matches on team/signing
             // AND a cheap bundle-id/path match isn't already decisive — keeps
             // the periodic sweep cheap for the common bundle-id-only case.
@@ -145,6 +175,7 @@ public enum MacProcessTerminator {
 
     /// Terminates all processes matching the given bundle identifier.
     public static func terminate(bundleIdentifier: String) {
+        guard !isBrowserBundleIdentifier(bundleIdentifier) else { return }
         let apps = NSWorkspace.shared.runningApplications.filter {
             $0.bundleIdentifier == bundleIdentifier
         }

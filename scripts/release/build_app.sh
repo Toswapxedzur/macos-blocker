@@ -21,7 +21,7 @@ WORKSPACE="$(cd "$ROOT/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT/release/build}"
 APP_PATH="${APP_PATH:-$BUILD_DIR/$APP_NAME.app}"
 RELEASE_BINARY="$ROOT/.build/arm64-apple-macosx/release/$SWIFTPM_PRODUCT"
-ICON_SOURCE="${ICON_SOURCE:-$WORKSPACE/customBlocker/icons/icon-master.png}"
+ICON_SOURCE="${ICON_SOURCE:-$ROOT/Assets/Branding/mac-vault-master.png}"
 
 echo "[build_app] root=$ROOT"
 echo "[build_app] version=$VERSION build=$BUILD_NUMBER bundle=$BUNDLE_ID"
