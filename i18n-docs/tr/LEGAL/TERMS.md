@@ -6,7 +6,7 @@ Bu şartlar Adamancia Vault'un macOS uygulaması sürümü için geçerlidir.
 
 ## Alfa Yazılımı
 
-Sürüm `0.0.1` alfa yazılımıdır. Kararsız, eksik veya kritik kullanıma uygun olmayabilir. Bunu yalnızca erken yazılım test etme ve sorunları raporlama konusunda rahatsanız kullanın.
+Sürüm `0.0.2` alfa yazılımıdır. Kararsız, eksik veya kritik kullanıma uygun olmayabilir. Bunu yalnızca erken yazılım test etme ve sorunları raporlama konusunda rahatsanız kullanın.
 
 ## Kullanım Amacı
 

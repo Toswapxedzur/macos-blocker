@@ -11,7 +11,7 @@ Cette carte est dérivée de l'arborescence source actuelle. Il s'agit d'une aid
 | Plan d'exécution | `Sources/MacBlockerCore/EnforcementPlan.swift` et `Sources/MacBlockerAppFeature/MacEnforcementBridge.swift` |
 | Adaptateurs de contrôle natifs | `Sources/MacBlockerMacControl/` et `Sources/MacBlockerScreenTime/` |
 | Règles personnalisées | `CustomJavaScriptPolicyRuntime.swift` ainsi que les ressources d'exécution JavaScript |
-| Moyeu du pont | @@@GARDER0000@@@ |
+| Moyeu du pont | `Sources/MacBlockerAppFeature/ConnectionHub.swift` |
 | Cycle de vie des applications | `BlockerAppDelegate.swift`, `BlockerMainView.swift` et `MacBlockerPanelApp.swift` |
 
 ## Limite du produit

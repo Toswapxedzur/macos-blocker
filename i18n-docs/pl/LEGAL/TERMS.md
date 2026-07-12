@@ -6,7 +6,7 @@ Niniejsze warunki mają zastosowanie do wersji aplikacji Adamancia Vault na macO
 
 ## Oprogramowanie alfa
 
-Wersja `0.0.1` to oprogramowanie w wersji alfa. Może być niestabilny, niekompletny lub nienadawać się do użytku krytycznego. Używaj go tylko wtedy, gdy nie masz problemu z testowaniem wczesnego oprogramowania i zgłaszaniem problemów.
+Wersja `0.0.2` to oprogramowanie w wersji alfa. Może być niestabilny, niekompletny lub nienadawać się do użytku krytycznego. Używaj go tylko wtedy, gdy nie masz problemu z testowaniem wczesnego oprogramowania i zgłaszaniem problemów.
 
 ## Przeznaczenie
 

@@ -11,7 +11,7 @@ Deze kaart is afgeleid van de huidige bronboom. Het is een navigatiehulpmiddel, 
 | Handhavingsplan | `Sources/MacBlockerCore/EnforcementPlan.swift` en `Sources/MacBlockerAppFeature/MacEnforcementBridge.swift` |
 | Native besturingsadapters | `Sources/MacBlockerMacControl/` en `Sources/MacBlockerScreenTime/` |
 | Aangepaste regels | `CustomJavaScriptPolicyRuntime.swift` plus de JavaScript-runtimebronnen |
-| Brughub | @@@HOUD0000@@@ |
+| Brughub | `Sources/MacBlockerAppFeature/ConnectionHub.swift` |
 | App-levenscyclus | `BlockerAppDelegate.swift`, `BlockerMainView.swift` en `MacBlockerPanelApp.swift` |
 
 ## Productgrens

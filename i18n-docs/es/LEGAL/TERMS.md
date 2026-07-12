@@ -6,7 +6,7 @@ Estos términos se aplican a la versión de la aplicación macOS de Adamancia Va
 
 ## Software Alfa
 
-La versión `0.0.1` es el software alfa. Puede ser inestable, incompleto o inadecuado para un uso crítico. Úselo sólo si se siente cómodo probando el software en sus primeras etapas e informando problemas.
+La versión `0.0.2` es el software alfa. Puede ser inestable, incompleto o inadecuado para un uso crítico. Úselo sólo si se siente cómodo probando el software en sus primeras etapas e informando problemas.
 
 ## Uso previsto
 

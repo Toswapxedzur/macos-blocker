@@ -6,7 +6,7 @@ Các điều khoản này áp dụng cho bản phát hành ứng dụng macOS c�
 
 ##Phần mềm Alpha
 
-Phiên bản `0.0.1` là phần mềm alpha. Nó có thể không ổn định, không đầy đủ hoặc không phù hợp cho mục đích sử dụng quan trọng. Chỉ sử dụng nó nếu bạn cảm thấy thoải mái khi kiểm tra phần mềm sớm và báo cáo sự cố.
+Phiên bản `0.0.2` là phần mềm alpha. Nó có thể không ổn định, không đầy đủ hoặc không phù hợp cho mục đích sử dụng quan trọng. Chỉ sử dụng nó nếu bạn cảm thấy thoải mái khi kiểm tra phần mềm sớm và báo cáo sự cố.
 
 ## Mục đích sử dụng
 
