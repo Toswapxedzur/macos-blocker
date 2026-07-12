@@ -50,7 +50,7 @@ trap 'hdiutil detach "$VOLUME" >/dev/null 2>&1 || true' EXIT
 [[ -f "$VOLUME/README.txt" ]] || { echo "[verify_release] missing README.txt" >&2; exit 1; }
 [[ -x "$VOLUME/uninstall.command" ]] || { echo "[verify_release] missing executable uninstall.command" >&2; exit 1; }
 
-shasum -a 256 "$DMG_PATH" > "$DMG_PATH.sha256"
+(cd "$(dirname "$DMG_PATH")" && shasum -a 256 "$(basename "$DMG_PATH")") > "$DMG_PATH.sha256"
 cat "$DMG_PATH.sha256"
 
 echo "[verify_release] release verified"
