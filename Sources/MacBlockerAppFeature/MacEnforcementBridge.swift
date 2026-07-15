@@ -60,6 +60,7 @@ public final class MacEnforcementBridge: ObservableObject {
     // Custom-rule runtime state
     private var ruleRuntime: CustomJavaScriptPolicyRuntime?
     private var loadedRuleSources: [String: String] = [:]
+    private var quarantinedRuleSources: [String: String] = [:]
     private var lastFrontmost: String?
 
     // Notification-driven lifecycle event queue. NSWorkspace notifications
@@ -77,7 +78,12 @@ public final class MacEnforcementBridge: ObservableObject {
     // site/tab/DOM enforcement belongs entirely to the customBlocker browser
     // extension. There is no browser tab reader, focus observer, or dynamic
     // site blocklist here on purpose (see the boundary note above the class).
-    private var blockedAppBundleIDs: Set<String> = []
+    private var blockedAppBundleIDsByGroup: [String: Set<String>] = [:]
+    private var blockedAppBundleIDs: Set<String> {
+        blockedAppBundleIDsByGroup.values.reduce(into: Set<String>()) { union, groupIDs in
+            union.formUnion(groupIDs)
+        }
+    }
 
     // Panel event throttle (leading-edge, trailing flush at tick)
     private static let panelThrottleInterval: TimeInterval = 0.10
@@ -415,7 +421,9 @@ public final class MacEnforcementBridge: ObservableObject {
 
         // Reconcile the JS runtime for groups that have custom rules.
         if ruleGroups.isEmpty {
-            if !loadedRuleSources.isEmpty { unloadAllRules() }
+            if !loadedRuleSources.isEmpty || !quarantinedRuleSources.isEmpty || !blockedAppBundleIDsByGroup.isEmpty {
+                unloadAllRules()
+            }
         } else if let runtime = ensureRuntime() {
             reconcileRuleRuntime(runtime: runtime, groups: ruleGroups)
         }
@@ -442,14 +450,20 @@ public final class MacEnforcementBridge: ObservableObject {
                 }
 
                 // Only dispatch to runtime if this group has a custom rule loaded.
-                guard !group.customRuleSource.isEmpty, let runtime = ruleRuntime else { continue }
+                guard !group.customRuleSource.isEmpty,
+                      loadedRuleSources[group.id] != nil,
+                      let runtime = ruleRuntime else { continue }
 
                 let result: DispatchResult
                 do {
                     result = try runtime.dispatch(event)
                 } catch {
-                    appendLog(level: "error", group: group.name,
-                              message: "dispatch failed: \(error.localizedDescription)")
+                    if isExecutionTermination(error) {
+                        quarantineRule(group: group, runtime: runtime)
+                    } else {
+                        appendLog(level: "error", group: group.name,
+                                  message: "dispatch failed: \(error.localizedDescription)")
+                    }
                     continue
                 }
 
@@ -490,7 +504,7 @@ public final class MacEnforcementBridge: ObservableObject {
                     collectedPanels.append(contentsOf: result.panels)
                 }
 
-                processWindowIntents(result.intents, frontmost: frontmost)
+                processWindowIntents(result.intents, groupID: group.id, frontmost: frontmost)
             }
         }
 
@@ -598,13 +612,18 @@ public final class MacEnforcementBridge: ObservableObject {
         if loadedRuleSources[group.id] != group.customRuleSource {
             reconcileRuleRuntime(runtime: runtime, groups: [group])
         }
+        guard loadedRuleSources[group.id] != nil else { return }
 
         let result: DispatchResult
         do {
             result = try runtime.dispatch(event)
         } catch {
-            appendLog(level: "error", group: group.name,
-                      message: "dispatch failed: \(error.localizedDescription)")
+            if isExecutionTermination(error) {
+                quarantineRule(group: group, runtime: runtime)
+            } else {
+                appendLog(level: "error", group: group.name,
+                          message: "dispatch failed: \(error.localizedDescription)")
+            }
             return
         }
 
@@ -626,7 +645,7 @@ public final class MacEnforcementBridge: ObservableObject {
             }
         }
 
-        processWindowIntents(result.intents, frontmost: frontmost)
+        processWindowIntents(result.intents, groupID: group.id, frontmost: frontmost)
 
         panelOverlay.update(panels: result.panels, forGroup: group.id)
     }
@@ -651,7 +670,8 @@ public final class MacEnforcementBridge: ObservableObject {
         let currentGroupNames = Set(groups.map(\.name))
 
         // Clean groups that are no longer enabled or have been removed.
-        for (groupID, _) in loadedRuleSources where !currentGroupIDs.contains(groupID) {
+        let trackedGroupIDs = Set(loadedRuleSources.keys).union(quarantinedRuleSources.keys)
+        for groupID in trackedGroupIDs where !currentGroupIDs.contains(groupID) {
             cleanRule(groupID: groupID)
         }
 
@@ -664,7 +684,14 @@ public final class MacEnforcementBridge: ObservableObject {
 
         // Build groups that are enabled but not yet loaded.
         for group in groups {
-            if loadedRuleSources[group.id] != nil { continue }
+            if let quarantined = quarantinedRuleSources[group.id] {
+                if quarantined == group.customRuleSource { continue }
+                quarantinedRuleSources.removeValue(forKey: group.id)
+            }
+            if let loaded = loadedRuleSources[group.id] {
+                if loaded == group.customRuleSource { continue }
+                cleanRule(groupID: group.id)
+            }
             buildRule(groupID: group.id)
         }
     }
@@ -674,11 +701,12 @@ public final class MacEnforcementBridge: ObservableObject {
     /// Called on: disable group, or as the first half of Run.
     public func cleanRule(groupID: String) {
         #if os(macOS)
-        guard let runtime = ruleRuntime else { return }
-        if loadedRuleSources[groupID] != nil {
+        if let runtime = ruleRuntime, loadedRuleSources[groupID] != nil {
             runtime.unload(groupID: groupID)
-            loadedRuleSources.removeValue(forKey: groupID)
         }
+        loadedRuleSources.removeValue(forKey: groupID)
+        quarantinedRuleSources.removeValue(forKey: groupID)
+        blockedAppBundleIDsByGroup.removeValue(forKey: groupID)
         // Immediately drop any panels this group rendered so they don't
         // linger on screen until the next tick (or forever if no other
         // group triggers a panel refresh).
@@ -718,8 +746,12 @@ public final class MacEnforcementBridge: ObservableObject {
             }
         } catch {
             loadedRuleSources.removeValue(forKey: groupID)
-            appendLog(level: "error", group: group.name,
-                      message: "Rule build failed: \(error.localizedDescription)")
+            if isExecutionTermination(error) {
+                quarantineRule(group: group, runtime: runtime)
+            } else {
+                appendLog(level: "error", group: group.name,
+                          message: "Rule build failed: \(error.localizedDescription)")
+            }
         }
         #endif
     }
@@ -730,7 +762,28 @@ public final class MacEnforcementBridge: ObservableObject {
         buildRule(groupID: groupID)
     }
 
-    private func processWindowIntents(_ intents: [WindowIntent], frontmost: String?) {
+    private func isExecutionTermination(_ error: Error) -> Bool {
+        let message: String
+        switch error as? CustomJavaScriptPolicyRuntimeError {
+        case .compileFailed(let detail), .dispatchFailed(let detail):
+            message = detail
+        default:
+            message = String(describing: error)
+        }
+        return message.localizedCaseInsensitiveContains("execution terminated")
+    }
+
+    private func quarantineRule(group: BlockGroup, runtime: CustomJavaScriptPolicyRuntime) {
+        runtime.unload(groupID: group.id)
+        loadedRuleSources.removeValue(forKey: group.id)
+        blockedAppBundleIDsByGroup.removeValue(forKey: group.id)
+        panelOverlay.removePanels(forGroup: group.id)
+        quarantinedRuleSources[group.id] = group.customRuleSource
+        appendLog(level: "error", group: group.name,
+                  message: "Rule stopped: execution deadline exceeded. Edit it and click Run to retry.")
+    }
+
+    private func processWindowIntents(_ intents: [WindowIntent], groupID: String, frontmost: String?) {
         for intent in intents {
             if intent.kind == "localFile" {
                 processLocalFileIntent(intent)
@@ -754,14 +807,17 @@ public final class MacEnforcementBridge: ObservableObject {
             case "blockApp":
                 if let target = intent.target, !target.isEmpty,
                    !MacProcessTerminator.isBrowserBundleIdentifier(target) {
-                    blockedAppBundleIDs.insert(target)
+                    blockedAppBundleIDsByGroup[groupID, default: []].insert(target)
                     MacProcessTerminator.terminate(bundleIdentifier: target)
                     appendLog(level: "log", group: "system",
                               message: "App blocked: \(target)")
                 }
             case "unblockApp":
                 if let target = intent.target, !target.isEmpty {
-                    blockedAppBundleIDs.remove(target)
+                    blockedAppBundleIDsByGroup[groupID]?.remove(target)
+                    if blockedAppBundleIDsByGroup[groupID]?.isEmpty == true {
+                        blockedAppBundleIDsByGroup.removeValue(forKey: groupID)
+                    }
                     appendLog(level: "log", group: "system",
                               message: "App unblocked: \(target)")
                 }
@@ -807,11 +863,14 @@ public final class MacEnforcementBridge: ObservableObject {
     }
 
     private func unloadAllRules() {
-        guard let runtime = ruleRuntime else { return }
-        for groupID in loadedRuleSources.keys {
-            runtime.unload(groupID: groupID)
+        if let runtime = ruleRuntime {
+            for groupID in loadedRuleSources.keys {
+                runtime.unload(groupID: groupID)
+            }
         }
         loadedRuleSources.removeAll()
+        quarantinedRuleSources.removeAll()
+        blockedAppBundleIDsByGroup.removeAll()
     }
 
     private func appendLog(level: String, group: String, message: String) {

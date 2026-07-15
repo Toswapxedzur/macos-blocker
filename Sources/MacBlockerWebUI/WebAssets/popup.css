@@ -559,6 +559,11 @@ textarea:focus {
   font-weight: 600;
 }
 
+#connectionPairingKeyReadout {
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
 .connection-dot {
   width: 10px;
   height: 10px;

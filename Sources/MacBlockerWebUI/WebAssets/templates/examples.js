@@ -1,181 +1,148 @@
-// Custom Web Blocker — curated raw-API examples.
+// Adamancia Vault native desktop custom-rule examples.
 //
-// The custom-rule engine is intentionally low-level: rules are plain
-// (event, helpers) => { ... } functions that register handlers and drive
-// raw primitives. These examples cover the main capabilities; most users
-// will generate rules with the "Generate AI prompt" button and an LLM.
-//
-// Key primitives used below:
-//   event.on(type, id, (ev, h) => {})          register a handler
-//   helpers.platform("youtube").hide(slot, pred)   hide feed cards
-//   helpers.platform("youtube").allow(slot, pred)  rescue (whitelist) cards
-//   helpers.platform("youtube").surface(name, "hide")  hide a whole region
-//   ev.setResult(-1) (+ ev.preventDefault())   block the page (redirect)
-//   helpers.getTimerHelper(), helpers.getPersistenceHelper()
+// App identity means a macOS bundle identifier (for example
+// com.apple.Safari) or the Windows identity shown by the app picker.
 
 (function () {
+  function appId(values) {
+    return String(values.appId || "").trim();
+  }
+
   CB_REGISTER_TEMPLATES([
     {
-      id: "yt-hide-small-channels",
-      title: "Hide YouTube videos from small channels",
-      description:
-        "Hide home/search/feed videos from channels under a subscriber threshold. Uses the enriched item.creator.subCount (null-safe; fails open until the channel resolves).",
-      tags: ["youtube", "feed", "creator"],
+      id: "block-focused-app",
+      title: "Always block an application",
+      description: "Block an app whenever it is focused or observed by the one-second native tick.",
+      tags: ["application", "block"],
       params: [
-        { id: "minSubs", label: "Minimum subscribers", type: "number", span: 1, defaultValue: 100000 }
+        { id: "appId", label: "Application identity", type: "text", span: 2, defaultValue: "com.example.App" }
       ],
       buildCode(values) {
-        const minSubs = Math.max(0, Math.round(Number(values.minSubs) || 0));
+        const id = appId(values);
         return `(event, helpers) => {
-  event.on("webChangedEvent", "yt-hide-small-channels", (ev, h) => {
-    h.platform("youtube").hide("videos", (item) => {
-      const c = item.creator;
-      return c && typeof c.subCount === "number" && c.subCount < ${minSubs};
-    });
-  });
-}`;
-      }
-    },
-    {
-      id: "yt-hide-by-tag",
-      title: "Hide YouTube videos by creator tag",
-      description:
-        "Hide videos whose creator carries any of the given classification tags (e.g. gaming, news-politics). Tags come from item.creator.tags.",
-      tags: ["youtube", "feed", "tags"],
-      params: [
-        { id: "tagsCsv", label: "Tags (comma separated)", type: "text", span: 2, defaultValue: "gaming,news-politics" }
-      ],
-      buildCode(values) {
-        const tags = String(values.tagsCsv || "")
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean);
-        return `(event, helpers) => {
-  const blocked = ${JSON.stringify(tags)};
-  event.on("webChangedEvent", "yt-hide-by-tag", (ev, h) => {
-    h.platform("youtube").hide((item) => {
-      const tags = (item.creator && item.creator.tags) || [];
-      return tags.some((t) => blocked.includes(t));
-    });
-  });
-}`;
-      }
-    },
-    {
-      id: "yt-allow-education",
-      title: "Rescue (allow) educational creators",
-      description:
-        "A whitelist rescue: keep videos tagged 'education' even when a lower-priority block group would hide them. Place this group ABOVE the block group in the list.",
-      tags: ["youtube", "allow", "rescue"],
-      params: [
-        { id: "tag", label: "Tag to always allow", type: "text", span: 1, defaultValue: "education" }
-      ],
-      buildCode(values) {
-        const tag = String(values.tag || "education").trim();
-        return `(event, helpers) => {
-  event.on("webChangedEvent", "yt-allow-tag", (ev, h) => {
-    h.platform("youtube").allow((item) => {
-      const tags = (item.creator && item.creator.tags) || [];
-      return tags.includes(${JSON.stringify(tag)});
-    });
-  });
-}`;
-      }
-    },
-    {
-      id: "yt-hide-shorts",
-      title: "Hide all YouTube Shorts",
-      description:
-        "Remove every Shorts card from feeds and hide the Shorts button in the sidebar.",
-      tags: ["youtube", "shorts", "feed"],
-      params: [],
-      buildCode() {
-        return `(event, helpers) => {
-  event.on("webChangedEvent", "yt-hide-shorts", (ev, h) => {
-    const yt = h.platform("youtube");
-    yt.hide("shorts", () => true);
-    yt.surface("shortButton", "hide");
-  });
-}`;
-      }
-    },
-    {
-      id: "block-shorts-page",
-      title: "Block the Shorts player page (redirect)",
-      description:
-        "Bounce off any /shorts/ player URL. Native network blocking is gone — this redirects the page instead.",
-      tags: ["youtube", "shorts", "redirect"],
-      params: [],
-      buildCode() {
-        return `(event, helpers) => {
-  const yt = helpers.platform("youtube");
-  function maybeBlock(ev) {
-    if (!yt.isShortUrl(ev.url)) return;
-    ev.preventDefault();
+  const appId = ${JSON.stringify(id)};
+  function blockWhenActive(ev) {
+    if (ev.data.appId !== appId && ev.data.bundleId !== appId) return;
+    ev.block(appId);
+    ev.setShieldMessage("This application is blocked.");
     ev.setResult(-1);
   }
-  event.on("openWebEvent", "shorts-page-block", maybeBlock);
-  event.on("webChangedEvent", "shorts-page-block", maybeBlock);
+  event.on("focusEvent", "block-focused-app", blockWhenActive);
+  event.on("tickEvent", "block-focused-app-tick", blockWhenActive, { intervalMs: 1000 });
 }`;
       }
     },
     {
-      id: "hide-home-feed",
-      title: "Hide the YouTube home feed",
-      description:
-        "Hide the entire home page recommendation grid while leaving search and subscriptions usable.",
-      tags: ["youtube", "home", "surface"],
-      params: [],
-      buildCode() {
-        return `(event, helpers) => {
-  event.on("webChangedEvent", "yt-hide-home", (ev, h) => {
-    h.platform("youtube").surface("home", "hide");
-  });
-}`;
-      }
-    },
-    {
-      id: "watch-time-counter",
-      title: "Count-up watch-time overlay",
-      description:
-        "Show a count-up stopwatch of time spent on YouTube watch pages. Informational only — it never blocks.",
-      tags: ["timer", "youtube"],
-      params: [],
-      buildCode() {
-        return `(event, helpers) => {
-  const tm = helpers.getTimerHelper();
-  tm.getOrCreateTimer({
-    id: "yt-watch-time",
-    displayName: "YouTube watch time",
-    direction: "forward",
-    currentMs: 0,
-    scope: (url) => /youtube\\.com\\/watch/.test(url),
-    domain: (url) => /youtube\\.com/.test(url)
-  });
-}`;
-      }
-    },
-    {
-      id: "daily-visit-counter",
-      title: "Count daily visits with persistence",
-      description:
-        "Increment a per-day counter every time a tab opens on the given host, logging the running total. Shows raw persistence usage.",
-      tags: ["persistence", "logging"],
+      id: "close-app-on-launch",
+      title: "Close an application when it launches",
+      description: "Close the selected app on its native launch event without adding a persistent block.",
+      tags: ["application", "launch", "close"],
       params: [
-        { id: "host", label: "Host to count", type: "text", span: 2, defaultValue: "news.ycombinator.com" }
+        { id: "appId", label: "Application identity", type: "text", span: 2, defaultValue: "com.example.App" }
       ],
       buildCode(values) {
-        const host = String(values.host || "").trim();
+        const id = appId(values);
         return `(event, helpers) => {
-  const host = ${JSON.stringify(host)};
-  event.on("openWebEvent", "daily-visit-counter", (ev, h) => {
-    if (!ev.hostname || ev.hostname.indexOf(host) === -1) return;
-    const p = h.getPersistenceHelper();
-    const day = new Date().toISOString().slice(0, 10);
-    const key = "visits:" + day;
-    const next = (Number(p.get(key, 0)) || 0) + 1;
-    p.set(key, next);
-    h.log(host + " visits today: " + next);
+  const appId = ${JSON.stringify(id)};
+  event.on("openAppEvent", "close-app-on-launch", (ev) => {
+    if (ev.data.bundleId === appId) ev.close(appId);
+  });
+}`;
+      }
+    },
+    {
+      id: "work-hours-app-block",
+      title: "Block an app during selected hours",
+      description: "Maintain a native app block during a daily time window, including windows that cross midnight.",
+      tags: ["application", "schedule"],
+      params: [
+        { id: "appId", label: "Application identity", type: "text", span: 2, defaultValue: "com.example.App" },
+        { id: "startHour", label: "Start hour (0–23)", type: "number", span: 1, defaultValue: 9 },
+        { id: "endHour", label: "End hour (0–23)", type: "number", span: 1, defaultValue: 17 }
+      ],
+      buildCode(values) {
+        const id = appId(values);
+        const start = Math.max(0, Math.min(23, Math.floor(Number(values.startHour) || 0)));
+        const end = Math.max(0, Math.min(23, Math.floor(Number(values.endHour) || 0)));
+        return `(event, helpers) => {
+  const appId = ${JSON.stringify(id)};
+  const startHour = ${start};
+  const endHour = ${end};
+  event.on("tickEvent", "work-hours-app-block", (ev) => {
+    const hour = ev.time.hour;
+    const inside = startHour === endHour ||
+      (startHour < endHour ? hour >= startHour && hour < endHour : hour >= startHour || hour < endHour);
+    if (inside) {
+      ev.block(appId);
+      if (ev.data.appId === appId) ev.setResult(-1);
+    } else {
+      ev.unblock(appId);
+    }
+  }, { intervalMs: 1000 });
+}`;
+      }
+    },
+    {
+      id: "daily-app-time-budget",
+      title: "Give an app a daily time budget",
+      description: "Count down only while the selected app is focused, reset each local day, then block it.",
+      tags: ["application", "timer", "daily"],
+      params: [
+        { id: "appId", label: "Application identity", type: "text", span: 2, defaultValue: "com.example.App" },
+        { id: "minutes", label: "Minutes per day", type: "number", span: 1, defaultValue: 30 }
+      ],
+      buildCode(values) {
+        const id = appId(values);
+        const minutes = Math.max(1, Math.round(Number(values.minutes) || 30));
+        return `(event, helpers) => {
+  const appId = ${JSON.stringify(id)};
+  const budgetMs = ${minutes} * 60 * 1000;
+  const timerId = "daily-app-budget";
+  const tm = helpers.getTimerHelper();
+  const persistence = helpers.getPersistenceHelper();
+  tm.getOrCreateTimer({
+    id: timerId,
+    displayName: "Daily app budget",
+    direction: "backward",
+    currentMs: budgetMs,
+    scope: appId
+  });
+
+  event.on("tickEvent", "daily-app-budget", (ev) => {
+    const date = new Date(ev.time.now);
+    const day = date.getFullYear() + "-" + (date.getMonth() + 1) + "-" + date.getDate();
+    if (persistence.get("budget-day", "") !== day) {
+      persistence.set("budget-day", day);
+      tm.setCurrentMs(timerId, budgetMs);
+    }
+    if (tm.isExpired(timerId)) {
+      ev.block(appId);
+      if (ev.data.appId === appId) ev.setResult(-1);
+    } else {
+      ev.unblock(appId);
+    }
+  }, { intervalMs: 1000 });
+}`;
+      }
+    },
+    {
+      id: "app-focus-counter",
+      title: "Count application focuses",
+      description: "Persist and log how many times the selected app receives focus.",
+      tags: ["application", "persistence", "logging"],
+      params: [
+        { id: "appId", label: "Application identity", type: "text", span: 2, defaultValue: "com.example.App" }
+      ],
+      buildCode(values) {
+        const id = appId(values);
+        return `(event, helpers) => {
+  const appId = ${JSON.stringify(id)};
+  event.on("focusEvent", "app-focus-counter", (ev, h) => {
+    if (ev.data.bundleId !== appId && ev.data.appId !== appId) return;
+    const persistence = h.getPersistenceHelper();
+    const count = Number(persistence.get("focus-count", 0)) + 1;
+    persistence.set("focus-count", count);
+    h.log(appId + " focus count: " + count);
   });
 }`;
       }

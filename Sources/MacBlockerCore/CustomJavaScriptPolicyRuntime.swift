@@ -1,5 +1,9 @@
 import Foundation
 
+#if canImport(Darwin)
+import Darwin
+#endif
+
 #if canImport(JavaScriptCore)
 @preconcurrency import JavaScriptCore
 #endif
@@ -34,6 +38,7 @@ public struct CustomRuleEvent: Codable, Equatable, Sendable {
 
 public enum CustomJavaScriptPolicyRuntimeError: Error, Equatable {
     case javaScriptCoreUnavailable
+    case executionDeadlineUnavailable
     case compileFailed(String)
     case dispatchFailed(String)
     case invalidResult
@@ -238,12 +243,38 @@ public protocol CustomPolicyRuntime {
 public final class CustomJavaScriptPolicyRuntime: CustomPolicyRuntime {
     #if canImport(JavaScriptCore)
     private let context: JSContext
+    private static let executionTimeLimitSeconds: Double = 0.25
+
+    private typealias ExecutionTimeLimitCallback = @convention(c) (
+        OpaquePointer?, UnsafeMutableRawPointer?
+    ) -> Bool
+    private typealias SetExecutionTimeLimit = @convention(c) (
+        OpaquePointer?, Double, ExecutionTimeLimitCallback?, UnsafeMutableRawPointer?
+    ) -> Void
+    private typealias ClearExecutionTimeLimit = @convention(c) (OpaquePointer?) -> Void
+
+    private static let setExecutionTimeLimit: SetExecutionTimeLimit? = {
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2),
+                                 "JSContextGroupSetExecutionTimeLimit") else { return nil }
+        return unsafeBitCast(symbol, to: SetExecutionTimeLimit.self)
+    }()
+    private static let clearExecutionTimeLimit: ClearExecutionTimeLimit? = {
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2),
+                                 "JSContextGroupClearExecutionTimeLimit") else { return nil }
+        return unsafeBitCast(symbol, to: ClearExecutionTimeLimit.self)
+    }()
     #endif
 
     public init() throws {
         #if canImport(JavaScriptCore)
         guard let context = JSContext() else {
             throw CustomJavaScriptPolicyRuntimeError.javaScriptCoreUnavailable
+        }
+        guard Self.setExecutionTimeLimit != nil,
+              Self.clearExecutionTimeLimit != nil else {
+            // Fail closed: evaluating user code without a preemptive deadline
+            // would let a non-returning rule hang the native app.
+            throw CustomJavaScriptPolicyRuntimeError.executionDeadlineUnavailable
         }
         self.context = context
         installBootstrap()
@@ -260,18 +291,27 @@ public final class CustomJavaScriptPolicyRuntime: CustomPolicyRuntime {
         let script = """
         MacBlockerRuntime.load(\(groupLiteral), \(sourceLiteral));
         """
-        guard let value = context.evaluateScript(script) else {
-            throw CustomJavaScriptPolicyRuntimeError.compileFailed("Script evaluation returned no value.")
-        }
-        if let exception = context.exception {
+        do {
+            let value = evaluateUserScript(script)
+            if let exception = context.exception {
+                context.exception = nil
+                throw CustomJavaScriptPolicyRuntimeError.compileFailed(exception.toString())
+            }
+            guard let value else {
+                throw CustomJavaScriptPolicyRuntimeError.compileFailed("Script evaluation returned no value.")
+            }
+            guard let json = value.toString(), let data = json.data(using: .utf8) else {
+                return LoadResult()
+            }
+            let envelope = try JSONDecoder().decode(LoadEnvelope.self, from: data)
+            return LoadResult(handlers: envelope.handlers, decisions: envelope.decisions ?? [])
+        } catch {
+            // A rule may have registered some handlers before throwing or
+            // exhausting its deadline. Never leave that partial group live.
+            context.evaluateScript("MacBlockerRuntime.unload(\(groupLiteral));")
             context.exception = nil
-            throw CustomJavaScriptPolicyRuntimeError.compileFailed(exception.toString())
+            throw error
         }
-        guard let json = value.toString(), let data = json.data(using: .utf8) else {
-            return LoadResult()
-        }
-        let envelope = try JSONDecoder().decode(LoadEnvelope.self, from: data)
-        return LoadResult(handlers: envelope.handlers, decisions: envelope.decisions ?? [])
         #else
         throw CustomJavaScriptPolicyRuntimeError.javaScriptCoreUnavailable
         #endif
@@ -302,12 +342,13 @@ public final class CustomJavaScriptPolicyRuntime: CustomPolicyRuntime {
         }
         let eventLiteral = try Self.javaScriptStringLiteral(eventJSON)
         let script = "MacBlockerRuntime.dispatch(JSON.parse(\(eventLiteral)));"
-        guard let value = context.evaluateScript(script) else {
-            throw CustomJavaScriptPolicyRuntimeError.invalidResult
-        }
+        let value = evaluateUserScript(script)
         if let exception = context.exception {
             context.exception = nil
             throw CustomJavaScriptPolicyRuntimeError.dispatchFailed(exception.toString())
+        }
+        guard let value else {
+            throw CustomJavaScriptPolicyRuntimeError.invalidResult
         }
         guard let resultJSON = value.toString(),
               let data = resultJSON.data(using: .utf8)
@@ -326,6 +367,18 @@ public final class CustomJavaScriptPolicyRuntime: CustomPolicyRuntime {
         var intents: [WindowIntent]?
         var timers: [CustomTimerSnapshot]?
         var panels: [PanelSnapshot]?
+    }
+
+    private func evaluateUserScript(_ script: String) -> JSValue? {
+        guard let setLimit = Self.setExecutionTimeLimit,
+              let clearLimit = Self.clearExecutionTimeLimit else {
+            return nil
+        }
+        let group = JSContextGetGroup(context.jsGlobalContextRef)
+        let shouldTerminate: ExecutionTimeLimitCallback = { _, _ in true }
+        setLimit(group, Self.executionTimeLimitSeconds, shouldTerminate, nil)
+        defer { clearLimit(group) }
+        return context.evaluateScript(script)
     }
 
     #if canImport(JavaScriptCore)
