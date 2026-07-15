@@ -65,6 +65,10 @@ let package = Package(
         .testTarget(
             name: "MacBlockerMacControlTests",
             dependencies: ["MacBlockerMacControl", "MacBlockerCore"]
+        ),
+        .testTarget(
+            name: "MacBlockerAppFeatureTests",
+            dependencies: ["MacBlockerAppFeature"]
         )
     ]
 )

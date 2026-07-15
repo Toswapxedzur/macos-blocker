@@ -6,13 +6,20 @@ import Network
 ///
 /// The macOS app is the only endpoint that can listen on a socket (a browser
 /// extension cannot), so it hosts this server on a fixed loopback port. Browser
-/// extensions connect out to it; because the listener is loopback-only there is
-/// no pairing step.
+/// extensions connect out to it and authenticate with a per-install pairing key.
 ///
 /// Scope: accept loopback WebSocket connections, track connected peers, route
 /// cluster/group sync messages, and expose a JSON status string for the web
 /// editor (polled each second + on demand).
 final class ConnectionHub: ObservableObject {
+    static let protocolVersion = 2
+    static let localProgram = "macapp"
+    private static let maxMessageBytes = 1_048_576
+    private static let pairingKeyDefaultsKey = "ConnectionHub.pairingKey.v1"
+    private static let remotePrograms: Set<String> = [
+        "chrome", "edge", "firefox", "safari", "opera", "browser"
+    ]
+
     private struct Peer {
         let id: String
         var program: String
@@ -34,6 +41,44 @@ final class ConnectionHub: ObservableObject {
     /// Fixed loopback port for the bridge (no longer user-configurable).
     private let port = 8787
     private var lastError = ""
+    private let pairingKey: String
+
+    private init() {
+        pairingKey = Self.loadOrCreatePairingKey()
+    }
+
+    private static func loadOrCreatePairingKey() -> String {
+        if let existing = UserDefaults.standard.string(forKey: pairingKeyDefaultsKey),
+           existing.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil {
+            return existing
+        }
+        let key = (UUID().uuidString + UUID().uuidString)
+            .replacingOccurrences(of: "-", with: "")
+            .lowercased()
+        UserDefaults.standard.set(key, forKey: pairingKeyDefaultsKey)
+        return key
+    }
+
+    private static func secureEquals(_ lhs: String, _ rhs: String) -> Bool {
+        let a = Array(lhs.utf8)
+        let b = Array(rhs.utf8)
+        guard a.count == b.count else { return false }
+        var difference: UInt8 = 0
+        for index in a.indices { difference |= a[index] ^ b[index] }
+        return difference == 0
+    }
+
+    static func helloRejectionReason(_ obj: [String: Any], pairingKey: String) -> String? {
+        let version = (obj["v"] as? NSNumber)?.intValue
+        guard version == protocolVersion else { return "protocol-mismatch" }
+        guard let program = obj["program"] as? String, remotePrograms.contains(program) else {
+            return "invalid-program"
+        }
+        guard let supplied = obj["pairingKey"] as? String,
+              secureEquals(supplied.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), pairingKey)
+        else { return "pairing-key-rejected" }
+        return nil
+    }
 
     // MARK: Cluster registry (per-group web-app bridge linking)
 
@@ -185,13 +230,26 @@ final class ConnectionHub: ObservableObject {
         }
         conn.start(queue: queue)
         receive(conn, key: key)
+        queue.asyncAfter(deadline: .now() + 5) { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            let isPending = self.peers[key]?.connected == false
+            self.lock.unlock()
+            if isPending {
+                self.rejectAndClose(conn, reason: "authentication-timeout")
+            }
+        }
     }
 
     private func receive(_ conn: NWConnection, key: ObjectIdentifier) {
         conn.receiveMessage { [weak self] data, _, _, error in
             guard let self else { return }
             if let data, !data.isEmpty {
-                self.handleIncoming(conn, key: key, data: data)
+                if data.count > Self.maxMessageBytes {
+                    conn.cancel()
+                } else {
+                    self.handleIncoming(conn, key: key, data: data)
+                }
             }
             if error == nil {
                 self.receive(conn, key: key)
@@ -203,16 +261,38 @@ final class ConnectionHub: ObservableObject {
 
     private func handleIncoming(_ conn: NWConnection, key: ObjectIdentifier, data: Data) {
         guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let kind = obj["kind"] as? String else { return }
+              let kind = obj["kind"] as? String else {
+            rejectAndClose(conn, reason: "invalid-message")
+            return
+        }
+        lock.lock()
+        let authenticated = peers[key]?.connected == true
+        lock.unlock()
+        if kind != "hello" && !authenticated {
+            rejectAndClose(conn, reason: "authentication-required")
+            return
+        }
+        if kind == "hello" && authenticated {
+            rejectAndClose(conn, reason: "already-authenticated")
+            return
+        }
         switch kind {
         case "hello":
-            // Loopback-only listener, so any local client may attach (no pairing).
+            if let reason = Self.helloRejectionReason(obj, pairingKey: pairingKey) {
+                rejectAndClose(conn, reason: reason)
+                return
+            }
             let program = (obj["program"] as? String) ?? "browser"
             lock.lock()
             peers[key]?.program = program
             peers[key]?.connected = true
             lock.unlock()
-            send(conn, dict: ["kind": "welcome", "peers": peerListJSON()])
+            send(conn, dict: [
+                "kind": "welcome",
+                "v": Self.protocolVersion,
+                "hubProgram": Self.localProgram,
+                "peers": peerListJSON()
+            ])
             broadcastPeers()
             sendClustersSnapshot(conn)
         case "groups-announce":
@@ -255,6 +335,11 @@ final class ConnectionHub: ObservableObject {
         default:
             break
         }
+    }
+
+    private func rejectAndClose(_ conn: NWConnection, reason: String) {
+        send(conn, dict: ["kind": "rejected", "reason": reason])
+        queue.asyncAfter(deadline: .now() + .milliseconds(100)) { conn.cancel() }
     }
 
     private func send(_ conn: NWConnection, dict: [String: Any]) {
@@ -304,7 +389,7 @@ final class ConnectionHub: ObservableObject {
 
     private func peerListJSON() -> [[String: Any]] {
         lock.lock()
-        let list = peers.values.map {
+        let list = peers.values.filter { $0.connected }.map {
             ["id": $0.id, "program": $0.program, "connected": $0.connected] as [String: Any]
         }
         lock.unlock()
@@ -325,7 +410,7 @@ final class ConnectionHub: ObservableObject {
         lock.lock()
         let running = self.running
         let err = self.lastError
-        let peerList = peers.values.map {
+        let peerList = peers.values.filter { $0.connected }.map {
             ["id": $0.id, "program": $0.program, "connected": $0.connected] as [String: Any]
         }
         lock.unlock()
@@ -334,7 +419,9 @@ final class ConnectionHub: ObservableObject {
             "state": err.isEmpty ? (running ? "running" : "off") : "error",
             "address": "ws://127.0.0.1:\(port)",
             "peers": peerList,
-            "error": err
+            "error": err,
+            "pairingKey": pairingKey,
+            "hubProgram": Self.localProgram
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: status),
               let json = String(data: data, encoding: .utf8) else {
@@ -603,7 +690,7 @@ final class ConnectionHub: ObservableObject {
         // first real delta arrives (it adopts the largest member total) so prior
         // Mac usage survives joining a cluster.
         if let seedMs { contribution["usageMs"] = seedMs }
-        applySync(program: "macapp", groupName: groupName, groupType: "site", contribution: contribution, ts: 0)
+        applySync(program: Self.localProgram, groupName: groupName, groupType: "site", contribution: contribution, ts: 0)
     }
 
     /// The hub-authoritative shared usage budget for a Mac-clustered Default
@@ -616,7 +703,7 @@ final class ConnectionHub: ObservableObject {
         lock.lock()
         defer { lock.unlock() }
         guard let cluster = clusters.values.first(where: {
-            $0.groupName == groupName && $0.members.contains("macapp")
+            $0.groupName == groupName && $0.members.contains(Self.localProgram)
         }) else { return nil }
         return (cluster.sharedUsageMs, cluster.sharedUsageResetAtMs)
     }
@@ -624,7 +711,7 @@ final class ConnectionHub: ObservableObject {
     func syncFromBridge(json: String) {
         guard let obj = decode(json) else { return }
         applySync(
-            program: (obj["program"] as? String) ?? "macapp",
+            program: (obj["program"] as? String) ?? Self.localProgram,
             groupName: (obj["groupName"] as? String) ?? "",
             groupType: (obj["groupType"] as? String) ?? "",
             contribution: obj,
@@ -663,7 +750,7 @@ final class ConnectionHub: ObservableObject {
     func announceFromBridge(json: String) {
         guard let obj = decode(json) else { return }
         setRoster(
-            program: (obj["program"] as? String) ?? "macapp",
+            program: (obj["program"] as? String) ?? Self.localProgram,
             groups: (obj["groups"] as? [[String: Any]]) ?? []
         )
     }
@@ -671,7 +758,7 @@ final class ConnectionHub: ObservableObject {
     func connectFromBridge(json: String) {
         guard let obj = decode(json) else { return }
         connectGroup(
-            from: (obj["fromProgram"] as? String) ?? "macapp",
+            from: (obj["fromProgram"] as? String) ?? Self.localProgram,
             to: (obj["toProgram"] as? String) ?? "",
             groupName: (obj["groupName"] as? String) ?? "",
             groupType: (obj["groupType"] as? String) ?? ""
@@ -683,7 +770,7 @@ final class ConnectionHub: ObservableObject {
         disconnectGroup(
             clusterId: (obj["clusterId"] as? String) ?? "",
             groupName: (obj["groupName"] as? String) ?? "",
-            program: (obj["program"] as? String) ?? "macapp"
+            program: (obj["program"] as? String) ?? Self.localProgram
         )
     }
 
@@ -812,7 +899,7 @@ final class ConnectionHub: ObservableObject {
         for peer in peers.values where peer.connected && !peer.program.isEmpty {
             set.insert(peer.program)
         }
-        set.insert("macapp")
+        set.insert(Self.localProgram)
         return set
     }
 
@@ -893,7 +980,7 @@ final class ConnectionHub: ObservableObject {
     }
 
     private func rejectTo(program: String, reason: String) {
-        if program == "macapp" {
+        if program == Self.localProgram {
             lock.lock()
             pendingLocalRejection = reason
             lock.unlock()

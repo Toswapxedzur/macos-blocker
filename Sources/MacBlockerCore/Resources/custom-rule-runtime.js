@@ -48,7 +48,7 @@ var MacBlockerRuntime = (function () {
     SnoozePress: "snoozePress",
     PanelEvent: "panelEvent",
     LocalFileEvent: "localFileEvent",
-    // macOS app lifecycle events (notification-driven)
+    // Native desktop app lifecycle events (notification/snapshot-driven)
     OpenAppEvent: "openAppEvent",
     CloseAppEvent: "closeAppEvent",
     FocusEvent: "focusEvent",
@@ -1388,7 +1388,7 @@ var MacBlockerRuntime = (function () {
       var key = "unsupported:" + name;
       if (logSeen[key]) return;
       logSeen[key] = true;
-      pushDecision("log", "helpers." + name + " is not available on iOS (browser-only).", "", null, { level: "warn", surface: "popup" }, []);
+      pushDecision("log", "helpers." + name + " is not available in native apps (browser-only).", "", null, { level: "warn", surface: "popup" }, []);
     }
 
     function logDecision(level, surface, args) {
@@ -1790,10 +1790,10 @@ var MacBlockerRuntime = (function () {
     },
     handlerCount: function (groupId) { return countHandlers(groupId); },
     getDynamicBlocklist: function (groupId) {
-      if (groupId) return Object.keys(dynamicBlocklistByGroup[groupId] || {});
+      if (groupId) return Object.keys(dynamicAppBlocklistByGroup[groupId] || {});
       var all = {};
-      for (var gid in dynamicBlocklistByGroup) {
-        var bl = dynamicBlocklistByGroup[gid];
+      for (var gid in dynamicAppBlocklistByGroup) {
+        var bl = dynamicAppBlocklistByGroup[gid];
         for (var p in bl) all[p] = true;
       }
       return Object.keys(all);

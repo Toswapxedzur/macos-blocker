@@ -72,11 +72,11 @@ public struct BlockerMainView: View {
 /// and the Device Control section is kept in sync by the per-tick state push.
 @MainActor
 final class AppBlockingPermissionModel: ObservableObject {
-    /// Opens the Accessibility System Settings pane. We intentionally do NOT
-    /// fire the native `AXIsProcessTrustedWithOptions` prompt ("…would like to
-    /// control this computer") — the web UI already drives the grant flow, so
-    /// the extra system dialog was redundant.
+    /// Requests Accessibility through macOS, then reveals the exact settings
+    /// pane where the user can grant it if it is still unavailable.
     func requestGrant() {
+        let permission = MacPermissionState.current(promptForAccessibility: true)
+        guard !permission.accessibilityTrusted else { return }
         openSettings()
     }
 

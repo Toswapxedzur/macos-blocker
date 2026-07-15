@@ -95,4 +95,82 @@ final class CustomJavaScriptPolicyRuntimeTests: XCTestCase {
         XCTAssertEqual(localIntents.map(\.action), ["write", "append", "readJson", "list"])
         XCTAssertEqual(localIntents.map(\.path), ["notes/focus.txt", "notes/focus.txt", "config/focus.json", ""])
     }
+
+    func testRegistrationDeadlineStopsInfiniteLoopAndRuntimeRecovers() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        let started = Date()
+
+        XCTAssertThrowsError(try runtime.load(
+            groupID: "deadline-load",
+            source: "(event) => { while (true) {} }"
+        ))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1.5)
+
+        let loaded = try runtime.load(
+            groupID: "deadline-load",
+            source: "(event) => { event.on('tickEvent', 'recovered', () => {}); }"
+        )
+        XCTAssertEqual(loaded.handlers, 1)
+    }
+
+    func testDispatchDeadlineStopsInfiniteHandlerAndRuntimeRecovers() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(
+            groupID: "deadline-dispatch",
+            source: "(event) => { event.on('tickEvent', 'loop', () => { while (true) {} }); }"
+        )
+        let started = Date()
+
+        XCTAssertThrowsError(try runtime.dispatch(
+            CustomRuleEvent(type: "tickEvent", groupID: "deadline-dispatch")
+        ))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1.5)
+
+        runtime.unload(groupID: "deadline-dispatch")
+        let loaded = try runtime.load(
+            groupID: "deadline-dispatch",
+            source: "(event) => { event.on('tickEvent', 'recovered', () => {}); }"
+        )
+        XCTAssertEqual(loaded.handlers, 1)
+    }
+
+    func testDynamicAppBlocksAreGroupScopedAndUnloadClearsOwner() throws {
+        let runtime = try CustomJavaScriptPolicyRuntime()
+        try runtime.load(
+            groupID: "owner-a",
+            source: """
+            (event) => {
+              event.on("tickEvent", "block", (ev, h) => h.getWindowHelper().block("com.example.a"));
+            }
+            """
+        )
+        _ = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "owner-a"))
+
+        try runtime.load(
+            groupID: "owner-b",
+            source: """
+            (event) => {
+              event.on("tickEvent", "check", (ev, h) => {
+                if (h.getWindowHelper().isBlocked("com.example.a")) ev.block("com.example.leaked");
+              });
+            }
+            """
+        )
+        let isolated = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "owner-b"))
+        XCTAssertFalse(isolated.intents.contains { $0.target == "com.example.leaked" })
+
+        runtime.unload(groupID: "owner-a")
+        try runtime.load(
+            groupID: "owner-a",
+            source: """
+            (event) => {
+              event.on("tickEvent", "check-cleared", (ev, h) => {
+                if (h.getWindowHelper().isBlocked("com.example.a")) ev.block("com.example.stale");
+              });
+            }
+            """
+        )
+        let cleared = try runtime.dispatch(CustomRuleEvent(type: "tickEvent", groupID: "owner-a"))
+        XCTAssertFalse(cleared.intents.contains { $0.target == "com.example.stale" })
+    }
 }

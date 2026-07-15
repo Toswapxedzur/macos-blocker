@@ -186,14 +186,15 @@ const cbDialog = (function () {
 // so `server*` fields are honored only on the native host and `client*` fields
 // only in the browser extensions. Both are persisted in globalSettings so the
 // transport layer (background service worker / native server) can read them.
-const CONNECTION_PROTOCOL_VERSION = 1;
+const CONNECTION_PROTOCOL_VERSION = window.CBBridgeProtocol.PROTOCOL_VERSION;
 const CONNECTION_DEFAULT_PORT = 8787;
 const CONNECTION_DEFAULT_ADDRESS = `ws://127.0.0.1:${CONNECTION_DEFAULT_PORT}`;
 const DEFAULT_CONNECTION_SETTINGS = {
   // macOS hub
   serverEnabled: false,
   // browser client
-  clientEnabled: false
+  clientEnabled: false,
+  pairingKey: ""
 };
 
 const DEFAULT_GLOBAL_SETTINGS = {
@@ -221,7 +222,7 @@ function isNativeHost() {
 // Stable identifier for this endpoint's "program", shown in the per-group
 // connection panel's program picker (macapp / chrome / edge / firefox / ...).
 function detectProgramId() {
-  if (isNativeHost()) return "macapp";
+  if (isNativeHost()) return window.CBBridgeProtocol.nativeProgramId(window.__CB_DESKTOP_PROGRAM_ID);
   let ua = "";
   try {
     ua = navigator.userAgent || "";
@@ -412,6 +413,7 @@ const connectionDisconnectButton = document.getElementById("connectionDisconnect
 const connectionStatusDot = document.getElementById("connectionStatusDot");
 const connectionStatusText = document.getElementById("connectionStatusText");
 const connectionAddressReadout = document.getElementById("connectionAddressReadout");
+const connectionPairingKeyReadout = document.getElementById("connectionPairingKeyReadout");
 const connectionPeerList = document.getElementById("connectionPeerList");
 const connectionGroupSection = document.getElementById("connectionGroupSection");
 const connectionGroupHint = document.getElementById("connectionGroupHint");
@@ -851,9 +853,14 @@ function connectionStatusLabel(status) {
     case "connecting":
       return t("connection.statusConnecting");
     case "error":
-      return status.error
-        ? t("connection.statusError") + ": " + status.error
-        : t("connection.statusError");
+      if (!status.error) return t("connection.statusError");
+      return t("connection.statusError") + ": " + ({
+        "pairing-key-required": t("connection.errorPairingKey"),
+        "pairing-key-rejected": t("connection.errorPairingKey"),
+        "protocol-mismatch": t("connection.errorProtocolMismatch"),
+        "handshake-timeout": t("connection.errorSecureConnection"),
+        "socket-error": t("connection.errorSecureConnection")
+      }[status.error] || status.error);
     case "disconnected":
       return t("connection.statusDisconnected");
     default:
@@ -892,6 +899,9 @@ function renderConnectionSettings() {
   if (connectionAddressReadout) {
     connectionAddressReadout.textContent = status.address || CONNECTION_DEFAULT_ADDRESS;
   }
+  if (connectionPairingKeyReadout) {
+    connectionPairingKeyReadout.textContent = status.pairingKey || "—";
+  }
 
   if (connectionPeerList) {
     connectionPeerList.textContent = "";
@@ -927,7 +937,9 @@ function applyConnectionStatus(raw) {
     state: typeof incoming.state === "string" ? incoming.state : "off",
     address: typeof incoming.address === "string" ? incoming.address : "",
     peers: Array.isArray(incoming.peers) ? incoming.peers : [],
-    error: typeof incoming.error === "string" ? incoming.error : ""
+    error: typeof incoming.error === "string" ? incoming.error : "",
+    pairingKey: typeof incoming.pairingKey === "string" ? incoming.pairingKey : "",
+    hubProgram: window.CBBridgeProtocol.hubProgramFromStatus(incoming)
   };
   if (state.isSettingsOpen) renderConnectionSettings();
   // The per-group panel lives in the editor (always visible), so keep it fresh.
@@ -964,7 +976,8 @@ function requestConnectionStatus() {
 // ---------------------------------------------------------------------------
 
 const CONNECTION_PROGRAM_LABELS = {
-  macapp: "Mac app",
+  macapp: "Mac Vault",
+  windowsapp: "Windows Vault",
   chrome: "Chrome",
   edge: "Edge",
   firefox: "Firefox",
@@ -1016,32 +1029,13 @@ function clusterOfflineMembers(cluster) {
 // re-creating one with the same name does NOT re-adopt the old cluster. Falls
 // back to the saved name for pre-id-pinning hubs that don't send a groupId.
 function groupConnectionCluster(group) {
-  if (!group) return null;
-  const clusters = Array.isArray(state.clusters) ? state.clusters : [];
-  return (
-    clusters.find((cluster) =>
-      Array.isArray(cluster.members) &&
-      cluster.members.some(
-        (m) =>
-          m &&
-          m.program === LOCAL_PROGRAM_ID &&
-          (m.groupId ? m.groupId === group.id : m.groupName === group.name)
-      )
-    ) || null
-  );
+  return window.CBBridgeProtocol.clusterForGroup(state.clusters, group, LOCAL_PROGRAM_ID);
 }
 
 // This endpoint's local group for a cluster, resolved via the member's pinned
 // group id (falling back to the saved name for pre-id-pinning hubs).
 function clusterLocalGroup(cluster) {
-  if (!cluster || !Array.isArray(cluster.members)) return null;
-  const self = cluster.members.find((m) => m && m.program === LOCAL_PROGRAM_ID);
-  if (!self) return null;
-  if (self.groupId) {
-    const byId = state.groups.find((g) => g.id === self.groupId);
-    if (byId) return byId;
-  }
-  return state.groups.find((g) => g.name === (self.groupName || cluster.groupName)) || null;
+  return window.CBBridgeProtocol.groupForCluster(state.groups, cluster, LOCAL_PROGRAM_ID);
 }
 
 // Programs the user can link to right now (other connected endpoints). A client
@@ -1054,7 +1048,10 @@ function bridgeConnectablePrograms() {
   for (const peer of peers) {
     if (peer && peer.connected !== false && peer.program) programs.add(peer.program);
   }
-  if (!IS_CONNECTION_HUB) programs.add("macapp");
+  if (!IS_CONNECTION_HUB) {
+    const hubProgram = window.CBBridgeProtocol.hubProgramFromStatus(status);
+    if (hubProgram) programs.add(hubProgram);
+  }
   programs.delete(LOCAL_PROGRAM_ID);
   programs.delete("browser");
   programs.delete("");
@@ -2282,7 +2279,8 @@ function sanitizeConnectionSettings(raw) {
   const src = raw && typeof raw === "object" ? raw : {};
   return {
     serverEnabled: src.serverEnabled === true,
-    clientEnabled: src.clientEnabled === true
+    clientEnabled: src.clientEnabled === true,
+    pairingKey: window.CBBridgeProtocol.normalizePairingKey(src.pairingKey)
   };
 }
 
@@ -6924,38 +6922,27 @@ function buildCustomRuleAiPrompt(userRequest, currentRule) {
   const existingRule = String(currentRule || "").trim() || "(No current rule.)";
 
   return [
-    "TASK: generate custom-rule JavaScript for Chrome extension Adamancia Vault — Website Blocker & Focus Timer.",
+    "TASK: generate custom-rule JavaScript for the native desktop Adamancia Vault app (Mac Vault or Windows Vault). This is application-level blocking, not browser website blocking.",
     "OUTPUT_CONTRACT: put only the final valid JavaScript source inside one copyable fenced code block labeled javascript; no prose before or after the code block.",
     "TOP_LEVEL_SHAPE: (event, helpers) => { /* register handlers here */ }",
-    "EXECUTION_MODEL: top-level function runs once per Run click or enable; it must register persistent handlers. Do not do the blocking work only at top level. Handlers persist until Run again, disable, delete, or same (type,id) re-register. Custom rules ALWAYS run (no built-in schedule). Sandbox is long-lived and shared by groups. Keep synchronous work bounded. No infinite loops, network fetches, external packages, eval/new Function, DOM globals, chrome APIs, timers like setInterval for rule logic, or assumptions that browser/page globals exist.",
+    "EXECUTION_MODEL: the top-level function runs once when the rule loads and must register persistent handlers. Handlers remain until Run again, disable, or delete. Keep registration and every handler synchronous and bounded. A deadline terminates non-returning code. Do not use network access, external packages, eval/new Function, DOM or chrome APIs, worker/message APIs, setTimeout/setInterval, or browser/page globals.",
+    "IDENTITIES: use the exact identity shown by the desktop app picker. On macOS this is normally a bundle ID such as com.apple.Safari. On Windows it may be an AUMID or executable path. Do not invent or normalize identities.",
     "USER_REQUEST_BEGIN",
     demand,
     "USER_REQUEST_END",
-    "API.EVENT_REGISTRY:",
-    "event.on(type,id,handler,options?) -> boolean (register or replace by type+id); event.off(type,id) -> boolean; event.emit(type,data?,{scope?}) -> void. Raw aliases also exist: event.register/unregister/post, event.getEvent(type,id), event.getEvents(type), event.countRegistered(type), event.unregisterAll(type). Reserved types starting '_' are rejected. options.priority default 0 (higher runs first). options.intervalMs throttles frequent handlers. There are NO per-type convenience methods (no registerTickEvent/countTickRegistered etc.) — always pass the raw type string, e.g. event.on('tickEvent','my-id',(ev,h)=>{}).",
-    "BUILTIN_EVENT_TYPES: tickEvent, openWebEvent, closeWebEvent, webChangedEvent, timerEnded, snoozePress, panelEvent, localFileEvent, pageHeartbeatEvent. (There are no switch/refresh events: webChangedEvent + its flags cover same-tab URL changes, cross-domain hops, first load, and reloads.)",
-    "EVENT_SEMANTICS: tickEvent per-open-tab 1s tick data {intervalMs} with at most one tick per tab per second; pageHeartbeatEvent active visible tab heartbeat data {elapsedMs}; openWebEvent new tab created data {previousUrl,isNewTab}; closeWebEvent tab close (no post-URL; the tab is gone) data {reason,nextUrl}; webChangedEvent one committed top-level navigation/reload data {previousUrl,previousHostname,sameDomain,isFirstLoad,isReload,transition:'commit'} — derive same-tab URL change (!isFirstLoad && url!==previousUrl), cross-domain hop (!sameDomain), first load (isFirstLoad), and refresh (isReload) from these flags; timerEnded owning group only data {timerId,displayName,direction,currentMs}; snoozePress custom group only when Start Snooze clicked data {triggeredAt}; panelEvent owning group only data {panelId,controlId,eventName,value,values,key,code,keyInfo} and ev.panelId/ev.controlId/ev.eventName/ev.value/ev.values/ev.key/ev.code/ev.keyInfo shortcuts; localFileEvent owning group only data {eventName,action,path,directoryPath,requestId,ok,text,value,entries,exists,bytes,error} and same-name ev shortcuts. New tab/about blank exposed as ev.url === ''.",
-    "HANDLER_SHAPE: (ev, helpers) => void. ev fields: type, groupId, tabId, pageId, url, hostname, time:{now,month,dayOfMonth,dayName,hour,minute}, data. ev methods: preventDefault(), stopPropagation(), setResult(number|string), getResult(), post(type,data,{scope?}), setRedirectLink(url), getRedirectLink(). setResult(-1)=block, 0=neutral/pass, 1=allow override; string result is redirect URL; setRedirectLink sets redirect target for blocked result; stopPropagation halts all later handlers across groups. ev is Proxy: custom fields can be assigned/read during same dispatch.",
-    "HELPERS.TOP: helpers.now, helpers.currentUrl, helpers.groupId, helpers.platform(name?) (raw platform feed control — see HELPERS.PLATFORM), helpers.log(...), helpers.warn(...), helpers.error(...), helpers.logScreen(...), helpers.warnScreen(...), helpers.errorScreen(...), helpers.logPopup(...), helpers.warnPopup(...), helpers.errorPopup(...), getLogHelper, getDomainHelper, getDomainUtility, getTimerHelper, getPanelHelper, getPersistenceHelper, getRedirectionHelper, getDOMHelper, getNavigationHelper, getStorageHelper, getLocalFolderHelper, getTabHelper, getPlatformHelper.",
-    "HELPERS.LOG: log=helpers.getLogHelper(); log.log/warn/error write popup Log panel and follow Settings → Show custom rule logs on web pages for page toasts. log.logScreen/warnScreen/errorScreen write screen/page toast only. log.logPopup/warnPopup/errorPopup write popup only. Top-level helpers.log*, warn*, error* shortcuts mirror these. Logs are capped/rate-limited.",
-    "HELPERS.DOMAIN: d=helpers.getDomainHelper(); d.hostnameOf(url); d.pathnameOf(url); d.matches(hostname,site); d.getPlatform(url); d.isYouTubeHost(host); d.isTikTokHost(host); d.isInstagramHost(host); d.isFacebookHost(host); d.isTwitchHost(host); d.isRedditHost(host); d.isDiscordHost(host); d.isEmptyStartPage(url); d.matchesAny(url,regexOrArrayOrString); d.pathStartsWith(url,path); d.queryHas(url,key,value?); d.queryGet(url,key); d.isSearchPage(url); d.isInfiniteFeedUrl(url); d.sameSection(a,b). Platform URL classifiers: d.youtube()/tiktok()/instagram()/facebook()/twitch() each expose isPlatformUrl(url), isShortUrl(url), isVideoUrl(url), isPostUrl(url), isHomePage(url), extractAuthor(url), extractVideoId(url).",
-    "HELPERS.TIMER: tm=helpers.getTimerHelper(); tm.groupId; tm.create({id,displayName?,direction?,currentMs?,minMs?,maxMs?,stepMs?,overlayStyle?,scope?,domain?,accrueWhen?}) resets; tm.getOrCreateTimer({...same...}) creates only when missing and otherwise returns the existing timer unchanged (predicates not replaced); init fields apply only on creation. direction forward/backward; currentMs ms. OPTIONS: minMs/maxMs clamp currentMs (forward stops at maxMs, backward stops at minMs); stepMs quantizes each auto-tick (e.g. 60000 = whole-minute accrual); overlayStyle is a JSON style object for the on-page chip (known string keys color,background,fontSize,fontWeight,border,borderRadius,padding,opacity,icon). PREDICATES: scope(url) auto-ticks on the visible page heartbeat; domain(url) controls overlay display; accrueWhen(url) is an extra gate so the timer ticks only when BOTH scope and accrueWhen are true (e.g. only while a video plays). Mutators: setDirection(id,dir), setCurrentMs(id,ms), addMs(id,deltaMs), subMs(id,deltaMs), setBounds(id,minMs,maxMs), setStep(id,stepMs), setOverlayStyle(id,style), setDisplayName(id,name). Reads: getCurrentMs(id), isExpired(id), isPaused(id), getDirection(id), getDisplayName(id), exists(id), getState(id)->{id,displayName,direction,isPaused,currentMs,isExpired,minMs?,maxMs?,stepMs?,overlayStyle?}|null, list()->array. tm.delete(id), pause(id), resume(id). Timers do not block by themselves; check isExpired in an open/switch/webChanged handler and then redirect.",
-    "HELPERS.PANEL: pn=helpers.getPanelHelper(); pn.create({id,title?,description?,position?,align?,layout?,priority?,width?,textSize?,theme?,ariaLabel?,role?,autoFocus?,scope?,domain?,controls?,onEvent?,onChange?,onClick?,onInput?,onFocus?,onBlur?,onSubmit?,onClose?,onMount?,onUnmount?,onKey?}) replaces/resets; pn.getOrCreatePanel(config) creates only when missing and otherwise returns existing panel unchanged; pn.update(id,patch), delete(id), show(id), hide(id), setValue(panelId,controlId,value), updateControl(panelId,controlId,patch), enable/disable(panelId,controlId), setOptions(panelId,controlId,options), setText(panelId,controlId,text), setTheme(panelId,theme), setTitle(panelId,title), setDescription(panelId,text), getValue(panelId,controlId), getValues(panelId), getState(id), list(); builders: notice(config), confirm(config), checklist(config), form(config). Controls: {id,type,label?,text?,placeholder?,value?,options?,min?,max?,step?,timerId?,timer?,format?,showExpired?,action?,layout?,priority?,width?,height?,rows?,disabled?,ariaLabel?,autoFocus?,onEvent?,onChange?,onClick?,onInput?,onFocus?,onBlur?,onSubmit?,onClose?,onMount?,onUnmount?,onKey?}; types text, checkbox, select, textInput, textarea, button, section, timer, numberInput, range, toggle, radio, date, time, color, pin, html. html mounts raw markup via control.html (sanitized: <script> and on* handlers stripped, javascript: URLs neutralized) — use it for custom layouts/icons. Read/write any control with getValue/getValues/setValue/updateControl. section has nested controls and its own layout/priority. timer is display-only: use timerId to hydrate from getTimerHelper state, or timer: tm.getState(id) for a snapshot. numberInput/range support min/max/step; radio uses options; toggle is boolean. Layout presets: vertical, compact, comfortable, spacious, inline, row, wrap, twoColumn, grid, split, form, toolbar, stack. Higher priority panels/controls/sections appear earlier/closer to corner. Per-control width accepts px/%, full, auto; height accepts px/auto; rows affects textarea. If panel width is omitted, the outer panel auto-fits content tightly. Panel events include change/click/input/focus/blur/submit/close/mount/unmount/key; key events expose ev.key/ev.code/ev.keyInfo. scope/domain decide where shown.",
-    "HELPERS.PERSISTENCE: p=helpers.getPersistenceHelper(); p.get(key,defaultValue?), set(key,valueJSON), delete(key), has(key), keys(), entries(), clear(), size(). Values JSON-serializable; scoped to group.",
-    "HELPERS.REDIRECT: r=helpers.getRedirectionHelper(); r.get(); r.set(url); r.setRedirectLink(url); r.getRedirectLink(); r.createMessageUrl(message). ev.setRedirectLink can also be used directly.",
-    "HELPERS.DOM: dom=helpers.getDOMHelper(); dom.hide(selector), show(selector), addClass(selector,className), removeClass(selector,className), setText(selector,text), click(selector), injectCss(css,id?), removeInjectedCss(id), scrollTo(selector). These enqueue content-script DOM intents, applied after handler returns.",
-    "HELPERS.NAVIGATION: nav=helpers.getNavigationHelper(); nav.back(), forward(), reload(), goTo(url), closeTab(). These enqueue tab navigation intents for current event tab.",
-    "HELPERS.STORAGE: s=helpers.getStorageHelper(); includes persistence methods plus s.requestAsyncGet(key), s.requestAsyncSet(key,valueJSON). Async results arrive via follow-up custom storage events; do not await.",
-    "HELPERS.LOCAL_FOLDER: lf=helpers.getLocalFolderHelper(); requires Settings → Local File Folder. Supported files: .txt, .csv, .json inside the granted folder only. Request methods are async and return requestId: requestRead(path), requestWrite(path,text), requestAppend(path,text), requestList(directoryPath?), requestExists(path), requestReadJson(path), requestWriteJson(path,valueJSON). Results arrive via event.on('localFileEvent',id,(ev,h)=>{}) with ev.eventName read/write/append/list/exists/error, ev.path, ev.directoryPath, ev.requestId, ev.text, ev.value, ev.entries, ev.exists, ev.error.",
-    "HELPERS.TAB: tab=helpers.getTabHelper(); tab.list(), getActiveTab(), getById(id), countOpen(), requestRefresh(). Uses snapshot bundled with dispatch.",
-    "HELPERS.PLATFORM (RAW): p=helpers.platform('youtube') OR helpers.platform().youtube(). Platforms: youtube, tiktok, instagram, facebook, twitch. Raw methods on each: p.hide(slot,predicate,opts?) installs a per-(group,platform,slot) hide predicate; p.hide(predicate,opts?) (no slot) applies to every feed slot; p.allow(slot,predicate,opts?) / p.allow(predicate,opts?) installs a RESCUE predicate (effect 'allow') that overrides lower-priority block groups in the shared cascade; p.show(slot?) clears one slot's predicate (or all when slot omitted); p.surface(name,'hide'|'show') toggles a whole region; p.timer(slot,opts) caps subsection time and returns its id; p.snapshot() returns the raw per-platform snapshot or null; introspection p.slots()/p.surfaces()/p.timerSlots(); URL classifiers p.isPlatformUrl/isShortUrl/isVideoUrl/isPostUrl/isHomePage/extractAuthor/extractVideoId. opts: {blockPageOnVisit?} (redirect the page when a block predicate matches). Calling hide/show/timer with a slot the platform doesn't support throws TypeError. One predicate per (group,platform,slot); each call replaces it.",
-    "PLATFORM_SLOTS: youtube slots=shorts,videos,posts,comments,live surfaces=home,comments,shortButton,live timerSlots=shorts,videos,posts. tiktok slots=videos,comments,live surfaces=home,comments,live timerSlots=videos. instagram slots=shorts(Reels),posts,comments surfaces=home,comments timerSlots=shorts,posts. facebook slots=shorts(Reels),videos,posts,comments,live surfaces=home,comments,live timerSlots=shorts,videos,posts. twitch slots=shorts(Clips),streams,videos,live surfaces=home,comments,live timerSlots=shorts,streams,videos.",
-    "PLATFORM_PREDICATE_ITEM: the predicate receives a raw feed-card item={url,name,title,author,channelId,length,views,publishedAt,description,live,sponsored,algorithmic,videoForm}; most fields may be null/false. On YouTube the item is enriched with item.creator={id,subCount,tags,[],name,handle} (subCount may be null until the channel resolves — null-check and fail open). videoForm is one of short/long/post. Predicates run async in the sandbox over batches of cards; keep them pure and fast. Example: helpers.platform('youtube').hide('videos', it => it.creator && typeof it.creator.subCount==='number' && it.creator.subCount < 100000).",
-    "COMMON_PATTERNS: hide feed cards by creator/tag/subcount -> helpers.platform(site).hide(slot,predicate) (re-installs on each Run; persists across navigations). Rescue/whitelist -> helpers.platform(site).allow(slot,predicate). Whole-page block -> in event.on('webChangedEvent'[,'openWebEvent']) handler, if the URL matches, call ev.setRedirectLink(url?) then ev.setResult(-1) (network-level blocking no longer exists; blocking is redirect-based). Time budgets -> getOrCreateTimer with scope/domain plus a handler that checks isExpired and redirects. Hide whole regions -> helpers.platform(site).surface('home','hide').",
+    "EVENT_REGISTRY: event.on(type,id,handler,options?) registers or replaces by type+id; event.off(type,id); event.emit(type,data?,options?) is inert at top level. Aliases: register, unregister, unregisterAll, getEvent, getEvents, countRegistered, post. options.priority sorts higher first; options.intervalMs throttles frequent handlers. Typed registerX aliases exist, but event.on with the raw event name is preferred.",
+    "NATIVE_EVENTS: tickEvent every ~1 second; timerEnded; snoozePress; panelEvent; localFileEvent; openAppEvent; closeAppEvent; focusEvent; unfocusEvent; minimizeEvent; unminimizeEvent; switchAppEvent; appChangedEvent. Lifecycle events expose data.bundleId. switchAppEvent exposes data.previousAppId/currentAppId. appChangedEvent adds data.reason. tick/focus context exposes data.appId, data.appName, data.groupName, data.isBrowser='false', and data.allApps (JSON string).",
+    "EVENT_OBJECT: ev.type, groupId/groupID, target, url ('app://'+focused identity), hostname (focused identity), time:{now,month,dayOfMonth,dayName,hour,minute}, data. ev.stopPropagation(); ev.setResult(-1) shields the focused/target app, 0 is neutral, 1 allows; ev.getResult(); ev.setShieldMessage(text); ev.allow(reason); ev.close(appId?); ev.block(appId?); ev.unblock(appId?); ev.open(appId); ev.post(type,data,options?). panelEvent and localFileEvent also expose their data as direct ev fields.",
+    "LOGGING: helpers.log/warn/error and *Screen/*Popup variants; helpers.getLogHelper() exposes the same methods. Logs are capped and rate-limited.",
+    "WINDOW_HELPER: w=helpers.getWindowHelper(); w.current()->{id,name,isBrowser:false}; w.all()->running app array; w.close(appId); w.block(appId); w.unblock(appId); w.isBlocked(appId); w.getBlocked(). Dynamic blocks are owned by this rule group and are cleared when the group reloads, disables, or is deleted. ev.open(appId) launches an app.",
+    "TIMER_HELPER: tm=helpers.getTimerHelper(); tm.create(config); tm.getOrCreateTimer(config); delete/pause/resume; setDirection/setCurrentMs/addMs/subMs/setBounds/setStep/setOverlayStyle/setDisplayName; getCurrentMs/isExpired/isPaused/getDirection/getDisplayName/exists/getState/list. config includes id, displayName, direction ('forward'|'backward'), currentMs, minMs, maxMs, stepMs, scope, domain, accrueWhen. On native desktop, scope/domain/accrueWhen receive the focused application identity; a string scope is exact identity matching. Timers do not block by themselves, so check isExpired in a handler and call ev.block/ev.setResult.",
+    "PERSISTENCE_AND_STORAGE: p=helpers.getPersistenceHelper(); p.get(key,default?), set(key,jsonValue), delete, has, keys, entries, clear, size. helpers.getStorageHelper() offers the same synchronous group-scoped operations. State is removed when the rule group is unloaded.",
+    "PANELS: pn=helpers.getPanelHelper(); create/getOrCreatePanel/update/delete/show/hide, control value/update/enable/disable/options/text methods, theme/title/description reads and list. Controls include text, checkbox, select, textInput, textarea, button, section, timer, numberInput, range, toggle, radio, date, time, color, pin, html. panelEvent provides panelId, controlId, eventName, value, values, key, and code.",
+    "LOCAL_FILES: lf=helpers.getLocalFolderHelper(); requestRead, requestWrite, requestAppend, requestList, requestExists, requestReadJson, requestWriteJson return request IDs. Results arrive through localFileEvent with requestId, eventName/action, ok, path, text/value/entries/exists/bytes/error. Only app-managed .txt/.csv/.json files are available.",
+    "URL_CLASSIFIERS_ONLY: helpers.getDomainHelper()/getDomainUtility() and helpers.platform(name) retain URL classification helpers for synthetic/app strings, but platform feed mutation is inert. getDOMHelper, getNavigationHelper, getRedirectionHelper, and getTabHelper are browser-only and unavailable on native desktop. Never generate website, tab, redirect, DOM, feed-card, or browser-navigation rules here.",
+    "COMMON_PATTERNS: permanent app block -> tickEvent/focusEvent checks data.appId then ev.block(id)+ev.setResult(-1). Launch close -> openAppEvent checks data.bundleId then ev.close(id). Scheduled block -> tickEvent uses ev.time.hour and calls ev.block(id) inside the window and ev.unblock(id) outside. Daily budget -> backward timer scoped to the app plus persistence for the local date; block once tm.isExpired(id).",
     "CURRENT_RULE_BEGIN",
-    "BEGIN_CURRENT_RULE",
     existingRule,
-    "END_CURRENT_RULE",
     "CURRENT_RULE_END"
   ].join("\n");
 }
@@ -7419,15 +7406,23 @@ if (connectionServerToggle) {
 }
 
 if (connectionConnectButton) {
-  connectionConnectButton.addEventListener("click", () => {
-    updateConnectionSettings({ clientEnabled: true })
-      .then(() => {
-        try {
-          chrome.runtime.sendMessage({ type: "connection-connect" });
-        } catch (_) {}
-        applyConnectionStatus({ ...state.connectionStatus, state: "connecting" });
-      })
-      .catch(() => {});
+  connectionConnectButton.addEventListener("click", async () => {
+    const current = getConnectionSettings();
+    const entered = await uiDialog.prompt(
+      t("connection.pairingKeyPrompt"), current.pairingKey || "",
+      { confirmText: t("connection.connect"), cancelText: t("manual.close") }
+    );
+    if (entered === null) return;
+    const pairingKey = window.CBBridgeProtocol.normalizePairingKey(entered);
+    if (!pairingKey) {
+      applyConnectionStatus({ ...state.connectionStatus, state: "error", error: "pairing-key-required" });
+      return;
+    }
+    try {
+      await updateConnectionSettings({ clientEnabled: true, pairingKey });
+      chrome.runtime.sendMessage({ type: "connection-connect", pairingKey });
+      applyConnectionStatus({ ...state.connectionStatus, state: "connecting", error: "" });
+    } catch (_) {}
   });
 }
 
@@ -7519,6 +7514,9 @@ let __cbAppBlockingGranted = null;
 function applyPermissionState(granted) {
   __cbAppBlockingGranted = granted;
   const isGranted = granted === true;
+  // The native host is the authority here. Once it observes that macOS granted
+  // Accessibility, clear the request modal instead of leaving a stale prompt.
+  if (isGranted && permissionModal) permissionModal.classList.add("hidden");
   if (deviceControlCopy) {
     deviceControlCopy.textContent = isGranted
       ? t("settings.deviceControlCopyGranted")

@@ -21,6 +21,7 @@
  * before the editor reads storage.
  */
 (function () {
+  window.__CB_DESKTOP_PROGRAM_ID = "macapp";
   if (window.chrome && window.chrome.__cbShim) {
     return;
   }
@@ -277,85 +278,23 @@
     }
   };
 
-  // ----- custom-rule syntax check (runs in-page, like the sandbox) -----
-
-  function noop() {}
-
-  function stubHelpers() {
-    return new Proxy(
-      {},
-      {
-        get: function () {
-          return function () {
-            return new Proxy({}, { get: function () { return noop; } });
-          };
-        }
-      }
-    );
-  }
-
-  function countingRegistry(onRegister) {
-    var api = {
-      register: function () {
-        onRegister();
-        return true;
-      },
-      unregister: function () { return true; },
-      unregisterAll: function () { return 0; },
-      getEvent: function () { return null; },
-      getEvents: function () { return {}; },
-      countRegistered: function () { return 0; },
-      post: noop
-    };
-    var MAX_HANDLERS = 1000;
-    var registered = 0;
-    var typed = [
-      "TickEvent", "TimerEnded", "SnoozePress",
-      "PanelEvent", "LocalFileEvent",
-      "OpenAppEvent", "CloseAppEvent", "FocusEvent", "UnfocusEvent",
-      "MinimizeEvent", "UnminimizeEvent", "SwitchAppEvent", "AppChangedEvent",
-      "UsageThresholdReached", "ScheduleChanged", "ShieldAction"
-    ];
-    function cappedRegister() {
-      if (registered < MAX_HANDLERS) { registered++; onRegister(); return true; }
-      return false;
-    }
-    typed.forEach(function (name) {
-      api["register" + name] = cappedRegister;
-      api["register" + name + "Event"] = cappedRegister;
-      api["get" + name] = function () { return null; };
-      api["get" + name + "s"] = function () { return {}; };
-      api["get" + name + "Event"] = function () { return null; };
-      api["get" + name + "Events"] = function () { return {}; };
-      api["count" + name + "Registered"] = function () { return 0; };
-      api["count" + name + "EventRegistered"] = function () { return 0; };
-    });
-    return new Proxy(api, {
-      get: function (target, prop) {
-        if (prop in target) return target[prop];
-        if (typeof prop === "string" && prop.indexOf("register") === 0) {
-          return cappedRegister;
-        }
-        return noop;
-      }
-    });
-  }
+  // ----- custom-rule syntax check (parse-only; never executes user code) -----
 
   function checkSyntax(source) {
     try {
-      var count = 0;
-      var factory = new Function('"use strict"; return (' + String(source || "") + "\n);");
-      var rule = factory();
-      if (typeof rule !== "function") {
+      var text = String(source || "");
+      // Parse only. Executing the registration body here would run untrusted
+      // code in the privileged editor page and could freeze its UI before the
+      // native runtime's execution deadline has a chance to intervene.
+      new Function('"use strict"; return (' + text + "\n);");
+      if (!/=>|\bfunction\b/.test(text)) {
         return { ok: true, result: { ok: false, error: "Rule must evaluate to a function." } };
       }
-      try {
-        rule(countingRegistry(function () { count += 1; }), stubHelpers());
-      } catch (runErr) {
-        // Registration body referenced a helper at top level; syntax is
-        // still valid, so report ok with however many handlers registered.
-        return { ok: true, result: { ok: true, handlers: count } };
-      }
+      // Registration count is a UI preview only; the isolated native runtime
+      // supplies the authoritative count after Run. Cover raw event.on and
+      // the register/registerX aliases without evaluating the source.
+      var registrations = text.match(/\b(?:event|events)\s*\.\s*(?:on|register(?:[A-Z_$][\w$]*)?)\s*\(/g) || [];
+      var count = Math.min(1000, registrations.length);
       return { ok: true, result: { ok: true, handlers: count } };
     } catch (parseErr) {
       return {
