@@ -1,0 +1,103 @@
+[
+  {
+    "id": "feed-title-only",
+    "purpose": "A normal feed card exposes the title and stable identifiers, but not an AI summary.",
+    "availability": { "entryID": true, "sourceID": true, "title": true, "description": false, "suppliedTags": false, "aiSummary": false },
+    "entry": {
+      "requestID": "fixture-feed-title-only",
+      "platform": "youtube",
+      "entryID": "feed-clash-1",
+      "sourceID": "youtube:channel:fixture-clash",
+      "surface": "feed",
+      "evidence": { "title": "Clash Royale deck gameplay - ranked match", "suppliedTags": [], "metadata": {} },
+      "policyIDs": ["clash-royale-focus"]
+    },
+    "expectedTags": ["content.entities.clash-royale", "content.topics.gaming"],
+    "expectedAction": "dim"
+  },
+  {
+    "id": "watch-expanded",
+    "purpose": "A fully opened watch page can expose description, creator-provided tags, and an optional generated summary.",
+    "availability": { "entryID": true, "sourceID": true, "title": true, "description": true, "suppliedTags": true, "aiSummary": true },
+    "entry": {
+      "requestID": "fixture-watch-expanded",
+      "platform": "youtube",
+      "entryID": "watch-clash-1",
+      "sourceID": "youtube:channel:fixture-clash",
+      "surface": "page",
+      "evidence": {
+        "title": "How to build a Clash Royale deck",
+        "text": "A guide to Clash Royale ranked deck choices.",
+        "summary": "Gameplay guide for Clash Royale.",
+        "suppliedTags": ["clash royale", "guide"],
+        "metadata": { "viewCount": 120000 }
+      },
+      "policyIDs": ["clash-royale-focus"]
+    },
+    "expectedTags": ["content.entities.clash-royale", "content.formats.tutorial"],
+    "expectedAction": "block"
+  },
+  {
+    "id": "shorts-minimal",
+    "purpose": "Shorts can have only a title at collection time.",
+    "availability": { "entryID": true, "sourceID": true, "title": true, "description": false, "suppliedTags": false, "aiSummary": false },
+    "entry": {
+      "requestID": "fixture-shorts-minimal",
+      "platform": "youtube",
+      "entryID": "short-minecraft-1",
+      "sourceID": "youtube:channel:fixture-minecraft",
+      "surface": "feed",
+      "evidence": { "title": "Minecraft creeper surprise", "suppliedTags": [], "metadata": {} },
+      "policyIDs": []
+    },
+    "expectedTags": ["content.entities.minecraft"],
+    "expectedAction": "allow"
+  },
+  {
+    "id": "localized-no-title",
+    "purpose": "Localization or a delayed DOM can yield summary-only evidence; it must be treated as limited evidence.",
+    "availability": { "entryID": true, "sourceID": true, "title": false, "description": false, "suppliedTags": false, "aiSummary": true },
+    "entry": {
+      "requestID": "fixture-localized-summary",
+      "platform": "youtube",
+      "entryID": "localized-1",
+      "sourceID": "youtube:channel:fixture-clash",
+      "surface": "feed",
+      "evidence": { "summary": "Clash Royale gameplay discussion.", "suppliedTags": [], "metadata": {} },
+      "policyIDs": ["clash-royale-focus"]
+    },
+    "expectedTags": ["content.entities.clash-royale"],
+    "expectedAction": "dim"
+  },
+  {
+    "id": "live-feed-card",
+    "purpose": "A live card retains visible title and source identity; live status is display metadata, never invented evidence.",
+    "availability": { "entryID": true, "sourceID": true, "title": true, "description": false, "suppliedTags": false, "aiSummary": false },
+    "entry": {
+      "requestID": "fixture-live-feed",
+      "platform": "youtube",
+      "entryID": "live-clash-1",
+      "sourceID": "youtube:channel:fixture-clash",
+      "surface": "feed",
+      "evidence": { "title": "Clash Royale live ranked gameplay", "suppliedTags": [], "metadata": { "live": true } },
+      "policyIDs": ["clash-royale-focus"]
+    },
+    "expectedTags": ["content.entities.clash-royale", "content.topics.gaming"],
+    "expectedAction": "dim"
+  },
+  {
+    "id": "signed-out-feed",
+    "purpose": "A signed-out feed can lack source identity. The adapter must still classify visible title evidence without fabricating a creator prior.",
+    "availability": { "entryID": true, "sourceID": false, "title": true, "description": false, "suppliedTags": false, "aiSummary": false },
+    "entry": {
+      "requestID": "fixture-signed-out",
+      "platform": "youtube",
+      "entryID": "signed-out-minecraft-1",
+      "surface": "feed",
+      "evidence": { "title": "Minecraft gameplay redstone survival build", "suppliedTags": [], "metadata": {} },
+      "policyIDs": []
+    },
+    "expectedTags": ["content.entities.minecraft", "content.topics.gaming"],
+    "expectedAction": "allow"
+  }
+]

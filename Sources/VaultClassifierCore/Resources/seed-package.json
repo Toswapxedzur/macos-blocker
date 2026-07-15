@@ -1,0 +1,51 @@
+{
+  "packageID": "vault-seed-2026-07-15",
+  "taxonomyVersion": "vault-taxonomy-1",
+  "modelVersion": "vault-model-1",
+  "taxonomy": [
+    { "id": "content", "name": "Content", "predictable": false },
+    { "id": "content.topics", "name": "Topics", "parentID": "content", "predictable": false },
+    { "id": "content.topics.gaming", "name": "Gaming", "parentID": "content.topics" },
+    { "id": "content.topics.technology", "name": "Technology", "parentID": "content.topics" },
+    { "id": "content.topics.learning", "name": "Learning", "parentID": "content.topics" },
+    { "id": "content.topics.music", "name": "Music", "parentID": "content.topics" },
+    { "id": "content.entities", "name": "Entities", "parentID": "content", "predictable": false },
+    { "id": "content.entities.clash-royale", "name": "Clash Royale", "parentID": "content.entities" },
+    { "id": "content.entities.minecraft", "name": "Minecraft", "parentID": "content.entities" },
+    { "id": "content.formats", "name": "Formats", "parentID": "content", "predictable": false },
+    { "id": "content.formats.gameplay", "name": "Gameplay", "parentID": "content.formats" },
+    { "id": "content.formats.tutorial", "name": "Tutorial", "parentID": "content.formats" },
+    { "id": "content.formats.commentary", "name": "Commentary", "parentID": "content.formats" }
+  ],
+  "model": {
+    "biases": {
+      "content.topics.gaming": -1.4,
+      "content.topics.technology": -1.6,
+      "content.topics.learning": -1.7,
+      "content.topics.music": -1.7,
+      "content.entities.clash-royale": -2.2,
+      "content.entities.minecraft": -2.2,
+      "content.formats.gameplay": -1.6,
+      "content.formats.tutorial": -1.8,
+      "content.formats.commentary": -1.8
+    },
+    "weights": {
+      "content.topics.gaming": { "w:clash": 1.3, "w:royale": 1.3, "w:minecraft": 1.7, "w:gaming": 1.3, "w:gameplay": 1.0, "w:deck": 0.8 },
+      "content.topics.technology": { "w:programming": 1.7, "w:software": 1.4, "w:computer": 1.2, "w:iphone": 1.0 },
+      "content.topics.learning": { "w:tutorial": 1.2, "w:lesson": 1.4, "w:learn": 1.2, "w:explained": 1.1 },
+      "content.topics.music": { "w:music": 1.6, "w:cover": 1.1, "w:album": 1.2, "w:song": 1.3 },
+      "content.entities.clash-royale": { "w:clash": 2.1, "w:royale": 2.1, "b:clash_royale": 2.4, "w:supercell": 1.1, "w:deck": 0.8 },
+      "content.entities.minecraft": { "w:minecraft": 2.8, "w:creeper": 1.2, "w:redstone": 1.1 },
+      "content.formats.gameplay": { "w:gameplay": 2.0, "w:match": 0.8, "w:ranked": 0.8, "w:deck": 0.5 },
+      "content.formats.tutorial": { "w:tutorial": 2.0, "w:guide": 1.6, "w:how": 0.7, "w:lesson": 1.0 },
+      "content.formats.commentary": { "w:commentary": 2.0, "w:reaction": 1.4, "w:review": 1.0 }
+    }
+  },
+  "pageThreshold": 0.55,
+  "feedThresholdOffset": 0.05,
+  "sourcePrior": {
+    "maximumWeight": 0.3,
+    "minimumEffectiveEntries": 2,
+    "halfLifeEntries": 250
+  }
+}
