@@ -127,6 +127,19 @@ public struct ClassificationDataset: Codable, Equatable, Sendable, Identifiable 
     }
 }
 
+/// Optional base packages that a local model may be configured to use. The
+/// identifier is deliberately a package identity, not a provider endpoint or
+/// credential. Selecting one stays local and is safe to persist before its
+/// package is available on this Mac.
+public enum LocalBaseEmbedding: String, Codable, Sendable, CaseIterable {
+    case allMiniLML6V2 = "all-MiniLM-L6-v2"
+    case allMPNetBaseV2 = "all-mpnet-base-v2"
+    case multilingualE5Small = "multilingual-e5-small"
+    case multilingualE5Base = "multilingual-e5-base"
+    case multilingualE5Large = "multilingual-e5-large"
+    case bgeM3 = "bge-m3"
+}
+
 public struct LocalModelAsset: Codable, Equatable, Sendable, Identifiable {
     public var id: String
     public var name: String
@@ -136,8 +149,19 @@ public struct LocalModelAsset: Codable, Equatable, Sendable, Identifiable {
     public var datasetRevision: Int
     public var version: Int
     public var isReady: Bool
+    /// The browser platform whose approved records this model trains on. A
+    /// model remains a reusable asset; this only scopes its training corpus.
+    public var trainingPlatformID: String?
+    /// `nil` means use the compact on-device embedding learned from the local
+    /// corpus. A non-nil value records the requested downloadable base package.
+    public var baseEmbeddingID: LocalBaseEmbedding?
+    /// The trained local artifact is persisted with the model asset so an
+    /// explicit run survives an app restart without any server dependency.
+    public var embeddedNeuralModel: EmbeddedNeuralTextClassifier?
+    public var embeddedTrainingReport: EmbeddedNeuralTrainingReport?
+    public var trainedAtMilliseconds: Int64?
 
-    public init(id: String = UUID().uuidString, name: String, treeID: String, treeRevision: Int, datasetID: String, datasetRevision: Int, version: Int = 1, isReady: Bool = false) {
+    public init(id: String = UUID().uuidString, name: String, treeID: String, treeRevision: Int, datasetID: String, datasetRevision: Int, version: Int = 1, isReady: Bool = false, trainingPlatformID: String? = nil, baseEmbeddingID: LocalBaseEmbedding? = nil, embeddedNeuralModel: EmbeddedNeuralTextClassifier? = nil, embeddedTrainingReport: EmbeddedNeuralTrainingReport? = nil, trainedAtMilliseconds: Int64? = nil) {
         self.id = id
         self.name = name
         self.treeID = treeID
@@ -146,6 +170,95 @@ public struct LocalModelAsset: Codable, Equatable, Sendable, Identifiable {
         self.datasetRevision = datasetRevision
         self.version = version
         self.isReady = isReady
+        self.trainingPlatformID = trainingPlatformID
+        self.baseEmbeddingID = baseEmbeddingID
+        self.embeddedNeuralModel = embeddedNeuralModel
+        self.embeddedTrainingReport = embeddedTrainingReport
+        self.trainedAtMilliseconds = trainedAtMilliseconds
+    }
+}
+
+public enum LocalModelTrainingError: Error, Equatable, LocalizedError, Sendable {
+    case incompatibleTree
+    case incompatibleDataset
+    case missingPlatform
+    case noApprovedExamples
+
+    public var errorDescription: String? {
+        switch self {
+        case .incompatibleTree:
+            return "The local model is not configured for this tag tree revision."
+        case .incompatibleDataset:
+            return "The local model is not configured for this classification dataset revision."
+        case .missingPlatform:
+            return "Choose a classification-data platform before training this local model."
+        case .noApprovedExamples:
+            return "Add approved manual or LLM-assisted labels for this tree and platform before training."
+        }
+    }
+}
+
+/// Converts immutable, approved classification rows into on-device neural
+/// samples. It never treats browsing activity, pending LLM suggestions, legacy
+/// imports, or labels from another tree revision as training data.
+public enum LocalModelTrainer {
+    public static let defaultEpochs = 48
+
+    public static func approvedExamples(
+        for tree: TagTreeAsset,
+        dataset: ClassificationDataset,
+        platformID: String
+    ) -> [EmbeddedNeuralTrainingExample] {
+        let availableTagIDs = Set(tree.nodes.lazy.filter { !$0.isRetired }.map(\.id))
+        return dataset.records.compactMap { record in
+            guard record.review == .approved,
+                  record.origin == .manual || record.origin == .llmAssist,
+                  record.platformID == platformID,
+                  record.treeRevision == tree.revision,
+                  !record.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return nil
+            }
+            let positiveLabelIDs = record.tagIDs.filter { availableTagIDs.contains($0) }
+            guard !positiveLabelIDs.isEmpty else { return nil }
+            return .init(text: record.title, positiveLabelIDs: positiveLabelIDs)
+        }
+    }
+
+    public static func train(
+        _ model: LocalModelAsset,
+        tree: TagTreeAsset,
+        dataset: ClassificationDataset,
+        epochs: Int = defaultEpochs,
+        configuration: EmbeddedNeuralModelConfiguration = .init()
+    ) throws -> LocalModelAsset {
+        guard model.treeID == tree.id, model.treeRevision == tree.revision else {
+            throw LocalModelTrainingError.incompatibleTree
+        }
+        guard model.datasetID == dataset.id, model.datasetRevision == dataset.revision else {
+            throw LocalModelTrainingError.incompatibleDataset
+        }
+        guard let platformID = model.trainingPlatformID, !platformID.isEmpty else {
+            throw LocalModelTrainingError.missingPlatform
+        }
+        let examples = approvedExamples(for: tree, dataset: dataset, platformID: platformID)
+        let labelIDs = Array(Set(examples.flatMap(\.positiveLabelIDs))).sorted()
+        guard !examples.isEmpty, !labelIDs.isEmpty else {
+            throw LocalModelTrainingError.noApprovedExamples
+        }
+
+        var classifier = try EmbeddedNeuralTextClassifier(
+            configuration: configuration,
+            labelIDs: labelIDs,
+            trainingExamples: examples
+        )
+        let report = try classifier.train(examples, epochs: epochs)
+        var trained = model
+        trained.version += 1
+        trained.isReady = true
+        trained.embeddedNeuralModel = classifier
+        trained.embeddedTrainingReport = report
+        trained.trainedAtMilliseconds = WorkspaceCatalog.now()
+        return trained
     }
 }
 
@@ -229,7 +342,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         // an optional import rather than an imposed first node or hierarchy.
         let tree = TagTreeAsset(id: "vault-starter", name: "Vault starter tree", nodes: [])
         let dataset = ClassificationDataset(id: "local-dataset", name: "Local classification data")
-        let model = LocalModelAsset(id: "local-neural-model", name: "Local neural model", treeID: tree.id, treeRevision: tree.revision, datasetID: dataset.id, datasetRevision: dataset.revision)
+        let model = LocalModelAsset(id: "local-neural-model", name: "Local neural model", treeID: tree.id, treeRevision: tree.revision, datasetID: dataset.id, datasetRevision: dataset.revision, trainingPlatformID: "youtube")
         return .init(trees: [tree], datasets: [dataset], models: [model], bindings: [.init(treeID: tree.id, datasetID: dataset.id)])
     }
 
