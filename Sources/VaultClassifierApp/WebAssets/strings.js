@@ -1,7 +1,6 @@
 window.VaultClassifierStrings = Object.freeze({
   "app.title": "Vault Classifier",
   "app.loading": "Loading the local Vault Classifier shell…",
-  "hero.subtitle": "Local entry classification, policies, and correction learning on this Mac.",
   "hero.offline": "OFFLINE ON THIS MAC",
   "navigation.aria": "Classifier workspaces",
   "navigation.title": "Classifier work",
