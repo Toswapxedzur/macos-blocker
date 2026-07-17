@@ -8,8 +8,13 @@
   let activeTagPanel = null;
   let tagDrag = null;
   let suppressTagClick = false;
+  let connectionSource = null;
+  let selectedTagNode = null;
   const layoutTraceSignatures = new Map();
   const treeViewportPositions = new Map();
+  const editorViewportPositions = new Map();
+  const pendingTagRenameTimers = new Map();
+  const pendingTagRenames = new Map();
 
   const esc = (value) => String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -59,6 +64,10 @@
     return `<label class="field"><span class="field-label">${tx(labelKey)}${hintKey ? ` · ${tx(hintKey)}` : ""}</span><select class="select-control" data-field="${esc(key)}">${options.map(([id, labelKey]) => `<option value="${esc(id)}"${selected(value, id)}>${tx(labelKey)}</option>`).join("")}</select></label>`;
   }
 
+  function valueSelectField(labelKey, hintKey, key, value, options, extra = "") {
+    return `<label class="field"><span class="field-label">${tx(labelKey)}${hintKey ? ` · ${tx(hintKey)}` : ""}</span><select class="select-control" data-field="${esc(key)}" ${extra}>${options.map(([id, label]) => `<option value="${esc(id)}"${selected(value, id)}>${esc(label)}</option>`).join("")}</select></label>`;
+  }
+
   function toggle(labelKey, key, value) {
     return `<label class="toggle-row"><input type="checkbox" data-field="${esc(key)}"${checked(value)}><span>${tx(labelKey)}</span></label>`;
   }
@@ -102,7 +111,7 @@
           </div></section>
           <div class="sidebar-status"><strong>${tx("navigation.localProfile")}</strong><br><span class="small-copy">${tx("navigation.assetCopy")}</span></div>
         </aside>
-        <section class="editor-panel">${content}</section>
+        <section class="editor-panel" data-editor-panel data-workspace="${esc(state.workspace)}">${content}</section>
       </div>
     </div>`;
   }
@@ -240,39 +249,91 @@
       const panelExtentY = panelState ? panelState.y + 214 : 0;
       const mapWidth = Math.max(640, nodeExtentX + 28, panelExtentX + 20);
       const mapHeight = Math.max(320, nodeExtentY + 28, panelExtentY + 20);
-      const selectedNode = panelState?.nodeID ? nodeByID.get(panelState.nodeID) : null;
-      const parentChoices = (node, selectedParentID) => `<option value="">${tx("tree.rootLevel")}</option>${nodes.filter((candidate) => candidate.id !== node?.id).map((candidate) => `<option value="${esc(candidate.id)}"${selected(selectedParentID || "", candidate.id)}>${esc(candidate.name)}</option>`).join("")}`;
+      const selectedNodeID = selectedTagNode?.treeID === tree.id ? selectedTagNode.nodeID : "";
+      const popoverNode = panelState?.nodeID ? nodeByID.get(panelState.nodeID) : null;
+      const connectionState = connectionSource?.treeID === tree.id ? connectionSource : null;
       const popover = panelState ? (() => {
-        const isEdit = panelState.kind === "edit" && selectedNode;
-        const parentID = isEdit ? selectedNode.parentID : panelState.parentID;
-        const nodeID = isEdit ? selectedNode.id : "";
-        const titleKey = isEdit ? "tree.editNode" : "tree.createNode";
-        const action = isEdit ? "updateTag" : "addTag";
-        return `<section class="tree-popover" style="left:${panelState.x}px;top:${panelState.y}px" data-tree-popover data-form-id="tag-popover-form"><div class="tree-popover-head"><span class="eyebrow">${tx(titleKey)}</span><button class="tree-popover-close" data-action="cancelTagPanel" title="${tx("tree.cancel")}" aria-label="${tx("tree.cancel")}">×</button></div><div class="tree-form">${field(isEdit ? "tree.nodeName" : "tree.tagName", "", "name", isEdit ? selectedNode.name : "")}<label class="field"><span class="field-label">${tx("tree.parent")}</span><select class="select-control" data-field="parentID">${parentChoices(isEdit ? selectedNode : null, parentID)}</select></label><div class="action-row"><button class="primary" data-action="${action}" data-form="tag-popover-form" data-tree-id="${esc(tree.id)}"${nodeID ? ` data-node-id="${esc(nodeID)}"` : ""}>${tx(isEdit ? "tree.saveNode" : "tree.createNode")}</button>${isEdit ? `<button class="secondary" data-action="toggleTagRetirement" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx(selectedNode.retired ? "tree.restore" : "tree.retire")}</button>` : ""}</div></div></section>`;
+        const isTreeEdit = panelState.kind === "tree";
+        const isTreeDelete = panelState.kind === "delete-tree";
+        const isEdit = panelState.kind === "edit" && popoverNode;
+        const nodeID = isEdit ? popoverNode.id : "";
+        const titleKey = isTreeDelete ? "tree.confirmDelete" : isTreeEdit ? "tree.renameTree" : isEdit ? "tree.editNode" : "tree.createNode";
+        const nameField = field(
+          isTreeEdit ? "tree.treeName" : isEdit ? "tree.nodeName" : "tree.tagName",
+          "",
+          "name",
+          isTreeEdit ? tree.name : isEdit ? popoverNode.name : "",
+          "text",
+          isEdit ? `data-live-tag-name data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}"` : ""
+        );
+        const actions = isTreeDelete
+          ? `<button class="secondary" data-action="cancelTagPanel">${tx("tree.cancel")}</button><button class="danger" data-action="confirmDeleteTree" data-tree-id="${esc(tree.id)}">${tx("tree.confirmDeleteAction")}</button>`
+          : isTreeEdit
+            ? `<button class="primary" data-action="saveTreeName" data-form="tag-popover-form" data-tree-id="${esc(tree.id)}">${tx("tree.saveTreeName")}</button>`
+            : isEdit
+          ? `<button class="secondary" data-action="beginConnection" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.connection")}</button><button class="secondary" data-action="disconnectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}"${disabled(!popoverNode.parentID)}>${tx("tree.disconnection")}</button><button class="danger" data-action="deleteTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.deleteNode")}</button>`
+          : `<button class="primary" data-action="addTag" data-form="tag-popover-form" data-tree-id="${esc(tree.id)}">${tx("tree.createNode")}</button>`;
+        const content = isTreeDelete
+          ? `<p class="small-copy">${tx("tree.confirmDeleteCopy")}</p><div class="action-row">${actions}</div>`
+          : `${nameField}${actions ? `<div class="action-row">${actions}</div>` : ""}`;
+        return `<section class="tree-popover" style="left:${panelState.x}px;top:${panelState.y}px" data-tree-popover data-form-id="tag-popover-form"><div class="tree-popover-head"><span class="eyebrow">${tx(titleKey)}</span><button class="tree-popover-close" data-action="cancelTagPanel" title="${tx("tree.cancel")}" aria-label="${tx("tree.cancel")}">×</button></div><div class="tree-form">${content}</div></section>`;
       })() : "";
-      const map = `<div class="tree-map" data-tree-map data-tree-id="${esc(tree.id)}"><div class="tree-map-content" style="width:max(${mapWidth}px, calc(100% + 480px)); height:max(${mapHeight}px, calc(100% + 280px))"><svg class="tree-links" aria-hidden="true"></svg><div class="tree-map-title">${esc(tree.name)}</div><div class="tree-node-layer">${nodes.map((node) => {
+      const map = `<div class="tree-map" data-tree-map data-tree-id="${esc(tree.id)}"><div class="tree-map-title">${esc(tree.name)}</div>${connectionState ? `<div class="tree-connection-mode">${tx("tree.connectionHint")}</div>` : ""}<div class="tree-map-content" style="width:max(${mapWidth}px, calc(100% + 480px)); height:max(${mapHeight}px, calc(100% + 280px))"><svg class="tree-links" aria-hidden="true"></svg><div class="tree-node-layer">${nodes.map((node) => {
         const position = positions.get(node.id);
         const depth = depthFor(node);
         const tier = depth === 0 ? "primary" : depth === 1 ? "secondary" : depth === 2 ? "tertiary" : "quaternary";
-        return `<button class="tree-map-node ${tier}${panelState?.nodeID === node.id ? " active" : ""}${node.retired ? " retired" : ""}" style="left:${position.x}px;top:${position.y}px" data-action="selectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(node.id)}" data-parent-id="${esc(node.parentID || "")}" data-position-x="${position.x}" data-position-y="${position.y}" title="${tx("tree.contextHint")}"><span aria-hidden="true"></span><strong>${esc(node.name)}</strong></button>`;
+        return `<button class="tree-map-node ${tier}${panelState?.nodeID === node.id || selectedNodeID === node.id ? " active" : ""}${connectionState?.nodeID === node.id ? " connection-source" : ""}${node.retired ? " retired" : ""}" style="left:${position.x}px;top:${position.y}px" data-action="selectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(node.id)}" data-parent-id="${esc(node.parentID || "")}" data-position-x="${position.x}" data-position-y="${position.y}" title="${tx("tree.contextHint")}"><span aria-hidden="true"></span><strong>${esc(node.name)}</strong></button>`;
       }).join("")}</div>${nodes.length ? "" : `<div class="tree-map-empty">${tx("tree.empty")}</div>`}${popover}</div></div>`;
-      return `<section class="tree-panel">${map}<p class="tree-canvas-hint">${tx("tree.canvasHint")}</p></section>`;
+      const treeActions = `<div class="tree-canvas-actions"><button class="secondary" data-action="renameTree" data-tree-id="${esc(tree.id)}">${tx("tree.rename")}</button><button class="danger" data-action="deleteTree" data-tree-id="${esc(tree.id)}">${tx("tree.delete")}</button><button class="secondary" data-action="rearrangeTree" data-tree-id="${esc(tree.id)}">${tx("tree.rearrange")}</button></div>`;
+      return `<section class="tree-panel">${map}<div class="tree-canvas-hint"><span>${tx("tree.canvasHint")}</span>${treeActions}</div></section>`;
     };
     return `<div class="workspace tree-workspace">${header("tree.title", "tree.copy", t("tree.sharedLibrary"), "cyan")}
       <section class="tree-create" data-form-id="new-tree-form">${field("tree.treeName", "", "name", "")}<button class="primary" data-action="createTree" data-form="new-tree-form">${tx("tree.create")}</button><span class="small-copy">${tx("tree.multiplePanels")}</span></section><div class="tree-panels">${assets.trees.map(panel).join("")}</div>${notice(state.issue, "red")}</div>`;
   }
 
+  function baseEmbeddingLabelKey(identifier) {
+    const keys = {
+      "all-MiniLM-L6-v2": "model.base.allMiniLML6V2",
+      "all-mpnet-base-v2": "model.base.allMPNetBaseV2",
+      "multilingual-e5-small": "model.base.multilingualE5Small",
+      "multilingual-e5-base": "model.base.multilingualE5Base",
+      "multilingual-e5-large": "model.base.multilingualE5Large",
+      "bge-m3": "model.base.bgeM3",
+    };
+    return keys[identifier] || "model.base.none";
+  }
+
   function localModelWorkspace() {
     const assets = state.assets;
-    const model = assets.models[0];
-    const training = state.training;
-    const backup = state.backup;
-    return `<div class="workspace">${header("model.title", "model.copy", t(model?.ready ? "model.ready" : "model.needsTraining"), "pink")}
-      <div class="metric-row">${metric("model.models", assets.models.length, "pink")}${metric("model.labels", training.labelCount, "pink")}${metric("model.versions", model?.version || 0, "pink")}</div>
-      <section class="section-card pink"><div class="section-header"><div><h3>${tx("model.active")}</h3><p class="section-copy">${tx("model.activeCopy")}</p></div></div><div class="status-line"><strong>${esc(model?.name || t("model.none"))}</strong><span class="spacer"></span><span>${tx("model.boundRevisions", { tree: model?.treeRevision || 0, data: model?.datasetRevision || 0 })}</span></div></section>
-      <section class="section-card pink" data-form-id="retrain-form"><div class="section-header"><div><h3>${tx("model.localTraining")}</h3><p class="section-copy">${tx("model.trainingCopy")}</p></div></div><div class="form-row">${field("model.passes", "", "epochs", training.epochs)}<div class="field"><span class="field-label">${tx("model.explicitAction")}</span><button class="pink-action" data-action="retrain" data-form="retrain-form"${disabled(!training.labelCount)}>${tx("model.train")}</button></div></div></section>
-      <section class="section-card navy" data-form-id="backup-owner-form"><div class="section-header"><div><h3>${tx("model.backup")}</h3><p class="section-copy">${tx("model.backupCopy")}</p></div></div>${backup.unlocked ? `<div class="notice navy">${tx("backup.unlocked")}</div>` : `<div class="action-row"><div class="field">${field("backup.ownerCode", backup.hasOwnerCode ? "backup.existingCode" : "backup.newCode", "ownerCode", "", "password")}</div><button class="primary" data-action="${backup.hasOwnerCode ? "unlockBackup" : "setBackupOwnerCode"}" data-form="backup-owner-form">${tx(backup.hasOwnerCode ? "backup.unlock" : "backup.setCode")}</button></div>`}</section>
-      <section class="section-card navy" data-form-id="backup-form"><div class="form-stack">${field("backup.localFolder", "backup.pathHint", "directory", backup.directory)}${toggle("backup.auto", "enabled", backup.enabled)}<div class="action-row"><button class="primary" data-action="saveBackup" data-form="backup-form"${disabled(!backup.unlocked)}>${tx("backup.save")}</button><button class="secondary" data-action="backupNow"${disabled(!backup.unlocked || !backup.savedEnabled)}>${tx("backup.create")}</button><span class="small-copy">${tx("model.backupStatus", { count: 4 })}</span></div></div></section>${notice(state.notices.backup, "navy")}${notice(state.notices.training, "pink")}${notice(state.issue, "red")}</div>`;
+    const models = assets.models || [];
+    const panel = (model) => {
+      const formID = `local-model-${model.id}`;
+      const tree = assets.trees.find((candidate) => candidate.id === model.treeID);
+      const platformID = model.platformID || assets.bindings.find((binding) => binding.datasetID === model.datasetID)?.id || "";
+      const dataset = assets.datasets.find((candidate) => candidate.id === model.datasetID);
+      const treeOptions = assets.trees.map((candidate) => [candidate.id, `${candidate.name} · r${candidate.revision}`]);
+      const platformOptions = assets.bindings.map((binding) => [binding.id, `${binding.name} · ${binding.browser}`]);
+      const baseOptions = [["", t("model.base.none")], ...(assets.baseEmbeddings || []).map((identifier) => [identifier, t(baseEmbeddingLabelKey(identifier))])];
+      const tagCount = tree?.nodes.filter((node) => !node.retired).length || 0;
+      const recordCount = (dataset?.records || []).filter((record) => record.platformID === platformID && record.review === "approved" && (record.origin === "manual" || record.origin === "llmAssist") && record.treeRevision === model.treeRevision).length;
+      const training = model.training;
+      const trainingStatus = training
+        ? `<div class="model-run pink">${tx("model.trainedRun", { records: training.examples, updates: training.updates, epochs: training.epochs })}</div>`
+        : `<div class="model-run muted">${tx("model.untrained")}</div>`;
+      return `<section class="model-panel" data-model-panel data-model-id="${esc(model.id)}" data-form-id="${esc(formID)}">
+        <div class="model-panel-head">
+          <div><span class="eyebrow">${tx("model.panel")}</span><h3>${esc(model.name)}</h3><p class="section-copy">${tx("model.boundRevisions", { tree: model.treeRevision, data: model.datasetRevision })}</p></div>
+          <div class="model-panel-status">${statusPill(t(model.ready ? "model.ready" : "model.needsTraining"), model.ready ? "pink" : "gold")}${statusPill(t("model.version", { value: model.version }), "navy")}</div>
+        </div>
+        <div class="model-name-row">${field("model.modelName", "", "name", model.name)}<div class="model-name-actions"><button class="secondary" data-action="renameLocalModel" data-form="${esc(formID)}" data-model-id="${esc(model.id)}">${tx("model.rename")}</button><button class="danger" data-action="deleteLocalModel" data-model-id="${esc(model.id)}">${tx("model.delete")}</button></div></div>
+        <div class="model-setup"><div class="section-header"><div><h3>${tx("model.setup")}</h3><p class="section-copy">${tx("model.setupCopy")}</p></div></div><div class="form-row model-setup-fields">${valueSelectField("model.targetTree", "", "treeID", model.treeID, treeOptions, "data-local-model-setup")}${valueSelectField("model.classificationPlatform", "", "platformID", platformID, platformOptions, "data-local-model-setup")}${valueSelectField("model.baseLanguageModel", "model.baseCopy", "baseEmbeddingID", model.baseEmbeddingID || "", baseOptions, "data-local-model-setup")}</div></div>
+        <div class="model-training-row"><div><span class="eyebrow">${tx("model.localTraining")}</span><p class="section-copy">${tx("model.trainingScope", { records: recordCount, tags: tagCount })}</p></div><button class="pink-action" data-action="trainLocalModel" data-form="${esc(formID)}" data-model-id="${esc(model.id)}"${disabled(!treeOptions.length || !platformOptions.length)}>${tx("model.train")}</button></div>
+        ${trainingStatus}
+      </section>`;
+    };
+    return `<div class="workspace model-workspace">${header("model.title", "model.copy", t("model.sharedLibrary"), "pink")}
+      <section class="model-create" data-form-id="new-local-model-form">${field("model.modelName", "", "name", "")}<button class="pink-action" data-action="createLocalModel" data-form="new-local-model-form"${disabled(!assets.trees.length || !assets.bindings.length)}>${tx("model.create")}</button><span class="small-copy">${tx("model.multiplePanels")}</span></section>
+      <div class="model-panels">${models.length ? models.map(panel).join("") : `<div class="empty">${tx("model.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
   }
 
   function llmAssistWorkspace() {
@@ -384,6 +445,66 @@
     });
   }
 
+  function tagRenameKey(treeID, nodeID) {
+    return `${treeID}\u0000${nodeID}`;
+  }
+
+  function flushLiveTagRename(treeID, nodeID) {
+    const key = tagRenameKey(treeID, nodeID);
+    const timer = pendingTagRenameTimers.get(key);
+    if (timer) window.clearTimeout(timer);
+    pendingTagRenameTimers.delete(key);
+    const name = pendingTagRenames.get(key);
+    pendingTagRenames.delete(key);
+    if (!name?.trim()) return;
+    send("renameTag", { treeID, nodeID, name });
+  }
+
+  function updateRenderedTagName(treeID, nodeID, name) {
+    root.querySelectorAll(".tree-map-node").forEach((node) => {
+      if (node.dataset.treeId === treeID && node.dataset.nodeId === nodeID) {
+        node.querySelector("strong").textContent = name;
+      }
+    });
+  }
+
+  function openTagEditor(treeID, nodeID) {
+    const node = [...root.querySelectorAll(".tree-map-node")].find((candidate) => candidate.dataset.treeId === treeID && candidate.dataset.nodeId === nodeID);
+    if (!node) return;
+    selectedTagNode = { treeID, nodeID };
+    const nodeX = Number(node.dataset.positionX) || 0;
+    const nodeY = Number(node.dataset.positionY) || 0;
+    activeTagPanel = { kind: "edit", treeID, nodeID, x: nodeX + node.offsetWidth + 12, y: nodeY };
+    render();
+  }
+
+  function openTreePanel(treeID, kind) {
+    const map = root.querySelector(`[data-tree-map][data-tree-id="${treeID}"]`);
+    if (!map) return;
+    selectedTagNode = null;
+    connectionSource = null;
+    activeTagPanel = {
+      kind,
+      treeID,
+      x: map.scrollLeft + Math.max(16, Math.round((map.clientWidth - 256) / 2)),
+      y: map.scrollTop + Math.max(56, Math.round((map.clientHeight - 174) / 2)),
+    };
+    render();
+  }
+
+  document.addEventListener("input", (event) => {
+    const input = event.target.closest("input[data-live-tag-name]");
+    if (!input) return;
+    const { treeId: treeID, nodeId: nodeID } = input.dataset;
+    if (!treeID || !nodeID) return;
+    const key = tagRenameKey(treeID, nodeID);
+    pendingTagRenames.set(key, input.value);
+    updateRenderedTagName(treeID, nodeID, input.value);
+    const timer = pendingTagRenameTimers.get(key);
+    if (timer) window.clearTimeout(timer);
+    pendingTagRenameTimers.set(key, window.setTimeout(() => flushLiveTagRename(treeID, nodeID), 250));
+  });
+
   function rememberTreeViewportPositions() {
     root.querySelectorAll("[data-tree-map]").forEach((map) => {
       treeViewportPositions.set(map.dataset.treeId, { x: map.scrollLeft, y: map.scrollTop });
@@ -399,10 +520,28 @@
     });
   }
 
+  function rememberEditorViewportPosition() {
+    const editor = root.querySelector("[data-editor-panel]");
+    const workspace = editor?.dataset.workspace;
+    if (!editor || !workspace) return;
+    editorViewportPositions.set(workspace, { x: editor.scrollLeft, y: editor.scrollTop });
+  }
+
+  function restoreEditorViewportPosition() {
+    const editor = root.querySelector("[data-editor-panel]");
+    const workspace = editor?.dataset.workspace;
+    const position = workspace ? editorViewportPositions.get(workspace) : null;
+    if (!editor || !position) return;
+    editor.scrollLeft = position.x;
+    editor.scrollTop = position.y;
+  }
+
   function render() {
     rememberTreeViewportPositions();
+    rememberEditorViewportPosition();
     root.innerHTML = state ? shell(workspace()) : `<div class="popup"><div class="empty">${tx("app.loading")}</div></div>`;
     window.requestAnimationFrame(() => {
+      restoreEditorViewportPosition();
       restoreTreeViewportPositions();
       drawTreeConnections();
       traceTreeLayout();
@@ -415,6 +554,8 @@
       const map = event.target.closest("[data-tree-map]");
       if (map && !event.target.closest(".tree-map-node, [data-tree-popover]")) {
         activeTagPanel = null;
+        connectionSource = null;
+        selectedTagNode = null;
         render();
       }
       return;
@@ -426,6 +567,7 @@
     if (button.dataset.id) data.id = button.dataset.id;
     if (button.dataset.correction) data.correction = button.dataset.correction;
     if (button.dataset.policyId) data.policyID = button.dataset.policyId;
+    if (button.dataset.modelId) data.modelID = button.dataset.modelId;
     if (button.dataset.treeId) data.treeID = button.dataset.treeId;
     if (button.dataset.nodeId) data.nodeID = button.dataset.nodeId;
     if (button.dataset.parentId) data.parentID = button.dataset.parentId;
@@ -436,14 +578,85 @@
     }
     if (action === "selectTag") {
       if (suppressTagClick) return;
-      const nodeX = Number(button.dataset.positionX) || 0;
-      const nodeY = Number(button.dataset.positionY) || 0;
-      activeTagPanel = { kind: "edit", treeID: button.dataset.treeId, nodeID: button.dataset.nodeId, x: nodeX + button.offsetWidth + 12, y: nodeY };
+      if (connectionSource) {
+        if (button.dataset.treeId !== connectionSource.treeID || button.dataset.nodeId === connectionSource.nodeID) return;
+        const source = connectionSource;
+        flushLiveTagRename(source.treeID, source.nodeID);
+        connectionSource = null;
+        selectedTagNode = source;
+        activeTagPanel = null;
+        render();
+        send("connectTag", { treeID: source.treeID, nodeID: source.nodeID, parentID: button.dataset.nodeId });
+        return;
+      }
+      openTagEditor(button.dataset.treeId, button.dataset.nodeId);
+      return;
+    }
+    if (action === "beginConnection") {
+      flushLiveTagRename(button.dataset.treeId, button.dataset.nodeId);
+      selectedTagNode = { treeID: button.dataset.treeId, nodeID: button.dataset.nodeId };
+      connectionSource = { treeID: button.dataset.treeId, nodeID: button.dataset.nodeId };
+      activeTagPanel = null;
       render();
+      return;
+    }
+    if (action === "disconnectTag") {
+      flushLiveTagRename(button.dataset.treeId, button.dataset.nodeId);
+      connectionSource = null;
+      selectedTagNode = { treeID: button.dataset.treeId, nodeID: button.dataset.nodeId };
+      activeTagPanel = null;
+      render();
+      send("disconnectTag", { treeID: button.dataset.treeId, nodeID: button.dataset.nodeId });
+      return;
+    }
+    if (action === "deleteTag") {
+      flushLiveTagRename(button.dataset.treeId, button.dataset.nodeId);
+      connectionSource = null;
+      selectedTagNode = null;
+      activeTagPanel = null;
+      render();
+      send("deleteTag", { treeID: button.dataset.treeId, nodeID: button.dataset.nodeId });
+      return;
+    }
+    if (action === "renameTree") {
+      openTreePanel(button.dataset.treeId, "tree");
+      return;
+    }
+    if (action === "saveTreeName") {
+      if (!data.name?.trim()) return;
+      activeTagPanel = null;
+      render();
+      send("renameTree", { treeID: button.dataset.treeId, name: data.name });
+      return;
+    }
+    if (action === "rearrangeTree") {
+      selectedTagNode = null;
+      connectionSource = null;
+      activeTagPanel = null;
+      render();
+      send("rearrangeTree", { treeID: button.dataset.treeId });
+      return;
+    }
+    if (action === "deleteTree") {
+      openTreePanel(button.dataset.treeId, "delete-tree");
+      return;
+    }
+    if (action === "confirmDeleteTree") {
+      connectionSource = null;
+      selectedTagNode = null;
+      activeTagPanel = null;
+      render();
+      send("deleteTree", { treeID: button.dataset.treeId });
+      return;
+    }
+    if (action === "deleteLocalModel") {
+      if (!window.confirm(`${t("model.confirmDelete")}\n\n${t("model.confirmDeleteCopy")}`)) return;
+      send(action, data);
       return;
     }
     if (action === "addTag") {
       if (!activeTagPanel || activeTagPanel.kind !== "create") return;
+      data.parentID = activeTagPanel.parentID || "";
       data.positionX = activeTagPanel.x;
       data.positionY = activeTagPanel.y;
       activeTagPanel = null;
@@ -451,11 +664,18 @@
       send(action, data);
       return;
     }
-    if (action === "updateTag" || action === "toggleTagRetirement") {
-      activeTagPanel = null;
-      render();
-    }
     send(action, data);
+  });
+
+  document.addEventListener("change", (event) => {
+    const control = event.target.closest("[data-local-model-setup]");
+    if (!control) return;
+    const panel = control.closest("[data-model-panel]");
+    const formID = panel?.dataset.formId;
+    const modelID = panel?.dataset.modelId;
+    if (!formID || !modelID) return;
+    const data = collect(formID);
+    send("configureLocalModel", { modelID, treeID: data.treeID, platformID: data.platformID, baseEmbeddingID: data.baseEmbeddingID });
   });
 
   // Mirror the Tags canvas: keep a two-axis trackpad gesture inside the
@@ -482,14 +702,14 @@
     const node = event.target.closest(".tree-map-node");
     const nodeX = node ? Number(node.dataset.positionX) || 0 : Math.max(12, Math.round(event.clientX - contentRect.left + map.scrollLeft));
     const nodeY = node ? Number(node.dataset.positionY) || 0 : Math.max(12, Math.round(event.clientY - contentRect.top + map.scrollTop));
-    activeTagPanel = {
-      kind: "create",
-      treeID: map.dataset.treeId,
-      parentID: node?.dataset.nodeId || "",
-      x: node ? nodeX + node.offsetWidth + 12 : nodeX,
-      y: nodeY,
-    };
-    render();
+    connectionSource = null;
+    if (node) {
+      openTagEditor(map.dataset.treeId, node.dataset.nodeId);
+    } else {
+      selectedTagNode = null;
+      activeTagPanel = { kind: "create", treeID: map.dataset.treeId, parentID: "", x: nodeX, y: nodeY };
+      render();
+    }
   });
 
   function beginTagDrag(event) {
