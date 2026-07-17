@@ -13,7 +13,22 @@ Included now:
 - Sparse local scoring, decayed source priors, and named-policy decisions
   (`allow`, `dim`, `block`).
 - A bounded FIFO local cache, decision/correction ledger, resource profiles,
-  local seed-package backups, and a native SwiftUI development shell.
+  and a bundled local WebKit development shell that runs as a regular,
+  full-screen capable macOS window. The visible UI is a light-theme Mac Vault
+  working surface; its bounded native bridge never exposes credentials, raw
+  audit evidence, pairing material, or arbitrary provider controls to the web
+  page.
+- A bounded local supervised corpus. Only an explicit user label or an
+  explicitly confirmed policy-changing personal-audit finding enters it; the
+  personal FTRL correction layer is reproducibly rebuilt from those retained
+  labels, with bounded per-tag feature state. Views, clicks, raw corrections,
+  and unconfirmed provider output never become training data.
+- Optional owner-gated local model backups. The owner-code verifier lives in
+  this Mac's Keychain; each private snapshot contains the active package,
+  policies, explicit training corpus, and correction layer—but not the
+  activity cache, decision ledger, or audit history. It is written only to a
+  user-chosen local folder and retains the current snapshot plus three prior
+  snapshots. No backup is uploaded.
 - A source-only Chrome/Edge YouTube adapter, authenticated native host, and
   app-owned local IPC; see [PHASE2.md](PHASE2.md). The bridge is disabled and
   unregistered until a future signed installer is explicitly authorized.

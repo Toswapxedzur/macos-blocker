@@ -98,6 +98,9 @@ final class LocalAuditStoreIntegrationTests: XCTestCase {
         let appliedState = coordinator.snapshot()
         XCTAssertFalse(appliedState.personalModel.state.isEmpty, "Only an explicit local user confirmation may train the personal model.")
         XCTAssertEqual(appliedState.auditState.learningApplications.first?.auditID, settled.auditID)
+        XCTAssertEqual(appliedState.trainingCorpus.examples.count, 1)
+        XCTAssertEqual(appliedState.trainingCorpus.examples.first?.origin, .confirmedPersonalAudit)
+        XCTAssertEqual(appliedState.trainingCorpus.lastRun?.exampleCount, 1)
 
         let diagnostic = String(decoding: try coordinator.redactedAuditDiagnostics(at: Date(timeIntervalSince1970: 1_700_000_003)), as: UTF8.self)
         XCTAssertFalse(diagnostic.contains(privateTitle))

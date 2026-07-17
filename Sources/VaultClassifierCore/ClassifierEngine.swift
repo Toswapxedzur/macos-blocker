@@ -99,4 +99,60 @@ public struct LocalClassifierEngine: Sendable {
         let features = NgramFeatures.features(for: evidence.evidence)
         personalModel.train(features: features, tagID: tagID, isPositive: isPositive, baseLogit: package.model.logit(for: tagID, features: features))
     }
+
+    /// Rebuilds the per-installation correction layer from explicit retained
+    /// labels. The base package is never edited; this is a deterministic local
+    /// overlay that can be regenerated whenever a person adds or corrects a
+    /// label.
+    public mutating func rebuildPersonalModel(
+        from examples: [LocalTrainingExample],
+        epochs: Int
+    ) throws -> (exampleCount: Int, labelUpdateCount: Int) {
+        guard (1...12).contains(epochs) else { throw LocalTrainingError.invalidEpochCount }
+        let leaves = taxonomy.predictableLeafIDs
+        let compatible = examples
+            .filter { $0.taxonomyVersion == package.taxonomyVersion }
+            .map { example in
+                var copy = example
+                copy.positiveLeafTagIDs = example.positiveLeafTagIDs.filter(leaves.contains).sorted()
+                copy.negativeLeafTagIDs = example.negativeLeafTagIDs.filter(leaves.contains).sorted()
+                return copy
+            }
+            .filter { !$0.positiveLeafTagIDs.isEmpty || !$0.negativeLeafTagIDs.isEmpty }
+            .sorted {
+                if $0.createdAtMilliseconds != $1.createdAtMilliseconds {
+                    return $0.createdAtMilliseconds < $1.createdAtMilliseconds
+                }
+                return $0.cacheKey < $1.cacheKey
+            }
+        guard !compatible.isEmpty else { throw LocalTrainingError.noCompatibleExamples }
+
+        var replacement = PersonalFTRLModel(settings: personalModel.settings)
+        var labelUpdateCount = 0
+        for _ in 0..<epochs {
+            for example in compatible {
+                let features = NgramFeatures.features(for: example.evidence.evidence)
+                for tagID in example.positiveLeafTagIDs {
+                    replacement.train(
+                        features: features,
+                        tagID: tagID,
+                        isPositive: true,
+                        baseLogit: package.model.logit(for: tagID, features: features)
+                    )
+                    labelUpdateCount += 1
+                }
+                for tagID in example.negativeLeafTagIDs {
+                    replacement.train(
+                        features: features,
+                        tagID: tagID,
+                        isPositive: false,
+                        baseLogit: package.model.logit(for: tagID, features: features)
+                    )
+                    labelUpdateCount += 1
+                }
+            }
+        }
+        personalModel = replacement
+        return (compatible.count, labelUpdateCount)
+    }
 }

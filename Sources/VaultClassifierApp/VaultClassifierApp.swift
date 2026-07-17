@@ -1,24 +1,85 @@
-import SwiftUI
-#if canImport(AppKit)
+import CryptoKit
 import AppKit
-#endif
+import Combine
 import VaultClassifierCore
 
 @main
-struct VaultClassifierApp: App {
-    var body: some Scene {
-        WindowGroup("Vault Classifier") {
-            VaultClassifierRootView()
+private enum VaultClassifierAppMain {
+    static func main() {
+        let application = NSApplication.shared
+        let delegate = VaultClassifierAppDelegate()
+        application.setActivationPolicy(.regular)
+        application.delegate = delegate
+        application.run()
+    }
+}
+
+private final class VaultClassifierAppDelegate: NSObject, NSApplicationDelegate {
+    private var model: VaultClassifierViewModel?
+    private var webShell: VaultClassifierWebShell?
+    private var mainWindow: NSWindow?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // SwiftPM executables otherwise behave like background tools. This
+        // AppKit host keeps the window native while every visible product
+        // control is rendered by the bundled local WKWebView.
+        NSApp.setActivationPolicy(.regular)
+        // This development shell intentionally follows Mac Vault's light
+        // working surface even when the host Mac uses Dark appearance.
+        NSApp.appearance = NSAppearance(named: .aqua)
+        NSApp.activate(ignoringOtherApps: true)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(configureWindow(_:)),
+            name: NSWindow.didBecomeKeyNotification,
+            object: nil
+        )
+        Task { @MainActor [weak self] in
+            self?.showClassifierWindow()
         }
+    }
+
+    @MainActor
+    private func showClassifierWindow() {
+        let model = VaultClassifierViewModel()
+        let shell = VaultClassifierWebShell(model: model)
+        let webView = shell.makeWebView()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1_180, height: 780),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Vault Classifier"
+        window.minSize = NSSize(width: 980, height: 650)
+        window.collectionBehavior.insert(.fullScreenPrimary)
+        window.contentView = webView
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        self.model = model
+        self.webShell = shell
+        self.mainWindow = window
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func configureWindow(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        window.collectionBehavior.insert(.fullScreenPrimary)
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
     }
 }
 
 @MainActor
-private final class VaultClassifierViewModel: ObservableObject {
-    enum Workspace: String, CaseIterable, Identifiable {
+final class VaultClassifierViewModel: ObservableObject {
+    enum Workspace: String, CaseIterable, Identifiable, Hashable {
         case inspect
         case policies
         case activity
+        case training
+        case backup
         case audit
         case integration
 
@@ -59,6 +120,16 @@ private final class VaultClassifierViewModel: ObservableObject {
     @Published var allowBackgroundSync = true
     @Published var allowLocalLLMAudit = false
     @Published var packageUpdateMode: PackageUpdateMode = .automatic
+    @Published var trainingPositiveTags = ""
+    @Published var trainingNegativeTags = ""
+    @Published var trainingEpochs = "3"
+    @Published private(set) var trainingNotice: String?
+    @Published var backupOwnerCode = ""
+    @Published var backupDirectory = ""
+    @Published var backupEnabled = false
+    @Published private(set) var hasBackupOwnerCode = false
+    @Published private(set) var backupUnlocked = false
+    @Published private(set) var backupNotice: String?
 
     private var coordinator: LocalClassifierCoordinator?
     private var ipcServer: LocalIPCServer?
@@ -76,7 +147,9 @@ private final class VaultClassifierViewModel: ObservableObject {
             self.localState = coordinator.snapshot()
             loadResourceSettings(from: coordinator.snapshot().settings)
             loadAuditConfiguration(from: coordinator.snapshot().auditState.configuration)
+            loadBackupConfiguration(from: coordinator.snapshot().backupConfiguration)
             self.hasStoredGeminiAPIKey = PersonalAuditCredentialStore.hasGeminiAPIKey()
+            self.hasBackupOwnerCode = LocalBackupOwnerCodeStore.hasOwnerCode
             let server = LocalIPCServer(socketURL: vaultDirectory.appendingPathComponent("classifier-v1.sock")) { request in
                 do {
                     try coordinator.verifyAndRecordNativeEnvelope(request.envelope)
@@ -106,13 +179,7 @@ private final class VaultClassifierViewModel: ObservableObject {
     func classify() {
         do {
             guard let coordinator else { return }
-            let entry = EntryEvidence(
-                platform: "demo",
-                sourceID: sourceID.isEmpty ? nil : sourceID,
-                surface: surface,
-                evidence: .init(title: title),
-                policyIDs: policies.map(\.id)
-            )
+            let entry = currentManualEntry()
             let output = try coordinator.classifyWithLedger(entry)
             result = output.result
             latestLedgerID = output.ledgerID
@@ -395,6 +462,100 @@ private final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
+    func storeCurrentTrainingExample() {
+        do {
+            guard let coordinator, result != nil else { throw AppInputError.noCurrentDecision }
+            let entry = currentManualEntry()
+            _ = try coordinator.recordLocalTrainingExample(
+                evidence: entry,
+                positiveLeafTagIDs: splitTagList(trainingPositiveTags),
+                negativeLeafTagIDs: splitTagList(trainingNegativeTags)
+            )
+            refreshLocalState()
+            trainingNotice = "Local label stored. Retrain when you are ready to apply the retained corpus."
+            issue = nil
+        } catch {
+            trainingNotice = nil
+            issue = error.localizedDescription
+        }
+    }
+
+    func retrainLocalModel() {
+        do {
+            guard let coordinator else { return }
+            let epochs = try positiveInteger(trainingEpochs, label: "Training epochs")
+            let run = try coordinator.retrainLocalModel(epochs: epochs)
+            refreshLocalState()
+            trainingNotice = "Rebuilt this Mac's correction layer from \(run.exampleCount) explicit label\(run.exampleCount == 1 ? "" : "s") in \(run.epochs) pass\(run.epochs == 1 ? "" : "es")."
+            issue = nil
+        } catch {
+            trainingNotice = nil
+            issue = error.localizedDescription
+        }
+    }
+
+    func localTrainingFeatureCount() -> Int {
+        localState?.personalModel.state.values.reduce(0) { $0 + $1.count } ?? 0
+    }
+
+    func setBackupOwnerCode() {
+        do {
+            try LocalBackupOwnerCodeStore.setOwnerCode(backupOwnerCode)
+            backupOwnerCode = ""
+            hasBackupOwnerCode = true
+            backupUnlocked = true
+            backupNotice = "Backup controls are unlocked for this app session."
+            issue = nil
+        } catch {
+            backupNotice = nil
+            issue = error.localizedDescription
+        }
+    }
+
+    func unlockBackupMode() {
+        guard LocalBackupOwnerCodeStore.verifyOwnerCode(backupOwnerCode) else {
+            backupUnlocked = false
+            backupNotice = nil
+            issue = "The local backup owner code did not match."
+            return
+        }
+        backupOwnerCode = ""
+        backupUnlocked = true
+        backupNotice = "Backup controls are unlocked for this app session."
+        issue = nil
+    }
+
+    func saveBackupConfiguration() {
+        do {
+            guard backupUnlocked else { throw AppInputError.backupLocked }
+            let configuration = LocalBackupConfiguration(
+                isEnabled: backupEnabled,
+                directoryPath: backupDirectory
+            )
+            try coordinator?.updateLocalBackupConfiguration(configuration)
+            refreshLocalState()
+            backupNotice = backupEnabled
+                ? "Private local snapshots will be written after each successful model rebuild."
+                : "Automatic local backups are off. Existing snapshots were left untouched."
+            issue = nil
+        } catch {
+            backupNotice = nil
+            issue = error.localizedDescription
+        }
+    }
+
+    func backupLocalModelNow() {
+        do {
+            guard backupUnlocked else { throw AppInputError.backupLocked }
+            let destination = try coordinator?.backupLocalModelNow()
+            backupNotice = destination.map { "Local model snapshot created in \($0.lastPathComponent)." }
+            issue = nil
+        } catch {
+            backupNotice = nil
+            issue = error.localizedDescription
+        }
+    }
+
     /// This is deliberately an explicit local action. The exported diagnostic
     /// contract contains aggregate configuration and budget state only; it
     /// omits credentials, evidence, source/entry/audit identifiers, rationale,
@@ -447,6 +608,31 @@ private final class VaultClassifierViewModel: ObservableObject {
         packageUpdateMode = settings.packageUpdateMode
     }
 
+    private func currentManualEntry() -> EntryEvidence {
+        let source = sourceID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let material = "\(source)\u{1F}\(surface.rawValue)\u{1F}\(title)"
+        let digest = SHA256.hash(data: Data(material.utf8))
+            .prefix(16)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return .init(
+            platform: "manual",
+            entryID: "manual-\(digest)",
+            sourceID: source.isEmpty ? nil : source,
+            surface: surface,
+            evidence: .init(title: title),
+            policyIDs: policies.map(\.id)
+        )
+    }
+
+    private func loadBackupConfiguration(from configuration: LocalBackupConfiguration?) {
+        let defaultDirectory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Vault Classifier Backups", isDirectory: true)
+            .path
+        backupDirectory = configuration?.directoryPath ?? defaultDirectory
+        backupEnabled = configuration?.isEnabled ?? false
+    }
+
     private func positiveInteger(_ raw: String, label: String) throws -> Int {
         let digits = raw.replacingOccurrences(of: ",", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard let value = Int(digits), value > 0 else { throw AppInputError.invalidNumber(label) }
@@ -487,6 +673,317 @@ private final class VaultClassifierViewModel: ObservableObject {
         return "\(used.formatted()) / \(limitText)"
     }
 
+    /// The WKWebView receives only the bounded local state necessary to render
+    /// this development shell. Browser evidence, API keys, pairing material,
+    /// audit rationales, and stable identifiers stay in native storage.
+    func webSnapshot() -> [String: Any] {
+        let state = localState ?? coordinator?.snapshot()
+        let auditState = state?.auditState
+        let budgetRecords = auditState?.budgetLedger.records ?? []
+        let training = state?.trainingCorpus
+        let backup = state?.backupConfiguration
+        let notices: [String: Any] = [
+            "training": trainingNotice ?? NSNull(),
+            "backup": backupNotice ?? NSNull(),
+            "auditDiagnostic": auditDiagnosticNotice ?? NSNull(),
+        ]
+        let inspect: [String: Any] = [
+            "title": title,
+            "sourceID": sourceID,
+            "surface": surface.rawValue,
+            "result": result.map(webResult) ?? NSNull(),
+        ]
+        let policyItems: [[String: Any]] = policies.map { policy in
+            [
+                "id": policy.id,
+                "name": policy.name,
+                "includeAny": policy.includeAnyTagIDs,
+                "exclude": policy.excludeTagIDs,
+                "feedAction": policy.feedAction.rawValue,
+                "pageAction": policy.pageAction.rawValue,
+            ]
+        }
+        let policiesPayload: [String: Any] = [
+            "items": policyItems,
+            "editor": [
+                "id": editingPolicyID,
+                "name": editingPolicyName,
+                "includeAny": editingPolicyIncludeTag,
+                "exclude": editingPolicyExcludeTag,
+                "feedAction": editingFeedAction.rawValue,
+                "pageAction": editingPageAction.rawValue,
+            ] as [String: Any],
+        ]
+        let recentLedgerEntries = state.map { Array($0.ledger.suffix(12).reversed()) } ?? []
+        let ledger: [[String: Any]] = recentLedgerEntries.map { entry in
+            [
+                "id": entry.id.uuidString,
+                "cacheKey": entry.cacheKey,
+                "grade": entry.auditGrade.rawValue,
+                "modelVersion": entry.modelVersion,
+                "hasCorrection": entry.correction != nil,
+            ]
+        }
+        let activity: [String: Any] = [
+            "cacheCount": state?.cache.count ?? 0,
+            "cacheCapacity": state?.settings.cacheCapacity ?? 0,
+            "ledgerCount": state?.ledger.count ?? 0,
+            "correctionCount": state?.ledger.filter { $0.correction != nil }.count ?? 0,
+            "settings": [
+                "profile": profile.rawValue,
+                "cacheCapacity": resourceCacheCapacity,
+                "allowIdleWork": allowIdleWork,
+                "allowBackgroundSync": allowBackgroundSync,
+                "allowLocalLLMAudit": allowLocalLLMAudit,
+                "packageUpdateMode": packageUpdateMode.rawValue,
+            ] as [String: Any],
+            "ledger": ledger,
+        ]
+        let lastRun: Any
+        if let run = training?.lastRun {
+            lastRun = [
+                "exampleCount": run.exampleCount,
+                "labelUpdateCount": run.labelUpdateCount,
+                "epochs": run.epochs,
+                "taxonomyVersion": run.taxonomyVersion,
+            ] as [String: Any]
+        } else {
+            lastRun = NSNull()
+        }
+        let trainingPayload: [String: Any] = [
+            "labelCount": training?.examples.count ?? 0,
+            "capacity": state?.settings.cacheCapacity ?? 0,
+            "featureCount": localTrainingFeatureCount(),
+            "positiveTags": trainingPositiveTags,
+            "negativeTags": trainingNegativeTags,
+            "epochs": trainingEpochs,
+            "lastRun": lastRun,
+        ]
+        let backupPayload: [String: Any] = [
+            "hasOwnerCode": hasBackupOwnerCode,
+            "unlocked": backupUnlocked,
+            "enabled": backupEnabled,
+            "directory": backupDirectory,
+            "savedEnabled": backup?.isEnabled ?? false,
+        ]
+        let recentCandidates = auditState.map { Array($0.candidates.suffix(6).reversed()) } ?? []
+        let candidates: [[String: Any]] = recentCandidates.map { candidate in
+            [
+                "id": candidate.auditID.uuidString,
+                "intent": candidate.intent.rawValue,
+                "priority": candidate.risk.priority,
+                "modelVersion": candidate.localResult.modelVersion,
+                "eligible": candidate.eligibility.isEligible,
+                "running": auditRunningCandidateIDs.contains(candidate.auditID),
+            ]
+        }
+        let recentResults = auditState.map { Array($0.results.suffix(5).reversed()) } ?? []
+        let auditResults: [[String: Any]] = recentResults.map { auditResult in
+            [
+                "id": auditResult.auditID.uuidString,
+                "finding": auditResult.finding.rawValue,
+                "leafTags": auditResult.leafTagIDs,
+                "confidence": auditResult.confidence ?? NSNull(),
+                "tokens": (try? auditResult.usage.totalTokens()) ?? 0,
+                "canApply": auditResult.finding == .potentialFalseAllow && auditLocalLearning && !isAuditApplied(auditResult.auditID),
+                "policyIDs": confirmationPolicyIDs(for: auditResult),
+            ]
+        }
+        let audit: [String: Any] = [
+            "enabled": auditEnabled,
+            "modelIdentifier": auditModelIdentifier,
+            "effort": auditEffort.rawValue,
+            "selectionMode": auditSelectionMode.rawValue,
+            "outputCap": auditOutputCap,
+            "requestCap": auditRequestTokenCap,
+            "weeklyCap": auditWeeklyTokenCap,
+            "monthlyCap": auditMonthlyTokenCap,
+            "localLearning": auditLocalLearning,
+            "hasStoredKey": hasStoredGeminiAPIKey,
+            "dispatchAllowed": allowLocalLLMAudit,
+            "candidateCount": auditState?.candidates.count ?? 0,
+            "settledCount": budgetRecords.filter { $0.state == .settled }.count,
+            "inFlightCount": budgetRecords.filter { $0.state == .reserved || $0.state == .possiblySent }.count,
+            "uncertainCount": budgetRecords.filter { $0.state == .uncertain }.count,
+            "weeklyTokens": auditBudgetTokenSummary(for: .weekly),
+            "monthlyTokens": auditBudgetTokenSummary(for: .monthly),
+            "candidates": candidates,
+            "results": auditResults,
+        ]
+        return [
+            "workspace": workspace.rawValue,
+            "issue": issue ?? NSNull(),
+            "notices": notices,
+            "inspect": inspect,
+            "policies": policiesPayload,
+            "activity": activity,
+            "training": trainingPayload,
+            "backup": backupPayload,
+            "audit": audit,
+        ]
+    }
+
+    /// The web renderer is a bundled local asset, but its messages are still
+    /// treated as untrusted UI input. Keep the surface small and bounded so it
+    /// cannot become another native IPC or provider-control path.
+    func performWebAction(_ action: String, data: [String: Any]) {
+        do {
+            switch action {
+            case "state":
+                refreshLocalState()
+            case "workspace":
+                let selected = try webString(data, key: "workspace", limit: 32)
+                guard let value = Workspace(rawValue: selected) else { throw WebBridgeInputError.invalidChoice("workspace") }
+                workspace = value
+                if value == .activity || value == .training || value == .backup || value == .audit {
+                    refreshLocalState()
+                }
+            case "classify":
+                title = try webString(data, key: "title", limit: 4_096)
+                sourceID = try webString(data, key: "sourceID", limit: 1_024)
+                let surfaceValue = try webString(data, key: "surface", limit: 16)
+                guard let value = EntrySurface(rawValue: surfaceValue) else { throw WebBridgeInputError.invalidChoice("surface") }
+                surface = value
+                classify()
+            case "markCorrection":
+                let raw = try webString(data, key: "correction", limit: 32)
+                guard let correction = UserCorrection(rawValue: raw) else { throw WebBridgeInputError.invalidChoice("correction") }
+                markCurrentResult(correction)
+            case "newPolicy":
+                startNewPolicy()
+            case "selectPolicy":
+                let identifier = try webString(data, key: "id", limit: 256)
+                guard let policy = policies.first(where: { $0.id == identifier }) else { throw WebBridgeInputError.invalidChoice("policy") }
+                select(policy)
+            case "savePolicy":
+                editingPolicyID = try webString(data, key: "id", limit: 256)
+                editingPolicyName = try webString(data, key: "name", limit: 256)
+                editingPolicyIncludeTag = try webString(data, key: "includeAny", limit: 4_096)
+                editingPolicyExcludeTag = try webString(data, key: "exclude", limit: 4_096)
+                let feed = try webString(data, key: "feedAction", limit: 16)
+                let page = try webString(data, key: "pageAction", limit: 16)
+                guard let feedAction = PresentationAction(rawValue: feed), let pageAction = PresentationAction(rawValue: page) else {
+                    throw WebBridgeInputError.invalidChoice("policy action")
+                }
+                editingFeedAction = feedAction
+                editingPageAction = pageAction
+                savePolicy()
+            case "deletePolicy":
+                deleteEditingPolicy()
+            case "clearCorrection":
+                let raw = try webString(data, key: "id", limit: 64)
+                guard let identifier = UUID(uuidString: raw) else { throw WebBridgeInputError.invalidChoice("decision") }
+                clearCorrection(identifier)
+            case "saveResourceSettings":
+                let rawProfile = try webString(data, key: "profile", limit: 32)
+                let rawMode = try webString(data, key: "packageUpdateMode", limit: 32)
+                guard let selectedProfile = ResourceProfile(rawValue: rawProfile), let updateMode = PackageUpdateMode(rawValue: rawMode) else {
+                    throw WebBridgeInputError.invalidChoice("resource setting")
+                }
+                profile = selectedProfile
+                resourceCacheCapacity = try webString(data, key: "cacheCapacity", limit: 16)
+                allowIdleWork = try webBool(data, key: "allowIdleWork")
+                allowBackgroundSync = try webBool(data, key: "allowBackgroundSync")
+                allowLocalLLMAudit = try webBool(data, key: "allowLocalLLMAudit")
+                packageUpdateMode = updateMode
+                saveResourceSettings()
+            case "storeTraining":
+                trainingPositiveTags = try webString(data, key: "positiveTags", limit: 4_096)
+                trainingNegativeTags = try webString(data, key: "negativeTags", limit: 4_096)
+                storeCurrentTrainingExample()
+            case "retrain":
+                trainingEpochs = try webString(data, key: "epochs", limit: 16)
+                retrainLocalModel()
+            case "setBackupOwnerCode":
+                backupOwnerCode = try webString(data, key: "ownerCode", limit: 512)
+                setBackupOwnerCode()
+            case "unlockBackup":
+                backupOwnerCode = try webString(data, key: "ownerCode", limit: 512)
+                unlockBackupMode()
+            case "saveBackup":
+                backupDirectory = try webString(data, key: "directory", limit: 2_048)
+                backupEnabled = try webBool(data, key: "enabled")
+                saveBackupConfiguration()
+            case "backupNow":
+                backupLocalModelNow()
+            case "saveAudit":
+                auditEnabled = try webBool(data, key: "enabled")
+                auditModelIdentifier = try webString(data, key: "modelIdentifier", limit: 128)
+                let rawEffort = try webString(data, key: "effort", limit: 16)
+                let rawSelection = try webString(data, key: "selectionMode", limit: 64)
+                guard let effort = AuditReasoningEffort(rawValue: rawEffort), let selection = AuditSelectionMode(rawValue: rawSelection) else {
+                    throw WebBridgeInputError.invalidChoice("audit setting")
+                }
+                auditEffort = effort
+                auditSelectionMode = selection
+                auditOutputCap = try webString(data, key: "outputCap", limit: 16)
+                auditRequestTokenCap = try webString(data, key: "requestCap", limit: 16)
+                auditWeeklyTokenCap = try webString(data, key: "weeklyCap", limit: 16)
+                auditMonthlyTokenCap = try webString(data, key: "monthlyCap", limit: 16)
+                auditLocalLearning = try webBool(data, key: "localLearning")
+                saveAuditConfiguration()
+            case "storeGeminiKey":
+                auditGeminiAPIKey = try webString(data, key: "apiKey", limit: 2_048)
+                saveGeminiAPIKey()
+            case "removeGeminiKey":
+                removeGeminiAPIKey()
+            case "queueSuggestedAudits":
+                queueSuggestedAudits()
+            case "queueCurrentAudit":
+                queueCurrentAudit()
+            case "runAudit":
+                let raw = try webString(data, key: "id", limit: 64)
+                guard let identifier = UUID(uuidString: raw), let candidate = localState?.auditState.candidates.first(where: { $0.auditID == identifier }) else {
+                    throw WebBridgeInputError.invalidChoice("audit candidate")
+                }
+                runGeminiAudit(candidate)
+            case "confirmAudit":
+                let raw = try webString(data, key: "id", limit: 64)
+                let policyID = try webString(data, key: "policyID", limit: 256)
+                guard let identifier = UUID(uuidString: raw), let auditResult = localState?.auditState.results.first(where: { $0.auditID == identifier }) else {
+                    throw WebBridgeInputError.invalidChoice("audit result")
+                }
+                confirmFalseAllowAudit(auditResult, policyID: policyID)
+            case "copyDiagnostics":
+                copyRedactedAuditDiagnostics()
+            default:
+                throw WebBridgeInputError.invalidChoice("action")
+            }
+        } catch {
+            issue = error.localizedDescription
+        }
+    }
+
+    private func webResult(_ value: ClassificationResult) -> [String: Any] {
+        [
+            "strongestAction": value.strongestAction.rawValue,
+            "threshold": value.threshold,
+            "leafTags": value.selectedLeafTagIDs,
+            "ancestorTags": value.ancestorTagIDs,
+            "scores": Array(value.scores.prefix(4).map { score in
+                ["tag": score.tagID, "score": score.finalScore] as [String: Any]
+            }),
+            "decisions": value.decisions.map { decision in
+                [
+                    "policyID": decision.policyID,
+                    "action": decision.action.rawValue,
+                    "explanation": decision.explanation,
+                ] as [String: Any]
+            },
+        ]
+    }
+
+    private func webString(_ data: [String: Any], key: String, limit: Int) throws -> String {
+        guard let value = data[key] as? String else { throw WebBridgeInputError.missingValue(key) }
+        guard value.count <= limit else { throw WebBridgeInputError.exceedsLimit(key, limit) }
+        return value
+    }
+
+    private func webBool(_ data: [String: Any], key: String) throws -> Bool {
+        guard let value = data[key] as? Bool else { throw WebBridgeInputError.missingValue(key) }
+        return value
+    }
+
     private func splitTagList(_ raw: String) -> [String] {
         Array(Set(raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
     }
@@ -501,6 +998,7 @@ private enum AppInputError: Error, LocalizedError {
     case auditRequestBudgetTooSmall
     case diagnosticEncodingFailed
     case diagnosticClipboardUnavailable
+    case backupLocked
 
     var errorDescription: String? {
         switch self {
@@ -512,156 +1010,128 @@ private enum AppInputError: Error, LocalizedError {
         case .auditRequestBudgetTooSmall: return "The per-request token reservation must be at least the configured output-token cap."
         case .diagnosticEncodingFailed: return "The redacted audit diagnostic could not be encoded locally."
         case .diagnosticClipboardUnavailable: return "The redacted audit diagnostic could not be copied to the local clipboard."
+        case .backupLocked: return "Enter the local backup owner code before changing backup mode."
         }
     }
 }
 
+private enum WebBridgeInputError: Error, LocalizedError {
+    case missingValue(String)
+    case exceedsLimit(String, Int)
+    case invalidChoice(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .missingValue(let field): return "The web UI did not supply a valid \(field) value."
+        case .exceedsLimit(let field, let limit): return "\(field) must contain at most \(limit) characters."
+        case .invalidChoice(let field): return "The web UI supplied an unsupported \(field)."
+        }
+    }
+}
+
+#if false
+// Retained temporarily as an implementation reference while the current
+// development shell is wholly AppKit + WKWebView. It is not compiled or used.
 private struct VaultClassifierRootView: View {
     @StateObject private var model = VaultClassifierViewModel()
 
     var body: some View {
-        ZStack {
-            LinearGradient(
-                colors: [VaultPalette.canvasTop, VaultPalette.canvasBottom],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
+        NavigationSplitView {
+            List(selection: workspaceSelection) {
+                Section("WORK") {
+                    workspaceRow(.inspect, title: "Inspect entry", icon: "wand.and.stars")
+                    workspaceRow(.policies, title: "Named policies", icon: "tag")
+                    workspaceRow(.activity, title: "Local activity", icon: "archivebox")
+                    workspaceRow(.training, title: "Local training", icon: "brain.head.profile")
+                }
 
-            VStack(spacing: 12) {
-                header
+                Section("CONTROL") {
+                    workspaceRow(.backup, title: "Local backup", icon: "externaldrive.badge.checkmark")
+                    workspaceRow(.audit, title: "Personal audit", icon: "checklist.checked")
+                    workspaceRow(.integration, title: "Browser bridge", icon: "cable.connector")
+                }
 
-                HStack(alignment: .top, spacing: 14) {
-                    sidebar
-                        .frame(width: 270)
-                    inspector
+                Section("LOCAL STATUS") {
+                    Label("Seed package verified", systemImage: "checkmark.seal.fill")
+                    Label("Offline on this Mac", systemImage: "lock.fill")
+                }
+                .font(.caption)
+                .foregroundStyle(VaultPalette.muted)
+            }
+            .listStyle(.sidebar)
+            .navigationTitle("Vault Classifier")
+            .frame(minWidth: 225)
+        } detail: {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    workspaceContent
+                }
+                .frame(maxWidth: 920, alignment: .leading)
+                .padding(.horizontal, 32)
+                .padding(.vertical, 28)
+            }
+            .background(VaultPalette.canvas)
+            .toolbar {
+                ToolbarItem(placement: .automatic) {
+                    Picker("Resource profile", selection: $model.profile) {
+                        ForEach(ResourceProfile.allCases, id: \.self) { profile in
+                            Text(profile.rawValue.capitalized).tag(profile)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 230)
+                    .onChange(of: model.profile) { _ in
+                        model.applyResourceProfileDefaults()
+                    }
+                }
+                ToolbarItem(placement: .automatic) {
+                    Label("Offline", systemImage: "lock.fill")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(VaultPalette.muted)
                 }
             }
-            .padding(12)
         }
-        .frame(minWidth: 960, minHeight: 650)
+        .frame(minWidth: 980, minHeight: 650)
+        .tint(VaultPalette.navy)
         .onAppear { model.classify() }
     }
 
-    private var header: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(VaultPalette.navy)
-                Image(systemName: "lock.shield.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.white)
-            }
-            .frame(width: 42, height: 42)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Vault Classifier")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(VaultPalette.ink)
-                Text("Local evidence inspector")
-                    .font(.system(size: 12))
-                    .foregroundStyle(VaultPalette.muted)
-            }
-
-            Text("OFFLINE")
-                .font(.system(size: 10, weight: .bold, design: .rounded))
-                .tracking(0.8)
-                .foregroundStyle(VaultPalette.navy)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 5)
-                .background(VaultPalette.navyPale, in: Capsule())
-
-            Spacer()
-
-            VStack(alignment: .trailing, spacing: 4) {
-                Text("Resource profile")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(VaultPalette.muted)
-                Picker("Resource profile", selection: $model.profile) {
-                    ForEach(ResourceProfile.allCases, id: \.self) { profile in
-                        Text(profile.rawValue.capitalized).tag(profile)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 254)
-                .onChange(of: model.profile) { _ in
-                    model.applyResourceProfileDefaults()
+    private var workspaceSelection: Binding<VaultClassifierViewModel.Workspace?> {
+        Binding(
+            get: { model.workspace },
+            set: { selected in
+                guard let selected else { return }
+                model.workspace = selected
+                if selected == .activity || selected == .training || selected == .backup || selected == .audit {
+                    model.refreshLocalState()
                 }
             }
-        }
-        .padding(.horizontal, 8)
+        )
     }
 
-    private var sidebar: some View {
-        VaultPanel {
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("CLASSIFIER")
-                        .font(.system(size: 10, weight: .bold))
-                        .tracking(0.8)
-                        .foregroundStyle(VaultPalette.muted)
-                    Text("Local workspace")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(VaultPalette.ink)
-                    Text("Everything below is read, scored, and retained on this Mac.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(VaultPalette.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                VStack(spacing: 7) {
-                    VaultNavigationRow(icon: "wand.and.stars", title: "Inspect entry", detail: "Current tool", isSelected: model.workspace == .inspect) { model.workspace = .inspect }
-                    VaultNavigationRow(icon: "tag", title: "Named policies", detail: "\(model.policies.count) local", isSelected: model.workspace == .policies) { model.workspace = .policies }
-                    VaultNavigationRow(icon: "archivebox", title: "Local activity", detail: "FIFO + corrections", isSelected: model.workspace == .activity) { model.workspace = .activity; model.refreshLocalState() }
-                    VaultNavigationRow(icon: "checklist.checked", title: "Personal audit", detail: "Optional + budgeted", isSelected: model.workspace == .audit) { model.workspace = .audit; model.refreshLocalState() }
-                    VaultNavigationRow(icon: "cable.connector", title: "Browser bridge", detail: "Opt-in local path", isSelected: model.workspace == .integration) { model.workspace = .integration }
-                }
-
-                Divider()
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("PACKAGE")
-                        .font(.system(size: 10, weight: .bold))
-                        .tracking(0.8)
-                        .foregroundStyle(VaultPalette.muted)
-                    VaultStatusLine(icon: "checkmark.seal.fill", title: "Seed verified", value: "SHA-256")
-                    VaultStatusLine(icon: "point.3.connected.trianglepath.dotted", title: "Source prior", value: "70 / 30")
-                    VaultStatusLine(icon: "lock.fill", title: "Network", value: "Not used")
-                }
-
-                Spacer(minLength: 0)
-
-                HStack(spacing: 8) {
-                    Image(systemName: "info.circle")
-                        .foregroundStyle(VaultPalette.navy)
-                    Text("Local-first development shell")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(VaultPalette.muted)
-                }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(VaultPalette.navyPale.opacity(0.7), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            }
-        }
+    @ViewBuilder
+    private func workspaceRow(_ workspace: VaultClassifierViewModel.Workspace, title: String, icon: String) -> some View {
+        Label(title, systemImage: icon)
+            .tag(workspace)
     }
 
-    private var inspector: some View {
-        VaultPanel {
-            ScrollView {
-                switch model.workspace {
-                case .inspect:
-                    inspectWorkspace
-                case .policies:
-                    policyWorkspace
-                case .activity:
-                    activityWorkspace
-                case .audit:
-                    auditWorkspace
-                case .integration:
-                    integrationWorkspace
-                }
-            }
+    @ViewBuilder
+    private var workspaceContent: some View {
+        switch model.workspace {
+        case .inspect:
+            inspectWorkspace
+        case .policies:
+            policyWorkspace
+        case .activity:
+            activityWorkspace
+        case .training:
+            trainingWorkspace
+        case .backup:
+            backupWorkspace
+        case .audit:
+            auditWorkspace
+        case .integration:
+            integrationWorkspace
         }
     }
 
@@ -670,7 +1140,7 @@ private struct VaultClassifierRootView: View {
                     HStack(alignment: .top, spacing: 12) {
                         VStack(alignment: .leading, spacing: 5) {
                             Text("Inspect an entry")
-                                .font(.system(size: 20, weight: .bold))
+                                .font(.title2.weight(.semibold))
                                 .foregroundStyle(VaultPalette.ink)
                             Text("Provide the same compact evidence a browser adapter will send. Ancestors are derived locally.")
                                 .font(.system(size: 12))
@@ -680,10 +1150,10 @@ private struct VaultClassifierRootView: View {
                         Text(model.surface == .feed ? "FEED DECISION" : "PAGE DECISION")
                             .font(.system(size: 10, weight: .bold, design: .rounded))
                             .tracking(0.7)
-                            .foregroundStyle(VaultPalette.navy)
+                            .foregroundStyle(VaultPalette.cyan)
                             .padding(.horizontal, 9)
                             .padding(.vertical, 6)
-                            .background(VaultPalette.navyPale, in: Capsule())
+                            .background(VaultPalette.cyanPale, in: Capsule())
                     }
 
                     VStack(alignment: .leading, spacing: 8) {
@@ -717,12 +1187,8 @@ private struct VaultClassifierRootView: View {
                         Button(action: model.classify) {
                             Label("Classify locally", systemImage: "sparkles")
                                 .font(.system(size: 13, weight: .semibold))
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 9)
                         }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.white)
-                        .background(VaultPalette.navy, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .buttonStyle(VaultPrimaryActionStyle())
 
                         Text("No upload • no provider key • local ledger")
                             .font(.system(size: 11))
@@ -763,7 +1229,7 @@ private struct VaultClassifierRootView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Named policies")
-                        .font(.system(size: 20, weight: .bold))
+                        .font(.title2.weight(.semibold))
                         .foregroundStyle(VaultPalette.ink)
                     Text("Policies live in Vault Classifier. The browser only asks for a policy ID and renders the returned decision.")
                         .font(.system(size: 12))
@@ -793,7 +1259,7 @@ private struct VaultClassifierRootView: View {
                                     .foregroundStyle(VaultPalette.muted)
                             }
                             .padding(10)
-                            .background(model.editingPolicyID == policy.id ? VaultPalette.navyPale : .white.opacity(0.5), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .background(model.editingPolicyID == policy.id ? VaultPalette.navyPale : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                         .buttonStyle(.plain)
                     }
@@ -851,7 +1317,7 @@ private struct VaultClassifierRootView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Local activity")
-                        .font(.system(size: 20, weight: .bold))
+                        .font(.title2.weight(.semibold))
                         .foregroundStyle(VaultPalette.ink)
                     Text("The bounded cache and decision ledger are local. Opening or watching content is never a training label.")
                         .font(.system(size: 12))
@@ -925,7 +1391,7 @@ private struct VaultClassifierRootView: View {
                             }
                         }
                         .padding(10)
-                        .background(.white.opacity(0.5), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .background(VaultPalette.inset, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                 }
             } else {
@@ -939,6 +1405,207 @@ private struct VaultClassifierRootView: View {
         }
     }
 
+    private var trainingWorkspace: some View {
+        let corpus = model.localState?.trainingCorpus
+        let labelCount = corpus?.examples.count ?? 0
+        let featureCount = model.localTrainingFeatureCount()
+        return VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Local training")
+                        .font(.title2.weight(.semibold))
+                        .foregroundStyle(VaultPalette.ink)
+                    Text("Build a bounded correction layer only from labels you explicitly store. Viewing, clicking, a raw correction, and provider output alone are never training data.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(VaultPalette.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Text(labelCount == 0 ? "NO LABELS" : "LOCAL ONLY")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .tracking(0.7)
+                    .foregroundStyle(labelCount == 0 ? VaultPalette.muted : VaultPalette.navy)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .background(labelCount == 0 ? .gray.opacity(0.12) : VaultPalette.navyPale, in: Capsule())
+            }
+
+            HStack(spacing: 10) {
+                VaultMetric(title: "EXPLICIT LABELS", value: "\(labelCount) / \(model.localState?.settings.cacheCapacity ?? 0)")
+                VaultMetric(title: "MODEL FEATURES", value: featureCount.formatted())
+                VaultMetric(title: "LAST REBUILD", value: corpus?.lastRun.map { "\($0.exampleCount) labels" } ?? "Not yet")
+            }
+
+            VStack(alignment: .leading, spacing: 11) {
+                VaultFieldLabel(title: "CURRENT ENTRY LABEL", hint: "Exact predictable leaf IDs")
+                Text("Classify the entry first, then state what it is and is not. Ancestor paths are computed locally; do not enter parent nodes such as content.topics.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(VaultPalette.muted)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    VaultFieldLabel(title: "POSITIVE LEAF TAGS", hint: "Comma separated")
+                    TextField("content.entities.clash-royale", text: $model.trainingPositiveTags)
+                        .textFieldStyle(.plain)
+                        .vaultInput()
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    VaultFieldLabel(title: "NEGATIVE LEAF TAGS", hint: "Optional, comma separated")
+                    TextField("content.entities.minecraft", text: $model.trainingNegativeTags)
+                        .textFieldStyle(.plain)
+                        .vaultInput()
+                }
+                HStack(spacing: 10) {
+                    Button("Store current label") { model.storeCurrentTrainingExample() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.result == nil)
+                    Text("The newest label for the same source entry replaces its older label. Labels remain on this Mac.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(VaultPalette.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(12)
+            .background(VaultPalette.navyPale.opacity(0.62), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 10) {
+                VaultFieldLabel(title: "REBUILD CORRECTION LAYER", hint: "No network or provider")
+                HStack(alignment: .bottom, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        VaultFieldLabel(title: "PASSES", hint: "1–12")
+                        TextField("3", text: $model.trainingEpochs)
+                            .textFieldStyle(.plain)
+                            .vaultInput()
+                            .frame(width: 110)
+                    }
+                    Button("Retrain local model") { model.retrainLocalModel() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(labelCount == 0)
+                    Spacer(minLength: 0)
+                }
+                Text("Rebuild replaces the previous personal correction layer deterministically from retained compatible labels. It affects new classifications; existing activity remains an historical record until it is explicitly re-evaluated.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(VaultPalette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let run = corpus?.lastRun {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(VaultPalette.navy)
+                    Text("Last rebuild: \(run.exampleCount) labels • \(run.labelUpdateCount) updates • \(run.epochs) passes • taxonomy \(run.taxonomyVersion)")
+                        .font(.system(size: 10))
+                        .foregroundStyle(VaultPalette.muted)
+                }
+            }
+            if let notice = model.trainingNotice {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(VaultPalette.navy)
+                    Text(notice)
+                        .font(.system(size: 11))
+                        .foregroundStyle(VaultPalette.muted)
+                }
+                .padding(11)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(VaultPalette.navyPale.opacity(0.58), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            if let issue = model.issue { VaultIssueCard(issue: issue) }
+        }
+    }
+
+    private var backupWorkspace: some View {
+        let configuration = model.localState?.backupConfiguration
+        return VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Local model backup")
+                        .font(.title2.weight(.semibold))
+                        .foregroundStyle(VaultPalette.ink)
+                    Text("Keep private copies of this Mac's active seed package, local training corpus, and personal correction layer. Nothing is uploaded, shared, or sent to a server.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(VaultPalette.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Text(configuration?.isEnabled == true ? "ON" : "OFF")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .tracking(0.7)
+                    .foregroundStyle(configuration?.isEnabled == true ? VaultPalette.navy : VaultPalette.muted)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .background(configuration?.isEnabled == true ? VaultPalette.navyPale : .gray.opacity(0.12), in: Capsule())
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                VaultFieldLabel(title: "OWNER GATE", hint: "This Mac's Keychain")
+                if model.backupUnlocked {
+                    Label("Backup controls are unlocked for this app session.", systemImage: "lock.open.fill")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(VaultPalette.navy)
+                } else {
+                    Text("Set an owner code once, or enter the existing owner code to unlock backup mode for this app session. The code itself is never written to the state file or a backup.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(VaultPalette.muted)
+                    HStack(spacing: 8) {
+                        SecureField(model.hasBackupOwnerCode ? "Enter local backup owner code" : "Create local backup owner code (8+ characters)", text: $model.backupOwnerCode)
+                            .textFieldStyle(.plain)
+                            .vaultInput()
+                        Button(model.hasBackupOwnerCode ? "Unlock" : "Set code") {
+                            if model.hasBackupOwnerCode {
+                                model.unlockBackupMode()
+                            } else {
+                                model.setBackupOwnerCode()
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.backupOwnerCode.isEmpty)
+                    }
+                }
+            }
+            .padding(12)
+            .background(VaultPalette.navyPale.opacity(0.62), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 10) {
+                VaultFieldLabel(title: "PRIVATE SNAPSHOT FOLDER", hint: "A local path you control")
+                TextField("/Users/you/Vault Classifier Backups", text: $model.backupDirectory)
+                    .textFieldStyle(.plain)
+                    .vaultInput()
+                    .disabled(!model.backupUnlocked)
+                Toggle("Back up automatically after every successful local model rebuild", isOn: $model.backupEnabled)
+                    .toggleStyle(.switch)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(VaultPalette.ink)
+                    .disabled(!model.backupUnlocked)
+                Text("Each snapshot contains model material only: the active package, policies, explicit training corpus, and correction layer—not the activity cache, decision ledger, or audit history. The folder retains the current snapshot and three previous snapshots; no existing snapshot is deleted when automatic mode is turned off.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(VaultPalette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 10) {
+                    Button("Save backup mode") { model.saveBackupConfiguration() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!model.backupUnlocked)
+                    Button("Create backup now") { model.backupLocalModelNow() }
+                        .buttonStyle(.bordered)
+                        .disabled(!model.backupUnlocked || configuration?.isEnabled != true)
+                }
+            }
+
+            if let notice = model.backupNotice {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(VaultPalette.navy)
+                    Text(notice)
+                        .font(.system(size: 11))
+                        .foregroundStyle(VaultPalette.muted)
+                }
+                .padding(11)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(VaultPalette.navyPale.opacity(0.58), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            if let issue = model.issue { VaultIssueCard(issue: issue) }
+        }
+    }
+
     private var auditWorkspace: some View {
         let auditState = model.localState?.auditState
         let configuration = auditState?.configuration
@@ -946,7 +1613,7 @@ private struct VaultClassifierRootView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Personal audit")
-                        .font(.system(size: 20, weight: .bold))
+                        .font(.title2.weight(.semibold))
                         .foregroundStyle(VaultPalette.ink)
                     Text("Optional review for possible false allows. Evidence stays quoted as untrusted data; a local reservation is made before an explicit Gemini request, and provider-reported thinking usage is retained if it exceeds that reservation.")
                         .font(.system(size: 12))
@@ -957,14 +1624,15 @@ private struct VaultClassifierRootView: View {
                 Text(model.auditEnabled ? (model.allowLocalLLMAudit ? (model.hasStoredGeminiAPIKey ? "READY" : "KEY NEEDED") : "RESOURCE HOLD") : "OFF")
                     .font(.system(size: 10, weight: .bold, design: .rounded))
                     .tracking(0.7)
-                    .foregroundStyle(model.auditEnabled && model.allowLocalLLMAudit && model.hasStoredGeminiAPIKey ? VaultPalette.navy : VaultPalette.muted)
+                    .foregroundStyle(model.auditEnabled && model.allowLocalLLMAudit && model.hasStoredGeminiAPIKey ? VaultPalette.gold : VaultPalette.muted)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 6)
-                    .background(model.auditEnabled && model.allowLocalLLMAudit && model.hasStoredGeminiAPIKey ? VaultPalette.navyPale : .gray.opacity(0.12), in: Capsule())
+                    .background(model.auditEnabled && model.allowLocalLLMAudit && model.hasStoredGeminiAPIKey ? VaultPalette.goldPale : .gray.opacity(0.12), in: Capsule())
             }
 
             Toggle("Enable personal local auditing", isOn: $model.auditEnabled)
                 .toggleStyle(.switch)
+                .tint(VaultPalette.gold)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(VaultPalette.ink)
 
@@ -974,7 +1642,7 @@ private struct VaultClassifierRootView: View {
                     .foregroundStyle(VaultPalette.muted)
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(VaultPalette.navyPale.opacity(0.72), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .background(VaultPalette.goldPale, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
 
             if model.auditEnabled {
@@ -987,7 +1655,7 @@ private struct VaultClassifierRootView: View {
                                 .foregroundStyle(VaultPalette.ink)
                                 .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
                                 .padding(.horizontal, 9)
-                                .background(.white.opacity(0.68), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .background(VaultPalette.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                         VStack(alignment: .leading, spacing: 6) {
                             VaultFieldLabel(title: "REASONING", hint: "Per request")
@@ -1060,12 +1728,13 @@ private struct VaultClassifierRootView: View {
                     .foregroundStyle(VaultPalette.muted)
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(VaultPalette.navyPale.opacity(0.6), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .background(VaultPalette.goldPale, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
 
             HStack(spacing: 10) {
                 Button("Save local audit settings") { model.saveAuditConfiguration() }
                     .buttonStyle(.borderedProminent)
+                    .tint(VaultPalette.gold)
                 Button("Queue risk-selected allows") { model.queueSuggestedAudits() }
                     .buttonStyle(.bordered)
                     .disabled(!model.auditEnabled || !model.allowLocalLLMAudit)
@@ -1104,7 +1773,7 @@ private struct VaultClassifierRootView: View {
             if let notice = model.auditDiagnosticNotice {
                 Label(notice, systemImage: "checkmark.circle.fill")
                     .font(.system(size: 10))
-                    .foregroundStyle(VaultPalette.navy)
+                    .foregroundStyle(VaultPalette.gold)
             }
 
             if let candidates = auditState?.candidates.suffix(6).reversed(), !candidates.isEmpty {
@@ -1113,7 +1782,7 @@ private struct VaultClassifierRootView: View {
                     ForEach(Array(candidates)) { candidate in
                         HStack(alignment: .top, spacing: 10) {
                             Image(systemName: candidate.intent == .potentialFalseAllow ? "questionmark.circle" : "flag.fill")
-                                .foregroundStyle(VaultPalette.navy)
+                                .foregroundStyle(VaultPalette.gold)
                                 .frame(width: 18)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(candidate.intent == .potentialFalseAllow ? "Potential false allow" : "User-marked decision")
@@ -1126,14 +1795,15 @@ private struct VaultClassifierRootView: View {
                             Spacer()
                             Text(candidate.eligibility.isEligible ? "eligible" : "held")
                                 .font(.system(size: 10, weight: .medium, design: .rounded))
-                                .foregroundStyle(candidate.eligibility.isEligible ? VaultPalette.navy : VaultPalette.red)
+                                .foregroundStyle(candidate.eligibility.isEligible ? VaultPalette.gold : VaultPalette.red)
                             Button(model.isRunningAudit(candidate) ? "Running…" : "Run Gemini") { model.runGeminiAudit(candidate) }
                                 .buttonStyle(.bordered)
+                                .tint(VaultPalette.gold)
                                 .font(.system(size: 10))
                                 .disabled(!candidate.eligibility.isEligible || !model.auditEnabled || !model.allowLocalLLMAudit || !model.hasStoredGeminiAPIKey || model.isRunningAudit(candidate))
                         }
                         .padding(10)
-                        .background(.white.opacity(0.5), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .background(VaultPalette.inset, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                 }
             }
@@ -1145,7 +1815,7 @@ private struct VaultClassifierRootView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack(spacing: 8) {
                                 Image(systemName: auditResult.finding == .potentialFalseAllow ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                                    .foregroundStyle(auditResult.finding == .potentialFalseAllow ? VaultPalette.red : VaultPalette.navy)
+                                    .foregroundStyle(auditResult.finding == .potentialFalseAllow ? VaultPalette.red : VaultPalette.gold)
                                 Text(auditResult.finding.rawValue)
                                     .font(.system(size: 11, weight: .semibold))
                                     .foregroundStyle(VaultPalette.ink)
@@ -1180,7 +1850,7 @@ private struct VaultClassifierRootView: View {
                             }
                         }
                         .padding(10)
-                        .background(.white.opacity(0.5), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .background(VaultPalette.inset, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                 }
             }
@@ -1198,7 +1868,7 @@ private struct VaultClassifierRootView: View {
     private var integrationWorkspace: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Browser bridge")
-                .font(.system(size: 20, weight: .bold))
+                .font(.title2.weight(.semibold))
                 .foregroundStyle(VaultPalette.ink)
             Text("A source-only Chrome/Edge native-messaging adapter is present, but it is deliberately not registered or enabled. This development app continues to classify locally without a browser, server, account, or provider key.")
                 .font(.system(size: 12))
@@ -1219,54 +1889,45 @@ private struct VaultClassifierRootView: View {
 }
 
 private enum VaultPalette {
-    static let navy = Color(red: 30 / 255, green: 58 / 255, blue: 138 / 255)
-    static let navyPale = Color(red: 238 / 255, green: 242 / 255, blue: 255 / 255)
-    static let canvasTop = Color(red: 248 / 255, green: 250 / 255, blue: 252 / 255)
-    static let canvasBottom = Color(red: 238 / 255, green: 242 / 255, blue: 255 / 255)
-    static let ink = Color(red: 31 / 255, green: 41 / 255, blue: 55 / 255)
-    static let muted = Color(red: 71 / 255, green: 85 / 255, blue: 105 / 255)
-    static let border = Color(red: 203 / 255, green: 213 / 255, blue: 225 / 255)
+    // Shared Vault language: semantic macOS surfaces, cool navy hardware, and
+    // restrained accents with one clear meaning each.
+    static let navy = Color(red: 34 / 255, green: 52 / 255, blue: 79 / 255)
+    static let navyDark = Color(red: 7 / 255, green: 13 / 255, blue: 24 / 255)
+    static let navyPale = navy.opacity(0.11)
+    static let canvas = Color(nsColor: .windowBackgroundColor)
+    static let surface = Color(nsColor: .controlBackgroundColor)
+    static let inset = Color(nsColor: .underPageBackgroundColor)
+    static let ink = Color.primary
+    static let muted = Color.secondary
+    static let border = Color(nsColor: .separatorColor)
+    static let cyan = Color(red: 14 / 255, green: 116 / 255, blue: 144 / 255)
+    static let cyanPale = cyan.opacity(0.12)
+    static let gold = Color(red: 161 / 255, green: 98 / 255, blue: 7 / 255)
+    static let goldPale = gold.opacity(0.12)
     static let red = Color(red: 153 / 255, green: 27 / 255, blue: 27 / 255)
-    static let redPale = Color(red: 254 / 255, green: 242 / 255, blue: 242 / 255)
+    static let redPale = red.opacity(0.12)
 }
 
-private struct VaultPanel<Content: View>: View {
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        content
-            .padding(16)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(.white.opacity(0.92), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .shadow(color: .black.opacity(0.08), radius: 17, y: 8)
-    }
-}
-
-private struct VaultNavigationRow: View {
-    let icon: String
-    let title: String
-    let detail: String
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 18)
-                    .foregroundStyle(isSelected ? VaultPalette.navy : VaultPalette.muted)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title).font(.system(size: 12, weight: .semibold))
-                    Text(detail).font(.system(size: 10)).foregroundStyle(VaultPalette.muted)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 10)
+private struct VaultPrimaryActionStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
             .padding(.vertical, 9)
-            .background(isSelected ? VaultPalette.navyPale : .clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        }
-        .buttonStyle(.plain)
+            .background(
+                LinearGradient(
+                    colors: [VaultPalette.navy, VaultPalette.navyDark],
+                    startPoint: .top,
+                    endPoint: .bottom
+                ),
+                in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+            )
+            .overlay(alignment: .top) {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .stroke(.white.opacity(configuration.isPressed ? 0.12 : 0.25), lineWidth: 0.7)
+            }
+            .shadow(color: VaultPalette.navy.opacity(configuration.isPressed ? 0.10 : 0.22), radius: configuration.isPressed ? 2 : 5, y: configuration.isPressed ? 1 : 3)
+            .opacity(configuration.isPressed ? 0.88 : 1)
     }
 }
 
@@ -1277,16 +1938,16 @@ private struct VaultMetric: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
-                .font(.system(size: 9, weight: .bold))
-                .tracking(0.7)
+                .font(.caption2.weight(.semibold))
                 .foregroundStyle(VaultPalette.muted)
             Text(value)
-                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .font(.headline)
                 .foregroundStyle(VaultPalette.ink)
         }
-        .padding(11)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.white.opacity(0.65), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(VaultPalette.inset, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 }
 
@@ -1319,7 +1980,7 @@ private struct VaultStatusLine: View {
                 .foregroundStyle(VaultPalette.navy)
                 .frame(width: 14)
             Text(title)
-                .font(.system(size: 11))
+                .font(.caption)
                 .foregroundStyle(VaultPalette.muted)
             Spacer(minLength: 0)
             Text(value)
@@ -1336,11 +1997,10 @@ private struct VaultFieldLabel: View {
     var body: some View {
         HStack(spacing: 6) {
             Text(title)
-                .font(.system(size: 10, weight: .bold))
-                .tracking(0.75)
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(VaultPalette.ink)
             Text(hint)
-                .font(.system(size: 10))
+                .font(.caption)
                 .foregroundStyle(VaultPalette.muted)
         }
     }
@@ -1349,12 +2009,12 @@ private struct VaultFieldLabel: View {
 private struct VaultInput: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .font(.system(size: 13))
+            .font(.body)
             .foregroundStyle(VaultPalette.ink)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(.white, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(VaultPalette.border.opacity(0.9), lineWidth: 1))
+            .background(VaultPalette.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(VaultPalette.border.opacity(0.9), lineWidth: 1))
     }
 }
 
@@ -1367,16 +2027,16 @@ private struct VaultResultCard: View {
 
     private var actionColor: Color {
         switch result.strongestAction {
-        case .allow: return Color(red: 14 / 255, green: 116 / 255, blue: 144 / 255)
-        case .dim: return Color(red: 161 / 255, green: 98 / 255, blue: 7 / 255)
+        case .allow: return VaultPalette.cyan
+        case .dim: return VaultPalette.gold
         case .block: return VaultPalette.red
         }
     }
 
     private var actionPale: Color {
         switch result.strongestAction {
-        case .allow: return Color(red: 236 / 255, green: 254 / 255, blue: 255 / 255)
-        case .dim: return Color(red: 255 / 255, green: 251 / 255, blue: 235 / 255)
+        case .allow: return VaultPalette.cyanPale
+        case .dim: return VaultPalette.goldPale
         case .block: return VaultPalette.redPale
         }
     }
@@ -1464,3 +2124,4 @@ private struct VaultResultCard: View {
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(actionColor.opacity(0.2), lineWidth: 1))
     }
 }
+#endif
