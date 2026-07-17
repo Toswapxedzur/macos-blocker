@@ -75,18 +75,16 @@ private final class VaultClassifierAppDelegate: NSObject, NSApplicationDelegate 
 @MainActor
 final class VaultClassifierViewModel: ObservableObject {
     enum Workspace: String, CaseIterable, Identifiable, Hashable {
-        case inspect
-        case policies
-        case activity
-        case training
-        case backup
-        case audit
-        case integration
+        case tagTree
+        case localModel
+        case llmAssist
+        case browserBridge
+        case classificationData
 
         var id: String { rawValue }
     }
 
-    @Published var workspace: Workspace = .inspect
+    @Published var workspace: Workspace = .tagTree
     @Published var title = "Clash Royale deck gameplay - ranked match"
     @Published var sourceID = "youtube:channel:demo"
     @Published var surface: EntrySurface = .feed
@@ -270,6 +268,143 @@ final class VaultClassifierViewModel: ObservableObject {
 
     func refreshLocalState() {
         localState = coordinator?.snapshot()
+    }
+
+    func createTree(name: String) {
+        do {
+            let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleaned.isEmpty else { throw WebBridgeInputError.invalidChoice("tree name") }
+            guard var catalog = localState?.workspaceCatalog else { return }
+            catalog.trees.append(.init(name: cleaned, nodes: []))
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+        } catch { issue = error.localizedDescription }
+    }
+
+    func addTag(treeID: String, name: String, parentID: String?, positionX: Double, positionY: Double) {
+        do {
+            guard var catalog = localState?.workspaceCatalog,
+                  let treeIndex = catalog.trees.firstIndex(where: { $0.id == treeID }) else {
+                throw WebBridgeInputError.invalidChoice("tag tree")
+            }
+            let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleaned.isEmpty else { throw WebBridgeInputError.invalidChoice("tag name") }
+            let normalizedParentID = parentID?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let normalizedParentID, !normalizedParentID.isEmpty,
+               !catalog.trees[treeIndex].nodes.contains(where: { $0.id == normalizedParentID }) {
+                throw WebBridgeInputError.invalidChoice("tag parent")
+            }
+            catalog.trees[treeIndex].nodes.append(.init(name: cleaned, parentID: normalizedParentID?.isEmpty == false ? normalizedParentID : nil, positionX: positionX, positionY: positionY))
+            advanceTreeRevision(in: &catalog, treeIndex: treeIndex)
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+        } catch { issue = error.localizedDescription }
+    }
+
+    func moveTag(treeID: String, nodeID: String, positionX: Double, positionY: Double) {
+        do {
+            guard var catalog = localState?.workspaceCatalog,
+                  let treeIndex = catalog.trees.firstIndex(where: { $0.id == treeID }),
+                  let nodeIndex = catalog.trees[treeIndex].nodes.firstIndex(where: { $0.id == nodeID }) else {
+                throw WebBridgeInputError.invalidChoice("tag node")
+            }
+            guard positionX.isFinite, positionY.isFinite, positionX >= 0, positionY >= 0 else {
+                throw WebBridgeInputError.invalidChoice("tag position")
+            }
+            let tree = catalog.trees[treeIndex]
+            let sourcePosition = tree.nodes[nodeIndex].resolvedCanvasPosition(index: nodeIndex)
+            let deltaX = positionX - sourcePosition.x
+            let deltaY = positionY - sourcePosition.y
+            let movedNodeIDs = tree.subtreeNodeIDs(rootID: nodeID)
+
+            for index in catalog.trees[treeIndex].nodes.indices where movedNodeIDs.contains(catalog.trees[treeIndex].nodes[index].id) {
+                let currentPosition = catalog.trees[treeIndex].nodes[index].resolvedCanvasPosition(index: index)
+                let nextX = currentPosition.x + deltaX
+                let nextY = currentPosition.y + deltaY
+                guard nextX.isFinite, nextY.isFinite, nextX >= 0, nextY >= 0, nextX <= 20_000, nextY <= 20_000 else {
+                    throw WebBridgeInputError.invalidChoice("tag position")
+                }
+                catalog.trees[treeIndex].nodes[index].positionX = nextX
+                catalog.trees[treeIndex].nodes[index].positionY = nextY
+            }
+            catalog.trees[treeIndex].updatedAtMilliseconds = WorkspaceCatalog.now()
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+        } catch { issue = error.localizedDescription }
+    }
+
+    func updateTag(treeID: String, nodeID: String, name: String, parentID: String?) {
+        do {
+            guard var catalog = localState?.workspaceCatalog,
+                  let treeIndex = catalog.trees.firstIndex(where: { $0.id == treeID }),
+                  let nodeIndex = catalog.trees[treeIndex].nodes.firstIndex(where: { $0.id == nodeID }) else {
+                throw WebBridgeInputError.invalidChoice("tag node")
+            }
+            let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleaned.isEmpty else { throw WebBridgeInputError.invalidChoice("tag name") }
+            let normalizedParentID = parentID?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let normalizedParentID, !normalizedParentID.isEmpty {
+                guard normalizedParentID != nodeID,
+                      catalog.trees[treeIndex].nodes.contains(where: { $0.id == normalizedParentID }),
+                      !isDescendant(normalizedParentID, of: nodeID, in: catalog.trees[treeIndex]) else {
+                    throw WebBridgeInputError.invalidChoice("tag parent")
+                }
+            }
+            catalog.trees[treeIndex].nodes[nodeIndex].name = cleaned
+            catalog.trees[treeIndex].nodes[nodeIndex].parentID = normalizedParentID?.isEmpty == false ? normalizedParentID : nil
+            advanceTreeRevision(in: &catalog, treeIndex: treeIndex)
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+        } catch { issue = error.localizedDescription }
+    }
+
+    func toggleTagRetirement(treeID: String, nodeID: String) {
+        do {
+            guard var catalog = localState?.workspaceCatalog,
+                  let treeIndex = catalog.trees.firstIndex(where: { $0.id == treeID }),
+                  let nodeIndex = catalog.trees[treeIndex].nodes.firstIndex(where: { $0.id == nodeID }) else {
+                throw WebBridgeInputError.invalidChoice("tag node")
+            }
+            catalog.trees[treeIndex].nodes[nodeIndex].isRetired.toggle()
+            advanceTreeRevision(in: &catalog, treeIndex: treeIndex)
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+        } catch { issue = error.localizedDescription }
+    }
+
+    private func advanceTreeRevision(in catalog: inout WorkspaceCatalog, treeIndex: Int) {
+        catalog.trees[treeIndex].revision += 1
+        catalog.trees[treeIndex].updatedAtMilliseconds = WorkspaceCatalog.now()
+        let treeID = catalog.trees[treeIndex].id
+        for bindingIndex in catalog.bindings.indices where catalog.bindings[bindingIndex].treeID == treeID {
+            catalog.bindings[bindingIndex].activeModelID = nil
+        }
+    }
+
+    private func isDescendant(_ possibleDescendantID: String, of nodeID: String, in tree: TagTreeAsset) -> Bool {
+        var cursor = tree.nodes.first(where: { $0.id == possibleDescendantID })?.parentID
+        while let current = cursor {
+            if current == nodeID { return true }
+            cursor = tree.nodes.first(where: { $0.id == current })?.parentID
+        }
+        return false
+    }
+
+    func recordManualClassification(title: String, tags: String) {
+        do {
+            guard var catalog = localState?.workspaceCatalog,
+                  let binding = catalog.bindings.first,
+                  let tree = catalog.trees.first(where: { $0.id == binding.treeID }),
+                  let datasetIndex = catalog.datasets.firstIndex(where: { $0.id == binding.datasetID }) else { return }
+            let labels = splitTagList(tags)
+            guard !labels.isEmpty, labels.allSatisfy({ tagID in tree.nodes.contains(where: { $0.id == tagID && !$0.isRetired }) }) else {
+                throw WebBridgeInputError.invalidChoice("tag IDs")
+            }
+            catalog.datasets[datasetIndex].records.append(.init(title: title, tagIDs: labels, origin: .manual, review: .approved, platformID: binding.id, treeRevision: tree.revision))
+            catalog.datasets[datasetIndex].revision += 1
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+        } catch { issue = error.localizedDescription }
     }
 
     func applyResourceProfileDefaults() {
@@ -485,6 +620,24 @@ final class VaultClassifierViewModel: ObservableObject {
             guard let coordinator else { return }
             let epochs = try positiveInteger(trainingEpochs, label: "Training epochs")
             let run = try coordinator.retrainLocalModel(epochs: epochs)
+            guard var catalog = localState?.workspaceCatalog,
+                  let bindingIndex = catalog.bindings.firstIndex(where: { $0.id == "youtube" }),
+                  let tree = catalog.trees.first(where: { $0.id == catalog.bindings[bindingIndex].treeID }),
+                  let dataset = catalog.datasets.first(where: { $0.id == catalog.bindings[bindingIndex].datasetID }) else {
+                refreshLocalState()
+                return
+            }
+            let modelID = catalog.bindings[bindingIndex].activeModelID ?? catalog.models.first(where: { $0.treeID == tree.id && $0.datasetID == dataset.id })?.id ?? UUID().uuidString
+            if let modelIndex = catalog.models.firstIndex(where: { $0.id == modelID }) {
+                catalog.models[modelIndex].treeRevision = tree.revision
+                catalog.models[modelIndex].datasetRevision = dataset.revision
+                catalog.models[modelIndex].version += 1
+                catalog.models[modelIndex].isReady = true
+            } else {
+                catalog.models.append(.init(id: modelID, name: "Local neural model", treeID: tree.id, treeRevision: tree.revision, datasetID: dataset.id, datasetRevision: dataset.revision, isReady: true))
+            }
+            catalog.bindings[bindingIndex].activeModelID = modelID
+            try coordinator.updateWorkspaceCatalog(catalog)
             refreshLocalState()
             trainingNotice = "Rebuilt this Mac's correction layer from \(run.exampleCount) explicit label\(run.exampleCount == 1 ? "" : "s") in \(run.epochs) pass\(run.epochs == 1 ? "" : "es")."
             issue = nil
@@ -810,6 +963,36 @@ final class VaultClassifierViewModel: ObservableObject {
             "candidates": candidates,
             "results": auditResults,
         ]
+        let catalog = state?.workspaceCatalog ?? .starter()
+        let assets: [String: Any] = [
+            "trees": catalog.trees.map { tree in
+                ["id": tree.id, "name": tree.name, "revision": tree.revision, "nodes": tree.nodes.enumerated().map { index, node -> [String: Any] in
+                    let position = node.resolvedCanvasPosition(index: index)
+                    return ["id": node.id, "name": node.name, "parentID": node.parentID ?? NSNull(), "retired": node.isRetired, "positionX": position.x, "positionY": position.y]
+                }] as [String: Any]
+            },
+            "datasets": catalog.datasets.map { dataset in
+                ["id": dataset.id, "name": dataset.name, "revision": dataset.revision, "records": dataset.records.map { record -> [String: Any] in ["id": record.id, "title": record.title, "tags": record.tagIDs, "origin": record.origin.rawValue, "review": record.review.rawValue, "platformID": record.platformID] }] as [String: Any]
+            },
+            "models": catalog.models.map { model in
+                ["id": model.id, "name": model.name, "treeID": model.treeID, "treeRevision": model.treeRevision, "datasetID": model.datasetID, "datasetRevision": model.datasetRevision, "version": model.version, "ready": model.isReady] as [String: Any]
+            },
+            "bindings": catalog.bindings.map { binding in
+                ["id": binding.id, "name": binding.name, "browser": binding.browser, "treeID": binding.treeID, "datasetID": binding.datasetID, "activeModelID": binding.activeModelID ?? NSNull(), "policyID": binding.policyID ?? NSNull()] as [String: Any]
+            },
+            "tokenUsage": budgetRecords.suffix(12).reversed().map { record -> [String: Any] in
+                let usage = record.settledUsage ?? record.usageCeiling
+                return [
+                    "id": record.id.uuidString,
+                    "provider": auditProvider.rawValue,
+                    "model": auditModelIdentifier,
+                    "input": usage.inputTokens,
+                    "output": usage.outputTokens,
+                    "other": usage.otherBilledTokens,
+                    "status": record.state.rawValue,
+                ]
+            },
+        ]
         return [
             "workspace": workspace.rawValue,
             "issue": issue ?? NSNull(),
@@ -820,6 +1003,7 @@ final class VaultClassifierViewModel: ObservableObject {
             "training": trainingPayload,
             "backup": backupPayload,
             "audit": audit,
+            "assets": assets,
         ]
     }
 
@@ -835,9 +1019,22 @@ final class VaultClassifierViewModel: ObservableObject {
                 let selected = try webString(data, key: "workspace", limit: 32)
                 guard let value = Workspace(rawValue: selected) else { throw WebBridgeInputError.invalidChoice("workspace") }
                 workspace = value
-                if value == .activity || value == .training || value == .backup || value == .audit {
+                if value == .localModel || value == .llmAssist || value == .browserBridge || value == .classificationData {
                     refreshLocalState()
                 }
+            case "createTree":
+                createTree(name: try webString(data, key: "name", limit: 128))
+            case "addTag":
+                addTag(treeID: try webString(data, key: "treeID", limit: 256), name: try webString(data, key: "name", limit: 128), parentID: try webOptionalString(data, key: "parentID", limit: 256), positionX: try webCanvasCoordinate(data, key: "positionX"), positionY: try webCanvasCoordinate(data, key: "positionY"))
+            case "moveTag":
+                moveTag(treeID: try webString(data, key: "treeID", limit: 256), nodeID: try webString(data, key: "nodeID", limit: 256), positionX: try webCanvasCoordinate(data, key: "positionX"), positionY: try webCanvasCoordinate(data, key: "positionY"))
+            case "updateTag":
+                let parentID = try webOptionalString(data, key: "parentID", limit: 256)
+                updateTag(treeID: try webString(data, key: "treeID", limit: 256), nodeID: try webString(data, key: "nodeID", limit: 256), name: try webString(data, key: "name", limit: 128), parentID: parentID)
+            case "toggleTagRetirement":
+                toggleTagRetirement(treeID: try webString(data, key: "treeID", limit: 256), nodeID: try webString(data, key: "nodeID", limit: 256))
+            case "recordManualClassification":
+                recordManualClassification(title: try webString(data, key: "title", limit: 512), tags: try webString(data, key: "tags", limit: 1_024))
             case "classify":
                 title = try webString(data, key: "title", limit: 4_096)
                 sourceID = try webString(data, key: "sourceID", limit: 1_024)
@@ -977,6 +1174,21 @@ final class VaultClassifierViewModel: ObservableObject {
         guard let value = data[key] as? String else { throw WebBridgeInputError.missingValue(key) }
         guard value.count <= limit else { throw WebBridgeInputError.exceedsLimit(key, limit) }
         return value
+    }
+
+    private func webOptionalString(_ data: [String: Any], key: String, limit: Int) throws -> String? {
+        guard let value = data[key] as? String else { return nil }
+        guard value.count <= limit else { throw WebBridgeInputError.exceedsLimit(key, limit) }
+        return value
+    }
+
+    private func webCanvasCoordinate(_ data: [String: Any], key: String) throws -> Double {
+        guard let value = data[key] as? NSNumber else { throw WebBridgeInputError.missingValue(key) }
+        let coordinate = value.doubleValue
+        guard coordinate.isFinite, (0...20_000).contains(coordinate) else {
+            throw WebBridgeInputError.invalidChoice("canvas coordinate")
+        }
+        return coordinate
     }
 
     private func webBool(_ data: [String: Any], key: String) throws -> Bool {
