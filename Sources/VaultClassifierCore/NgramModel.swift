@@ -49,7 +49,7 @@ public struct FTRLSettings: Codable, Equatable, Sendable {
     public var l1: Double
     public var l2: Double
 
-    public init(alpha: Double = 0.08, beta: Double = 1.0, l1: Double = 0.1, l2: Double = 1.0) {
+    public init(alpha: Double = 0.08, beta: Double = 1.0, l1: Double = 0.01, l2: Double = 1.0) {
         self.alpha = alpha
         self.beta = beta
         self.l1 = l1
@@ -67,6 +67,10 @@ public struct FTRLFeatureState: Codable, Equatable, Sendable {
 /// A tiny per-installation correction layer. It never calls a provider and is trained only
 /// from explicit local corrections; watch and click events are deliberately not labels.
 public struct PersonalFTRLModel: Codable, Equatable, Sendable {
+    /// The correction layer is intentionally bounded even if the retained
+    /// corpus is large. This keeps an offline rebuild usable on ordinary Macs
+    /// and prevents a long-lived local model from becoming an unbounded cache.
+    public static let maximumFeaturesPerTag = 20_000
     public var settings: FTRLSettings
     public var state: [String: [String: FTRLFeatureState]]
 
@@ -84,14 +88,21 @@ public struct PersonalFTRLModel: Codable, Equatable, Sendable {
         let target = isPositive ? 1.0 : 0.0
         let gradient = sigmoid(baseLogit + delta) - target
         guard gradient.isFinite else { return }
+        var tagState = state[tagID] ?? [:]
         for feature in features {
-            var value = state[tagID]?[feature] ?? .init()
+            if tagState[feature] == nil, tagState.count >= Self.maximumFeaturesPerTag {
+                // Existing features continue to learn. New features past the
+                // cap are ignored rather than expanding retained local state.
+                continue
+            }
+            var value = tagState[feature] ?? .init()
             let oldWeight = weight(for: value)
             let sigma = (sqrt(value.n + gradient * gradient) - sqrt(value.n)) / settings.alpha
             value.z += gradient - sigma * oldWeight
             value.n += gradient * gradient
-            state[tagID, default: [:]][feature] = value
+            tagState[feature] = value
         }
+        state[tagID] = tagState
     }
 
     private func weight(for state: FTRLFeatureState) -> Double {

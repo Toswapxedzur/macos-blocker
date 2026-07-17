@@ -118,6 +118,13 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
     public var policies: [NamedPolicy]
     public var sourceProfiles: [String: SourceProfile]
     public var personalModel: PersonalFTRLModel
+    /// Explicit, local-only labels used to reproducibly rebuild
+    /// `personalModel`. This is separate from cache and ledger history so
+    /// browsing or correction events cannot become labels by accident.
+    public var trainingCorpus: LocalTrainingCorpus
+    /// Optional private, user-owned local snapshot destination. The owner-code
+    /// verifier lives in Keychain, never in this state file.
+    public var backupConfiguration: LocalBackupConfiguration?
     public var nativeReplayWindow: NativeReplayWindow
     public var auditState: LocalAuditState
     public var cacheBackfill: CacheBackfillProgress?
@@ -133,13 +140,15 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
     public var cache: [CachedEntry]
     public var ledger: [DecisionLedgerEntry]
 
-    public init(schemaVersion: Int = 1, sequence: Int64 = 0, settings: ClassifierSettings = .init(), policies: [NamedPolicy] = [], sourceProfiles: [String: SourceProfile] = [:], personalModel: PersonalFTRLModel = .init(), nativeReplayWindow: NativeReplayWindow = .init(), auditState: LocalAuditState = .init(), cacheBackfill: CacheBackfillProgress? = nil, activeModelIdentity: ActiveModelIdentity? = nil, highestAcceptedSignedRelease: PackageReleaseStamp? = nil, signedRollbackIdentities: [ActiveModelIdentity] = [], cache: [CachedEntry] = [], ledger: [DecisionLedgerEntry] = []) {
+    public init(schemaVersion: Int = 1, sequence: Int64 = 0, settings: ClassifierSettings = .init(), policies: [NamedPolicy] = [], sourceProfiles: [String: SourceProfile] = [:], personalModel: PersonalFTRLModel = .init(), trainingCorpus: LocalTrainingCorpus = .init(), backupConfiguration: LocalBackupConfiguration? = nil, nativeReplayWindow: NativeReplayWindow = .init(), auditState: LocalAuditState = .init(), cacheBackfill: CacheBackfillProgress? = nil, activeModelIdentity: ActiveModelIdentity? = nil, highestAcceptedSignedRelease: PackageReleaseStamp? = nil, signedRollbackIdentities: [ActiveModelIdentity] = [], cache: [CachedEntry] = [], ledger: [DecisionLedgerEntry] = []) {
         self.schemaVersion = schemaVersion
         self.sequence = sequence
         self.settings = settings
         self.policies = policies
         self.sourceProfiles = sourceProfiles
         self.personalModel = personalModel
+        self.trainingCorpus = trainingCorpus
+        self.backupConfiguration = backupConfiguration
         self.nativeReplayWindow = nativeReplayWindow
         self.auditState = auditState
         self.cacheBackfill = cacheBackfill
@@ -181,7 +190,7 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, sequence, settings, policies, sourceProfiles, personalModel, nativeReplayWindow, auditState, cacheBackfill, activeModelIdentity, highestAcceptedSignedRelease, signedRollbackIdentities, cache, ledger
+        case schemaVersion, sequence, settings, policies, sourceProfiles, personalModel, trainingCorpus, backupConfiguration, nativeReplayWindow, auditState, cacheBackfill, activeModelIdentity, highestAcceptedSignedRelease, signedRollbackIdentities, cache, ledger
     }
 
     public init(from decoder: Decoder) throws {
@@ -192,6 +201,8 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
         policies = try container.decodeIfPresent([NamedPolicy].self, forKey: .policies) ?? []
         sourceProfiles = try container.decodeIfPresent([String: SourceProfile].self, forKey: .sourceProfiles) ?? [:]
         personalModel = try container.decodeIfPresent(PersonalFTRLModel.self, forKey: .personalModel) ?? .init()
+        trainingCorpus = try container.decodeIfPresent(LocalTrainingCorpus.self, forKey: .trainingCorpus) ?? .init()
+        backupConfiguration = try container.decodeIfPresent(LocalBackupConfiguration.self, forKey: .backupConfiguration)
         nativeReplayWindow = try container.decodeIfPresent(NativeReplayWindow.self, forKey: .nativeReplayWindow) ?? .init()
         auditState = try container.decodeIfPresent(LocalAuditState.self, forKey: .auditState) ?? .init()
         cacheBackfill = try container.decodeIfPresent(CacheBackfillProgress.self, forKey: .cacheBackfill)
@@ -518,6 +529,89 @@ public final class LocalClassifierCoordinator {
         synchronizeEngineState()
         state.trimRetainedData()
         try stateFile.save(state)
+    }
+
+    /// Stores a supervised label for the current local taxonomy. This does not
+    /// change a classification until `retrainLocalModel` is explicitly called,
+    /// making collection and token-free model rebuilding independently
+    /// controllable.
+    @discardableResult
+    public func recordLocalTrainingExample(
+        evidence: EntryEvidence,
+        positiveLeafTagIDs: [String],
+        negativeLeafTagIDs: [String] = [],
+        origin: LocalTrainingLabelOrigin = .explicitUser,
+        at date: Date = .now
+    ) throws -> LocalTrainingExample {
+        lock.lock()
+        defer { lock.unlock() }
+        let example = try makeValidatedTrainingExample(
+            evidence: evidence,
+            positiveLeafTagIDs: positiveLeafTagIDs,
+            negativeLeafTagIDs: negativeLeafTagIDs,
+            origin: origin,
+            at: date
+        )
+        state.trainingCorpus.upsert(example, limit: state.settings.cacheCapacity)
+        try stateFile.save(state)
+        return example
+    }
+
+    /// Rebuilds the bounded local correction layer from retained explicit
+    /// labels. The seed package remains immutable and no network, provider,
+    /// account, or browser path is involved.
+    @discardableResult
+    public func retrainLocalModel(epochs: Int = 3, at date: Date = .now) throws -> LocalTrainingRun {
+        lock.lock()
+        defer { lock.unlock() }
+        var replacementEngine = engine
+        let report = try replacementEngine.rebuildPersonalModel(
+            from: state.trainingCorpus.examples,
+            epochs: epochs
+        )
+        let run = LocalTrainingRun(
+            exampleCount: report.exampleCount,
+            labelUpdateCount: report.labelUpdateCount,
+            epochs: epochs,
+            taxonomyVersion: replacementEngine.package.taxonomyVersion,
+            completedAtMilliseconds: Self.milliseconds(date)
+        )
+        var replacementState = state
+        replacementState.trainingCorpus.lastRun = run
+        synchronize(workingEngine: replacementEngine, into: &replacementState)
+        try stateFile.save(replacementState)
+        engine = replacementEngine
+        state = replacementState
+        backupCurrentModelIfConfigured(state: replacementState, at: date)
+        return run
+    }
+
+    /// The optional configuration is persisted locally. Enabling it does not
+    /// send or mount anything; it merely makes future successful local model
+    /// rebuilds write a private snapshot to the chosen folder.
+    public func updateLocalBackupConfiguration(_ configuration: LocalBackupConfiguration?) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        if let configuration, configuration.isEnabled {
+            _ = try configuration.directoryURL()
+        }
+        state.backupConfiguration = configuration
+        try stateFile.save(state)
+    }
+
+    @discardableResult
+    public func backupLocalModelNow(at date: Date = .now) throws -> URL {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let configuration = state.backupConfiguration, configuration.isEnabled else {
+            throw LocalBackupError.backupDisabled
+        }
+        return try LocalModelBackup().backup(
+            state: state,
+            package: activeVerifiedPackage,
+            in: configuration.directoryURL(),
+            at: date
+        )
     }
 
     /// Policies are authored by the local app and validated against the active
@@ -1089,20 +1183,48 @@ public final class LocalClassifierCoordinator {
         }
         let applicableLeaves = decision.matchedTagIDs.filter { result.leafTagIDs.contains($0) }
         guard !applicableLeaves.isEmpty else { throw LocalAuditStoreError.auditFindingNotApplicable }
-        for tagID in applicableLeaves {
-            try engine.trainLocalCorrection(for: tagID, isPositive: true, evidence: candidate.evidence.quotedEntry)
-        }
-        state.auditState.recordLearningApplication(.init(
+        let trainingExample = try makeValidatedTrainingExample(
+            evidence: candidate.evidence.quotedEntry,
+            positiveLeafTagIDs: applicableLeaves,
+            negativeLeafTagIDs: [],
+            origin: .confirmedPersonalAudit,
+            at: date
+        )
+        var replacementState = state
+        replacementState.trainingCorpus.upsert(trainingExample, limit: replacementState.settings.cacheCapacity)
+        var replacementEngine = engine
+        let report = try replacementEngine.rebuildPersonalModel(
+            from: replacementState.trainingCorpus.examples,
+            epochs: 3
+        )
+        replacementState.trainingCorpus.lastRun = .init(
+            exampleCount: report.exampleCount,
+            labelUpdateCount: report.labelUpdateCount,
+            epochs: 3,
+            taxonomyVersion: replacementEngine.package.taxonomyVersion,
+            completedAtMilliseconds: Self.milliseconds(date)
+        )
+        replacementState.auditState.recordLearningApplication(.init(
             auditID: auditID,
             policyID: policyID,
             leafTagIDs: applicableLeaves,
             appliedAtMilliseconds: Self.milliseconds(date)
         ))
-        if state.cacheBackfill != nil {
-            restartBackfillAfterCacheMutation()
+        if replacementState.cacheBackfill != nil {
+            // A pending cache continuation must be recomputed from the new
+            // correction model rather than mixing direct scores from before
+            // this confirmed label was added.
+            replacementEngine.sourceProfiles = [:]
+            for index in replacementState.cache.indices {
+                replacementState.cache[index].replayState = .awaitingCausalReplay
+            }
+            replacementState.cacheBackfill?.restart()
         }
-        synchronizeEngineState()
-        try stateFile.save(state)
+        synchronize(workingEngine: replacementEngine, into: &replacementState)
+        try stateFile.save(replacementState)
+        engine = replacementEngine
+        state = replacementState
+        backupCurrentModelIfConfigured(state: replacementState, at: date)
     }
 
     public func redactedAuditDiagnostics(at date: Date = .now) throws -> Data {
@@ -1130,6 +1252,52 @@ public final class LocalClassifierCoordinator {
         targetState.sourceProfiles = workingEngine.sourceProfiles
         targetState.personalModel = workingEngine.personalModel
         targetState.settings = workingEngine.settings
+    }
+
+    private func makeValidatedTrainingExample(
+        evidence: EntryEvidence,
+        positiveLeafTagIDs: [String],
+        negativeLeafTagIDs: [String],
+        origin: LocalTrainingLabelOrigin,
+        at date: Date
+    ) throws -> LocalTrainingExample {
+        try EntryEvidenceValidator().validate(evidence)
+        let positives = Array(Set(positiveLeafTagIDs)).sorted()
+        let negatives = Array(Set(negativeLeafTagIDs)).sorted()
+        guard !positives.isEmpty || !negatives.isEmpty else {
+            throw LocalTrainingError.noLabels
+        }
+        guard Set(positives).isDisjoint(with: negatives) else {
+            throw LocalTrainingError.overlappingLabels
+        }
+        for tagID in positives + negatives where !engine.taxonomy.predictableLeafIDs.contains(tagID) {
+            throw LocalTrainingError.unknownLeafTag(tagID)
+        }
+        let timestamp = Self.milliseconds(date)
+        return .init(
+            cacheKey: LocalClassifierState.cacheKey(for: evidence),
+            evidence: evidence,
+            positiveLeafTagIDs: positives,
+            negativeLeafTagIDs: negatives,
+            origin: origin,
+            taxonomyVersion: engine.package.taxonomyVersion,
+            createdAtMilliseconds: timestamp,
+            updatedAtMilliseconds: timestamp
+        )
+    }
+
+    /// A backup failure must never roll back a successfully saved model rebuild
+    /// or package activation. The UI still provides an explicit `backup now`
+    /// action that surfaces any destination error to the owner.
+    private func backupCurrentModelIfConfigured(state: LocalClassifierState, at date: Date) {
+        guard let configuration = state.backupConfiguration, configuration.isEnabled,
+              let directory = try? configuration.directoryURL() else { return }
+        _ = try? LocalModelBackup().backup(
+            state: state,
+            package: activeVerifiedPackage,
+            in: directory,
+            at: date
+        )
     }
 
     /// Creates the only engine allowed to rebuild source profiles. Its source
@@ -1429,5 +1597,6 @@ private extension LocalClassifierState {
         if cache.count > cacheLimit { cache.removeFirst(cache.count - cacheLimit) }
         let ledgerLimit = max(cacheLimit, 1_000)
         if ledger.count > ledgerLimit { ledger.removeFirst(ledger.count - ledgerLimit) }
+        trainingCorpus.trim(to: cacheLimit)
     }
 }

@@ -16,7 +16,8 @@ let package = Package(
         ),
         .executableTarget(
             name: "VaultClassifierApp",
-            dependencies: ["VaultClassifierCore"]
+            dependencies: ["VaultClassifierCore"],
+            resources: [.copy("WebAssets")]
         ),
         .executableTarget(
             name: "VaultClassifierNativeHost",

@@ -30,6 +30,11 @@ The optional personal-audit path is intentionally narrow:
 7. Provider output never automatically trains the local FTRL model. When local
    polishing is enabled, a person must explicitly confirm a current
    policy-changing false allow; that application is one-time and revalidated.
+   The confirmation becomes an explicit local training example and triggers a
+   deterministic rebuild from the bounded retained corpus. A person can also
+   add positive/negative predictable-leaf labels directly in the app and
+   choose when to rebuild. Views, clicks, normal corrections, and unconfirmed
+   provider output remain non-labels.
 
 The extension, native host, local state file, diagnostic export, and Vault
 server never receive the provider key. The redacted diagnostic copy action
@@ -38,6 +43,19 @@ and stable evidence digests.
 
 No live credential, provider test request, search/research tool, server
 contribution, or account/group feature is part of this source slice.
+
+## Local model backup
+
+The app can keep private local snapshots of its active seed package, policies,
+retained labels, and personal correction layer. It deliberately excludes the
+browsing cache, decision ledger, and audit history. Changing backup mode is gated
+by a locally stored owner-code verifier in the macOS Keychain; the code itself
+is not written to state, a backup, IPC, diagnostics, or a server. A configured
+folder is private to the current filesystem and contains no network transport.
+Each successful local model rebuild writes a snapshot when the mode is enabled.
+Retention is fixed at four snapshots: the latest plus three previous snapshots.
+An explicit **Create backup now** action is available for the owner. Backup
+failure cannot undo a successfully persisted model rebuild.
 
 ## Verified package lifecycle
 
