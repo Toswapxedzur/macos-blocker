@@ -96,7 +96,7 @@
   function shell(content) {
     return `<div class="popup">
       <header class="hero">
-        <div class="hero-copy"><span class="hero-mark" aria-hidden="true">V</span><div><h1>${tx("app.title")}</h1><p class="subtitle">${tx("hero.subtitle")}</p></div></div>
+        <div class="hero-copy"><span class="hero-mark" aria-hidden="true">V</span><div><h1>${tx("app.title")}</h1></div></div>
         <div class="hero-status"><span class="status-dot"></span>${tx("hero.offline")}</div>
       </header>
       <div class="layout">
