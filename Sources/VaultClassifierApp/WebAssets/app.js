@@ -3,6 +3,28 @@
 
   const root = document.getElementById("app");
   const strings = window.VaultClassifierStrings || {};
+  const languageChoices = [
+    ["en", "language.name.en"],
+    ["ar", "language.name.ar"],
+    ["bn", "language.name.bn"],
+    ["de", "language.name.de"],
+    ["es", "language.name.es"],
+    ["fr", "language.name.fr"],
+    ["hi", "language.name.hi"],
+    ["id", "language.name.id"],
+    ["it", "language.name.it"],
+    ["ja", "language.name.ja"],
+    ["ko", "language.name.ko"],
+    ["nl", "language.name.nl"],
+    ["pa", "language.name.pa"],
+    ["pl", "language.name.pl"],
+    ["pt", "language.name.pt"],
+    ["ru", "language.name.ru"],
+    ["th", "language.name.th"],
+    ["tr", "language.name.tr"],
+    ["vi", "language.name.vi"],
+    ["zh", "language.name.zh"],
+  ];
   let state = null;
   let renderedPayloadSignature = "";
   let activeTagPanel = null;
@@ -15,6 +37,14 @@
   const editorViewportPositions = new Map();
   const pendingTagRenameTimers = new Map();
   const pendingTagRenames = new Map();
+  let utilityPanel = null;
+  let selectedLanguage = "en";
+
+  try {
+    const storedLanguage = window.localStorage.getItem("vaultClassifier.language");
+    if (languageChoices.some(([identifier]) => identifier === storedLanguage)) selectedLanguage = storedLanguage;
+  } catch (_) {}
+  document.documentElement.lang = selectedLanguage;
 
   const esc = (value) => String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -88,6 +118,19 @@
     return `<div class="workspace-head"><div><h2>${tx(titleKey)}</h2><p class="section-copy">${tx(copyKey)}</p></div>${statusPill(badge, tone)}</div>`;
   }
 
+  function languageSelection() {
+    return `<label class="header-language"><span class="visually-hidden">${tx("language.label")}</span><select class="select-control" data-language-selection aria-label="${tx("language.label")}">${languageChoices.map(([identifier, nameKey]) => `<option value="${esc(identifier)}"${selected(selectedLanguage, identifier)}>${tx(nameKey)}</option>`).join("")}</select></label>`;
+  }
+
+  function utilityPanelContent() {
+    if (!utilityPanel) return "";
+    if (utilityPanel === "settings") {
+      const settings = state.activity.settings;
+      return `<section class="utility-panel cyan" data-form-id="utility-settings-form"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="utility-close" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}" title="${tx("utility.close")}">×</button></div><div class="form-row">${selectField("activity.profile", "activity.profileHint", "profile", settings.profile, [["light", "enum.profile.light"], ["balanced", "enum.profile.balanced"], ["aggressive", "enum.profile.aggressive"]])}${field("activity.cacheCapacity", "activity.uniqueEntries", "cacheCapacity", settings.cacheCapacity)}${selectField("activity.packageUpdates", "activity.preference", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div><div class="utility-toggles">${toggle("activity.idleWork", "allowIdleWork", settings.allowIdleWork)}${toggle("activity.backgroundSync", "allowBackgroundSync", settings.allowBackgroundSync)}${toggle("activity.auditDispatch", "allowLocalLLMAudit", settings.allowLocalLLMAudit)}</div><div class="action-row"><button class="primary" data-action="saveResourceSettings" data-form="utility-settings-form">${tx("activity.save")}</button></div></section>`;
+    }
+    return `<section class="utility-panel navy"><div class="utility-panel-head"><div><h2>${tx("utility.manual.title")}</h2><p class="section-copy">${tx("utility.manual.copy")}</p></div><button class="utility-close" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}" title="${tx("utility.close")}">×</button></div><ol class="manual-list"><li>${tx("utility.manual.stepTree")}</li><li>${tx("utility.manual.stepData")}</li><li>${tx("utility.manual.stepModel")}</li><li>${tx("utility.manual.stepAssist")}</li><li>${tx("utility.manual.stepBridge")}</li></ol></section>`;
+  }
+
   function navButton(workspace, symbol, titleKey, metaKey, tone) {
     const active = state.workspace === workspace ? " active" : "";
     return `<button class="sidebar-row accent-${esc(tone)}${active}" type="button" data-action="workspace" data-workspace="${esc(workspace)}"><span class="sidebar-symbol" aria-hidden="true">${symbol}</span><span class="sidebar-copy"><span class="sidebar-name">${tx(titleKey)}</span><span class="sidebar-meta">${tx(metaKey)}</span></span></button>`;
@@ -97,8 +140,9 @@
     return `<div class="popup">
       <header class="hero">
         <div class="hero-copy"><span class="hero-mark" aria-hidden="true">V</span><div><h1>${tx("app.title")}</h1></div></div>
-        <div class="hero-status"><span class="status-dot"></span>${tx("hero.offline")}</div>
+        <div class="hero-controls"><button class="header-tool" data-action="openUtilityPanel" data-utility-panel="settings">${tx("utility.settings.button")}</button><button class="header-tool" data-action="openUtilityPanel" data-utility-panel="manual">${tx("utility.manual.button")}</button>${languageSelection()}<div class="hero-status"><span class="status-dot"></span>${tx("hero.offline")}</div></div>
       </header>
+      ${utilityPanelContent()}
       <div class="layout">
         <aside class="navigation-panel" aria-label="${tx("navigation.aria")}">
           <div class="panel-header"><div><h2>${tx("navigation.title")}</h2><p class="small-copy">${tx("navigation.subtitle")}</p></div></div>
@@ -566,6 +610,7 @@
     if (button.dataset.workspace) data.workspace = button.dataset.workspace;
     if (button.dataset.id) data.id = button.dataset.id;
     if (button.dataset.correction) data.correction = button.dataset.correction;
+    if (button.dataset.utilityPanel) data.utilityPanel = button.dataset.utilityPanel;
     if (button.dataset.policyId) data.policyID = button.dataset.policyId;
     if (button.dataset.modelId) data.modelID = button.dataset.modelId;
     if (button.dataset.treeId) data.treeID = button.dataset.treeId;
@@ -573,6 +618,16 @@
     if (button.dataset.parentId) data.parentID = button.dataset.parentId;
     if (action === "cancelTagPanel") {
       activeTagPanel = null;
+      render();
+      return;
+    }
+    if (action === "openUtilityPanel") {
+      utilityPanel = data.utilityPanel === "settings" ? "settings" : "manual";
+      render();
+      return;
+    }
+    if (action === "closeUtilityPanel") {
+      utilityPanel = null;
       render();
       return;
     }
@@ -668,6 +723,14 @@
   });
 
   document.addEventListener("change", (event) => {
+    const languageControl = event.target.closest("[data-language-selection]");
+    if (languageControl) {
+      if (!languageChoices.some(([identifier]) => identifier === languageControl.value)) return;
+      selectedLanguage = languageControl.value;
+      document.documentElement.lang = selectedLanguage;
+      try { window.localStorage.setItem("vaultClassifier.language", selectedLanguage); } catch (_) {}
+      return;
+    }
     const control = event.target.closest("[data-local-model-setup]");
     if (!control) return;
     const panel = control.closest("[data-model-panel]");
