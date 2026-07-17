@@ -271,7 +271,7 @@ window.VaultClassifierStrings = Object.freeze({
   "tree.createNode": "Create node",
   "tree.editNode": "Edit node",
   "tree.cancel": "Cancel",
-  "tree.canvasHint": "Right-click empty space to create a root node. Right-click a node to create its child. Drag a node to reposition it.",
+  "tree.canvasHint": "Right-click empty space to create a root node. Right-click a node to create its child. Drag a node to reposition its branch.",
   "tree.retire": "Retire node",
   "tree.restore": "Restore node",
   "tree.addChild": "Add child tag",
