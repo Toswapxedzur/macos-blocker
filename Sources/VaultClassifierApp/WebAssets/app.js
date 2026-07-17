@@ -128,7 +128,7 @@
       const settings = state.activity.settings;
       return `<section class="utility-panel cyan" data-form-id="utility-settings-form"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="utility-close" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}" title="${tx("utility.close")}">×</button></div><div class="form-row">${selectField("activity.profile", "activity.profileHint", "profile", settings.profile, [["light", "enum.profile.light"], ["balanced", "enum.profile.balanced"], ["aggressive", "enum.profile.aggressive"]])}${field("activity.cacheCapacity", "activity.uniqueEntries", "cacheCapacity", settings.cacheCapacity)}${selectField("activity.packageUpdates", "activity.preference", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div><div class="utility-toggles">${toggle("activity.idleWork", "allowIdleWork", settings.allowIdleWork)}${toggle("activity.backgroundSync", "allowBackgroundSync", settings.allowBackgroundSync)}${toggle("activity.auditDispatch", "allowLocalLLMAudit", settings.allowLocalLLMAudit)}</div><div class="action-row"><button class="primary" data-action="saveResourceSettings" data-form="utility-settings-form">${tx("activity.save")}</button></div></section>`;
     }
-    return `<section class="utility-panel navy"><div class="utility-panel-head"><div><h2>${tx("utility.manual.title")}</h2><p class="section-copy">${tx("utility.manual.copy")}</p></div><button class="utility-close" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}" title="${tx("utility.close")}">×</button></div><ol class="manual-list"><li>${tx("utility.manual.stepTree")}</li><li>${tx("utility.manual.stepData")}</li><li>${tx("utility.manual.stepModel")}</li><li>${tx("utility.manual.stepAssist")}</li><li>${tx("utility.manual.stepBridge")}</li></ol></section>`;
+    return "";
   }
 
   function navButton(workspace, symbol, titleKey, metaKey, tone) {
@@ -140,7 +140,7 @@
     return `<div class="popup">
       <header class="hero">
         <div class="hero-copy"><span class="hero-mark" aria-hidden="true">V</span><div><h1>${tx("app.title")}</h1></div></div>
-        <div class="hero-controls"><button class="header-tool" data-action="openUtilityPanel" data-utility-panel="settings">${tx("utility.settings.button")}</button><button class="header-tool" data-action="openUtilityPanel" data-utility-panel="manual">${tx("utility.manual.button")}</button>${languageSelection()}<div class="hero-status"><span class="status-dot"></span>${tx("hero.offline")}</div></div>
+        <div class="hero-controls"><button class="header-tool" data-action="openUtilityPanel" data-utility-panel="settings">${tx("utility.settings.button")}</button>${languageSelection()}<div class="hero-status"><span class="status-dot"></span>${tx("hero.offline")}</div></div>
       </header>
       ${utilityPanelContent()}
       <div class="layout">
@@ -622,7 +622,7 @@
       return;
     }
     if (action === "openUtilityPanel") {
-      utilityPanel = data.utilityPanel === "settings" ? "settings" : "manual";
+      utilityPanel = data.utilityPanel === "settings" ? "settings" : null;
       render();
       return;
     }
