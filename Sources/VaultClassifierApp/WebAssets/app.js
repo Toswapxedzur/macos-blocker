@@ -4,6 +4,11 @@
   const root = document.getElementById("app");
   const strings = window.VaultClassifierStrings || {};
   let state = null;
+  let renderedPayloadSignature = "";
+  let activeTagPanel = null;
+  let tagDrag = null;
+  let suppressTagClick = false;
+  const layoutTraceSignatures = new Map();
 
   const esc = (value) => String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -88,17 +93,13 @@
         <aside class="navigation-panel" aria-label="${tx("navigation.aria")}">
           <div class="panel-header"><div><h2>${tx("navigation.title")}</h2><p class="small-copy">${tx("navigation.subtitle")}</p></div></div>
           <section class="sidebar-section"><span class="eyebrow">${tx("navigation.work")}</span><div class="sidebar-list">
-            ${navButton("inspect", "✦", "navigation.inspect", "navigation.inspectMeta", "cyan")}
-            ${navButton("policies", "⌗", "navigation.policies", "navigation.policiesMeta", "navy")}
-            ${navButton("activity", "◷", "navigation.activity", "navigation.activityMeta", "cyan")}
-            ${navButton("training", "◉", "navigation.training", "navigation.trainingMeta", "pink")}
+            ${navButton("tagTree", "⌘", "navigation.tagTree", "navigation.tagTreeMeta", "cyan")}
+            ${navButton("localModel", "◉", "navigation.localModel", "navigation.localModelMeta", "pink")}
+            ${navButton("llmAssist", "◌", "navigation.llmAssist", "navigation.llmAssistMeta", "gold")}
+            ${navButton("browserBridge", "⇄", "navigation.browserBridge", "navigation.browserBridgeMeta", "navy")}
+            ${navButton("classificationData", "▤", "navigation.classificationData", "navigation.classificationDataMeta", "cyan")}
           </div></section>
-          <section class="sidebar-section"><span class="eyebrow">${tx("navigation.control")}</span><div class="sidebar-list">
-            ${navButton("backup", "□", "navigation.backup", "navigation.backupMeta", "navy")}
-            ${navButton("audit", "◌", "navigation.audit", "navigation.auditMeta", "gold")}
-            ${navButton("integration", "⇄", "navigation.integration", "navigation.integrationMeta", "cyan")}
-          </div></section>
-          <div class="sidebar-status"><strong>${tx("navigation.seedVerified")}</strong><br><span class="small-copy">${tx("navigation.seedCopy")}</span></div>
+          <div class="sidebar-status"><strong>${tx("navigation.localProfile")}</strong><br><span class="small-copy">${tx("navigation.assetCopy")}</span></div>
         </aside>
         <section class="editor-panel">${content}</section>
       </div>
@@ -207,45 +208,332 @@
       <section class="section-card cyan"><div class="form-stack">${line("integration.app", "integration.ready")}${line("integration.pairing", "integration.keychain")}${line("integration.host", "integration.notRegistered")}${line("integration.server", "integration.notRequired")}</div></section><div class="notice cyan">${tx("integration.notice")}</div></div>`;
   }
 
+  function tagTreeWorkspace() {
+    const assets = state.assets;
+    const coordinate = (value, fallback) => {
+      const number = Number(value);
+      return Number.isFinite(number) && number >= 0 ? number : fallback;
+    };
+    const panel = (tree) => {
+      const nodes = tree.nodes || [];
+      const nodeByID = new Map(nodes.map((node) => [node.id, node]));
+      const children = new Set(nodes.map((node) => node.parentID).filter(Boolean));
+      const positions = new Map(nodes.map((node, index) => [node.id, {
+        x: coordinate(node.positionX, 24 + (index % 4) * 154),
+        y: coordinate(node.positionY, 24 + Math.floor(index / 4) * 48),
+      }]));
+      const panelState = activeTagPanel?.treeID === tree.id ? activeTagPanel : null;
+      const nodeExtentX = Math.max(0, ...[...positions.values()].map((position) => position.x + 136));
+      const nodeExtentY = Math.max(0, ...[...positions.values()].map((position) => position.y + 30));
+      const panelExtentX = panelState ? panelState.x + 256 : 0;
+      const panelExtentY = panelState ? panelState.y + 214 : 0;
+      const mapWidth = Math.max(640, nodeExtentX + 28, panelExtentX + 20);
+      const mapHeight = Math.max(320, nodeExtentY + 28, panelExtentY + 20);
+      const selectedNode = panelState?.nodeID ? nodeByID.get(panelState.nodeID) : null;
+      const parentChoices = (node, selectedParentID) => `<option value="">${tx("tree.rootLevel")}</option>${nodes.filter((candidate) => candidate.id !== node?.id).map((candidate) => `<option value="${esc(candidate.id)}"${selected(selectedParentID || "", candidate.id)}>${esc(candidate.name)}</option>`).join("")}`;
+      const popover = panelState ? (() => {
+        const isEdit = panelState.kind === "edit" && selectedNode;
+        const parentID = isEdit ? selectedNode.parentID : panelState.parentID;
+        const nodeID = isEdit ? selectedNode.id : "";
+        const titleKey = isEdit ? "tree.editNode" : "tree.createNode";
+        const action = isEdit ? "updateTag" : "addTag";
+        return `<section class="tree-popover" style="left:${panelState.x}px;top:${panelState.y}px" data-tree-popover data-form-id="tag-popover-form"><div class="tree-popover-head"><span class="eyebrow">${tx(titleKey)}</span><button class="tree-popover-close" data-action="cancelTagPanel" title="${tx("tree.cancel")}" aria-label="${tx("tree.cancel")}">×</button></div><div class="tree-form">${field(isEdit ? "tree.nodeName" : "tree.tagName", "", "name", isEdit ? selectedNode.name : "")}<label class="field"><span class="field-label">${tx("tree.parent")}</span><select class="select-control" data-field="parentID">${parentChoices(isEdit ? selectedNode : null, parentID)}</select></label><div class="action-row"><button class="primary" data-action="${action}" data-form="tag-popover-form" data-tree-id="${esc(tree.id)}"${nodeID ? ` data-node-id="${esc(nodeID)}"` : ""}>${tx(isEdit ? "tree.saveNode" : "tree.createNode")}</button>${isEdit ? `<button class="secondary" data-action="toggleTagRetirement" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx(selectedNode.retired ? "tree.restore" : "tree.retire")}</button>` : ""}</div></div></section>`;
+      })() : "";
+      const map = `<div class="tree-map" data-tree-map data-tree-id="${esc(tree.id)}"><div class="tree-map-content" style="width:max(${mapWidth}px, calc(100% + 480px)); height:max(${mapHeight}px, calc(100% + 280px))"><svg class="tree-links" aria-hidden="true"></svg><div class="tree-node-layer">${nodes.map((node) => {
+        const position = positions.get(node.id);
+        const tier = !node.parentID ? "primary" : children.has(node.id) ? "secondary" : "tertiary";
+        return `<button class="tree-map-node ${tier}${panelState?.nodeID === node.id ? " active" : ""}${node.retired ? " retired" : ""}" style="left:${position.x}px;top:${position.y}px" data-action="selectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(node.id)}" data-parent-id="${esc(node.parentID || "")}" data-position-x="${position.x}" data-position-y="${position.y}" title="${tx("tree.contextHint")}"><span aria-hidden="true"></span><strong>${esc(node.name)}</strong></button>`;
+      }).join("")}</div>${nodes.length ? "" : `<div class="tree-map-empty">${tx("tree.empty")}</div>`}${popover}</div></div>`;
+      return `<section class="tree-panel"><header class="tree-panel-head"><div><span class="eyebrow">${tx("tree.sharedLibrary")}</span><h3>${esc(tree.name)}</h3><p class="small-copy">${tx("tree.activeCopy", { revision: tree.revision })} · ${tx("tree.nodeCount", { count: nodes.length })}</p></div><span class="status-pill cyan">${tx("tree.panel")}</span></header>${map}<p class="tree-canvas-hint">${tx("tree.canvasHint")}</p></section>`;
+    };
+    return `<div class="workspace tree-workspace">${header("tree.title", "tree.copy", t("tree.sharedLibrary"), "cyan")}
+      <section class="tree-create" data-form-id="new-tree-form">${field("tree.treeName", "", "name", "")}<button class="primary" data-action="createTree" data-form="new-tree-form">${tx("tree.create")}</button><span class="small-copy">${tx("tree.multiplePanels")}</span></section><div class="tree-panels">${assets.trees.map(panel).join("")}</div>${notice(state.issue, "red")}</div>`;
+  }
+
+  function localModelWorkspace() {
+    const assets = state.assets;
+    const model = assets.models[0];
+    const training = state.training;
+    const backup = state.backup;
+    return `<div class="workspace">${header("model.title", "model.copy", t(model?.ready ? "model.ready" : "model.needsTraining"), "pink")}
+      <div class="metric-row">${metric("model.models", assets.models.length, "pink")}${metric("model.labels", training.labelCount, "pink")}${metric("model.versions", model?.version || 0, "pink")}</div>
+      <section class="section-card pink"><div class="section-header"><div><h3>${tx("model.active")}</h3><p class="section-copy">${tx("model.activeCopy")}</p></div></div><div class="status-line"><strong>${esc(model?.name || t("model.none"))}</strong><span class="spacer"></span><span>${tx("model.boundRevisions", { tree: model?.treeRevision || 0, data: model?.datasetRevision || 0 })}</span></div></section>
+      <section class="section-card pink" data-form-id="retrain-form"><div class="section-header"><div><h3>${tx("model.localTraining")}</h3><p class="section-copy">${tx("model.trainingCopy")}</p></div></div><div class="form-row">${field("model.passes", "", "epochs", training.epochs)}<div class="field"><span class="field-label">${tx("model.explicitAction")}</span><button class="pink-action" data-action="retrain" data-form="retrain-form"${disabled(!training.labelCount)}>${tx("model.train")}</button></div></div></section>
+      <section class="section-card navy" data-form-id="backup-owner-form"><div class="section-header"><div><h3>${tx("model.backup")}</h3><p class="section-copy">${tx("model.backupCopy")}</p></div></div>${backup.unlocked ? `<div class="notice navy">${tx("backup.unlocked")}</div>` : `<div class="action-row"><div class="field">${field("backup.ownerCode", backup.hasOwnerCode ? "backup.existingCode" : "backup.newCode", "ownerCode", "", "password")}</div><button class="primary" data-action="${backup.hasOwnerCode ? "unlockBackup" : "setBackupOwnerCode"}" data-form="backup-owner-form">${tx(backup.hasOwnerCode ? "backup.unlock" : "backup.setCode")}</button></div>`}</section>
+      <section class="section-card navy" data-form-id="backup-form"><div class="form-stack">${field("backup.localFolder", "backup.pathHint", "directory", backup.directory)}${toggle("backup.auto", "enabled", backup.enabled)}<div class="action-row"><button class="primary" data-action="saveBackup" data-form="backup-form"${disabled(!backup.unlocked)}>${tx("backup.save")}</button><button class="secondary" data-action="backupNow"${disabled(!backup.unlocked || !backup.savedEnabled)}>${tx("backup.create")}</button><span class="small-copy">${tx("model.backupStatus", { count: 4 })}</span></div></div></section>${notice(state.notices.backup, "navy")}${notice(state.notices.training, "pink")}${notice(state.issue, "red")}</div>`;
+  }
+
+  function llmAssistWorkspace() {
+    const entries = state.assets.tokenUsage || [];
+    const ledger = `<section class="section-card gold"><div class="section-header"><div><h3>${tx("llm.usage")}</h3><p class="section-copy">${tx("llm.usageCopy")}</p></div></div>${entries.length ? `<div class="list">${entries.map((entry) => `<div class="list-row"><span class="list-symbol">◌</span><span class="list-copy"><span class="list-title">${esc(entry.provider)} · ${esc(entry.model)}</span><span class="list-meta">${tx("llm.tokenLine", { input: entry.input, output: entry.output, other: entry.other })} · ${tx(`llm.status.${entry.status}`)}</span></span></div>`).join("")}</div>` : `<div class="empty">${tx("llm.noUsage")}</div>`}</section>`;
+    const audit = auditWorkspace().replace(tx("audit.title"), tx("llm.title")).replace(tx("audit.copy"), tx("llm.copy"));
+    return audit.replace(/<\/div>$/, `${ledger}</div>`);
+  }
+
+  function browserBridgeWorkspace() {
+    const binding = state.assets.bindings[0];
+    return `<div class="workspace">${header("bridge.title", "bridge.copy", t("bridge.macOnly"), "navy")}
+      <section class="section-card navy"><div class="section-header"><div><h3>${tx("bridge.platform")}</h3><p class="section-copy">${tx("bridge.platformCopy")}</p></div></div><div class="status-line"><strong>${esc(binding?.name || t("bridge.none"))}</strong><span class="spacer"></span><span>${esc(binding?.browser || "")}</span></div><div class="status-line"><strong>${tx("bridge.assetBinding")}</strong><span class="spacer"></span><span>${tx("bridge.oneTreeDataset")}</span></div></section>
+      <section class="section-card navy"><div class="section-header"><div><h3>${tx("bridge.policy")}</h3><p class="section-copy">${tx("bridge.policyCopy")}</p></div><button class="secondary" data-action="workspace" data-workspace="browserBridge">${tx("bridge.configure")}</button></div>${state.policies.items.length ? `<div class="list">${state.policies.items.map((policy) => `<div class="list-row"><span class="list-symbol">⌗</span><span class="list-copy"><span class="list-title">${esc(policy.name || policy.id)}</span><span class="list-meta">${esc(policy.id)}</span></span></div>`).join("")}</div>` : `<div class="empty">${tx("bridge.noPolicy")}</div>`}</section>${notice(state.issue, "red")}</div>`;
+  }
+
+  function classificationDataWorkspace() {
+    const dataset = state.assets.datasets[0];
+    const records = dataset?.records || [];
+    const tree = state.assets.trees[0];
+    return `<div class="workspace">${header("data.title", "data.copy", t("data.records", { count: records.length }), "cyan")}
+      <section class="section-card cyan" data-form-id="manual-record-form"><div class="section-header"><div><h3>${tx("data.manual")}</h3><p class="section-copy">${tx("data.manualCopy")}</p></div></div><div class="form-stack">${field("data.entryTitle", "", "title", "")}${field("data.tagIDs", "data.tagIDsHint", "tags", tree?.nodes.filter((node) => !node.retired).map((node) => node.id).join(", ") || "")}<div class="action-row"><button class="primary" data-action="recordManualClassification" data-form="manual-record-form">${tx("data.record")}</button></div></div></section>
+      <section class="section-card cyan"><div class="section-header"><div><h3>${tx("data.ledger")}</h3><p class="section-copy">${tx("data.ledgerCopy")}</p></div></div>${records.length ? `<div class="list">${records.map((record) => `<div class="list-row"><span class="list-symbol">${record.origin === "manual" ? "✓" : "◌"}</span><span class="list-copy"><span class="list-title">${esc(record.title)}</span><span class="list-meta">${esc(record.tags.join(", "))} · ${tx(`data.origin.${record.origin}`)} · ${tx(`data.review.${record.review}`)}</span></span></div>`).join("")}</div>` : `<div class="empty">${tx("data.empty")}</div>`}</section>${notice(state.issue, "red")}</div>`;
+  }
+
   function workspace() {
     switch (state.workspace) {
-      case "policies": return policyWorkspace();
-      case "activity": return activityWorkspace();
-      case "training": return trainingWorkspace();
-      case "backup": return backupWorkspace();
-      case "audit": return auditWorkspace();
-      case "integration": return integrationWorkspace();
-      default: return inspectWorkspace();
+      case "localModel": return localModelWorkspace();
+      case "llmAssist": return llmAssistWorkspace();
+      case "browserBridge": return browserBridgeWorkspace();
+      case "classificationData": return classificationDataWorkspace();
+      default: return tagTreeWorkspace();
     }
+  }
+
+  function drawTreeConnections() {
+    root.querySelectorAll("[data-tree-map]").forEach((map) => {
+      const content = map.querySelector(".tree-map-content");
+      const links = map.querySelector(".tree-links");
+      if (!content || !links) return;
+
+      const contentRect = content.getBoundingClientRect();
+      const width = Math.ceil(content.offsetWidth);
+      const height = Math.ceil(content.scrollHeight);
+      links.setAttribute("viewBox", `0 0 ${width} ${height}`);
+      links.setAttribute("width", width);
+      links.setAttribute("height", height);
+
+      const nodesByID = new Map([...content.querySelectorAll(".tree-map-node")].map((node) => [node.dataset.nodeId, node]));
+      links.innerHTML = [...nodesByID.values()].map((node) => {
+        const parent = node.dataset.parentId ? nodesByID.get(node.dataset.parentId) : null;
+        if (!parent || parent === node) return "";
+        const parentRect = parent.getBoundingClientRect();
+        const nodeRect = node.getBoundingClientRect();
+        const startX = Math.round(parentRect.left - contentRect.left + parentRect.width / 2);
+        const startY = Math.round(parentRect.bottom - contentRect.top);
+        const endX = Math.round(nodeRect.left - contentRect.left + nodeRect.width / 2);
+        const endY = Math.round(nodeRect.top - contentRect.top);
+        const bendY = Math.round((startY + endY) / 2);
+        return `<path d="M ${startX} ${startY} V ${bendY} H ${endX} V ${endY}"/>`;
+      }).join("");
+    });
+  }
+
+  function traceTreeLayout() {
+    root.querySelectorAll("[data-tree-map]").forEach((map) => {
+      const content = map.querySelector(".tree-map-content");
+      if (!content) return;
+      const contentRect = content.getBoundingClientRect();
+      const nodes = [...content.querySelectorAll(".tree-map-node")].slice(0, 12).map((node) => {
+        const rect = node.getBoundingClientRect();
+        return {
+          id: node.dataset.nodeId,
+          dataX: node.dataset.positionX,
+          dataY: node.dataset.positionY,
+          cssLeft: window.getComputedStyle(node).left,
+          cssTop: window.getComputedStyle(node).top,
+          renderX: Math.round(rect.left - contentRect.left + map.scrollLeft),
+          renderY: Math.round(rect.top - contentRect.top + map.scrollTop),
+        };
+      });
+      const popover = content.querySelector("[data-tree-popover]");
+      const panel = popover ? {
+        cssLeft: window.getComputedStyle(popover).left,
+        cssTop: window.getComputedStyle(popover).top,
+        renderX: Math.round(popover.getBoundingClientRect().left - contentRect.left + map.scrollLeft),
+        renderY: Math.round(popover.getBoundingClientRect().top - contentRect.top + map.scrollTop),
+      } : null;
+      const detail = JSON.stringify({ scrollX: map.scrollLeft, scrollY: map.scrollTop, nodes, panel });
+      const signature = `${map.dataset.treeId}:${detail}`;
+      if (layoutTraceSignatures.get(map.dataset.treeId) === signature) return;
+      layoutTraceSignatures.set(map.dataset.treeId, signature);
+      send("layoutTrace", { phase: "render", treeID: map.dataset.treeId, detail });
+    });
+  }
+
+  function traceTagDrag(phase, drag) {
+    const node = drag.node;
+    send("layoutTrace", {
+      phase,
+      treeID: drag.treeID,
+      detail: JSON.stringify({
+        id: drag.nodeID,
+        dataX: node.dataset.positionX,
+        dataY: node.dataset.positionY,
+        cssLeft: window.getComputedStyle(node).left,
+        cssTop: window.getComputedStyle(node).top,
+      }),
+    });
   }
 
   function render() {
     root.innerHTML = state ? shell(workspace()) : `<div class="popup"><div class="empty">${tx("app.loading")}</div></div>`;
+    window.requestAnimationFrame(() => {
+      drawTreeConnections();
+      traceTreeLayout();
+    });
   }
 
   document.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-action]");
-    if (!button || button.disabled) return;
+    if (!button) {
+      const map = event.target.closest("[data-tree-map]");
+      if (map && !event.target.closest(".tree-map-node, [data-tree-popover]")) {
+        activeTagPanel = null;
+        render();
+      }
+      return;
+    }
+    if (button.disabled) return;
     const action = button.dataset.action;
     const data = button.dataset.form ? collect(button.dataset.form) : {};
     if (button.dataset.workspace) data.workspace = button.dataset.workspace;
     if (button.dataset.id) data.id = button.dataset.id;
     if (button.dataset.correction) data.correction = button.dataset.correction;
     if (button.dataset.policyId) data.policyID = button.dataset.policyId;
+    if (button.dataset.treeId) data.treeID = button.dataset.treeId;
+    if (button.dataset.nodeId) data.nodeID = button.dataset.nodeId;
+    if (button.dataset.parentId) data.parentID = button.dataset.parentId;
+    if (action === "cancelTagPanel") {
+      activeTagPanel = null;
+      render();
+      return;
+    }
+    if (action === "selectTag") {
+      if (suppressTagClick) return;
+      const nodeX = Number(button.dataset.positionX) || 0;
+      const nodeY = Number(button.dataset.positionY) || 0;
+      activeTagPanel = { kind: "edit", treeID: button.dataset.treeId, nodeID: button.dataset.nodeId, x: nodeX + button.offsetWidth + 12, y: nodeY };
+      render();
+      return;
+    }
+    if (action === "addTag") {
+      if (!activeTagPanel || activeTagPanel.kind !== "create") return;
+      data.positionX = activeTagPanel.x;
+      data.positionY = activeTagPanel.y;
+      activeTagPanel = null;
+      render();
+      send(action, data);
+      return;
+    }
+    if (action === "updateTag" || action === "toggleTagRetirement") {
+      activeTagPanel = null;
+      render();
+    }
     send(action, data);
   });
 
+  // Mirror the Tags canvas: keep a two-axis trackpad gesture inside the
+  // tree viewport instead of letting the surrounding editor consume it.
+  document.addEventListener("wheel", (event) => {
+    const map = event.target.closest("[data-tree-map]");
+    if (!map || event.ctrlKey || event.metaKey) return;
+    const horizontal = event.shiftKey && event.deltaX === 0 ? event.deltaY : event.deltaX;
+    const vertical = event.shiftKey && event.deltaX === 0 ? 0 : event.deltaY;
+    const startX = map.scrollLeft;
+    const startY = map.scrollTop;
+    map.scrollLeft += horizontal;
+    map.scrollTop += vertical;
+    if (map.scrollLeft !== startX || map.scrollTop !== startY) event.preventDefault();
+    event.stopPropagation();
+  }, { passive: false });
+
+  document.addEventListener("contextmenu", (event) => {
+    const map = event.target.closest("[data-tree-map]");
+    if (!map || event.target.closest("[data-tree-popover]")) return;
+    event.preventDefault();
+    const content = map.querySelector(".tree-map-content");
+    const contentRect = content.getBoundingClientRect();
+    const node = event.target.closest(".tree-map-node");
+    const nodeX = node ? Number(node.dataset.positionX) || 0 : Math.max(12, Math.round(event.clientX - contentRect.left + map.scrollLeft));
+    const nodeY = node ? Number(node.dataset.positionY) || 0 : Math.max(12, Math.round(event.clientY - contentRect.top + map.scrollTop));
+    activeTagPanel = {
+      kind: "create",
+      treeID: map.dataset.treeId,
+      parentID: node?.dataset.nodeId || "",
+      x: node ? nodeX + node.offsetWidth + 12 : nodeX,
+      y: nodeY,
+    };
+    render();
+  });
+
+  function beginTagDrag(event) {
+    const node = event.target.closest(".tree-map-node");
+    if (!node || event.button !== 0 || tagDrag) return;
+    tagDrag = {
+      pointerID: event.pointerId ?? null,
+      treeID: node.dataset.treeId,
+      nodeID: node.dataset.nodeId,
+      node,
+      startPointerX: event.clientX,
+      startPointerY: event.clientY,
+      startNodeX: Number(node.dataset.positionX) || 0,
+      startNodeY: Number(node.dataset.positionY) || 0,
+      moved: false,
+    };
+    if (event.pointerId != null) node.setPointerCapture?.(event.pointerId);
+    traceTagDrag("drag-start", tagDrag);
+  }
+
+  function moveTagDrag(event) {
+    if (!tagDrag || (event.pointerId != null && event.pointerId !== tagDrag.pointerID)) return;
+    const deltaX = event.clientX - tagDrag.startPointerX;
+    const deltaY = event.clientY - tagDrag.startPointerY;
+    if (!tagDrag.moved && Math.max(Math.abs(deltaX), Math.abs(deltaY)) < 3) return;
+    tagDrag.moved = true;
+    activeTagPanel = null;
+    root.querySelector("[data-tree-popover]")?.remove();
+    const positionX = Math.max(0, Math.round(tagDrag.startNodeX + deltaX));
+    const positionY = Math.max(0, Math.round(tagDrag.startNodeY + deltaY));
+    tagDrag.node.dataset.positionX = String(positionX);
+    tagDrag.node.dataset.positionY = String(positionY);
+    tagDrag.node.style.left = `${positionX}px`;
+    tagDrag.node.style.top = `${positionY}px`;
+    window.requestAnimationFrame(drawTreeConnections);
+    event.preventDefault();
+  }
+
+  function finishTagDrag(event) {
+    if (!tagDrag || (event.pointerId != null && event.pointerId !== tagDrag.pointerID)) return;
+    const drag = tagDrag;
+    tagDrag = null;
+    if (!drag.moved) return;
+    traceTagDrag("drag-end", drag);
+    suppressTagClick = true;
+    window.setTimeout(() => { suppressTagClick = false; }, 0);
+    send("moveTag", {
+      treeID: drag.treeID,
+      nodeID: drag.nodeID,
+      positionX: Number(drag.node.dataset.positionX) || 0,
+      positionY: Number(drag.node.dataset.positionY) || 0,
+    });
+  }
+
+  document.addEventListener("pointerdown", beginTagDrag);
+  document.addEventListener("mousedown", beginTagDrag);
+  document.addEventListener("pointermove", moveTagDrag);
+  document.addEventListener("mousemove", moveTagDrag);
+  document.addEventListener("pointerup", finishTagDrag);
+  document.addEventListener("pointercancel", finishTagDrag);
+  document.addEventListener("mouseup", finishTagDrag);
+
   window.VaultClassifier = {
     receive(payload) {
+      const signature = JSON.stringify(payload);
+      if (signature === renderedPayloadSignature) return;
+      renderedPayloadSignature = signature;
       state = payload;
       render();
     },
   };
 
+  window.addEventListener("resize", () => window.requestAnimationFrame(drawTreeConnections));
   render();
   send("state", {});
-  window.setInterval(() => {
-    const active = document.activeElement;
-    if (!active || !["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName)) send("state", {});
-  }, 3000);
 })();

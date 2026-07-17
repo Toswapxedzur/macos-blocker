@@ -122,6 +122,8 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
     /// `personalModel`. This is separate from cache and ledger history so
     /// browsing or correction events cannot become labels by accident.
     public var trainingCorpus: LocalTrainingCorpus
+    /// Shared user-owned tree, model, dataset, bridge, and token-ledger assets.
+    public var workspaceCatalog: WorkspaceCatalog
     /// Optional private, user-owned local snapshot destination. The owner-code
     /// verifier lives in Keychain, never in this state file.
     public var backupConfiguration: LocalBackupConfiguration?
@@ -140,7 +142,7 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
     public var cache: [CachedEntry]
     public var ledger: [DecisionLedgerEntry]
 
-    public init(schemaVersion: Int = 1, sequence: Int64 = 0, settings: ClassifierSettings = .init(), policies: [NamedPolicy] = [], sourceProfiles: [String: SourceProfile] = [:], personalModel: PersonalFTRLModel = .init(), trainingCorpus: LocalTrainingCorpus = .init(), backupConfiguration: LocalBackupConfiguration? = nil, nativeReplayWindow: NativeReplayWindow = .init(), auditState: LocalAuditState = .init(), cacheBackfill: CacheBackfillProgress? = nil, activeModelIdentity: ActiveModelIdentity? = nil, highestAcceptedSignedRelease: PackageReleaseStamp? = nil, signedRollbackIdentities: [ActiveModelIdentity] = [], cache: [CachedEntry] = [], ledger: [DecisionLedgerEntry] = []) {
+    public init(schemaVersion: Int = 1, sequence: Int64 = 0, settings: ClassifierSettings = .init(), policies: [NamedPolicy] = [], sourceProfiles: [String: SourceProfile] = [:], personalModel: PersonalFTRLModel = .init(), trainingCorpus: LocalTrainingCorpus = .init(), workspaceCatalog: WorkspaceCatalog = .starter(), backupConfiguration: LocalBackupConfiguration? = nil, nativeReplayWindow: NativeReplayWindow = .init(), auditState: LocalAuditState = .init(), cacheBackfill: CacheBackfillProgress? = nil, activeModelIdentity: ActiveModelIdentity? = nil, highestAcceptedSignedRelease: PackageReleaseStamp? = nil, signedRollbackIdentities: [ActiveModelIdentity] = [], cache: [CachedEntry] = [], ledger: [DecisionLedgerEntry] = []) {
         self.schemaVersion = schemaVersion
         self.sequence = sequence
         self.settings = settings
@@ -148,6 +150,7 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
         self.sourceProfiles = sourceProfiles
         self.personalModel = personalModel
         self.trainingCorpus = trainingCorpus
+        self.workspaceCatalog = workspaceCatalog
         self.backupConfiguration = backupConfiguration
         self.nativeReplayWindow = nativeReplayWindow
         self.auditState = auditState
@@ -190,7 +193,7 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, sequence, settings, policies, sourceProfiles, personalModel, trainingCorpus, backupConfiguration, nativeReplayWindow, auditState, cacheBackfill, activeModelIdentity, highestAcceptedSignedRelease, signedRollbackIdentities, cache, ledger
+        case schemaVersion, sequence, settings, policies, sourceProfiles, personalModel, trainingCorpus, workspaceCatalog, backupConfiguration, nativeReplayWindow, auditState, cacheBackfill, activeModelIdentity, highestAcceptedSignedRelease, signedRollbackIdentities, cache, ledger
     }
 
     public init(from decoder: Decoder) throws {
@@ -202,6 +205,7 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
         sourceProfiles = try container.decodeIfPresent([String: SourceProfile].self, forKey: .sourceProfiles) ?? [:]
         personalModel = try container.decodeIfPresent(PersonalFTRLModel.self, forKey: .personalModel) ?? .init()
         trainingCorpus = try container.decodeIfPresent(LocalTrainingCorpus.self, forKey: .trainingCorpus) ?? .init()
+        workspaceCatalog = try container.decodeIfPresent(WorkspaceCatalog.self, forKey: .workspaceCatalog) ?? .starter()
         backupConfiguration = try container.decodeIfPresent(LocalBackupConfiguration.self, forKey: .backupConfiguration)
         nativeReplayWindow = try container.decodeIfPresent(NativeReplayWindow.self, forKey: .nativeReplayWindow) ?? .init()
         auditState = try container.decodeIfPresent(LocalAuditState.self, forKey: .auditState) ?? .init()
@@ -596,6 +600,14 @@ public final class LocalClassifierCoordinator {
             _ = try configuration.directoryURL()
         }
         state.backupConfiguration = configuration
+        try stateFile.save(state)
+    }
+
+    public func updateWorkspaceCatalog(_ catalog: WorkspaceCatalog) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try catalog.validate()
+        state.workspaceCatalog = catalog
         try stateFile.save(state)
     }
 
