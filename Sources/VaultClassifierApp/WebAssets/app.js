@@ -9,6 +9,7 @@
   let tagDrag = null;
   let suppressTagClick = false;
   const layoutTraceSignatures = new Map();
+  const treeViewportPositions = new Map();
 
   const esc = (value) => String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -217,11 +218,21 @@
     const panel = (tree) => {
       const nodes = tree.nodes || [];
       const nodeByID = new Map(nodes.map((node) => [node.id, node]));
-      const children = new Set(nodes.map((node) => node.parentID).filter(Boolean));
       const positions = new Map(nodes.map((node, index) => [node.id, {
         x: coordinate(node.positionX, 24 + (index % 4) * 154),
         y: coordinate(node.positionY, 24 + Math.floor(index / 4) * 48),
       }]));
+      const depthFor = (node) => {
+        let depth = 0;
+        let current = node;
+        const visited = new Set([node.id]);
+        while (current.parentID && nodeByID.has(current.parentID) && !visited.has(current.parentID)) {
+          current = nodeByID.get(current.parentID);
+          visited.add(current.id);
+          depth += 1;
+        }
+        return depth;
+      };
       const panelState = activeTagPanel?.treeID === tree.id ? activeTagPanel : null;
       const nodeExtentX = Math.max(0, ...[...positions.values()].map((position) => position.x + 136));
       const nodeExtentY = Math.max(0, ...[...positions.values()].map((position) => position.y + 30));
@@ -239,12 +250,13 @@
         const action = isEdit ? "updateTag" : "addTag";
         return `<section class="tree-popover" style="left:${panelState.x}px;top:${panelState.y}px" data-tree-popover data-form-id="tag-popover-form"><div class="tree-popover-head"><span class="eyebrow">${tx(titleKey)}</span><button class="tree-popover-close" data-action="cancelTagPanel" title="${tx("tree.cancel")}" aria-label="${tx("tree.cancel")}">×</button></div><div class="tree-form">${field(isEdit ? "tree.nodeName" : "tree.tagName", "", "name", isEdit ? selectedNode.name : "")}<label class="field"><span class="field-label">${tx("tree.parent")}</span><select class="select-control" data-field="parentID">${parentChoices(isEdit ? selectedNode : null, parentID)}</select></label><div class="action-row"><button class="primary" data-action="${action}" data-form="tag-popover-form" data-tree-id="${esc(tree.id)}"${nodeID ? ` data-node-id="${esc(nodeID)}"` : ""}>${tx(isEdit ? "tree.saveNode" : "tree.createNode")}</button>${isEdit ? `<button class="secondary" data-action="toggleTagRetirement" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx(selectedNode.retired ? "tree.restore" : "tree.retire")}</button>` : ""}</div></div></section>`;
       })() : "";
-      const map = `<div class="tree-map" data-tree-map data-tree-id="${esc(tree.id)}"><div class="tree-map-content" style="width:max(${mapWidth}px, calc(100% + 480px)); height:max(${mapHeight}px, calc(100% + 280px))"><svg class="tree-links" aria-hidden="true"></svg><div class="tree-node-layer">${nodes.map((node) => {
+      const map = `<div class="tree-map" data-tree-map data-tree-id="${esc(tree.id)}"><div class="tree-map-content" style="width:max(${mapWidth}px, calc(100% + 480px)); height:max(${mapHeight}px, calc(100% + 280px))"><svg class="tree-links" aria-hidden="true"></svg><div class="tree-map-title">${esc(tree.name)}</div><div class="tree-node-layer">${nodes.map((node) => {
         const position = positions.get(node.id);
-        const tier = !node.parentID ? "primary" : children.has(node.id) ? "secondary" : "tertiary";
+        const depth = depthFor(node);
+        const tier = depth === 0 ? "primary" : depth === 1 ? "secondary" : depth === 2 ? "tertiary" : "quaternary";
         return `<button class="tree-map-node ${tier}${panelState?.nodeID === node.id ? " active" : ""}${node.retired ? " retired" : ""}" style="left:${position.x}px;top:${position.y}px" data-action="selectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(node.id)}" data-parent-id="${esc(node.parentID || "")}" data-position-x="${position.x}" data-position-y="${position.y}" title="${tx("tree.contextHint")}"><span aria-hidden="true"></span><strong>${esc(node.name)}</strong></button>`;
       }).join("")}</div>${nodes.length ? "" : `<div class="tree-map-empty">${tx("tree.empty")}</div>`}${popover}</div></div>`;
-      return `<section class="tree-panel"><header class="tree-panel-head"><div><span class="eyebrow">${tx("tree.sharedLibrary")}</span><h3>${esc(tree.name)}</h3><p class="small-copy">${tx("tree.activeCopy", { revision: tree.revision })} · ${tx("tree.nodeCount", { count: nodes.length })}</p></div><span class="status-pill cyan">${tx("tree.panel")}</span></header>${map}<p class="tree-canvas-hint">${tx("tree.canvasHint")}</p></section>`;
+      return `<section class="tree-panel">${map}<p class="tree-canvas-hint">${tx("tree.canvasHint")}</p></section>`;
     };
     return `<div class="workspace tree-workspace">${header("tree.title", "tree.copy", t("tree.sharedLibrary"), "cyan")}
       <section class="tree-create" data-form-id="new-tree-form">${field("tree.treeName", "", "name", "")}<button class="primary" data-action="createTree" data-form="new-tree-form">${tx("tree.create")}</button><span class="small-copy">${tx("tree.multiplePanels")}</span></section><div class="tree-panels">${assets.trees.map(panel).join("")}</div>${notice(state.issue, "red")}</div>`;
@@ -372,9 +384,26 @@
     });
   }
 
+  function rememberTreeViewportPositions() {
+    root.querySelectorAll("[data-tree-map]").forEach((map) => {
+      treeViewportPositions.set(map.dataset.treeId, { x: map.scrollLeft, y: map.scrollTop });
+    });
+  }
+
+  function restoreTreeViewportPositions() {
+    root.querySelectorAll("[data-tree-map]").forEach((map) => {
+      const position = treeViewportPositions.get(map.dataset.treeId);
+      if (!position) return;
+      map.scrollLeft = position.x;
+      map.scrollTop = position.y;
+    });
+  }
+
   function render() {
+    rememberTreeViewportPositions();
     root.innerHTML = state ? shell(workspace()) : `<div class="popup"><div class="empty">${tx("app.loading")}</div></div>`;
     window.requestAnimationFrame(() => {
+      restoreTreeViewportPositions();
       drawTreeConnections();
       traceTreeLayout();
     });
@@ -466,11 +495,38 @@
   function beginTagDrag(event) {
     const node = event.target.closest(".tree-map-node");
     if (!node || event.button !== 0 || tagDrag) return;
+    const map = node.closest("[data-tree-map]");
+    const nodesByID = new Map([...map.querySelectorAll(".tree-map-node")].map((candidate) => [candidate.dataset.nodeId, candidate]));
+    const childrenByParentID = new Map();
+    nodesByID.forEach((candidate) => {
+      const parentID = candidate.dataset.parentId;
+      if (!parentID) return;
+      const children = childrenByParentID.get(parentID) || [];
+      children.push(candidate);
+      childrenByParentID.set(parentID, children);
+    });
+    const branchNodes = [];
+    const pendingIDs = [node.dataset.nodeId];
+    const visitedIDs = new Set();
+    while (pendingIDs.length) {
+      const currentID = pendingIDs.pop();
+      if (!currentID || visitedIDs.has(currentID)) continue;
+      visitedIDs.add(currentID);
+      const currentNode = nodesByID.get(currentID);
+      if (!currentNode) continue;
+      branchNodes.push({
+        node: currentNode,
+        startX: Number(currentNode.dataset.positionX) || 0,
+        startY: Number(currentNode.dataset.positionY) || 0,
+      });
+      (childrenByParentID.get(currentID) || []).forEach((child) => pendingIDs.push(child.dataset.nodeId));
+    }
     tagDrag = {
       pointerID: event.pointerId ?? null,
       treeID: node.dataset.treeId,
       nodeID: node.dataset.nodeId,
       node,
+      nodes: branchNodes,
       startPointerX: event.clientX,
       startPointerY: event.clientY,
       startNodeX: Number(node.dataset.positionX) || 0,
@@ -483,18 +539,26 @@
 
   function moveTagDrag(event) {
     if (!tagDrag || (event.pointerId != null && event.pointerId !== tagDrag.pointerID)) return;
-    const deltaX = event.clientX - tagDrag.startPointerX;
-    const deltaY = event.clientY - tagDrag.startPointerY;
-    if (!tagDrag.moved && Math.max(Math.abs(deltaX), Math.abs(deltaY)) < 3) return;
+    const rawDeltaX = Math.round(event.clientX - tagDrag.startPointerX);
+    const rawDeltaY = Math.round(event.clientY - tagDrag.startPointerY);
+    if (!tagDrag.moved && Math.max(Math.abs(rawDeltaX), Math.abs(rawDeltaY)) < 3) return;
     tagDrag.moved = true;
     activeTagPanel = null;
     root.querySelector("[data-tree-popover]")?.remove();
-    const positionX = Math.max(0, Math.round(tagDrag.startNodeX + deltaX));
-    const positionY = Math.max(0, Math.round(tagDrag.startNodeY + deltaY));
-    tagDrag.node.dataset.positionX = String(positionX);
-    tagDrag.node.dataset.positionY = String(positionY);
-    tagDrag.node.style.left = `${positionX}px`;
-    tagDrag.node.style.top = `${positionY}px`;
+    const minStartX = Math.min(...tagDrag.nodes.map((entry) => entry.startX));
+    const minStartY = Math.min(...tagDrag.nodes.map((entry) => entry.startY));
+    const maxStartX = Math.max(...tagDrag.nodes.map((entry) => entry.startX));
+    const maxStartY = Math.max(...tagDrag.nodes.map((entry) => entry.startY));
+    const deltaX = Math.max(-minStartX, Math.min(20_000 - maxStartX, rawDeltaX));
+    const deltaY = Math.max(-minStartY, Math.min(20_000 - maxStartY, rawDeltaY));
+    tagDrag.nodes.forEach((entry) => {
+      const positionX = entry.startX + deltaX;
+      const positionY = entry.startY + deltaY;
+      entry.node.dataset.positionX = String(positionX);
+      entry.node.dataset.positionY = String(positionY);
+      entry.node.style.left = `${positionX}px`;
+      entry.node.style.top = `${positionY}px`;
+    });
     window.requestAnimationFrame(drawTreeConnections);
     event.preventDefault();
   }
