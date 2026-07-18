@@ -28,6 +28,7 @@ window.VaultClassifierStrings = Object.freeze({
   "language.name.vi": "Tiếng Việt",
   "language.name.zh": "中文",
   "navigation.aria": "Classifier workspaces",
+  "navigation.resize": "Resize classifier navigation",
   "navigation.title": "Classifier work",
   "navigation.subtitle": "Local development shell",
   "navigation.work": "WORK",

@@ -2,6 +2,8 @@
   "use strict";
 
   const root = document.getElementById("app");
+  const navigationWidthStorageKey = "vaultClassifier.navigationPanelWidth";
+  const navigationWidthRange = { minimum: 236, maximum: 460, fallback: 300 };
   const strings = window.VaultClassifierStrings || {};
   const languageChoices = [
     ["en", "language.name.en"],
@@ -39,12 +41,25 @@
   const pendingTagRenames = new Map();
   let utilityPanel = null;
   let selectedLanguage = "en";
+  let navigationPanelWidth = navigationWidthRange.fallback;
+  let navigationResize = null;
 
   try {
     const storedLanguage = window.localStorage.getItem("vaultClassifier.language");
     if (languageChoices.some(([identifier]) => identifier === storedLanguage)) selectedLanguage = storedLanguage;
   } catch (_) {}
+  try {
+    const storedWidth = Number(window.localStorage.getItem(navigationWidthStorageKey));
+    if (Number.isFinite(storedWidth)) {
+      navigationPanelWidth = Math.round(Math.min(navigationWidthRange.maximum, Math.max(navigationWidthRange.minimum, storedWidth)));
+    }
+  } catch (_) {}
   document.documentElement.lang = selectedLanguage;
+
+  function applyNavigationPanelWidth() {
+    root.style.setProperty("--navigation-panel-width", `${navigationPanelWidth}px`);
+    root.querySelector("[data-navigation-resizer]")?.setAttribute("aria-valuenow", String(navigationPanelWidth));
+  }
 
   const esc = (value) => String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -162,9 +177,9 @@
     return `<section class="utility-panel navy"><div class="utility-panel-head"><div><h2>${tx("bridge.settingsTitle")}</h2><p class="section-copy">${tx("bridge.settingsCopy")}</p></div><div class="action-row"><button class="secondary" data-action="openUtilityPanel" data-utility-panel="settings">${tx("bridge.backToSettings")}</button><button class="utility-close" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}" title="${tx("utility.close")}">×</button></div></div><div class="bridge-settings-status"><div class="status-line"><strong>${tx("bridge.hubAddress")}</strong><span class="spacer"></span><span>${esc(hub.address || "wss://customblocker.com/api/vault-bridge")}</span></div><div class="status-line"><strong>${tx("bridge.hubStatus")}</strong><span class="spacer"></span>${statusPill(tx(stateKey), connected ? "cyan" : "muted")}</div><div class="status-line"><strong>${tx("bridge.peers")}</strong><span class="spacer"></span><span>${peerLabels}</span></div></div><div class="bridge-settings-actions">${connectionButton}</div><p class="small-copy">${tx("bridge.hostCopy")}</p>${hub.error ? notice(hub.error, "red") : ""}</section>`;
   }
 
-  function navButton(workspace, symbol, titleKey, metaKey, tone) {
+  function navButton(workspace, symbol, titleKey, metaKey) {
     const active = state.workspace === workspace ? " active" : "";
-    return `<button class="sidebar-row accent-${esc(tone)}${active}" type="button" data-action="workspace" data-workspace="${esc(workspace)}"><span class="sidebar-symbol" aria-hidden="true">${symbol}</span><span class="sidebar-copy"><span class="sidebar-name">${tx(titleKey)}</span><span class="sidebar-meta">${tx(metaKey)}</span></span></button>`;
+    return `<button class="sidebar-row${active}" type="button" data-action="workspace" data-workspace="${esc(workspace)}"><span class="sidebar-symbol" aria-hidden="true">${symbol}</span><span class="sidebar-copy"><span class="sidebar-name">${tx(titleKey)}</span><span class="sidebar-meta">${tx(metaKey)}</span></span></button>`;
   }
 
   function shell(content) {
@@ -176,15 +191,15 @@
       <div class="layout">
         <aside class="navigation-panel" aria-label="${tx("navigation.aria")}">
           <div class="panel-header"><div><h2>${tx("navigation.title")}</h2><p class="small-copy">${tx("navigation.subtitle")}</p></div></div>
-          <section class="sidebar-section"><span class="eyebrow">${tx("navigation.work")}</span><div class="sidebar-list">
-            ${navButton("tagTree", "⌘", "navigation.tagTree", "navigation.tagTreeMeta", "cyan")}
-            ${navButton("localModel", "◉", "navigation.localModel", "navigation.localModelMeta", "pink")}
-            ${navButton("llmAssist", "◌", "navigation.llmAssist", "navigation.llmAssistMeta", "gold")}
-            ${navButton("browserBridge", "⇄", "navigation.browserBridge", "navigation.browserBridgeMeta", "navy")}
-            ${navButton("classificationData", "▤", "navigation.classificationData", "navigation.classificationDataMeta", "cyan")}
-          </div></section>
-          <div class="sidebar-status"><strong>${tx("navigation.localProfile")}</strong><br><span class="small-copy">${tx("navigation.assetCopy")}</span></div>
+          <div class="sidebar-list">
+            ${navButton("tagTree", "⌘", "navigation.tagTree", "navigation.tagTreeMeta")}
+            ${navButton("localModel", "◉", "navigation.localModel", "navigation.localModelMeta")}
+            ${navButton("llmAssist", "◌", "navigation.llmAssist", "navigation.llmAssistMeta")}
+            ${navButton("browserBridge", "⇄", "navigation.browserBridge", "navigation.browserBridgeMeta")}
+            ${navButton("classificationData", "▤", "navigation.classificationData", "navigation.classificationDataMeta")}
+          </div>
         </aside>
+        <div class="layout-resizer" data-navigation-resizer role="separator" aria-orientation="vertical" aria-label="${tx("navigation.resize")}" aria-valuemin="${navigationWidthRange.minimum}" aria-valuemax="${navigationWidthRange.maximum}" aria-valuenow="${navigationPanelWidth}" tabindex="0"></div>
         <section class="editor-panel" data-editor-panel data-workspace="${esc(state.workspace)}">${content}</section>
       </div>
     </div>`;
@@ -848,6 +863,7 @@
     rememberEditorViewportPosition();
     root.innerHTML = state ? shell(workspace()) : `<div class="popup"><div class="empty">${tx("app.loading")}</div></div>`;
     window.requestAnimationFrame(() => {
+      applyNavigationPanelWidth();
       restoreEditorViewportPosition();
       restoreTreeViewportPositions();
       drawTreeConnections();
@@ -1037,6 +1053,49 @@
     if (!formID || !modelID) return;
     const data = collect(formID);
     send("configureLocalModel", { modelID, treeID: data.treeID, platformIDs: data.platformIDs || [], baseEmbeddingID: data.baseEmbeddingID });
+  });
+
+  document.addEventListener("pointerdown", (event) => {
+    const resizer = event.target.closest("[data-navigation-resizer]");
+    if (!resizer || event.button !== 0) return;
+    navigationResize = { pointerID: event.pointerId };
+    resizer.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+  });
+
+  document.addEventListener("pointermove", (event) => {
+    if (!navigationResize || event.pointerId !== navigationResize.pointerID) return;
+    const layout = root.querySelector(".layout");
+    if (!layout) return;
+    const bounds = layout.getBoundingClientRect();
+    const width = Math.round(event.clientX - bounds.left);
+    navigationPanelWidth = Math.min(navigationWidthRange.maximum, Math.max(navigationWidthRange.minimum, width));
+    applyNavigationPanelWidth();
+    event.preventDefault();
+  });
+
+  function finishNavigationResize(event) {
+    if (!navigationResize || event.pointerId !== navigationResize.pointerID) return;
+    navigationResize = null;
+    try { window.localStorage.setItem(navigationWidthStorageKey, String(navigationPanelWidth)); } catch (_) {}
+  }
+
+  document.addEventListener("pointerup", finishNavigationResize);
+  document.addEventListener("pointercancel", finishNavigationResize);
+
+  document.addEventListener("keydown", (event) => {
+    const resizer = event.target.closest?.("[data-navigation-resizer]");
+    if (!resizer) return;
+    let nextWidth = navigationPanelWidth;
+    if (event.key === "ArrowLeft") nextWidth -= 16;
+    else if (event.key === "ArrowRight") nextWidth += 16;
+    else if (event.key === "Home") nextWidth = navigationWidthRange.minimum;
+    else if (event.key === "End") nextWidth = navigationWidthRange.maximum;
+    else return;
+    event.preventDefault();
+    navigationPanelWidth = Math.min(navigationWidthRange.maximum, Math.max(navigationWidthRange.minimum, nextWidth));
+    applyNavigationPanelWidth();
+    try { window.localStorage.setItem(navigationWidthStorageKey, String(navigationPanelWidth)); } catch (_) {}
   });
 
   // Mirror the Tags canvas: keep a two-axis trackpad gesture inside the
