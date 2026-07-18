@@ -161,6 +161,12 @@ final class VaultClassifierViewModel: ObservableObject {
                 do {
                     try coordinator.verifyAndRecordNativeEnvelope(request.envelope)
                     switch request.envelope.kind {
+                    case "bridge-info":
+                        _ = try JSONDecoder().decode(NativeBridgeInfoRequest.self, from: request.envelope.bodyData())
+                        let policies = coordinator.policies().prefix(64).map {
+                            NativeBridgePolicy(id: $0.id, name: $0.name)
+                        }
+                        return .init(requestID: request.requestID, bridgeInfo: .init(policies: policies))
                     case "classify":
                         let classification = try JSONDecoder().decode(NativeClassificationRequest.self, from: request.envelope.bodyData())
                         let output = try coordinator.classifyWithLedger(classification.entry)

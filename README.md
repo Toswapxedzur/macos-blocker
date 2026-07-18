@@ -29,9 +29,11 @@ Included now:
   activity cache, decision ledger, or audit history. It is written only to a
   user-chosen local folder and retains the current snapshot plus three prior
   snapshots. No backup is uploaded.
-- A source-only Chrome/Edge YouTube adapter, authenticated native host, and
-  app-owned local IPC; see [PHASE2.md](PHASE2.md). The bridge is disabled and
-  unregistered until a future signed installer is explicitly authorized.
+- An opt-in Chrome/Edge YouTube bridge with an authenticated native host and
+  app-owned local IPC; see [PHASE2.md](PHASE2.md). Register the local product
+  host with `./scripts/install-browser-bridge.sh`, then explicitly enable it
+  from the Vault extension. Missing host/app, invalid frames, and timeouts all
+  fail open.
 - Optional personal audit and local polishing: the user stores a Gemini key in
   this Mac's Keychain, enables a local token budget, queues a local candidate,
   and explicitly presses **Run Gemini**. The fixed adapter sends one bounded,

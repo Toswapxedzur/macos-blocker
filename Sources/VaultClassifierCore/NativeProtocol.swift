@@ -131,6 +131,31 @@ public struct NativePairResponse: Codable, Equatable, Sendable {
     public init(secretBase64: String) { self.secretBase64 = secretBase64 }
 }
 
+/// A browser can request this small, local-only inventory after native-host
+/// pairing. It deliberately contains policy names and identifiers only: the
+/// extension never receives a tree, model, ledger, evidence, or credential.
+public struct NativeBridgeInfoRequest: Codable, Equatable, Sendable {
+    public init() {}
+}
+
+public struct NativeBridgePolicy: Codable, Equatable, Sendable {
+    public var id: String
+    public var name: String
+
+    public init(id: String, name: String) {
+        self.id = id
+        self.name = name
+    }
+}
+
+public struct NativeBridgeInfoResponse: Codable, Equatable, Sendable {
+    public var policies: [NativeBridgePolicy]
+
+    public init(policies: [NativeBridgePolicy]) {
+        self.policies = policies
+    }
+}
+
 public struct NativeClassificationRequest: Codable, Equatable, Sendable {
     public var entry: EntryEvidence
     public init(entry: EntryEvidence) { self.entry = entry }
