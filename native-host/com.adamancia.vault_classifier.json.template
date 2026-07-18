@@ -1,9 +1,9 @@
 {
   "name": "com.adamancia.vault_classifier",
-  "description": "Vault Classifier local development native host",
+  "description": "Vault Classifier browser bridge",
   "path": "__ABSOLUTE_PATH_TO_VAULT_CLASSIFIER_NATIVE_HOST__",
   "type": "stdio",
   "allowed_origins": [
-    "chrome-extension://__STABLE_CHROME_OR_EDGE_EXTENSION_ID__/"
+    "chrome-extension://mcbmcmephdaapjepopobikobjmfdeamm/"
   ]
 }

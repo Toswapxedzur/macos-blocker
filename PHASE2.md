@@ -1,6 +1,9 @@
 # Phase 2 — local YouTube vertical slice
 
-This source-only Phase 2 implementation adds an opt-in Chrome/Edge adapter and a local native-messaging path. It does not register a native-host manifest, modify an installer, change any version, or enable the feature for an extension user.
+This opt-in product path adds a Chrome/Edge adapter and local native messaging
+for the stable Vault extension ID `mcbmcmephdaapjepopobikobjmfdeamm`. It does
+not change a product version or enable the feature until the user explicitly
+enables it in the extension.
 
 ## Local path
 
@@ -13,11 +16,23 @@ This source-only Phase 2 implementation adds an opt-in Chrome/Edge adapter and a
 4. The host uses a `0600` Unix-domain socket in the user Application Support directory, checks that the peer UID is the current user, and forwards the request to the visible app. The app owns the classifier/cache/ledger and returns the decision. There is no HTTP listener or public loopback port.
 5. Feed decisions default to **dim**, with reveal/why controls. Hard feed blocking requires the explicit `feedHardBlock` local setting. A matching watch page presents a local block surface with reveal/why controls. Revealing reports a local false-dim/false-block correction to the decision ledger.
 
-## Deliberately not installed
+## Installation
 
-`native-host/com.adamancia.vault_classifier.json.template` is only a template. Its executable path and Chrome/Edge extension ID must be supplied by a future signed installer. Do not copy it into a browser native-messaging directory for a production release.
+Run the local product registration command from the repository checkout:
 
-With no registered host, the extension fails open. This is intentional until packaging, stable extension IDs, and the installer are separately authorized.
+```sh
+cd /Users/fengyue.john.zhu/Desktop/blockerGroup/vaultClassifier
+./scripts/install-browser-bridge.sh
+```
+
+It creates the Chrome and Edge native-host manifests for the fixed extension
+ID and points them at sibling release executables built from this checkout. The
+host launches only that sibling `VaultClassifierApp` when its private IPC socket
+is unavailable. It never opens a loopback port. Re-run the command after a
+release build changes location.
+
+With no registered host, a disabled bridge, an unavailable app, or an invalid
+response, the extension fails open and leaves YouTube visible.
 
 ## Developer checks
 

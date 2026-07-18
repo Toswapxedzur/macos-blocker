@@ -61,6 +61,12 @@ private final class VaultClassifierNativeHost {
         do {
             try replayStore.verifyAndRecord(envelope, secret: secret)
             switch envelope.kind {
+            case "bridge-info":
+                _ = try JSONDecoder().decode(NativeBridgeInfoRequest.self, from: envelope.bodyData())
+                let response = try forwardBridgeInfo(requestID: envelope.requestID, envelope: envelope)
+                var authenticated = try NativeEnvelope.unsigned(kind: "bridge-info-response", body: response, requestID: envelope.requestID)
+                authenticated.sign(using: secret)
+                return authenticated
             case "classify":
                 let body = try JSONDecoder().decode(NativeClassificationRequest.self, from: envelope.bodyData())
                 let response = try forwardClassification(body, requestID: envelope.requestID, envelope: envelope)
@@ -99,6 +105,12 @@ private final class VaultClassifierNativeHost {
         return classification
     }
 
+    private func forwardBridgeInfo(requestID: String, envelope: NativeEnvelope) throws -> NativeBridgeInfoResponse {
+        let response = try forward(LocalIPCRequest(envelope: envelope), requestID: requestID)
+        guard let bridgeInfo = response.bridgeInfo else { throw LocalIPCError.unavailable }
+        return bridgeInfo
+    }
+
     private func forwardCorrection(_ request: NativeCorrectionRequest, requestID: String, envelope: NativeEnvelope) throws -> NativeCorrectionResponse {
         let response = try forward(LocalIPCRequest(envelope: envelope), requestID: requestID)
         guard let correction = response.correction else { throw LocalIPCError.unavailable }
@@ -123,9 +135,19 @@ private final class VaultClassifierNativeHost {
     }
 
     private func launchVisibleAppIfConfigured() throws {
-        guard let rawPath = ProcessInfo.processInfo.environment["VAULT_CLASSIFIER_APP_PATH"], !rawPath.isEmpty else { return }
-        let configuration = NSWorkspace.OpenConfiguration()
-        NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: rawPath), configuration: configuration)
+        // The registered host and product app are installed as sibling
+        // executables. Resolving from the executable path avoids accepting an
+        // environment-provided launch target from a browser process.
+        let hostURL = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        let appURL = hostURL.deletingLastPathComponent().appendingPathComponent("VaultClassifierApp")
+        guard FileManager.default.isExecutableFile(atPath: appURL.path) else { throw LocalIPCError.unavailable }
+
+        let process = Process()
+        process.executableURL = appURL
+        process.currentDirectoryURL = appURL.deletingLastPathComponent()
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
     }
 
     private func unsignedError(requestID: String, message: String) -> NativeEnvelope {
