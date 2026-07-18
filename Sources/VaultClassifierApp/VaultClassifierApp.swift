@@ -134,6 +134,13 @@ final class VaultClassifierViewModel: ObservableObject {
     private var coordinator: LocalClassifierCoordinator?
     private var ipcServer: LocalIPCServer?
     private var latestLedgerID: UUID?
+    /// Credentials saved without Keychain are intentionally process-scoped.
+    /// They support a one-session explicit provider run without writing a raw
+    /// credential into the workspace catalog or to disk.
+    private var sessionProviderCredentials: [String: ProviderCredentialRecord] = [:]
+    /// Keep the AppKit object alive while its sheet is visible. WKScriptMessage
+    /// callbacks do not otherwise guarantee an `NSAlert` remains retained.
+    private var activeProviderCredentialAlert: NSAlert?
 
     init() {
         do {
@@ -355,6 +362,7 @@ final class VaultClassifierViewModel: ObservableObject {
 
     func presentProviderCredentialEntry(profileID: String) {
         do {
+            guard activeProviderCredentialAlert == nil else { return }
             guard let profile = localState?.workspaceCatalog.providerProfiles.first(where: { $0.id == profileID }) else {
                 throw WebBridgeInputError.invalidChoice("provider profile")
             }
@@ -382,14 +390,19 @@ final class VaultClassifierViewModel: ObservableObject {
                 stack.addArrangedSubview(control)
             }
             alert.accessoryView = stack
+            alert.window.initialFirstResponder = fields.first?.1
             guard let window = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible }) else {
                 throw WebBridgeInputError.invalidChoice("application window")
             }
             NSApp.activate(ignoringOtherApps: true)
+            activeProviderCredentialAlert = alert
             alert.beginSheetModal(for: window) { [weak self] response in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    defer { self.onWebStateChange?() }
+                    defer {
+                        self.activeProviderCredentialAlert = nil
+                        self.onWebStateChange?()
+                    }
                     guard response == .alertFirstButtonReturn else { return }
                     do {
                         let record = ProviderCredentialRecord(values: Dictionary(uniqueKeysWithValues: fields.map { ($0.0, $0.1.stringValue) }))
@@ -401,6 +414,43 @@ final class VaultClassifierViewModel: ObservableObject {
                     }
                 }
             }
+            DispatchQueue.main.async { [weak self, weak window] in
+                guard self?.activeProviderCredentialAlert === alert else { return }
+                window?.makeFirstResponder(fields.first?.1)
+            }
+        } catch { issue = error.localizedDescription }
+    }
+
+    /// The LLM-assist panel deliberately accepts a masked direct entry field.
+    /// It forwards a credential only for this explicit save action, never in a
+    /// snapshot. The user may opt into persistent Keychain storage; otherwise
+    /// the validated value survives only for this process.
+    func saveProviderCredential(profileID: String, credentialValues: [String: String], storeInKeychain: Bool) {
+        do {
+            guard let profile = localState?.workspaceCatalog.providerProfiles.first(where: { $0.id == profileID }) else {
+                throw WebBridgeInputError.invalidChoice("provider profile")
+            }
+            let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
+            var values: [ProviderCredentialField: String] = [:]
+            for (rawField, value) in credentialValues {
+                guard let field = ProviderCredentialField(rawValue: rawField), values[field] == nil else {
+                    throw WebBridgeInputError.invalidChoice("provider credential")
+                }
+                values[field] = value
+            }
+            let record = ProviderCredentialRecord(values: values)
+            try record.validate(for: descriptor)
+            if storeInKeychain {
+                try ProviderCredentialStore.saveCredentialRecord(record, for: profileID, descriptor: descriptor)
+                sessionProviderCredentials.removeValue(forKey: profileID)
+            } else {
+                // An unchecked Keychain option means no credential is retained
+                // after the app exits. Remove any prior persistent replacement.
+                try ProviderCredentialStore.removeCredential(for: profileID)
+                sessionProviderCredentials[profileID] = record
+            }
+            refreshLocalState()
+            issue = nil
         } catch { issue = error.localizedDescription }
     }
 
@@ -410,6 +460,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 throw WebBridgeInputError.invalidChoice("provider profile")
             }
             try ProviderCredentialStore.removeCredential(for: profileID)
+            sessionProviderCredentials.removeValue(forKey: profileID)
             refreshLocalState()
             issue = nil
         } catch { issue = error.localizedDescription }
@@ -428,6 +479,7 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             try coordinator?.updateWorkspaceCatalog(catalog)
             try ProviderCredentialStore.removeCredential(for: profileID)
+            sessionProviderCredentials.removeValue(forKey: profileID)
             refreshLocalState()
             issue = nil
         } catch { issue = error.localizedDescription }
@@ -1487,6 +1539,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     "customEndpoint": profile.customEndpoint ?? NSNull(),
                     "protocolConfiguration": profile.protocolConfiguration,
                     "hasStoredCredential": ProviderCredentialStore.hasCredential(for: profile.id),
+                    "hasSessionCredential": sessionProviderCredentials[profile.id] != nil,
                 ] as [String: Any]
             },
             "providerProtocols": Dictionary(uniqueKeysWithValues: APIKeyProviderType.allCases
@@ -1500,6 +1553,7 @@ final class VaultClassifierViewModel: ObservableObject {
                         "supportsYouTubeTool": descriptor.requestFormats.contains(where: { $0.operation == .generateText }),
                         "allowsEndpointOverride": descriptor.allowsEndpointOverride,
                         "credentialRequired": !descriptor.credentialFields.isEmpty,
+                        "credentialFields": descriptor.credentialFields.map(\.rawValue),
                         "configurationRequirements": descriptor.configurationRequirements.map { requirement in
                             [
                                 "field": requirement.field.rawValue,
@@ -1579,6 +1633,12 @@ final class VaultClassifierViewModel: ObservableObject {
                 )
             case "presentProviderCredentialEntry":
                 presentProviderCredentialEntry(profileID: try webString(data, key: "profileID", limit: 128))
+            case "saveProviderCredential":
+                saveProviderCredential(
+                    profileID: try webString(data, key: "profileID", limit: 128),
+                    credentialValues: try webProviderCredentials(data),
+                    storeInKeychain: data["storeInKeychain"] as? Bool ?? false
+                )
             case "removeProviderCredential":
                 removeProviderCredential(profileID: try webString(data, key: "profileID", limit: 128))
             case "confirmDeleteProviderProfile":
@@ -1777,6 +1837,23 @@ final class VaultClassifierViewModel: ObservableObject {
                 throw WebBridgeInputError.invalidChoice("protocol configuration")
             }
             return (key, string)
+        })
+    }
+
+    private func webProviderCredentials(_ data: [String: Any]) throws -> [String: String] {
+        guard let raw = data["credentials"] as? [String: Any] else {
+            throw WebBridgeInputError.missingValue("provider credential")
+        }
+        guard raw.count <= ProviderCredentialField.allCases.count else {
+            throw WebBridgeInputError.exceedsLimit("provider credential", ProviderCredentialField.allCases.count)
+        }
+        return try Dictionary(uniqueKeysWithValues: raw.map { key, value in
+            guard ProviderCredentialField(rawValue: key) != nil,
+                  let credential = value as? String,
+                  credential.count <= ProviderCredentialStore.maximumCredentialCharacters else {
+                throw WebBridgeInputError.invalidChoice("provider credential")
+            }
+            return (key, credential)
         })
     }
 

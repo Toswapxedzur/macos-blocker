@@ -1,10 +1,11 @@
 import Foundation
 import Security
 
-/// Keychain-only storage for user-owned API credentials. A workspace profile
-/// retains only its opaque ID and non-secret configuration; raw keys never
-/// enter local state, the WKWebView snapshot, diagnostics, native messaging,
-/// or server traffic.
+/// Persistent Keychain storage for user-owned API credentials. A workspace
+/// profile retains only its opaque ID and non-secret configuration. The
+/// direct-entry panel may forward a value through one bounded, explicit local
+/// WebView action, but credentials never appear in local state, snapshots,
+/// diagnostics, browser messages, or server traffic.
 public struct ProviderCredentialRecord: Codable, Equatable, Sendable {
     public var values: [ProviderCredentialField: String]
 
