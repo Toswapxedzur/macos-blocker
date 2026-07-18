@@ -2,6 +2,18 @@ import XCTest
 @testable import VaultClassifierCore
 
 final class WorkspaceAssetsTests: XCTestCase {
+    func testCollectionRegistryMarksOnlyInstalledPublicContentCollectorsAvailable() {
+        let available = Set(CollectionPlatformRegistry.definitions.lazy.filter(\.collectorAvailable).map(\.id))
+        XCTAssertEqual(available, Set([
+            "youtube", "tiktok", "facebook", "instagram", "twitch", "reddit",
+            "twitter", "bluesky", "threads", "substack", "bilibili", "rumble",
+            "pinterest", "tumblr", "peertube", "pixelfed",
+        ]))
+        XCTAssertFalse(CollectionPlatformRegistry.definition(for: "discord")?.collectorAvailable ?? true)
+        XCTAssertFalse(CollectionPlatformRegistry.definition(for: "kick")?.collectorAvailable ?? true)
+        XCTAssertFalse(CollectionPlatformRegistry.definition(for: "kuaishou")?.collectorAvailable ?? true)
+    }
+
     func testStarterCatalogBindsOneTreeAndDatasetToYouTube() {
         let catalog = WorkspaceCatalog.starter()
         let binding = try! XCTUnwrap(catalog.bindings.first)
