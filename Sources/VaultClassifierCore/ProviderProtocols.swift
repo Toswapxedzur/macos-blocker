@@ -328,104 +328,18 @@ public enum ProviderProtocolError: Error, Equatable, LocalizedError, Sendable {
 public enum ProviderProtocolRegistry {
     public static func descriptor(for type: APIKeyProviderType) -> ProviderProtocolDescriptor {
         switch type {
-        case .chatGPT:
+        case .openAI:
             return model(type, .openAIResponsesV1, "https://api.openai.com/v1", "/responses", .openAIResponses)
+        case .openAICompatible:
+            return model(type, .openAIChatCompletionsV1, nil, "/chat/completions", .openAIChatCompletions, override: true)
         case .gemini:
             return model(type, .geminiGenerateContentV1Beta, "https://generativelanguage.googleapis.com/v1beta", "/models/{model}:generateContent", .geminiGenerateContent, authentication: .apiKeyHeader, header: "x-goog-api-key")
-        case .claude:
+        case .anthropic:
             return model(type, .anthropicMessagesV1, "https://api.anthropic.com/v1", "/messages", .anthropicMessages, authentication: .apiKeyHeader, header: "x-api-key", headers: ["anthropic-version": "2023-06-01"])
-        case .deepSeek:
-            return model(type, .openAIChatCompletionsV1, "https://api.deepseek.com/v1", "/chat/completions", .openAIChatCompletions)
-        case .mistral:
-            return model(type, .openAIChatCompletionsV1, "https://api.mistral.ai/v1", "/chat/completions", .openAIChatCompletions)
         case .cohere:
             return model(type, .cohereChatV2, "https://api.cohere.com/v2", "/chat", .cohereChat)
-        case .groq:
-            return model(type, .openAIChatCompletionsV1, "https://api.groq.com/openai/v1", "/chat/completions", .openAIChatCompletions)
-        case .xAI:
-            return model(type, .openAIChatCompletionsV1, "https://api.x.ai/v1", "/chat/completions", .openAIChatCompletions)
-        case .perplexity:
-            return model(type, .openAIChatCompletionsV1, "https://api.perplexity.ai", "/chat/completions", .openAIChatCompletions)
-        case .openRouter:
-            return model(type, .openAIChatCompletionsV1, "https://openrouter.ai/api/v1", "/chat/completions", .openAIChatCompletions)
-        case .togetherAI:
-            return model(type, .openAIChatCompletionsV1, "https://api.together.xyz/v1", "/chat/completions", .openAIChatCompletions)
-        case .fireworksAI:
-            return model(type, .openAIChatCompletionsV1, "https://api.fireworks.ai/inference/v1", "/chat/completions", .openAIChatCompletions)
-        case .huggingFace:
-            return model(type, .openAIChatCompletionsV1, "https://router.huggingface.co/v1", "/chat/completions", .openAIChatCompletions)
-        case .replicate:
-            return model(type, .replicatePredictionsV1, "https://api.replicate.com/v1", "/predictions", .replicatePrediction)
-        case .azureOpenAI:
-            return model(type, .openAIChatCompletionsV1, nil, "/openai/deployments/{model}/chat/completions", .openAIChatCompletions, authentication: .apiKeyHeader, header: "api-key", override: true, configuration: [.init(.apiVersion, defaultValue: "2025-04-01-preview")])
-        case .awsBedrock:
-            return model(type, .awsBedrockConverseV1, "https://bedrock-runtime.{region}.amazonaws.com", "/model/{model}/converse", .awsBedrockConverse, authentication: .awsSignatureV4, credentials: [.accessKeyID, .secretAccessKey], configuration: [.init(.region, defaultValue: "us-east-1")])
-        case .googleVertexAI:
-            return model(type, .googleVertexGenerateContentV1, "https://aiplatform.googleapis.com", "/v1/projects/{projectID}/locations/{location}/publishers/google/models/{model}:generateContent", .vertexGenerateContent, configuration: [.init(.projectID, isRequiredForDispatch: true), .init(.location, defaultValue: "global")])
-        case .cloudflareWorkersAI:
-            return model(type, .cloudflareWorkersAIRunV4, "https://api.cloudflare.com/client/v4", "/accounts/{accountID}/ai/run/{model}", .cloudflareAIRun, configuration: [.init(.accountID)])
-        case .nvidiaNIM:
-            return model(type, .openAIChatCompletionsV1, "https://integrate.api.nvidia.com/v1", "/chat/completions", .openAIChatCompletions)
-        case .cerebras:
-            return model(type, .openAIChatCompletionsV1, "https://api.cerebras.ai/v1", "/chat/completions", .openAIChatCompletions)
-        case .sambaNova:
-            return model(type, .openAIChatCompletionsV1, "https://api.sambanova.ai/v1", "/chat/completions", .openAIChatCompletions)
-        case .ai21:
-            return model(type, .openAIChatCompletionsV1, "https://api.ai21.com/studio/v1", "/chat/completions", .openAIChatCompletions)
-        case .voyageAI:
-            return model(type, .voyageEmbeddingsV1, "https://api.voyageai.com/v1", "/embeddings", .embeddingInput, operation: .embedText)
-        case .jinaAI:
-            return model(type, .jinaEmbeddingsV1, "https://api.jina.ai/v1", "/embeddings", .embeddingInput, operation: .embedText)
         case .ollama:
             return model(type, .ollamaChatV1, "http://127.0.0.1:11434", "/api/chat", .ollamaChat, authentication: .none, credentials: [], override: true, loopback: true)
-        case .youtubeData:
-            return external(type, .youtubeDataV3, "https://www.googleapis.com/youtube/v3", "/videos", .readPublicContent, authentication: .apiKeyQuery, header: "key")
-        case .twitch:
-            return external(type, .twitchHelixV1, "https://api.twitch.tv/helix", "/videos", .readPublicContent, authentication: .bearerTokenAndClientID, configuration: [.init(.clientID)])
-        case .reddit:
-            return external(type, .redditOAuthV1, "https://oauth.reddit.com", "/r/{contentID}/new", .readPublicContent, configuration: [.init(.userAgent, defaultValue: "VaultClassifier/1.0")])
-        case .xPlatform:
-            return external(type, .xAPIV2, "https://api.x.com/2", "/tweets/{contentID}", .readPublicContent)
-        case .tikTok:
-            return external(type, .tikTokDisplayV2, "https://open.tiktokapis.com/v2", "/video/list/", .readPublicContent)
-        case .instagramGraph, .facebookGraph:
-            return external(type, .metaGraphV1, "https://graph.facebook.com", "/{apiVersion}/{contentID}", .readPublicContent, configuration: [.init(.apiVersion, defaultValue: "v24.0")])
-        case .linkedIn:
-            return external(type, .linkedInRestV1, "https://api.linkedin.com/rest", "/posts/{contentID}", .readPublicContent)
-        case .pinterest:
-            return external(type, .pinterestV5, "https://api.pinterest.com/v5", "/pins/{contentID}", .readPublicContent)
-        case .bluesky:
-            return external(type, .blueskyATProtoV1, "https://bsky.social/xrpc", "/app.bsky.feed.getPostThread", .readPublicContent)
-        case .mastodon:
-            return external(type, .mastodonV1, nil, "/api/v1/statuses/{contentID}", .readPublicContent, override: true)
-        case .vimeo:
-            return external(type, .vimeoV3, "https://api.vimeo.com", "/videos/{contentID}", .readPublicContent)
-        case .dailyMotion:
-            return external(type, .dailymotionV1, "https://api.dailymotion.com", "/video/{contentID}", .readPublicContent)
-        case .spotify:
-            return external(type, .spotifyWebV1, "https://api.spotify.com/v1", "/tracks/{contentID}", .readPublicContent)
-        case .soundCloud:
-            return external(type, .soundCloudV2, "https://api.soundcloud.com", "/tracks/{contentID}", .readPublicContent)
-        case .steam:
-            return external(type, .steamWebV1, "https://api.steampowered.com", "/ISteamApps/GetAppList/v2/", .readPublicContent, authentication: .apiKeyQuery, header: "key")
-        case .braveSearch:
-            return external(type, .braveSearchV1, "https://api.search.brave.com/res/v1", "/web/search", .searchWeb, authentication: .apiKeyHeader, header: "X-Subscription-Token")
-        case .tavily:
-            return external(type, .tavilySearchV1, "https://api.tavily.com", "/search", .searchWeb)
-        case .serpAPI:
-            return external(type, .serpAPIV1, "https://serpapi.com", "/search.json", .searchWeb, authentication: .apiKeyQuery, header: "api_key")
-        case .firecrawl:
-            return external(type, .firecrawlV2, "https://api.firecrawl.dev/v2", "/search", .searchWeb)
-        case .googleCustomSearch:
-            return external(type, .googleCustomSearchV1, "https://customsearch.googleapis.com", "/customsearch/v1", .searchWeb, authentication: .apiKeyQuery, header: "key", configuration: [.init(.searchEngineID)])
-        case .bingWebSearch:
-            return external(type, .bingWebSearchV7, "https://api.bing.microsoft.com/v7.0", "/search", .searchWeb, authentication: .apiKeyHeader, header: "Ocp-Apim-Subscription-Key")
-        case .custom:
-            return model(type, .customJSONV1, nil, "/", .customJSON, override: true, configuration: [.init(.protocolFamily, defaultValue: ProviderProtocolFamily.openAIChatCompletionsV1.rawValue)])
-        // Compatibility-only legacy profile types are kept decodable. They use
-        // the same explicit bearer-token read-only contract until removed.
-        case .discord, .github, .gitlab, .slack, .telegram, .notion, .microsoftGraph:
-            return external(type, .customJSONV1, nil, "/", .readPublicContent, override: true)
         }
     }
 

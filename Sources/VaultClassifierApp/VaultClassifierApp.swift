@@ -390,7 +390,6 @@ final class VaultClassifierViewModel: ObservableObject {
     func createProviderProfile(typeRaw: String) {
         do {
             guard let type = APIKeyProviderType(rawValue: typeRaw),
-                  type.isSelectableProfileType,
                   var catalog = localState?.workspaceCatalog else {
                 throw WebBridgeInputError.invalidChoice("provider type")
             }
@@ -423,8 +422,6 @@ final class VaultClassifierViewModel: ObservableObject {
         modelIdentifier: String?,
         batchSize: String?,
         maximumTokens: String?,
-        youtubeProviderID: String?,
-        searchEnabled: Bool?,
         customEndpoint: String?,
         protocolConfiguration: [String: String],
         inputCostUSDPerMillion: String?,
@@ -441,27 +438,15 @@ final class VaultClassifierViewModel: ObservableObject {
             guard !cleanedName.isEmpty else { throw WebBridgeInputError.invalidChoice("provider profile name") }
             profile.name = cleanedName
             let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
-            if descriptor.supportsLLMConfiguration {
-                guard let modelIdentifier, let batchSize, let maximumTokens else {
-                    throw WebBridgeInputError.missingValue("provider model settings")
-                }
-                profile.modelIdentifier = modelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
-                profile.batchSize = try providerPositiveInteger(batchSize, maximum: APIKeyProviderProfile.maximumBatchSize, label: "Provider batch size")
-                profile.maximumTokens = try providerPositiveInteger(maximumTokens, maximum: APIKeyProviderProfile.maximumTokenLimit, label: "Provider maximum tokens")
-                let normalizedYouTubeID = youtubeProviderID?.trimmingCharacters(in: .whitespacesAndNewlines)
-                profile.youtubeProviderID = normalizedYouTubeID?.isEmpty == false ? normalizedYouTubeID : nil
-                profile.searchEnabled = searchEnabled ?? false
-                let normalizedEndpoint = customEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines)
-                profile.customEndpoint = normalizedEndpoint?.isEmpty == false ? normalizedEndpoint : nil
-            } else {
-                profile.modelIdentifier = ""
-                profile.batchSize = 1
-                profile.maximumTokens = 1_024
-                profile.youtubeProviderID = nil
-                profile.searchEnabled = false
-                let normalizedEndpoint = customEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines)
-                profile.customEndpoint = normalizedEndpoint?.isEmpty == false ? normalizedEndpoint : nil
+            guard descriptor.supportsLLMConfiguration,
+                  let modelIdentifier, let batchSize, let maximumTokens else {
+                throw WebBridgeInputError.missingValue("provider model settings")
             }
+            profile.modelIdentifier = modelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+            profile.batchSize = try providerPositiveInteger(batchSize, maximum: APIKeyProviderProfile.maximumBatchSize, label: "Provider batch size")
+            profile.maximumTokens = try providerPositiveInteger(maximumTokens, maximum: APIKeyProviderProfile.maximumTokenLimit, label: "Provider maximum tokens")
+            let normalizedEndpoint = customEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines)
+            profile.customEndpoint = normalizedEndpoint?.isEmpty == false ? normalizedEndpoint : nil
             profile.protocolConfiguration = protocolConfiguration
             profile.inputCostUSDPerMillion = try providerCostRate(inputCostUSDPerMillion, label: "Provider input token cost")
             profile.outputCostUSDPerMillion = try providerCostRate(outputCostUSDPerMillion, label: "Provider output token cost")
@@ -836,10 +821,6 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             catalog.providerProfiles.removeAll(where: { $0.id == profileID })
             catalog.providerRequestRecords.removeAll(where: { $0.profileID == profileID })
-            for index in catalog.providerProfiles.indices where catalog.providerProfiles[index].youtubeProviderID == profileID {
-                catalog.providerProfiles[index].youtubeProviderID = nil
-                catalog.providerProfiles[index].updatedAtMilliseconds = WorkspaceCatalog.now()
-            }
             try coordinator?.updateWorkspaceCatalog(catalog)
             try ProviderCredentialStore.removeCredential(for: profileID)
             sessionProviderCredentials.removeValue(forKey: profileID)
@@ -2145,8 +2126,6 @@ final class VaultClassifierViewModel: ObservableObject {
                     "modelIdentifier": profile.modelIdentifier,
                     "batchSize": profile.batchSize,
                     "maximumTokens": profile.maximumTokens,
-                    "youtubeProviderID": profile.youtubeProviderID ?? NSNull(),
-                    "searchEnabled": profile.searchEnabled,
                     "customEndpoint": profile.customEndpoint ?? NSNull(),
                     "protocolConfiguration": profile.protocolConfiguration,
                     "inputCostUSDPerMillion": profile.inputCostUSDPerMillion ?? NSNull(),
@@ -2185,7 +2164,6 @@ final class VaultClassifierViewModel: ObservableObject {
                         "revision": descriptor.revision,
                         "family": descriptor.family.rawValue,
                         "supportsLLMConfiguration": descriptor.supportsLLMConfiguration,
-                        "supportsYouTubeTool": descriptor.requestFormats.contains(where: { $0.operation == .generateText }),
                         "allowsEndpointOverride": descriptor.allowsEndpointOverride,
                         "credentialRequired": !descriptor.credentialFields.isEmpty,
                         "credentialFields": descriptor.credentialFields.map(\.rawValue),
@@ -2329,8 +2307,6 @@ final class VaultClassifierViewModel: ObservableObject {
                     modelIdentifier: try webOptionalString(data, key: "modelIdentifier", limit: APIKeyProviderProfile.maximumModelIdentifierLength),
                     batchSize: try webOptionalString(data, key: "batchSize", limit: 16),
                     maximumTokens: try webOptionalString(data, key: "maximumTokens", limit: 16),
-                    youtubeProviderID: try webOptionalString(data, key: "youtubeProviderID", limit: 128),
-                    searchEnabled: data["searchEnabled"] as? Bool,
                     customEndpoint: try webOptionalString(data, key: "customEndpoint", limit: APIKeyProviderProfile.maximumEndpointLength),
                     protocolConfiguration: try webProviderConfiguration(data),
                     inputCostUSDPerMillion: try webOptionalString(data, key: "inputCostUSDPerMillion", limit: 32),
