@@ -546,8 +546,44 @@
   }
 
   function browserBridgeWorkspace() {
-    return `<div class="workspace">${header("bridge.title", "bridge.futureCopy", t("bridge.reserved"), "navy")}
-      <section class="section-card navy"><div class="section-header"><div><h3>${tx("bridge.reserved")}</h3><p class="section-copy">${tx("bridge.reservedCopy")}</p></div><button class="secondary" data-action="openUtilityPanel" data-utility-panel="browserBridge">${tx("bridge.openSettings")}</button></div></section>${notice(state.issue, "red")}</div>`;
+    const assets = state.assets;
+    const classifierTypes = assets.classifierTypes || [];
+    const trees = assets.trees || [];
+    const datasets = assets.datasets || [];
+    const models = assets.models || [];
+    const profiles = assets.providerProfiles || [];
+    const protocols = assets.providerProtocols || {};
+    const llmProfiles = profiles.filter((profile) => protocols[profile.type]?.supportsLLMConfiguration);
+    const sourceOptions = [
+      ["human", t("bridge.source.human")],
+      ["llmAssist", t("bridge.source.llmAssist")],
+      ["localModel", t("bridge.source.localModel")],
+    ];
+    const typeForm = (classifierType) => {
+      const formID = `classifier-type-${classifierType.id}`;
+      const selectedTree = trees.find((tree) => tree.id === classifierType.treeID);
+      const selectedDataset = datasets.find((dataset) => dataset.id === classifierType.datasetID);
+      const compatibleModels = models.filter((model) => model.ready &&
+        model.treeID === classifierType.treeID &&
+        model.treeRevision === selectedTree?.revision &&
+        model.datasetID === classifierType.datasetID &&
+        model.datasetRevision === selectedDataset?.revision);
+      const treeOptions = trees.map((tree) => [tree.id, `${tree.name} · r${tree.revision}`]);
+      const datasetOptions = datasets.map((dataset) => [dataset.id, `${dataset.name} · r${dataset.revision}`]);
+      const modelOptions = [["", t("bridge.noLocalModel")], ...compatibleModels.map((model) => [model.id, `${model.name} · v${model.version}`])];
+      const selectedLLMIDs = new Set(classifierType.llmProfileIDs || []);
+      const creatorSources = new Set(classifierType.creatorDecisionSources || []);
+      const entrySources = new Set(classifierType.entryDecisionSources || []);
+      const priority = classifierType.decisionPriority || ["human", "llmAssist", "localModel"];
+      const localAvailable = Boolean(classifierType.localModelID) && compatibleModels.some((model) => model.id === classifierType.localModelID);
+      const llmAvailable = selectedLLMIDs.size > 0;
+      const sourceToggle = (fieldName, source, enabled, available) => `<label class="classifier-source-toggle"><input type="checkbox" data-field="${esc(fieldName)}"${checked(enabled)}${disabled(!available)}><span>${tx(`bridge.source.${source}`)}</span>${!available ? `<small>${tx(`bridge.sourceUnavailable.${source}`)}</small>` : ""}</label>`;
+      const typeStatus = `${creatorSources.size || entrySources.size ? t("bridge.configured") : t("bridge.needsSource")}`;
+      return `<section class="classifier-type-panel" data-form-id="${esc(formID)}"><div class="classifier-type-head"><div><span class="eyebrow">${tx("bridge.typePanel")}</span><h3>${esc(classifierType.name)}</h3><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div>${statusPill(typeStatus, creatorSources.size || entrySources.size ? "navy" : "muted")}</div><div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}<button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("bridge.saveType")}</button><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}">${tx("bridge.deleteType")}</button></div><section class="classifier-type-section"><div class="section-header"><div><h3>${tx("bridge.assetSelection")}</h3><p class="section-copy">${tx("bridge.assetSelectionCopy")}</p></div></div><div class="classifier-asset-grid">${valueSelectField("bridge.tagTree", "", "treeID", classifierType.treeID, treeOptions)}${valueSelectField("bridge.classificationData", "", "datasetID", classifierType.datasetID, datasetOptions)}${valueSelectField("bridge.localModel", "bridge.localModelCopy", "localModelID", classifierType.localModelID || "", modelOptions)}</div></section><section class="classifier-type-section classifier-llm-section"><div class="section-header"><div><h3>${tx("bridge.llmAssist")}</h3><p class="section-copy">${tx("bridge.llmAssistCopy")}</p></div><span class="small-copy">${tx("bridge.llmExplicitOnly")}</span></div>${llmProfiles.length ? `<div class="classifier-profile-list">${llmProfiles.map((profile) => `<label class="classifier-profile-choice"><input type="checkbox" data-field="llmProfile.${esc(profile.id)}"${checked(selectedLLMIDs.has(profile.id))}><span>${esc(profile.name)}</span><small>${esc(profile.modelIdentifier)}</small></label>`).join("")}</div>` : `<div class="empty compact-empty">${tx("bridge.noLLMProfiles")}</div>`}</section><section class="classifier-type-section"><div class="section-header"><div><h3>${tx("bridge.decisionPolicy")}</h3><p class="section-copy">${tx("bridge.decisionPolicyCopy")}</p></div></div><div class="classifier-priority-grid">${valueSelectField("bridge.priorityFirst", "", "priorityFirst", priority[0], sourceOptions)}${valueSelectField("bridge.prioritySecond", "", "prioritySecond", priority[1], sourceOptions)}${valueSelectField("bridge.priorityThird", "", "priorityThird", priority[2], sourceOptions)}</div><div class="classifier-decision-grid"><section><span class="eyebrow">${tx("bridge.creatorDecision")}</span><p class="small-copy">${tx("bridge.creatorDecisionCopy")}</p><div class="classifier-source-list">${sourceToggle("creatorHuman", "human", creatorSources.has("human"), true)}${sourceToggle("creatorLLM", "llmAssist", creatorSources.has("llmAssist"), llmAvailable)}${sourceToggle("creatorLocalModel", "localModel", creatorSources.has("localModel"), localAvailable)}</div></section><section><span class="eyebrow">${tx("bridge.entryDecision")}</span><p class="small-copy">${tx("bridge.entryDecisionCopy")}</p><div class="classifier-source-list">${sourceToggle("entryHuman", "human", entrySources.has("human"), true)}${sourceToggle("entryLLM", "llmAssist", entrySources.has("llmAssist"), llmAvailable)}${sourceToggle("entryLocalModel", "localModel", entrySources.has("localModel"), localAvailable)}</div></section></div></section></section>`;
+    };
+    return `<div class="workspace classifier-type-workspace">${header("bridge.title", "bridge.copy", t("bridge.typeLibrary"), "navy")}
+      <section class="classifier-type-create" data-form-id="classifier-type-create-form">${field("bridge.newTypeName", "bridge.newTypeNameCopy", "name", "")}<button class="primary" data-action="createClassifierType" data-form="classifier-type-create-form">${tx("bridge.createType")}</button></section>
+      <div class="classifier-type-panels">${classifierTypes.length ? classifierTypes.map(typeForm).join("") : `<div class="empty">${tx("bridge.emptyTypes")}</div>`}</div>${notice(state.issue, "red")}</div>`;
   }
 
   function classificationDataWorkspace() {
@@ -813,6 +849,7 @@
     if (button.dataset.nodeId) data.nodeID = button.dataset.nodeId;
     if (button.dataset.parentId) data.parentID = button.dataset.parentId;
     if (button.dataset.platformId) data.platformID = button.dataset.platformId;
+    if (button.dataset.typeId) data.typeID = button.dataset.typeId;
     if (action === "configureProviderProfile") {
       const protocolConfiguration = {};
       Object.keys(data).filter((key) => key.startsWith("protocol.")).forEach((key) => {
@@ -829,13 +866,19 @@
       });
       data.credentials = credentials;
     }
+    if (action === "configureClassifierType") {
+      data.llmProfileIDs = Object.keys(data)
+        .filter((key) => key.startsWith("llmProfile.") && data[key] === true)
+        .map((key) => key.slice("llmProfile.".length));
+      Object.keys(data).filter((key) => key.startsWith("llmProfile.")).forEach((key) => delete data[key]);
+    }
     if (action === "cancelTagPanel") {
       activeTagPanel = null;
       render();
       return;
     }
     if (action === "openUtilityPanel") {
-      utilityPanel = data.utilityPanel === "settings" ? "settings" : null;
+      utilityPanel = ["settings", "browserBridge"].includes(data.utilityPanel) ? data.utilityPanel : null;
       render();
       return;
     }

@@ -855,6 +855,130 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
+    func createClassifierType(name: String) {
+        do {
+            let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleaned.isEmpty,
+                  cleaned.count <= ClassifierTypeAsset.maximumNameLength,
+                  var catalog = localState?.workspaceCatalog,
+                  let tree = catalog.trees.first,
+                  let dataset = catalog.datasets.first else {
+                throw WebBridgeInputError.invalidChoice("classifier type")
+            }
+            catalog.classifierTypes.append(.init(
+                name: cleaned,
+                treeID: tree.id,
+                treeRevision: tree.revision,
+                datasetID: dataset.id,
+                datasetRevision: dataset.revision
+            ))
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
+    func configureClassifierType(
+        typeID: String,
+        name: String,
+        treeID: String,
+        datasetID: String,
+        localModelID: String?,
+        llmProfileIDs: [String],
+        priority: [ClassifierDecisionSource],
+        creatorHuman: Bool,
+        creatorLLM: Bool,
+        creatorLocalModel: Bool,
+        entryHuman: Bool,
+        entryLLM: Bool,
+        entryLocalModel: Bool
+    ) {
+        do {
+            let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanedName.isEmpty,
+                  cleanedName.count <= ClassifierTypeAsset.maximumNameLength,
+                  priority.count == ClassifierDecisionSource.allCases.count,
+                  Set(priority) == Set(ClassifierDecisionSource.allCases),
+                  var catalog = localState?.workspaceCatalog,
+                  let typeIndex = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }),
+                  let tree = catalog.trees.first(where: { $0.id == treeID }),
+                  let dataset = catalog.datasets.first(where: { $0.id == datasetID }) else {
+                throw WebBridgeInputError.invalidChoice("classifier type")
+            }
+            let selectedLLMIDs = Array(Set(llmProfileIDs)).sorted()
+            guard selectedLLMIDs.count <= ClassifierTypeAsset.maximumLLMProfiles,
+                  selectedLLMIDs.allSatisfy({ profileID in
+                      catalog.providerProfiles.contains(where: { $0.id == profileID && $0.type.supportsLLMConfiguration })
+                  }) else {
+                throw WebBridgeInputError.invalidChoice("LLM assist")
+            }
+            let normalizedModelID = localModelID?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let compatibleModelID: String?
+            if let normalizedModelID, !normalizedModelID.isEmpty,
+               catalog.models.contains(where: { model in
+                   model.id == normalizedModelID && model.isReady &&
+                   model.treeID == tree.id && model.treeRevision == tree.revision &&
+                   model.datasetID == dataset.id && model.datasetRevision == dataset.revision
+               }) {
+                compatibleModelID = normalizedModelID
+            } else {
+                compatibleModelID = nil
+            }
+
+            func decisionSources(human: Bool, llm: Bool, localModel: Bool) -> [ClassifierDecisionSource] {
+                var sources: [ClassifierDecisionSource] = []
+                if human { sources.append(.human) }
+                if llm && !selectedLLMIDs.isEmpty { sources.append(.llmAssist) }
+                if localModel && compatibleModelID != nil { sources.append(.localModel) }
+                return sources
+            }
+
+            catalog.classifierTypes[typeIndex] = .init(
+                id: catalog.classifierTypes[typeIndex].id,
+                name: cleanedName,
+                treeID: tree.id,
+                treeRevision: tree.revision,
+                datasetID: dataset.id,
+                datasetRevision: dataset.revision,
+                localModelID: compatibleModelID,
+                llmProfileIDs: selectedLLMIDs,
+                decisionPriority: priority,
+                creatorDecisionSources: decisionSources(human: creatorHuman, llm: creatorLLM, localModel: creatorLocalModel),
+                entryDecisionSources: decisionSources(human: entryHuman, llm: entryLLM, localModel: entryLocalModel)
+            )
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
+    func deleteClassifierType(typeID: String) {
+        do {
+            guard var catalog = localState?.workspaceCatalog,
+                  catalog.classifierTypes.contains(where: { $0.id == typeID }) else {
+                throw WebBridgeInputError.invalidChoice("classifier type")
+            }
+            catalog.classifierTypes.removeAll(where: { $0.id == typeID })
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
+    func confirmClassifierTypeDeletion(typeID: String) {
+        guard localState?.workspaceCatalog.classifierTypes.contains(where: { $0.id == typeID }) == true else {
+            issue = WebBridgeInputError.invalidChoice("classifier type").localizedDescription
+            return
+        }
+        presentNativeConfirmation(
+            title: "Delete classifier type?",
+            message: "This removes this local decision configuration. Trees, models, data, and provider profiles are retained.",
+            confirmTitle: "Delete classifier type"
+        ) { [weak self] in
+            self?.deleteClassifierType(typeID: typeID)
+        }
+    }
+
     private func presentNativeConfirmation(
         title: String,
         message: String,
@@ -1813,6 +1937,21 @@ final class VaultClassifierViewModel: ObservableObject {
                     } ?? NSNull(),
                 ] as [String: Any]
             },
+            "classifierTypes": catalog.classifierTypes.map { classifierType in
+                [
+                    "id": classifierType.id,
+                    "name": classifierType.name,
+                    "treeID": classifierType.treeID,
+                    "treeRevision": classifierType.treeRevision,
+                    "datasetID": classifierType.datasetID,
+                    "datasetRevision": classifierType.datasetRevision,
+                    "localModelID": classifierType.localModelID ?? NSNull(),
+                    "llmProfileIDs": classifierType.llmProfileIDs,
+                    "decisionPriority": classifierType.decisionPriority.map(\.rawValue),
+                    "creatorDecisionSources": classifierType.creatorDecisionSources.map(\.rawValue),
+                    "entryDecisionSources": classifierType.entryDecisionSources.map(\.rawValue),
+                ] as [String: Any]
+            },
             "baseEmbeddings": LocalBaseEmbedding.allCases.map(\.rawValue),
             "providerProfiles": catalog.providerProfiles.map { profile in
                 [
@@ -1956,6 +2095,37 @@ final class VaultClassifierViewModel: ObservableObject {
                 )
             case "createLocalModel":
                 createLocalModel(name: try webString(data, key: "name", limit: 128))
+            case "createClassifierType":
+                createClassifierType(name: try webString(data, key: "name", limit: ClassifierTypeAsset.maximumNameLength))
+            case "configureClassifierType":
+                let priorityRaw = [
+                    try webString(data, key: "priorityFirst", limit: 32),
+                    try webString(data, key: "prioritySecond", limit: 32),
+                    try webString(data, key: "priorityThird", limit: 32),
+                ]
+                let priority = try priorityRaw.map { raw -> ClassifierDecisionSource in
+                    guard let source = ClassifierDecisionSource(rawValue: raw) else {
+                        throw WebBridgeInputError.invalidChoice("decision priority")
+                    }
+                    return source
+                }
+                configureClassifierType(
+                    typeID: try webString(data, key: "typeID", limit: 256),
+                    name: try webString(data, key: "name", limit: ClassifierTypeAsset.maximumNameLength),
+                    treeID: try webString(data, key: "treeID", limit: 256),
+                    datasetID: try webString(data, key: "datasetID", limit: 256),
+                    localModelID: try webOptionalString(data, key: "localModelID", limit: 256),
+                    llmProfileIDs: try webClassifierTypeLLMProfiles(data),
+                    priority: priority,
+                    creatorHuman: try webBool(data, key: "creatorHuman"),
+                    creatorLLM: try webBool(data, key: "creatorLLM"),
+                    creatorLocalModel: try webBool(data, key: "creatorLocalModel"),
+                    entryHuman: try webBool(data, key: "entryHuman"),
+                    entryLLM: try webBool(data, key: "entryLLM"),
+                    entryLocalModel: try webBool(data, key: "entryLocalModel")
+                )
+            case "confirmDeleteClassifierType":
+                confirmClassifierTypeDeletion(typeID: try webString(data, key: "typeID", limit: 256))
             case "createProviderProfile":
                 createProviderProfile(typeRaw: try webString(data, key: "type", limit: 32))
             case "renameProviderProfile":
@@ -2191,6 +2361,23 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             return (key, string)
         })
+    }
+
+    private func webClassifierTypeLLMProfiles(_ data: [String: Any]) throws -> [String] {
+        guard let raw = data["llmProfileIDs"] as? [Any] else { return [] }
+        guard raw.count <= ClassifierTypeAsset.maximumLLMProfiles else {
+            throw WebBridgeInputError.exceedsLimit("LLM assist", ClassifierTypeAsset.maximumLLMProfiles)
+        }
+        let values = try raw.map { value -> String in
+            guard let identifier = value as? String, identifier.count <= 256 else {
+                throw WebBridgeInputError.invalidChoice("LLM assist")
+            }
+            return identifier
+        }
+        guard Set(values).count == values.count else {
+            throw WebBridgeInputError.invalidChoice("LLM assist")
+        }
+        return values
     }
 
     private func webProviderCredentials(_ data: [String: Any]) throws -> [String: String] {

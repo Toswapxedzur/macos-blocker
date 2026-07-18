@@ -69,6 +69,45 @@ final class WorkspaceAssetsTests: XCTestCase {
         }
     }
 
+    func testClassifierTypeRequiresMatchingAssetsAndReconcilesStaleDependencies() throws {
+        var catalog = WorkspaceCatalog.starter()
+        catalog.models[0].isReady = true
+        let profile = APIKeyProviderProfile(id: "gemini-profile", type: .gemini)
+        catalog.providerProfiles = [profile]
+        let tree = try XCTUnwrap(catalog.trees.first)
+        let dataset = try XCTUnwrap(catalog.datasets.first)
+        let classifierType = ClassifierTypeAsset(
+            id: "creator-brain",
+            name: "Creator brain",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            datasetID: dataset.id,
+            datasetRevision: dataset.revision,
+            localModelID: catalog.models[0].id,
+            llmProfileIDs: [profile.id],
+            creatorDecisionSources: [.human, .llmAssist, .localModel],
+            entryDecisionSources: [.localModel]
+        )
+        catalog.classifierTypes = [classifierType]
+        XCTAssertNoThrow(try catalog.validate())
+
+        catalog.datasets[0].revision += 1
+        XCTAssertThrowsError(try catalog.validate()) { error in
+            XCTAssertEqual(error as? WorkspaceCatalogError, .invalidClassifierType(classifierType.id))
+        }
+        catalog.reconcileClassifierTypes()
+        XCTAssertNoThrow(try catalog.validate())
+        XCTAssertEqual(catalog.classifierTypes[0].datasetRevision, catalog.datasets[0].revision)
+        XCTAssertNil(catalog.classifierTypes[0].localModelID)
+        XCTAssertFalse(catalog.classifierTypes[0].creatorDecisionSources.contains(.localModel))
+        XCTAssertFalse(catalog.classifierTypes[0].entryDecisionSources.contains(.localModel))
+
+        catalog.providerProfiles = []
+        catalog.reconcileClassifierTypes()
+        XCTAssertTrue(catalog.classifierTypes[0].llmProfileIDs.isEmpty)
+        XCTAssertFalse(catalog.classifierTypes[0].creatorDecisionSources.contains(.llmAssist))
+    }
+
     func testModelTrainingUsesOnlyApprovedRecordsForItsTreeAndPlatform() throws {
         let tree = TagTreeAsset(
             id: "interests",

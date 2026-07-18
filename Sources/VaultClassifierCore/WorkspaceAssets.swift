@@ -281,6 +281,99 @@ public struct LocalModelAsset: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+/// The source used to make a classifier-type decision. The order in a
+/// `ClassifierTypeAsset` is an explicit user policy, not an automatic model
+/// fallback: LLM work always remains an independently initiated action.
+public enum ClassifierDecisionSource: String, Codable, Sendable, CaseIterable {
+    case human
+    case llmAssist
+    case localModel
+}
+
+/// A reusable decision brain. It deliberately binds immutable revisions of a
+/// tree and data asset, so a model trained against an older revision cannot be
+/// selected silently after an edit.
+public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
+    public static let maximumNameLength = 128
+    public static let maximumLLMProfiles = 16
+
+    public var id: String
+    public var name: String
+    public var treeID: String
+    public var treeRevision: Int
+    public var datasetID: String
+    public var datasetRevision: Int
+    /// A ready model is optional: a human-only type is valid, while a local
+    /// model source is enabled only when this compatible model is selected.
+    public var localModelID: String?
+    /// Several configured LLM profiles may be attached for explicit runs.
+    /// Their suggestions never dispatch automatically.
+    public var llmProfileIDs: [String]
+    /// Ordered once by the user and used for both creator and entry decisions.
+    /// The scope source lists below decide which priorities are available.
+    public var decisionPriority: [ClassifierDecisionSource]
+    /// Creator decisions normally combine all selected sources.
+    public var creatorDecisionSources: [ClassifierDecisionSource]
+    /// Individual-entry human and LLM decisions are deliberately opt-in; the
+    /// default only enables a compatible local model for this scope.
+    public var entryDecisionSources: [ClassifierDecisionSource]
+    public var updatedAtMilliseconds: Int64
+
+    public init(
+        id: String = UUID().uuidString,
+        name: String,
+        treeID: String,
+        treeRevision: Int,
+        datasetID: String,
+        datasetRevision: Int,
+        localModelID: String? = nil,
+        llmProfileIDs: [String] = [],
+        decisionPriority: [ClassifierDecisionSource] = [.human, .llmAssist, .localModel],
+        creatorDecisionSources: [ClassifierDecisionSource] = [.human],
+        entryDecisionSources: [ClassifierDecisionSource] = [],
+        updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
+    ) {
+        self.id = id
+        self.name = name
+        self.treeID = treeID
+        self.treeRevision = treeRevision
+        self.datasetID = datasetID
+        self.datasetRevision = datasetRevision
+        self.localModelID = localModelID
+        self.llmProfileIDs = Array(Set(llmProfileIDs)).sorted()
+        self.decisionPriority = decisionPriority
+        self.creatorDecisionSources = creatorDecisionSources
+        self.entryDecisionSources = entryDecisionSources
+        self.updatedAtMilliseconds = updatedAtMilliseconds
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, treeID, treeRevision, datasetID, datasetRevision, localModelID,
+             llmProfileIDs, decisionPriority, creatorDecisionSources,
+             entryDecisionSources, updatedAtMilliseconds
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        treeID = try container.decode(String.self, forKey: .treeID)
+        treeRevision = try container.decode(Int.self, forKey: .treeRevision)
+        datasetID = try container.decode(String.self, forKey: .datasetID)
+        datasetRevision = try container.decode(Int.self, forKey: .datasetRevision)
+        localModelID = try container.decodeIfPresent(String.self, forKey: .localModelID)
+        llmProfileIDs = Array(Set(try container.decodeIfPresent([String].self, forKey: .llmProfileIDs) ?? [])).sorted()
+        decisionPriority = try container.decodeIfPresent([ClassifierDecisionSource].self, forKey: .decisionPriority)
+            ?? [.human, .llmAssist, .localModel]
+        creatorDecisionSources = try container.decodeIfPresent([ClassifierDecisionSource].self, forKey: .creatorDecisionSources)
+            ?? [.human]
+        entryDecisionSources = try container.decodeIfPresent([ClassifierDecisionSource].self, forKey: .entryDecisionSources)
+            ?? []
+        updatedAtMilliseconds = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMilliseconds)
+            ?? WorkspaceCatalog.now()
+    }
+}
+
 public enum LocalModelTrainingError: Error, Equatable, LocalizedError, Sendable {
     case incompatibleTree
     case incompatibleDataset
@@ -861,6 +954,7 @@ public enum WorkspaceCatalogError: Error, Equatable, LocalizedError, Sendable {
     case invalidCollectedEntry(String)
     case invalidProviderProfile(String)
     case missingYouTubeProvider(String)
+    case invalidClassifierType(String)
 
     public var errorDescription: String? {
         switch self {
@@ -873,6 +967,7 @@ public enum WorkspaceCatalogError: Error, Equatable, LocalizedError, Sendable {
         case .invalidCollectedEntry(let value): return "The collected platform entry is invalid: \(value)."
         case .invalidProviderProfile(let value): return "The API provider profile is invalid: \(value)."
         case .missingYouTubeProvider(let value): return "The LLM profile references a missing YouTube Data API profile: \(value)."
+        case .invalidClassifierType(let value): return "The classifier type has incompatible local assets: \(value)."
         }
     }
 }
@@ -882,17 +977,21 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     public var datasets: [ClassificationDataset]
     public var models: [LocalModelAsset]
     public var bindings: [PlatformBinding]
+    /// Reusable decision brains. A platform may later select one explicitly;
+    /// the asset itself does not grant a browser or provider permission.
+    public var classifierTypes: [ClassifierTypeAsset]
     public var tokenUsage: [TokenUsageRecord]
     public var providerRequestRecords: [ProviderRequestRecord]
     /// Provider profile metadata remains local. Its credentials are stored by
     /// `ProviderCredentialStore` in Keychain, never in this Codable catalog.
     public var providerProfiles: [APIKeyProviderProfile]
 
-    public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], models: [LocalModelAsset] = [], bindings: [PlatformBinding] = [], tokenUsage: [TokenUsageRecord] = [], providerRequestRecords: [ProviderRequestRecord] = [], providerProfiles: [APIKeyProviderProfile] = []) {
+    public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], models: [LocalModelAsset] = [], bindings: [PlatformBinding] = [], classifierTypes: [ClassifierTypeAsset] = [], tokenUsage: [TokenUsageRecord] = [], providerRequestRecords: [ProviderRequestRecord] = [], providerProfiles: [APIKeyProviderProfile] = []) {
         self.trees = trees
         self.datasets = datasets
         self.models = models
         self.bindings = bindings
+        self.classifierTypes = classifierTypes
         self.tokenUsage = tokenUsage
         self.providerRequestRecords = providerRequestRecords
         self.providerProfiles = providerProfiles
@@ -910,7 +1009,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     }
 
     public func validate() throws {
-        try unique(trees.map(\.id) + datasets.map(\.id) + models.map(\.id) + bindings.map(\.id) + providerProfiles.map(\.id))
+        try unique(trees.map(\.id) + datasets.map(\.id) + models.map(\.id) + bindings.map(\.id) + classifierTypes.map(\.id) + providerProfiles.map(\.id))
         for binding in bindings {
             guard CollectionPlatformRegistry.definition(for: binding.id) != nil else {
                 throw WorkspaceCatalogError.unsupportedCollectionPlatform(binding.id)
@@ -949,6 +1048,40 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                 }
             }
         }
+        for classifierType in classifierTypes {
+            guard !classifierType.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  classifierType.name.count <= ClassifierTypeAsset.maximumNameLength,
+                  let tree = trees.first(where: { $0.id == classifierType.treeID }),
+                  tree.revision == classifierType.treeRevision,
+                  let dataset = datasets.first(where: { $0.id == classifierType.datasetID }),
+                  dataset.revision == classifierType.datasetRevision,
+                  classifierType.llmProfileIDs.count <= ClassifierTypeAsset.maximumLLMProfiles,
+                  Set(classifierType.llmProfileIDs).count == classifierType.llmProfileIDs.count,
+                  classifierType.llmProfileIDs.allSatisfy({ profileID in
+                      providerProfiles.contains(where: { $0.id == profileID && $0.type.supportsLLMConfiguration })
+                  }),
+                  classifierType.decisionPriority.count == ClassifierDecisionSource.allCases.count,
+                  Set(classifierType.decisionPriority) == Set(ClassifierDecisionSource.allCases),
+                  Set(classifierType.creatorDecisionSources).count == classifierType.creatorDecisionSources.count,
+                  Set(classifierType.entryDecisionSources).count == classifierType.entryDecisionSources.count else {
+                throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
+            }
+            if let localModelID = classifierType.localModelID {
+                guard let model = models.first(where: { $0.id == localModelID }),
+                      model.isReady,
+                      model.treeID == tree.id,
+                      model.treeRevision == tree.revision,
+                      model.datasetID == dataset.id,
+                      model.datasetRevision == dataset.revision else {
+                    throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
+                }
+            }
+            let enabledSources = Set(classifierType.creatorDecisionSources + classifierType.entryDecisionSources)
+            guard (!enabledSources.contains(.localModel) || classifierType.localModelID != nil),
+                  (!enabledSources.contains(.llmAssist) || !classifierType.llmProfileIDs.isEmpty) else {
+                throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
+            }
+        }
         for profile in providerProfiles {
             do {
                 try profile.validate()
@@ -972,7 +1105,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case trees, datasets, models, bindings, tokenUsage, providerRequestRecords, providerProfiles
+        case trees, datasets, models, bindings, classifierTypes, tokenUsage, providerRequestRecords, providerProfiles
     }
 
     public init(from decoder: Decoder) throws {
@@ -981,6 +1114,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         datasets = try container.decodeIfPresent([ClassificationDataset].self, forKey: .datasets) ?? []
         models = try container.decodeIfPresent([LocalModelAsset].self, forKey: .models) ?? []
         bindings = try container.decodeIfPresent([PlatformBinding].self, forKey: .bindings) ?? []
+        classifierTypes = try container.decodeIfPresent([ClassifierTypeAsset].self, forKey: .classifierTypes) ?? []
         tokenUsage = try container.decodeIfPresent([TokenUsageRecord].self, forKey: .tokenUsage) ?? []
         providerRequestRecords = try container.decodeIfPresent([ProviderRequestRecord].self, forKey: .providerRequestRecords) ?? []
         providerProfiles = try container.decodeIfPresent([APIKeyProviderProfile].self, forKey: .providerProfiles) ?? []
@@ -989,6 +1123,46 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     private func unique(_ identifiers: [String]) throws {
         guard Set(identifiers).count == identifiers.count else {
             throw WorkspaceCatalogError.duplicateIdentifier("workspace catalog")
+        }
+    }
+
+    /// Tree/data revisions are immutable model boundaries. Edits therefore
+    /// retain the classifier type but move it to the new selected revision and
+    /// remove only dependencies that are no longer compatible. This keeps the
+    /// user-visible brain editable while never letting an old model decide for
+    /// a changed tree or dataset.
+    public mutating func reconcileClassifierTypes() {
+        classifierTypes = classifierTypes.compactMap { classifierType in
+            guard let tree = trees.first(where: { $0.id == classifierType.treeID }),
+                  let dataset = datasets.first(where: { $0.id == classifierType.datasetID }) else {
+                return nil
+            }
+            var reconciled = classifierType
+            reconciled.treeRevision = tree.revision
+            reconciled.datasetRevision = dataset.revision
+            reconciled.llmProfileIDs = reconciled.llmProfileIDs.filter { profileID in
+                providerProfiles.contains(where: { $0.id == profileID && $0.type.supportsLLMConfiguration })
+            }
+            if let modelID = reconciled.localModelID {
+                let compatible = models.contains(where: { model in
+                    model.id == modelID && model.isReady &&
+                    model.treeID == tree.id && model.treeRevision == tree.revision &&
+                    model.datasetID == dataset.id && model.datasetRevision == dataset.revision
+                })
+                if !compatible { reconciled.localModelID = nil }
+            }
+            if reconciled.localModelID == nil {
+                reconciled.creatorDecisionSources.removeAll(where: { $0 == .localModel })
+                reconciled.entryDecisionSources.removeAll(where: { $0 == .localModel })
+            }
+            if reconciled.llmProfileIDs.isEmpty {
+                reconciled.creatorDecisionSources.removeAll(where: { $0 == .llmAssist })
+                reconciled.entryDecisionSources.removeAll(where: { $0 == .llmAssist })
+            }
+            reconciled.creatorDecisionSources = Array(Set(reconciled.creatorDecisionSources)).sorted { $0.rawValue < $1.rawValue }
+            reconciled.entryDecisionSources = Array(Set(reconciled.entryDecisionSources)).sorted { $0.rawValue < $1.rawValue }
+            reconciled.updatedAtMilliseconds = WorkspaceCatalog.now()
+            return reconciled
         }
     }
 }
