@@ -252,7 +252,7 @@
       <div class="action-row"><button class="gold-action" data-action="saveAudit" data-form="audit-form">${tx("audit.save")}</button></div>
       </div></section>
       ${!audit.dispatchAllowed ? notice(t("audit.dispatchHeld"), "gold") : ""}
-      <section class="section-card gold" data-form-id="key-form"><div class="section-header"><div><h3>${tx("audit.key")}</h3><p class="section-copy">${tx("audit.keyCopy")}</p></div></div><div class="action-row"><div class="field">${field("audit.keychain", audit.hasStoredKey ? "audit.replaceHint" : "audit.keyHint", "apiKey", "", "password")}</div><button class="secondary" data-action="storeGeminiKey" data-form="key-form">${tx(audit.hasStoredKey ? "audit.replace" : "audit.store")}</button>${audit.hasStoredKey ? `<button class="danger" data-action="removeGeminiKey">${tx("audit.remove")}</button>` : ""}</div></section>
+      <section class="section-card gold"><div class="section-header"><div><h3>${tx("audit.key")}</h3><p class="section-copy">${tx("audit.keyCopy")}</p></div></div><div class="action-row"><button class="secondary" data-action="presentGeminiCredentialEntry">${tx(audit.hasStoredKey ? "audit.replace" : "audit.store")}</button>${audit.hasStoredKey ? `<button class="danger" data-action="removeGeminiKey">${tx("audit.remove")}</button>` : ""}</div></section>
       <div class="action-row"><button class="secondary" data-action="queueSuggestedAudits"${disabled(!canQueue)}>${tx("audit.queueRisk")}</button><button class="secondary" data-action="queueCurrentAudit"${disabled(!audit.enabled)}>${tx("audit.queueCurrent")}</button><button class="secondary" data-action="copyDiagnostics">${tx("audit.copyDiagnostics")}</button></div>
       <div class="metric-row">${metric("audit.queued", audit.candidateCount, "gold")}${metric("audit.settled", audit.settledCount, "gold")}${metric("audit.inFlight", audit.inFlightCount, "gold")}${metric("audit.uncertain", audit.uncertainCount, "gold")}${metric("audit.weeklyTokens", audit.weeklyTokens, "gold")}${metric("audit.monthlyTokens", audit.monthlyTokens, "gold")}</div>
       <section class="section-card gold"><div class="section-header"><div><h3>${tx("audit.queue")}</h3><p class="section-copy">${tx("audit.queueCopy")}</p></div></div>${audit.candidates.length ? `<div class="list">${audit.candidates.map((candidate) => `<div class="list-row"><span class="list-symbol">?</span><span class="list-copy"><span class="list-title">${esc(enumText("intent", candidate.intent))}</span><span class="list-meta">${tx("audit.risk", { value: percent(candidate.priority) })} · ${esc(candidate.modelVersion)}</span></span>${statusPill(t(candidate.eligible ? "audit.eligible" : "audit.held"), candidate.eligible ? "gold" : "red")}<button class="gold-action" data-action="runAudit" data-id="${esc(candidate.id)}"${disabled(!candidate.eligible || !audit.enabled || !audit.dispatchAllowed || !audit.hasStoredKey || candidate.running)}>${tx(candidate.running ? "audit.running" : "audit.run")}</button></div>`).join("")}</div>` : `<div class="empty">${tx("audit.emptyQueue")}</div>`}</section>
@@ -445,6 +445,27 @@
     return keys[type] || "llm.provider.custom";
   }
 
+  function protocolFieldLabelKey(fieldName) {
+    const keys = {
+      accountID: "llm.protocol.accountID",
+      apiVersion: "llm.protocol.apiVersion",
+      clientID: "llm.protocol.clientID",
+      location: "llm.protocol.location",
+      projectID: "llm.protocol.projectID",
+      region: "llm.protocol.region",
+      userAgent: "llm.protocol.userAgent",
+      searchEngineID: "llm.protocol.searchEngineID",
+      protocolFamily: "llm.protocol.protocolFamily",
+    };
+    return keys[fieldName] || "llm.protocol.protocolFamily";
+  }
+
+  function protocolConfigurationField(requirement, profile) {
+    const value = profile.protocolConfiguration?.[requirement.field] ?? requirement.defaultValue ?? "";
+    const hint = requirement.requiredForDispatch ? "llm.protocol.required" : "";
+    return field(protocolFieldLabelKey(requirement.field), hint, `protocol.${requirement.field}`, value);
+  }
+
   function llmAssistWorkspace() {
     const profiles = state.assets.providerProfiles || [];
     const profileTypeGroups = [
@@ -459,12 +480,17 @@
     const youtubeProfiles = profiles.filter((profile) => profile.type === "youtubeData");
     const panel = (profile) => {
       const formID = `provider-profile-${profile.id}`;
-      const supportsLLM = profile.type !== "youtubeData";
-      const credentialStatus = profile.hasStoredCredential ? "llm.credentialStored" : "llm.credentialNeeded";
+      const protocol = state.assets.providerProtocols?.[profile.type] || {};
+      const supportsLLM = Boolean(protocol.supportsLLMConfiguration);
+      const credentialStatus = !protocol.credentialRequired ? "llm.noCredentialStatus" : (profile.hasStoredCredential ? "llm.credentialStored" : "llm.credentialNeeded");
       const youtubeOptions = [["", t("llm.noYouTubeTool")], ...youtubeProfiles.filter((candidate) => candidate.id !== profile.id).map((candidate) => [candidate.id, candidate.name])];
       const externalOnlyCopy = profile.type === "youtubeData" ? "llm.youtubeOnlyCopy" : "llm.dataAPIOnlyCopy";
-      const setup = supportsLLM ? `<div class="provider-setup"><div class="section-header"><div><h3>${tx("llm.modelSetup")}</h3><p class="section-copy">${tx("llm.modelSetupCopy")}</p></div></div><div class="provider-setup-fields">${field("llm.modelIdentifier", "", "modelIdentifier", profile.modelIdentifier)}${field("llm.batchSize", "", "batchSize", profile.batchSize, "text", "inputmode=\"numeric\"")}${field("llm.maximumTokens", "", "maximumTokens", profile.maximumTokens, "text", "inputmode=\"numeric\"")}</div>${field("llm.apiEndpoint", "llm.apiEndpointCopy", "customEndpoint", profile.customEndpoint || "")}<div class="provider-tools"><span class="eyebrow">${tx("llm.externalTools")}</span>${valueSelectField("llm.youtubeTool", "llm.youtubeToolCopy", "youtubeProviderID", profile.youtubeProviderID || "", youtubeOptions)}${toggle("llm.search", "searchEnabled", profile.searchEnabled)}</div></div>` : `<div class="provider-api-note"><span class="eyebrow">${tx("llm.externalTool")}</span><p class="section-copy">${tx(externalOnlyCopy)}</p></div>`;
-      return `<section class="provider-panel" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}"><div class="provider-panel-head"><div><span class="eyebrow">${tx("llm.providerPanel")}</span><h3>${esc(profile.name)}</h3><p class="section-copy">${tx(providerTypeLabelKey(profile.type))}</p></div><div class="provider-panel-status">${statusPill(t(credentialStatus), profile.hasStoredCredential ? "gold" : "muted")}</div></div><div class="provider-name-row">${field("llm.profileName", "", "name", profile.name)}<button class="secondary" data-action="configureProviderProfile" data-form="${esc(formID)}" data-profile-id="${esc(profile.id)}">${tx("llm.saveProfile")}</button><button class="danger" data-action="deleteProviderProfile" data-profile-id="${esc(profile.id)}">${tx("llm.deleteProfile")}</button></div><section class="provider-credential"><div class="section-header"><div><h3>${tx("llm.apiKey")}</h3><p class="section-copy">${tx("llm.keychainCopy")}</p></div></div><div class="provider-credential-row">${field("llm.keychainCredential", profile.hasStoredCredential ? "llm.replaceCredential" : "llm.enterCredential", "apiKey", "", "password")}<button class="secondary" data-action="storeProviderCredential" data-form="${esc(formID)}" data-profile-id="${esc(profile.id)}">${tx(profile.hasStoredCredential ? "llm.replaceKey" : "llm.storeKey")}</button>${profile.hasStoredCredential ? `<button class="danger" data-action="removeProviderCredential" data-profile-id="${esc(profile.id)}">${tx("llm.removeKey")}</button>` : ""}</div></section>${setup}</section>`;
+      const protocolFields = (protocol.configurationRequirements || []).map((requirement) => protocolConfigurationField(requirement, profile)).join("");
+      const endpointField = protocol.allowsEndpointOverride ? field("llm.apiEndpoint", "llm.apiEndpointCopy", "customEndpoint", profile.customEndpoint || "") : "";
+      const toolSetup = protocol.supportsYouTubeTool ? `<div class="provider-tools"><span class="eyebrow">${tx("llm.externalTools")}</span>${valueSelectField("llm.youtubeTool", "llm.youtubeToolCopy", "youtubeProviderID", profile.youtubeProviderID || "", youtubeOptions)}</div>` : "";
+      const setup = supportsLLM ? `<div class="provider-setup"><div class="section-header"><div><h3>${tx("llm.modelSetup")}</h3><p class="section-copy">${tx("llm.modelSetupCopy")}</p></div></div><div class="provider-setup-fields">${field("llm.modelIdentifier", "", "modelIdentifier", profile.modelIdentifier)}${field("llm.batchSize", "", "batchSize", profile.batchSize, "text", "inputmode=\"numeric\"")}${field("llm.maximumTokens", "", "maximumTokens", profile.maximumTokens, "text", "inputmode=\"numeric\"")}</div>${endpointField}${toolSetup}</div>` : `<div class="provider-api-note"><span class="eyebrow">${tx("llm.externalTool")}</span><p class="section-copy">${tx(externalOnlyCopy)}</p>${endpointField}</div>`;
+      const credentials = protocol.credentialRequired ? `<div class="provider-credential-row"><button class="secondary" data-action="presentProviderCredentialEntry" data-profile-id="${esc(profile.id)}">${tx(profile.hasStoredCredential ? "llm.replaceKey" : "llm.storeKey")}</button>${profile.hasStoredCredential ? `<button class="danger" data-action="removeProviderCredential" data-profile-id="${esc(profile.id)}">${tx("llm.removeKey")}</button>` : ""}</div>` : `<p class="small-copy">${tx("llm.noCredential")}</p>`;
+      return `<section class="provider-panel" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}"><div class="provider-panel-head"><div><span class="eyebrow">${tx("llm.providerPanel")}</span><h3>${esc(profile.name)}</h3><p class="section-copy">${tx(providerTypeLabelKey(profile.type))}</p></div><div class="provider-panel-status">${statusPill(t(credentialStatus), profile.hasStoredCredential ? "gold" : "muted")}</div></div><div class="provider-name-row">${field("llm.profileName", "", "name", profile.name)}<button class="secondary" data-action="configureProviderProfile" data-form="${esc(formID)}" data-profile-id="${esc(profile.id)}">${tx("llm.saveProfile")}</button><button class="danger" data-action="deleteProviderProfile" data-profile-id="${esc(profile.id)}">${tx("llm.deleteProfile")}</button></div><section class="provider-credential"><div class="section-header"><div><h3>${tx("llm.apiKey")}</h3><p class="section-copy">${tx("llm.keychainCopy")}</p></div></div>${credentials}</section>${protocolFields ? `<section class="provider-setup"><div class="section-header"><div><h3>${tx("llm.protocolSetup")}</h3><p class="section-copy">${tx("llm.protocolSetupCopy")}</p></div></div><div class="provider-setup-fields">${protocolFields}</div></section>` : ""}${setup}</section>`;
     };
     return `<div class="workspace provider-workspace">${header("llm.title", "llm.copy", t("llm.keyLibrary"), "gold")}<section class="provider-create" data-form-id="new-provider-profile-form">${groupedValueSelectField("llm.providerType", "", "type", "gemini", profileTypeGroups)}<button class="gold-action" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button><span class="small-copy">${tx("llm.createCopy")}</span></section><div class="provider-panels">${profiles.length ? profiles.map(panel).join("") : `<div class="empty">${tx("llm.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
   }
@@ -699,6 +725,14 @@
     if (button.dataset.treeId) data.treeID = button.dataset.treeId;
     if (button.dataset.nodeId) data.nodeID = button.dataset.nodeId;
     if (button.dataset.parentId) data.parentID = button.dataset.parentId;
+    if (action === "configureProviderProfile") {
+      const protocolConfiguration = {};
+      Object.keys(data).filter((key) => key.startsWith("protocol.")).forEach((key) => {
+        protocolConfiguration[key.slice("protocol.".length)] = data[key];
+        delete data[key];
+      });
+      data.protocolConfiguration = protocolConfiguration;
+    }
     if (action === "cancelTagPanel") {
       activeTagPanel = null;
       render();

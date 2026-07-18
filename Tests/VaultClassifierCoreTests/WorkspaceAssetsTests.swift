@@ -195,6 +195,75 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertThrowsError(try invalidDataProfile.validate())
     }
 
+    func testProviderProtocolsExposeVersionedRequestPlansForEveryType() throws {
+        for type in APIKeyProviderType.allCases {
+            let descriptor = ProviderProtocolRegistry.descriptor(for: type)
+            XCTAssertEqual(descriptor.identifier, type.rawValue)
+            XCTAssertEqual(descriptor.revision, ProviderProtocolDescriptor.currentRevision)
+            XCTAssertFalse(descriptor.requestFormats.isEmpty)
+            XCTAssertEqual(type.supportsLLMConfiguration, descriptor.supportsLLMConfiguration)
+        }
+
+        let gemini = APIKeyProviderProfile(type: .gemini)
+        let geminiPlan = try DescriptorBackedProviderProtocol(descriptor: .init(
+            identifier: "gemini",
+            family: .geminiGenerateContentV1Beta,
+            defaultBaseURL: "https://generativelanguage.googleapis.com/v1beta",
+            authentication: .apiKeyHeader,
+            authenticationHeader: "x-goog-api-key",
+            credentialFields: [.apiKey],
+            requestFormats: [.init(operation: .generateText, method: "POST", pathTemplate: "/models/{model}:generateContent", bodyFormat: .geminiGenerateContent)]
+        )).requestPlan(for: gemini, operation: .generateText)
+        XCTAssertEqual(geminiPlan.method, "POST")
+        XCTAssertEqual(geminiPlan.bodyFormat, .geminiGenerateContent)
+        XCTAssertEqual(geminiPlan.authenticationHeader, "x-goog-api-key")
+        XCTAssertEqual(geminiPlan.url.absoluteString, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent")
+
+        let youtube = APIKeyProviderProfile(type: .youtubeData)
+        let youtubePlan = try DescriptorBackedProviderProtocol(descriptor: ProviderProtocolRegistry.descriptor(for: .youtubeData))
+            .requestPlan(for: youtube, operation: .readPublicContent)
+        XCTAssertEqual(youtubePlan.authentication, .apiKeyQuery)
+        XCTAssertEqual(youtubePlan.authenticationHeader, "key")
+        XCTAssertEqual(youtubePlan.bodyFormat, .queryOnly)
+
+        let bedrock = APIKeyProviderProfile(type: .awsBedrock)
+        let bedrockPlan = try DescriptorBackedProviderProtocol(descriptor: ProviderProtocolRegistry.descriptor(for: .awsBedrock))
+            .requestPlan(for: bedrock, operation: .generateText)
+        XCTAssertTrue(bedrockPlan.url.absoluteString.contains("bedrock-runtime.us-east-1.amazonaws.com"))
+        XCTAssertEqual(bedrockPlan.requiredCredentialFields, [.accessKeyID, .secretAccessKey])
+    }
+
+    func testProviderProtocolsRejectUnsafeOrIncompleteDispatchSettings() throws {
+        let unsafeEndpoint = APIKeyProviderProfile(type: .azureOpenAI, customEndpoint: "http://remote.example")
+        XCTAssertThrowsError(try unsafeEndpoint.validate())
+
+        let missingAzureEndpoint = APIKeyProviderProfile(type: .azureOpenAI)
+        XCTAssertNoThrow(try missingAzureEndpoint.validate())
+        XCTAssertThrowsError(try missingAzureEndpoint.validateForDispatch())
+
+        let incompleteTwitch = APIKeyProviderProfile(type: .twitch)
+        XCTAssertThrowsError(try incompleteTwitch.validateForDispatch())
+
+        let configuredTwitch = APIKeyProviderProfile(
+            type: .twitch,
+            protocolConfiguration: [ProviderConfigurationField.clientID.rawValue: "client-id"]
+        )
+        XCTAssertNoThrow(try configuredTwitch.validateForDispatch())
+        let twitchPlan = try DescriptorBackedProviderProtocol(descriptor: ProviderProtocolRegistry.descriptor(for: .twitch))
+            .requestPlan(for: configuredTwitch, operation: .readPublicContent)
+        XCTAssertEqual(twitchPlan.requiredCredentialFields, [.bearerToken])
+
+        let legacy = Data(#"{"id":"legacy","name":"Legacy","type":"azureOpenAI","modelIdentifier":"gpt","batchSize":1,"maximumTokens":10,"searchEnabled":false,"updatedAtMilliseconds":1}"#.utf8)
+        let decoded = try JSONDecoder().decode(APIKeyProviderProfile.self, from: legacy)
+        XCTAssertEqual(decoded.protocolConfiguration[ProviderConfigurationField.apiVersion.rawValue], "2025-04-01-preview")
+    }
+
+    func testProtocolCredentialRecordsRequireTheDeclaredFieldSet() throws {
+        let descriptor = ProviderProtocolRegistry.descriptor(for: .twitch)
+        XCTAssertNoThrow(try ProviderCredentialRecord(values: [.bearerToken: "token-value"]).validate(for: descriptor))
+        XCTAssertThrowsError(try ProviderCredentialRecord(values: [.apiKey: "token-value"]).validate(for: descriptor))
+    }
+
     func testLegacyCatalogDecodesWithoutProviderProfiles() throws {
         let encoded = try JSONEncoder().encode(WorkspaceCatalog.starter())
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
