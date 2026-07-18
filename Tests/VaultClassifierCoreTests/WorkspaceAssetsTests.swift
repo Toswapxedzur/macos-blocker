@@ -261,6 +261,7 @@ final class WorkspaceAssetsTests: XCTestCase {
     func testProtocolCredentialRecordsRequireTheDeclaredFieldSet() throws {
         let descriptor = ProviderProtocolRegistry.descriptor(for: .twitch)
         XCTAssertNoThrow(try ProviderCredentialRecord(values: [.bearerToken: "token-value"]).validate(for: descriptor))
+        XCTAssertNoThrow(try ProviderCredentialRecord(values: [.bearerToken: " token-value\n"]).validate(for: descriptor))
         XCTAssertThrowsError(try ProviderCredentialRecord(values: [.apiKey: "token-value"]).validate(for: descriptor))
     }
 

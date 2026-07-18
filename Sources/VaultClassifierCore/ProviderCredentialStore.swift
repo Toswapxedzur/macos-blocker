@@ -9,13 +9,21 @@ public struct ProviderCredentialRecord: Codable, Equatable, Sendable {
     public var values: [ProviderCredentialField: String]
 
     public init(values: [ProviderCredentialField: String]) {
-        self.values = values
+        // Clipboard copies commonly include a harmless trailing newline. Keep
+        // the actual Keychain value clean without exposing it anywhere else.
+        self.values = Dictionary(uniqueKeysWithValues: values.map { field, value in
+            (field, value.trimmingCharacters(in: .whitespacesAndNewlines))
+        })
     }
 
     public func validate(for descriptor: ProviderProtocolDescriptor) throws {
-        guard Set(values.keys) == Set(descriptor.credentialFields),
-              values.values.allSatisfy(ProviderCredentialStore.isValidCredential) else {
+        guard Set(values.keys) == Set(descriptor.credentialFields) else {
             throw ProviderCredentialStoreError.invalidCredential
+        }
+        for field in descriptor.credentialFields {
+            guard let value = values[field], ProviderCredentialStore.isValidCredential(value) else {
+                throw ProviderCredentialStoreError.missingCredential(field)
+            }
         }
     }
 }
@@ -118,24 +126,24 @@ public enum ProviderCredentialStore {
 
     static func isValidCredential(_ credential: String) -> Bool {
         guard !credential.isEmpty,
-              credential == credential.trimmingCharacters(in: .whitespacesAndNewlines),
               credential.count <= maximumCredentialCharacters else {
             return false
         }
-        return credential.unicodeScalars.allSatisfy { scalar in
-            scalar.value >= 0x21 && scalar.value <= 0x7E
-        }
+        return credential.unicodeScalars.allSatisfy { $0.properties.generalCategory != .control }
     }
 }
 
 public enum ProviderCredentialStoreError: Error, LocalizedError, Sendable {
     case invalidCredential
+    case missingCredential(ProviderCredentialField)
     case keychain(OSStatus)
 
     public var errorDescription: String? {
         switch self {
         case .invalidCredential:
             return "The provider credential is malformed."
+        case .missingCredential(let field):
+            return "Enter a valid \(field.rawValue) before storing this provider credential."
         case .keychain:
             return "The provider credential could not be updated in Keychain."
         }
