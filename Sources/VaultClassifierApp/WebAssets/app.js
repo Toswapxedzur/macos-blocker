@@ -128,14 +128,17 @@
 
   function utilityPanelContent() {
     if (!utilityPanel) return "";
+    let content = "";
     if (utilityPanel === "settings") {
       const settings = state.activity.settings;
-      return `<section class="utility-panel cyan" data-form-id="utility-settings-form"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="utility-close" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}" title="${tx("utility.close")}">×</button></div><div class="form-row">${selectField("activity.profile", "activity.profileHint", "profile", settings.profile, [["light", "enum.profile.light"], ["balanced", "enum.profile.balanced"], ["aggressive", "enum.profile.aggressive"]])}${field("activity.cacheCapacity", "activity.uniqueEntries", "cacheCapacity", settings.cacheCapacity)}${selectField("activity.packageUpdates", "activity.preference", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div><div class="utility-toggles">${toggle("activity.idleWork", "allowIdleWork", settings.allowIdleWork)}${toggle("activity.backgroundSync", "allowBackgroundSync", settings.allowBackgroundSync)}${toggle("activity.auditDispatch", "allowLocalLLMAudit", settings.allowLocalLLMAudit)}</div><div class="action-row"><button class="primary" data-action="saveResourceSettings" data-form="utility-settings-form">${tx("activity.save")}</button></div><section class="utility-setting-card navy"><div><h3>${tx("bridge.settingsTitle")}</h3><p class="section-copy">${tx("bridge.settingsCopy")}</p></div><button class="secondary" data-action="openUtilityPanel" data-utility-panel="browserBridge">${tx("bridge.openSettings")}</button></section></section>`;
+      content = `<section class="utility-panel cyan" data-form-id="utility-settings-form"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="utility-close" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}" title="${tx("utility.close")}">×</button></div><div class="form-row">${selectField("activity.profile", "activity.profileHint", "profile", settings.profile, [["light", "enum.profile.light"], ["balanced", "enum.profile.balanced"], ["aggressive", "enum.profile.aggressive"]])}${field("activity.cacheCapacity", "activity.uniqueEntries", "cacheCapacity", settings.cacheCapacity)}${selectField("activity.packageUpdates", "activity.preference", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div><div class="utility-toggles">${toggle("activity.idleWork", "allowIdleWork", settings.allowIdleWork)}${toggle("activity.backgroundSync", "allowBackgroundSync", settings.allowBackgroundSync)}${toggle("activity.auditDispatch", "allowLocalLLMAudit", settings.allowLocalLLMAudit)}</div><div class="action-row"><button class="primary" data-action="saveResourceSettings" data-form="utility-settings-form">${tx("activity.save")}</button></div><section class="utility-setting-card navy"><div><h3>${tx("bridge.settingsTitle")}</h3><p class="section-copy">${tx("bridge.settingsCopy")}</p></div><button class="secondary" data-action="openUtilityPanel" data-utility-panel="browserBridge">${tx("bridge.openSettings")}</button></section></section>`;
     }
     if (utilityPanel === "browserBridge") {
-      return browserBridgeSettingsPopover();
+      content = browserBridgeSettingsPopover();
     }
-    return "";
+    if (!content) return "";
+    const title = utilityPanel === "browserBridge" ? tx("bridge.settingsTitle") : tx("utility.settings.title");
+    return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}"></button><div class="utility-popover" role="dialog" aria-modal="true" aria-label="${esc(title)}">${content}</div></div>`;
   }
 
   function browserBridgeSettingsPopover() {
@@ -162,9 +165,8 @@
     return `<div class="popup">
       <header class="hero">
         <div class="hero-copy"><span class="hero-mark" aria-hidden="true">V</span><div><h1>${tx("app.title")}</h1></div></div>
-        <div class="hero-controls"><button class="header-tool" data-action="openUtilityPanel" data-utility-panel="settings">${tx("utility.settings.button")}</button>${languageSelection()}<div class="hero-status"><span class="status-dot"></span>${tx("hero.offline")}</div></div>
+        <div class="hero-controls"><span class="settings-popover-anchor"><button class="header-tool" data-action="openUtilityPanel" data-utility-panel="settings" aria-haspopup="dialog" aria-expanded="${utilityPanel ? "true" : "false"}">${tx("utility.settings.button")}</button>${utilityPanelContent()}</span>${languageSelection()}<div class="hero-status"><span class="status-dot"></span>${tx("hero.offline")}</div></div>
       </header>
-      ${utilityPanelContent()}
       <div class="layout">
         <aside class="navigation-panel" aria-label="${tx("navigation.aria")}">
           <div class="panel-header"><div><h2>${tx("navigation.title")}</h2><p class="small-copy">${tx("navigation.subtitle")}</p></div></div>
@@ -878,7 +880,8 @@
       return;
     }
     if (action === "openUtilityPanel") {
-      utilityPanel = ["settings", "browserBridge"].includes(data.utilityPanel) ? data.utilityPanel : null;
+      const nextPanel = ["settings", "browserBridge"].includes(data.utilityPanel) ? data.utilityPanel : null;
+      utilityPanel = utilityPanel === nextPanel ? null : nextPanel;
       render();
       return;
     }
@@ -979,6 +982,12 @@
       return;
     }
     send(action, data);
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !utilityPanel) return;
+    utilityPanel = null;
+    render();
   });
 
   document.addEventListener("change", (event) => {

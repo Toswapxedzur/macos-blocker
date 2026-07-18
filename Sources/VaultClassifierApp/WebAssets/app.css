@@ -62,6 +62,7 @@ button:disabled {
 }
 
 .popup {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -93,6 +94,34 @@ button:disabled {
 
 .hero-copy { align-items: flex-start; gap: 10px; }
 .hero-controls { align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
+.settings-popover-anchor { position: relative; display: inline-flex; }
+
+.utility-popover-layer {
+  position: absolute;
+  top: calc(100% + 9px);
+  right: 0;
+  z-index: 20;
+  width: min(520px, calc(100vw - 28px));
+  pointer-events: none;
+}
+
+.utility-popover-dismiss {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  cursor: default;
+  background: transparent;
+}
+
+.utility-popover {
+  position: relative;
+  z-index: 1;
+  max-height: min(620px, calc(100vh - 92px));
+  overflow: auto;
+  pointer-events: auto;
+}
 
 .hero-mark {
   display: grid;
@@ -262,6 +291,11 @@ h3 { font-size: 13px; }
   border-radius: 14px;
   background: #fff;
   box-shadow: var(--panel-shadow);
+}
+
+.utility-popover .utility-panel {
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  box-shadow: 0 18px 46px rgba(15, 23, 42, 0.2);
 }
 
 .utility-panel::before {
