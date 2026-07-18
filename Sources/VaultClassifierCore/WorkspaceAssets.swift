@@ -113,10 +113,64 @@ public struct ClassificationRecord: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+/// The durable current classification for a content creator within one
+/// classifier type. It is deliberately distinct from an entry label: one
+/// creator decision can safely supply the labels for each of that creator's
+/// locally retained public entries when a local model is trained.
+public struct CreatorClassificationRecord: Codable, Equatable, Sendable, Identifiable {
+    public static let maximumTagIDs = 64
+
+    public var id: String
+    public var classifierTypeID: String
+    public var creatorID: String
+    public var creatorName: String
+    public var platformID: String
+    public var treeID: String
+    public var treeRevision: Int
+    public var tagIDs: [String]
+    public var origin: ClassificationRecordOrigin
+    public var review: ClassificationReviewStatus
+    public var createdAtMilliseconds: Int64
+    public var updatedAtMilliseconds: Int64
+
+    public init(
+        id: String = UUID().uuidString,
+        classifierTypeID: String,
+        creatorID: String,
+        creatorName: String,
+        platformID: String,
+        treeID: String,
+        treeRevision: Int,
+        tagIDs: [String],
+        origin: ClassificationRecordOrigin,
+        review: ClassificationReviewStatus,
+        createdAtMilliseconds: Int64 = WorkspaceCatalog.now(),
+        updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
+    ) {
+        self.id = id
+        self.classifierTypeID = classifierTypeID
+        self.creatorID = creatorID
+        self.creatorName = creatorName
+        self.platformID = platformID
+        self.treeID = treeID
+        self.treeRevision = treeRevision
+        self.tagIDs = Array(Set(tagIDs)).sorted()
+        self.origin = origin
+        self.review = review
+        self.createdAtMilliseconds = createdAtMilliseconds
+        self.updatedAtMilliseconds = updatedAtMilliseconds
+    }
+
+    /// A decision is current per classifier type and creator. It does not use
+    /// display names, which may legitimately change as a platform refreshes
+    /// public metadata.
+    public var identityKey: String { "\(classifierTypeID)\u{1F}\(platformID)\u{1F}\(creatorID)" }
+}
+
 /// Rendered public-content metadata the user has explicitly chosen to retain
 /// from a supported browser platform. It is not a classification label and
 /// therefore never changes the dataset revision or enters training until the
-/// user creates or approves a separate `ClassificationRecord`.
+/// user creates or approves a separate entry or creator classification record.
 public struct CollectedPlatformEntry: Codable, Equatable, Sendable, Identifiable {
     public static let maximumRetainedEntries = 5_000
     public static let maximumAttributes = 16
@@ -177,18 +231,38 @@ public struct ClassificationDataset: Codable, Equatable, Sendable, Identifiable 
     public var id: String
     public var name: String
     public var records: [ClassificationRecord]
+    /// Creator decisions are durable source-of-truth labels. Their associated
+    /// collected entries become explicit local-training examples only after a
+    /// manual or LLM decision is approved.
+    public var creatorClassifications: [CreatorClassificationRecord]
     /// Browser-collected entries are deliberately separate from labelled
     /// records. They support reviewing a creator's observed public entries,
     /// but cannot silently become model-training material.
     public var collectedEntries: [CollectedPlatformEntry]
     public var revision: Int
 
-    public init(id: String = UUID().uuidString, name: String, records: [ClassificationRecord] = [], collectedEntries: [CollectedPlatformEntry] = [], revision: Int = 1) {
+    public init(id: String = UUID().uuidString, name: String, records: [ClassificationRecord] = [], creatorClassifications: [CreatorClassificationRecord] = [], collectedEntries: [CollectedPlatformEntry] = [], revision: Int = 1) {
         self.id = id
         self.name = name
         self.records = records
+        self.creatorClassifications = creatorClassifications
         self.collectedEntries = Array(collectedEntries.suffix(CollectedPlatformEntry.maximumRetainedEntries))
         self.revision = revision
+    }
+
+    /// Replaces the current decision for one classifier type and creator while
+    /// retaining its durable identity and original creation time.
+    @discardableResult
+    public mutating func upsertCreatorClassification(_ classification: CreatorClassificationRecord) -> CreatorClassificationRecord {
+        if let index = creatorClassifications.firstIndex(where: { $0.identityKey == classification.identityKey }) {
+            var updated = classification
+            updated.id = creatorClassifications[index].id
+            updated.createdAtMilliseconds = creatorClassifications[index].createdAtMilliseconds
+            creatorClassifications[index] = updated
+            return updated
+        }
+        creatorClassifications.append(classification)
+        return classification
     }
 
     /// Updates a previously seen public entry in place, preserving its first
@@ -217,7 +291,7 @@ public struct ClassificationDataset: Codable, Equatable, Sendable, Identifiable 
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, records, collectedEntries, revision
+        case id, name, records, creatorClassifications, collectedEntries, revision
     }
 
     public init(from decoder: Decoder) throws {
@@ -225,6 +299,7 @@ public struct ClassificationDataset: Codable, Equatable, Sendable, Identifiable 
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         records = try container.decodeIfPresent([ClassificationRecord].self, forKey: .records) ?? []
+        creatorClassifications = try container.decodeIfPresent([CreatorClassificationRecord].self, forKey: .creatorClassifications) ?? []
         collectedEntries = Array((try container.decodeIfPresent([CollectedPlatformEntry].self, forKey: .collectedEntries) ?? []).suffix(CollectedPlatformEntry.maximumRetainedEntries))
         revision = try container.decodeIfPresent(Int.self, forKey: .revision) ?? 1
     }
@@ -395,8 +470,9 @@ public enum LocalModelTrainingError: Error, Equatable, LocalizedError, Sendable 
 }
 
 /// Converts immutable, approved classification rows into on-device neural
-/// samples. It never treats browsing activity, pending LLM suggestions, legacy
-/// imports, or labels from another tree revision as training data.
+/// samples. Approved creator decisions expand through that creator's retained
+/// public entries, while browsing activity, pending LLM suggestions, legacy
+/// imports, or labels from another tree revision never become training data.
 public enum LocalModelTrainer {
     public static let defaultEpochs = 48
 
@@ -406,7 +482,7 @@ public enum LocalModelTrainer {
         platformID: String
     ) -> [EmbeddedNeuralTrainingExample] {
         let availableTagIDs = (try? tree.inferenceTaxonomy())?.predictableLeafIDs ?? []
-        return dataset.records.compactMap { record in
+        let entryExamples = dataset.records.compactMap { record -> EmbeddedNeuralTrainingExample? in
             guard record.review == .approved,
                   record.origin == .manual || record.origin == .llmAssist,
                   record.platformID == platformID,
@@ -418,6 +494,26 @@ public enum LocalModelTrainer {
             guard !positiveLabelIDs.isEmpty else { return nil }
             return .init(text: record.title, positiveLabelIDs: positiveLabelIDs)
         }
+        let creatorExamples = dataset.creatorClassifications.flatMap { classification -> [EmbeddedNeuralTrainingExample] in
+            guard classification.review == .approved,
+                  classification.origin == .manual || classification.origin == .llmAssist,
+                  classification.platformID == platformID,
+                  classification.treeID == tree.id,
+                  classification.treeRevision == tree.revision else {
+                return []
+            }
+            let positiveLabelIDs = classification.tagIDs.filter { availableTagIDs.contains($0) }
+            guard !positiveLabelIDs.isEmpty else { return [] }
+            return dataset.collectedEntries.compactMap { entry in
+                guard entry.platformID == classification.platformID,
+                      entry.creatorID == classification.creatorID,
+                      !entry.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    return nil
+                }
+                return .init(text: entry.title, positiveLabelIDs: positiveLabelIDs)
+            }
+        }
+        return entryExamples + creatorExamples
     }
 
     public static func train(
@@ -828,6 +924,7 @@ public enum WorkspaceCatalogError: Error, Equatable, LocalizedError, Sendable {
     case incompatibleActiveClassifierType(String)
     case unsupportedCollectionPlatform(String)
     case invalidCollectedEntry(String)
+    case invalidCreatorClassification(String)
     case invalidProviderProfile(String)
     case invalidClassifierType(String)
 
@@ -842,6 +939,7 @@ public enum WorkspaceCatalogError: Error, Equatable, LocalizedError, Sendable {
         case .incompatibleActiveClassifierType(let value): return "The active classifier type is not compatible with the platform tree and dataset: \(value)."
         case .unsupportedCollectionPlatform(let value): return "The collection platform is not supported: \(value)."
         case .invalidCollectedEntry(let value): return "The collected platform entry is invalid: \(value)."
+        case .invalidCreatorClassification(let value): return "The creator classification is invalid: \(value)."
         case .invalidProviderProfile(let value): return "The API provider profile is invalid: \(value)."
         case .invalidClassifierType(let value): return "The classifier type has incompatible local assets: \(value)."
         }
@@ -921,6 +1019,22 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                       entry.observationCount > 0,
                       seenEntries.insert(entry.deduplicationKey).inserted else {
                     throw WorkspaceCatalogError.invalidCollectedEntry(entry.id)
+                }
+            }
+            var seenCreatorClassifications = Set<String>()
+            for classification in dataset.creatorClassifications {
+                guard !classification.id.isEmpty,
+                      !classification.classifierTypeID.isEmpty,
+                      !classification.creatorID.isEmpty,
+                      !classification.creatorName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      !classification.treeID.isEmpty,
+                      classification.treeRevision > 0,
+                      CollectionPlatformRegistry.definition(for: classification.platformID) != nil,
+                      !classification.tagIDs.isEmpty,
+                      classification.tagIDs.count <= CreatorClassificationRecord.maximumTagIDs,
+                      Set(classification.tagIDs).count == classification.tagIDs.count,
+                      seenCreatorClassifications.insert(classification.identityKey).inserted else {
+                    throw WorkspaceCatalogError.invalidCreatorClassification(classification.id)
                 }
             }
         }

@@ -73,6 +73,84 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(record.platformID, "youtube")
     }
 
+    func testCreatorClassificationsAreDurableSourceOfTruthAndApprovedLLMLabelsTrain() throws {
+        let tree = TagTreeAsset(
+            id: "interests",
+            name: "Interests",
+            nodes: [
+                .init(id: "games", name: "Games"),
+                .init(id: "technology", name: "Technology"),
+            ]
+        )
+        let manual = CreatorClassificationRecord(
+            id: "creator-decision",
+            classifierTypeID: "creator-focus",
+            creatorID: "youtube:channel:games",
+            creatorName: "Game creator",
+            platformID: "youtube",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            tagIDs: ["games"],
+            origin: .manual,
+            review: .approved,
+            createdAtMilliseconds: 100,
+            updatedAtMilliseconds: 100
+        )
+        let llm = CreatorClassificationRecord(
+            classifierTypeID: "creator-focus",
+            creatorID: "youtube:channel:technology",
+            creatorName: "Tech creator",
+            platformID: "youtube",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            tagIDs: ["technology"],
+            origin: .llmAssist,
+            review: .approved
+        )
+        let pending = CreatorClassificationRecord(
+            classifierTypeID: "creator-focus",
+            creatorID: "youtube:channel:pending",
+            creatorName: "Pending creator",
+            platformID: "youtube",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            tagIDs: ["games"],
+            origin: .llmAssist,
+            review: .pending
+        )
+        var dataset = ClassificationDataset(
+            id: "personal-labels",
+            name: "Personal labels",
+            creatorClassifications: [manual, llm, pending],
+            collectedEntries: [
+                .init(id: "game-video-one", platformID: "youtube", entryID: "game-video-one", creatorID: manual.creatorID, creatorName: manual.creatorName, entryType: "video", title: "Ranked deck guide"),
+                .init(id: "game-video-two", platformID: "youtube", entryID: "game-video-two", creatorID: manual.creatorID, creatorName: manual.creatorName, entryType: "video", title: "Arena gameplay"),
+                .init(id: "tech-video", platformID: "youtube", entryID: "tech-video", creatorID: llm.creatorID, creatorName: llm.creatorName, entryType: "video", title: "Build a local neural model"),
+                .init(id: "pending-video", platformID: "youtube", entryID: "pending-video", creatorID: pending.creatorID, creatorName: pending.creatorName, entryType: "video", title: "Do not train this"),
+            ]
+        )
+
+        let examples = LocalModelTrainer.approvedExamples(for: tree, dataset: dataset, platformID: "youtube")
+        XCTAssertEqual(examples.count, 3)
+        XCTAssertEqual(Set(examples.flatMap(\.positiveLabelIDs)), ["games", "technology"])
+        XCTAssertFalse(examples.contains(where: { $0.text == "Do not train this" }))
+
+        var updated = manual
+        updated.tagIDs = ["technology"]
+        updated.updatedAtMilliseconds = 200
+        let retained = dataset.upsertCreatorClassification(updated)
+        XCTAssertEqual(dataset.creatorClassifications.count, 3)
+        XCTAssertEqual(retained.id, manual.id)
+        XCTAssertEqual(retained.createdAtMilliseconds, 100)
+        XCTAssertEqual(retained.tagIDs, ["technology"])
+        XCTAssertEqual(try JSONDecoder().decode(ClassificationDataset.self, from: JSONEncoder().encode(dataset)), dataset)
+    }
+
+    func testLegacyClassificationDatasetDecodesWithoutCreatorClassifications() throws {
+        let legacy = Data(#"{"id":"legacy","name":"Legacy","records":[],"collectedEntries":[],"revision":1}"#.utf8)
+        XCTAssertTrue(try JSONDecoder().decode(ClassificationDataset.self, from: legacy).creatorClassifications.isEmpty)
+    }
+
     func testPlatformRejectsAnIncompatibleActiveModel() {
         var catalog = WorkspaceCatalog.starter()
         catalog.models[0].isReady = true
