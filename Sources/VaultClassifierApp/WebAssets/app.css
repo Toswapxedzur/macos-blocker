@@ -453,6 +453,21 @@ h3 { font-size: 13px; }
 .provider-credential-entry .small-copy { margin: 0; }
 .provider-credential-row .toggle-row { min-height: 38px; margin-right: auto; }
 
+.provider-pricing,
+.provider-history {
+  display: grid;
+  gap: 9px;
+  margin-left: 4px;
+  padding: 11px 12px;
+  border: 1px solid rgba(30, 58, 138, 0.18);
+  border-radius: 10px;
+  background: rgba(248, 250, 252, 0.88);
+}
+.provider-pricing-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.provider-pricing .small-copy { margin: 0; }
+.provider-history .section-header { gap: 12px; }
+.request-record-content { display: grid; gap: 3px; margin-top: 5px; color: #475569; white-space: pre-wrap; }
+
 .provider-setup {
   display: flex;
   flex-direction: column;
@@ -487,6 +502,7 @@ h3 { font-size: 13px; }
 @media (max-width: 1040px) {
   .model-setup-fields,
   .provider-setup-fields,
+  .provider-pricing-fields,
   .provider-tools { grid-template-columns: 1fr; }
   .provider-tools .eyebrow { grid-column: auto; }
 }
