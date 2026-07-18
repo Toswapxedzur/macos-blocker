@@ -876,6 +876,36 @@ final class VaultClassifierViewModel: ObservableObject {
         } catch { issue = error.localizedDescription }
     }
 
+    func deleteCollectionPlatform(platformID: String) {
+        do {
+            guard var catalog = localState?.workspaceCatalog,
+                  catalog.removePlatformBinding(platformID) else {
+                throw WebBridgeInputError.invalidChoice("collection platform")
+            }
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
+    func confirmCollectionPlatformDeletion(platformID: String) {
+        guard let catalog = localState?.workspaceCatalog,
+              let binding = catalog.bindings.first(where: { $0.id == platformID }) else {
+            issue = WebBridgeInputError.invalidChoice("collection platform").localizedDescription
+            return
+        }
+        let dataset = catalog.datasets.first(where: { $0.id == binding.datasetID })
+        let entries = dataset?.collectedEntries.filter { $0.platformID == platformID }.count ?? 0
+        let classifications = dataset?.creatorClassifications.filter { $0.platformID == platformID }.count ?? 0
+        presentNativeConfirmation(
+            title: "Delete \(binding.name)?",
+            message: "This stops collection and removes \(entries) retained entries and \(classifications) creator classifications for this platform. Shared trees and classification data remain; models using this source are reset or removed.",
+            confirmTitle: "Delete platform"
+        ) { [weak self] in
+            self?.deleteCollectionPlatform(platformID: platformID)
+        }
+    }
+
     func setCollectionEnabled(platformID: String, enabled: Bool) {
         do {
             guard var catalog = localState?.workspaceCatalog,
@@ -2521,6 +2551,8 @@ final class VaultClassifierViewModel: ObservableObject {
                 createTree(name: try webString(data, key: "name", limit: 128))
             case "addCollectionPlatform":
                 addCollectionPlatform(platformID: try webString(data, key: "platformID", limit: 64))
+            case "confirmDeleteCollectionPlatform":
+                confirmCollectionPlatformDeletion(platformID: try webString(data, key: "platformID", limit: 64))
             case "setCollectionEnabled":
                 setCollectionEnabled(
                     platformID: try webString(data, key: "platformID", limit: 64),

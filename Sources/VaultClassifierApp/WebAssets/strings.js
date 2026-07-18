@@ -585,6 +585,7 @@ window.VaultClassifierStrings = Object.freeze({
   "data.noPlatforms": "Add a platform to begin a local collection library.",
   "data.platform": "PLATFORM",
   "data.platformPanel": "PLATFORM COLLECTION",
+  "data.deletePlatform": "Delete platform",
   "data.collectorAvailable": "Collector available",
   "data.collectorPlanned": "Collector not installed yet",
   "data.collecting": "COLLECTING",
