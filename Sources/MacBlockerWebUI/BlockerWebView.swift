@@ -46,10 +46,10 @@ public struct BlockerWebView: _CBViewRepresentable {
     /// Supplies the current web-app bridge connection status as JSON; pushed
     /// each second to `window.__cbConnectionState`.
     private let connectionStatusJSON: (() -> String?)?
-    /// Web asked to start the local hub server on the given port.
-    private let onConnectionServerStart: ((Int) -> Void)?
-    /// Web asked to stop the local hub server.
-    private let onConnectionServerStop: (() -> Void)?
+    /// Web asked to connect to the shared Vault broker.
+    private let onConnectionConnect: (() -> Void)?
+    /// Web asked to disconnect from the shared Vault broker.
+    private let onConnectionDisconnect: (() -> Void)?
     /// Supplies current per-group bridge clusters as a JSON array; pushed each
     /// second to `window.__cbClustersState`.
     private let clustersJSON: (() -> String?)?
@@ -80,8 +80,8 @@ public struct BlockerWebView: _CBViewRepresentable {
         onRequestAppBlockingPermission: (() -> Void)? = nil,
         onOpenPermissionSettings: (() -> Void)? = nil,
         connectionStatusJSON: (() -> String?)? = nil,
-        onConnectionServerStart: ((Int) -> Void)? = nil,
-        onConnectionServerStop: (() -> Void)? = nil,
+        onConnectionConnect: (() -> Void)? = nil,
+        onConnectionDisconnect: (() -> Void)? = nil,
         clustersJSON: (() -> String?)? = nil,
         groupRejectionJSON: (() -> String?)? = nil,
         onGroupsAnnounce: ((String) -> Void)? = nil,
@@ -103,8 +103,8 @@ public struct BlockerWebView: _CBViewRepresentable {
         self.onRequestAppBlockingPermission = onRequestAppBlockingPermission
         self.onOpenPermissionSettings = onOpenPermissionSettings
         self.connectionStatusJSON = connectionStatusJSON
-        self.onConnectionServerStart = onConnectionServerStart
-        self.onConnectionServerStop = onConnectionServerStop
+        self.onConnectionConnect = onConnectionConnect
+        self.onConnectionDisconnect = onConnectionDisconnect
         self.clustersJSON = clustersJSON
         self.groupRejectionJSON = groupRejectionJSON
         self.onGroupsAnnounce = onGroupsAnnounce
@@ -114,7 +114,7 @@ public struct BlockerWebView: _CBViewRepresentable {
     }
 
     public func makeCoordinator() -> Coordinator {
-        Coordinator(store: store, ruleLogJSON: ruleLogJSON, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup, onSnoozePress: onSnoozePress, onPanelEvent: onPanelEvent, onShowSystemPanel: onShowSystemPanel, onDismissSystemPanel: onDismissSystemPanel, systemPanelEventsJSON: systemPanelEventsJSON, permissionStateJSON: permissionStateJSON, onRequestAppBlockingPermission: onRequestAppBlockingPermission, onOpenPermissionSettings: onOpenPermissionSettings, connectionStatusJSON: connectionStatusJSON, onConnectionServerStart: onConnectionServerStart, onConnectionServerStop: onConnectionServerStop, clustersJSON: clustersJSON, groupRejectionJSON: groupRejectionJSON, onGroupsAnnounce: onGroupsAnnounce, onGroupConnect: onGroupConnect, onGroupDisconnect: onGroupDisconnect, onGroupSync: onGroupSync)
+        Coordinator(store: store, ruleLogJSON: ruleLogJSON, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup, onSnoozePress: onSnoozePress, onPanelEvent: onPanelEvent, onShowSystemPanel: onShowSystemPanel, onDismissSystemPanel: onDismissSystemPanel, systemPanelEventsJSON: systemPanelEventsJSON, permissionStateJSON: permissionStateJSON, onRequestAppBlockingPermission: onRequestAppBlockingPermission, onOpenPermissionSettings: onOpenPermissionSettings, connectionStatusJSON: connectionStatusJSON, onConnectionConnect: onConnectionConnect, onConnectionDisconnect: onConnectionDisconnect, clustersJSON: clustersJSON, groupRejectionJSON: groupRejectionJSON, onGroupsAnnounce: onGroupsAnnounce, onGroupConnect: onGroupConnect, onGroupDisconnect: onGroupDisconnect, onGroupSync: onGroupSync)
     }
 
     private func makeWebView(context: Context) -> WKWebView {
@@ -287,8 +287,8 @@ public struct BlockerWebView: _CBViewRepresentable {
         private let onRequestAppBlockingPermission: (() -> Void)?
         private let onOpenPermissionSettings: (() -> Void)?
         private let connectionStatusJSON: (() -> String?)?
-        private let onConnectionServerStart: ((Int) -> Void)?
-        private let onConnectionServerStop: (() -> Void)?
+        private let onConnectionConnect: (() -> Void)?
+        private let onConnectionDisconnect: (() -> Void)?
         private let clustersJSON: (() -> String?)?
         private let groupRejectionJSON: (() -> String?)?
         private let onGroupsAnnounce: ((String) -> Void)?
@@ -318,8 +318,8 @@ public struct BlockerWebView: _CBViewRepresentable {
             onRequestAppBlockingPermission: (() -> Void)?,
             onOpenPermissionSettings: (() -> Void)?,
             connectionStatusJSON: (() -> String?)?,
-            onConnectionServerStart: ((Int) -> Void)?,
-            onConnectionServerStop: (() -> Void)?,
+            onConnectionConnect: (() -> Void)?,
+            onConnectionDisconnect: (() -> Void)?,
             clustersJSON: (() -> String?)?,
             groupRejectionJSON: (() -> String?)?,
             onGroupsAnnounce: ((String) -> Void)?,
@@ -340,8 +340,8 @@ public struct BlockerWebView: _CBViewRepresentable {
             self.onRequestAppBlockingPermission = onRequestAppBlockingPermission
             self.onOpenPermissionSettings = onOpenPermissionSettings
             self.connectionStatusJSON = connectionStatusJSON
-            self.onConnectionServerStart = onConnectionServerStart
-            self.onConnectionServerStop = onConnectionServerStop
+            self.onConnectionConnect = onConnectionConnect
+            self.onConnectionDisconnect = onConnectionDisconnect
             self.clustersJSON = clustersJSON
             self.groupRejectionJSON = groupRejectionJSON
             self.onGroupsAnnounce = onGroupsAnnounce
@@ -525,20 +525,11 @@ public struct BlockerWebView: _CBViewRepresentable {
                 onRequestAppBlockingPermission?()
             case "open-permission-settings":
                 onOpenPermissionSettings?()
-            case "connection-server-start":
-                let payload = body["message"] as? [String: Any]
-                let port: Int
-                if let p = payload?["port"] as? Int {
-                    port = p
-                } else if let p = payload?["port"] as? Double {
-                    port = Int(p)
-                } else {
-                    port = 8787
-                }
-                onConnectionServerStart?(port)
+            case "connection-connect":
+                onConnectionConnect?()
                 pushConnectionState()
-            case "connection-server-stop":
-                onConnectionServerStop?()
+            case "connection-disconnect":
+                onConnectionDisconnect?()
                 pushConnectionState()
             case "connection-status":
                 pushConnectionState()

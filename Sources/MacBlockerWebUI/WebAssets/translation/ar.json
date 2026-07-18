@@ -32,7 +32,7 @@
   "connection.copy": "اربط مجموعات Default وCustom بين إضافة المتصفح وMac Vault أو Windows Vault.",
   "connection.serverToggle": "تشغيل الخادم المحلي (المحور)",
   "connection.serverToggleHelp": "يمكن لإضافات المتصفح على هذا الكمبيوتر الاتصال بعد نسخ مفتاح الاقتران.",
-  "connection.clientHelp": "استخدم مفتاح الاقتران الظاهر في Mac Vault أو Windows Vault لتوصيل هذا المتصفح.",
+  "connection.clientHelp": "اتصل بخادم Vault المشترك. يعرض جميع تطبيقات Vault المتصلة حاليًا.",
   "connection.addressLabel": "العنوان",
   "connection.connect": "الاتصال",
   "connection.disconnect": "قطع الاتصال",
@@ -563,5 +563,5 @@
   "connection.pairingKeyPrompt": "الصق مفتاح الاقتران المكوّن من 64 حرفًا والظاهر في Mac Vault أو Windows Vault.",
   "connection.errorPairingKey": "أدخل مفتاح الاقتران الصحيح المكوّن من 64 حرفًا.",
   "connection.errorProtocolMismatch": "يستخدم التطبيق والإضافة إصدارين غير متوافقين من بروتوكول الجسر.",
-  "connection.errorSecureConnection": "تعذّر إنشاء اتصال آمن بتطبيق Vault المحلي."
+  "connection.errorSecureConnection": "تعذّر إنشاء اتصال بخادم Vault المشترك."
 }

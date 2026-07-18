@@ -20,16 +20,10 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // Bring the bridge up at the process level, independent of any window.
-        let enabled = BlockerWebStore().loadConnectionServerEnabled()
-        if enabled {
-            ConnectionHub.shared.start()
-        } else {
-            ConnectionHub.shared.stop()
-        }
-        // Only add a login item for users who actually run the bridge; clean it
-        // up for those who have turned it off.
-        syncLoginItem(enabled: enabled)
+        // Every app instance connects out to the single shared broker. It never
+        // opens a local listening socket or requires a pairing key.
+        ConnectionHub.shared.start()
+        syncLoginItem(enabled: false)
     }
 
     /// Keep the process — and therefore the hub — running after the last editor
@@ -38,15 +32,15 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
-    /// Warn before quitting while web-app bridge links are active: quitting stops
-    /// the hub, so linked browsers will see this Mac as offline and shared
+    /// Warn before quitting while web-app bridge links are active: quitting
+    /// disconnects this client, so linked browsers will see this Mac as offline and shared
     /// changes won't sync until the app is reopened.
     open func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard ConnectionHub.shared.activeClusterCount() > 0 else { return .terminateNow }
         let alert = NSAlert()
-        alert.messageText = "Quit and pause web-app bridge links?"
+        alert.messageText = "Quit and pause shared Vault links?"
         alert.informativeText =
-            "You have linked groups. Quitting stops the local server, so linked browsers "
+            "You have linked groups. Quitting disconnects Mac Vault, so linked browsers "
             + "will show this Mac as offline and shared changes won't sync until you reopen the app."
         alert.addButton(withTitle: "Quit")
         alert.addButton(withTitle: "Cancel")

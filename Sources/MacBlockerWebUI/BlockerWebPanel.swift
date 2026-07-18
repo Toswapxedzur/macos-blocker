@@ -20,8 +20,8 @@ public struct BlockerWebPanel: View {
     private let onRequestAppBlockingPermission: (() -> Void)?
     private let onOpenPermissionSettings: (() -> Void)?
     private let connectionStatusJSON: (() -> String?)?
-    private let onConnectionServerStart: ((Int) -> Void)?
-    private let onConnectionServerStop: (() -> Void)?
+    private let onConnectionConnect: (() -> Void)?
+    private let onConnectionDisconnect: (() -> Void)?
     private let clustersJSON: (() -> String?)?
     private let groupRejectionJSON: (() -> String?)?
     private let onGroupsAnnounce: ((String) -> Void)?
@@ -44,8 +44,8 @@ public struct BlockerWebPanel: View {
         onRequestAppBlockingPermission: (() -> Void)? = nil,
         onOpenPermissionSettings: (() -> Void)? = nil,
         connectionStatusJSON: (() -> String?)? = nil,
-        onConnectionServerStart: ((Int) -> Void)? = nil,
-        onConnectionServerStop: (() -> Void)? = nil,
+        onConnectionConnect: (() -> Void)? = nil,
+        onConnectionDisconnect: (() -> Void)? = nil,
         clustersJSON: (() -> String?)? = nil,
         groupRejectionJSON: (() -> String?)? = nil,
         onGroupsAnnounce: ((String) -> Void)? = nil,
@@ -67,8 +67,8 @@ public struct BlockerWebPanel: View {
         self.onRequestAppBlockingPermission = onRequestAppBlockingPermission
         self.onOpenPermissionSettings = onOpenPermissionSettings
         self.connectionStatusJSON = connectionStatusJSON
-        self.onConnectionServerStart = onConnectionServerStart
-        self.onConnectionServerStop = onConnectionServerStop
+        self.onConnectionConnect = onConnectionConnect
+        self.onConnectionDisconnect = onConnectionDisconnect
         self.clustersJSON = clustersJSON
         self.groupRejectionJSON = groupRejectionJSON
         self.onGroupsAnnounce = onGroupsAnnounce
@@ -93,8 +93,8 @@ public struct BlockerWebPanel: View {
             onRequestAppBlockingPermission: onRequestAppBlockingPermission,
             onOpenPermissionSettings: onOpenPermissionSettings,
             connectionStatusJSON: connectionStatusJSON,
-            onConnectionServerStart: onConnectionServerStart,
-            onConnectionServerStop: onConnectionServerStop,
+            onConnectionConnect: onConnectionConnect,
+            onConnectionDisconnect: onConnectionDisconnect,
             clustersJSON: clustersJSON,
             groupRejectionJSON: groupRejectionJSON,
             onGroupsAnnounce: onGroupsAnnounce,

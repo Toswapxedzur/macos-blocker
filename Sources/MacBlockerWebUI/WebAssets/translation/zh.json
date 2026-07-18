@@ -32,7 +32,7 @@
   "connection.copy": "在浏览器扩展与 Mac Vault 或 Windows Vault 之间关联默认组和自定义组。",
   "connection.serverToggle": "运行本地服务器（集线器）",
   "connection.serverToggleHelp": "复制配对密钥后，此计算机上的浏览器扩展即可连接。",
-  "connection.clientHelp": "使用 Mac Vault 或 Windows Vault 中显示的配对密钥连接此浏览器。",
+  "connection.clientHelp": "连接到共享 Vault 服务器。它会显示当前已连接的所有 Vault 应用。",
   "connection.addressLabel": "地址",
   "connection.connect": "连接",
   "connection.disconnect": "断开连接",
@@ -563,5 +563,5 @@
   "connection.pairingKeyPrompt": "粘贴 Mac Vault 或 Windows Vault 中显示的 64 位配对密钥。",
   "connection.errorPairingKey": "请输入正确的 64 位配对密钥。",
   "connection.errorProtocolMismatch": "应用与扩展使用的桥接协议版本不兼容。",
-  "connection.errorSecureConnection": "无法与本地 Vault 应用建立安全连接。"
+  "connection.errorSecureConnection": "无法连接到共享 Vault 服务器。"
 }

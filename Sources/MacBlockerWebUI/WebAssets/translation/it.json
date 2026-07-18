@@ -32,7 +32,7 @@
   "connection.copy": "Collega i gruppi predefiniti e personalizzati tra un'estensione del browser e Mac Vault o Windows Vault.",
   "connection.serverToggle": "Esegui il server locale (hub)",
   "connection.serverToggleHelp": "Le estensioni del browser su questo computer possono connettersi dopo aver copiato la chiave di associazione.",
-  "connection.clientHelp": "Usa la chiave di associazione mostrata in Mac Vault o Windows Vault per collegare questo browser.",
+  "connection.clientHelp": "Connettiti al server Vault condiviso. Mostra tutte le app Vault attualmente connesse.",
   "connection.addressLabel": "Indirizzo",
   "connection.connect": "Connettiti",
   "connection.disconnect": "Disconnetti",
@@ -563,5 +563,5 @@
   "connection.pairingKeyPrompt": "Incolla la chiave di associazione di 64 caratteri mostrata in Mac Vault o Windows Vault.",
   "connection.errorPairingKey": "Inserisci la chiave di associazione corretta di 64 caratteri.",
   "connection.errorProtocolMismatch": "L'app e l'estensione usano versioni incompatibili del protocollo bridge.",
-  "connection.errorSecureConnection": "Impossibile stabilire una connessione sicura con l'app Vault locale."
+  "connection.errorSecureConnection": "Impossibile stabilire una connessione al server Vault condiviso."
 }

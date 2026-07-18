@@ -32,7 +32,7 @@
   "connection.copy": "Verknüpfe Standard- und benutzerdefinierte Gruppen zwischen einer Browser-Erweiterung und Mac Vault oder Windows Vault.",
   "connection.serverToggle": "Lokalen Server (Hub) ausführen",
   "connection.serverToggleHelp": "Browser-Erweiterungen auf diesem Computer können sich verbinden, nachdem du den Kopplungsschlüssel kopiert hast.",
-  "connection.clientHelp": "Verwende den in Mac Vault oder Windows Vault angezeigten Kopplungsschlüssel, um diesen Browser zu verbinden.",
+  "connection.clientHelp": "Mit dem gemeinsamen Vault-Server verbinden. Er zeigt alle derzeit verbundenen Vault-Apps.",
   "connection.addressLabel": "Adresse",
   "connection.connect": "Verbinden",
   "connection.disconnect": "Trennen",
@@ -563,5 +563,5 @@
   "connection.pairingKeyPrompt": "Füge den 64-stelligen Kopplungsschlüssel aus Mac Vault oder Windows Vault ein.",
   "connection.errorPairingKey": "Gib den richtigen 64-stelligen Kopplungsschlüssel ein.",
   "connection.errorProtocolMismatch": "App und Erweiterung verwenden inkompatible Versionen des Bridge-Protokolls.",
-  "connection.errorSecureConnection": "Es konnte keine sichere Verbindung zur lokalen Vault-App hergestellt werden."
+  "connection.errorSecureConnection": "Es konnte keine Verbindung zum gemeinsamen Vault-Server hergestellt werden."
 }
