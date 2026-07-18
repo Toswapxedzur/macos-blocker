@@ -596,14 +596,10 @@
     const definitions = assets.collectionPlatforms || [];
     const datasetByID = new Map(datasets.map((dataset) => [dataset.id, dataset]));
     const treeByID = new Map((assets.trees || []).map((tree) => [tree.id, tree]));
-    const allRecords = datasets.flatMap((dataset) => dataset.records || []);
     const allCollected = datasets.flatMap((dataset) => dataset.collectedEntries || []);
     const classifierTypes = assets.classifierTypes || [];
     const models = assets.models || [];
     const availablePlatforms = definitions.filter((definition) => !bindings.some((binding) => binding.id === definition.id));
-    const manualBinding = bindings[0];
-    const manualTree = manualBinding ? treeByID.get(manualBinding.treeID) : null;
-    const manualPlatformOptions = bindings.map((binding) => [binding.id, binding.name]);
     const observedAt = (value) => {
       const numeric = Number(value);
       return Number.isFinite(numeric) ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(numeric)) : t("data.unknownDate");
@@ -643,8 +639,7 @@
     return `<div class="workspace collection-workspace">${header("data.title", "data.copy", t("data.entries", { count: allCollected.length }), "cyan")}
       <section class="collection-platform-create" data-form-id="collection-platform-create-form"><div><span class="eyebrow">${tx("data.addPlatform")}</span><p class="section-copy">${tx("data.addPlatformCopy")}</p></div>${availablePlatforms.length ? `${valueSelectField("data.platform", "", "platformID", availablePlatforms[0].id, availablePlatforms.map((platform) => [platform.id, platform.name]))}<button class="primary" data-action="addCollectionPlatform" data-form="collection-platform-create-form">${tx("data.addPlatformAction")}</button>` : `<span class="small-copy">${tx("data.allPlatformsAdded")}</span>`}</section>
       <div class="collection-platform-panels">${bindings.length ? bindings.map(bindingPanel).join("") : `<div class="empty">${tx("data.noPlatforms")}</div>`}</div>
-      <section class="section-card cyan" data-form-id="manual-record-form"><div class="section-header"><div><h3>${tx("data.manual")}</h3><p class="section-copy">${tx("data.manualCopy")}</p></div></div><div class="form-stack">${manualPlatformOptions.length ? valueSelectField("data.platform", "", "platformID", manualBinding.id, manualPlatformOptions) : ""}${field("data.entryTitle", "", "title", "")}${field("data.tagIDs", "data.tagIDsHint", "tags", manualTree?.nodes.filter((node) => !node.retired).map((node) => node.id).join(", ") || "")}<div class="action-row"><button class="primary" data-action="recordManualClassification" data-form="manual-record-form"${disabled(!manualPlatformOptions.length)}>${tx("data.record")}</button></div></div></section>
-      <section class="section-card cyan"><div class="section-header"><div><h3>${tx("data.ledger")}</h3><p class="section-copy">${tx("data.ledgerCopy")}</p></div></div>${allRecords.length ? `<div class="list">${allRecords.map((record) => `<div class="list-row"><span class="list-symbol">${record.origin === "manual" ? "✓" : "◌"}</span><span class="list-copy"><span class="list-title">${esc(record.title)}</span><span class="list-meta">${esc(record.tags.join(", "))} · ${tx(`data.origin.${record.origin}`)} · ${tx(`data.review.${record.review}`)}</span></span></div>`).join("")}</div>` : `<div class="empty">${tx("data.empty")}</div>`}</section>${notice(state.issue, "red")}</div>`;
+      ${notice(state.issue, "red")}</div>`;
   }
 
   function workspace() {
