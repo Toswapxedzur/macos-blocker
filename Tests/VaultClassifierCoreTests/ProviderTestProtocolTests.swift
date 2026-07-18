@@ -85,14 +85,19 @@ final class ProviderTestProtocolTests: XCTestCase {
         )
     }
 
-    func testEveryExposedProviderPreparesTestAndClassificationRequests() throws {
+    func testEveryExposedLanguageModelPreparesTestAndClassificationRequests() throws {
         let profiles: [APIKeyProviderProfile] = [
             .init(type: .openAI),
             .init(type: .openAICompatible, modelIdentifier: "deepseek-chat", customEndpoint: "https://api.deepseek.com/v1"),
+            .init(type: .deepSeek),
             .init(type: .gemini),
             .init(type: .anthropic),
+            .init(type: .mistral),
             .init(type: .cohere),
+            .init(type: .groq),
+            .init(type: .openRouter),
             .init(type: .ollama),
+            .init(type: .custom, customEndpoint: "https://api.example.com/v1"),
         ]
         let entry = EntryEvidence(platform: "youtube", entryID: "entry", surface: .feed, evidence: .init(title: "Deck gameplay"))
         for profile in profiles {
@@ -102,6 +107,23 @@ final class ProviderTestProtocolTests: XCTestCase {
                 .generateText,
                 profile.type.rawValue
             )
+        }
+    }
+
+    func testPlatformDataProfilesDoNotPrepareLanguageModelRequests() throws {
+        let platformTypes: [APIKeyProviderType] = [
+            .youtubeData, .twitch, .reddit, .xPlatform, .tikTok,
+            .instagramGraph, .facebookGraph, .linkedIn, .pinterest, .bluesky,
+            .mastodon, .vimeo, .dailyMotion, .spotify,
+        ]
+
+        for type in platformTypes {
+            let profile = APIKeyProviderProfile(type: type)
+            let descriptor = ProviderProtocolRegistry.descriptor(for: type)
+            XCTAssertFalse(descriptor.supportsLLMConfiguration, type.rawValue)
+            XCTAssertTrue(descriptor.requestFormats.contains(where: { $0.operation == .readPublicContent }), type.rawValue)
+            XCTAssertNoThrow(try profile.validate(), type.rawValue)
+            XCTAssertThrowsError(try ProviderTestProtocol.prepare(profile: profile), type.rawValue)
         }
     }
 }

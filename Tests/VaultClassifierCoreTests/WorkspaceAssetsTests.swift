@@ -393,28 +393,41 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertNil(decoded.embeddedTrainingReport)
     }
 
-    func testProviderProfilesKeepOnlyTheSixSupportedModelTransports() throws {
-        let compatible = APIKeyProviderProfile(
-            id: "compatible-key",
-            type: .openAICompatible,
-            modelIdentifier: "deepseek-chat",
-            customEndpoint: "https://api.deepseek.com/v1"
-        )
+    func testProviderProfilesKeepSelectedLanguageAndPlatformTransports() throws {
+        let profiles: [APIKeyProviderProfile] = [
+            .init(id: "deepseek-key", type: .deepSeek),
+            .init(id: "youtube-key", type: .youtubeData),
+            .init(id: "custom-key", type: .custom, customEndpoint: "https://api.example.com/v1"),
+        ]
         var catalog = WorkspaceCatalog.starter()
-        catalog.providerProfiles = [compatible]
+        catalog.providerProfiles = profiles
 
         XCTAssertNoThrow(try catalog.validate())
-        XCTAssertEqual(Set(APIKeyProviderType.allCases), [.openAI, .openAICompatible, .gemini, .anthropic, .cohere, .ollama])
+        XCTAssertEqual(
+            Set(APIKeyProviderType.allCases),
+            [
+                .openAI, .openAICompatible, .deepSeek, .gemini, .anthropic,
+                .mistral, .cohere, .groq, .openRouter, .ollama,
+                .youtubeData, .twitch, .reddit, .xPlatform, .tikTok,
+                .instagramGraph, .facebookGraph, .linkedIn, .pinterest,
+                .bluesky, .mastodon, .vimeo, .dailyMotion, .spotify, .custom,
+            ]
+        )
         let encoded = try JSONEncoder().encode(catalog)
         XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("apiKey"))
-        XCTAssertEqual(try JSONDecoder().decode(WorkspaceCatalog.self, from: encoded).providerProfiles, [compatible])
+        XCTAssertEqual(try JSONDecoder().decode(WorkspaceCatalog.self, from: encoded).providerProfiles, profiles)
     }
 
-    func testLegacyNamedProfilesMigrateToTheCompatibleTransport() throws {
-        let legacy = Data(#"{"id":"legacy","name":"Legacy","type":"deepSeek","modelIdentifier":"deepseek-chat","batchSize":1,"maximumTokens":10,"updatedAtMilliseconds":1}"#.utf8)
-        let decoded = try JSONDecoder().decode(APIKeyProviderProfile.self, from: legacy)
-        XCTAssertEqual(decoded.type, .openAICompatible)
+    func testDirectPresetsRemainReadableAndRetiredNamesMigrateToCompatibleTransport() throws {
+        let direct = Data(#"{"id":"direct","name":"Direct","type":"deepSeek","modelIdentifier":"deepseek-chat","batchSize":1,"maximumTokens":10,"updatedAtMilliseconds":1}"#.utf8)
+        let decoded = try JSONDecoder().decode(APIKeyProviderProfile.self, from: direct)
+        XCTAssertEqual(decoded.type, .deepSeek)
         XCTAssertEqual(decoded.modelIdentifier, "deepseek-chat")
+
+        let retired = Data(#"{"id":"retired","name":"Retired","type":"xAI","modelIdentifier":"grok","batchSize":1,"maximumTokens":10,"updatedAtMilliseconds":1}"#.utf8)
+        let migrated = try JSONDecoder().decode(APIKeyProviderProfile.self, from: retired)
+        XCTAssertEqual(migrated.type, .openAICompatible)
+        XCTAssertEqual(migrated.modelIdentifier, "grok")
     }
 
     func testProviderProtocolsExposeWorkingRequestPlansForEverySupportedType() throws {
@@ -446,6 +459,17 @@ final class WorkspaceAssetsTests: XCTestCase {
             .requestPlan(for: compatible, operation: .generateText)
         XCTAssertEqual(compatiblePlan.url.absoluteString, "https://api.deepseek.com/v1/chat/completions")
         XCTAssertEqual(compatiblePlan.bodyFormat, .openAIChatCompletions)
+
+        let deepSeek = APIKeyProviderProfile(type: .deepSeek)
+        let deepSeekPlan = try DescriptorBackedProviderProtocol(descriptor: ProviderProtocolRegistry.descriptor(for: .deepSeek))
+            .requestPlan(for: deepSeek, operation: .generateText)
+        XCTAssertEqual(deepSeekPlan.url.absoluteString, "https://api.deepseek.com/v1/chat/completions")
+
+        let custom = APIKeyProviderProfile(type: .custom, customEndpoint: "https://api.example.com/v1")
+        let customPlan = try DescriptorBackedProviderProtocol(descriptor: ProviderProtocolRegistry.descriptor(for: .custom))
+            .requestPlan(for: custom, operation: .generateText)
+        XCTAssertEqual(customPlan.url.absoluteString, "https://api.example.com/v1/chat/completions")
+        XCTAssertEqual(customPlan.bodyFormat, .openAIChatCompletions)
     }
 
     func testProviderProtocolsRejectUnsafeOrIncompleteDispatchSettings() throws {

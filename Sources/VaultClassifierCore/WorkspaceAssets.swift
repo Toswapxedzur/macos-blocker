@@ -759,10 +759,29 @@ public struct ProviderRequestRecord: Codable, Equatable, Sendable, Identifiable 
 public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
     case openAI
     case openAICompatible
+    case deepSeek
     case gemini
     case anthropic
+    case mistral
     case cohere
+    case groq
+    case openRouter
     case ollama
+    case youtubeData
+    case twitch
+    case reddit
+    case xPlatform
+    case tikTok
+    case instagramGraph
+    case facebookGraph
+    case linkedIn
+    case pinterest
+    case bluesky
+    case mastodon
+    case vimeo
+    case dailyMotion
+    case spotify
+    case custom
 
     public var supportsLLMConfiguration: Bool {
         ProviderProtocolRegistry.descriptor(for: self).supportsLLMConfiguration
@@ -772,10 +791,29 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
         switch self {
         case .openAI: return "OpenAI key"
         case .openAICompatible: return "OpenAI-compatible API"
+        case .deepSeek: return "DeepSeek key"
         case .gemini: return "Gemini key"
         case .anthropic: return "Anthropic key"
+        case .mistral: return "Mistral key"
         case .cohere: return "Cohere key"
+        case .groq: return "Groq key"
+        case .openRouter: return "OpenRouter key"
         case .ollama: return "Ollama profile"
+        case .youtubeData: return "YouTube Data API key"
+        case .twitch: return "Twitch credential"
+        case .reddit: return "Reddit credential"
+        case .xPlatform: return "X API credential"
+        case .tikTok: return "TikTok credential"
+        case .instagramGraph: return "Instagram Graph API credential"
+        case .facebookGraph: return "Facebook Graph API credential"
+        case .linkedIn: return "LinkedIn credential"
+        case .pinterest: return "Pinterest credential"
+        case .bluesky: return "Bluesky credential"
+        case .mastodon: return "Mastodon credential"
+        case .vimeo: return "Vimeo credential"
+        case .dailyMotion: return "Dailymotion credential"
+        case .spotify: return "Spotify credential"
+        case .custom: return "Custom API key"
         }
     }
 
@@ -783,24 +821,33 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
         switch self {
         case .openAI: return "gpt-4.1-mini"
         case .openAICompatible: return ""
+        case .deepSeek: return "deepseek-chat"
         case .gemini: return "gemini-3.1-flash-lite"
         case .anthropic: return "claude-sonnet-4-5"
+        case .mistral: return "mistral-large-latest"
         case .cohere: return "command-a-plus-05-2026"
+        case .groq: return "llama-3.3-70b-versatile"
+        case .openRouter: return "openai/gpt-4.1-mini"
         case .ollama: return "llama3.3"
+        case .youtubeData, .twitch, .reddit, .xPlatform, .tikTok,
+             .instagramGraph, .facebookGraph, .linkedIn, .pinterest, .bluesky,
+             .mastodon, .vimeo, .dailyMotion, .spotify: return ""
+        case .custom: return "custom-model"
         }
     }
 
-    /// Existing local profiles must remain decodable. Former named providers
-    /// migrate to the configurable OpenAI-compatible profile, which requires
-    /// the owner to review its endpoint before another explicit request.
+    /// Existing local profiles must remain decodable. Current direct presets
+    /// retain their type; retired or unknown values migrate to the configurable
+    /// OpenAI-compatible profile, which requires endpoint review before use.
     public init(from decoder: Decoder) throws {
         let raw = try decoder.singleValueContainer().decode(String.self)
+        if let type = APIKeyProviderType(rawValue: raw) {
+            self = type
+            return
+        }
         switch raw {
-        case "openAI", "chatGPT": self = .openAI
-        case "gemini": self = .gemini
-        case "anthropic", "claude": self = .anthropic
-        case "cohere": self = .cohere
-        case "ollama": self = .ollama
+        case "chatGPT": self = .openAI
+        case "claude": self = .anthropic
         default: self = .openAICompatible
         }
     }
