@@ -1,9 +1,8 @@
 import Foundation
 import VaultClassifierCore
 
-/// The classifier is a client of Mac Vault's existing loopback hub. It never
-/// binds a second localhost port and it never sends the shared pairing key
-/// beyond the authenticated hello frame.
+/// The classifier can join either desktop app's one shared loopback hub. It
+/// uses the same address and pairing key, never a second port.
 @MainActor
 final class SharedHubClient {
     enum State: String {
@@ -137,7 +136,8 @@ final class SharedHubClient {
         switch kind {
         case "welcome":
             guard (object["v"] as? NSNumber)?.intValue == 2,
-                  object["hubProgram"] as? String == "macapp" else {
+                  let hubProgram = object["hubProgram"] as? String,
+                  SharedBrowserBridgeProtocol.isAcceptedHubProgram(hubProgram) else {
                 connectionFailed("protocol-mismatch", retry: false)
                 return
             }

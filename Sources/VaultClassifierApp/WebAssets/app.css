@@ -282,6 +282,21 @@ h3 { font-size: 13px; }
 .utility-close { width: 28px; height: 28px; border-radius: 8px; color: #64748b; background: rgba(255, 255, 255, 0.7); font-size: 21px; line-height: 1; }
 .utility-close:hover { color: var(--navy-700); background: var(--navy-100); }
 .utility-toggles { display: flex; flex-wrap: wrap; gap: 10px 18px; padding-left: 4px; }
+.utility-setting-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 2px 0 0 4px;
+  padding: 12px;
+  border: 1px solid rgba(30, 64, 175, .2);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, .74);
+}
+.utility-setting-card h3 { font-size: 12px; }
+.utility-setting-card .section-copy { margin: 3px 0 0; }
+.bridge-settings-status { display: grid; gap: 8px; padding: 4px 4px 0; }
+.bridge-settings-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-left: 4px; }
 
 @media (max-width: 1120px) {
   .hero { align-items: flex-start; flex-direction: column; }

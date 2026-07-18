@@ -1,10 +1,11 @@
 # Phase 2 — shared local Vault bridge
 
 Vault Classifier, Mac Vault, and the Vault extension share one authenticated
-localhost WebSocket hub at `ws://127.0.0.1:8787`. Mac Vault is the only server
-and owns that port; Vault Classifier and the extension are paired clients.
-There is no Native Messaging host, second loopback server, or browser-host
-registration step.
+localhost WebSocket hub at `ws://127.0.0.1:8787`. Mac Vault or Vault
+Classifier can host that one server, but never simultaneously; the extension
+joins whichever desktop app holds the port with the same pairing key. There is
+no Native Messaging host, second loopback server, or browser-host registration
+step.
 
 ## Local path
 
@@ -21,11 +22,14 @@ registration step.
    setting is `true`. When active, it sends a bounded entry payload through its
    existing shared Vault connection. A missing connection, missing classifier
    peer, malformed response, or timeout leaves the card/page visible.
-3. In Vault Classifier's **Browser bridge** workspace, select **Connect to Mac
-   Vault** and enter the same 64-character pairing key shown in Mac Vault. The
-   key is held only in this Mac's Keychain; it never enters the WebView,
-   classifier state file, diagnostic output, browser request, or response.
-4. Mac Vault accepts one paired `classifier` peer and routes only bounded
+3. In Vault Classifier **Settings**, open **Browser bridge** and enter the
+   same 64-character pairing key shown in Mac Vault. You can connect to the
+   running Mac Vault host or choose **Host server here** when Classifier should
+   own the same port. The key is held only in this Mac's Keychain; it never
+   enters the WebView, classifier state file, diagnostic output, browser
+   request, or response.
+4. When Mac Vault hosts, it accepts one paired `classifier` peer and routes
+   only bounded
    `bridge-info`, `collection-info`, `collect`, `classify`, and `correct`
    requests from browser peers to that peer. It owns request correlation,
    response destinations, a 32-request global route cap, and a six-second
@@ -40,10 +44,10 @@ registration step.
 
 ## Setup
 
-1. Open Mac Vault and turn on its existing web-app bridge server.
-2. Connect the Vault extension to Mac Vault with the pairing key.
-3. Open Vault Classifier, choose **Browser bridge**, and connect it with that
-   same pairing key.
+1. Open the shared server from either Mac Vault or Vault Classifier Settings.
+2. Connect the Vault extension with that host's pairing key.
+3. In Vault Classifier Settings, open **Browser bridge** and connect with that
+   same key when Mac Vault is hosting; otherwise choose **Host server here**.
 4. Reload the extension, then enable **Vault Classifier bridge** in Settings
    and choose an available named policy.
 

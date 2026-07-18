@@ -133,6 +133,7 @@ final class VaultClassifierViewModel: ObservableObject {
 
     private var coordinator: LocalClassifierCoordinator?
     private var sharedHubClient: SharedHubClient?
+    private var sharedHubServer: SharedHubServer?
     private var latestLedgerID: UUID?
     /// Credentials saved without Keychain are intentionally process-scoped.
     /// They support a one-session explicit provider run without writing a raw
@@ -163,6 +164,14 @@ final class VaultClassifierViewModel: ObservableObject {
                 self?.handleSharedHubRequest(request) ?? .failure("classifier-unavailable")
             }
             sharedHubClient.onStateChange = { [weak self] in
+                self?.onWebStateChange?()
+            }
+            let sharedHubServer = SharedHubServer()
+            self.sharedHubServer = sharedHubServer
+            sharedHubServer.onRequest = { [weak self] request in
+                self?.handleSharedHubRequest(request) ?? .failure("classifier-unavailable")
+            }
+            sharedHubServer.onStateChange = { [weak self] in
                 self?.onWebStateChange?()
             }
             sharedHubClient.connectUsingStoredKey()
@@ -213,11 +222,13 @@ final class VaultClassifierViewModel: ObservableObject {
         return .success(object)
     }
 
-    func presentSharedHubPairingEntry() {
+    func presentSharedHubPairingEntry(forHosting: Bool = false) {
         let alert = NSAlert()
-        alert.messageText = "Connect to Mac Vault"
-        alert.informativeText = "Enter the 64-character pairing key shown by Mac Vault. It is stored only in this Mac's Keychain and joins the existing local Vault bridge at ws://127.0.0.1:8787."
-        alert.addButton(withTitle: "Connect")
+        alert.messageText = forHosting ? "Open shared Vault server" : "Connect to Mac Vault"
+        alert.informativeText = forHosting
+            ? "Enter the same 64-character pairing key used by the Vault extension. Vault Classifier will host the shared local bridge at ws://127.0.0.1:8787."
+            : "Enter the 64-character pairing key shown by Mac Vault. It is stored only in this Mac's Keychain and joins the existing local Vault bridge at ws://127.0.0.1:8787."
+        alert.addButton(withTitle: forHosting ? "Open server" : "Connect")
         alert.addButton(withTitle: "Cancel")
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
         field.placeholderString = "Mac Vault pairing key"
@@ -225,15 +236,44 @@ final class VaultClassifierViewModel: ObservableObject {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         do {
             try SharedHubPairingKeyStore.save(field.stringValue)
-            sharedHubClient?.connectUsingStoredKey()
+            if forHosting {
+                hostSharedHub()
+            } else {
+                sharedHubClient?.connectUsingStoredKey()
+            }
             issue = nil
         } catch {
             issue = error.localizedDescription
         }
     }
 
+    func connectSharedHub() {
+        if SharedHubPairingKeyStore.load() != nil {
+            sharedHubServer?.stop()
+            sharedHubClient?.connectUsingStoredKey()
+        } else {
+            presentSharedHubPairingEntry()
+        }
+    }
+
+    func hostSharedHub() {
+        guard let key = SharedHubPairingKeyStore.load() else {
+            presentSharedHubPairingEntry(forHosting: true)
+            return
+        }
+        sharedHubClient?.disconnect()
+        sharedHubServer?.start(pairingKey: key)
+        issue = nil
+    }
+
+    func stopSharedHubServer() {
+        sharedHubServer?.stop()
+        issue = nil
+    }
+
     func disconnectSharedHub() {
         do {
+            sharedHubServer?.stop()
             try SharedHubPairingKeyStore.remove()
             sharedHubClient?.disconnect()
             issue = nil
@@ -1856,9 +1896,16 @@ final class VaultClassifierViewModel: ObservableObject {
         ]
         let sharedHub: [String: Any] = [
             "address": SharedBrowserBridgeProtocol.address,
-            "state": sharedHubClient?.state.rawValue ?? "off",
-            "error": sharedHubClient?.error ?? "",
+            "state": sharedHubServer?.isHosting == true
+                ? (sharedHubServer?.state.rawValue ?? "off")
+                : (sharedHubClient?.state.rawValue ?? "off"),
+            "error": sharedHubServer?.isHosting == true
+                ? (sharedHubServer?.error ?? "")
+                : (sharedHubClient?.error ?? ""),
             "hasPairingKey": sharedHubClient?.hasStoredPairingKey ?? false,
+            "isHosting": sharedHubServer?.isHosting ?? false,
+            "serverState": sharedHubServer?.state.rawValue ?? "off",
+            "serverError": sharedHubServer?.error ?? "",
         ]
         return [
             "workspace": workspace.rawValue,
@@ -1891,7 +1938,11 @@ final class VaultClassifierViewModel: ObservableObject {
                     refreshLocalState()
                 }
             case "connectSharedHub":
-                presentSharedHubPairingEntry()
+                connectSharedHub()
+            case "hostSharedHub":
+                hostSharedHub()
+            case "stopSharedHubServer":
+                stopSharedHubServer()
             case "disconnectSharedHub":
                 disconnectSharedHub()
             case "createTree":

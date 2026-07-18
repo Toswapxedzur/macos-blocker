@@ -22,5 +22,9 @@ let package = Package(
             name: "VaultClassifierCoreTests",
             dependencies: ["VaultClassifierCore"]
         ),
+        .testTarget(
+            name: "VaultClassifierAppTests",
+            dependencies: ["VaultClassifierApp", "VaultClassifierCore"]
+        ),
     ]
 )
