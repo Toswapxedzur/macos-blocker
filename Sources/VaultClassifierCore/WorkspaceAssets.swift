@@ -302,12 +302,136 @@ public struct TokenUsageRecord: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+/// A local credential profile describes how the user intends to use a provider.
+/// It deliberately carries configuration only: the secret itself is stored in
+/// Keychain and never becomes part of the workspace catalog or a web snapshot.
+public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
+    case chatGPT
+    case gemini
+    case deepSeek
+    case youtubeData
+    case claude
+    case custom
+
+    public var supportsLLMConfiguration: Bool { self != .youtubeData }
+
+    public var defaultProfileName: String {
+        switch self {
+        case .chatGPT: return "ChatGPT key"
+        case .gemini: return "Gemini key"
+        case .deepSeek: return "DeepSeek key"
+        case .youtubeData: return "YouTube Data API key"
+        case .claude: return "Claude key"
+        case .custom: return "Custom API key"
+        }
+    }
+
+    public var defaultModelIdentifier: String {
+        switch self {
+        case .chatGPT: return "gpt-4.1-mini"
+        case .gemini: return "gemini-3.1-flash-lite"
+        case .deepSeek: return "deepseek-chat"
+        case .claude: return "claude-sonnet-4-5"
+        case .youtubeData: return ""
+        case .custom: return "custom-model"
+        }
+    }
+}
+
+public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable {
+    public static let maximumNameLength = 128
+    public static let maximumModelIdentifierLength = 256
+    public static let maximumEndpointLength = 2_048
+    public static let maximumBatchSize = 256
+    public static let maximumTokenLimit = 1_000_000
+
+    public var id: String
+    public var name: String
+    public var type: APIKeyProviderType
+    /// This is relevant only for LLM provider types. A YouTube Data API profile
+    /// remains a credential-only external-tool entry.
+    public var modelIdentifier: String
+    public var batchSize: Int
+    public var maximumTokens: Int
+    public var youtubeProviderID: String?
+    public var searchEnabled: Bool
+    /// An explicit endpoint is reserved for the Custom entry. It is stored as
+    /// configuration only; this source slice performs no network dispatch.
+    public var customEndpoint: String?
+    public var updatedAtMilliseconds: Int64
+
+    public init(
+        id: String = UUID().uuidString,
+        name: String? = nil,
+        type: APIKeyProviderType,
+        modelIdentifier: String? = nil,
+        batchSize: Int = 1,
+        maximumTokens: Int = 1_024,
+        youtubeProviderID: String? = nil,
+        searchEnabled: Bool = false,
+        customEndpoint: String? = nil,
+        updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
+    ) {
+        self.id = id
+        self.name = name ?? type.defaultProfileName
+        self.type = type
+        self.modelIdentifier = modelIdentifier ?? type.defaultModelIdentifier
+        self.batchSize = batchSize
+        self.maximumTokens = maximumTokens
+        self.youtubeProviderID = youtubeProviderID
+        self.searchEnabled = searchEnabled
+        self.customEndpoint = customEndpoint
+        self.updatedAtMilliseconds = updatedAtMilliseconds
+    }
+
+    public func validate() throws {
+        let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty, id.count <= 128,
+              !cleanedName.isEmpty, cleanedName.count <= Self.maximumNameLength,
+              batchSize > 0, batchSize <= Self.maximumBatchSize,
+              maximumTokens > 0, maximumTokens <= Self.maximumTokenLimit else {
+            throw APIKeyProviderProfileError.invalidConfiguration
+        }
+
+        if type.supportsLLMConfiguration {
+            let cleanedModel = modelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanedModel.isEmpty, cleanedModel.count <= Self.maximumModelIdentifierLength else {
+                throw APIKeyProviderProfileError.invalidConfiguration
+            }
+        } else if !modelIdentifier.isEmpty || youtubeProviderID != nil || searchEnabled || customEndpoint != nil {
+            throw APIKeyProviderProfileError.invalidConfiguration
+        }
+
+        let normalizedEndpoint = customEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if type == .custom, let normalizedEndpoint {
+            guard normalizedEndpoint.count <= Self.maximumEndpointLength,
+                  let components = URLComponents(string: normalizedEndpoint),
+                  components.scheme != nil,
+                  components.host != nil else {
+                throw APIKeyProviderProfileError.invalidConfiguration
+            }
+        } else if normalizedEndpoint != nil {
+            throw APIKeyProviderProfileError.invalidConfiguration
+        }
+    }
+}
+
+public enum APIKeyProviderProfileError: Error, Equatable, LocalizedError, Sendable {
+    case invalidConfiguration
+
+    public var errorDescription: String? {
+        "The provider profile configuration is invalid."
+    }
+}
+
 public enum WorkspaceCatalogError: Error, Equatable, LocalizedError, Sendable {
     case duplicateIdentifier(String)
     case missingTree(String)
     case missingDataset(String)
     case missingModel(String)
     case incompatibleActiveModel(String)
+    case invalidProviderProfile(String)
+    case missingYouTubeProvider(String)
 
     public var errorDescription: String? {
         switch self {
@@ -316,6 +440,8 @@ public enum WorkspaceCatalogError: Error, Equatable, LocalizedError, Sendable {
         case .missingDataset(let value): return "The platform binding references a missing classification dataset: \(value)."
         case .missingModel(let value): return "The platform binding references a missing local model: \(value)."
         case .incompatibleActiveModel(let value): return "The active local model is not compatible with the platform tree and dataset: \(value)."
+        case .invalidProviderProfile(let value): return "The API provider profile is invalid: \(value)."
+        case .missingYouTubeProvider(let value): return "The LLM profile references a missing YouTube Data API profile: \(value)."
         }
     }
 }
@@ -326,13 +452,17 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     public var models: [LocalModelAsset]
     public var bindings: [PlatformBinding]
     public var tokenUsage: [TokenUsageRecord]
+    /// Provider profile metadata remains local. Its credentials are stored by
+    /// `ProviderCredentialStore` in Keychain, never in this Codable catalog.
+    public var providerProfiles: [APIKeyProviderProfile]
 
-    public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], models: [LocalModelAsset] = [], bindings: [PlatformBinding] = [], tokenUsage: [TokenUsageRecord] = []) {
+    public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], models: [LocalModelAsset] = [], bindings: [PlatformBinding] = [], tokenUsage: [TokenUsageRecord] = [], providerProfiles: [APIKeyProviderProfile] = []) {
         self.trees = trees
         self.datasets = datasets
         self.models = models
         self.bindings = bindings
         self.tokenUsage = tokenUsage
+        self.providerProfiles = providerProfiles
     }
 
     public static func now() -> Int64 { Int64(Date().timeIntervalSince1970 * 1_000) }
@@ -347,7 +477,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     }
 
     public func validate() throws {
-        try unique(trees.map(\.id) + datasets.map(\.id) + models.map(\.id) + bindings.map(\.id))
+        try unique(trees.map(\.id) + datasets.map(\.id) + models.map(\.id) + bindings.map(\.id) + providerProfiles.map(\.id))
         for binding in bindings {
             guard let tree = trees.first(where: { $0.id == binding.treeID }) else { throw WorkspaceCatalogError.missingTree(binding.treeID) }
             guard let dataset = datasets.first(where: { $0.id == binding.datasetID }) else { throw WorkspaceCatalogError.missingDataset(binding.datasetID) }
@@ -357,6 +487,32 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                 throw WorkspaceCatalogError.incompatibleActiveModel(activeModelID)
             }
         }
+        for profile in providerProfiles {
+            do {
+                try profile.validate()
+            } catch {
+                throw WorkspaceCatalogError.invalidProviderProfile(profile.id)
+            }
+            guard let youtubeProviderID = profile.youtubeProviderID else { continue }
+            guard profile.type.supportsLLMConfiguration,
+                  providerProfiles.contains(where: { $0.id == youtubeProviderID && $0.type == .youtubeData }) else {
+                throw WorkspaceCatalogError.missingYouTubeProvider(youtubeProviderID)
+            }
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case trees, datasets, models, bindings, tokenUsage, providerProfiles
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        trees = try container.decodeIfPresent([TagTreeAsset].self, forKey: .trees) ?? []
+        datasets = try container.decodeIfPresent([ClassificationDataset].self, forKey: .datasets) ?? []
+        models = try container.decodeIfPresent([LocalModelAsset].self, forKey: .models) ?? []
+        bindings = try container.decodeIfPresent([PlatformBinding].self, forKey: .bindings) ?? []
+        tokenUsage = try container.decodeIfPresent([TokenUsageRecord].self, forKey: .tokenUsage) ?? []
+        providerProfiles = try container.decodeIfPresent([APIKeyProviderProfile].self, forKey: .providerProfiles) ?? []
     }
 
     private func unique(_ identifiers: [String]) throws {
