@@ -433,6 +433,20 @@ final class VaultClassifierViewModel: ObservableObject {
         } catch { issue = error.localizedDescription }
     }
 
+    func confirmProviderProfileDeletion(profileID: String) {
+        guard localState?.workspaceCatalog.providerProfiles.contains(where: { $0.id == profileID }) == true else {
+            issue = WebBridgeInputError.invalidChoice("provider profile").localizedDescription
+            return
+        }
+        presentNativeConfirmation(
+            title: "Delete provider profile?",
+            message: "This removes the local setup and its Keychain credential. It cannot be undone.",
+            confirmTitle: "Delete profile"
+        ) { [weak self] in
+            self?.deleteProviderProfile(profileID: profileID)
+        }
+    }
+
     private func nativeCredentialLabel(_ field: ProviderCredentialField) -> String {
         switch field {
         case .apiKey: return "API key"
@@ -508,6 +522,46 @@ final class VaultClassifierViewModel: ObservableObject {
             refreshLocalState()
             issue = nil
         } catch { issue = error.localizedDescription }
+    }
+
+    func confirmLocalModelDeletion(modelID: String) {
+        guard localState?.workspaceCatalog.models.contains(where: { $0.id == modelID }) == true else {
+            issue = WebBridgeInputError.invalidChoice("local model").localizedDescription
+            return
+        }
+        presentNativeConfirmation(
+            title: "Delete local model?",
+            message: "This removes the local model and clears any active platform binding. It cannot be undone.",
+            confirmTitle: "Delete model"
+        ) { [weak self] in
+            self?.deleteLocalModel(modelID: modelID)
+        }
+    }
+
+    private func presentNativeConfirmation(
+        title: String,
+        message: String,
+        confirmTitle: String,
+        action: @escaping () -> Void
+    ) {
+        guard let window = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible }) else {
+            issue = WebBridgeInputError.invalidChoice("application window").localizedDescription
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: confirmTitle)
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.beginSheetModal(for: window) { [weak self] response in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard response == .alertFirstButtonReturn else { return }
+                action()
+                self.onWebStateChange?()
+            }
+        }
     }
 
     func configureLocalModel(modelID: String, treeID: String, platformID: String, baseEmbeddingID: String?) {
@@ -1527,12 +1581,12 @@ final class VaultClassifierViewModel: ObservableObject {
                 presentProviderCredentialEntry(profileID: try webString(data, key: "profileID", limit: 128))
             case "removeProviderCredential":
                 removeProviderCredential(profileID: try webString(data, key: "profileID", limit: 128))
-            case "deleteProviderProfile":
-                deleteProviderProfile(profileID: try webString(data, key: "profileID", limit: 128))
+            case "confirmDeleteProviderProfile":
+                confirmProviderProfileDeletion(profileID: try webString(data, key: "profileID", limit: 128))
             case "renameLocalModel":
                 renameLocalModel(modelID: try webString(data, key: "modelID", limit: 256), name: try webString(data, key: "name", limit: 128))
-            case "deleteLocalModel":
-                deleteLocalModel(modelID: try webString(data, key: "modelID", limit: 256))
+            case "confirmDeleteLocalModel":
+                confirmLocalModelDeletion(modelID: try webString(data, key: "modelID", limit: 256))
             case "configureLocalModel":
                 configureLocalModel(
                     modelID: try webString(data, key: "modelID", limit: 256),
