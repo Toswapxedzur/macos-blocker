@@ -32,7 +32,7 @@
   "connection.copy": "Varsayılan ve Özel grupları bir tarayıcı uzantısı ile Mac Vault veya Windows Vault arasında bağlayın.",
   "connection.serverToggle": "Yerel sunucuyu (hub) çalıştır",
   "connection.serverToggleHelp": "Bu bilgisayardaki tarayıcı uzantıları, eşleştirme anahtarını kopyaladıktan sonra bağlanabilir.",
-  "connection.clientHelp": "Bu tarayıcıyı bağlamak için Mac Vault veya Windows Vault'ta gösterilen eşleştirme anahtarını kullanın.",
+  "connection.clientHelp": "Paylaşılan Vault sunucusuna bağlanın. Şu anda bağlı tüm Vault uygulamalarını gösterir.",
   "connection.addressLabel": "Adres",
   "connection.connect": "Bağlan",
   "connection.disconnect": "Bağlantıyı kes",
@@ -563,5 +563,5 @@
   "connection.pairingKeyPrompt": "Mac Vault veya Windows Vault'ta gösterilen 64 karakterlik eşleştirme anahtarını yapıştırın.",
   "connection.errorPairingKey": "Doğru 64 karakterlik eşleştirme anahtarını girin.",
   "connection.errorProtocolMismatch": "Uygulama ve uzantı uyumsuz köprü protokolü sürümleri kullanıyor.",
-  "connection.errorSecureConnection": "Yerel Vault uygulamasıyla güvenli bağlantı kurulamadı."
+  "connection.errorSecureConnection": "Paylaşılan Vault sunucusuna bağlantı kurulamadı."
 }

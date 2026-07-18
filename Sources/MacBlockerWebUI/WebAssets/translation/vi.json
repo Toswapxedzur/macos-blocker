@@ -32,7 +32,7 @@
   "connection.copy": "Liên kết các nhóm Mặc định và Tùy chỉnh giữa tiện ích trình duyệt với Mac Vault hoặc Windows Vault.",
   "connection.serverToggle": "Chạy máy chủ cục bộ (trung tâm)",
   "connection.serverToggleHelp": "Các tiện ích trình duyệt trên máy tính này có thể kết nối sau khi bạn sao chép khóa ghép nối.",
-  "connection.clientHelp": "Dùng khóa ghép nối hiển thị trong Mac Vault hoặc Windows Vault để kết nối trình duyệt này.",
+  "connection.clientHelp": "Kết nối với máy chủ Vault dùng chung. Máy chủ hiển thị mọi ứng dụng Vault đang kết nối.",
   "connection.addressLabel": "Địa chỉ",
   "connection.connect": "Kết nối",
   "connection.disconnect": "Ngắt kết nối",
@@ -563,5 +563,5 @@
   "connection.pairingKeyPrompt": "Dán khóa ghép nối 64 ký tự hiển thị trong Mac Vault hoặc Windows Vault.",
   "connection.errorPairingKey": "Nhập đúng khóa ghép nối gồm 64 ký tự.",
   "connection.errorProtocolMismatch": "Ứng dụng và tiện ích đang dùng các phiên bản giao thức cầu nối không tương thích.",
-  "connection.errorSecureConnection": "Không thể thiết lập kết nối an toàn với ứng dụng Vault cục bộ."
+  "connection.errorSecureConnection": "Không thể kết nối với máy chủ Vault dùng chung."
 }

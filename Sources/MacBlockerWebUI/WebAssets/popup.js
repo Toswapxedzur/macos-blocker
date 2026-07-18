@@ -181,20 +181,12 @@ const cbDialog = (function () {
 
 // Extension-wide preferences. Keep these defaults in sync with the
 // placeholder text in popup.html's Settings modal.
-// Web-app bridge (connection) defaults. The macOS app is the only endpoint
-// that can host the local hub (a browser extension cannot listen on a socket),
-// so `server*` fields are honored only on the native host and `client*` fields
-// only in the browser extensions. Both are persisted in globalSettings so the
-// transport layer (background service worker / native server) can read them.
+// Both the native app and browser extension connect out to the shared broker.
 const CONNECTION_PROTOCOL_VERSION = window.CBBridgeProtocol.PROTOCOL_VERSION;
-const CONNECTION_DEFAULT_PORT = 8787;
-const CONNECTION_DEFAULT_ADDRESS = `ws://127.0.0.1:${CONNECTION_DEFAULT_PORT}`;
+const CONNECTION_DEFAULT_ADDRESS = "wss://customblocker.com/api/vault-bridge";
 const DEFAULT_CONNECTION_SETTINGS = {
-  // macOS hub
   serverEnabled: false,
-  // browser client
-  clientEnabled: false,
-  pairingKey: ""
+  clientEnabled: false
 };
 
 const DEFAULT_GLOBAL_SETTINGS = {
@@ -208,9 +200,8 @@ const DEFAULT_GLOBAL_SETTINGS = {
 };
 const AUTOSAVE_DEBOUNCE_MAX_MS = 5_000;
 
-// True when running inside the macOS app's WKWebView (the native chrome shim),
-// false in a real browser extension. Used to decide whether this endpoint is
-// the connection HUB (macOS, hosts the server) or a CLIENT (browser).
+// Both endpoint types connect out; this remains only for macOS app-rule
+// ownership when displaying shared group state.
 function isNativeHost() {
   try {
     return !!(window.chrome && window.chrome.__cbShim);
@@ -236,7 +227,7 @@ function detectProgramId() {
 }
 
 const LOCAL_PROGRAM_ID = detectProgramId();
-const IS_CONNECTION_HUB = isNativeHost();
+const IS_NATIVE_DESKTOP = isNativeHost();
 
 const DEFAULT_ALLOWED_MINUTES = 15;
 const DEFAULT_RESET_INTERVAL_HOURS = 24;
@@ -403,13 +394,11 @@ const settingsStatus = document.getElementById("settingsStatus");
 const connectionSection = document.getElementById("connectionSection");
 const connectionServerControls = document.getElementById("connectionServerControls");
 const connectionClientControls = document.getElementById("connectionClientControls");
-const connectionServerToggle = document.getElementById("connectionServerToggle");
 const connectionConnectButton = document.getElementById("connectionConnectButton");
 const connectionDisconnectButton = document.getElementById("connectionDisconnectButton");
 const connectionStatusDot = document.getElementById("connectionStatusDot");
 const connectionStatusText = document.getElementById("connectionStatusText");
 const connectionAddressReadout = document.getElementById("connectionAddressReadout");
-const connectionPairingKeyReadout = document.getElementById("connectionPairingKeyReadout");
 const connectionPeerList = document.getElementById("connectionPeerList");
 const connectionGroupSection = document.getElementById("connectionGroupSection");
 const connectionGroupHint = document.getElementById("connectionGroupHint");
@@ -851,8 +840,6 @@ function connectionStatusLabel(status) {
     case "error":
       if (!status.error) return t("connection.statusError");
       return t("connection.statusError") + ": " + ({
-        "pairing-key-required": t("connection.errorPairingKey"),
-        "pairing-key-rejected": t("connection.errorPairingKey"),
         "protocol-mismatch": t("connection.errorProtocolMismatch"),
         "handshake-timeout": t("connection.errorSecureConnection"),
         "socket-error": t("connection.errorSecureConnection")
@@ -869,21 +856,11 @@ function renderConnectionSettings() {
   const conn = getConnectionSettings();
   const status = state.connectionStatus || {};
 
-  if (connectionServerControls) {
-    connectionServerControls.classList.toggle("hidden", !IS_CONNECTION_HUB);
-  }
-  if (connectionClientControls) {
-    connectionClientControls.classList.toggle("hidden", IS_CONNECTION_HUB);
-  }
-
-  if (IS_CONNECTION_HUB) {
-    if (connectionServerToggle) connectionServerToggle.checked = Boolean(conn.serverEnabled);
-  } else {
-    const connected = status.state === "connected" || status.state === "connecting";
-    if (connectionConnectButton) connectionConnectButton.classList.toggle("hidden", connected);
-    if (connectionDisconnectButton)
-      connectionDisconnectButton.classList.toggle("hidden", !connected);
-  }
+  if (connectionServerControls) connectionServerControls.classList.add("hidden");
+  if (connectionClientControls) connectionClientControls.classList.remove("hidden");
+  const connected = status.state === "connected" || status.state === "connecting" || status.state === "running";
+  if (connectionConnectButton) connectionConnectButton.classList.toggle("hidden", connected);
+  if (connectionDisconnectButton) connectionDisconnectButton.classList.toggle("hidden", !connected);
 
   const activeState = status.state || "off";
   if (connectionStatusDot) {
@@ -894,9 +871,6 @@ function renderConnectionSettings() {
   }
   if (connectionAddressReadout) {
     connectionAddressReadout.textContent = status.address || CONNECTION_DEFAULT_ADDRESS;
-  }
-  if (connectionPairingKeyReadout) {
-    connectionPairingKeyReadout.textContent = status.pairingKey || "—";
   }
 
   if (connectionPeerList) {
@@ -934,7 +908,6 @@ function applyConnectionStatus(raw) {
     address: typeof incoming.address === "string" ? incoming.address : "",
     peers: Array.isArray(incoming.peers) ? incoming.peers : [],
     error: typeof incoming.error === "string" ? incoming.error : "",
-    pairingKey: typeof incoming.pairingKey === "string" ? incoming.pairingKey : "",
     hubProgram: window.CBBridgeProtocol.hubProgramFromStatus(incoming)
   };
   if (state.isSettingsOpen) renderConnectionSettings();
@@ -1044,7 +1017,7 @@ function bridgeConnectablePrograms() {
   for (const peer of peers) {
     if (peer && peer.connected !== false && peer.program) programs.add(peer.program);
   }
-  if (!IS_CONNECTION_HUB) {
+  if (!IS_NATIVE_DESKTOP) {
     const hubProgram = window.CBBridgeProtocol.hubProgramFromStatus(status);
     if (hubProgram) programs.add(hubProgram);
   }
@@ -1390,7 +1363,7 @@ const SYNC_SCALAR_FIELDS = [
 // This endpoint owns (can edit + contributes) one blocked-list type: the Mac
 // owns apps, browsers own domains. The other type is a read-only mirror.
 function bridgeOwnsApps() {
-  return IS_CONNECTION_HUB;
+  return IS_NATIVE_DESKTOP;
 }
 
 function buildSyncContribution(group) {
@@ -2271,9 +2244,8 @@ function sanitizeGlobalSettings(raw) {
 function sanitizeConnectionSettings(raw) {
   const src = raw && typeof raw === "object" ? raw : {};
   return {
-    serverEnabled: src.serverEnabled === true,
-    clientEnabled: src.clientEnabled === true,
-    pairingKey: window.CBBridgeProtocol.normalizePairingKey(src.pairingKey)
+    serverEnabled: false,
+    clientEnabled: src.clientEnabled === true
   };
 }
 
@@ -7340,37 +7312,11 @@ if (settingsModal) {
   }
 }
 
-if (connectionServerToggle) {
-  connectionServerToggle.addEventListener("change", () => {
-    const enabled = connectionServerToggle.checked;
-    updateConnectionSettings({ serverEnabled: enabled })
-      .then(() => {
-        try {
-          chrome.runtime.sendMessage({
-            type: enabled ? "connection-server-start" : "connection-server-stop"
-          });
-        } catch (_) {}
-      })
-      .catch(() => {});
-  });
-}
-
 if (connectionConnectButton) {
   connectionConnectButton.addEventListener("click", async () => {
-    const current = getConnectionSettings();
-    const entered = await uiDialog.prompt(
-      t("connection.pairingKeyPrompt"), current.pairingKey || "",
-      { confirmText: t("connection.connect"), cancelText: t("manual.close") }
-    );
-    if (entered === null) return;
-    const pairingKey = window.CBBridgeProtocol.normalizePairingKey(entered);
-    if (!pairingKey) {
-      applyConnectionStatus({ ...state.connectionStatus, state: "error", error: "pairing-key-required" });
-      return;
-    }
     try {
-      await updateConnectionSettings({ clientEnabled: true, pairingKey });
-      chrome.runtime.sendMessage({ type: "connection-connect", pairingKey });
+      await updateConnectionSettings({ clientEnabled: true });
+      chrome.runtime.sendMessage({ type: "connection-connect" });
       applyConnectionStatus({ ...state.connectionStatus, state: "connecting", error: "" });
     } catch (_) {}
   });

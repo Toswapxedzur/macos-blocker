@@ -32,7 +32,7 @@
   "connection.copy": "เชื่อมกลุ่มเริ่มต้นและกลุ่มกำหนดเองระหว่างส่วนขยายเบราว์เซอร์กับ Mac Vault หรือ Windows Vault",
   "connection.serverToggle": "เรียกใช้เซิร์ฟเวอร์ภายในเครื่อง (ฮับ)",
   "connection.serverToggleHelp": "ส่วนขยายเบราว์เซอร์ในคอมพิวเตอร์นี้จะเชื่อมต่อได้หลังจากคุณคัดลอกคีย์จับคู่",
-  "connection.clientHelp": "ใช้คีย์จับคู่ที่แสดงใน Mac Vault หรือ Windows Vault เพื่อเชื่อมต่อเบราว์เซอร์นี้",
+  "connection.clientHelp": "เชื่อมต่อกับเซิร์ฟเวอร์ Vault ที่ใช้ร่วมกัน ซึ่งจะแสดงแอป Vault ที่เชื่อมต่ออยู่ทั้งหมด",
   "connection.addressLabel": "ที่อยู่",
   "connection.connect": "เชื่อมต่อ",
   "connection.disconnect": "ตัดการเชื่อมต่อ",
@@ -563,5 +563,5 @@
   "connection.pairingKeyPrompt": "วางคีย์จับคู่ 64 อักขระที่แสดงใน Mac Vault หรือ Windows Vault",
   "connection.errorPairingKey": "ป้อนคีย์จับคู่ 64 อักขระที่ถูกต้อง",
   "connection.errorProtocolMismatch": "แอปและส่วนขยายใช้เวอร์ชันโปรโตคอลบริดจ์ที่ไม่เข้ากัน",
-  "connection.errorSecureConnection": "ไม่สามารถสร้างการเชื่อมต่อที่ปลอดภัยกับแอป Vault ในเครื่องได้"
+  "connection.errorSecureConnection": "ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ Vault ที่ใช้ร่วมกันได้"
 }

@@ -32,7 +32,7 @@
   "connection.copy": "Koppel standaard- en aangepaste groepen tussen een browserextensie en Mac Vault of Windows Vault.",
   "connection.serverToggle": "Voer lokale server (hub) uit",
   "connection.serverToggleHelp": "Browserextensies op deze computer kunnen verbinding maken nadat je de koppelingssleutel hebt gekopieerd.",
-  "connection.clientHelp": "Gebruik de koppelingssleutel uit Mac Vault of Windows Vault om deze browser te verbinden.",
+  "connection.clientHelp": "Maak verbinding met de gedeelde Vault-server. Deze toont alle momenteel verbonden Vault-apps.",
   "connection.addressLabel": "Adres",
   "connection.connect": "Verbinden",
   "connection.disconnect": "Verbreek de verbinding",
@@ -563,5 +563,5 @@
   "connection.pairingKeyPrompt": "Plak de koppelingssleutel van 64 tekens die in Mac Vault of Windows Vault staat.",
   "connection.errorPairingKey": "Voer de juiste koppelingssleutel van 64 tekens in.",
   "connection.errorProtocolMismatch": "De app en extensie gebruiken incompatibele versies van het bridgeprotocol.",
-  "connection.errorSecureConnection": "Er kon geen beveiligde verbinding met de lokale Vault-app worden gemaakt."
+  "connection.errorSecureConnection": "Er kon geen verbinding met de gedeelde Vault-server worden gemaakt."
 }

@@ -32,7 +32,7 @@
   "connection.copy": "ব্রাউজার এক্সটেনশন এবং Mac Vault বা Windows Vault-এর মধ্যে Default ও Custom গ্রুপ লিঙ্ক করুন।",
   "connection.serverToggle": "স্থানীয় সার্ভার চালান (হাব)",
   "connection.serverToggleHelp": "পেয়ারিং কী কপি করার পর এই কম্পিউটারের ব্রাউজার এক্সটেনশনগুলি সংযোগ করতে পারবে।",
-  "connection.clientHelp": "এই ব্রাউজারটি সংযুক্ত করতে Mac Vault বা Windows Vault-এ দেখানো পেয়ারিং কী ব্যবহার করুন।",
+  "connection.clientHelp": "শেয়ার করা Vault সার্ভারে সংযোগ করুন। এটি বর্তমানে সংযুক্ত সব Vault অ্যাপ দেখায়।",
   "connection.addressLabel": "ঠিকানা",
   "connection.connect": "সংযোগ করুন",
   "connection.disconnect": "সংযোগ বিচ্ছিন্ন করুন",
@@ -563,5 +563,5 @@
   "connection.pairingKeyPrompt": "Mac Vault বা Windows Vault-এ দেখানো ৬৪-অক্ষরের পেয়ারিং কী পেস্ট করুন।",
   "connection.errorPairingKey": "সঠিক ৬৪-অক্ষরের পেয়ারিং কী লিখুন।",
   "connection.errorProtocolMismatch": "অ্যাপ ও এক্সটেনশনটি ব্রিজ প্রোটোকলের অসামঞ্জস্যপূর্ণ সংস্করণ ব্যবহার করছে।",
-  "connection.errorSecureConnection": "স্থানীয় Vault অ্যাপের সঙ্গে নিরাপদ সংযোগ স্থাপন করা যায়নি।"
+  "connection.errorSecureConnection": "শেয়ার করা Vault সার্ভারের সঙ্গে সংযোগ স্থাপন করা যায়নি।"
 }

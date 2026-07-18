@@ -32,7 +32,7 @@
   "connection.copy": "Vincula grupos predeterminados y personalizados entre una extensión del navegador y Mac Vault o Windows Vault.",
   "connection.serverToggle": "Ejecutar servidor local (hub)",
   "connection.serverToggleHelp": "Las extensiones del navegador de este equipo pueden conectarse después de copiar la clave de emparejamiento.",
-  "connection.clientHelp": "Usa la clave de emparejamiento que aparece en Mac Vault o Windows Vault para conectar este navegador.",
+  "connection.clientHelp": "Conéctate al servidor Vault compartido. Muestra todas las aplicaciones Vault conectadas actualmente.",
   "connection.addressLabel": "Dirección",
   "connection.connect": "Conectar",
   "connection.disconnect": "Desconectar",
@@ -563,5 +563,5 @@
   "connection.pairingKeyPrompt": "Pega la clave de emparejamiento de 64 caracteres que aparece en Mac Vault o Windows Vault.",
   "connection.errorPairingKey": "Introduce la clave de emparejamiento correcta de 64 caracteres.",
   "connection.errorProtocolMismatch": "La aplicación y la extensión usan versiones incompatibles del protocolo del puente.",
-  "connection.errorSecureConnection": "No se pudo establecer una conexión segura con la aplicación Vault local."
+  "connection.errorSecureConnection": "No se pudo establecer una conexión con el servidor Vault compartido."
 }

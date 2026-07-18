@@ -2,22 +2,16 @@
 import Foundation
 import Network
 
-/// Localhost WebSocket hub for the web-app bridge.
+/// Client for the one ephemeral Vault WebSocket broker.
 ///
-/// The macOS app is the only endpoint that can listen on a socket (a browser
-/// extension cannot), so it hosts this server on a fixed loopback port. Browser
-/// extensions connect out to it and authenticate with a per-install pairing key.
-///
-/// Scope: accept loopback WebSocket connections, track connected peers, route
-/// cluster/group sync messages, and expose a JSON status string for the web
-/// editor (polled each second + on demand).
+/// Mac Vault no longer listens on a loopback port. The public broker retains
+/// only live peer and group-sync state, while this app keeps enforcement local.
 final class ConnectionHub: ObservableObject {
-    static let protocolVersion = 2
+    static let protocolVersion = 3
     static let localProgram = "macapp"
     private static let maxMessageBytes = 1_048_576
     private static let maxClassifierBodyBytes = 88_000
     private static let maxClassifierRequests = 32
-    private static let pairingKeyDefaultsKey = "ConnectionHub.pairingKey.v1"
     private static let remotePrograms: Set<String> = [
         "chrome", "edge", "firefox", "safari", "opera", "browser", "classifier"
     ]
@@ -53,45 +47,21 @@ final class ConnectionHub: ObservableObject {
     private var peers: [ObjectIdentifier: Peer] = [:]
     private var classifierRequests: [String: ClassifierRequest] = [:]
     private var running = false
-    /// Fixed loopback port for the bridge (no longer user-configurable).
-    private let port = 8787
+    private static let brokerAddress = "wss://customblocker.com/api/vault-bridge"
     private var lastError = ""
-    private let pairingKey: String
-
-    private init() {
-        pairingKey = Self.loadOrCreatePairingKey()
-    }
-
-    private static func loadOrCreatePairingKey() -> String {
-        if let existing = UserDefaults.standard.string(forKey: pairingKeyDefaultsKey),
-           existing.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil {
-            return existing
-        }
-        let key = (UUID().uuidString + UUID().uuidString)
-            .replacingOccurrences(of: "-", with: "")
-            .lowercased()
-        UserDefaults.standard.set(key, forKey: pairingKeyDefaultsKey)
-        return key
-    }
-
-    private static func secureEquals(_ lhs: String, _ rhs: String) -> Bool {
-        let a = Array(lhs.utf8)
-        let b = Array(rhs.utf8)
-        guard a.count == b.count else { return false }
-        var difference: UInt8 = 0
-        for index in a.indices { difference |= a[index] ^ b[index] }
-        return difference == 0
-    }
-
-    static func helloRejectionReason(_ obj: [String: Any], pairingKey: String) -> String? {
+    private var brokerPeers: [[String: Any]] = []
+    private var brokerSession: URLSession?
+    private var brokerTask: URLSessionWebSocketTask?
+    private var reconnectWorkItem: DispatchWorkItem?
+    private var pingTimer: DispatchSourceTimer?
+    private var wantsBrokerConnection = false
+    private var lastBridgeAnnouncement: [String: Any]?
+    static func helloRejectionReason(_ obj: [String: Any]) -> String? {
         let version = (obj["v"] as? NSNumber)?.intValue
         guard version == protocolVersion else { return "protocol-mismatch" }
         guard let program = obj["program"] as? String, remotePrograms.contains(program) else {
             return "invalid-program"
         }
-        guard let supplied = obj["pairingKey"] as? String,
-              secureEquals(supplied.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), pairingKey)
-        else { return "pairing-key-rejected" }
         return nil
     }
 
@@ -154,6 +124,10 @@ final class ConnectionHub: ObservableObject {
         let groupName: String
         let groupType: String
         var members: Set<String> = []
+        /// Live peer presence comes from the broker snapshot. It is deliberately
+        /// not inferred from a local listener because Mac Vault is only a
+        /// broker client now.
+        var onlineMembers: Set<String> = []
         /// Per-program local group id: the specific group *instance* that program
         /// linked. Membership is pinned to this id so deleting a group and later
         /// re-creating one with the same name does NOT silently re-join the old
@@ -166,6 +140,8 @@ final class ConnectionHub: ObservableObject {
         // Hub-authoritative shared state.
         var sharedScalars: [String: Any] = [:]
         var sharedTs: Double = 0
+        var sharedSites: [String] = []
+        var sharedApps: [[String: Any]] = []
         /// Shared live usage budget. Members report *increments* (usageDeltaMs)
         /// from their own accrual, never absolutes, so folding this total back
         /// into each member's local counter can never double count. Before any
@@ -206,60 +182,22 @@ final class ConnectionHub: ObservableObject {
     // MARK: Lifecycle
 
     func start() {
-        // Idempotent: a listener already bound is left untouched so we don't
-        // churn (and drop peers) on repeated start calls.
-        lock.lock()
-        let alreadyBound = (listener != nil)
-        lock.unlock()
-        if alreadyBound { return }
-        stop()
-        lock.lock()
-        self.lastError = ""
-        // Restore persisted clusters once so a link survives an app/server
-        // restart (members show offline until they reconnect). Only when empty
-        // so a live registry is never clobbered by a stale snapshot.
-        if clusters.isEmpty { restoreClustersLocked() }
-        lock.unlock()
-
-        let parameters = NWParameters.tcp
-        let wsOptions = NWProtocolWebSocket.Options()
-        wsOptions.autoReplyPing = true
-        parameters.defaultProtocolStack.applicationProtocols.insert(wsOptions, at: 0)
-        parameters.allowLocalEndpointReuse = true
-        // Loopback only — never expose the hub on the LAN.
-        parameters.requiredInterfaceType = .loopback
-
-        guard let nwPort = NWEndpoint.Port(rawValue: UInt16(port)) else {
-            setError("invalid port")
-            return
-        }
-
-        do {
-            let listener = try NWListener(using: parameters, on: nwPort)
-            listener.newConnectionHandler = { [weak self] conn in
-                self?.accept(conn)
-            }
-            listener.stateUpdateHandler = { [weak self] state in
-                switch state {
-                case .ready:
-                    self?.setRunning(true)
-                case .failed(let error):
-                    self?.setError("\(error)")
-                    self?.stop()
-                case .cancelled:
-                    self?.setRunning(false)
-                default:
-                    break
-                }
-            }
-            self.listener = listener
-            listener.start(queue: queue)
-        } catch {
-            setError("\(error)")
-        }
+        guard !wantsBrokerConnection else { return }
+        wantsBrokerConnection = true
+        lastError = ""
+        connectToBroker()
     }
 
     func stop() {
+        wantsBrokerConnection = false
+        reconnectWorkItem?.cancel()
+        reconnectWorkItem = nil
+        pingTimer?.cancel()
+        pingTimer = nil
+        brokerTask?.cancel(with: .goingAway, reason: nil)
+        brokerTask = nil
+        brokerSession?.invalidateAndCancel()
+        brokerSession = nil
         listener?.cancel()
         listener = nil
         lock.lock()
@@ -268,6 +206,118 @@ final class ConnectionHub: ObservableObject {
         running = false
         lock.unlock()
         for conn in conns { conn.cancel() }
+    }
+
+    private func connectToBroker() {
+        guard wantsBrokerConnection, let url = URL(string: Self.brokerAddress) else {
+            setError("invalid-broker-address")
+            return
+        }
+        brokerTask?.cancel(with: .goingAway, reason: nil)
+        let session = URLSession(configuration: .ephemeral)
+        let task = session.webSocketTask(with: url)
+        brokerSession = session
+        brokerTask = task
+        task.resume()
+        sendBroker(["kind": "hello", "v": Self.protocolVersion, "program": Self.localProgram], on: task)
+        receiveBroker(on: task)
+    }
+
+    private func receiveBroker(on task: URLSessionWebSocketTask) {
+        task.receive { [weak self, weak task] result in
+            guard let self, let task, self.brokerTask === task else { return }
+            switch result {
+            case .success(let message):
+                let data: Data
+                switch message {
+                case .string(let text): data = Data(text.utf8)
+                case .data(let value): data = value
+                @unknown default: return
+                }
+                self.handleBrokerFrame(data)
+                if self.brokerTask === task { self.receiveBroker(on: task) }
+            case .failure(let error):
+                self.brokerDisconnected(error.localizedDescription)
+            }
+        }
+    }
+
+    private func handleBrokerFrame(_ data: Data) {
+        guard data.count <= Self.maxMessageBytes,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let kind = object["kind"] as? String else {
+            brokerDisconnected("invalid-message")
+            return
+        }
+        switch kind {
+        case "welcome":
+            guard (object["v"] as? NSNumber)?.intValue == Self.protocolVersion,
+                  object["hubProgram"] as? String == "vault-broker" else {
+                brokerDisconnected("protocol-mismatch", retry: false)
+                return
+            }
+            lock.lock()
+            running = true
+            lastError = ""
+            brokerPeers = object["peers"] as? [[String: Any]] ?? []
+            lock.unlock()
+            if let clusters = object["clusters"] as? [[String: Any]] { replaceBrokerClusters(clusters) }
+            if let announcement = lastBridgeAnnouncement { sendBroker(announcement) }
+            startBrokerPings()
+        case "peers":
+            lock.lock()
+            brokerPeers = object["peers"] as? [[String: Any]] ?? []
+            lock.unlock()
+        case "clusters":
+            replaceBrokerClusters(object["clusters"] as? [[String: Any]] ?? [])
+        case "cluster-updated":
+            if let cluster = object["cluster"] as? [String: Any] { applyBrokerCluster(cluster) }
+        case "connect-group-rejected":
+            lock.lock()
+            pendingLocalRejection = (object["reason"] as? String) ?? ""
+            lock.unlock()
+        case "rejected":
+            brokerDisconnected((object["reason"] as? String) ?? "rejected", retry: false)
+        default:
+            break
+        }
+    }
+
+    private func brokerDisconnected(_ reason: String, retry: Bool = true) {
+        lock.lock()
+        running = false
+        lastError = reason
+        brokerPeers.removeAll()
+        lock.unlock()
+        brokerTask?.cancel(with: .goingAway, reason: nil)
+        brokerTask = nil
+        pingTimer?.cancel()
+        pingTimer = nil
+        guard retry, wantsBrokerConnection else { return }
+        reconnectWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.connectToBroker() }
+        reconnectWorkItem = work
+        queue.asyncAfter(deadline: .now() + 5, execute: work)
+    }
+
+    private func sendBroker(_ frame: [String: Any], on task: URLSessionWebSocketTask? = nil) {
+        guard JSONSerialization.isValidJSONObject(frame),
+              let data = try? JSONSerialization.data(withJSONObject: frame),
+              data.count <= Self.maxMessageBytes,
+              let text = String(data: data, encoding: .utf8),
+              let target = task ?? brokerTask else { return }
+        target.send(.string(text)) { [weak self] error in
+            if let error { self?.brokerDisconnected(error.localizedDescription) }
+        }
+    }
+
+    private func startBrokerPings() {
+        pingTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + 20, repeating: 20)
+        timer.setEventHandler { [weak self] in self?.sendBroker(["kind": "ping", "t": Date().timeIntervalSince1970 * 1_000]) }
+        pingTimer = timer
+        timer.resume()
     }
 
     // MARK: Connections
@@ -336,7 +386,7 @@ final class ConnectionHub: ObservableObject {
         }
         switch kind {
         case "hello":
-            if let reason = Self.helloRejectionReason(obj, pairingKey: pairingKey) {
+            if let reason = Self.helloRejectionReason(obj) {
                 rejectAndClose(conn, reason: reason)
                 return
             }
@@ -613,18 +663,15 @@ final class ConnectionHub: ObservableObject {
         lock.lock()
         let running = self.running
         let err = self.lastError
-        let peerList = peers.values.filter { $0.connected }.map {
-            ["id": $0.id, "program": $0.program, "connected": $0.connected] as [String: Any]
-        }
+        let peerList = self.brokerPeers
         lock.unlock()
         let status: [String: Any] = [
             "running": running,
             "state": err.isEmpty ? (running ? "running" : "off") : "error",
-            "address": "ws://127.0.0.1:\(port)",
+            "address": Self.brokerAddress,
             "peers": peerList,
             "error": err,
-            "pairingKey": pairingKey,
-            "hubProgram": Self.localProgram
+            "hubProgram": "vault-broker"
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: status),
               let json = String(data: data, encoding: .utf8) else {
@@ -893,7 +940,12 @@ final class ConnectionHub: ObservableObject {
         // first real delta arrives (it adopts the largest member total) so prior
         // Mac usage survives joining a cluster.
         if let seedMs { contribution["usageMs"] = seedMs }
-        applySync(program: Self.localProgram, groupName: groupName, groupType: "site", contribution: contribution, ts: 0)
+        contribution["kind"] = "group-sync"
+        contribution["program"] = Self.localProgram
+        contribution["groupName"] = groupName
+        contribution["groupType"] = "site"
+        contribution["ts"] = 0
+        sendBroker(contribution)
     }
 
     /// The hub-authoritative shared usage budget for a Mac-clustered Default
@@ -913,13 +965,7 @@ final class ConnectionHub: ObservableObject {
 
     func syncFromBridge(json: String) {
         guard let obj = decode(json) else { return }
-        applySync(
-            program: (obj["program"] as? String) ?? Self.localProgram,
-            groupName: (obj["groupName"] as? String) ?? "",
-            groupType: (obj["groupType"] as? String) ?? "",
-            contribution: obj,
-            ts: (obj["ts"] as? Double) ?? 0
-        )
+        sendBroker(obj)
     }
 
     /// JSON array of all clusters, pushed to the Mac's own web editor each tick.
@@ -952,29 +998,61 @@ final class ConnectionHub: ObservableObject {
 
     func announceFromBridge(json: String) {
         guard let obj = decode(json) else { return }
-        setRoster(
-            program: (obj["program"] as? String) ?? Self.localProgram,
-            groups: (obj["groups"] as? [[String: Any]]) ?? []
-        )
+        lastBridgeAnnouncement = obj
+        sendBroker(obj)
     }
 
     func connectFromBridge(json: String) {
         guard let obj = decode(json) else { return }
-        connectGroup(
-            from: (obj["fromProgram"] as? String) ?? Self.localProgram,
-            to: (obj["toProgram"] as? String) ?? "",
-            groupName: (obj["groupName"] as? String) ?? "",
-            groupType: (obj["groupType"] as? String) ?? ""
-        )
+        sendBroker(obj)
     }
 
     func disconnectFromBridge(json: String) {
         guard let obj = decode(json) else { return }
-        disconnectGroup(
-            clusterId: (obj["clusterId"] as? String) ?? "",
-            groupName: (obj["groupName"] as? String) ?? "",
-            program: (obj["program"] as? String) ?? Self.localProgram
-        )
+        sendBroker(obj)
+    }
+
+    private func replaceBrokerClusters(_ snapshots: [[String: Any]]) {
+        lock.lock()
+        clusters.removeAll()
+        for snapshot in snapshots { installBrokerClusterLocked(snapshot) }
+        lock.unlock()
+    }
+
+    private func applyBrokerCluster(_ snapshot: [String: Any]) {
+        guard let identifier = snapshot["id"] as? String else { return }
+        lock.lock()
+        if let members = snapshot["members"] as? [[String: Any]], members.isEmpty {
+            clusters.removeValue(forKey: identifier)
+        } else {
+            installBrokerClusterLocked(snapshot)
+        }
+        lock.unlock()
+    }
+
+    private func installBrokerClusterLocked(_ snapshot: [String: Any]) {
+        guard let identifier = snapshot["id"] as? String,
+              let groupName = snapshot["groupName"] as? String,
+              let groupType = snapshot["groupType"] as? String else { return }
+        let cluster = ClusterState(id: identifier, groupName: groupName, groupType: groupType)
+        for member in (snapshot["members"] as? [[String: Any]] ?? []) {
+            guard let program = member["program"] as? String else { continue }
+            cluster.members.insert(program)
+            if let groupID = member["groupId"] as? String { cluster.memberGroupIds[program] = groupID }
+            if member["online"] as? Bool == true { cluster.onlineMembers.insert(program) }
+        }
+        if let shared = snapshot["shared"] as? [String: Any] {
+            cluster.sharedScalars = shared["scalars"] as? [String: Any] ?? [:]
+            cluster.sharedTs = (shared["ts"] as? NSNumber)?.doubleValue ?? 0
+            cluster.sharedSites = shared["sites"] as? [String] ?? []
+            cluster.sharedApps = shared["apps"] as? [[String: Any]] ?? []
+            cluster.sharedUsageMs = (shared["usageMs"] as? NSNumber)?.doubleValue ?? 0
+            cluster.sharedUsageResetAtMs = (shared["usageResetAtMs"] as? NSNumber)?.doubleValue ?? 0
+            cluster.sharedSnooze = shared["snooze"] as? [String: Any] ?? [:]
+            cluster.sharedSnoozeTs = (shared["snoozeTs"] as? NSNumber)?.doubleValue ?? 0
+            cluster.sharedSnoozeTotalMs = (shared["snoozeTotalMs"] as? NSNumber)?.doubleValue ?? 0
+        }
+        clusters[identifier] = cluster
     }
 
     // MARK: Cluster registry — internals
@@ -1109,11 +1187,15 @@ final class ConnectionHub: ObservableObject {
     /// Caller must hold `lock`. Serializes a cluster including the shared state
     /// and the union of owned lists (sites from browsers, apps from Macs).
     private func clusterJSONObject(_ cluster: ClusterState) -> [String: Any] {
-        var sites = Set<String>()
+        var sites = Set(cluster.sharedSites)
         // App pool keyed by display name → icon data URL. A non-empty icon from
         // any member wins so a name contributed without an icon (legacy string)
         // still picks up the icon when another member supplies it.
         var appIcons: [String: String] = [:]
+        for entry in cluster.sharedApps {
+            guard let name = entry["name"] as? String, !name.isEmpty else { continue }
+            appIcons[name] = (entry["icon"] as? String) ?? ""
+        }
         for contribution in cluster.contributions.values {
             if let list = contribution["sites"] as? [String] { sites.formUnion(list) }
             if let list = contribution["apps"] as? [[String: Any]] {
@@ -1132,7 +1214,7 @@ final class ConnectionHub: ObservableObject {
         let appsArray: [[String: Any]] = appIcons.keys.sorted().map {
             ["name": $0, "icon": appIcons[$0] ?? ""]
         }
-        let online = onlineProgramsLocked()
+        let online = cluster.onlineMembers
         let allOnline = cluster.members.allSatisfy { online.contains($0) }
         let hasShared = !cluster.sharedScalars.isEmpty || cluster.sharedTs > 0
         var dict: [String: Any] = [

@@ -32,7 +32,7 @@
   "connection.copy": "Połącz grupy domyślne i niestandardowe między rozszerzeniem przeglądarki a Mac Vault lub Windows Vault.",
   "connection.serverToggle": "Uruchom serwer lokalny (koncentrator)",
   "connection.serverToggleHelp": "Rozszerzenia przeglądarki na tym komputerze mogą się połączyć po skopiowaniu klucza parowania.",
-  "connection.clientHelp": "Użyj klucza parowania widocznego w Mac Vault lub Windows Vault, aby połączyć tę przeglądarkę.",
+  "connection.clientHelp": "Połącz z udostępnionym serwerem Vault. Pokazuje wszystkie aktualnie połączone aplikacje Vault.",
   "connection.addressLabel": "Adres",
   "connection.connect": "Połącz",
   "connection.disconnect": "Rozłącz",
@@ -563,5 +563,5 @@
   "connection.pairingKeyPrompt": "Wklej 64-znakowy klucz parowania widoczny w Mac Vault lub Windows Vault.",
   "connection.errorPairingKey": "Wprowadź prawidłowy 64-znakowy klucz parowania.",
   "connection.errorProtocolMismatch": "Aplikacja i rozszerzenie używają niezgodnych wersji protokołu mostu.",
-  "connection.errorSecureConnection": "Nie udało się nawiązać bezpiecznego połączenia z lokalną aplikacją Vault."
+  "connection.errorSecureConnection": "Nie udało się połączyć z udostępnionym serwerem Vault."
 }

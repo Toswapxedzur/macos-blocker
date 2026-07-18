@@ -133,19 +133,6 @@ public final class BlockerWebStore: @unchecked Sendable {
         return Date(timeIntervalSince1970: ms / 1000)
     }
 
-    /// Reads whether the web-app bridge server is enabled from
-    /// `globalSettings.connection` so the hub can auto-start on launch if the
-    /// user previously enabled it. The port is fixed (no longer configurable).
-    public func loadConnectionServerEnabled() -> Bool {
-        guard let object = loadStoreObject(),
-              let settings = object["globalSettings"] as? [String: Any],
-              let connection = settings["connection"] as? [String: Any]
-        else {
-            return false
-        }
-        return (connection["serverEnabled"] as? Bool) ?? false
-    }
-
     private func loadStoreObject() -> [String: Any]? {
         guard let data = shared.readData(SharedAppGroupStore.webStoreFileName),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
