@@ -1231,6 +1231,60 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         }
     }
 
+    /// Removes one local platform binding together with the public entries and
+    /// durable creator decisions that belong to that platform. Shared tree and
+    /// dataset assets are deliberately retained. Any model whose source set or
+    /// bound dataset changes is reset before it can be used again.
+    @discardableResult
+    public mutating func removePlatformBinding(_ platformID: String) -> Bool {
+        guard let bindingIndex = bindings.firstIndex(where: { $0.id == platformID }) else {
+            return false
+        }
+
+        let binding = bindings.remove(at: bindingIndex)
+        var datasetChanged = false
+        if let datasetIndex = datasets.firstIndex(where: { $0.id == binding.datasetID }) {
+            let classificationCount = datasets[datasetIndex].creatorClassifications.count
+            datasets[datasetIndex].collectedEntries.removeAll(where: { $0.platformID == platformID })
+            datasets[datasetIndex].creatorClassifications.removeAll(where: { $0.platformID == platformID })
+            datasetChanged = classificationCount != datasets[datasetIndex].creatorClassifications.count
+            if datasetChanged {
+                datasets[datasetIndex].revision += 1
+            }
+        }
+
+        let updatedDatasetRevision = datasets.first(where: { $0.id == binding.datasetID })?.revision
+        var invalidatedModelIDs = Set<String>()
+        models = models.compactMap { model in
+            var updated = model
+            let remainingSourcePlatformIDs = model.effectiveTrainingPlatformIDs.filter { $0 != platformID }
+            if remainingSourcePlatformIDs.count != model.effectiveTrainingPlatformIDs.count {
+                invalidatedModelIDs.insert(model.id)
+                guard !remainingSourcePlatformIDs.isEmpty else { return nil }
+                updated.trainingPlatformID = remainingSourcePlatformIDs.first
+                updated.trainingPlatformIDs = remainingSourcePlatformIDs
+            }
+            if datasetChanged, updated.datasetID == binding.datasetID, let updatedDatasetRevision {
+                invalidatedModelIDs.insert(model.id)
+                updated.datasetRevision = updatedDatasetRevision
+            }
+            if invalidatedModelIDs.contains(model.id) {
+                updated.isReady = false
+                updated.embeddedNeuralModel = nil
+                updated.embeddedTrainingReport = nil
+                updated.trainedAtMilliseconds = nil
+            }
+            return updated
+        }
+
+        for index in bindings.indices where invalidatedModelIDs.contains(bindings[index].activeModelID ?? "") {
+            bindings[index].activeModelID = nil
+            bindings[index].activeClassifierTypeID = nil
+        }
+        reconcileClassifierTypes()
+        return true
+    }
+
     /// Tree/data revisions are immutable model boundaries. Edits therefore
     /// retain the classifier type but move it to the new selected revision and
     /// remove only dependencies that are no longer compatible. This keeps the

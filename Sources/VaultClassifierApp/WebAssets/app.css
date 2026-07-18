@@ -227,6 +227,14 @@ h3 { font-size: 13px; }
   border-bottom: 1px solid rgba(14, 116, 144, .18);
 }
 
+.collection-platform-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .collection-platform-controls {
   align-items: center;
   flex-wrap: wrap;

@@ -224,6 +224,68 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertNoThrow(try catalog.validate())
     }
 
+    func testRemovingPlatformBindingPurgesItsDataAndReconcilesDependents() throws {
+        var catalog = WorkspaceCatalog.starter()
+        let tree = try XCTUnwrap(catalog.trees.first)
+        let dataset = try XCTUnwrap(catalog.datasets.first)
+        catalog.bindings.append(.init(id: "instagram", name: "Instagram", treeID: tree.id, datasetID: dataset.id))
+        catalog.datasets[0].collectedEntries = [
+            .init(id: "youtube-entry", platformID: "youtube", entryID: "youtube-entry", creatorID: "youtube:creator", creatorName: "YouTube creator", entryType: "video", title: "YouTube guide"),
+            .init(id: "instagram-entry", platformID: "instagram", entryID: "instagram-entry", creatorID: "instagram:creator", creatorName: "Instagram creator", entryType: "reel", title: "Instagram guide"),
+        ]
+        catalog.datasets[0].creatorClassifications = [
+            .init(classifierTypeID: "creator-type", creatorID: "youtube:creator", creatorName: "YouTube creator", platformID: "youtube", treeID: tree.id, treeRevision: tree.revision, tagIDs: ["games"], origin: .manual, review: .approved),
+            .init(classifierTypeID: "creator-type", creatorID: "instagram:creator", creatorName: "Instagram creator", platformID: "instagram", treeID: tree.id, treeRevision: tree.revision, tagIDs: ["games"], origin: .manual, review: .approved),
+        ]
+        catalog.models.append(.init(
+            id: "combined-model",
+            name: "Combined model",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            datasetID: dataset.id,
+            datasetRevision: dataset.revision,
+            isReady: true,
+            trainingPlatformID: "youtube",
+            trainingPlatformIDs: ["youtube", "instagram"]
+        ))
+        catalog.models.append(.init(
+            id: "instagram-only-model",
+            name: "Instagram-only model",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            datasetID: dataset.id,
+            datasetRevision: dataset.revision,
+            isReady: true,
+            trainingPlatformID: "instagram",
+            trainingPlatformIDs: ["instagram"]
+        ))
+        catalog.classifierTypes = [.init(
+            id: "creator-type",
+            name: "Creator type",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            datasetID: dataset.id,
+            datasetRevision: dataset.revision,
+            dataSourcePlatformIDs: ["youtube", "instagram"],
+            creatorDecisionSources: [.human]
+        )]
+
+        XCTAssertTrue(catalog.removePlatformBinding("instagram"))
+        XCTAssertEqual(catalog.bindings.map(\.id), ["youtube"])
+        XCTAssertEqual(catalog.datasets[0].collectedEntries.map(\.platformID), ["youtube"])
+        XCTAssertEqual(catalog.datasets[0].creatorClassifications.map(\.platformID), ["youtube"])
+        XCTAssertEqual(catalog.datasets[0].revision, dataset.revision + 1)
+        XCTAssertEqual(catalog.classifierTypes[0].dataSourcePlatformIDs, ["youtube"])
+        XCTAssertFalse(catalog.models.contains(where: { $0.id == "instagram-only-model" }))
+        let combined = try XCTUnwrap(catalog.models.first(where: { $0.id == "combined-model" }))
+        XCTAssertEqual(combined.effectiveTrainingPlatformIDs, ["youtube"])
+        XCTAssertEqual(combined.datasetRevision, catalog.datasets[0].revision)
+        XCTAssertFalse(combined.isReady)
+        XCTAssertFalse(catalog.models[0].isReady)
+        XCTAssertNoThrow(try catalog.validate())
+        XCTAssertFalse(catalog.removePlatformBinding("instagram"))
+    }
+
     func testLegacyClassificationDatasetDecodesWithoutCreatorClassifications() throws {
         let legacy = Data(#"{"id":"legacy","name":"Legacy","records":[],"collectedEntries":[],"revision":1}"#.utf8)
         XCTAssertTrue(try JSONDecoder().decode(ClassificationDataset.self, from: legacy).creatorClassifications.isEmpty)
