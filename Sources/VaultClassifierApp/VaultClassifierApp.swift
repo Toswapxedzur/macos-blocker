@@ -594,7 +594,12 @@ final class VaultClassifierViewModel: ObservableObject {
                         labelIDs: labelIDs
                     )
                     self.latestLedgerID = nil
-                    try self.recordLLMSuggestion(entry: entry, labelIDs: labelIDs, classifierType: classifierType, profile: profile)
+                    // Individual-entry provider output is an inspection result
+                    // only. Durable dataset labels are creator classifications:
+                    // the user labels a retained creator explicitly, or starts
+                    // the creator-specific LLM action below. Do not create an
+                    // unreviewable entry row that can drift from that source of
+                    // truth.
                     try self.appendProviderTestRecord(.init(
                         profileID: profile.id,
                         provider: profile.type.rawValue,
@@ -638,34 +643,6 @@ final class VaultClassifierViewModel: ObservableObject {
         } catch {
             issue = error.localizedDescription
         }
-    }
-
-    private func recordLLMSuggestion(
-        entry: EntryEvidence,
-        labelIDs: [String],
-        classifierType: ClassifierTypeAsset,
-        profile: APIKeyProviderProfile
-    ) throws {
-        guard var catalog = localState?.workspaceCatalog,
-              let binding = catalog.bindings.first(where: { $0.id == entry.platform }),
-              let datasetIndex = catalog.datasets.firstIndex(where: { $0.id == binding.datasetID }),
-              let tree = catalog.trees.first(where: { $0.id == binding.treeID }),
-              let title = entry.evidence.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else {
-            throw WebBridgeInputError.invalidChoice("LLM suggestion")
-        }
-        catalog.datasets[datasetIndex].records.append(.init(
-            title: title,
-            tagIDs: labelIDs,
-            origin: .llmAssist,
-            review: .pending,
-            platformID: binding.id,
-            treeRevision: tree.revision,
-            modelVersion: "llm-assist-\(classifierType.id)-\(profile.id)"
-        ))
-        // Pending provider suggestions are not approved training data and
-        // therefore must not invalidate the active neural model revision.
-        try coordinator?.updateWorkspaceCatalog(catalog)
-        refreshLocalState()
     }
 
     private func providerCredential(for profileID: String) throws -> ProviderCredentialRecord {
@@ -1544,25 +1521,16 @@ final class VaultClassifierViewModel: ObservableObject {
             }) else {
                 throw WebBridgeInputError.invalidChoice("creator")
             }
-            let labels = Array(Set(tagIDs)).sorted()
-            let availableLeafIDs = try tree.inferenceTaxonomy().predictableLeafIDs
-            guard !labels.isEmpty,
-                  labels.count <= CreatorClassificationRecord.maximumTagIDs,
-                  labels.allSatisfy(availableLeafIDs.contains) else {
-                throw WebBridgeInputError.invalidChoice("creator tag IDs")
-            }
-            _ = catalog.datasets[datasetIndex].upsertCreatorClassification(.init(
-                classifierTypeID: classifierType.id,
+            try storeCreatorClassification(
+                in: &catalog,
+                classifierType: classifierType,
+                tree: tree,
                 creatorID: creatorEntry.creatorID,
                 creatorName: creatorEntry.creatorName,
                 platformID: creatorEntry.platformID,
-                treeID: tree.id,
-                treeRevision: tree.revision,
-                tagIDs: labels,
-                origin: .manual,
-                review: .approved
-            ))
-            catalog.datasets[datasetIndex].revision += 1
+                tagIDs: tagIDs,
+                origin: .manual
+            )
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
             issue = nil
@@ -1652,7 +1620,6 @@ final class VaultClassifierViewModel: ObservableObject {
                         creatorID: representative.creatorID,
                         platformID: representative.platformID,
                         creatorName: representative.creatorName,
-                        tree: tree,
                         labelIDs: labelIDs
                     )
                     try self.appendProviderTestRecord(.init(
@@ -1705,38 +1672,71 @@ final class VaultClassifierViewModel: ObservableObject {
         creatorID: String,
         platformID: String,
         creatorName: String,
-        tree: TagTreeAsset,
         labelIDs: [String]
     ) throws {
         guard var catalog = localState?.workspaceCatalog,
               let classifierType = catalog.classifierTypes.first(where: { $0.id == typeID }),
               classifierType.creatorDecisionSources.contains(.llmAssist),
-              classifierType.dataSourcePlatformIDs.contains(platformID),
-              classifierType.treeID == tree.id,
-              classifierType.treeRevision == tree.revision,
-              let datasetIndex = catalog.datasets.firstIndex(where: { $0.id == classifierType.datasetID }) else {
+              let tree = catalog.trees.first(where: { $0.id == classifierType.treeID }) else {
             throw WebBridgeInputError.invalidChoice("creator LLM classifier type")
         }
-        let allowedTagIDs = try tree.inferenceTaxonomy().predictableLeafIDs
-        guard !labelIDs.isEmpty,
-              labelIDs.count <= CreatorClassificationRecord.maximumTagIDs,
-              labelIDs.allSatisfy(allowedTagIDs.contains) else {
-            throw WebBridgeInputError.invalidChoice("creator LLM tag IDs")
-        }
-        _ = catalog.datasets[datasetIndex].upsertCreatorClassification(.init(
-            classifierTypeID: classifierType.id,
+        try storeCreatorClassification(
+            in: &catalog,
+            classifierType: classifierType,
+            tree: tree,
             creatorID: creatorID,
             creatorName: creatorName,
             platformID: platformID,
+            tagIDs: labelIDs,
+            origin: .llmAssist
+        )
+        try coordinator?.updateWorkspaceCatalog(catalog)
+        refreshLocalState()
+    }
+
+    /// Manual and LLM-assisted labels share this one creator-level persistence
+    /// path. Individual entry inspection results are intentionally transient;
+    /// retaining a label always identifies the creator whose collected entries
+    /// may later be used for a local training run.
+    private func storeCreatorClassification(
+        in catalog: inout WorkspaceCatalog,
+        classifierType: ClassifierTypeAsset,
+        tree: TagTreeAsset,
+        creatorID: String,
+        creatorName: String,
+        platformID: String,
+        tagIDs: [String],
+        origin: ClassificationRecordOrigin
+    ) throws {
+        guard classifierType.dataSourcePlatformIDs.contains(platformID),
+              classifierType.treeID == tree.id,
+              classifierType.treeRevision == tree.revision,
+              let datasetIndex = catalog.datasets.firstIndex(where: { $0.id == classifierType.datasetID }) else {
+            throw WebBridgeInputError.invalidChoice("creator classification")
+        }
+        let cleanedCreatorID = creatorID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedCreatorName = creatorName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let labels = Array(Set(tagIDs)).sorted()
+        let availableLeafIDs = try tree.inferenceTaxonomy().predictableLeafIDs
+        guard !cleanedCreatorID.isEmpty,
+              !cleanedCreatorName.isEmpty,
+              !labels.isEmpty,
+              labels.count <= CreatorClassificationRecord.maximumTagIDs,
+              labels.allSatisfy(availableLeafIDs.contains) else {
+            throw WebBridgeInputError.invalidChoice("creator tag IDs")
+        }
+        _ = catalog.datasets[datasetIndex].upsertCreatorClassification(.init(
+            classifierTypeID: classifierType.id,
+            creatorID: cleanedCreatorID,
+            creatorName: cleanedCreatorName,
+            platformID: platformID,
             treeID: tree.id,
             treeRevision: tree.revision,
-            tagIDs: labelIDs,
-            origin: .llmAssist,
+            tagIDs: labels,
+            origin: origin,
             review: .approved
         ))
         catalog.datasets[datasetIndex].revision += 1
-        try coordinator?.updateWorkspaceCatalog(catalog)
-        refreshLocalState()
     }
 
     func applyResourceProfileDefaults() {
@@ -2316,9 +2316,6 @@ final class VaultClassifierViewModel: ObservableObject {
                     "id": dataset.id,
                     "name": dataset.name,
                     "revision": dataset.revision,
-                    "records": dataset.records.map { record -> [String: Any] in
-                        ["id": record.id, "title": record.title, "tags": record.tagIDs, "origin": record.origin.rawValue, "review": record.review.rawValue, "platformID": record.platformID]
-                    },
                     "creatorClassifications": dataset.creatorClassifications.map { classification -> [String: Any] in
                         [
                             "id": classification.id,

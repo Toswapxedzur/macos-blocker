@@ -230,10 +230,13 @@ public struct CollectedPlatformEntry: Codable, Equatable, Sendable, Identifiable
 public struct ClassificationDataset: Codable, Equatable, Sendable, Identifiable {
     public var id: String
     public var name: String
+    /// Compatibility-only entry rows from earlier development shells. New
+    /// labels are creator classifications, and local-model training excludes
+    /// these rows because they do not identify a retained creator.
     public var records: [ClassificationRecord]
-    /// Creator decisions are durable source-of-truth labels. Their associated
-    /// collected entries become explicit local-training examples only after a
-    /// manual or LLM decision is approved.
+    /// Creator decisions are the durable source-of-truth labels. Their
+    /// associated collected entries become local-training examples only after
+    /// the user explicitly saves a manual or LLM-assisted creator decision.
     public var creatorClassifications: [CreatorClassificationRecord]
     /// Browser-collected entries are deliberately separate from labelled
     /// records. They support reviewing a creator's observed public entries,
@@ -486,10 +489,10 @@ public enum LocalModelTrainingError: Error, Equatable, LocalizedError, Sendable 
     }
 }
 
-/// Converts immutable, approved classification rows into on-device neural
-/// samples. Approved creator decisions expand through that creator's retained
-/// public entries, while browsing activity, pending LLM suggestions, legacy
-/// imports, or labels from another tree revision never become training data.
+/// Converts immutable, approved creator classifications into on-device neural
+/// samples. A creator decision expands through that creator's retained public
+/// entries; browsing activity, legacy entry-level rows, and labels from another
+/// tree revision never become training data.
 public enum LocalModelTrainer {
     public static let defaultEpochs = 48
 
@@ -509,18 +512,6 @@ public enum LocalModelTrainer {
         let sourcePlatformIDs = Set(platformIDs)
         guard !sourcePlatformIDs.isEmpty else { return [] }
         let availableTagIDs = (try? tree.inferenceTaxonomy())?.predictableLeafIDs ?? []
-        let entryExamples = dataset.records.compactMap { record -> EmbeddedNeuralTrainingExample? in
-            guard record.review == .approved,
-                  record.origin == .manual || record.origin == .llmAssist,
-                  sourcePlatformIDs.contains(record.platformID),
-                  record.treeRevision == tree.revision,
-                  !record.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                return nil
-            }
-            let positiveLabelIDs = record.tagIDs.filter { availableTagIDs.contains($0) }
-            guard !positiveLabelIDs.isEmpty else { return nil }
-            return .init(text: record.title, positiveLabelIDs: positiveLabelIDs)
-        }
         let creatorExamples = dataset.creatorClassifications.flatMap { classification -> [EmbeddedNeuralTrainingExample] in
             guard classification.review == .approved,
                   classification.origin == .manual || classification.origin == .llmAssist,
@@ -540,7 +531,7 @@ public enum LocalModelTrainer {
                 return .init(text: entry.title, positiveLabelIDs: positiveLabelIDs)
             }
         }
-        return entryExamples + creatorExamples
+        return creatorExamples
     }
 
     public static func train(
