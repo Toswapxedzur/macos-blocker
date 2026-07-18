@@ -135,4 +135,45 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertNil(decoded.embeddedNeuralModel)
         XCTAssertNil(decoded.embeddedTrainingReport)
     }
+
+    func testProviderProfilesKeepOnlyConfigurationAndMayLinkAYouTubeKey() throws {
+        let youtube = APIKeyProviderProfile(id: "youtube-key", type: .youtubeData)
+        let gemini = APIKeyProviderProfile(
+            id: "gemini-key",
+            name: "Research Gemini",
+            type: .gemini,
+            modelIdentifier: "gemini-3.1-flash-lite",
+            batchSize: 12,
+            maximumTokens: 2_048,
+            youtubeProviderID: youtube.id,
+            searchEnabled: true
+        )
+        var catalog = WorkspaceCatalog.starter()
+        catalog.providerProfiles = [youtube, gemini]
+
+        XCTAssertNoThrow(try catalog.validate())
+        let encoded = try JSONEncoder().encode(catalog)
+        XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("apiKey"))
+        XCTAssertEqual(try JSONDecoder().decode(WorkspaceCatalog.self, from: encoded).providerProfiles, [youtube, gemini])
+    }
+
+    func testProviderProfileRejectsANonYouTubeToolReference() {
+        let gemini = APIKeyProviderProfile(id: "gemini", type: .gemini)
+        let chatGPT = APIKeyProviderProfile(id: "chatgpt", type: .chatGPT, youtubeProviderID: gemini.id)
+        var catalog = WorkspaceCatalog.starter()
+        catalog.providerProfiles = [gemini, chatGPT]
+
+        XCTAssertThrowsError(try catalog.validate()) { error in
+            XCTAssertEqual(error as? WorkspaceCatalogError, .missingYouTubeProvider(gemini.id))
+        }
+    }
+
+    func testLegacyCatalogDecodesWithoutProviderProfiles() throws {
+        let encoded = try JSONEncoder().encode(WorkspaceCatalog.starter())
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object.removeValue(forKey: "providerProfiles")
+        let legacy = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+
+        XCTAssertTrue(try JSONDecoder().decode(WorkspaceCatalog.self, from: legacy).providerProfiles.isEmpty)
+    }
 }

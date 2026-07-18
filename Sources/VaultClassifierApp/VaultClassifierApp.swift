@@ -270,6 +270,126 @@ final class VaultClassifierViewModel: ObservableObject {
         localState = coordinator?.snapshot()
     }
 
+    func createProviderProfile(typeRaw: String) {
+        do {
+            guard let type = APIKeyProviderType(rawValue: typeRaw),
+                  var catalog = localState?.workspaceCatalog else {
+                throw WebBridgeInputError.invalidChoice("provider type")
+            }
+            catalog.providerProfiles.append(.init(type: type))
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
+    func renameProviderProfile(profileID: String, name: String) {
+        do {
+            let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleaned.isEmpty,
+                  var catalog = localState?.workspaceCatalog,
+                  let index = catalog.providerProfiles.firstIndex(where: { $0.id == profileID }) else {
+                throw WebBridgeInputError.invalidChoice("provider profile")
+            }
+            catalog.providerProfiles[index].name = cleaned
+            catalog.providerProfiles[index].updatedAtMilliseconds = WorkspaceCatalog.now()
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
+    func configureProviderProfile(
+        profileID: String,
+        name: String,
+        modelIdentifier: String?,
+        batchSize: String?,
+        maximumTokens: String?,
+        youtubeProviderID: String?,
+        searchEnabled: Bool?,
+        customEndpoint: String?
+    ) {
+        do {
+            guard var catalog = localState?.workspaceCatalog,
+                  let index = catalog.providerProfiles.firstIndex(where: { $0.id == profileID }) else {
+                throw WebBridgeInputError.invalidChoice("provider profile")
+            }
+            var profile = catalog.providerProfiles[index]
+            let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanedName.isEmpty else { throw WebBridgeInputError.invalidChoice("provider profile name") }
+            profile.name = cleanedName
+            if profile.type.supportsLLMConfiguration {
+                guard let modelIdentifier, let batchSize, let maximumTokens, let searchEnabled else {
+                    throw WebBridgeInputError.missingValue("provider model settings")
+                }
+                profile.modelIdentifier = modelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+                profile.batchSize = try providerPositiveInteger(batchSize, maximum: APIKeyProviderProfile.maximumBatchSize, label: "Provider batch size")
+                profile.maximumTokens = try providerPositiveInteger(maximumTokens, maximum: APIKeyProviderProfile.maximumTokenLimit, label: "Provider maximum tokens")
+                let normalizedYouTubeID = youtubeProviderID?.trimmingCharacters(in: .whitespacesAndNewlines)
+                profile.youtubeProviderID = normalizedYouTubeID?.isEmpty == false ? normalizedYouTubeID : nil
+                profile.searchEnabled = searchEnabled
+                if profile.type == .custom {
+                    let normalizedEndpoint = customEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    profile.customEndpoint = normalizedEndpoint?.isEmpty == false ? normalizedEndpoint : nil
+                } else {
+                    profile.customEndpoint = nil
+                }
+            } else {
+                profile.modelIdentifier = ""
+                profile.batchSize = 1
+                profile.maximumTokens = 1_024
+                profile.youtubeProviderID = nil
+                profile.searchEnabled = false
+                profile.customEndpoint = nil
+            }
+            profile.updatedAtMilliseconds = WorkspaceCatalog.now()
+            catalog.providerProfiles[index] = profile
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
+    func storeProviderCredential(profileID: String, credential: String) {
+        do {
+            guard localState?.workspaceCatalog.providerProfiles.contains(where: { $0.id == profileID }) == true else {
+                throw WebBridgeInputError.invalidChoice("provider profile")
+            }
+            try ProviderCredentialStore.saveCredential(credential, for: profileID)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
+    func removeProviderCredential(profileID: String) {
+        do {
+            guard localState?.workspaceCatalog.providerProfiles.contains(where: { $0.id == profileID }) == true else {
+                throw WebBridgeInputError.invalidChoice("provider profile")
+            }
+            try ProviderCredentialStore.removeCredential(for: profileID)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
+    func deleteProviderProfile(profileID: String) {
+        do {
+            guard var catalog = localState?.workspaceCatalog,
+                  catalog.providerProfiles.contains(where: { $0.id == profileID }) else {
+                throw WebBridgeInputError.invalidChoice("provider profile")
+            }
+            try ProviderCredentialStore.removeCredential(for: profileID)
+            catalog.providerProfiles.removeAll(where: { $0.id == profileID })
+            for index in catalog.providerProfiles.indices where catalog.providerProfiles[index].youtubeProviderID == profileID {
+                catalog.providerProfiles[index].youtubeProviderID = nil
+                catalog.providerProfiles[index].updatedAtMilliseconds = WorkspaceCatalog.now()
+            }
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
     func createTree(name: String) {
         do {
             let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1029,6 +1149,12 @@ final class VaultClassifierViewModel: ObservableObject {
         return value
     }
 
+    private func providerPositiveInteger(_ raw: String, maximum: Int, label: String) throws -> Int {
+        let value = try positiveInteger(raw, label: label)
+        guard value <= maximum else { throw WebBridgeInputError.invalidChoice(label) }
+        return value
+    }
+
     private func auditUsageCeiling(for configuration: LocalAuditConfiguration) throws -> AuditUsage {
         guard let tokenLimit = configuration.budgetLimits.perRequest.tokenLimit,
               tokenLimit >= configuration.provider.maximumOutputTokens else {
@@ -1234,6 +1360,20 @@ final class VaultClassifierViewModel: ObservableObject {
                 ] as [String: Any]
             },
             "baseEmbeddings": LocalBaseEmbedding.allCases.map(\.rawValue),
+            "providerProfiles": catalog.providerProfiles.map { profile in
+                [
+                    "id": profile.id,
+                    "name": profile.name,
+                    "type": profile.type.rawValue,
+                    "modelIdentifier": profile.modelIdentifier,
+                    "batchSize": profile.batchSize,
+                    "maximumTokens": profile.maximumTokens,
+                    "youtubeProviderID": profile.youtubeProviderID ?? NSNull(),
+                    "searchEnabled": profile.searchEnabled,
+                    "customEndpoint": profile.customEndpoint ?? NSNull(),
+                    "hasStoredCredential": ProviderCredentialStore.hasCredential(for: profile.id),
+                ] as [String: Any]
+            },
             "bindings": catalog.bindings.map { binding in
                 ["id": binding.id, "name": binding.name, "browser": binding.browser, "treeID": binding.treeID, "datasetID": binding.datasetID, "activeModelID": binding.activeModelID ?? NSNull(), "policyID": binding.policyID ?? NSNull()] as [String: Any]
             },
@@ -1283,6 +1423,33 @@ final class VaultClassifierViewModel: ObservableObject {
                 createTree(name: try webString(data, key: "name", limit: 128))
             case "createLocalModel":
                 createLocalModel(name: try webString(data, key: "name", limit: 128))
+            case "createProviderProfile":
+                createProviderProfile(typeRaw: try webString(data, key: "type", limit: 32))
+            case "renameProviderProfile":
+                renameProviderProfile(
+                    profileID: try webString(data, key: "profileID", limit: 128),
+                    name: try webString(data, key: "name", limit: APIKeyProviderProfile.maximumNameLength)
+                )
+            case "configureProviderProfile":
+                configureProviderProfile(
+                    profileID: try webString(data, key: "profileID", limit: 128),
+                    name: try webString(data, key: "name", limit: APIKeyProviderProfile.maximumNameLength),
+                    modelIdentifier: try webOptionalString(data, key: "modelIdentifier", limit: APIKeyProviderProfile.maximumModelIdentifierLength),
+                    batchSize: try webOptionalString(data, key: "batchSize", limit: 16),
+                    maximumTokens: try webOptionalString(data, key: "maximumTokens", limit: 16),
+                    youtubeProviderID: try webOptionalString(data, key: "youtubeProviderID", limit: 128),
+                    searchEnabled: data["searchEnabled"] as? Bool,
+                    customEndpoint: try webOptionalString(data, key: "customEndpoint", limit: APIKeyProviderProfile.maximumEndpointLength)
+                )
+            case "storeProviderCredential":
+                storeProviderCredential(
+                    profileID: try webString(data, key: "profileID", limit: 128),
+                    credential: try webString(data, key: "apiKey", limit: ProviderCredentialStore.maximumCredentialCharacters)
+                )
+            case "removeProviderCredential":
+                removeProviderCredential(profileID: try webString(data, key: "profileID", limit: 128))
+            case "deleteProviderProfile":
+                deleteProviderProfile(profileID: try webString(data, key: "profileID", limit: 128))
             case "renameLocalModel":
                 renameLocalModel(modelID: try webString(data, key: "modelID", limit: 256), name: try webString(data, key: "name", limit: 128))
             case "deleteLocalModel":

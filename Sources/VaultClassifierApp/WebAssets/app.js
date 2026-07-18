@@ -380,11 +380,31 @@
       <div class="model-panels">${models.length ? models.map(panel).join("") : `<div class="empty">${tx("model.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
   }
 
+  function providerTypeLabelKey(type) {
+    const keys = {
+      chatGPT: "llm.provider.chatGPT",
+      gemini: "llm.provider.gemini",
+      deepSeek: "llm.provider.deepSeek",
+      youtubeData: "llm.provider.youtubeData",
+      claude: "llm.provider.claude",
+      custom: "llm.provider.custom",
+    };
+    return keys[type] || "llm.provider.custom";
+  }
+
   function llmAssistWorkspace() {
-    const entries = state.assets.tokenUsage || [];
-    const ledger = `<section class="section-card gold"><div class="section-header"><div><h3>${tx("llm.usage")}</h3><p class="section-copy">${tx("llm.usageCopy")}</p></div></div>${entries.length ? `<div class="list">${entries.map((entry) => `<div class="list-row"><span class="list-symbol">◌</span><span class="list-copy"><span class="list-title">${esc(entry.provider)} · ${esc(entry.model)}</span><span class="list-meta">${tx("llm.tokenLine", { input: entry.input, output: entry.output, other: entry.other })} · ${tx(`llm.status.${entry.status}`)}</span></span></div>`).join("")}</div>` : `<div class="empty">${tx("llm.noUsage")}</div>`}</section>`;
-    const audit = auditWorkspace().replace(tx("audit.title"), tx("llm.title")).replace(tx("audit.copy"), tx("llm.copy"));
-    return audit.replace(/<\/div>$/, `${ledger}</div>`);
+    const profiles = state.assets.providerProfiles || [];
+    const profileTypeOptions = ["chatGPT", "gemini", "deepSeek", "youtubeData", "claude", "custom"].map((type) => [type, t(providerTypeLabelKey(type))]);
+    const youtubeProfiles = profiles.filter((profile) => profile.type === "youtubeData");
+    const panel = (profile) => {
+      const formID = `provider-profile-${profile.id}`;
+      const supportsLLM = profile.type !== "youtubeData";
+      const credentialStatus = profile.hasStoredCredential ? "llm.credentialStored" : "llm.credentialNeeded";
+      const youtubeOptions = [["", t("llm.noYouTubeTool")], ...youtubeProfiles.filter((candidate) => candidate.id !== profile.id).map((candidate) => [candidate.id, candidate.name])];
+      const setup = supportsLLM ? `<div class="provider-setup"><div class="section-header"><div><h3>${tx("llm.modelSetup")}</h3><p class="section-copy">${tx("llm.modelSetupCopy")}</p></div></div><div class="provider-setup-fields">${field("llm.modelIdentifier", "", "modelIdentifier", profile.modelIdentifier)}${field("llm.batchSize", "", "batchSize", profile.batchSize, "text", "inputmode=\"numeric\"")}${field("llm.maximumTokens", "", "maximumTokens", profile.maximumTokens, "text", "inputmode=\"numeric\"")}</div>${profile.type === "custom" ? field("llm.customEndpoint", "llm.customEndpointCopy", "customEndpoint", profile.customEndpoint || "") : ""}<div class="provider-tools"><span class="eyebrow">${tx("llm.externalTools")}</span>${valueSelectField("llm.youtubeTool", "llm.youtubeToolCopy", "youtubeProviderID", profile.youtubeProviderID || "", youtubeOptions)}${toggle("llm.search", "searchEnabled", profile.searchEnabled)}</div></div>` : `<div class="provider-api-note"><span class="eyebrow">${tx("llm.externalTool")}</span><p class="section-copy">${tx("llm.youtubeOnlyCopy")}</p></div>`;
+      return `<section class="provider-panel" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}"><div class="provider-panel-head"><div><span class="eyebrow">${tx("llm.providerPanel")}</span><h3>${esc(profile.name)}</h3><p class="section-copy">${tx(providerTypeLabelKey(profile.type))}</p></div><div class="provider-panel-status">${statusPill(t(credentialStatus), profile.hasStoredCredential ? "gold" : "muted")}</div></div><div class="provider-name-row">${field("llm.profileName", "", "name", profile.name)}<button class="secondary" data-action="configureProviderProfile" data-form="${esc(formID)}" data-profile-id="${esc(profile.id)}">${tx("llm.saveProfile")}</button><button class="danger" data-action="deleteProviderProfile" data-profile-id="${esc(profile.id)}">${tx("llm.deleteProfile")}</button></div><section class="provider-credential"><div class="section-header"><div><h3>${tx("llm.apiKey")}</h3><p class="section-copy">${tx("llm.keychainCopy")}</p></div></div><div class="provider-credential-row">${field("llm.keychainCredential", profile.hasStoredCredential ? "llm.replaceCredential" : "llm.enterCredential", "apiKey", "", "password")}<button class="secondary" data-action="storeProviderCredential" data-form="${esc(formID)}" data-profile-id="${esc(profile.id)}">${tx(profile.hasStoredCredential ? "llm.replaceKey" : "llm.storeKey")}</button>${profile.hasStoredCredential ? `<button class="danger" data-action="removeProviderCredential" data-profile-id="${esc(profile.id)}">${tx("llm.removeKey")}</button>` : ""}</div></section>${setup}</section>`;
+    };
+    return `<div class="workspace provider-workspace">${header("llm.title", "llm.copy", t("llm.keyLibrary"), "gold")}<section class="provider-create" data-form-id="new-provider-profile-form">${valueSelectField("llm.providerType", "", "type", "gemini", profileTypeOptions)}<button class="gold-action" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button><span class="small-copy">${tx("llm.createCopy")}</span></section><div class="provider-panels">${profiles.length ? profiles.map(panel).join("") : `<div class="empty">${tx("llm.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
   }
 
   function browserBridgeWorkspace() {
@@ -613,6 +633,7 @@
     if (button.dataset.utilityPanel) data.utilityPanel = button.dataset.utilityPanel;
     if (button.dataset.policyId) data.policyID = button.dataset.policyId;
     if (button.dataset.modelId) data.modelID = button.dataset.modelId;
+    if (button.dataset.profileId) data.profileID = button.dataset.profileId;
     if (button.dataset.treeId) data.treeID = button.dataset.treeId;
     if (button.dataset.nodeId) data.nodeID = button.dataset.nodeId;
     if (button.dataset.parentId) data.parentID = button.dataset.parentId;
@@ -706,6 +727,11 @@
     }
     if (action === "deleteLocalModel") {
       if (!window.confirm(`${t("model.confirmDelete")}\n\n${t("model.confirmDeleteCopy")}`)) return;
+      send(action, data);
+      return;
+    }
+    if (action === "deleteProviderProfile") {
+      if (!window.confirm(`${t("llm.confirmDelete")}\n\n${t("llm.confirmDeleteCopy")}`)) return;
       send(action, data);
       return;
     }
