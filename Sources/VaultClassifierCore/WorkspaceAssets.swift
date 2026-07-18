@@ -363,13 +363,14 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
     case custom
 
     public var supportsLLMConfiguration: Bool {
+        ProviderProtocolRegistry.descriptor(for: self).supportsLLMConfiguration
+    }
+
+    /// These compatibility values remain decodable only so an owner can
+    /// remove an old profile. New UI or bridge input must not create them.
+    public var isSelectableProfileType: Bool {
         switch self {
-        case .youtubeData, .twitch, .reddit, .discord, .xPlatform, .tikTok,
-             .instagramGraph, .facebookGraph, .linkedIn, .pinterest, .bluesky,
-             .mastodon, .vimeo, .dailyMotion, .spotify, .soundCloud, .steam,
-             .github, .gitlab, .slack, .telegram, .notion, .microsoftGraph,
-             .braveSearch, .tavily, .serpAPI, .firecrawl, .googleCustomSearch,
-             .bingWebSearch:
+        case .discord, .github, .gitlab, .slack, .telegram, .notion, .microsoftGraph:
             return false
         default:
             return true
@@ -495,6 +496,9 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
     /// and custom entries. It is configuration only; this source slice makes
     /// no network dispatch.
     public var customEndpoint: String?
+    /// Non-secret protocol settings such as cloud account, region, or API
+    /// version. The versioned descriptor controls which keys are allowed.
+    public var protocolConfiguration: [String: String]
     public var updatedAtMilliseconds: Int64
 
     public init(
@@ -507,6 +511,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         youtubeProviderID: String? = nil,
         searchEnabled: Bool = false,
         customEndpoint: String? = nil,
+        protocolConfiguration: [String: String]? = nil,
         updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
     ) {
         self.id = id
@@ -518,6 +523,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         self.youtubeProviderID = youtubeProviderID
         self.searchEnabled = searchEnabled
         self.customEndpoint = customEndpoint
+        self.protocolConfiguration = protocolConfiguration ?? ProviderProtocolRegistry.descriptor(for: type).defaultConfiguration()
         self.updatedAtMilliseconds = updatedAtMilliseconds
     }
 
@@ -530,26 +536,60 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
             throw APIKeyProviderProfileError.invalidConfiguration
         }
 
-        if type.supportsLLMConfiguration {
+        let descriptor = ProviderProtocolRegistry.descriptor(for: type)
+        if descriptor.supportsLLMConfiguration {
             let cleanedModel = modelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleanedModel.isEmpty, cleanedModel.count <= Self.maximumModelIdentifierLength else {
                 throw APIKeyProviderProfileError.invalidConfiguration
             }
-        } else if !modelIdentifier.isEmpty || youtubeProviderID != nil || searchEnabled || customEndpoint != nil {
+        } else if !modelIdentifier.isEmpty || youtubeProviderID != nil || searchEnabled || (customEndpoint != nil && !descriptor.allowsEndpointOverride) {
             throw APIKeyProviderProfileError.invalidConfiguration
         }
 
         let normalizedEndpoint = customEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if type.supportsLLMConfiguration, let normalizedEndpoint {
-            guard normalizedEndpoint.count <= Self.maximumEndpointLength,
-                  let components = URLComponents(string: normalizedEndpoint),
-                  components.scheme != nil,
-                  components.host != nil else {
-                throw APIKeyProviderProfileError.invalidConfiguration
-            }
-        } else if normalizedEndpoint != nil {
+        guard normalizedEndpoint?.count ?? 0 <= Self.maximumEndpointLength else {
             throw APIKeyProviderProfileError.invalidConfiguration
         }
+        do {
+            try descriptor.validateConfiguration(protocolConfiguration, endpointOverride: normalizedEndpoint, requireDispatchReadiness: false)
+        } catch {
+            throw APIKeyProviderProfileError.invalidConfiguration
+        }
+    }
+
+    /// Used by an explicit future provider run before it asks Keychain for a
+    /// credential. Editing a profile intentionally permits incomplete values.
+    public func validateForDispatch() throws {
+        try validate()
+        do {
+            try ProviderProtocolRegistry.descriptor(for: type).validateConfiguration(
+                protocolConfiguration,
+                endpointOverride: customEndpoint,
+                requireDispatchReadiness: true
+            )
+        } catch {
+            throw APIKeyProviderProfileError.invalidConfiguration
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, type, modelIdentifier, batchSize, maximumTokens, youtubeProviderID, searchEnabled, customEndpoint, protocolConfiguration, updatedAtMilliseconds
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        type = try container.decode(APIKeyProviderType.self, forKey: .type)
+        modelIdentifier = try container.decodeIfPresent(String.self, forKey: .modelIdentifier) ?? type.defaultModelIdentifier
+        batchSize = try container.decodeIfPresent(Int.self, forKey: .batchSize) ?? 1
+        maximumTokens = try container.decodeIfPresent(Int.self, forKey: .maximumTokens) ?? 1_024
+        youtubeProviderID = try container.decodeIfPresent(String.self, forKey: .youtubeProviderID)
+        searchEnabled = try container.decodeIfPresent(Bool.self, forKey: .searchEnabled) ?? false
+        customEndpoint = try container.decodeIfPresent(String.self, forKey: .customEndpoint)
+        protocolConfiguration = try container.decodeIfPresent([String: String].self, forKey: .protocolConfiguration)
+            ?? ProviderProtocolRegistry.descriptor(for: type).defaultConfiguration()
+        updatedAtMilliseconds = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMilliseconds) ?? WorkspaceCatalog.now()
     }
 }
 

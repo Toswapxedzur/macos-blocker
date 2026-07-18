@@ -108,7 +108,6 @@ final class VaultClassifierViewModel: ObservableObject {
     @Published var auditWeeklyTokenCap = "8,000"
     @Published var auditMonthlyTokenCap = "25,000"
     @Published var auditLocalLearning = false
-    @Published var auditGeminiAPIKey = ""
     @Published private(set) var hasStoredGeminiAPIKey = false
     @Published private(set) var auditRunningCandidateIDs = Set<UUID>()
     @Published private(set) var auditDiagnosticNotice: String?
@@ -273,6 +272,7 @@ final class VaultClassifierViewModel: ObservableObject {
     func createProviderProfile(typeRaw: String) {
         do {
             guard let type = APIKeyProviderType(rawValue: typeRaw),
+                  type.isSelectableProfileType,
                   var catalog = localState?.workspaceCatalog else {
                 throw WebBridgeInputError.invalidChoice("provider type")
             }
@@ -307,7 +307,8 @@ final class VaultClassifierViewModel: ObservableObject {
         maximumTokens: String?,
         youtubeProviderID: String?,
         searchEnabled: Bool?,
-        customEndpoint: String?
+        customEndpoint: String?,
+        protocolConfiguration: [String: String]
     ) {
         do {
             guard var catalog = localState?.workspaceCatalog,
@@ -318,8 +319,9 @@ final class VaultClassifierViewModel: ObservableObject {
             let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleanedName.isEmpty else { throw WebBridgeInputError.invalidChoice("provider profile name") }
             profile.name = cleanedName
-            if profile.type.supportsLLMConfiguration {
-                guard let modelIdentifier, let batchSize, let maximumTokens, let searchEnabled else {
+            let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
+            if descriptor.supportsLLMConfiguration {
+                guard let modelIdentifier, let batchSize, let maximumTokens else {
                     throw WebBridgeInputError.missingValue("provider model settings")
                 }
                 profile.modelIdentifier = modelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -327,7 +329,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 profile.maximumTokens = try providerPositiveInteger(maximumTokens, maximum: APIKeyProviderProfile.maximumTokenLimit, label: "Provider maximum tokens")
                 let normalizedYouTubeID = youtubeProviderID?.trimmingCharacters(in: .whitespacesAndNewlines)
                 profile.youtubeProviderID = normalizedYouTubeID?.isEmpty == false ? normalizedYouTubeID : nil
-                profile.searchEnabled = searchEnabled
+                profile.searchEnabled = searchEnabled ?? false
                 let normalizedEndpoint = customEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines)
                 profile.customEndpoint = normalizedEndpoint?.isEmpty == false ? normalizedEndpoint : nil
             } else {
@@ -336,8 +338,10 @@ final class VaultClassifierViewModel: ObservableObject {
                 profile.maximumTokens = 1_024
                 profile.youtubeProviderID = nil
                 profile.searchEnabled = false
-                profile.customEndpoint = nil
+                let normalizedEndpoint = customEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines)
+                profile.customEndpoint = normalizedEndpoint?.isEmpty == false ? normalizedEndpoint : nil
             }
+            profile.protocolConfiguration = protocolConfiguration
             profile.updatedAtMilliseconds = WorkspaceCatalog.now()
             catalog.providerProfiles[index] = profile
             try coordinator?.updateWorkspaceCatalog(catalog)
@@ -346,12 +350,38 @@ final class VaultClassifierViewModel: ObservableObject {
         } catch { issue = error.localizedDescription }
     }
 
-    func storeProviderCredential(profileID: String, credential: String) {
+    func presentProviderCredentialEntry(profileID: String) {
         do {
-            guard localState?.workspaceCatalog.providerProfiles.contains(where: { $0.id == profileID }) == true else {
+            guard let profile = localState?.workspaceCatalog.providerProfiles.first(where: { $0.id == profileID }) else {
                 throw WebBridgeInputError.invalidChoice("provider profile")
             }
-            try ProviderCredentialStore.saveCredential(credential, for: profileID)
+            let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
+            guard !descriptor.credentialFields.isEmpty else {
+                refreshLocalState()
+                issue = nil
+                return
+            }
+            let alert = NSAlert()
+            alert.messageText = "Store provider credential"
+            alert.informativeText = "This value is entered directly into this Mac’s Keychain. It is not sent through the web workspace."
+            alert.addButton(withTitle: "Store in Keychain")
+            alert.addButton(withTitle: "Cancel")
+            let fields = descriptor.credentialFields.map { field in
+                (field, NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24)))
+            }
+            let stack = NSStackView()
+            stack.orientation = .vertical
+            stack.alignment = .leading
+            stack.spacing = 8
+            for (field, control) in fields {
+                let label = NSTextField(labelWithString: nativeCredentialLabel(field))
+                stack.addArrangedSubview(label)
+                stack.addArrangedSubview(control)
+            }
+            alert.accessoryView = stack
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            let record = ProviderCredentialRecord(values: Dictionary(uniqueKeysWithValues: fields.map { ($0.0, $0.1.stringValue) }))
+            try ProviderCredentialStore.saveCredentialRecord(record, for: profileID, descriptor: descriptor)
             refreshLocalState()
             issue = nil
         } catch { issue = error.localizedDescription }
@@ -374,16 +404,27 @@ final class VaultClassifierViewModel: ObservableObject {
                   catalog.providerProfiles.contains(where: { $0.id == profileID }) else {
                 throw WebBridgeInputError.invalidChoice("provider profile")
             }
-            try ProviderCredentialStore.removeCredential(for: profileID)
             catalog.providerProfiles.removeAll(where: { $0.id == profileID })
             for index in catalog.providerProfiles.indices where catalog.providerProfiles[index].youtubeProviderID == profileID {
                 catalog.providerProfiles[index].youtubeProviderID = nil
                 catalog.providerProfiles[index].updatedAtMilliseconds = WorkspaceCatalog.now()
             }
             try coordinator?.updateWorkspaceCatalog(catalog)
+            try ProviderCredentialStore.removeCredential(for: profileID)
             refreshLocalState()
             issue = nil
         } catch { issue = error.localizedDescription }
+    }
+
+    private func nativeCredentialLabel(_ field: ProviderCredentialField) -> String {
+        switch field {
+        case .apiKey: return "API key"
+        case .bearerToken: return "Bearer token"
+        case .clientSecret: return "Client secret"
+        case .accessKeyID: return "AWS access key ID"
+        case .secretAccessKey: return "AWS secret access key"
+        case .sessionToken: return "AWS session token"
+        }
     }
 
     func createTree(name: String) {
@@ -847,10 +888,17 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
-    func saveGeminiAPIKey() {
+    func presentGeminiCredentialEntry() {
         do {
-            try PersonalAuditCredentialStore.saveGeminiAPIKey(auditGeminiAPIKey)
-            auditGeminiAPIKey = ""
+            let alert = NSAlert()
+            alert.messageText = "Store Gemini API key"
+            alert.informativeText = "This value is entered directly into this Mac’s Keychain. It is not sent through the web workspace."
+            alert.addButton(withTitle: "Store in Keychain")
+            alert.addButton(withTitle: "Cancel")
+            let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
+            alert.accessoryView = field
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            try PersonalAuditCredentialStore.saveGeminiAPIKey(field.stringValue)
             hasStoredGeminiAPIKey = true
             issue = nil
         } catch {
@@ -861,7 +909,6 @@ final class VaultClassifierViewModel: ObservableObject {
     func removeGeminiAPIKey() {
         do {
             try PersonalAuditCredentialStore.removeGeminiAPIKey()
-            auditGeminiAPIKey = ""
             hasStoredGeminiAPIKey = false
             issue = nil
         } catch {
@@ -1367,9 +1414,30 @@ final class VaultClassifierViewModel: ObservableObject {
                     "youtubeProviderID": profile.youtubeProviderID ?? NSNull(),
                     "searchEnabled": profile.searchEnabled,
                     "customEndpoint": profile.customEndpoint ?? NSNull(),
+                    "protocolConfiguration": profile.protocolConfiguration,
                     "hasStoredCredential": ProviderCredentialStore.hasCredential(for: profile.id),
                 ] as [String: Any]
             },
+            "providerProtocols": Dictionary(uniqueKeysWithValues: APIKeyProviderType.allCases
+                .map { type -> (String, [String: Any]) in
+                    let descriptor = ProviderProtocolRegistry.descriptor(for: type)
+                    return (type.rawValue, [
+                        "identifier": descriptor.identifier,
+                        "revision": descriptor.revision,
+                        "family": descriptor.family.rawValue,
+                        "supportsLLMConfiguration": descriptor.supportsLLMConfiguration,
+                        "supportsYouTubeTool": descriptor.requestFormats.contains(where: { $0.operation == .generateText }),
+                        "allowsEndpointOverride": descriptor.allowsEndpointOverride,
+                        "credentialRequired": !descriptor.credentialFields.isEmpty,
+                        "configurationRequirements": descriptor.configurationRequirements.map { requirement in
+                            [
+                                "field": requirement.field.rawValue,
+                                "defaultValue": requirement.defaultValue ?? NSNull(),
+                                "requiredForDispatch": requirement.isRequiredForDispatch,
+                            ] as [String: Any]
+                        },
+                    ])
+                }),
             "bindings": catalog.bindings.map { binding in
                 ["id": binding.id, "name": binding.name, "browser": binding.browser, "treeID": binding.treeID, "datasetID": binding.datasetID, "activeModelID": binding.activeModelID ?? NSNull(), "policyID": binding.policyID ?? NSNull()] as [String: Any]
             },
@@ -1435,13 +1503,11 @@ final class VaultClassifierViewModel: ObservableObject {
                     maximumTokens: try webOptionalString(data, key: "maximumTokens", limit: 16),
                     youtubeProviderID: try webOptionalString(data, key: "youtubeProviderID", limit: 128),
                     searchEnabled: data["searchEnabled"] as? Bool,
-                    customEndpoint: try webOptionalString(data, key: "customEndpoint", limit: APIKeyProviderProfile.maximumEndpointLength)
+                    customEndpoint: try webOptionalString(data, key: "customEndpoint", limit: APIKeyProviderProfile.maximumEndpointLength),
+                    protocolConfiguration: try webProviderConfiguration(data)
                 )
-            case "storeProviderCredential":
-                storeProviderCredential(
-                    profileID: try webString(data, key: "profileID", limit: 128),
-                    credential: try webString(data, key: "apiKey", limit: ProviderCredentialStore.maximumCredentialCharacters)
-                )
+            case "presentProviderCredentialEntry":
+                presentProviderCredentialEntry(profileID: try webString(data, key: "profileID", limit: 128))
             case "removeProviderCredential":
                 removeProviderCredential(profileID: try webString(data, key: "profileID", limit: 128))
             case "deleteProviderProfile":
@@ -1568,9 +1634,8 @@ final class VaultClassifierViewModel: ObservableObject {
                 auditMonthlyTokenCap = try webString(data, key: "monthlyCap", limit: 16)
                 auditLocalLearning = try webBool(data, key: "localLearning")
                 saveAuditConfiguration()
-            case "storeGeminiKey":
-                auditGeminiAPIKey = try webString(data, key: "apiKey", limit: 2_048)
-                saveGeminiAPIKey()
+            case "presentGeminiCredentialEntry":
+                presentGeminiCredentialEntry()
             case "removeGeminiKey":
                 removeGeminiAPIKey()
             case "queueSuggestedAudits":
@@ -1629,6 +1694,19 @@ final class VaultClassifierViewModel: ObservableObject {
         guard let value = data[key] as? String else { return nil }
         guard value.count <= limit else { throw WebBridgeInputError.exceedsLimit(key, limit) }
         return value
+    }
+
+    private func webProviderConfiguration(_ data: [String: Any]) throws -> [String: String] {
+        guard let raw = data["protocolConfiguration"] as? [String: Any] else { return [:] }
+        guard raw.count <= ProviderConfigurationField.allCases.count else {
+            throw WebBridgeInputError.exceedsLimit("protocol configuration", ProviderConfigurationField.allCases.count)
+        }
+        return try Dictionary(uniqueKeysWithValues: raw.map { key, value in
+            guard key.count <= 64, let string = value as? String, string.count <= 512 else {
+                throw WebBridgeInputError.invalidChoice("protocol configuration")
+            }
+            return (key, string)
+        })
     }
 
     private func webCanvasCoordinate(_ data: [String: Any], key: String) throws -> Double {
@@ -2366,12 +2444,8 @@ private struct VaultClassifierRootView: View {
                     VStack(alignment: .leading, spacing: 7) {
                         VaultFieldLabel(title: "GEMINI API KEY", hint: "This Mac's Keychain only")
                         HStack(spacing: 8) {
-                            SecureField(model.hasStoredGeminiAPIKey ? "A key is already stored — enter a replacement" : "Paste a Gemini API key", text: $model.auditGeminiAPIKey)
-                                .textFieldStyle(.plain)
-                                .vaultInput()
-                            Button(model.hasStoredGeminiAPIKey ? "Replace" : "Store") { model.saveGeminiAPIKey() }
+                            Button(model.hasStoredGeminiAPIKey ? "Replace" : "Store") { model.presentGeminiCredentialEntry() }
                                 .buttonStyle(.bordered)
-                                .disabled(model.auditGeminiAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                             if model.hasStoredGeminiAPIKey {
                                 Button("Remove", role: .destructive) { model.removeGeminiAPIKey() }
                                     .buttonStyle(.bordered)

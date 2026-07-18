@@ -5,15 +5,39 @@ import Security
 /// retains only its opaque ID and non-secret configuration; raw keys never
 /// enter local state, the WKWebView snapshot, diagnostics, native messaging,
 /// or server traffic.
+public struct ProviderCredentialRecord: Codable, Equatable, Sendable {
+    public var values: [ProviderCredentialField: String]
+
+    public init(values: [ProviderCredentialField: String]) {
+        self.values = values
+    }
+
+    public func validate(for descriptor: ProviderProtocolDescriptor) throws {
+        guard Set(values.keys) == Set(descriptor.credentialFields),
+              values.values.allSatisfy(ProviderCredentialStore.isValidCredential) else {
+            throw ProviderCredentialStoreError.invalidCredential
+        }
+    }
+}
+
 public enum ProviderCredentialStore {
     private static let service = "com.adamancia.vault-classifier.provider-credential"
     public static let maximumCredentialCharacters = 2_048
 
     public static func hasCredential(for profileID: String) -> Bool {
-        loadCredential(for: profileID) != nil
+        guard isValidProfileID(profileID) else { return false }
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: profileID,
+            kSecMatchLimit: kSecMatchLimitOne,
+        ]
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }
 
-    public static func loadCredential(for profileID: String) -> String? {
+    /// Retrieves a native-only structured record. This function must never be
+    /// used to form a WebView snapshot, log record, or browser message.
+    public static func loadCredentialRecord(for profileID: String) -> ProviderCredentialRecord? {
         guard isValidProfileID(profileID) else { return nil }
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
@@ -25,15 +49,28 @@ public enum ProviderCredentialStore {
         var result: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
               let data = result as? Data,
-              let credential = String(data: data, encoding: .utf8),
-              isValidCredential(credential) else {
+              let credential = String(data: data, encoding: .utf8) else {
             return nil
         }
-        return credential
+        if let record = try? JSONDecoder().decode(ProviderCredentialRecord.self, from: data) {
+            return record
+        }
+        // A profile created before protocol revision 1 stored one raw key.
+        // Treat it as an API-key record so the native panel can migrate it on
+        // the next explicit replacement; do not expose it to the WebView.
+        guard isValidCredential(credential) else { return nil }
+        return .init(values: [.apiKey: credential])
     }
 
-    public static func saveCredential(_ credential: String, for profileID: String) throws {
-        guard isValidProfileID(profileID), isValidCredential(credential) else {
+    public static func saveCredentialRecord(
+        _ record: ProviderCredentialRecord,
+        for profileID: String,
+        descriptor: ProviderProtocolDescriptor
+    ) throws {
+        try record.validate(for: descriptor)
+        guard isValidProfileID(profileID),
+              let encoded = try? JSONEncoder().encode(record),
+              encoded.count <= maximumCredentialCharacters * 2 else {
             throw ProviderCredentialStoreError.invalidCredential
         }
         let identity: [CFString: Any] = [
@@ -42,7 +79,7 @@ public enum ProviderCredentialStore {
             kSecAttrAccount: profileID,
         ]
         let attributes: [CFString: Any] = [
-            kSecValueData: Data(credential.utf8),
+            kSecValueData: encoded,
             kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
         ]
         let updateStatus = SecItemUpdate(identity as CFDictionary, attributes as CFDictionary)
@@ -79,7 +116,7 @@ public enum ProviderCredentialStore {
         }
     }
 
-    private static func isValidCredential(_ credential: String) -> Bool {
+    static func isValidCredential(_ credential: String) -> Bool {
         guard !credential.isEmpty,
               credential == credential.trimmingCharacters(in: .whitespacesAndNewlines),
               credential.count <= maximumCredentialCharacters else {
