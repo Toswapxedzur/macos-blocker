@@ -1,8 +1,8 @@
 import Foundation
 import VaultClassifierCore
 
-/// The classifier can join either desktop app's one shared loopback hub. It
-/// uses the same address and pairing key, never a second port.
+/// The classifier is a client of the one ephemeral Vault broker. It never
+/// listens on a local port and the broker never persists its requests.
 @MainActor
 final class SharedHubClient {
     enum State: String {
@@ -25,12 +25,12 @@ final class SharedHubClient {
 
     private(set) var state: State = .off { didSet { onStateChange?() } }
     private(set) var error = "" { didSet { onStateChange?() } }
+    private(set) var peers: [[String: Any]] = [] { didSet { onStateChange?() } }
     private var task: URLSessionWebSocketTask?
     private var session: URLSession?
     private var reconnectTimer: Timer?
     private var handshakeTimer: Timer?
     private var desired = false
-    private var pairingKey = ""
 
     struct Reply {
         var body: Any?
@@ -40,24 +40,7 @@ final class SharedHubClient {
         static func failure(_ error: String) -> Reply { .init(body: nil, error: error) }
     }
 
-    var hasStoredPairingKey: Bool { SharedHubPairingKeyStore.load() != nil }
-
-    func connectUsingStoredKey() {
-        guard let key = SharedHubPairingKeyStore.load() else {
-            transition(to: .off, error: "")
-            return
-        }
-        connect(pairingKey: key)
-    }
-
-    func connect(pairingKey: String) {
-        guard let normalized = SharedHubPairingKeyStore.normalized(pairingKey) else {
-            desired = false
-            closeSocket()
-            transition(to: .error, error: "pairing-key-required")
-            return
-        }
-        self.pairingKey = normalized
+    func connect() {
         desired = true
         reconnectTimer?.invalidate()
         reconnectTimer = nil
@@ -74,9 +57,8 @@ final class SharedHubClient {
         send(
             [
                 "kind": "hello",
-                "v": 2,
+                "v": SharedBrowserBridgeProtocol.version,
                 "program": "classifier",
-                "pairingKey": normalized,
             ],
             on: task
         ) { [weak self, weak task] error in
@@ -94,12 +76,12 @@ final class SharedHubClient {
 
     func disconnect() {
         desired = false
-        pairingKey = ""
         reconnectTimer?.invalidate()
         reconnectTimer = nil
         handshakeTimer?.invalidate()
         handshakeTimer = nil
         closeSocket()
+        peers = []
         transition(to: .off, error: "")
     }
 
@@ -135,7 +117,7 @@ final class SharedHubClient {
         }
         switch kind {
         case "welcome":
-            guard (object["v"] as? NSNumber)?.intValue == 2,
+            guard (object["v"] as? NSNumber)?.intValue == SharedBrowserBridgeProtocol.version,
                   let hubProgram = object["hubProgram"] as? String,
                   SharedBrowserBridgeProtocol.isAcceptedHubProgram(hubProgram) else {
                 connectionFailed("protocol-mismatch", retry: false)
@@ -143,7 +125,10 @@ final class SharedHubClient {
             }
             handshakeTimer?.invalidate()
             handshakeTimer = nil
+            peers = object["peers"] as? [[String: Any]] ?? []
             transition(to: .connected, error: "")
+        case "peers":
+            peers = object["peers"] as? [[String: Any]] ?? []
         case "rejected":
             connectionFailed((object["reason"] as? String) ?? "rejected", retry: false)
         case "classifier-request":
@@ -204,6 +189,7 @@ final class SharedHubClient {
         handshakeTimer?.invalidate()
         handshakeTimer = nil
         closeSocket()
+        peers = []
         let canRetry = retry && desired
         transition(to: canRetry ? .disconnected : .error, error: reason)
         guard canRetry else { return }
@@ -211,7 +197,7 @@ final class SharedHubClient {
         reconnectTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.desired else { return }
-                self.connect(pairingKey: self.pairingKey)
+                self.connect()
             }
         }
     }

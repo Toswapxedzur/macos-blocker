@@ -152,17 +152,14 @@
 
   function browserBridgeSettingsPopover() {
     const hub = state.bridge || {};
-    const hosting = hub.isHosting === true;
     const connected = hub.state === "connected";
-    const stateKey = hosting ? `bridge.status.${hub.serverState || "starting"}` : `bridge.status.${hub.state || "off"}`;
-    const serverButton = hosting
-      ? `<button class="danger" data-action="stopSharedHubServer">${tx("bridge.stopServer")}</button>`
-      : `<button class="secondary" data-action="hostSharedHub">${tx("bridge.hostServer")}</button>`;
-    const connectionButton = hosting ? "" : (connected
+    const stateKey = `bridge.status.${hub.state || "off"}`;
+    const peers = Array.isArray(hub.peers) ? hub.peers : [];
+    const peerLabels = peers.filter((peer) => peer && peer.program).map((peer) => esc(peer.program)).join(", ") || tx("bridge.noPeers");
+    const connectionButton = connected
       ? `<button class="secondary" data-action="disconnectSharedHub">${tx("bridge.disconnect")}</button>`
-      : `<button class="primary" data-action="connectSharedHub">${tx("bridge.connect")}</button>`);
-    const error = hosting ? hub.serverError : hub.error;
-    return `<section class="utility-panel navy"><div class="utility-panel-head"><div><h2>${tx("bridge.settingsTitle")}</h2><p class="section-copy">${tx("bridge.settingsCopy")}</p></div><div class="action-row"><button class="secondary" data-action="openUtilityPanel" data-utility-panel="settings">${tx("bridge.backToSettings")}</button><button class="utility-close" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}" title="${tx("utility.close")}">×</button></div></div><div class="bridge-settings-status"><div class="status-line"><strong>${tx("bridge.hubAddress")}</strong><span class="spacer"></span><span>${esc(hub.address || "ws://127.0.0.1:8787")}</span></div><div class="status-line"><strong>${tx("bridge.hubStatus")}</strong><span class="spacer"></span>${statusPill(tx(stateKey), hosting ? "navy" : (connected ? "cyan" : "muted"))}</div><div class="status-line"><strong>${tx("bridge.pairing")}</strong><span class="spacer"></span><span>${tx(hub.hasPairingKey ? "bridge.pairingStored" : "bridge.pairingMissing")}</span></div></div><div class="bridge-settings-actions">${connectionButton}${serverButton}</div><p class="small-copy">${tx("bridge.hostCopy")}</p>${error ? notice(error, "red") : ""}</section>`;
+      : `<button class="primary" data-action="connectSharedHub">${tx("bridge.connect")}</button>`;
+    return `<section class="utility-panel navy"><div class="utility-panel-head"><div><h2>${tx("bridge.settingsTitle")}</h2><p class="section-copy">${tx("bridge.settingsCopy")}</p></div><div class="action-row"><button class="secondary" data-action="openUtilityPanel" data-utility-panel="settings">${tx("bridge.backToSettings")}</button><button class="utility-close" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}" title="${tx("utility.close")}">×</button></div></div><div class="bridge-settings-status"><div class="status-line"><strong>${tx("bridge.hubAddress")}</strong><span class="spacer"></span><span>${esc(hub.address || "wss://customblocker.com/api/vault-bridge")}</span></div><div class="status-line"><strong>${tx("bridge.hubStatus")}</strong><span class="spacer"></span>${statusPill(tx(stateKey), connected ? "cyan" : "muted")}</div><div class="status-line"><strong>${tx("bridge.peers")}</strong><span class="spacer"></span><span>${peerLabels}</span></div></div><div class="bridge-settings-actions">${connectionButton}</div><p class="small-copy">${tx("bridge.hostCopy")}</p>${hub.error ? notice(hub.error, "red") : ""}</section>`;
   }
 
   function navButton(workspace, symbol, titleKey, metaKey, tone) {
