@@ -73,7 +73,7 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(record.platformID, "youtube")
     }
 
-    func testCreatorClassificationsAreDurableSourceOfTruthAndApprovedLLMLabelsTrain() throws {
+    func testCreatorClassificationsAreTheOnlyActiveTrainingLabels() throws {
         let tree = TagTreeAsset(
             id: "interests",
             name: "Interests",
@@ -121,6 +121,9 @@ final class WorkspaceAssetsTests: XCTestCase {
         var dataset = ClassificationDataset(
             id: "personal-labels",
             name: "Personal labels",
+            records: [
+                .init(title: "Legacy entry label", tagIDs: ["games"], origin: .manual, review: .approved, platformID: "youtube", treeRevision: tree.revision),
+            ],
             creatorClassifications: [manual, llm, pending],
             collectedEntries: [
                 .init(id: "game-video-one", platformID: "youtube", entryID: "game-video-one", creatorID: manual.creatorID, creatorName: manual.creatorName, entryType: "video", title: "Ranked deck guide"),
@@ -134,6 +137,7 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(examples.count, 3)
         XCTAssertEqual(Set(examples.flatMap(\.positiveLabelIDs)), ["games", "technology"])
         XCTAssertFalse(examples.contains(where: { $0.text == "Do not train this" }))
+        XCTAssertFalse(examples.contains(where: { $0.text == "Legacy entry label" }))
 
         var updated = manual
         updated.tagIDs = ["technology"]
@@ -155,6 +159,17 @@ final class WorkspaceAssetsTests: XCTestCase {
                 .init(id: "technology", name: "Technology"),
             ]
         )
+        let youtubeCreator = CreatorClassificationRecord(
+            classifierTypeID: "creator-focus",
+            creatorID: "youtube:channel:games",
+            creatorName: "Games creator",
+            platformID: "youtube",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            tagIDs: ["games"],
+            origin: .manual,
+            review: .approved
+        )
         let instagramCreator = CreatorClassificationRecord(
             classifierTypeID: "creator-focus",
             creatorID: "instagram:creator:technology",
@@ -169,12 +184,9 @@ final class WorkspaceAssetsTests: XCTestCase {
         let dataset = ClassificationDataset(
             id: "personal-labels",
             name: "Personal labels",
-            records: [
-                .init(title: "YouTube deck guide", tagIDs: ["games"], origin: .manual, review: .approved, platformID: "youtube", treeRevision: tree.revision),
-                .init(title: "Twitch stream", tagIDs: ["games"], origin: .manual, review: .approved, platformID: "twitch", treeRevision: tree.revision),
-            ],
-            creatorClassifications: [instagramCreator],
+            creatorClassifications: [youtubeCreator, instagramCreator],
             collectedEntries: [
+                .init(id: "youtube-video", platformID: "youtube", entryID: "youtube-video", creatorID: youtubeCreator.creatorID, creatorName: youtubeCreator.creatorName, entryType: "video", title: "YouTube deck guide"),
                 .init(id: "instagram-video", platformID: "instagram", entryID: "instagram-video", creatorID: instagramCreator.creatorID, creatorName: instagramCreator.creatorName, entryType: "reel", title: "Instagram neural model guide"),
             ]
         )
@@ -230,8 +242,21 @@ final class WorkspaceAssetsTests: XCTestCase {
     func testClassifierTypeRequiresMatchingAssetsAndReconcilesStaleDependencies() throws {
         var catalog = WorkspaceCatalog.starter()
         catalog.trees[0].nodes = [.init(id: "games", name: "Games")]
-        catalog.datasets[0].records = [
-            .init(title: "Deck game guide", tagIDs: ["games"], origin: .manual, review: .approved, platformID: "youtube", treeRevision: catalog.trees[0].revision),
+        catalog.datasets[0].creatorClassifications = [
+            .init(
+                classifierTypeID: "games-neural",
+                creatorID: "youtube:channel:games",
+                creatorName: "Games creator",
+                platformID: "youtube",
+                treeID: catalog.trees[0].id,
+                treeRevision: catalog.trees[0].revision,
+                tagIDs: ["games"],
+                origin: .manual,
+                review: .approved
+            ),
+        ]
+        catalog.datasets[0].collectedEntries = [
+            .init(id: "game-entry", platformID: "youtube", entryID: "game-entry", creatorID: "youtube:channel:games", creatorName: "Games creator", entryType: "video", title: "Deck game guide"),
         ]
         catalog.models[0] = try LocalModelTrainer.train(
             catalog.models[0],
@@ -326,7 +351,7 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(result.scores.map(\.tagID), ["games"])
     }
 
-    func testModelTrainingUsesOnlyApprovedRecordsForItsTreeAndPlatform() throws {
+    func testModelTrainingUsesOnlyApprovedCreatorClassificationsForItsTreeAndPlatform() throws {
         let tree = TagTreeAsset(
             id: "interests",
             name: "Interests",
@@ -336,19 +361,89 @@ final class WorkspaceAssetsTests: XCTestCase {
                 .init(id: "cooking", name: "Cooking"),
             ]
         )
+        let gamesCreator = CreatorClassificationRecord(
+            classifierTypeID: "creator-focus",
+            creatorID: "youtube:channel:games",
+            creatorName: "Games creator",
+            platformID: "youtube",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            tagIDs: ["games"],
+            origin: .manual,
+            review: .approved
+        )
+        let technologyCreator = CreatorClassificationRecord(
+            classifierTypeID: "creator-focus",
+            creatorID: "youtube:channel:technology",
+            creatorName: "Technology creator",
+            platformID: "youtube",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            tagIDs: ["technology"],
+            origin: .llmAssist,
+            review: .approved
+        )
+        let cookingCreator = CreatorClassificationRecord(
+            classifierTypeID: "creator-focus",
+            creatorID: "youtube:channel:cooking",
+            creatorName: "Cooking creator",
+            platformID: "youtube",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            tagIDs: ["cooking"],
+            origin: .manual,
+            review: .approved
+        )
+        let pendingCreator = CreatorClassificationRecord(
+            classifierTypeID: "creator-focus",
+            creatorID: "youtube:channel:pending",
+            creatorName: "Pending creator",
+            platformID: "youtube",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            tagIDs: ["games"],
+            origin: .llmAssist,
+            review: .pending
+        )
+        let otherPlatformCreator = CreatorClassificationRecord(
+            classifierTypeID: "creator-focus",
+            creatorID: "twitch:channel:games",
+            creatorName: "Twitch games creator",
+            platformID: "twitch",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            tagIDs: ["games"],
+            origin: .manual,
+            review: .approved
+        )
+        let outdatedTreeCreator = CreatorClassificationRecord(
+            classifierTypeID: "creator-focus",
+            creatorID: "youtube:channel:old-tree",
+            creatorName: "Old tree creator",
+            platformID: "youtube",
+            treeID: tree.id,
+            treeRevision: tree.revision + 1,
+            tagIDs: ["games"],
+            origin: .manual,
+            review: .approved
+        )
         let dataset = ClassificationDataset(
             id: "personal-labels",
             name: "Personal labels",
             records: [
-                .init(title: "Fast deck guide for the arena", tagIDs: ["games"], origin: .manual, review: .approved, platformID: "youtube", treeRevision: tree.revision),
-                .init(title: "Patch notes and ranked gameplay", tagIDs: ["games"], origin: .manual, review: .approved, platformID: "youtube", treeRevision: tree.revision),
-                .init(title: "Build a compact neural network", tagIDs: ["technology"], origin: .manual, review: .approved, platformID: "youtube", treeRevision: tree.revision),
-                .init(title: "Review a local embedding model", tagIDs: ["technology"], origin: .llmAssist, review: .approved, platformID: "youtube", treeRevision: tree.revision),
-                .init(title: "Quick pasta recipe", tagIDs: ["cooking"], origin: .manual, review: .approved, platformID: "youtube", treeRevision: tree.revision),
-                .init(title: "Bake sourdough bread", tagIDs: ["cooking"], origin: .manual, review: .approved, platformID: "youtube", treeRevision: tree.revision),
-                .init(title: "Unreviewed suggestion", tagIDs: ["games"], origin: .llmAssist, review: .pending, platformID: "youtube", treeRevision: tree.revision),
-                .init(title: "Another platform", tagIDs: ["games"], origin: .manual, review: .approved, platformID: "twitch", treeRevision: tree.revision),
-                .init(title: "Old tree", tagIDs: ["games"], origin: .manual, review: .approved, platformID: "youtube", treeRevision: tree.revision + 1),
+                .init(title: "Legacy entry label", tagIDs: ["games"], origin: .manual, review: .approved, platformID: "youtube", treeRevision: tree.revision),
+            ],
+            creatorClassifications: [gamesCreator, technologyCreator, cookingCreator, pendingCreator, otherPlatformCreator, outdatedTreeCreator],
+            collectedEntries: [
+                .init(id: "games-guide", platformID: "youtube", entryID: "games-guide", creatorID: gamesCreator.creatorID, creatorName: gamesCreator.creatorName, entryType: "video", title: "Fast deck guide for the arena"),
+                .init(id: "games-patch", platformID: "youtube", entryID: "games-patch", creatorID: gamesCreator.creatorID, creatorName: gamesCreator.creatorName, entryType: "video", title: "Patch notes and ranked gameplay"),
+                .init(id: "technology-network", platformID: "youtube", entryID: "technology-network", creatorID: technologyCreator.creatorID, creatorName: technologyCreator.creatorName, entryType: "video", title: "Build a compact neural network"),
+                .init(id: "technology-embedding", platformID: "youtube", entryID: "technology-embedding", creatorID: technologyCreator.creatorID, creatorName: technologyCreator.creatorName, entryType: "video", title: "Review a local embedding model"),
+                .init(id: "cooking-pasta", platformID: "youtube", entryID: "cooking-pasta", creatorID: cookingCreator.creatorID, creatorName: cookingCreator.creatorName, entryType: "video", title: "Quick pasta recipe"),
+                .init(id: "cooking-bread", platformID: "youtube", entryID: "cooking-bread", creatorID: cookingCreator.creatorID, creatorName: cookingCreator.creatorName, entryType: "video", title: "Bake sourdough bread"),
+                .init(id: "pending", platformID: "youtube", entryID: "pending", creatorID: pendingCreator.creatorID, creatorName: pendingCreator.creatorName, entryType: "video", title: "Unreviewed suggestion"),
+                .init(id: "twitch", platformID: "twitch", entryID: "twitch", creatorID: otherPlatformCreator.creatorID, creatorName: otherPlatformCreator.creatorName, entryType: "stream", title: "Another platform"),
+                .init(id: "old-tree", platformID: "youtube", entryID: "old-tree", creatorID: outdatedTreeCreator.creatorID, creatorName: outdatedTreeCreator.creatorName, entryType: "video", title: "Old tree"),
             ]
         )
         let model = LocalModelAsset(
