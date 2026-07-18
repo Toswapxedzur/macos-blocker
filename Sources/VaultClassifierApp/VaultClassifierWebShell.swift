@@ -12,6 +12,11 @@ final class VaultClassifierWebShell {
     init(model: VaultClassifierViewModel) {
         self.model = model
         self.coordinator = Coordinator(model: model)
+        Task { @MainActor [weak coordinator] in
+            model.onWebStateChange = { [weak coordinator] in
+                Task { @MainActor in coordinator?.sendState() }
+            }
+        }
     }
 
     func makeWebView() -> WKWebView {
@@ -84,7 +89,7 @@ final class VaultClassifierWebShell {
             webView.reload()
         }
 
-        private func sendState() {
+        func sendState() {
             let payload = model.webSnapshot()
             Self.layoutLogger.recordNativeSnapshot(payload)
             guard let webView,

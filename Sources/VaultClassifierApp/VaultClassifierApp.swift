@@ -127,6 +127,9 @@ final class VaultClassifierViewModel: ObservableObject {
     @Published private(set) var hasBackupOwnerCode = false
     @Published private(set) var backupUnlocked = false
     @Published private(set) var backupNotice: String?
+    /// Web actions normally receive a synchronous state refresh. Native sheets
+    /// complete later, so they explicitly use this bounded local callback.
+    var onWebStateChange: (() -> Void)?
 
     private var coordinator: LocalClassifierCoordinator?
     private var ipcServer: LocalIPCServer?
@@ -379,11 +382,25 @@ final class VaultClassifierViewModel: ObservableObject {
                 stack.addArrangedSubview(control)
             }
             alert.accessoryView = stack
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
-            let record = ProviderCredentialRecord(values: Dictionary(uniqueKeysWithValues: fields.map { ($0.0, $0.1.stringValue) }))
-            try ProviderCredentialStore.saveCredentialRecord(record, for: profileID, descriptor: descriptor)
-            refreshLocalState()
-            issue = nil
+            guard let window = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible }) else {
+                throw WebBridgeInputError.invalidChoice("application window")
+            }
+            NSApp.activate(ignoringOtherApps: true)
+            alert.beginSheetModal(for: window) { [weak self] response in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    defer { self.onWebStateChange?() }
+                    guard response == .alertFirstButtonReturn else { return }
+                    do {
+                        let record = ProviderCredentialRecord(values: Dictionary(uniqueKeysWithValues: fields.map { ($0.0, $0.1.stringValue) }))
+                        try ProviderCredentialStore.saveCredentialRecord(record, for: profileID, descriptor: descriptor)
+                        self.refreshLocalState()
+                        self.issue = nil
+                    } catch {
+                        self.issue = error.localizedDescription
+                    }
+                }
+            }
         } catch { issue = error.localizedDescription }
     }
 
