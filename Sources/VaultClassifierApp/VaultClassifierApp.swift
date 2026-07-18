@@ -80,6 +80,12 @@ final class VaultClassifierViewModel: ObservableObject {
         case llmAssist
         case browserBridge
         case classificationData
+        case inspect
+        case policies
+        case activity
+        case training
+        case backup
+        case audit
 
         var id: String { rawValue }
     }
@@ -361,7 +367,10 @@ final class VaultClassifierViewModel: ObservableObject {
 
     func markCurrentResult(_ correction: UserCorrection) {
         do {
-            guard let coordinator, let latestLedgerID else { return }
+            guard let coordinator else { throw WebBridgeInputError.invalidChoice("classifier") }
+            guard let latestLedgerID else {
+                throw WebBridgeInputError.invalidChoice("current decision correction")
+            }
             try coordinator.setCorrection(ledgerID: latestLedgerID, correction: correction)
             refreshLocalState()
             issue = nil
@@ -2184,6 +2193,7 @@ final class VaultClassifierViewModel: ObservableObject {
             "platformID": manualPlatformID,
             "llmAvailable": manualLLMAvailable,
             "llmRunning": providerClassificationRunning,
+            "canCorrect": latestLedgerID != nil,
             "result": result.map(webResult) ?? NSNull(),
         ]
         let policyItems: [[String: Any]] = policies.map { policy in
@@ -2506,7 +2516,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 let selected = try webString(data, key: "workspace", limit: 32)
                 guard let value = Workspace(rawValue: selected) else { throw WebBridgeInputError.invalidChoice("workspace") }
                 workspace = value
-                if value == .localModel || value == .llmAssist || value == .browserBridge || value == .classificationData {
+                if value == .localModel || value == .llmAssist || value == .browserBridge || value == .classificationData || value == .inspect || value == .policies || value == .activity || value == .training || value == .backup || value == .audit {
                     refreshLocalState()
                 }
             case "connectSharedHub":
