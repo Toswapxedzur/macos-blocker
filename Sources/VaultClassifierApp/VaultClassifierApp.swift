@@ -1505,23 +1505,6 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
-    func recordManualClassification(title: String, tags: String, platformID: String) {
-        do {
-            guard var catalog = localState?.workspaceCatalog,
-                  let binding = catalog.bindings.first(where: { $0.id == platformID }),
-                  let tree = catalog.trees.first(where: { $0.id == binding.treeID }),
-                  let datasetIndex = catalog.datasets.firstIndex(where: { $0.id == binding.datasetID }) else { return }
-            let labels = splitTagList(tags)
-            guard !labels.isEmpty, labels.allSatisfy({ tagID in tree.nodes.contains(where: { $0.id == tagID && !$0.isRetired }) }) else {
-                throw WebBridgeInputError.invalidChoice("tag IDs")
-            }
-            catalog.datasets[datasetIndex].records.append(.init(title: title, tagIDs: labels, origin: .manual, review: .approved, platformID: binding.id, treeRevision: tree.revision))
-            catalog.datasets[datasetIndex].revision += 1
-            try coordinator?.updateWorkspaceCatalog(catalog)
-            refreshLocalState()
-        } catch { issue = error.localizedDescription }
-    }
-
     /// Saves the current creator-level source of truth for a classifier type.
     /// The dataset revision advances because approved creator decisions are
     /// explicit local-model training material through their collected entries.
@@ -2647,12 +2630,6 @@ final class VaultClassifierViewModel: ObservableObject {
                 disconnectTag(treeID: try webString(data, key: "treeID", limit: 256), nodeID: try webString(data, key: "nodeID", limit: 256))
             case "deleteTag":
                 deleteTag(treeID: try webString(data, key: "treeID", limit: 256), nodeID: try webString(data, key: "nodeID", limit: 256))
-            case "recordManualClassification":
-                recordManualClassification(
-                    title: try webString(data, key: "title", limit: 512),
-                    tags: try webString(data, key: "tags", limit: 1_024),
-                    platformID: try webString(data, key: "platformID", limit: 64)
-                )
             case "recordCreatorClassification":
                 recordCreatorClassification(
                     typeID: try webString(data, key: "typeID", limit: 256),
