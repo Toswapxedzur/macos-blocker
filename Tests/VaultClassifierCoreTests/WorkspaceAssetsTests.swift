@@ -180,7 +180,7 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertTrue(APIKeyProviderType.allCases.contains(.voyageAI))
         XCTAssertTrue(APIKeyProviderType.allCases.contains(.googleCustomSearch))
         XCTAssertTrue(APIKeyProviderType.allCases.contains(.twitch))
-        XCTAssertTrue(APIKeyProviderType.allCases.contains(.microsoftGraph))
+        XCTAssertTrue(APIKeyProviderType.allCases.contains(.spotify))
         XCTAssertNoThrow(try azure.validate())
         XCTAssertNoThrow(try brave.validate())
         XCTAssertFalse(APIKeyProviderType.braveSearch.supportsLLMConfiguration)

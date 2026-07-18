@@ -452,7 +452,7 @@
       ["llm.providerGroup.inference", ["groq", "cerebras", "sambaNova", "nvidiaNIM", "openRouter", "togetherAI", "fireworksAI", "huggingFace", "replicate", "ollama"]],
       ["llm.providerGroup.cloud", ["azureOpenAI", "awsBedrock", "googleVertexAI", "cloudflareWorkersAI"]],
       ["llm.providerGroup.embeddings", ["voyageAI", "jinaAI"]],
-      ["llm.providerGroup.platform", ["youtubeData", "twitch", "reddit", "discord", "xPlatform", "tikTok", "instagramGraph", "facebookGraph", "linkedIn", "pinterest", "bluesky", "mastodon", "vimeo", "dailyMotion", "spotify", "soundCloud", "steam", "github", "gitlab", "slack", "telegram", "notion", "microsoftGraph"]],
+      ["llm.providerGroup.platform", ["youtubeData", "twitch", "reddit", "xPlatform", "tikTok", "instagramGraph", "facebookGraph", "linkedIn", "pinterest", "bluesky", "mastodon", "vimeo", "dailyMotion", "spotify", "soundCloud", "steam"]],
       ["llm.providerGroup.data", ["braveSearch", "tavily", "serpAPI", "firecrawl", "googleCustomSearch", "bingWebSearch"]],
       ["llm.providerGroup.custom", ["custom"]],
     ].map(([groupKey, types]) => [groupKey, types.map((type) => [type, t(providerTypeLabelKey(type))])]);
