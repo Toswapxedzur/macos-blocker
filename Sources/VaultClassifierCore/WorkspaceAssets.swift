@@ -633,171 +633,51 @@ public struct ProviderRequestRecord: Codable, Equatable, Sendable, Identifiable 
 /// It deliberately carries configuration only: the secret itself is stored in
 /// Keychain and never becomes part of the workspace catalog or a web snapshot.
 public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
-    case chatGPT
+    case openAI
+    case openAICompatible
     case gemini
-    case deepSeek
-    case youtubeData
-    case claude
-    case mistral
+    case anthropic
     case cohere
-    case groq
-    case xAI
-    case perplexity
-    case openRouter
-    case togetherAI
-    case fireworksAI
-    case huggingFace
-    case replicate
-    case azureOpenAI
-    case awsBedrock
-    case googleVertexAI
-    case cloudflareWorkersAI
-    case nvidiaNIM
-    case cerebras
-    case sambaNova
-    case ai21
-    case voyageAI
-    case jinaAI
     case ollama
-    case twitch
-    case reddit
-    case discord
-    case xPlatform
-    case tikTok
-    case instagramGraph
-    case facebookGraph
-    case linkedIn
-    case pinterest
-    case bluesky
-    case mastodon
-    case vimeo
-    case dailyMotion
-    case spotify
-    case soundCloud
-    case steam
-    case github
-    case gitlab
-    case slack
-    case telegram
-    case notion
-    case microsoftGraph
-    case braveSearch
-    case tavily
-    case serpAPI
-    case firecrawl
-    case googleCustomSearch
-    case bingWebSearch
-    case custom
 
     public var supportsLLMConfiguration: Bool {
         ProviderProtocolRegistry.descriptor(for: self).supportsLLMConfiguration
     }
 
-    /// These compatibility values remain decodable only so an owner can
-    /// remove an old profile. New UI or bridge input must not create them.
-    public var isSelectableProfileType: Bool {
-        switch self {
-        case .discord, .github, .gitlab, .slack, .telegram, .notion, .microsoftGraph:
-            return false
-        default:
-            return true
-        }
-    }
-
     public var defaultProfileName: String {
         switch self {
-        case .chatGPT: return "ChatGPT key"
+        case .openAI: return "OpenAI key"
+        case .openAICompatible: return "OpenAI-compatible API"
         case .gemini: return "Gemini key"
-        case .deepSeek: return "DeepSeek key"
-        case .youtubeData: return "YouTube Data API key"
-        case .claude: return "Claude key"
-        case .mistral: return "Mistral key"
+        case .anthropic: return "Anthropic key"
         case .cohere: return "Cohere key"
-        case .groq: return "Groq key"
-        case .xAI: return "xAI key"
-        case .perplexity: return "Perplexity key"
-        case .openRouter: return "OpenRouter key"
-        case .togetherAI: return "Together AI key"
-        case .fireworksAI: return "Fireworks AI key"
-        case .huggingFace: return "Hugging Face key"
-        case .replicate: return "Replicate key"
-        case .azureOpenAI: return "Azure OpenAI key"
-        case .awsBedrock: return "AWS Bedrock key"
-        case .googleVertexAI: return "Google Vertex AI key"
-        case .cloudflareWorkersAI: return "Cloudflare Workers AI key"
-        case .nvidiaNIM: return "NVIDIA NIM key"
-        case .cerebras: return "Cerebras key"
-        case .sambaNova: return "SambaNova key"
-        case .ai21: return "AI21 key"
-        case .voyageAI: return "Voyage AI key"
-        case .jinaAI: return "Jina AI key"
         case .ollama: return "Ollama profile"
-        case .twitch: return "Twitch credential"
-        case .reddit: return "Reddit credential"
-        case .discord: return "Discord credential"
-        case .xPlatform: return "X credential"
-        case .tikTok: return "TikTok credential"
-        case .instagramGraph: return "Instagram Graph credential"
-        case .facebookGraph: return "Facebook Graph credential"
-        case .linkedIn: return "LinkedIn credential"
-        case .pinterest: return "Pinterest credential"
-        case .bluesky: return "Bluesky credential"
-        case .mastodon: return "Mastodon credential"
-        case .vimeo: return "Vimeo credential"
-        case .dailyMotion: return "Dailymotion credential"
-        case .spotify: return "Spotify credential"
-        case .soundCloud: return "SoundCloud credential"
-        case .steam: return "Steam Web API key"
-        case .github: return "GitHub credential"
-        case .gitlab: return "GitLab credential"
-        case .slack: return "Slack credential"
-        case .telegram: return "Telegram bot token"
-        case .notion: return "Notion credential"
-        case .microsoftGraph: return "Microsoft Graph credential"
-        case .braveSearch: return "Brave Search API key"
-        case .tavily: return "Tavily API key"
-        case .serpAPI: return "SerpAPI key"
-        case .firecrawl: return "Firecrawl API key"
-        case .googleCustomSearch: return "Google Custom Search key"
-        case .bingWebSearch: return "Bing Web Search key"
-        case .custom: return "Custom API key"
         }
     }
 
     public var defaultModelIdentifier: String {
         switch self {
-        case .chatGPT: return "gpt-4.1-mini"
+        case .openAI: return "gpt-4.1-mini"
+        case .openAICompatible: return ""
         case .gemini: return "gemini-3.1-flash-lite"
-        case .deepSeek: return "deepseek-chat"
-        case .claude: return "claude-sonnet-4-5"
-        case .mistral: return "mistral-large-latest"
+        case .anthropic: return "claude-sonnet-4-5"
         case .cohere: return "command-a-plus-05-2026"
-        case .groq: return "llama-3.3-70b-versatile"
-        case .xAI: return "grok-4.5"
-        case .perplexity: return "sonar"
-        case .openRouter: return "openai/gpt-4.1-mini"
-        case .togetherAI: return "meta-llama/Llama-3.3-70B-Instruct-Turbo"
-        case .fireworksAI: return "accounts/fireworks/models/llama-v3p3-70b-instruct"
-        case .huggingFace: return "meta-llama/Llama-3.3-70B-Instruct"
-        case .replicate: return "meta/meta-llama-3-70b-instruct"
-        case .azureOpenAI: return "gpt-4.1-mini"
-        case .awsBedrock: return "anthropic.claude-sonnet-4-5-20250929-v1:0"
-        case .googleVertexAI: return "gemini-3.1-flash-lite"
-        case .cloudflareWorkersAI: return "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
-        case .nvidiaNIM: return "meta/llama-3.3-70b-instruct"
-        case .cerebras: return "gpt-oss-120b"
-        case .sambaNova: return "Meta-Llama-3.3-70B-Instruct"
-        case .ai21: return "jamba-large-1.7"
-        case .voyageAI: return "voyage-4"
-        case .jinaAI: return "jina-embeddings-v4"
         case .ollama: return "llama3.3"
-        case .youtubeData, .twitch, .reddit, .discord, .xPlatform, .tikTok,
-             .instagramGraph, .facebookGraph, .linkedIn, .pinterest, .bluesky,
-             .mastodon, .vimeo, .dailyMotion, .spotify, .soundCloud, .steam,
-             .github, .gitlab, .slack, .telegram, .notion, .microsoftGraph,
-             .braveSearch, .tavily, .serpAPI, .firecrawl, .googleCustomSearch,
-             .bingWebSearch: return ""
-        case .custom: return "custom-model"
+        }
+    }
+
+    /// Existing local profiles must remain decodable. Former named providers
+    /// migrate to the configurable OpenAI-compatible profile, which requires
+    /// the owner to review its endpoint before another explicit request.
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        switch raw {
+        case "openAI", "chatGPT": self = .openAI
+        case "gemini": self = .gemini
+        case "anthropic", "claude": self = .anthropic
+        case "cohere": self = .cohere
+        case "ollama": self = .ollama
+        default: self = .openAICompatible
         }
     }
 }
@@ -812,13 +692,9 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
     public var id: String
     public var name: String
     public var type: APIKeyProviderType
-    /// This is relevant only for LLM provider types. A YouTube Data API profile
-    /// remains a credential-only external-tool entry.
     public var modelIdentifier: String
     public var batchSize: Int
     public var maximumTokens: Int
-    public var youtubeProviderID: String?
-    public var searchEnabled: Bool
     /// An optional endpoint override supports compatible cloud, self-hosted,
     /// and custom entries. It is configuration only; this source slice makes
     /// no network dispatch.
@@ -842,8 +718,6 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         modelIdentifier: String? = nil,
         batchSize: Int = 1,
         maximumTokens: Int = 1_024,
-        youtubeProviderID: String? = nil,
-        searchEnabled: Bool = false,
         customEndpoint: String? = nil,
         protocolConfiguration: [String: String]? = nil,
         inputCostUSDPerMillion: Double? = nil,
@@ -857,8 +731,6 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         self.modelIdentifier = modelIdentifier ?? type.defaultModelIdentifier
         self.batchSize = batchSize
         self.maximumTokens = maximumTokens
-        self.youtubeProviderID = youtubeProviderID
-        self.searchEnabled = searchEnabled
         self.customEndpoint = customEndpoint
         self.protocolConfiguration = protocolConfiguration ?? ProviderProtocolRegistry.descriptor(for: type).defaultConfiguration()
         self.inputCostUSDPerMillion = inputCostUSDPerMillion
@@ -882,8 +754,6 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
             guard !cleanedModel.isEmpty, cleanedModel.count <= Self.maximumModelIdentifierLength else {
                 throw APIKeyProviderProfileError.invalidConfiguration
             }
-        } else if !modelIdentifier.isEmpty || youtubeProviderID != nil || searchEnabled || (customEndpoint != nil && !descriptor.allowsEndpointOverride) {
-            throw APIKeyProviderProfileError.invalidConfiguration
         }
 
         let normalizedEndpoint = customEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -919,7 +789,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, type, modelIdentifier, batchSize, maximumTokens, youtubeProviderID, searchEnabled, customEndpoint, protocolConfiguration, inputCostUSDPerMillion, outputCostUSDPerMillion, storesFullRequestRecords, updatedAtMilliseconds
+        case id, name, type, modelIdentifier, batchSize, maximumTokens, customEndpoint, protocolConfiguration, inputCostUSDPerMillion, outputCostUSDPerMillion, storesFullRequestRecords, updatedAtMilliseconds
     }
 
     public init(from decoder: Decoder) throws {
@@ -930,8 +800,6 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         modelIdentifier = try container.decodeIfPresent(String.self, forKey: .modelIdentifier) ?? type.defaultModelIdentifier
         batchSize = try container.decodeIfPresent(Int.self, forKey: .batchSize) ?? 1
         maximumTokens = try container.decodeIfPresent(Int.self, forKey: .maximumTokens) ?? 1_024
-        youtubeProviderID = try container.decodeIfPresent(String.self, forKey: .youtubeProviderID)
-        searchEnabled = try container.decodeIfPresent(Bool.self, forKey: .searchEnabled) ?? false
         customEndpoint = try container.decodeIfPresent(String.self, forKey: .customEndpoint)
         protocolConfiguration = try container.decodeIfPresent([String: String].self, forKey: .protocolConfiguration)
             ?? ProviderProtocolRegistry.descriptor(for: type).defaultConfiguration()
@@ -961,7 +829,6 @@ public enum WorkspaceCatalogError: Error, Equatable, LocalizedError, Sendable {
     case unsupportedCollectionPlatform(String)
     case invalidCollectedEntry(String)
     case invalidProviderProfile(String)
-    case missingYouTubeProvider(String)
     case invalidClassifierType(String)
 
     public var errorDescription: String? {
@@ -976,7 +843,6 @@ public enum WorkspaceCatalogError: Error, Equatable, LocalizedError, Sendable {
         case .unsupportedCollectionPlatform(let value): return "The collection platform is not supported: \(value)."
         case .invalidCollectedEntry(let value): return "The collected platform entry is invalid: \(value)."
         case .invalidProviderProfile(let value): return "The API provider profile is invalid: \(value)."
-        case .missingYouTubeProvider(let value): return "The LLM profile references a missing YouTube Data API profile: \(value)."
         case .invalidClassifierType(let value): return "The classifier type has incompatible local assets: \(value)."
         }
     }
@@ -1123,11 +989,6 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                 try profile.validate()
             } catch {
                 throw WorkspaceCatalogError.invalidProviderProfile(profile.id)
-            }
-            guard let youtubeProviderID = profile.youtubeProviderID else { continue }
-            guard profile.type.supportsLLMConfiguration,
-                  providerProfiles.contains(where: { $0.id == youtubeProviderID && $0.type == .youtubeData }) else {
-                throw WorkspaceCatalogError.missingYouTubeProvider(youtubeProviderID)
             }
         }
         for record in providerRequestRecords {

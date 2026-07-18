@@ -19,7 +19,13 @@ final class ProviderTestProtocolTests: XCTestCase {
     }
 
     func testOpenAIStyleTestParsesUsageAndCalculatesOnlyConfiguredCost() throws {
-        var profile = APIKeyProviderProfile(type: .deepSeek, inputCostUSDPerMillion: 0.28, outputCostUSDPerMillion: 0.42)
+        var profile = APIKeyProviderProfile(
+            type: .openAICompatible,
+            modelIdentifier: "deepseek-chat",
+            customEndpoint: "https://api.deepseek.com/v1",
+            inputCostUSDPerMillion: 0.28,
+            outputCostUSDPerMillion: 0.42
+        )
         let prepared = try ProviderTestProtocol.prepare(profile: profile)
         XCTAssertEqual(prepared.plan.bodyFormat, .openAIChatCompletions)
         let response = Data(#"{"usage":{"prompt_tokens":1000,"completion_tokens":500},"choices":[{"message":{"content":"OK"}}]}"#.utf8)
@@ -77,5 +83,25 @@ final class ProviderTestProtocolTests: XCTestCase {
         XCTAssertThrowsError(
             try ProviderClassificationProtocol.parseLabelIDs(#"{"labelIDs":["unknown"]}"#, allowedLeafTagIDs: ["games", "technology"])
         )
+    }
+
+    func testEveryExposedProviderPreparesTestAndClassificationRequests() throws {
+        let profiles: [APIKeyProviderProfile] = [
+            .init(type: .openAI),
+            .init(type: .openAICompatible, modelIdentifier: "deepseek-chat", customEndpoint: "https://api.deepseek.com/v1"),
+            .init(type: .gemini),
+            .init(type: .anthropic),
+            .init(type: .cohere),
+            .init(type: .ollama),
+        ]
+        let entry = EntryEvidence(platform: "youtube", entryID: "entry", surface: .feed, evidence: .init(title: "Deck gameplay"))
+        for profile in profiles {
+            XCTAssertEqual(try ProviderTestProtocol.prepare(profile: profile).operation, .generateText, profile.type.rawValue)
+            XCTAssertEqual(
+                try ProviderClassificationProtocol.prepare(profile: profile, entry: entry, allowedLeafTagIDs: ["games"]).operation,
+                .generateText,
+                profile.type.rawValue
+            )
+        }
     }
 }

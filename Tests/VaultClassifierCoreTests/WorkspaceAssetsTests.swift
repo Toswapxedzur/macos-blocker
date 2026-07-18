@@ -249,66 +249,31 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertNil(decoded.embeddedTrainingReport)
     }
 
-    func testProviderProfilesKeepOnlyConfigurationAndMayLinkAYouTubeKey() throws {
-        let youtube = APIKeyProviderProfile(id: "youtube-key", type: .youtubeData)
-        let gemini = APIKeyProviderProfile(
-            id: "gemini-key",
-            name: "Research Gemini",
-            type: .gemini,
-            modelIdentifier: "gemini-3.1-flash-lite",
-            batchSize: 12,
-            maximumTokens: 2_048,
-            youtubeProviderID: youtube.id,
-            searchEnabled: true
+    func testProviderProfilesKeepOnlyTheSixSupportedModelTransports() throws {
+        let compatible = APIKeyProviderProfile(
+            id: "compatible-key",
+            type: .openAICompatible,
+            modelIdentifier: "deepseek-chat",
+            customEndpoint: "https://api.deepseek.com/v1"
         )
         var catalog = WorkspaceCatalog.starter()
-        catalog.providerProfiles = [youtube, gemini]
+        catalog.providerProfiles = [compatible]
 
         XCTAssertNoThrow(try catalog.validate())
+        XCTAssertEqual(Set(APIKeyProviderType.allCases), [.openAI, .openAICompatible, .gemini, .anthropic, .cohere, .ollama])
         let encoded = try JSONEncoder().encode(catalog)
         XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("apiKey"))
-        XCTAssertEqual(try JSONDecoder().decode(WorkspaceCatalog.self, from: encoded).providerProfiles, [youtube, gemini])
+        XCTAssertEqual(try JSONDecoder().decode(WorkspaceCatalog.self, from: encoded).providerProfiles, [compatible])
     }
 
-    func testProviderProfileRejectsANonYouTubeToolReference() {
-        let gemini = APIKeyProviderProfile(id: "gemini", type: .gemini)
-        let chatGPT = APIKeyProviderProfile(id: "chatgpt", type: .chatGPT, youtubeProviderID: gemini.id)
-        var catalog = WorkspaceCatalog.starter()
-        catalog.providerProfiles = [gemini, chatGPT]
-
-        XCTAssertThrowsError(try catalog.validate()) { error in
-            XCTAssertEqual(error as? WorkspaceCatalogError, .missingYouTubeProvider(gemini.id))
-        }
+    func testLegacyNamedProfilesMigrateToTheCompatibleTransport() throws {
+        let legacy = Data(#"{"id":"legacy","name":"Legacy","type":"deepSeek","modelIdentifier":"deepseek-chat","batchSize":1,"maximumTokens":10,"updatedAtMilliseconds":1}"#.utf8)
+        let decoded = try JSONDecoder().decode(APIKeyProviderProfile.self, from: legacy)
+        XCTAssertEqual(decoded.type, .openAICompatible)
+        XCTAssertEqual(decoded.modelIdentifier, "deepseek-chat")
     }
 
-    func testExpandedProviderPresetsSeparateModelAndDataProfiles() throws {
-        let azure = APIKeyProviderProfile(
-            id: "azure",
-            type: .azureOpenAI,
-            customEndpoint: "https://example.openai.azure.com"
-        )
-        let brave = APIKeyProviderProfile(id: "brave", type: .braveSearch)
-
-        XCTAssertTrue(APIKeyProviderType.allCases.contains(.mistral))
-        XCTAssertTrue(APIKeyProviderType.allCases.contains(.voyageAI))
-        XCTAssertTrue(APIKeyProviderType.allCases.contains(.googleCustomSearch))
-        XCTAssertTrue(APIKeyProviderType.allCases.contains(.twitch))
-        XCTAssertTrue(APIKeyProviderType.allCases.contains(.spotify))
-        XCTAssertNoThrow(try azure.validate())
-        XCTAssertNoThrow(try brave.validate())
-        XCTAssertFalse(APIKeyProviderType.braveSearch.supportsLLMConfiguration)
-        XCTAssertFalse(APIKeyProviderType.twitch.supportsLLMConfiguration)
-        XCTAssertTrue(APIKeyProviderType.nvidiaNIM.supportsLLMConfiguration)
-
-        let invalidDataProfile = APIKeyProviderProfile(
-            id: "invalid-brave",
-            type: .braveSearch,
-            modelIdentifier: "not-a-model"
-        )
-        XCTAssertThrowsError(try invalidDataProfile.validate())
-    }
-
-    func testProviderProtocolsExposeVersionedRequestPlansForEveryType() throws {
+    func testProviderProtocolsExposeWorkingRequestPlansForEverySupportedType() throws {
         for type in APIKeyProviderType.allCases {
             let descriptor = ProviderProtocolRegistry.descriptor(for: type)
             XCTAssertEqual(descriptor.identifier, type.rawValue)
@@ -332,50 +297,27 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(geminiPlan.authenticationHeader, "x-goog-api-key")
         XCTAssertEqual(geminiPlan.url.absoluteString, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent")
 
-        let youtube = APIKeyProviderProfile(type: .youtubeData)
-        let youtubePlan = try DescriptorBackedProviderProtocol(descriptor: ProviderProtocolRegistry.descriptor(for: .youtubeData))
-            .requestPlan(for: youtube, operation: .readPublicContent)
-        XCTAssertEqual(youtubePlan.authentication, .apiKeyQuery)
-        XCTAssertEqual(youtubePlan.authenticationHeader, "key")
-        XCTAssertEqual(youtubePlan.bodyFormat, .queryOnly)
-
-        let bedrock = APIKeyProviderProfile(type: .awsBedrock)
-        let bedrockPlan = try DescriptorBackedProviderProtocol(descriptor: ProviderProtocolRegistry.descriptor(for: .awsBedrock))
-            .requestPlan(for: bedrock, operation: .generateText)
-        XCTAssertTrue(bedrockPlan.url.absoluteString.contains("bedrock-runtime.us-east-1.amazonaws.com"))
-        XCTAssertEqual(bedrockPlan.requiredCredentialFields, [.accessKeyID, .secretAccessKey])
+        let compatible = APIKeyProviderProfile(type: .openAICompatible, modelIdentifier: "deepseek-chat", customEndpoint: "https://api.deepseek.com/v1")
+        let compatiblePlan = try DescriptorBackedProviderProtocol(descriptor: ProviderProtocolRegistry.descriptor(for: .openAICompatible))
+            .requestPlan(for: compatible, operation: .generateText)
+        XCTAssertEqual(compatiblePlan.url.absoluteString, "https://api.deepseek.com/v1/chat/completions")
+        XCTAssertEqual(compatiblePlan.bodyFormat, .openAIChatCompletions)
     }
 
     func testProviderProtocolsRejectUnsafeOrIncompleteDispatchSettings() throws {
-        let unsafeEndpoint = APIKeyProviderProfile(type: .azureOpenAI, customEndpoint: "http://remote.example")
+        let unsafeEndpoint = APIKeyProviderProfile(type: .openAICompatible, modelIdentifier: "model", customEndpoint: "http://remote.example")
         XCTAssertThrowsError(try unsafeEndpoint.validate())
 
-        let missingAzureEndpoint = APIKeyProviderProfile(type: .azureOpenAI)
-        XCTAssertNoThrow(try missingAzureEndpoint.validate())
-        XCTAssertThrowsError(try missingAzureEndpoint.validateForDispatch())
-
-        let incompleteTwitch = APIKeyProviderProfile(type: .twitch)
-        XCTAssertThrowsError(try incompleteTwitch.validateForDispatch())
-
-        let configuredTwitch = APIKeyProviderProfile(
-            type: .twitch,
-            protocolConfiguration: [ProviderConfigurationField.clientID.rawValue: "client-id"]
-        )
-        XCTAssertNoThrow(try configuredTwitch.validateForDispatch())
-        let twitchPlan = try DescriptorBackedProviderProtocol(descriptor: ProviderProtocolRegistry.descriptor(for: .twitch))
-            .requestPlan(for: configuredTwitch, operation: .readPublicContent)
-        XCTAssertEqual(twitchPlan.requiredCredentialFields, [.bearerToken])
-
-        let legacy = Data(#"{"id":"legacy","name":"Legacy","type":"azureOpenAI","modelIdentifier":"gpt","batchSize":1,"maximumTokens":10,"searchEnabled":false,"updatedAtMilliseconds":1}"#.utf8)
-        let decoded = try JSONDecoder().decode(APIKeyProviderProfile.self, from: legacy)
-        XCTAssertEqual(decoded.protocolConfiguration[ProviderConfigurationField.apiVersion.rawValue], "2025-04-01-preview")
+        let missingEndpoint = APIKeyProviderProfile(type: .openAICompatible, modelIdentifier: "model")
+        XCTAssertNoThrow(try missingEndpoint.validate())
+        XCTAssertThrowsError(try missingEndpoint.validateForDispatch())
     }
 
     func testProtocolCredentialRecordsRequireTheDeclaredFieldSet() throws {
-        let descriptor = ProviderProtocolRegistry.descriptor(for: .twitch)
-        XCTAssertNoThrow(try ProviderCredentialRecord(values: [.bearerToken: "token-value"]).validate(for: descriptor))
-        XCTAssertNoThrow(try ProviderCredentialRecord(values: [.bearerToken: " token-value\n"]).validate(for: descriptor))
-        XCTAssertThrowsError(try ProviderCredentialRecord(values: [.apiKey: "token-value"]).validate(for: descriptor))
+        let descriptor = ProviderProtocolRegistry.descriptor(for: .openAI)
+        XCTAssertNoThrow(try ProviderCredentialRecord(values: [.apiKey: "token-value"]).validate(for: descriptor))
+        XCTAssertNoThrow(try ProviderCredentialRecord(values: [.apiKey: " token-value\n"]).validate(for: descriptor))
+        XCTAssertThrowsError(try ProviderCredentialRecord(values: [.bearerToken: "token-value"]).validate(for: descriptor))
     }
 
     func testLegacyCatalogDecodesWithoutProviderProfiles() throws {
