@@ -186,14 +186,6 @@
             ${navButton("browserBridge", "⇄", "navigation.browserBridge", "navigation.browserBridgeMeta", "navy")}
             ${navButton("classificationData", "▤", "navigation.classificationData", "navigation.classificationDataMeta", "cyan")}
           </div></section>
-          <section class="sidebar-section"><span class="eyebrow">${tx("navigation.control")}</span><div class="sidebar-list">
-            ${navButton("inspect", "⌕", "navigation.inspect", "navigation.inspectMeta", "cyan")}
-            ${navButton("policies", "⌗", "navigation.policies", "navigation.policiesMeta", "navy")}
-            ${navButton("activity", "◷", "navigation.activity", "navigation.activityMeta", "cyan")}
-            ${navButton("training", "◉", "navigation.training", "navigation.trainingMeta", "pink")}
-            ${navButton("backup", "□", "navigation.backup", "navigation.backupMeta", "navy")}
-            ${navButton("audit", "✓", "navigation.audit", "navigation.auditMeta", "gold")}
-          </div></section>
           <div class="sidebar-status"><strong>${tx("navigation.localProfile")}</strong><br><span class="small-copy">${tx("navigation.assetCopy")}</span></div>
         </aside>
         <section class="editor-panel" data-editor-panel data-workspace="${esc(state.workspace)}">${content}</section>
@@ -215,12 +207,10 @@
       const decisions = result.decisions.length
         ? `<div class="list">${result.decisions.map((decision) => `<div class="list-row"><span class="list-symbol">•</span><span class="list-copy"><span class="list-title">${esc(decision.policyID)} · ${esc(enumText("action", decision.action))}</span><span class="list-meta">${esc(decision.explanation)}</span></span></div>`).join("")}</div>`
         : `<p class="small-copy">${tx("inspect.noPolicy")}</p>`;
-      const correction = inspect.canCorrect
-        ? (action === "allow"
-          ? `<button class="secondary" data-action="markCorrection" data-correction="falseAllow">${tx("inspect.markFalseAllow")}</button>`
-          : `<button class="gold-action" data-action="markCorrection" data-correction="falseDim">${tx("inspect.markFalseDim")}</button><button class="danger" data-action="markCorrection" data-correction="falseBlock">${tx("inspect.markFalseBlock")}</button>`)
-        : "";
-      renderedResult = `<section class="result-card ${esc(action)}"><div class="result-head"><span class="result-symbol">${symbol}</span><div><span class="eyebrow">${tx("inspect.policyDecision")}</span><div class="result-action">${esc(enumText("action", action))}</div></div><span class="spacer"></span><span class="small-copy">${tx("inspect.threshold", { value: percent(result.threshold) })}</span></div><div><span class="field-label">${tx("inspect.predictedLeaves")} · ${tx("inspect.ancestorsComputed")}</span><div class="chips">${result.leafTags.length ? result.leafTags.map((tag) => `<span class="chip">${esc(tag.replace("content.", "").replaceAll(".", " · "))}</span>`).join("") : `<span class="small-copy">${tx("inspect.noLeaf")}</span>`}</div></div><div><span class="field-label">${tx("inspect.localScores")} · ${tx("inspect.sourcePrior")}</span>${scores}</div><div><span class="field-label">${tx("inspect.policyMatches")}</span>${decisions}</div>${result.ancestorTags.length ? `<p class="small-copy">${tx("inspect.computedPath", { path: result.ancestorTags.join(" › ") })}</p>` : ""}${correction ? `<div class="action-row">${correction}</div>` : ""}</section>`;
+      const correction = action === "allow"
+        ? `<button class="secondary" data-action="markCorrection" data-correction="falseAllow">${tx("inspect.markFalseAllow")}</button>`
+        : `<button class="gold-action" data-action="markCorrection" data-correction="falseDim">${tx("inspect.markFalseDim")}</button><button class="danger" data-action="markCorrection" data-correction="falseBlock">${tx("inspect.markFalseBlock")}</button>`;
+      renderedResult = `<section class="result-card ${esc(action)}"><div class="result-head"><span class="result-symbol">${symbol}</span><div><span class="eyebrow">${tx("inspect.policyDecision")}</span><div class="result-action">${esc(enumText("action", action))}</div></div><span class="spacer"></span><span class="small-copy">${tx("inspect.threshold", { value: percent(result.threshold) })}</span></div><div><span class="field-label">${tx("inspect.predictedLeaves")} · ${tx("inspect.ancestorsComputed")}</span><div class="chips">${result.leafTags.length ? result.leafTags.map((tag) => `<span class="chip">${esc(tag.replace("content.", "").replaceAll(".", " · "))}</span>`).join("") : `<span class="small-copy">${tx("inspect.noLeaf")}</span>`}</div></div><div><span class="field-label">${tx("inspect.localScores")} · ${tx("inspect.sourcePrior")}</span>${scores}</div><div><span class="field-label">${tx("inspect.policyMatches")}</span>${decisions}</div>${result.ancestorTags.length ? `<p class="small-copy">${tx("inspect.computedPath", { path: result.ancestorTags.join(" › ") })}</p>` : ""}<div class="action-row">${correction}</div></section>`;
     }
     return `<div class="workspace">${header("inspect.title", "inspect.copy", t(inspect.surface === "feed" ? "inspect.feedDecision" : "inspect.pageDecision"), "cyan")}
       <section class="section-card cyan" data-form-id="inspect-form"><div class="form-stack">
@@ -681,12 +671,6 @@
 
   function workspace() {
     switch (state.workspace) {
-      case "inspect": return inspectWorkspace();
-      case "policies": return policyWorkspace();
-      case "activity": return activityWorkspace();
-      case "training": return trainingWorkspace();
-      case "backup": return backupWorkspace();
-      case "audit": return auditWorkspace();
       case "localModel": return localModelWorkspace();
       case "llmAssist": return llmAssistWorkspace();
       case "browserBridge": return browserBridgeWorkspace();
