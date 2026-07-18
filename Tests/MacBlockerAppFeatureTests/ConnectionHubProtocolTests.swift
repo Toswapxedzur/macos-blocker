@@ -53,5 +53,50 @@ final class ConnectionHubProtocolTests: XCTestCase {
             "invalid-program"
         )
     }
+
+    func testAuthenticatedClassifierPeerMayJoinTheSharedHub() {
+        let hello: [String: Any] = [
+            "kind": "hello",
+            "v": ConnectionHub.protocolVersion,
+            "program": "classifier",
+            "pairingKey": pairingKey
+        ]
+        XCTAssertNil(ConnectionHub.helloRejectionReason(hello, pairingKey: pairingKey))
+    }
+
+    func testClassifierRequestsStaySchemaBounded() {
+        let valid: [String: Any] = [
+            "requestID": "classifier-request-1",
+            "operation": "bridge-info",
+            "body": [:]
+        ]
+        XCTAssertNil(ConnectionHub.classifierRequestRejectionReason(valid))
+        XCTAssertNil(ConnectionHub.classifierRequestRejectionReason([
+            "requestID": "classifier-collection-1",
+            "operation": "collection-info",
+            "body": [:]
+        ]))
+        XCTAssertNil(ConnectionHub.classifierRequestRejectionReason([
+            "requestID": "classifier-collection-2",
+            "operation": "collect",
+            "body": ["entry": ["platform": "youtube"]]
+        ]))
+        XCTAssertEqual(
+            ConnectionHub.classifierRequestRejectionReason([
+                "requestID": "classifier-request-2",
+                "operation": "unknown",
+                "body": [:]
+            ]),
+            "invalid-classifier-request"
+        )
+        XCTAssertEqual(
+            ConnectionHub.classifierRequestRejectionReason([
+                "requestID": "classifier-request-3",
+                "operation": "classify",
+                "body": ["payload": String(repeating: "x", count: 90_000)]
+            ]),
+            "invalid-classifier-request"
+        )
+    }
 }
 #endif

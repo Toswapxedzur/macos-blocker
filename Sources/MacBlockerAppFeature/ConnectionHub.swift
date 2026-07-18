@@ -15,8 +15,13 @@ final class ConnectionHub: ObservableObject {
     static let protocolVersion = 2
     static let localProgram = "macapp"
     private static let maxMessageBytes = 1_048_576
+    private static let maxClassifierBodyBytes = 88_000
+    private static let maxClassifierRequests = 32
     private static let pairingKeyDefaultsKey = "ConnectionHub.pairingKey.v1"
     private static let remotePrograms: Set<String> = [
+        "chrome", "edge", "firefox", "safari", "opera", "browser", "classifier"
+    ]
+    private static let browserPrograms: Set<String> = [
         "chrome", "edge", "firefox", "safari", "opera", "browser"
     ]
 
@@ -25,6 +30,15 @@ final class ConnectionHub: ObservableObject {
         var program: String
         var connected: Bool
         let connection: NWConnection
+    }
+
+    /// A short-lived routed classifier call. The hub owns this correlation so a
+    /// connected browser cannot select a response destination or impersonate a
+    /// different peer on the shared localhost socket.
+    private struct ClassifierRequest {
+        let sourcePeerID: String
+        let classifierPeerID: String
+        let operation: String
     }
 
     /// Process-wide hub. Owned at the app-delegate level (not by any SwiftUI
@@ -37,6 +51,7 @@ final class ConnectionHub: ObservableObject {
 
     private var listener: NWListener?
     private var peers: [ObjectIdentifier: Peer] = [:]
+    private var classifierRequests: [String: ClassifierRequest] = [:]
     private var running = false
     /// Fixed loopback port for the bridge (no longer user-configurable).
     private let port = 8787
@@ -78,6 +93,49 @@ final class ConnectionHub: ObservableObject {
               secureEquals(supplied.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), pairingKey)
         else { return "pairing-key-rejected" }
         return nil
+    }
+
+    static func classifierRequestRejectionReason(_ obj: [String: Any]) -> String? {
+        guard let requestID = obj["requestID"] as? String,
+              isVisibleBridgeIdentifier(requestID, maximumLength: 128),
+              let operation = obj["operation"] as? String,
+              ["bridge-info", "collection-info", "collect", "classify", "correct"].contains(operation),
+              let body = obj["body"] as? [String: Any],
+              JSONSerialization.isValidJSONObject(body),
+              let bodyData = try? JSONSerialization.data(withJSONObject: body),
+              bodyData.count <= maxClassifierBodyBytes else {
+            return "invalid-classifier-request"
+        }
+        return nil
+    }
+
+    private static func classifierResponseRejectionReason(_ obj: [String: Any]) -> String? {
+        guard let sourcePeerID = obj["sourcePeerID"] as? String,
+              isVisibleBridgeIdentifier(sourcePeerID, maximumLength: 128),
+              let requestID = obj["requestID"] as? String,
+              isVisibleBridgeIdentifier(requestID, maximumLength: 128),
+              let operation = obj["operation"] as? String,
+              ["bridge-info", "collection-info", "collect", "classify", "correct"].contains(operation) else {
+            return "invalid-classifier-response"
+        }
+        if let body = obj["body"] as? [String: Any],
+           JSONSerialization.isValidJSONObject(body),
+           let bodyData = try? JSONSerialization.data(withJSONObject: body),
+           bodyData.count <= maxClassifierBodyBytes {
+            return nil
+        }
+        if let error = obj["error"] as? String,
+           error.count <= 256,
+           error.unicodeScalars.allSatisfy({ $0.value >= 0x20 && $0.value <= 0x7e }) {
+            return nil
+        }
+        return "invalid-classifier-response"
+    }
+
+    private static func isVisibleBridgeIdentifier(_ value: String, maximumLength: Int) -> Bool {
+        !value.isEmpty && value.count <= maximumLength && value.unicodeScalars.allSatisfy {
+            $0.value >= 0x21 && $0.value <= 0x7e
+        }
     }
 
     // MARK: Cluster registry (per-group web-app bridge linking)
@@ -330,6 +388,16 @@ final class ConnectionHub: ObservableObject {
                 contribution: obj,
                 ts: (obj["ts"] as? Double) ?? 0
             )
+        case "classifier-request":
+            lock.lock()
+            let program = peers[key]?.program ?? ""
+            lock.unlock()
+            routeClassifierRequest(from: key, program: program, object: obj)
+        case "classifier-response":
+            lock.lock()
+            let program = peers[key]?.program ?? ""
+            lock.unlock()
+            routeClassifierResponse(from: key, program: program, object: obj)
         case "ping":
             send(conn, dict: ["kind": "pong", "t": (obj["t"] as? Double) ?? 0])
         default:
@@ -354,11 +422,146 @@ final class ConnectionHub: ObservableObject {
         )
     }
 
+    // MARK: Shared classifier route
+
+    private func routeClassifierRequest(from key: ObjectIdentifier, program: String, object: [String: Any]) {
+        guard Self.browserPrograms.contains(program) else {
+            lock.lock(); let source = peers[key]?.connection; lock.unlock()
+            if let source { rejectAndClose(source, reason: "classifier-browser-required") }
+            return
+        }
+        guard Self.classifierRequestRejectionReason(object) == nil,
+              let requestID = object["requestID"] as? String,
+              let operation = object["operation"] as? String,
+              let body = object["body"] as? [String: Any] else {
+            lock.lock(); let source = peers[key]?.connection; lock.unlock()
+            if let source { rejectAndClose(source, reason: "invalid-classifier-request") }
+            return
+        }
+
+        lock.lock()
+        guard let source = peers[key], source.connected else { lock.unlock(); return }
+        guard classifierRequests[requestID] == nil else {
+            lock.unlock()
+            send(source.connection, dict: ["kind": "classifier-response", "requestID": requestID, "operation": operation, "error": "duplicate-classifier-request"])
+            return
+        }
+        guard classifierRequests.count < Self.maxClassifierRequests else {
+            lock.unlock()
+            send(source.connection, dict: ["kind": "classifier-response", "requestID": requestID, "operation": operation, "error": "classifier-busy"])
+            return
+        }
+        let classifiers = peers.values.filter { $0.connected && $0.program == "classifier" }
+        guard classifiers.count == 1, let classifier = classifiers.first else {
+            lock.unlock()
+            send(source.connection, dict: ["kind": "classifier-response", "requestID": requestID, "operation": operation, "error": "classifier-unavailable"])
+            return
+        }
+        classifierRequests[requestID] = .init(
+            sourcePeerID: source.id,
+            classifierPeerID: classifier.id,
+            operation: operation
+        )
+        lock.unlock()
+
+        send(classifier.connection, dict: [
+            "kind": "classifier-request",
+            "sourcePeerID": source.id,
+            "requestID": requestID,
+            "operation": operation,
+            "body": body,
+        ])
+        queue.asyncAfter(deadline: .now() + 6) { [weak self] in
+            self?.expireClassifierRequest(requestID)
+        }
+    }
+
+    private func routeClassifierResponse(from key: ObjectIdentifier, program: String, object: [String: Any]) {
+        guard program == "classifier", Self.classifierResponseRejectionReason(object) == nil,
+              let sourcePeerID = object["sourcePeerID"] as? String,
+              let requestID = object["requestID"] as? String,
+              let operation = object["operation"] as? String else {
+            lock.lock(); let classifier = peers[key]?.connection; lock.unlock()
+            if let classifier { rejectAndClose(classifier, reason: "invalid-classifier-response") }
+            return
+        }
+        lock.lock()
+        let classifier = peers[key]
+        guard let classifier,
+              let pending = classifierRequests[requestID],
+              pending.classifierPeerID == classifier.id,
+              pending.sourcePeerID == sourcePeerID,
+              pending.operation == operation else {
+            lock.unlock()
+            if let classifier { rejectAndClose(classifier.connection, reason: "unmatched-classifier-response") }
+            return
+        }
+        classifierRequests.removeValue(forKey: requestID)
+        let source = peers.values.first { $0.connected && $0.id == pending.sourcePeerID }?.connection
+        lock.unlock()
+        guard let source else { return }
+        var response: [String: Any] = [
+            "kind": "classifier-response",
+            "requestID": requestID,
+            "operation": operation,
+        ]
+        if let body = object["body"] { response["body"] = body }
+        if let error = object["error"] { response["error"] = error }
+        send(source, dict: response)
+    }
+
+    private func expireClassifierRequest(_ requestID: String) {
+        lock.lock()
+        guard let pending = classifierRequests.removeValue(forKey: requestID) else {
+            lock.unlock()
+            return
+        }
+        let source = peers.values.first { $0.connected && $0.id == pending.sourcePeerID }?.connection
+        lock.unlock()
+        if let source {
+            send(source, dict: [
+                "kind": "classifier-response",
+                "requestID": requestID,
+                "operation": pending.operation,
+                "error": "classifier-timeout",
+            ])
+        }
+    }
+
     private func removePeer(_ key: ObjectIdentifier) {
         lock.lock()
-        let program = peers[key]?.program
-        let existed = peers.removeValue(forKey: key) != nil
+        let removed = peers.removeValue(forKey: key)
+        let program = removed?.program
+        let removedPeerID = removed?.id
+        // If a browser disconnects, retain its in-flight route until the
+        // classifier replies or the six-second expiry fires. Otherwise that
+        // valid later reply would look unmatched and unnecessarily disconnect
+        // the classifier peer. A classifier disconnect, by contrast, fails
+        // every route it owns immediately.
+        let affectedRequests = classifierRequests.filter { _, pending in
+            guard let removedPeerID else { return false }
+            return pending.classifierPeerID == removedPeerID
+        }
+        for (requestID, _) in affectedRequests {
+            classifierRequests.removeValue(forKey: requestID)
+        }
+        let replyTargets: [(NWConnection, String, String)] = affectedRequests.compactMap { requestID, pending in
+            guard pending.classifierPeerID == removedPeerID,
+                  let source = peers.values.first(where: { $0.connected && $0.id == pending.sourcePeerID }) else {
+                return nil
+            }
+            return (source.connection, requestID, pending.operation)
+        }
+        let existed = removed != nil
         lock.unlock()
+        for (source, requestID, operation) in replyTargets {
+            send(source, dict: [
+                "kind": "classifier-response",
+                "requestID": requestID,
+                "operation": operation,
+                "error": "classifier-unavailable",
+            ])
+        }
         if let program, !program.isEmpty {
             // A dropped socket means the program went OFFLINE, not that it left
             // its clusters. We keep its cluster membership and its last
