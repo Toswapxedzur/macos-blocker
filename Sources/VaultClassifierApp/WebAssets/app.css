@@ -384,6 +384,7 @@ h3 { font-size: 13px; }
 .classifier-type-section:last-child { border-bottom: 0; }
 .classifier-type-section .section-header { margin-bottom: 10px; }
 .classifier-asset-grid { grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 10px; }
+.classifier-data-source-field { margin-top: 10px; max-width: 520px; }
 .creator-classification-section { background: rgba(236, 253, 245, .48); }
 .creator-classification-fields { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr); gap: 10px; }
 .creator-classification-fields + .action-row { margin-top: 10px; }
