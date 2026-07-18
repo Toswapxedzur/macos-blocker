@@ -1,0 +1,127 @@
+import Foundation
+
+/// The only generic-provider classification path. It is intentionally an
+/// explicit, caller-owned request: browser bridge traffic never reaches this
+/// type. The response grammar is deliberately tiny so provider prose cannot
+/// become a tag, policy, or command.
+public enum ProviderClassificationProtocol {
+    public static let maximumOutputTokens = 128
+
+    public static func prepare(
+        profile: APIKeyProviderProfile,
+        entry: EntryEvidence,
+        allowedLeafTagIDs: Set<String>
+    ) throws -> ProviderTestPreparedRequest {
+        try EntryEvidenceValidator().validate(entry)
+        guard !allowedLeafTagIDs.isEmpty else { throw ProviderClassificationProtocolError.noAvailableTags }
+        let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
+        guard descriptor.requestFormats.contains(where: { $0.operation == .generateText }) else {
+            throw ProviderClassificationProtocolError.unsupportedProvider
+        }
+        let plan = try DescriptorBackedProviderProtocol(descriptor: descriptor)
+            .requestPlan(for: profile, operation: .generateText)
+        let prompt = prompt(entry: entry, allowedLeafTagIDs: allowedLeafTagIDs)
+        return .init(
+            plan: plan,
+            operation: .generateText,
+            prompt: prompt,
+            body: try requestBody(format: plan.bodyFormat, profile: profile, prompt: prompt)
+        )
+    }
+
+    public static func parseLabelIDs(_ content: String, allowedLeafTagIDs: Set<String>) throws -> [String] {
+        guard let data = content.data(using: .utf8),
+              let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              Set(object.keys) == Set(["labelIDs"]),
+              let rawLabels = object["labelIDs"] as? [Any],
+              rawLabels.count <= EntryEvidenceValidator.tagLimit else {
+            throw ProviderClassificationProtocolError.invalidResponse
+        }
+        var seen = Set<String>()
+        let labelIDs = try rawLabels.map { value -> String in
+            guard let labelID = value as? String,
+                  labelID.count <= EntryEvidenceValidator.tagLengthLimit,
+                  allowedLeafTagIDs.contains(labelID),
+                  seen.insert(labelID).inserted else {
+                throw ProviderClassificationProtocolError.invalidResponse
+            }
+            return labelID
+        }
+        return labelIDs.sorted()
+    }
+
+    public static func result(
+        entry: EntryEvidence,
+        classifierType: ClassifierTypeAsset,
+        profile: APIKeyProviderProfile,
+        taxonomy: Taxonomy,
+        policies: [NamedPolicy],
+        labelIDs: [String]
+    ) -> ClassificationResult {
+        let selected = labelIDs.sorted()
+        var result = ClassificationResult(
+            entryID: entry.entryID,
+            sourceID: entry.sourceID,
+            surface: entry.surface,
+            evidenceState: .sufficient,
+            threshold: 1,
+            selectedLeafTagIDs: selected,
+            ancestorTagIDs: taxonomy.ancestorClosure(for: selected),
+            scores: selected.map { .init(tagID: $0, directScore: 1, sourceScore: nil, finalScore: 1) },
+            decisions: [],
+            packageID: "workspace-classifier-type-\(classifierType.id)",
+            modelVersion: "llm-assist-\(profile.id)"
+        )
+        result.decisions = PolicyEvaluator(taxonomy: taxonomy).evaluate(
+            result: result,
+            policies: policies,
+            requestedPolicyIDs: entry.policyIDs
+        )
+        return result
+    }
+
+    private static func prompt(entry: EntryEvidence, allowedLeafTagIDs: Set<String>) -> String {
+        let evidence = [entry.evidence.title, entry.evidence.summary, entry.evidence.text]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+        let labels = allowedLeafTagIDs.sorted().prefix(EntryEvidenceValidator.tagLimit).joined(separator: ", ")
+        return "Classify the quoted local entry using only the listed tag IDs. Return exactly one JSON object with one key, labelIDs, whose value is an array of zero or more listed IDs. Do not include markdown or explanation.\nAllowed tag IDs: [\(labels)]\nEntry: \(evidence)"
+    }
+
+    private static func requestBody(format: ProviderRequestBodyFormat, profile: APIKeyProviderProfile, prompt: String) throws -> Data {
+        let output = min(maximumOutputTokens, profile.maximumTokens)
+        let object: [String: Any]
+        switch format {
+        case .openAIResponses:
+            object = ["model": profile.modelIdentifier, "input": prompt, "max_output_tokens": output]
+        case .openAIChatCompletions:
+            object = ["model": profile.modelIdentifier, "messages": [["role": "user", "content": prompt]], "max_tokens": output]
+        case .anthropicMessages:
+            object = ["model": profile.modelIdentifier, "max_tokens": output, "messages": [["role": "user", "content": prompt]]]
+        case .geminiGenerateContent, .vertexGenerateContent:
+            object = ["contents": [["parts": [["text": prompt]]]], "generationConfig": ["maxOutputTokens": output]]
+        case .cohereChat:
+            object = ["model": profile.modelIdentifier, "messages": [["role": "user", "content": prompt]], "max_tokens": output]
+        case .ollamaChat:
+            object = ["model": profile.modelIdentifier, "messages": [["role": "user", "content": prompt]], "stream": false, "options": ["num_predict": output]]
+        default:
+            throw ProviderClassificationProtocolError.unsupportedProvider
+        }
+        return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    }
+}
+
+public enum ProviderClassificationProtocolError: Error, Equatable, LocalizedError, Sendable {
+    case unsupportedProvider
+    case noAvailableTags
+    case invalidResponse
+
+    public var errorDescription: String? {
+        switch self {
+        case .unsupportedProvider: return "This provider does not support explicit text classification."
+        case .noAvailableTags: return "The selected tag tree has no active leaf tags to classify."
+        case .invalidResponse: return "The provider response did not contain valid local tag IDs."
+        }
+    }
+}

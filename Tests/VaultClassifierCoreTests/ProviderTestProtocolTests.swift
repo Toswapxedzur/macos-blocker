@@ -58,4 +58,24 @@ final class ProviderTestProtocolTests: XCTestCase {
         XCTAssertEqual(restored.providerRequestRecords, [record])
         XCTAssertFalse(String(decoding: try JSONEncoder().encode(restored), as: UTF8.self).contains("apiKey"))
     }
+
+    func testExplicitProviderClassificationUsesOnlyKnownLeafIDs() throws {
+        let profile = APIKeyProviderProfile(type: .gemini, maximumTokens: 512)
+        let entry = EntryEvidence(platform: "youtube", entryID: "entry", surface: .feed, evidence: .init(title: "Deck gameplay"))
+        let prepared = try ProviderClassificationProtocol.prepare(
+            profile: profile,
+            entry: entry,
+            allowedLeafTagIDs: ["games", "technology"]
+        )
+        XCTAssertEqual(prepared.operation, .generateText)
+        XCTAssertTrue(prepared.prompt.contains("games"))
+        XCTAssertFalse(prepared.prompt.contains("apiKey"))
+        XCTAssertEqual(
+            try ProviderClassificationProtocol.parseLabelIDs(#"{"labelIDs":["games"]}"#, allowedLeafTagIDs: ["games", "technology"]),
+            ["games"]
+        )
+        XCTAssertThrowsError(
+            try ProviderClassificationProtocol.parseLabelIDs(#"{"labelIDs":["unknown"]}"#, allowedLeafTagIDs: ["games", "technology"])
+        )
+    }
 }

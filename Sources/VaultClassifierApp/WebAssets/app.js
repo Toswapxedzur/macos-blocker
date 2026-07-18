@@ -186,6 +186,7 @@
 
   function inspectWorkspace() {
     const inspect = state.inspect;
+    const platformOptions = (state.assets.bindings || []).map((binding) => [binding.id, binding.name]);
     const result = inspect.result;
     let renderedResult = "";
     if (result) {
@@ -205,8 +206,9 @@
     return `<div class="workspace">${header("inspect.title", "inspect.copy", t(inspect.surface === "feed" ? "inspect.feedDecision" : "inspect.pageDecision"), "cyan")}
       <section class="section-card cyan" data-form-id="inspect-form"><div class="form-stack">
         ${field("inspect.entryTitle", "inspect.required", "title", inspect.title)}
-        <div class="form-row">${field("inspect.sourceID", "inspect.optional", "sourceID", inspect.sourceID)}<div class="field"><span class="field-label">${tx("inspect.surface")} · ${tx("inspect.surfaceHint")}</span><div class="choice-row"><label><input type="radio" name="surface" data-field="surface" value="feed"${checked(inspect.surface === "feed")}><span>${tx("enum.surface.feed")}</span></label><label><input type="radio" name="surface" data-field="surface" value="page"${checked(inspect.surface === "page")}><span>${tx("enum.surface.page")}</span></label></div></div></div>
-        <div class="action-row"><button class="primary" data-action="classify" data-form="inspect-form">${tx("inspect.classify")}</button><span class="small-copy">${tx("inspect.localOnly")}</span></div>
+        <div class="form-row">${field("inspect.sourceID", "inspect.optional", "sourceID", inspect.sourceID)}${platformOptions.length ? valueSelectField("inspect.platform", "inspect.platformCopy", "platformID", inspect.platformID, platformOptions) : ""}</div>
+        <div class="field"><span class="field-label">${tx("inspect.surface")} · ${tx("inspect.surfaceHint")}</span><div class="choice-row"><label><input type="radio" name="surface" data-field="surface" value="feed"${checked(inspect.surface === "feed")}><span>${tx("enum.surface.feed")}</span></label><label><input type="radio" name="surface" data-field="surface" value="page"${checked(inspect.surface === "page")}><span>${tx("enum.surface.page")}</span></label></div></div>
+        <div class="action-row"><button class="primary" data-action="classify" data-form="inspect-form"${disabled(!platformOptions.length)}>${tx("inspect.classify")}</button>${inspect.llmAvailable ? `<button class="gold-action" data-action="classifyWithLLM" data-form="inspect-form"${disabled(inspect.llmRunning)}>${tx(inspect.llmRunning ? "inspect.llmClassifying" : "inspect.classifyWithLLM")}</button>` : ""}<span class="small-copy">${tx(inspect.llmAvailable ? "inspect.llmExplicitOnly" : "inspect.localOnly")}</span></div>
       </div></section>${renderedResult || `<div class="empty">${tx("inspect.noResult")}</div>`}${notice(state.issue, "red")}</div>`;
   }
 
@@ -597,6 +599,8 @@
     const treeByID = new Map((assets.trees || []).map((tree) => [tree.id, tree]));
     const allRecords = datasets.flatMap((dataset) => dataset.records || []);
     const allCollected = datasets.flatMap((dataset) => dataset.collectedEntries || []);
+    const classifierTypes = assets.classifierTypes || [];
+    const models = assets.models || [];
     const availablePlatforms = definitions.filter((definition) => !bindings.some((binding) => binding.id === definition.id));
     const manualBinding = bindings[0];
     const manualTree = manualBinding ? treeByID.get(manualBinding.treeID) : null;
@@ -627,7 +631,15 @@
         }).join("");
       const formID = `collection-platform-${binding.id}`;
       const availability = definition?.collectorAvailable ? "data.collectorAvailable" : "data.collectorPlanned";
-      return `<section class="collection-platform-panel" data-form-id="${esc(formID)}"><div class="collection-platform-head"><div><span class="eyebrow">${tx("data.platformPanel")}</span><h3>${esc(binding.name)}</h3><p class="section-copy">${esc(binding.browser)} · ${tx(availability)}</p></div>${statusPill(t(binding.collectionEnabled ? "data.collecting" : "data.collectionOff"), binding.collectionEnabled ? "cyan" : "muted")}</div><div class="collection-platform-controls">${toggle("data.collectToggle", "enabled", Boolean(binding.collectionEnabled))}<button class="primary" data-action="setCollectionEnabled" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyCollection")}</button><span class="small-copy">${tx("data.creatorCount", { count: creators.size })} · ${tx("data.entryCount", { count: entries.length })}</span></div>${entries.length ? `<div class="collection-creators">${creatorRows}</div>` : `<div class="empty collection-empty">${tx(binding.collectionEnabled ? "data.waitingForEntries" : "data.collectionDisabledCopy")}</div>`}</section>`;
+      const tree = treeByID.get(binding.treeID);
+      const selectableTypes = classifierTypes.filter((classifierType) => {
+        if (classifierType.treeID !== binding.treeID || classifierType.datasetID !== binding.datasetID || classifierType.treeRevision !== tree?.revision || classifierType.datasetRevision !== dataset?.revision) return false;
+        if (!(classifierType.entryDecisionSources || []).includes("localModel")) return true;
+        return models.some((model) => model.id === classifierType.localModelID && model.ready && model.training);
+      });
+      const typeOptions = [["", t("data.noClassifierType")], ...selectableTypes.map((classifierType) => [classifierType.id, classifierType.name])];
+      const typeStatus = binding.activeClassifierTypeID ? "data.classifierTypeActive" : "data.classifierTypeNone";
+      return `<section class="collection-platform-panel" data-form-id="${esc(formID)}"><div class="collection-platform-head"><div><span class="eyebrow">${tx("data.platformPanel")}</span><h3>${esc(binding.name)}</h3><p class="section-copy">${esc(binding.browser)} · ${tx(availability)}</p></div>${statusPill(t(binding.collectionEnabled ? "data.collecting" : "data.collectionOff"), binding.collectionEnabled ? "cyan" : "muted")}</div><div class="collection-platform-controls">${toggle("data.collectToggle", "enabled", Boolean(binding.collectionEnabled))}<button class="primary" data-action="setCollectionEnabled" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyCollection")}</button><span class="small-copy">${tx("data.creatorCount", { count: creators.size })} · ${tx("data.entryCount", { count: entries.length })}</span></div><div class="collection-platform-controls">${valueSelectField("data.classifierType", "data.classifierTypeCopy", "classifierTypeID", binding.activeClassifierTypeID || "", typeOptions)}<button class="secondary" data-action="setActiveClassifierType" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyClassifierType")}</button>${statusPill(t(typeStatus), binding.activeClassifierTypeID ? "navy" : "muted")}</div>${entries.length ? `<div class="collection-creators">${creatorRows}</div>` : `<div class="empty collection-empty">${tx(binding.collectionEnabled ? "data.waitingForEntries" : "data.collectionDisabledCopy")}</div>`}</section>`;
     };
     return `<div class="workspace collection-workspace">${header("data.title", "data.copy", t("data.entries", { count: allCollected.length }), "cyan")}
       <section class="collection-platform-create" data-form-id="collection-platform-create-form"><div><span class="eyebrow">${tx("data.addPlatform")}</span><p class="section-copy">${tx("data.addPlatformCopy")}</p></div>${availablePlatforms.length ? `${valueSelectField("data.platform", "", "platformID", availablePlatforms[0].id, availablePlatforms.map((platform) => [platform.id, platform.name]))}<button class="primary" data-action="addCollectionPlatform" data-form="collection-platform-create-form">${tx("data.addPlatformAction")}</button>` : `<span class="small-copy">${tx("data.allPlatformsAdded")}</span>`}</section>

@@ -405,7 +405,7 @@ public enum LocalModelTrainer {
         dataset: ClassificationDataset,
         platformID: String
     ) -> [EmbeddedNeuralTrainingExample] {
-        let availableTagIDs = Set(tree.nodes.lazy.filter { !$0.isRetired }.map(\.id))
+        let availableTagIDs = (try? tree.inferenceTaxonomy())?.predictableLeafIDs ?? []
         return dataset.records.compactMap { record in
             guard record.review == .approved,
                   record.origin == .manual || record.origin == .llmAssist,
@@ -509,25 +509,30 @@ public struct PlatformBinding: Codable, Equatable, Sendable, Identifiable {
     public var browser: String
     public var treeID: String
     public var datasetID: String
+    /// The reusable decision configuration selected for this platform. A
+    /// binding without a classifier type remains on the legacy engine until
+    /// the person explicitly selects one.
+    public var activeClassifierTypeID: String?
     public var activeModelID: String?
     public var policyID: String?
     /// Raw public-content collection is off by default. A browser may only
     /// send title/creator metadata after this local binding is explicitly on.
     public var collectionEnabled: Bool
 
-    public init(id: String = "youtube", name: String = "YouTube", browser: String = "Chrome and Edge", treeID: String, datasetID: String, activeModelID: String? = nil, policyID: String? = nil, collectionEnabled: Bool = false) {
+    public init(id: String = "youtube", name: String = "YouTube", browser: String = "Chrome and Edge", treeID: String, datasetID: String, activeClassifierTypeID: String? = nil, activeModelID: String? = nil, policyID: String? = nil, collectionEnabled: Bool = false) {
         self.id = id
         self.name = name
         self.browser = browser
         self.treeID = treeID
         self.datasetID = datasetID
+        self.activeClassifierTypeID = activeClassifierTypeID
         self.activeModelID = activeModelID
         self.policyID = policyID
         self.collectionEnabled = collectionEnabled
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, browser, treeID, datasetID, activeModelID, policyID, collectionEnabled
+        case id, name, browser, treeID, datasetID, activeClassifierTypeID, activeModelID, policyID, collectionEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -537,6 +542,7 @@ public struct PlatformBinding: Codable, Equatable, Sendable, Identifiable {
         browser = try container.decodeIfPresent(String.self, forKey: .browser) ?? "Chrome and Edge"
         treeID = try container.decode(String.self, forKey: .treeID)
         datasetID = try container.decode(String.self, forKey: .datasetID)
+        activeClassifierTypeID = try container.decodeIfPresent(String.self, forKey: .activeClassifierTypeID)
         activeModelID = try container.decodeIfPresent(String.self, forKey: .activeModelID)
         policyID = try container.decodeIfPresent(String.self, forKey: .policyID)
         collectionEnabled = try container.decodeIfPresent(Bool.self, forKey: .collectionEnabled) ?? false
@@ -950,6 +956,8 @@ public enum WorkspaceCatalogError: Error, Equatable, LocalizedError, Sendable {
     case missingDataset(String)
     case missingModel(String)
     case incompatibleActiveModel(String)
+    case missingClassifierType(String)
+    case incompatibleActiveClassifierType(String)
     case unsupportedCollectionPlatform(String)
     case invalidCollectedEntry(String)
     case invalidProviderProfile(String)
@@ -963,6 +971,8 @@ public enum WorkspaceCatalogError: Error, Equatable, LocalizedError, Sendable {
         case .missingDataset(let value): return "The platform binding references a missing classification dataset: \(value)."
         case .missingModel(let value): return "The platform binding references a missing local model: \(value)."
         case .incompatibleActiveModel(let value): return "The active local model is not compatible with the platform tree and dataset: \(value)."
+        case .missingClassifierType(let value): return "The platform binding references a missing classifier type: \(value)."
+        case .incompatibleActiveClassifierType(let value): return "The active classifier type is not compatible with the platform tree and dataset: \(value)."
         case .unsupportedCollectionPlatform(let value): return "The collection platform is not supported: \(value)."
         case .invalidCollectedEntry(let value): return "The collected platform entry is invalid: \(value)."
         case .invalidProviderProfile(let value): return "The API provider profile is invalid: \(value)."
@@ -1069,6 +1079,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             if let localModelID = classifierType.localModelID {
                 guard let model = models.first(where: { $0.id == localModelID }),
                       model.isReady,
+                      model.embeddedNeuralModel != nil,
                       model.treeID == tree.id,
                       model.treeRevision == tree.revision,
                       model.datasetID == dataset.id,
@@ -1080,6 +1091,31 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             guard (!enabledSources.contains(.localModel) || classifierType.localModelID != nil),
                   (!enabledSources.contains(.llmAssist) || !classifierType.llmProfileIDs.isEmpty) else {
                 throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
+            }
+        }
+        for binding in bindings {
+            guard let classifierTypeID = binding.activeClassifierTypeID else { continue }
+            guard let classifierType = classifierTypes.first(where: { $0.id == classifierTypeID }) else {
+                throw WorkspaceCatalogError.missingClassifierType(classifierTypeID)
+            }
+            guard classifierType.treeID == binding.treeID,
+                  classifierType.datasetID == binding.datasetID,
+                  let tree = trees.first(where: { $0.id == binding.treeID }),
+                  let dataset = datasets.first(where: { $0.id == binding.datasetID }),
+                  classifierType.treeRevision == tree.revision,
+                  classifierType.datasetRevision == dataset.revision else {
+                throw WorkspaceCatalogError.incompatibleActiveClassifierType(classifierTypeID)
+            }
+            if classifierType.entryDecisionSources.contains(.localModel) {
+                guard let localModelID = classifierType.localModelID,
+                      binding.activeModelID == localModelID,
+                      let model = models.first(where: { $0.id == localModelID }),
+                      model.isReady,
+                      model.embeddedNeuralModel != nil else {
+                    throw WorkspaceCatalogError.incompatibleActiveClassifierType(classifierTypeID)
+                }
+            } else if binding.activeModelID != nil {
+                throw WorkspaceCatalogError.incompatibleActiveClassifierType(classifierTypeID)
             }
         }
         for profile in providerProfiles {
@@ -1145,7 +1181,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             }
             if let modelID = reconciled.localModelID {
                 let compatible = models.contains(where: { model in
-                    model.id == modelID && model.isReady &&
+                    model.id == modelID && model.isReady && model.embeddedNeuralModel != nil &&
                     model.treeID == tree.id && model.treeRevision == tree.revision &&
                     model.datasetID == dataset.id && model.datasetRevision == dataset.revision
                 })
@@ -1163,6 +1199,34 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             reconciled.entryDecisionSources = Array(Set(reconciled.entryDecisionSources)).sorted { $0.rawValue < $1.rawValue }
             reconciled.updatedAtMilliseconds = WorkspaceCatalog.now()
             return reconciled
+        }
+        for index in bindings.indices {
+            guard let classifierTypeID = bindings[index].activeClassifierTypeID else { continue }
+            guard let classifierType = classifierTypes.first(where: { $0.id == classifierTypeID }),
+                  let tree = trees.first(where: { $0.id == bindings[index].treeID }),
+                  let dataset = datasets.first(where: { $0.id == bindings[index].datasetID }),
+                  classifierType.treeID == tree.id,
+                  classifierType.treeRevision == tree.revision,
+                  classifierType.datasetID == dataset.id,
+                  classifierType.datasetRevision == dataset.revision else {
+                bindings[index].activeClassifierTypeID = nil
+                bindings[index].activeModelID = nil
+                continue
+            }
+            if classifierType.entryDecisionSources.contains(.localModel),
+               let modelID = classifierType.localModelID,
+               models.contains(where: { model in
+                   model.id == modelID && model.isReady && model.embeddedNeuralModel != nil &&
+                   model.treeID == tree.id && model.treeRevision == tree.revision &&
+                   model.datasetID == dataset.id && model.datasetRevision == dataset.revision
+               }) {
+                bindings[index].activeModelID = modelID
+            } else if classifierType.entryDecisionSources.contains(.localModel) {
+                bindings[index].activeClassifierTypeID = nil
+                bindings[index].activeModelID = nil
+            } else {
+                bindings[index].activeModelID = nil
+            }
         }
     }
 }
