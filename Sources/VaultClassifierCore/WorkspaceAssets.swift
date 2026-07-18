@@ -319,6 +319,8 @@ public enum LocalBaseEmbedding: String, Codable, Sendable, CaseIterable {
 }
 
 public struct LocalModelAsset: Codable, Equatable, Sendable, Identifiable {
+    public static let maximumTrainingPlatforms = 32
+
     public var id: String
     public var name: String
     public var treeID: String
@@ -327,9 +329,11 @@ public struct LocalModelAsset: Codable, Equatable, Sendable, Identifiable {
     public var datasetRevision: Int
     public var version: Int
     public var isReady: Bool
-    /// The browser platform whose approved records this model trains on. A
-    /// model remains a reusable asset; this only scopes its training corpus.
+    /// Legacy single-platform value retained for state migration. New model
+    /// setup persists `trainingPlatformIDs` and can train from several local
+    /// platform sources at once.
     public var trainingPlatformID: String?
+    public var trainingPlatformIDs: [String]?
     /// `nil` means use the compact on-device embedding learned from the local
     /// corpus. A non-nil value records the requested downloadable base package.
     public var baseEmbeddingID: LocalBaseEmbedding?
@@ -339,7 +343,7 @@ public struct LocalModelAsset: Codable, Equatable, Sendable, Identifiable {
     public var embeddedTrainingReport: EmbeddedNeuralTrainingReport?
     public var trainedAtMilliseconds: Int64?
 
-    public init(id: String = UUID().uuidString, name: String, treeID: String, treeRevision: Int, datasetID: String, datasetRevision: Int, version: Int = 1, isReady: Bool = false, trainingPlatformID: String? = nil, baseEmbeddingID: LocalBaseEmbedding? = nil, embeddedNeuralModel: EmbeddedNeuralTextClassifier? = nil, embeddedTrainingReport: EmbeddedNeuralTrainingReport? = nil, trainedAtMilliseconds: Int64? = nil) {
+    public init(id: String = UUID().uuidString, name: String, treeID: String, treeRevision: Int, datasetID: String, datasetRevision: Int, version: Int = 1, isReady: Bool = false, trainingPlatformID: String? = nil, trainingPlatformIDs: [String]? = nil, baseEmbeddingID: LocalBaseEmbedding? = nil, embeddedNeuralModel: EmbeddedNeuralTextClassifier? = nil, embeddedTrainingReport: EmbeddedNeuralTrainingReport? = nil, trainedAtMilliseconds: Int64? = nil) {
         self.id = id
         self.name = name
         self.treeID = treeID
@@ -349,10 +353,16 @@ public struct LocalModelAsset: Codable, Equatable, Sendable, Identifiable {
         self.version = version
         self.isReady = isReady
         self.trainingPlatformID = trainingPlatformID
+        self.trainingPlatformIDs = trainingPlatformIDs.map { Array(Set($0)).sorted() }
         self.baseEmbeddingID = baseEmbeddingID
         self.embeddedNeuralModel = embeddedNeuralModel
         self.embeddedTrainingReport = embeddedTrainingReport
         self.trainedAtMilliseconds = trainedAtMilliseconds
+    }
+
+    public var effectiveTrainingPlatformIDs: [String] {
+        let configured = trainingPlatformIDs ?? trainingPlatformID.map { [$0] } ?? []
+        return Array(Set(configured)).sorted()
     }
 }
 
@@ -371,6 +381,7 @@ public enum ClassifierDecisionSource: String, Codable, Sendable, CaseIterable {
 public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     public static let maximumNameLength = 128
     public static let maximumLLMProfiles = 16
+    public static let maximumDataSourcePlatforms = 32
 
     public var id: String
     public var name: String
@@ -378,6 +389,9 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     public var treeRevision: Int
     public var datasetID: String
     public var datasetRevision: Int
+    /// Platform-specific slices from the selected local data asset. A type may
+    /// intentionally combine, for example, YouTube and Instagram sources.
+    public var dataSourcePlatformIDs: [String]
     /// A ready model is optional: a human-only type is valid, while a local
     /// model source is enabled only when this compatible model is selected.
     public var localModelID: String?
@@ -401,6 +415,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         treeRevision: Int,
         datasetID: String,
         datasetRevision: Int,
+        dataSourcePlatformIDs: [String] = [],
         localModelID: String? = nil,
         llmProfileIDs: [String] = [],
         decisionPriority: [ClassifierDecisionSource] = [.human, .llmAssist, .localModel],
@@ -414,6 +429,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         self.treeRevision = treeRevision
         self.datasetID = datasetID
         self.datasetRevision = datasetRevision
+        self.dataSourcePlatformIDs = Array(Set(dataSourcePlatformIDs)).sorted()
         self.localModelID = localModelID
         self.llmProfileIDs = Array(Set(llmProfileIDs)).sorted()
         self.decisionPriority = decisionPriority
@@ -423,7 +439,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, treeID, treeRevision, datasetID, datasetRevision, localModelID,
+        case id, name, treeID, treeRevision, datasetID, datasetRevision, dataSourcePlatformIDs, localModelID,
              llmProfileIDs, decisionPriority, creatorDecisionSources,
              entryDecisionSources, updatedAtMilliseconds
     }
@@ -436,6 +452,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         treeRevision = try container.decode(Int.self, forKey: .treeRevision)
         datasetID = try container.decode(String.self, forKey: .datasetID)
         datasetRevision = try container.decode(Int.self, forKey: .datasetRevision)
+        dataSourcePlatformIDs = Array(Set(try container.decodeIfPresent([String].self, forKey: .dataSourcePlatformIDs) ?? [])).sorted()
         localModelID = try container.decodeIfPresent(String.self, forKey: .localModelID)
         llmProfileIDs = Array(Set(try container.decodeIfPresent([String].self, forKey: .llmProfileIDs) ?? [])).sorted()
         decisionPriority = try container.decodeIfPresent([ClassifierDecisionSource].self, forKey: .decisionPriority)
@@ -481,11 +498,21 @@ public enum LocalModelTrainer {
         dataset: ClassificationDataset,
         platformID: String
     ) -> [EmbeddedNeuralTrainingExample] {
+        return approvedExamples(for: tree, dataset: dataset, platformIDs: [platformID])
+    }
+
+    public static func approvedExamples(
+        for tree: TagTreeAsset,
+        dataset: ClassificationDataset,
+        platformIDs: [String]
+    ) -> [EmbeddedNeuralTrainingExample] {
+        let sourcePlatformIDs = Set(platformIDs)
+        guard !sourcePlatformIDs.isEmpty else { return [] }
         let availableTagIDs = (try? tree.inferenceTaxonomy())?.predictableLeafIDs ?? []
         let entryExamples = dataset.records.compactMap { record -> EmbeddedNeuralTrainingExample? in
             guard record.review == .approved,
                   record.origin == .manual || record.origin == .llmAssist,
-                  record.platformID == platformID,
+                  sourcePlatformIDs.contains(record.platformID),
                   record.treeRevision == tree.revision,
                   !record.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 return nil
@@ -497,7 +524,7 @@ public enum LocalModelTrainer {
         let creatorExamples = dataset.creatorClassifications.flatMap { classification -> [EmbeddedNeuralTrainingExample] in
             guard classification.review == .approved,
                   classification.origin == .manual || classification.origin == .llmAssist,
-                  classification.platformID == platformID,
+                  sourcePlatformIDs.contains(classification.platformID),
                   classification.treeID == tree.id,
                   classification.treeRevision == tree.revision else {
                 return []
@@ -529,10 +556,11 @@ public enum LocalModelTrainer {
         guard model.datasetID == dataset.id, model.datasetRevision == dataset.revision else {
             throw LocalModelTrainingError.incompatibleDataset
         }
-        guard let platformID = model.trainingPlatformID, !platformID.isEmpty else {
+        let platformIDs = model.effectiveTrainingPlatformIDs
+        guard !platformIDs.isEmpty else {
             throw LocalModelTrainingError.missingPlatform
         }
-        let examples = approvedExamples(for: tree, dataset: dataset, platformID: platformID)
+        let examples = approvedExamples(for: tree, dataset: dataset, platformIDs: platformIDs)
         let labelIDs = Array(Set(examples.flatMap(\.positiveLabelIDs))).sorted()
         guard !examples.isEmpty, !labelIDs.isEmpty else {
             throw LocalModelTrainingError.noApprovedExamples
@@ -925,6 +953,7 @@ public enum WorkspaceCatalogError: Error, Equatable, LocalizedError, Sendable {
     case unsupportedCollectionPlatform(String)
     case invalidCollectedEntry(String)
     case invalidCreatorClassification(String)
+    case invalidLocalModel(String)
     case invalidProviderProfile(String)
     case invalidClassifierType(String)
 
@@ -940,6 +969,7 @@ public enum WorkspaceCatalogError: Error, Equatable, LocalizedError, Sendable {
         case .unsupportedCollectionPlatform(let value): return "The collection platform is not supported: \(value)."
         case .invalidCollectedEntry(let value): return "The collected platform entry is invalid: \(value)."
         case .invalidCreatorClassification(let value): return "The creator classification is invalid: \(value)."
+        case .invalidLocalModel(let value): return "The local model has incompatible training data sources: \(value)."
         case .invalidProviderProfile(let value): return "The API provider profile is invalid: \(value)."
         case .invalidClassifierType(let value): return "The classifier type has incompatible local assets: \(value)."
         }
@@ -978,7 +1008,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         // an optional import rather than an imposed first node or hierarchy.
         let tree = TagTreeAsset(id: "vault-starter", name: "Vault starter tree", nodes: [])
         let dataset = ClassificationDataset(id: "local-dataset", name: "Local classification data")
-        let model = LocalModelAsset(id: "local-neural-model", name: "Local neural model", treeID: tree.id, treeRevision: tree.revision, datasetID: dataset.id, datasetRevision: dataset.revision, trainingPlatformID: "youtube")
+        let model = LocalModelAsset(id: "local-neural-model", name: "Local neural model", treeID: tree.id, treeRevision: tree.revision, datasetID: dataset.id, datasetRevision: dataset.revision, trainingPlatformID: "youtube", trainingPlatformIDs: ["youtube"])
         return .init(trees: [tree], datasets: [dataset], models: [model], bindings: [.init(treeID: tree.id, datasetID: dataset.id)])
     }
 
@@ -994,6 +1024,19 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             guard let model = models.first(where: { $0.id == activeModelID }) else { throw WorkspaceCatalogError.missingModel(activeModelID) }
             guard model.isReady, model.treeID == tree.id, model.treeRevision == tree.revision, model.datasetID == dataset.id, model.datasetRevision == dataset.revision else {
                 throw WorkspaceCatalogError.incompatibleActiveModel(activeModelID)
+            }
+        }
+        for model in models {
+            let sourcePlatformIDs = model.effectiveTrainingPlatformIDs
+            guard sourcePlatformIDs.count <= LocalModelAsset.maximumTrainingPlatforms,
+                  sourcePlatformIDs.allSatisfy({ platformID in
+                      bindings.contains(where: { binding in
+                          binding.id == platformID &&
+                          binding.treeID == model.treeID &&
+                          binding.datasetID == model.datasetID
+                      })
+                  }) else {
+                throw WorkspaceCatalogError.invalidLocalModel(model.id)
             }
         }
         for dataset in datasets {
@@ -1045,6 +1088,13 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                   tree.revision == classifierType.treeRevision,
                   let dataset = datasets.first(where: { $0.id == classifierType.datasetID }),
                   dataset.revision == classifierType.datasetRevision,
+                  classifierType.dataSourcePlatformIDs.count <= ClassifierTypeAsset.maximumDataSourcePlatforms,
+                  Set(classifierType.dataSourcePlatformIDs).count == classifierType.dataSourcePlatformIDs.count,
+                  classifierType.dataSourcePlatformIDs.allSatisfy({ platformID in
+                      bindings.contains(where: { binding in
+                          binding.id == platformID && binding.treeID == tree.id && binding.datasetID == dataset.id
+                      })
+                  }),
                   classifierType.llmProfileIDs.count <= ClassifierTypeAsset.maximumLLMProfiles,
                   Set(classifierType.llmProfileIDs).count == classifierType.llmProfileIDs.count,
                   classifierType.llmProfileIDs.allSatisfy({ profileID in
@@ -1063,7 +1113,13 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                       model.treeID == tree.id,
                       model.treeRevision == tree.revision,
                       model.datasetID == dataset.id,
-                      model.datasetRevision == dataset.revision else {
+                      model.datasetRevision == dataset.revision,
+                      // Empty source selections are accepted only while an
+                      // older saved classifier type is awaiting reconciliation.
+                      // New types are required to select at least one source
+                      // by the app bridge.
+                      (classifierType.dataSourcePlatformIDs.isEmpty ||
+                       Set(model.effectiveTrainingPlatformIDs) == Set(classifierType.dataSourcePlatformIDs)) else {
                     throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
                 }
             }
@@ -1151,6 +1207,16 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             var reconciled = classifierType
             reconciled.treeRevision = tree.revision
             reconciled.datasetRevision = dataset.revision
+            let compatibleSourcePlatformIDs = bindings.compactMap { binding -> String? in
+                binding.treeID == tree.id && binding.datasetID == dataset.id ? binding.id : nil
+            }.sorted()
+            if reconciled.dataSourcePlatformIDs.isEmpty {
+                // Older saved types predate source selection. Their existing
+                // compatible platform bindings form the safe migration set.
+                reconciled.dataSourcePlatformIDs = compatibleSourcePlatformIDs
+            } else {
+                reconciled.dataSourcePlatformIDs = reconciled.dataSourcePlatformIDs.filter(compatibleSourcePlatformIDs.contains)
+            }
             reconciled.llmProfileIDs = reconciled.llmProfileIDs.filter { profileID in
                 providerProfiles.contains(where: { $0.id == profileID && $0.type.supportsLLMConfiguration })
             }
@@ -1158,7 +1224,8 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                 let compatible = models.contains(where: { model in
                     model.id == modelID && model.isReady && model.embeddedNeuralModel != nil &&
                     model.treeID == tree.id && model.treeRevision == tree.revision &&
-                    model.datasetID == dataset.id && model.datasetRevision == dataset.revision
+                    model.datasetID == dataset.id && model.datasetRevision == dataset.revision &&
+                    Set(model.effectiveTrainingPlatformIDs) == Set(reconciled.dataSourcePlatformIDs)
                 })
                 if !compatible { reconciled.localModelID = nil }
             }

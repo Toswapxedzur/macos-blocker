@@ -920,7 +920,8 @@ final class VaultClassifierViewModel: ObservableObject {
                 treeRevision: tree.revision,
                 datasetID: dataset.id,
                 datasetRevision: dataset.revision,
-                trainingPlatformID: binding.id
+                trainingPlatformID: binding.id,
+                trainingPlatformIDs: [binding.id]
             ))
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
@@ -984,12 +985,17 @@ final class VaultClassifierViewModel: ObservableObject {
                   let dataset = catalog.datasets.first else {
                 throw WebBridgeInputError.invalidChoice("classifier type")
             }
+            let dataSourcePlatformIDs = catalog.bindings
+                .filter { $0.treeID == tree.id && $0.datasetID == dataset.id }
+                .map(\.id)
+                .sorted()
             catalog.classifierTypes.append(.init(
                 name: cleaned,
                 treeID: tree.id,
                 treeRevision: tree.revision,
                 datasetID: dataset.id,
-                datasetRevision: dataset.revision
+                datasetRevision: dataset.revision,
+                dataSourcePlatformIDs: dataSourcePlatformIDs
             ))
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
@@ -1002,6 +1008,7 @@ final class VaultClassifierViewModel: ObservableObject {
         name: String,
         treeID: String,
         datasetID: String,
+        dataSourcePlatformIDs: [String],
         localModelID: String?,
         llmProfileIDs: [String],
         priority: [ClassifierDecisionSource],
@@ -1025,6 +1032,16 @@ final class VaultClassifierViewModel: ObservableObject {
                 throw WebBridgeInputError.invalidChoice("classifier type")
             }
             let selectedLLMIDs = Array(Set(llmProfileIDs)).sorted()
+            let selectedDataSourcePlatformIDs = Array(Set(dataSourcePlatformIDs)).sorted()
+            guard !selectedDataSourcePlatformIDs.isEmpty,
+                  selectedDataSourcePlatformIDs.count <= ClassifierTypeAsset.maximumDataSourcePlatforms,
+                  selectedDataSourcePlatformIDs.allSatisfy({ platformID in
+                      catalog.bindings.contains(where: { binding in
+                          binding.id == platformID && binding.treeID == tree.id && binding.datasetID == dataset.id
+                      })
+                  }) else {
+                throw WebBridgeInputError.invalidChoice("classification data sources")
+            }
             guard selectedLLMIDs.count <= ClassifierTypeAsset.maximumLLMProfiles,
                   selectedLLMIDs.allSatisfy({ profileID in
                       catalog.providerProfiles.contains(where: { $0.id == profileID && $0.type.supportsLLMConfiguration })
@@ -1037,7 +1054,8 @@ final class VaultClassifierViewModel: ObservableObject {
                catalog.models.contains(where: { model in
                    model.id == normalizedModelID && model.isReady && model.embeddedNeuralModel != nil &&
                    model.treeID == tree.id && model.treeRevision == tree.revision &&
-                   model.datasetID == dataset.id && model.datasetRevision == dataset.revision
+                   model.datasetID == dataset.id && model.datasetRevision == dataset.revision &&
+                   Set(model.effectiveTrainingPlatformIDs) == Set(selectedDataSourcePlatformIDs)
                }) {
                 compatibleModelID = normalizedModelID
             } else {
@@ -1059,6 +1077,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 treeRevision: tree.revision,
                 datasetID: dataset.id,
                 datasetRevision: dataset.revision,
+                dataSourcePlatformIDs: selectedDataSourcePlatformIDs,
                 localModelID: compatibleModelID,
                 llmProfileIDs: selectedLLMIDs,
                 decisionPriority: priority,
@@ -1179,14 +1198,14 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
-    func configureLocalModel(modelID: String, treeID: String, platformID: String, baseEmbeddingID: String?) {
+    func configureLocalModel(modelID: String, treeID: String, platformIDs: [String], baseEmbeddingID: String?) {
         do {
             guard var catalog = localState?.workspaceCatalog else { return }
             try configureLocalModel(
                 in: &catalog,
                 modelID: modelID,
                 treeID: treeID,
-                platformID: platformID,
+                platformIDs: platformIDs,
                 baseEmbeddingID: baseEmbeddingID
             )
             try coordinator?.updateWorkspaceCatalog(catalog)
@@ -1195,14 +1214,14 @@ final class VaultClassifierViewModel: ObservableObject {
         } catch { issue = error.localizedDescription }
     }
 
-    func trainLocalModel(modelID: String, treeID: String, platformID: String, baseEmbeddingID: String?) {
+    func trainLocalModel(modelID: String, treeID: String, platformIDs: [String], baseEmbeddingID: String?) {
         do {
             guard var catalog = localState?.workspaceCatalog else { return }
             try configureLocalModel(
                 in: &catalog,
                 modelID: modelID,
                 treeID: treeID,
-                platformID: platformID,
+                platformIDs: platformIDs,
                 baseEmbeddingID: baseEmbeddingID
             )
             guard let modelIndex = catalog.models.firstIndex(where: { $0.id == modelID }),
@@ -1221,14 +1240,27 @@ final class VaultClassifierViewModel: ObservableObject {
         in catalog: inout WorkspaceCatalog,
         modelID: String,
         treeID: String,
-        platformID: String,
+        platformIDs: [String],
         baseEmbeddingID: String?
     ) throws {
         guard let modelIndex = catalog.models.firstIndex(where: { $0.id == modelID }),
-              let tree = catalog.trees.first(where: { $0.id == treeID }),
-              let binding = catalog.bindings.first(where: { $0.id == platformID }),
-              let dataset = catalog.datasets.first(where: { $0.id == binding.datasetID }) else {
+              let tree = catalog.trees.first(where: { $0.id == treeID }) else {
             throw WebBridgeInputError.invalidChoice("local model setup")
+        }
+        let selectedPlatformIDs = Array(Set(platformIDs)).sorted()
+        guard !selectedPlatformIDs.isEmpty,
+              selectedPlatformIDs.count <= LocalModelAsset.maximumTrainingPlatforms else {
+            throw WebBridgeInputError.invalidChoice("local model data sources")
+        }
+        let bindings = selectedPlatformIDs.compactMap { platformID in
+            catalog.bindings.first(where: { $0.id == platformID })
+        }
+        guard bindings.count == selectedPlatformIDs.count,
+              bindings.allSatisfy({ $0.treeID == tree.id }),
+              let datasetID = bindings.first?.datasetID,
+              bindings.allSatisfy({ $0.datasetID == datasetID }),
+              let dataset = catalog.datasets.first(where: { $0.id == datasetID }) else {
+            throw WebBridgeInputError.invalidChoice("local model data sources")
         }
         let normalizedBaseEmbeddingID = baseEmbeddingID?.trimmingCharacters(in: .whitespacesAndNewlines)
         let baseEmbedding = normalizedBaseEmbeddingID?.isEmpty == false
@@ -1243,13 +1275,14 @@ final class VaultClassifierViewModel: ObservableObject {
             prior.treeRevision != tree.revision ||
             prior.datasetID != dataset.id ||
             prior.datasetRevision != dataset.revision ||
-            prior.trainingPlatformID != binding.id ||
+            prior.effectiveTrainingPlatformIDs != selectedPlatformIDs ||
             prior.baseEmbeddingID != baseEmbedding
         catalog.models[modelIndex].treeID = tree.id
         catalog.models[modelIndex].treeRevision = tree.revision
         catalog.models[modelIndex].datasetID = dataset.id
         catalog.models[modelIndex].datasetRevision = dataset.revision
-        catalog.models[modelIndex].trainingPlatformID = binding.id
+        catalog.models[modelIndex].trainingPlatformID = selectedPlatformIDs.first
+        catalog.models[modelIndex].trainingPlatformIDs = selectedPlatformIDs
         catalog.models[modelIndex].baseEmbeddingID = baseEmbedding
         if changed {
             catalog.models[modelIndex].isReady = false
@@ -1512,6 +1545,9 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             let platformID = String(keyParts[0])
             let creatorID = String(keyParts[1])
+            guard classifierType.dataSourcePlatformIDs.contains(platformID) else {
+                throw WebBridgeInputError.invalidChoice("creator data source")
+            }
             guard let creatorEntry = catalog.datasets[datasetIndex].collectedEntries.first(where: {
                 $0.platformID == platformID && $0.creatorID == creatorID
             }) else {
@@ -1566,6 +1602,9 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             let platformID = String(keyParts[0])
             let creatorID = String(keyParts[1])
+            guard classifierType.dataSourcePlatformIDs.contains(platformID) else {
+                throw WebBridgeInputError.invalidChoice("creator data source")
+            }
             guard let representative = dataset.collectedEntries.first(where: {
                 $0.platformID == platformID && $0.creatorID == creatorID
             }) else {
@@ -1681,6 +1720,7 @@ final class VaultClassifierViewModel: ObservableObject {
         guard var catalog = localState?.workspaceCatalog,
               let classifierType = catalog.classifierTypes.first(where: { $0.id == typeID }),
               classifierType.creatorDecisionSources.contains(.llmAssist),
+              classifierType.dataSourcePlatformIDs.contains(platformID),
               classifierType.treeID == tree.id,
               classifierType.treeRevision == tree.revision,
               let datasetIndex = catalog.datasets.firstIndex(where: { $0.id == classifierType.datasetID }) else {
@@ -2330,6 +2370,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     "datasetID": model.datasetID,
                     "datasetRevision": model.datasetRevision,
                     "platformID": model.trainingPlatformID ?? NSNull(),
+                    "platformIDs": model.effectiveTrainingPlatformIDs,
                     "baseEmbeddingID": model.baseEmbeddingID?.rawValue ?? NSNull(),
                     "version": model.version,
                     "ready": model.isReady,
@@ -2351,6 +2392,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     "treeRevision": classifierType.treeRevision,
                     "datasetID": classifierType.datasetID,
                     "datasetRevision": classifierType.datasetRevision,
+                    "dataSourcePlatformIDs": classifierType.dataSourcePlatformIDs,
                     "localModelID": classifierType.localModelID ?? NSNull(),
                     "llmProfileIDs": classifierType.llmProfileIDs,
                     "decisionPriority": classifierType.decisionPriority.map(\.rawValue),
@@ -2522,6 +2564,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     name: try webString(data, key: "name", limit: ClassifierTypeAsset.maximumNameLength),
                     treeID: try webString(data, key: "treeID", limit: 256),
                     datasetID: try webString(data, key: "datasetID", limit: 256),
+                    dataSourcePlatformIDs: try webStringArray(data, key: "dataSourcePlatformIDs", limit: ClassifierTypeAsset.maximumDataSourcePlatforms, elementLimit: 64),
                     localModelID: try webOptionalString(data, key: "localModelID", limit: 256),
                     llmProfileIDs: try webClassifierTypeLLMProfiles(data),
                     priority: priority,
@@ -2576,14 +2619,14 @@ final class VaultClassifierViewModel: ObservableObject {
                 configureLocalModel(
                     modelID: try webString(data, key: "modelID", limit: 256),
                     treeID: try webString(data, key: "treeID", limit: 256),
-                    platformID: try webString(data, key: "platformID", limit: 256),
+                    platformIDs: try webStringArray(data, key: "platformIDs", limit: LocalModelAsset.maximumTrainingPlatforms, elementLimit: 64),
                     baseEmbeddingID: try webOptionalString(data, key: "baseEmbeddingID", limit: 128)
                 )
             case "trainLocalModel":
                 trainLocalModel(
                     modelID: try webString(data, key: "modelID", limit: 256),
                     treeID: try webString(data, key: "treeID", limit: 256),
-                    platformID: try webString(data, key: "platformID", limit: 256),
+                    platformIDs: try webStringArray(data, key: "platformIDs", limit: LocalModelAsset.maximumTrainingPlatforms, elementLimit: 64),
                     baseEmbeddingID: try webOptionalString(data, key: "baseEmbeddingID", limit: 128)
                 )
             case "renameTree":

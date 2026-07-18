@@ -146,6 +146,72 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(ClassificationDataset.self, from: JSONEncoder().encode(dataset)), dataset)
     }
 
+    func testLocalModelTrainingCombinesEachSelectedPlatformSource() throws {
+        let tree = TagTreeAsset(
+            id: "interests",
+            name: "Interests",
+            nodes: [
+                .init(id: "games", name: "Games"),
+                .init(id: "technology", name: "Technology"),
+            ]
+        )
+        let instagramCreator = CreatorClassificationRecord(
+            classifierTypeID: "creator-focus",
+            creatorID: "instagram:creator:technology",
+            creatorName: "Technology creator",
+            platformID: "instagram",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            tagIDs: ["technology"],
+            origin: .llmAssist,
+            review: .approved
+        )
+        let dataset = ClassificationDataset(
+            id: "personal-labels",
+            name: "Personal labels",
+            records: [
+                .init(title: "YouTube deck guide", tagIDs: ["games"], origin: .manual, review: .approved, platformID: "youtube", treeRevision: tree.revision),
+                .init(title: "Twitch stream", tagIDs: ["games"], origin: .manual, review: .approved, platformID: "twitch", treeRevision: tree.revision),
+            ],
+            creatorClassifications: [instagramCreator],
+            collectedEntries: [
+                .init(id: "instagram-video", platformID: "instagram", entryID: "instagram-video", creatorID: instagramCreator.creatorID, creatorName: instagramCreator.creatorName, entryType: "reel", title: "Instagram neural model guide"),
+            ]
+        )
+        let model = LocalModelAsset(
+            name: "Cross-platform model",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            datasetID: dataset.id,
+            datasetRevision: dataset.revision,
+            trainingPlatformID: "youtube",
+            trainingPlatformIDs: ["youtube", "instagram", "youtube"]
+        )
+
+        XCTAssertEqual(model.effectiveTrainingPlatformIDs, ["instagram", "youtube"])
+        let examples = LocalModelTrainer.approvedExamples(
+            for: tree,
+            dataset: dataset,
+            platformIDs: model.effectiveTrainingPlatformIDs
+        )
+        XCTAssertEqual(Set(examples.map(\.text)), ["YouTube deck guide", "Instagram neural model guide"])
+        XCTAssertEqual(Set(examples.flatMap(\.positiveLabelIDs)), ["games", "technology"])
+    }
+
+    func testLegacyClassifierTypeMigratesToAllCompatiblePlatformSources() throws {
+        let legacy = Data(#"{"id":"legacy-type","name":"Legacy type","treeID":"vault-starter","treeRevision":1,"datasetID":"local-dataset","datasetRevision":1,"localModelID":null,"llmProfileIDs":[],"decisionPriority":["human","llmAssist","localModel"],"creatorDecisionSources":["human"],"entryDecisionSources":[],"updatedAtMilliseconds":0}"#.utf8)
+        let type = try JSONDecoder().decode(ClassifierTypeAsset.self, from: legacy)
+        XCTAssertTrue(type.dataSourcePlatformIDs.isEmpty)
+
+        var catalog = WorkspaceCatalog.starter()
+        catalog.bindings.append(.init(id: "instagram", treeID: "vault-starter", datasetID: "local-dataset"))
+        catalog.classifierTypes = [type]
+        catalog.reconcileClassifierTypes()
+
+        XCTAssertEqual(catalog.classifierTypes[0].dataSourcePlatformIDs, ["instagram", "youtube"])
+        XCTAssertNoThrow(try catalog.validate())
+    }
+
     func testLegacyClassificationDatasetDecodesWithoutCreatorClassifications() throws {
         let legacy = Data(#"{"id":"legacy","name":"Legacy","records":[],"collectedEntries":[],"revision":1}"#.utf8)
         XCTAssertTrue(try JSONDecoder().decode(ClassificationDataset.self, from: legacy).creatorClassifications.isEmpty)
