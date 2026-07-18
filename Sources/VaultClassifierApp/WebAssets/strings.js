@@ -431,7 +431,7 @@ window.VaultClassifierStrings = Object.freeze({
   "llm.providerGroup.inference": "INFERENCE AND MODEL ROUTING",
   "llm.providerGroup.cloud": "CLOUD MODEL PLATFORMS",
   "llm.providerGroup.embeddings": "EMBEDDING APIS",
-  "llm.providerGroup.platform": "PLATFORM APIS",
+  "llm.providerGroup.platform": "BLOCKABLE CONTENT PLATFORMS",
   "llm.providerGroup.data": "DATA AND SEARCH APIS",
   "llm.providerGroup.custom": "CUSTOM",
   "llm.profileName": "PROFILE NAME",
