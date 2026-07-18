@@ -624,8 +624,10 @@ public final class LocalClassifierCoordinator {
     public func updateWorkspaceCatalog(_ catalog: WorkspaceCatalog) throws {
         lock.lock()
         defer { lock.unlock() }
-        try catalog.validate()
-        state.workspaceCatalog = catalog
+        var reconciledCatalog = catalog
+        reconciledCatalog.reconcileClassifierTypes()
+        try reconciledCatalog.validate()
+        state.workspaceCatalog = reconciledCatalog
         try stateFile.save(state)
     }
 
