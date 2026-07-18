@@ -460,6 +460,18 @@
     return keys[fieldName] || "llm.protocol.protocolFamily";
   }
 
+  function credentialFieldLabelKey(fieldName) {
+    const keys = {
+      apiKey: "llm.credential.apiKey",
+      bearerToken: "llm.credential.bearerToken",
+      clientSecret: "llm.credential.clientSecret",
+      accessKeyID: "llm.credential.accessKeyID",
+      secretAccessKey: "llm.credential.secretAccessKey",
+      sessionToken: "llm.credential.sessionToken",
+    };
+    return keys[fieldName] || "llm.apiKey";
+  }
+
   function protocolConfigurationField(requirement, profile) {
     const value = profile.protocolConfiguration?.[requirement.field] ?? requirement.defaultValue ?? "";
     const hint = requirement.requiredForDispatch ? "llm.protocol.required" : "";
@@ -482,15 +494,18 @@
       const formID = `provider-profile-${profile.id}`;
       const protocol = state.assets.providerProtocols?.[profile.type] || {};
       const supportsLLM = Boolean(protocol.supportsLLMConfiguration);
-      const credentialStatus = !protocol.credentialRequired ? "llm.noCredentialStatus" : (profile.hasStoredCredential ? "llm.credentialStored" : "llm.credentialNeeded");
+      const hasSessionCredential = Boolean(profile.hasSessionCredential);
+      const credentialStatus = !protocol.credentialRequired ? "llm.noCredentialStatus" : (profile.hasStoredCredential ? "llm.credentialStored" : (hasSessionCredential ? "llm.sessionCredential" : "llm.credentialNeeded"));
       const youtubeOptions = [["", t("llm.noYouTubeTool")], ...youtubeProfiles.filter((candidate) => candidate.id !== profile.id).map((candidate) => [candidate.id, candidate.name])];
       const externalOnlyCopy = profile.type === "youtubeData" ? "llm.youtubeOnlyCopy" : "llm.dataAPIOnlyCopy";
       const protocolFields = (protocol.configurationRequirements || []).map((requirement) => protocolConfigurationField(requirement, profile)).join("");
       const endpointField = protocol.allowsEndpointOverride ? field("llm.apiEndpoint", "llm.apiEndpointCopy", "customEndpoint", profile.customEndpoint || "") : "";
       const toolSetup = protocol.supportsYouTubeTool ? `<div class="provider-tools"><span class="eyebrow">${tx("llm.externalTools")}</span>${valueSelectField("llm.youtubeTool", "llm.youtubeToolCopy", "youtubeProviderID", profile.youtubeProviderID || "", youtubeOptions)}</div>` : "";
       const setup = supportsLLM ? `<div class="provider-setup"><div class="section-header"><div><h3>${tx("llm.modelSetup")}</h3><p class="section-copy">${tx("llm.modelSetupCopy")}</p></div></div><div class="provider-setup-fields">${field("llm.modelIdentifier", "", "modelIdentifier", profile.modelIdentifier)}${field("llm.batchSize", "", "batchSize", profile.batchSize, "text", "inputmode=\"numeric\"")}${field("llm.maximumTokens", "", "maximumTokens", profile.maximumTokens, "text", "inputmode=\"numeric\"")}</div>${endpointField}${toolSetup}</div>` : `<div class="provider-api-note"><span class="eyebrow">${tx("llm.externalTool")}</span><p class="section-copy">${tx(externalOnlyCopy)}</p>${endpointField}</div>`;
-      const credentials = protocol.credentialRequired ? `<div class="provider-credential-row"><button class="secondary" data-action="presentProviderCredentialEntry" data-profile-id="${esc(profile.id)}">${tx(profile.hasStoredCredential ? "llm.replaceKey" : "llm.storeKey")}</button>${profile.hasStoredCredential ? `<button class="danger" data-action="removeProviderCredential" data-profile-id="${esc(profile.id)}">${tx("llm.removeKey")}</button>` : ""}</div>` : `<p class="small-copy">${tx("llm.noCredential")}</p>`;
-      return `<section class="provider-panel" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}"><div class="provider-panel-head"><div><span class="eyebrow">${tx("llm.providerPanel")}</span><h3>${esc(profile.name)}</h3><p class="section-copy">${tx(providerTypeLabelKey(profile.type))}</p></div><div class="provider-panel-status">${statusPill(t(credentialStatus), profile.hasStoredCredential ? "gold" : "muted")}</div></div><div class="provider-name-row">${field("llm.profileName", "", "name", profile.name)}<button class="secondary" data-action="configureProviderProfile" data-form="${esc(formID)}" data-profile-id="${esc(profile.id)}">${tx("llm.saveProfile")}</button><button class="danger" data-action="deleteProviderProfile" data-profile-id="${esc(profile.id)}">${tx("llm.deleteProfile")}</button></div><section class="provider-credential"><div class="section-header"><div><h3>${tx("llm.apiKey")}</h3><p class="section-copy">${tx("llm.keychainCopy")}</p></div></div>${credentials}</section>${protocolFields ? `<section class="provider-setup"><div class="section-header"><div><h3>${tx("llm.protocolSetup")}</h3><p class="section-copy">${tx("llm.protocolSetupCopy")}</p></div></div><div class="provider-setup-fields">${protocolFields}</div></section>` : ""}${setup}</section>`;
+      const credentialFormID = `${formID}-credential`;
+      const credentialFields = (protocol.credentialFields || []).map((fieldName) => field(credentialFieldLabelKey(fieldName), "", `credential.${fieldName}`, "", "password", "autocomplete=\"off\" autocapitalize=\"off\" spellcheck=\"false\"")).join("");
+      const credentials = protocol.credentialRequired ? `<div class="provider-credential-entry" data-form-id="${esc(credentialFormID)}">${credentialFields}<p class="small-copy">${tx("llm.keychainCopy")}</p><div class="provider-credential-row">${toggle("llm.storeInKeychain", "storeInKeychain", false)}<button class="secondary" data-action="saveProviderCredential" data-form="${esc(credentialFormID)}" data-profile-id="${esc(profile.id)}">${tx("llm.saveCredential")}</button>${(profile.hasStoredCredential || hasSessionCredential) ? `<button class="danger" data-action="removeProviderCredential" data-profile-id="${esc(profile.id)}">${tx("llm.removeKey")}</button>` : ""}</div></div>` : `<p class="small-copy">${tx("llm.noCredential")}</p>`;
+      return `<section class="provider-panel" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}"><div class="provider-panel-head"><div><span class="eyebrow">${tx("llm.providerPanel")}</span><h3>${esc(profile.name)}</h3><p class="section-copy">${tx(providerTypeLabelKey(profile.type))}</p></div><div class="provider-panel-status">${statusPill(t(credentialStatus), profile.hasStoredCredential ? "gold" : "muted")}</div></div><div class="provider-name-row">${field("llm.profileName", "", "name", profile.name)}<button class="secondary" data-action="configureProviderProfile" data-form="${esc(formID)}" data-profile-id="${esc(profile.id)}">${tx("llm.saveProfile")}</button><button class="danger" data-action="deleteProviderProfile" data-profile-id="${esc(profile.id)}">${tx("llm.deleteProfile")}</button></div><section class="provider-credential"><div class="section-header"><div><h3>${tx("llm.apiKey")}</h3></div>${credentials}</section>${protocolFields ? `<section class="provider-setup"><div class="section-header"><div><h3>${tx("llm.protocolSetup")}</h3><p class="section-copy">${tx("llm.protocolSetupCopy")}</p></div></div><div class="provider-setup-fields">${protocolFields}</div></section>` : ""}${setup}</section>`;
     };
     return `<div class="workspace provider-workspace">${header("llm.title", "llm.copy", t("llm.keyLibrary"), "gold")}<section class="provider-create" data-form-id="new-provider-profile-form">${groupedValueSelectField("llm.providerType", "", "type", "gemini", profileTypeGroups)}<button class="gold-action" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button><span class="small-copy">${tx("llm.createCopy")}</span></section><div class="provider-panels">${profiles.length ? profiles.map(panel).join("") : `<div class="empty">${tx("llm.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
   }
@@ -732,6 +747,14 @@
         delete data[key];
       });
       data.protocolConfiguration = protocolConfiguration;
+    }
+    if (action === "saveProviderCredential") {
+      const credentials = {};
+      Object.keys(data).filter((key) => key.startsWith("credential.")).forEach((key) => {
+        credentials[key.slice("credential.".length)] = data[key];
+        delete data[key];
+      });
+      data.credentials = credentials;
     }
     if (action === "cancelTagPanel") {
       activeTagPanel = null;

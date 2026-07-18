@@ -448,6 +448,10 @@ h3 { font-size: 13px; }
 
 .provider-credential-row { align-items: end; gap: 9px; margin-top: 11px; }
 .provider-credential-row .field { flex: 1 1 auto; }
+.provider-credential-entry { display: grid; gap: 9px; }
+.provider-credential-entry .field input { box-shadow: inset 0 0 0 1px rgba(180, 83, 9, 0.28); }
+.provider-credential-entry .small-copy { margin: 0; }
+.provider-credential-row .toggle-row { min-height: 38px; margin-right: auto; }
 
 .provider-setup {
   display: flex;
