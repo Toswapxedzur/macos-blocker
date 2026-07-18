@@ -302,6 +302,66 @@ public struct TokenUsageRecord: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+/// A bounded local history of an explicit provider test. Credentials, request
+/// headers, and endpoint query strings are never retained. Request and
+/// response text are stored only when the profile's explicit opt-in is set.
+public struct ProviderRequestRecord: Codable, Equatable, Sendable, Identifiable {
+    public static let maximumContentCharacters = 12_000
+
+    public var id: String
+    public var profileID: String
+    public var provider: String
+    public var model: String
+    public var operation: String
+    public var endpoint: String
+    public var method: String
+    public var statusCode: Int?
+    public var durationMilliseconds: Int
+    public var inputTokens: Int?
+    public var outputTokens: Int?
+    public var estimatedCostUSD: Double?
+    public var outcome: String
+    public var requestContent: String?
+    public var responseContent: String?
+    public var createdAtMilliseconds: Int64
+
+    public init(
+        id: String = UUID().uuidString,
+        profileID: String,
+        provider: String,
+        model: String,
+        operation: String,
+        endpoint: String,
+        method: String,
+        statusCode: Int?,
+        durationMilliseconds: Int,
+        inputTokens: Int?,
+        outputTokens: Int?,
+        estimatedCostUSD: Double?,
+        outcome: String,
+        requestContent: String? = nil,
+        responseContent: String? = nil,
+        createdAtMilliseconds: Int64 = WorkspaceCatalog.now()
+    ) {
+        self.id = id
+        self.profileID = profileID
+        self.provider = provider
+        self.model = model
+        self.operation = operation
+        self.endpoint = endpoint
+        self.method = method
+        self.statusCode = statusCode
+        self.durationMilliseconds = durationMilliseconds
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.estimatedCostUSD = estimatedCostUSD
+        self.outcome = outcome
+        self.requestContent = requestContent.map { String($0.prefix(Self.maximumContentCharacters)) }
+        self.responseContent = responseContent.map { String($0.prefix(Self.maximumContentCharacters)) }
+        self.createdAtMilliseconds = createdAtMilliseconds
+    }
+}
+
 /// A local credential profile describes how the user intends to use a provider.
 /// It deliberately carries configuration only: the secret itself is stored in
 /// Keychain and never becomes part of the workspace catalog or a web snapshot.
@@ -499,6 +559,13 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
     /// Non-secret protocol settings such as cloud account, region, or API
     /// version. The versioned descriptor controls which keys are allowed.
     public var protocolConfiguration: [String: String]
+    /// Optional user-supplied USD rates per million provider-reported tokens.
+    /// A missing rate deliberately produces an unavailable cost, not a guess.
+    public var inputCostUSDPerMillion: Double?
+    public var outputCostUSDPerMillion: Double?
+    /// Default history is metadata-only. This opt-in permits a bounded test
+    /// prompt and successful response body in the local request record.
+    public var storesFullRequestRecords: Bool
     public var updatedAtMilliseconds: Int64
 
     public init(
@@ -512,6 +579,9 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         searchEnabled: Bool = false,
         customEndpoint: String? = nil,
         protocolConfiguration: [String: String]? = nil,
+        inputCostUSDPerMillion: Double? = nil,
+        outputCostUSDPerMillion: Double? = nil,
+        storesFullRequestRecords: Bool = false,
         updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
     ) {
         self.id = id
@@ -524,6 +594,9 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         self.searchEnabled = searchEnabled
         self.customEndpoint = customEndpoint
         self.protocolConfiguration = protocolConfiguration ?? ProviderProtocolRegistry.descriptor(for: type).defaultConfiguration()
+        self.inputCostUSDPerMillion = inputCostUSDPerMillion
+        self.outputCostUSDPerMillion = outputCostUSDPerMillion
+        self.storesFullRequestRecords = storesFullRequestRecords
         self.updatedAtMilliseconds = updatedAtMilliseconds
     }
 
@@ -550,6 +623,12 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         guard normalizedEndpoint?.count ?? 0 <= Self.maximumEndpointLength else {
             throw APIKeyProviderProfileError.invalidConfiguration
         }
+        guard [inputCostUSDPerMillion, outputCostUSDPerMillion].allSatisfy({ rate in
+            guard let rate else { return true }
+            return rate.isFinite && (0...1_000_000).contains(rate)
+        }) else {
+            throw APIKeyProviderProfileError.invalidConfiguration
+        }
         do {
             try descriptor.validateConfiguration(protocolConfiguration, endpointOverride: normalizedEndpoint, requireDispatchReadiness: false)
         } catch {
@@ -573,7 +652,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, type, modelIdentifier, batchSize, maximumTokens, youtubeProviderID, searchEnabled, customEndpoint, protocolConfiguration, updatedAtMilliseconds
+        case id, name, type, modelIdentifier, batchSize, maximumTokens, youtubeProviderID, searchEnabled, customEndpoint, protocolConfiguration, inputCostUSDPerMillion, outputCostUSDPerMillion, storesFullRequestRecords, updatedAtMilliseconds
     }
 
     public init(from decoder: Decoder) throws {
@@ -589,6 +668,9 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         customEndpoint = try container.decodeIfPresent(String.self, forKey: .customEndpoint)
         protocolConfiguration = try container.decodeIfPresent([String: String].self, forKey: .protocolConfiguration)
             ?? ProviderProtocolRegistry.descriptor(for: type).defaultConfiguration()
+        inputCostUSDPerMillion = try container.decodeIfPresent(Double.self, forKey: .inputCostUSDPerMillion)
+        outputCostUSDPerMillion = try container.decodeIfPresent(Double.self, forKey: .outputCostUSDPerMillion)
+        storesFullRequestRecords = try container.decodeIfPresent(Bool.self, forKey: .storesFullRequestRecords) ?? false
         updatedAtMilliseconds = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMilliseconds) ?? WorkspaceCatalog.now()
     }
 }
@@ -629,16 +711,18 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     public var models: [LocalModelAsset]
     public var bindings: [PlatformBinding]
     public var tokenUsage: [TokenUsageRecord]
+    public var providerRequestRecords: [ProviderRequestRecord]
     /// Provider profile metadata remains local. Its credentials are stored by
     /// `ProviderCredentialStore` in Keychain, never in this Codable catalog.
     public var providerProfiles: [APIKeyProviderProfile]
 
-    public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], models: [LocalModelAsset] = [], bindings: [PlatformBinding] = [], tokenUsage: [TokenUsageRecord] = [], providerProfiles: [APIKeyProviderProfile] = []) {
+    public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], models: [LocalModelAsset] = [], bindings: [PlatformBinding] = [], tokenUsage: [TokenUsageRecord] = [], providerRequestRecords: [ProviderRequestRecord] = [], providerProfiles: [APIKeyProviderProfile] = []) {
         self.trees = trees
         self.datasets = datasets
         self.models = models
         self.bindings = bindings
         self.tokenUsage = tokenUsage
+        self.providerRequestRecords = providerRequestRecords
         self.providerProfiles = providerProfiles
     }
 
@@ -676,10 +760,18 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                 throw WorkspaceCatalogError.missingYouTubeProvider(youtubeProviderID)
             }
         }
+        for record in providerRequestRecords {
+            guard providerProfiles.contains(where: { $0.id == record.profileID }),
+                  record.durationMilliseconds >= 0,
+                  record.requestContent?.count ?? 0 <= ProviderRequestRecord.maximumContentCharacters,
+                  record.responseContent?.count ?? 0 <= ProviderRequestRecord.maximumContentCharacters else {
+                throw WorkspaceCatalogError.invalidProviderProfile(record.profileID)
+            }
+        }
     }
 
     private enum CodingKeys: String, CodingKey {
-        case trees, datasets, models, bindings, tokenUsage, providerProfiles
+        case trees, datasets, models, bindings, tokenUsage, providerRequestRecords, providerProfiles
     }
 
     public init(from decoder: Decoder) throws {
@@ -689,6 +781,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         models = try container.decodeIfPresent([LocalModelAsset].self, forKey: .models) ?? []
         bindings = try container.decodeIfPresent([PlatformBinding].self, forKey: .bindings) ?? []
         tokenUsage = try container.decodeIfPresent([TokenUsageRecord].self, forKey: .tokenUsage) ?? []
+        providerRequestRecords = try container.decodeIfPresent([ProviderRequestRecord].self, forKey: .providerRequestRecords) ?? []
         providerProfiles = try container.decodeIfPresent([APIKeyProviderProfile].self, forKey: .providerProfiles) ?? []
     }
 

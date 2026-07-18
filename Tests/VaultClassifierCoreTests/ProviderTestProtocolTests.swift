@@ -1,0 +1,61 @@
+import XCTest
+@testable import VaultClassifierCore
+
+final class ProviderTestProtocolTests: XCTestCase {
+    func testGeminiTestUsesTheFixedBoundedPromptAndParsesUsage() throws {
+        let profile = APIKeyProviderProfile(type: .gemini, maximumTokens: 4)
+        let prepared = try ProviderTestProtocol.prepare(profile: profile)
+
+        XCTAssertEqual(prepared.operation, .generateText)
+        XCTAssertEqual(prepared.plan.url.absoluteString, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent")
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: prepared.body) as? [String: Any])
+        XCTAssertEqual((((body["contents"] as? [[String: Any]])?.first?["parts"] as? [[String: Any]])?.first?["text"] as? String), ProviderTestProtocol.prompt)
+        XCTAssertEqual((body["generationConfig"] as? [String: Any])?["maxOutputTokens"] as? Int, 4)
+
+        let response = Data(#"{"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":2},"candidates":[{"content":{"parts":[{"text":"OK"}]}}]}"#.utf8)
+        let parsed = try ProviderTestProtocol.parseResponse(response, format: .geminiGenerateContent, operation: .generateText)
+        XCTAssertEqual(parsed.content, "OK")
+        XCTAssertEqual(parsed.usage, .init(inputTokens: 7, outputTokens: 2))
+    }
+
+    func testOpenAIStyleTestParsesUsageAndCalculatesOnlyConfiguredCost() throws {
+        var profile = APIKeyProviderProfile(type: .deepSeek, inputCostUSDPerMillion: 0.28, outputCostUSDPerMillion: 0.42)
+        let prepared = try ProviderTestProtocol.prepare(profile: profile)
+        XCTAssertEqual(prepared.plan.bodyFormat, .openAIChatCompletions)
+        let response = Data(#"{"usage":{"prompt_tokens":1000,"completion_tokens":500},"choices":[{"message":{"content":"OK"}}]}"#.utf8)
+        let parsed = try ProviderTestProtocol.parseResponse(response, format: .openAIChatCompletions, operation: .generateText)
+        XCTAssertEqual(parsed.content, "OK")
+        XCTAssertEqual(try XCTUnwrap(ProviderTestProtocol.estimatedCost(profile: profile, usage: parsed.usage)), 0.00049, accuracy: 0.0000001)
+
+        profile.outputCostUSDPerMillion = nil
+        XCTAssertNil(ProviderTestProtocol.estimatedCost(profile: profile, usage: parsed.usage))
+    }
+
+    func testRequestRecordPreservesMetadataAndOnlyExplicitContent() throws {
+        let profile = APIKeyProviderProfile(id: "gemini", type: .gemini, storesFullRequestRecords: true)
+        let record = ProviderRequestRecord(
+            profileID: profile.id,
+            provider: profile.type.rawValue,
+            model: profile.modelIdentifier,
+            operation: ProviderOperation.generateText.rawValue,
+            endpoint: "https://example.test/v1",
+            method: "POST",
+            statusCode: 200,
+            durationMilliseconds: 41,
+            inputTokens: 3,
+            outputTokens: 1,
+            estimatedCostUSD: 0.0001,
+            outcome: "succeeded",
+            requestContent: ProviderTestProtocol.prompt,
+            responseContent: "OK"
+        )
+        var catalog = WorkspaceCatalog.starter()
+        catalog.providerProfiles = [profile]
+        catalog.providerRequestRecords = [record]
+        XCTAssertNoThrow(try catalog.validate())
+
+        let restored = try JSONDecoder().decode(WorkspaceCatalog.self, from: JSONEncoder().encode(catalog))
+        XCTAssertEqual(restored.providerRequestRecords, [record])
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(restored), as: UTF8.self).contains("apiKey"))
+    }
+}

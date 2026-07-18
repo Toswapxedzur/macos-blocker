@@ -141,6 +141,7 @@ final class VaultClassifierViewModel: ObservableObject {
     /// Keep the AppKit object alive while its sheet is visible. WKScriptMessage
     /// callbacks do not otherwise guarantee an `NSAlert` remains retained.
     private var activeProviderCredentialAlert: NSAlert?
+    private var testingProviderProfileIDs = Set<String>()
 
     init() {
         do {
@@ -324,7 +325,10 @@ final class VaultClassifierViewModel: ObservableObject {
         youtubeProviderID: String?,
         searchEnabled: Bool?,
         customEndpoint: String?,
-        protocolConfiguration: [String: String]
+        protocolConfiguration: [String: String],
+        inputCostUSDPerMillion: String?,
+        outputCostUSDPerMillion: String?,
+        storesFullRequestRecords: Bool?
     ) {
         do {
             guard var catalog = localState?.workspaceCatalog,
@@ -358,12 +362,135 @@ final class VaultClassifierViewModel: ObservableObject {
                 profile.customEndpoint = normalizedEndpoint?.isEmpty == false ? normalizedEndpoint : nil
             }
             profile.protocolConfiguration = protocolConfiguration
+            profile.inputCostUSDPerMillion = try providerCostRate(inputCostUSDPerMillion, label: "Provider input token cost")
+            profile.outputCostUSDPerMillion = try providerCostRate(outputCostUSDPerMillion, label: "Provider output token cost")
+            profile.storesFullRequestRecords = storesFullRequestRecords ?? false
             profile.updatedAtMilliseconds = WorkspaceCatalog.now()
             catalog.providerProfiles[index] = profile
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
             issue = nil
         } catch { issue = error.localizedDescription }
+    }
+
+    /// A provider test is always an explicit user action. It sends only the
+    /// fixed harmless prompt declared by `ProviderTestProtocol`, never browser
+    /// evidence or catalog data, and records no credential or headers.
+    func testProviderProfile(profileID: String) {
+        guard !testingProviderProfileIDs.contains(profileID) else { return }
+        guard let profile = localState?.workspaceCatalog.providerProfiles.first(where: { $0.id == profileID }) else {
+            issue = WebBridgeInputError.invalidChoice("provider profile").localizedDescription
+            return
+        }
+        testingProviderProfileIDs.insert(profileID)
+        issue = nil
+        Task { [weak self] in
+            guard let self else { return }
+            let startedAt = Date()
+            var prepared: ProviderTestPreparedRequest?
+            do {
+                let credential = try self.providerCredential(for: profileID)
+                let request = try ProviderTestProtocol.prepare(profile: profile)
+                prepared = request
+                var urlRequest = URLRequest(url: request.plan.url)
+                urlRequest.httpMethod = request.plan.method
+                urlRequest.httpBody = request.body
+                urlRequest.timeoutInterval = 30
+                request.plan.headers.forEach { urlRequest.setValue($0.value, forHTTPHeaderField: $0.key) }
+                try self.apply(credential: credential, to: &urlRequest, plan: request.plan)
+                let (data, response) = try await URLSession.shared.data(for: urlRequest)
+                let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
+                guard let http = response as? HTTPURLResponse else { throw ProviderTestProtocolError.invalidResponse }
+                guard (200..<300).contains(http.statusCode) else { throw ProviderTestHTTPError.status(http.statusCode) }
+                let parsed = try ProviderTestProtocol.parseResponse(data, format: request.plan.bodyFormat, operation: request.operation)
+                let cost = ProviderTestProtocol.estimatedCost(profile: profile, usage: parsed.usage)
+                try self.appendProviderTestRecord(.init(
+                    profileID: profile.id,
+                    provider: profile.type.rawValue,
+                    model: profile.modelIdentifier,
+                    operation: request.operation.rawValue,
+                    endpoint: ProviderTestProtocol.safeEndpoint(request.plan.url),
+                    method: request.plan.method,
+                    statusCode: http.statusCode,
+                    durationMilliseconds: duration,
+                    inputTokens: parsed.usage.inputTokens,
+                    outputTokens: parsed.usage.outputTokens,
+                    estimatedCostUSD: cost,
+                    outcome: "succeeded",
+                    requestContent: profile.storesFullRequestRecords ? request.prompt : nil,
+                    responseContent: profile.storesFullRequestRecords ? parsed.content : nil
+                ))
+                self.issue = nil
+            } catch {
+                let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
+                if let prepared {
+                    try? self.appendProviderTestRecord(.init(
+                        profileID: profile.id,
+                        provider: profile.type.rawValue,
+                        model: profile.modelIdentifier,
+                        operation: prepared.operation.rawValue,
+                        endpoint: ProviderTestProtocol.safeEndpoint(prepared.plan.url),
+                        method: prepared.plan.method,
+                        statusCode: nil,
+                        durationMilliseconds: duration,
+                        inputTokens: nil,
+                        outputTokens: nil,
+                        estimatedCostUSD: nil,
+                        outcome: "failed"
+                    ))
+                }
+                self.issue = error.localizedDescription
+            }
+            self.testingProviderProfileIDs.remove(profileID)
+            self.onWebStateChange?()
+        }
+    }
+
+    private func providerCredential(for profileID: String) throws -> ProviderCredentialRecord {
+        if let credential = sessionProviderCredentials[profileID] { return credential }
+        if let credential = ProviderCredentialStore.loadCredentialRecord(for: profileID) { return credential }
+        throw ProviderTestProtocolError.missingCredential
+    }
+
+    private func apply(credential: ProviderCredentialRecord, to request: inout URLRequest, plan: ProviderRequestPlan) throws {
+        func value(_ preferred: ProviderCredentialField) throws -> String {
+            guard let value = credential.values[preferred] ?? credential.values[.apiKey] ?? credential.values[.bearerToken] else {
+                throw ProviderTestProtocolError.missingCredential
+            }
+            return value
+        }
+        switch plan.authentication {
+        case .none:
+            return
+        case .bearerToken:
+            request.setValue("Bearer \(try value(.bearerToken))", forHTTPHeaderField: plan.authenticationHeader ?? "Authorization")
+        case .apiKeyHeader:
+            request.setValue(try value(.apiKey), forHTTPHeaderField: plan.authenticationHeader ?? "X-API-Key")
+        case .apiKeyQuery:
+            guard var components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false) else { throw ProviderTestProtocolError.invalidResponse }
+            components.queryItems = (components.queryItems ?? []) + [.init(name: plan.authenticationHeader ?? "key", value: try value(.apiKey))]
+            request.url = components.url
+        case .bearerTokenAndClientID, .awsSignatureV4:
+            throw ProviderTestProtocolError.unsupportedProvider
+        }
+    }
+
+    private func appendProviderTestRecord(_ record: ProviderRequestRecord) throws {
+        guard var catalog = localState?.workspaceCatalog else { return }
+        catalog.providerRequestRecords.insert(record, at: 0)
+        catalog.providerRequestRecords = Array(catalog.providerRequestRecords.prefix(100))
+        if record.outcome == "succeeded" {
+            catalog.tokenUsage.insert(.init(
+                provider: record.provider,
+                model: record.model,
+                inputTokens: record.inputTokens ?? 0,
+                outputTokens: record.outputTokens ?? 0,
+                status: record.outcome
+            ), at: 0)
+            catalog.tokenUsage = Array(catalog.tokenUsage.prefix(200))
+        }
+        try coordinator?.updateWorkspaceCatalog(catalog)
+        refreshLocalState()
     }
 
     func presentProviderCredentialEntry(profileID: String) {
@@ -479,6 +606,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 throw WebBridgeInputError.invalidChoice("provider profile")
             }
             catalog.providerProfiles.removeAll(where: { $0.id == profileID })
+            catalog.providerRequestRecords.removeAll(where: { $0.profileID == profileID })
             for index in catalog.providerProfiles.indices where catalog.providerProfiles[index].youtubeProviderID == profileID {
                 catalog.providerProfiles[index].youtubeProviderID = nil
                 catalog.providerProfiles[index].updatedAtMilliseconds = WorkspaceCatalog.now()
@@ -1544,8 +1672,32 @@ final class VaultClassifierViewModel: ObservableObject {
                     "searchEnabled": profile.searchEnabled,
                     "customEndpoint": profile.customEndpoint ?? NSNull(),
                     "protocolConfiguration": profile.protocolConfiguration,
+                    "inputCostUSDPerMillion": profile.inputCostUSDPerMillion ?? NSNull(),
+                    "outputCostUSDPerMillion": profile.outputCostUSDPerMillion ?? NSNull(),
+                    "storesFullRequestRecords": profile.storesFullRequestRecords,
                     "hasStoredCredential": ProviderCredentialStore.hasCredential(for: profile.id),
                     "hasSessionCredential": sessionProviderCredentials[profile.id] != nil,
+                    "testing": testingProviderProfileIDs.contains(profile.id),
+                ] as [String: Any]
+            },
+            "providerRequestRecords": catalog.providerRequestRecords.map { record in
+                [
+                    "id": record.id,
+                    "profileID": record.profileID,
+                    "provider": record.provider,
+                    "model": record.model,
+                    "operation": record.operation,
+                    "endpoint": record.endpoint,
+                    "method": record.method,
+                    "statusCode": record.statusCode ?? NSNull(),
+                    "durationMilliseconds": record.durationMilliseconds,
+                    "inputTokens": record.inputTokens ?? NSNull(),
+                    "outputTokens": record.outputTokens ?? NSNull(),
+                    "estimatedCostUSD": record.estimatedCostUSD ?? NSNull(),
+                    "outcome": record.outcome,
+                    "requestContent": record.requestContent ?? NSNull(),
+                    "responseContent": record.responseContent ?? NSNull(),
+                    "createdAtMilliseconds": record.createdAtMilliseconds,
                 ] as [String: Any]
             },
             "providerProtocols": Dictionary(uniqueKeysWithValues: APIKeyProviderType.allCases
@@ -1635,7 +1787,10 @@ final class VaultClassifierViewModel: ObservableObject {
                     youtubeProviderID: try webOptionalString(data, key: "youtubeProviderID", limit: 128),
                     searchEnabled: data["searchEnabled"] as? Bool,
                     customEndpoint: try webOptionalString(data, key: "customEndpoint", limit: APIKeyProviderProfile.maximumEndpointLength),
-                    protocolConfiguration: try webProviderConfiguration(data)
+                    protocolConfiguration: try webProviderConfiguration(data),
+                    inputCostUSDPerMillion: try webOptionalString(data, key: "inputCostUSDPerMillion", limit: 32),
+                    outputCostUSDPerMillion: try webOptionalString(data, key: "outputCostUSDPerMillion", limit: 32),
+                    storesFullRequestRecords: data["storesFullRequestRecords"] as? Bool
                 )
             case "presentProviderCredentialEntry":
                 presentProviderCredentialEntry(profileID: try webString(data, key: "profileID", limit: 128))
@@ -1645,6 +1800,8 @@ final class VaultClassifierViewModel: ObservableObject {
                     credentialValues: try webProviderCredentials(data),
                     storeInKeychain: data["storeInKeychain"] as? Bool ?? false
                 )
+            case "testProviderProfile":
+                testProviderProfile(profileID: try webString(data, key: "profileID", limit: 128))
             case "removeProviderCredential":
                 removeProviderCredential(profileID: try webString(data, key: "profileID", limit: 128))
             case "confirmDeleteProviderProfile":
@@ -1863,6 +2020,14 @@ final class VaultClassifierViewModel: ObservableObject {
         })
     }
 
+    private func providerCostRate(_ raw: String?, label: String) throws -> Double? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+        guard let value = Double(trimmed), value.isFinite, (0...1_000_000).contains(value) else {
+            throw WebBridgeInputError.invalidChoice(label)
+        }
+        return value
+    }
+
     private func webCanvasCoordinate(_ data: [String: Any], key: String) throws -> Double {
         guard let value = data[key] as? NSNumber else { throw WebBridgeInputError.missingValue(key) }
         let coordinate = value.doubleValue
@@ -1904,6 +2069,16 @@ private enum AppInputError: Error, LocalizedError {
         case .diagnosticEncodingFailed: return "The redacted audit diagnostic could not be encoded locally."
         case .diagnosticClipboardUnavailable: return "The redacted audit diagnostic could not be copied to the local clipboard."
         case .backupLocked: return "Enter the local backup owner code before changing backup mode."
+        }
+    }
+}
+
+private enum ProviderTestHTTPError: Error, LocalizedError {
+    case status(Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .status(let status): return "The provider test returned HTTP \(status)."
         }
     }
 }
