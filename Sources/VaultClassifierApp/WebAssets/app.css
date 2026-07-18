@@ -384,6 +384,11 @@ h3 { font-size: 13px; }
 .classifier-type-section:last-child { border-bottom: 0; }
 .classifier-type-section .section-header { margin-bottom: 10px; }
 .classifier-asset-grid { grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 10px; }
+.creator-classification-section { background: rgba(236, 253, 245, .48); }
+.creator-classification-fields { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr); gap: 10px; }
+.creator-classification-fields + .action-row { margin-top: 10px; }
+.creator-llm-row { display: grid; grid-template-columns: minmax(220px, 1fr) auto; align-items: end; gap: 10px; margin-top: 12px; }
+.creator-llm-row + .small-copy { margin: 6px 0 0; }
 .classifier-priority-grid { grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 10px; }
 .classifier-llm-section { background: rgba(255, 251, 235, .52); }
 
@@ -431,6 +436,8 @@ h3 { font-size: 13px; }
   .classifier-type-create,
   .classifier-name-row,
   .classifier-asset-grid,
+  .creator-classification-fields,
+  .creator-llm-row,
   .classifier-priority-grid,
   .classifier-decision-grid { grid-template-columns: 1fr; }
 }
@@ -962,6 +969,12 @@ select.select-control {
   background-repeat: no-repeat;
   background-size: 16px 16px;
   cursor: pointer;
+}
+
+select.multi-select-control {
+  min-height: 112px;
+  padding: 7px 10px;
+  background-image: none;
 }
 
 textarea { min-height: 80px; resize: vertical; }

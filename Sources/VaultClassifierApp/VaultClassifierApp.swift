@@ -1122,6 +1122,13 @@ final class VaultClassifierViewModel: ObservableObject {
                 throw WebBridgeInputError.invalidChoice("classifier type")
             }
             catalog.classifierTypes.removeAll(where: { $0.id == typeID })
+            for datasetIndex in catalog.datasets.indices {
+                let priorCount = catalog.datasets[datasetIndex].creatorClassifications.count
+                catalog.datasets[datasetIndex].creatorClassifications.removeAll(where: { $0.classifierTypeID == typeID })
+                if catalog.datasets[datasetIndex].creatorClassifications.count != priorCount {
+                    catalog.datasets[datasetIndex].revision += 1
+                }
+            }
             for index in catalog.bindings.indices where catalog.bindings[index].activeClassifierTypeID == typeID {
                 catalog.bindings[index].activeClassifierTypeID = nil
                 catalog.bindings[index].activeModelID = nil
@@ -1139,7 +1146,7 @@ final class VaultClassifierViewModel: ObservableObject {
         }
         presentNativeConfirmation(
             title: "Delete classifier type?",
-            message: "This removes this local decision configuration. Trees, models, data, and provider profiles are retained.",
+            message: "This removes this local decision configuration and its creator classifications. Trees, models, other data, and provider profiles are retained.",
             confirmTitle: "Delete classifier type"
         ) { [weak self] in
             self?.deleteClassifierType(typeID: typeID)
@@ -1480,6 +1487,225 @@ final class VaultClassifierViewModel: ObservableObject {
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
         } catch { issue = error.localizedDescription }
+    }
+
+    /// Saves the current creator-level source of truth for a classifier type.
+    /// The dataset revision advances because approved creator decisions are
+    /// explicit local-model training material through their collected entries.
+    func recordCreatorClassification(typeID: String, creatorKey: String, tagIDs: [String]) {
+        do {
+            guard var catalog = localState?.workspaceCatalog,
+                  let typeIndex = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }) else {
+                throw WebBridgeInputError.invalidChoice("classifier type")
+            }
+            let classifierType = catalog.classifierTypes[typeIndex]
+            guard classifierType.creatorDecisionSources.contains(.human),
+                  let tree = catalog.trees.first(where: { $0.id == classifierType.treeID }),
+                  let datasetIndex = catalog.datasets.firstIndex(where: { $0.id == classifierType.datasetID }) else {
+                throw WebBridgeInputError.invalidChoice("creator decision")
+            }
+            let keyParts = creatorKey.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
+            guard keyParts.count == 2,
+                  !keyParts[0].isEmpty,
+                  !keyParts[1].isEmpty else {
+                throw WebBridgeInputError.invalidChoice("creator")
+            }
+            let platformID = String(keyParts[0])
+            let creatorID = String(keyParts[1])
+            guard let creatorEntry = catalog.datasets[datasetIndex].collectedEntries.first(where: {
+                $0.platformID == platformID && $0.creatorID == creatorID
+            }) else {
+                throw WebBridgeInputError.invalidChoice("creator")
+            }
+            let labels = Array(Set(tagIDs)).sorted()
+            let availableLeafIDs = try tree.inferenceTaxonomy().predictableLeafIDs
+            guard !labels.isEmpty,
+                  labels.count <= CreatorClassificationRecord.maximumTagIDs,
+                  labels.allSatisfy(availableLeafIDs.contains) else {
+                throw WebBridgeInputError.invalidChoice("creator tag IDs")
+            }
+            _ = catalog.datasets[datasetIndex].upsertCreatorClassification(.init(
+                classifierTypeID: classifierType.id,
+                creatorID: creatorEntry.creatorID,
+                creatorName: creatorEntry.creatorName,
+                platformID: creatorEntry.platformID,
+                treeID: tree.id,
+                treeRevision: tree.revision,
+                tagIDs: labels,
+                origin: .manual,
+                review: .approved
+            ))
+            catalog.datasets[datasetIndex].revision += 1
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
+    /// An LLM creator run is still explicitly initiated from the classifier
+    /// type. A valid answer replaces that type's current creator decision and
+    /// is approved by that deliberate action, making its collected titles
+    /// available to a compatible local-model retraining run.
+    func classifyCreatorWithLLM(typeID: String, creatorKey: String, profileID: String) {
+        guard !providerClassificationRunning else { return }
+        do {
+            guard let catalog = localState?.workspaceCatalog,
+                  let classifierType = catalog.classifierTypes.first(where: { $0.id == typeID }),
+                  classifierType.creatorDecisionSources.contains(.llmAssist),
+                  classifierType.llmProfileIDs.contains(profileID),
+                  let profile = catalog.providerProfiles.first(where: { $0.id == profileID }),
+                  let tree = catalog.trees.first(where: { $0.id == classifierType.treeID }),
+                  let dataset = catalog.datasets.first(where: { $0.id == classifierType.datasetID }) else {
+                throw WebBridgeInputError.invalidChoice("creator LLM classifier type")
+            }
+            let keyParts = creatorKey.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
+            guard keyParts.count == 2,
+                  !keyParts[0].isEmpty,
+                  !keyParts[1].isEmpty else {
+                throw WebBridgeInputError.invalidChoice("creator")
+            }
+            let platformID = String(keyParts[0])
+            let creatorID = String(keyParts[1])
+            guard let representative = dataset.collectedEntries.first(where: {
+                $0.platformID == platformID && $0.creatorID == creatorID
+            }) else {
+                throw WebBridgeInputError.invalidChoice("creator")
+            }
+            let evidenceTitles = dataset.collectedEntries
+                .filter { $0.platformID == platformID && $0.creatorID == creatorID }
+                .sorted { lhs, rhs in
+                    if lhs.lastObservedAtMilliseconds == rhs.lastObservedAtMilliseconds { return lhs.id < rhs.id }
+                    return lhs.lastObservedAtMilliseconds > rhs.lastObservedAtMilliseconds
+                }
+                .prefix(25)
+                .map(\.title)
+                .joined(separator: "\n")
+            let entry = EntryEvidence(
+                platform: platformID,
+                sourceID: creatorID,
+                surface: .page,
+                evidence: .init(
+                    title: String("Creator: \(representative.creatorName)".prefix(EntryEvidenceValidator.titleLimit)),
+                    text: String(evidenceTitles.prefix(EntryEvidenceValidator.textLimit))
+                )
+            )
+            let taxonomy = try tree.inferenceTaxonomy()
+            let allowedTagIDs = taxonomy.predictableLeafIDs
+            providerClassificationRunning = true
+            issue = nil
+            Task { [weak self] in
+                guard let self else { return }
+                let startedAt = Date()
+                var prepared: ProviderTestPreparedRequest?
+                do {
+                    let credential = try self.providerCredential(for: profile.id)
+                    let request = try ProviderClassificationProtocol.prepare(
+                        profile: profile,
+                        entry: entry,
+                        allowedLeafTagIDs: allowedTagIDs
+                    )
+                    prepared = request
+                    var urlRequest = URLRequest(url: request.plan.url)
+                    urlRequest.httpMethod = request.plan.method
+                    urlRequest.httpBody = request.body
+                    urlRequest.timeoutInterval = 30
+                    request.plan.headers.forEach { urlRequest.setValue($0.value, forHTTPHeaderField: $0.key) }
+                    try self.apply(credential: credential, to: &urlRequest, plan: request.plan)
+                    let (data, response) = try await URLSession.shared.data(for: urlRequest)
+                    let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
+                    guard let http = response as? HTTPURLResponse else { throw ProviderTestProtocolError.invalidResponse }
+                    guard (200..<300).contains(http.statusCode) else { throw ProviderTestHTTPError.status(http.statusCode) }
+                    let parsed = try ProviderTestProtocol.parseResponse(data, format: request.plan.bodyFormat, operation: request.operation)
+                    let labelIDs = try ProviderClassificationProtocol.parseLabelIDs(parsed.content, allowedLeafTagIDs: allowedTagIDs)
+                    try self.recordLLMCreatorClassification(
+                        typeID: classifierType.id,
+                        creatorID: representative.creatorID,
+                        platformID: representative.platformID,
+                        creatorName: representative.creatorName,
+                        tree: tree,
+                        labelIDs: labelIDs
+                    )
+                    try self.appendProviderTestRecord(.init(
+                        profileID: profile.id,
+                        provider: profile.type.rawValue,
+                        model: profile.modelIdentifier,
+                        operation: "classify-creator",
+                        endpoint: ProviderTestProtocol.safeEndpoint(request.plan.url),
+                        method: request.plan.method,
+                        statusCode: http.statusCode,
+                        durationMilliseconds: duration,
+                        inputTokens: parsed.usage.inputTokens,
+                        outputTokens: parsed.usage.outputTokens,
+                        estimatedCostUSD: ProviderTestProtocol.estimatedCost(profile: profile, usage: parsed.usage),
+                        outcome: "succeeded",
+                        requestContent: profile.storesFullRequestRecords ? request.prompt : nil,
+                        responseContent: profile.storesFullRequestRecords ? parsed.content : nil
+                    ))
+                    self.issue = nil
+                } catch {
+                    let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
+                    if let prepared {
+                        try? self.appendProviderTestRecord(.init(
+                            profileID: profile.id,
+                            provider: profile.type.rawValue,
+                            model: profile.modelIdentifier,
+                            operation: "classify-creator",
+                            endpoint: ProviderTestProtocol.safeEndpoint(prepared.plan.url),
+                            method: prepared.plan.method,
+                            statusCode: nil,
+                            durationMilliseconds: duration,
+                            inputTokens: nil,
+                            outputTokens: nil,
+                            estimatedCostUSD: nil,
+                            outcome: "failed"
+                        ))
+                    }
+                    self.issue = error.localizedDescription
+                }
+                self.providerClassificationRunning = false
+                self.onWebStateChange?()
+            }
+        } catch {
+            issue = error.localizedDescription
+        }
+    }
+
+    private func recordLLMCreatorClassification(
+        typeID: String,
+        creatorID: String,
+        platformID: String,
+        creatorName: String,
+        tree: TagTreeAsset,
+        labelIDs: [String]
+    ) throws {
+        guard var catalog = localState?.workspaceCatalog,
+              let classifierType = catalog.classifierTypes.first(where: { $0.id == typeID }),
+              classifierType.creatorDecisionSources.contains(.llmAssist),
+              classifierType.treeID == tree.id,
+              classifierType.treeRevision == tree.revision,
+              let datasetIndex = catalog.datasets.firstIndex(where: { $0.id == classifierType.datasetID }) else {
+            throw WebBridgeInputError.invalidChoice("creator LLM classifier type")
+        }
+        let allowedTagIDs = try tree.inferenceTaxonomy().predictableLeafIDs
+        guard !labelIDs.isEmpty,
+              labelIDs.count <= CreatorClassificationRecord.maximumTagIDs,
+              labelIDs.allSatisfy(allowedTagIDs.contains) else {
+            throw WebBridgeInputError.invalidChoice("creator LLM tag IDs")
+        }
+        _ = catalog.datasets[datasetIndex].upsertCreatorClassification(.init(
+            classifierTypeID: classifierType.id,
+            creatorID: creatorID,
+            creatorName: creatorName,
+            platformID: platformID,
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            tagIDs: labelIDs,
+            origin: .llmAssist,
+            review: .approved
+        ))
+        catalog.datasets[datasetIndex].revision += 1
+        try coordinator?.updateWorkspaceCatalog(catalog)
+        refreshLocalState()
     }
 
     func applyResourceProfileDefaults() {
@@ -2062,6 +2288,21 @@ final class VaultClassifierViewModel: ObservableObject {
                     "records": dataset.records.map { record -> [String: Any] in
                         ["id": record.id, "title": record.title, "tags": record.tagIDs, "origin": record.origin.rawValue, "review": record.review.rawValue, "platformID": record.platformID]
                     },
+                    "creatorClassifications": dataset.creatorClassifications.map { classification -> [String: Any] in
+                        [
+                            "id": classification.id,
+                            "classifierTypeID": classification.classifierTypeID,
+                            "creatorID": classification.creatorID,
+                            "creatorName": classification.creatorName,
+                            "platformID": classification.platformID,
+                            "treeID": classification.treeID,
+                            "treeRevision": classification.treeRevision,
+                            "tags": classification.tagIDs,
+                            "origin": classification.origin.rawValue,
+                            "review": classification.review.rawValue,
+                            "updatedAtMilliseconds": classification.updatedAtMilliseconds,
+                        ] as [String: Any]
+                    },
                     "collectedEntries": dataset.collectedEntries.map { entry -> [String: Any] in
                         [
                             "id": entry.id,
@@ -2369,6 +2610,18 @@ final class VaultClassifierViewModel: ObservableObject {
                     tags: try webString(data, key: "tags", limit: 1_024),
                     platformID: try webString(data, key: "platformID", limit: 64)
                 )
+            case "recordCreatorClassification":
+                recordCreatorClassification(
+                    typeID: try webString(data, key: "typeID", limit: 256),
+                    creatorKey: try webString(data, key: "creatorKey", limit: 768),
+                    tagIDs: try webStringArray(data, key: "tagIDs", limit: CreatorClassificationRecord.maximumTagIDs, elementLimit: 256)
+                )
+            case "classifyCreatorWithLLM":
+                classifyCreatorWithLLM(
+                    typeID: try webString(data, key: "typeID", limit: 256),
+                    creatorKey: try webString(data, key: "creatorKey", limit: 768),
+                    profileID: try webString(data, key: "creatorLLMProfileID", limit: 256)
+                )
             case "classify":
                 title = try webString(data, key: "title", limit: 4_096)
                 sourceID = try webString(data, key: "sourceID", limit: 1_024)
@@ -2530,6 +2783,19 @@ final class VaultClassifierViewModel: ObservableObject {
         guard let value = data[key] as? String else { return nil }
         guard value.count <= limit else { throw WebBridgeInputError.exceedsLimit(key, limit) }
         return value
+    }
+
+    private func webStringArray(_ data: [String: Any], key: String, limit: Int, elementLimit: Int) throws -> [String] {
+        guard let raw = data[key] as? [Any] else { throw WebBridgeInputError.missingValue(key) }
+        guard raw.count <= limit else { throw WebBridgeInputError.exceedsLimit(key, limit) }
+        let values = try raw.map { value -> String in
+            guard let string = value as? String, !string.isEmpty, string.count <= elementLimit else {
+                throw WebBridgeInputError.invalidChoice(key)
+            }
+            return string
+        }
+        guard Set(values).count == values.count else { throw WebBridgeInputError.invalidChoice(key) }
+        return values
     }
 
     private func webProviderConfiguration(_ data: [String: Any]) throws -> [String: String] {

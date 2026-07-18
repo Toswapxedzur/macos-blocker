@@ -81,7 +81,11 @@
     if (!form) return values;
     form.querySelectorAll("[data-field]").forEach((control) => {
       if (control.type === "radio" && !control.checked) return;
-      values[control.dataset.field] = control.type === "checkbox" ? control.checked : control.value;
+      values[control.dataset.field] = control.type === "checkbox"
+        ? control.checked
+        : control.multiple
+          ? Array.from(control.selectedOptions).map((option) => option.value)
+          : control.value;
     });
     return values;
   }
@@ -96,6 +100,10 @@
 
   function valueSelectField(labelKey, hintKey, key, value, options, extra = "") {
     return `<label class="field"><span class="field-label">${tx(labelKey)}${hintKey ? ` · ${tx(hintKey)}` : ""}</span><select class="select-control" data-field="${esc(key)}" ${extra}>${options.map(([id, label]) => `<option value="${esc(id)}"${selected(value, id)}>${esc(label)}</option>`).join("")}</select></label>`;
+  }
+
+  function multiValueSelectField(labelKey, hintKey, key, options, extra = "") {
+    return `<label class="field"><span class="field-label">${tx(labelKey)}${hintKey ? ` · ${tx(hintKey)}` : ""}</span><select class="select-control multi-select-control" data-field="${esc(key)}" multiple ${extra}>${options.map(([id, label]) => `<option value="${esc(id)}">${esc(label)}</option>`).join("")}</select></label>`;
   }
 
   function groupedValueSelectField(labelKey, hintKey, key, value, groups, extra = "") {
@@ -496,6 +504,7 @@
     const datasets = assets.datasets || [];
     const models = assets.models || [];
     const profiles = assets.providerProfiles || [];
+    const platformDefinitions = new Map((assets.collectionPlatforms || []).map((platform) => [platform.id, platform]));
     const protocols = assets.providerProtocols || {};
     const llmProfiles = profiles.filter((profile) => protocols[profile.type]?.supportsLLMConfiguration);
     const sourceOptions = [
@@ -523,7 +532,43 @@
       const llmAvailable = selectedLLMIDs.size > 0;
       const sourceToggle = (fieldName, source, enabled, available) => `<label class="classifier-source-toggle"><input type="checkbox" data-field="${esc(fieldName)}"${checked(enabled)}${disabled(!available)}><span>${tx(`bridge.source.${source}`)}</span>${!available ? `<small>${tx(`bridge.sourceUnavailable.${source}`)}</small>` : ""}</label>`;
       const typeStatus = `${creatorSources.size || entrySources.size ? t("bridge.configured") : t("bridge.needsSource")}`;
-      return `<section class="classifier-type-panel" data-form-id="${esc(formID)}"><div class="classifier-type-head"><div><span class="eyebrow">${tx("bridge.typePanel")}</span><h3>${esc(classifierType.name)}</h3><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div>${statusPill(typeStatus, creatorSources.size || entrySources.size ? "navy" : "muted")}</div><div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}<button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("bridge.saveType")}</button><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}">${tx("bridge.deleteType")}</button></div><section class="classifier-type-section"><div class="section-header"><div><h3>${tx("bridge.assetSelection")}</h3><p class="section-copy">${tx("bridge.assetSelectionCopy")}</p></div></div><div class="classifier-asset-grid">${valueSelectField("bridge.tagTree", "", "treeID", classifierType.treeID, treeOptions)}${valueSelectField("bridge.classificationData", "", "datasetID", classifierType.datasetID, datasetOptions)}${valueSelectField("bridge.localModel", "bridge.localModelCopy", "localModelID", classifierType.localModelID || "", modelOptions)}</div></section><section class="classifier-type-section classifier-llm-section"><div class="section-header"><div><h3>${tx("bridge.llmAssist")}</h3><p class="section-copy">${tx("bridge.llmAssistCopy")}</p></div><span class="small-copy">${tx("bridge.llmExplicitOnly")}</span></div>${llmProfiles.length ? `<div class="classifier-profile-list">${llmProfiles.map((profile) => `<label class="classifier-profile-choice"><input type="checkbox" data-field="llmProfile.${esc(profile.id)}"${checked(selectedLLMIDs.has(profile.id))}><span>${esc(profile.name)}</span><small>${esc(profile.modelIdentifier)}</small></label>`).join("")}</div>` : `<div class="empty compact-empty">${tx("bridge.noLLMProfiles")}</div>`}</section><section class="classifier-type-section"><div class="section-header"><div><h3>${tx("bridge.decisionPolicy")}</h3><p class="section-copy">${tx("bridge.decisionPolicyCopy")}</p></div></div><div class="classifier-priority-grid">${valueSelectField("bridge.priorityFirst", "", "priorityFirst", priority[0], sourceOptions)}${valueSelectField("bridge.prioritySecond", "", "prioritySecond", priority[1], sourceOptions)}${valueSelectField("bridge.priorityThird", "", "priorityThird", priority[2], sourceOptions)}</div><div class="classifier-decision-grid"><section><span class="eyebrow">${tx("bridge.creatorDecision")}</span><p class="small-copy">${tx("bridge.creatorDecisionCopy")}</p><div class="classifier-source-list">${sourceToggle("creatorHuman", "human", creatorSources.has("human"), true)}${sourceToggle("creatorLLM", "llmAssist", creatorSources.has("llmAssist"), llmAvailable)}${sourceToggle("creatorLocalModel", "localModel", creatorSources.has("localModel"), localAvailable)}</div></section><section><span class="eyebrow">${tx("bridge.entryDecision")}</span><p class="small-copy">${tx("bridge.entryDecisionCopy")}</p><div class="classifier-source-list">${sourceToggle("entryHuman", "human", entrySources.has("human"), true)}${sourceToggle("entryLLM", "llmAssist", entrySources.has("llmAssist"), llmAvailable)}${sourceToggle("entryLocalModel", "localModel", entrySources.has("localModel"), localAvailable)}</div></section></div></section></section>`;
+      const leafTagOptions = (selectedTree?.nodes || [])
+        .filter((node) => !node.retired && !(selectedTree?.nodes || []).some((candidate) => candidate.parentID === node.id))
+        .sort((lhs, rhs) => lhs.name.localeCompare(rhs.name))
+        .map((node) => [node.id, `${node.name} · ${node.id}`]);
+      const currentDecisionByCreator = new Map((selectedDataset?.creatorClassifications || [])
+        .filter((classification) => classification.classifierTypeID === classifierType.id)
+        .map((classification) => [`${classification.platformID}|${classification.creatorID}`, classification]));
+      const creatorCandidates = new Map();
+      (selectedDataset?.collectedEntries || []).forEach((entry) => {
+        if (!entry.platformID || !entry.creatorID || !entry.creatorName) return;
+        const key = `${entry.platformID}|${entry.creatorID}`;
+        const current = creatorCandidates.get(key);
+        if (!current || Number(entry.lastObservedAtMilliseconds) > Number(current.lastObservedAtMilliseconds)) creatorCandidates.set(key, entry);
+      });
+      const creatorOptions = [...creatorCandidates.entries()]
+        .sort(([, lhs], [, rhs]) => lhs.creatorName.localeCompare(rhs.creatorName))
+        .map(([key, entry]) => {
+          const platformName = platformDefinitions.get(entry.platformID)?.name || entry.platformID;
+          const existing = currentDecisionByCreator.get(key);
+          return [key, `${platformName} · ${entry.creatorName}${existing ? ` · ${t("bridge.creatorClassified")}` : ""}`];
+        });
+      const canClassifyCreator = creatorSources.has("human") && creatorOptions.length && leafTagOptions.length;
+      const creatorLLMProfiles = llmProfiles.filter((profile) => selectedLLMIDs.has(profile.id));
+      const creatorLLMReady = creatorLLMProfiles.some((profile) =>
+        (profile.hasStoredCredential || profile.hasSessionCredential) &&
+        (profile.type !== "openAICompatible" || Boolean(profile.customEndpoint))
+      );
+      const llmRunning = Boolean(state.inspect?.llmRunning);
+      const creatorLLMClassification = creatorSources.has("llmAssist")
+        ? creatorLLMProfiles.length
+          ? `<div class="creator-llm-row">${valueSelectField("bridge.creatorLLMProfile", "bridge.creatorLLMProfileCopy", "creatorLLMProfileID", creatorLLMProfiles[0].id, creatorLLMProfiles.map((profile) => [profile.id, `${profile.name} · ${profile.modelIdentifier}`]))}<button class="gold-action" data-action="classifyCreatorWithLLM" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}"${disabled(!creatorOptions.length || !creatorLLMReady || llmRunning)}>${tx(llmRunning ? "bridge.creatorLLMClassifying" : "bridge.classifyCreatorWithLLM")}</button></div><p class="small-copy">${tx("bridge.creatorLLMExplicitOnly")}</p>`
+          : `<p class="small-copy">${tx("bridge.creatorLLMRequired")}</p>`
+        : "";
+      const creatorClassification = creatorOptions.length && leafTagOptions.length
+        ? `<div class="creator-classification-fields">${valueSelectField("bridge.creator", "bridge.creatorCopy", "creatorKey", creatorOptions[0][0], creatorOptions)}${multiValueSelectField("bridge.creatorTags", "bridge.creatorTagsCopy", "tagIDs", leafTagOptions)}</div><div class="action-row"><button class="primary" data-action="recordCreatorClassification" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}"${disabled(!canClassifyCreator)}>${tx("bridge.classifyCreator")}</button>${!creatorSources.has("human") ? `<span class="small-copy">${tx("bridge.creatorHumanRequired")}</span>` : ""}</div>${creatorLLMClassification}`
+        : `<div class="empty compact-empty">${tx(!creatorOptions.length ? "bridge.noCreators" : "bridge.noCreatorTags")}</div>`;
+      return `<section class="classifier-type-panel" data-form-id="${esc(formID)}"><div class="classifier-type-head"><div><span class="eyebrow">${tx("bridge.typePanel")}</span><h3>${esc(classifierType.name)}</h3><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div>${statusPill(typeStatus, creatorSources.size || entrySources.size ? "navy" : "muted")}</div><div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}<button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("bridge.saveType")}</button><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}">${tx("bridge.deleteType")}</button></div><section class="classifier-type-section"><div class="section-header"><div><h3>${tx("bridge.assetSelection")}</h3><p class="section-copy">${tx("bridge.assetSelectionCopy")}</p></div></div><div class="classifier-asset-grid">${valueSelectField("bridge.tagTree", "", "treeID", classifierType.treeID, treeOptions)}${valueSelectField("bridge.classificationData", "", "datasetID", classifierType.datasetID, datasetOptions)}${valueSelectField("bridge.localModel", "bridge.localModelCopy", "localModelID", classifierType.localModelID || "", modelOptions)}</div></section><section class="classifier-type-section creator-classification-section"><div class="section-header"><div><h3>${tx("bridge.manualCreator")}</h3><p class="section-copy">${tx("bridge.manualCreatorCopy")}</p></div><span class="small-copy">${tx("bridge.creatorCount", { count: creatorOptions.length })}</span></div>${creatorClassification}</section><section class="classifier-type-section classifier-llm-section"><div class="section-header"><div><h3>${tx("bridge.llmAssist")}</h3><p class="section-copy">${tx("bridge.llmAssistCopy")}</p></div><span class="small-copy">${tx("bridge.llmExplicitOnly")}</span></div>${llmProfiles.length ? `<div class="classifier-profile-list">${llmProfiles.map((profile) => `<label class="classifier-profile-choice"><input type="checkbox" data-field="llmProfile.${esc(profile.id)}"${checked(selectedLLMIDs.has(profile.id))}><span>${esc(profile.name)}</span><small>${esc(profile.modelIdentifier)}</small></label>`).join("")}</div>` : `<div class="empty compact-empty">${tx("bridge.noLLMProfiles")}</div>`}</section><section class="classifier-type-section"><div class="section-header"><div><h3>${tx("bridge.decisionPolicy")}</h3><p class="section-copy">${tx("bridge.decisionPolicyCopy")}</p></div></div><div class="classifier-priority-grid">${valueSelectField("bridge.priorityFirst", "", "priorityFirst", priority[0], sourceOptions)}${valueSelectField("bridge.prioritySecond", "", "prioritySecond", priority[1], sourceOptions)}${valueSelectField("bridge.priorityThird", "", "priorityThird", priority[2], sourceOptions)}</div><div class="classifier-decision-grid"><section><span class="eyebrow">${tx("bridge.creatorDecision")}</span><p class="small-copy">${tx("bridge.creatorDecisionCopy")}</p><div class="classifier-source-list">${sourceToggle("creatorHuman", "human", creatorSources.has("human"), true)}${sourceToggle("creatorLLM", "llmAssist", creatorSources.has("llmAssist"), llmAvailable)}${sourceToggle("creatorLocalModel", "localModel", creatorSources.has("localModel"), localAvailable)}</div></section><section><span class="eyebrow">${tx("bridge.entryDecision")}</span><p class="small-copy">${tx("bridge.entryDecisionCopy")}</p><div class="classifier-source-list">${sourceToggle("entryHuman", "human", entrySources.has("human"), true)}${sourceToggle("entryLLM", "llmAssist", entrySources.has("llmAssist"), llmAvailable)}${sourceToggle("entryLocalModel", "localModel", entrySources.has("localModel"), localAvailable)}</div></section></div></section></section>`;
     };
     return `<div class="workspace classifier-type-workspace">${header("bridge.title", "bridge.copy", t("bridge.typeLibrary"), "navy")}
       <section class="classifier-type-create" data-form-id="classifier-type-create-form">${field("bridge.newTypeName", "bridge.newTypeNameCopy", "name", "")}<button class="primary" data-action="createClassifierType" data-form="classifier-type-create-form">${tx("bridge.createType")}</button></section>
