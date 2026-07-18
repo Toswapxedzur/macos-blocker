@@ -438,19 +438,27 @@ final class VaultClassifierViewModel: ObservableObject {
             guard !cleanedName.isEmpty else { throw WebBridgeInputError.invalidChoice("provider profile name") }
             profile.name = cleanedName
             let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
-            guard descriptor.supportsLLMConfiguration,
-                  let modelIdentifier, let batchSize, let maximumTokens else {
-                throw WebBridgeInputError.missingValue("provider model settings")
+            if descriptor.supportsLLMConfiguration {
+                guard let modelIdentifier, let batchSize, let maximumTokens else {
+                    throw WebBridgeInputError.missingValue("provider model settings")
+                }
+                profile.modelIdentifier = modelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+                profile.batchSize = try providerPositiveInteger(batchSize, maximum: APIKeyProviderProfile.maximumBatchSize, label: "Provider batch size")
+                profile.maximumTokens = try providerPositiveInteger(maximumTokens, maximum: APIKeyProviderProfile.maximumTokenLimit, label: "Provider maximum tokens")
+                profile.inputCostUSDPerMillion = try providerCostRate(inputCostUSDPerMillion, label: "Provider input token cost")
+                profile.outputCostUSDPerMillion = try providerCostRate(outputCostUSDPerMillion, label: "Provider output token cost")
+                profile.storesFullRequestRecords = storesFullRequestRecords ?? false
+            } else {
+                profile.modelIdentifier = ""
+                profile.batchSize = 1
+                profile.maximumTokens = 1_024
+                profile.inputCostUSDPerMillion = nil
+                profile.outputCostUSDPerMillion = nil
+                profile.storesFullRequestRecords = false
             }
-            profile.modelIdentifier = modelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
-            profile.batchSize = try providerPositiveInteger(batchSize, maximum: APIKeyProviderProfile.maximumBatchSize, label: "Provider batch size")
-            profile.maximumTokens = try providerPositiveInteger(maximumTokens, maximum: APIKeyProviderProfile.maximumTokenLimit, label: "Provider maximum tokens")
             let normalizedEndpoint = customEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines)
             profile.customEndpoint = normalizedEndpoint?.isEmpty == false ? normalizedEndpoint : nil
             profile.protocolConfiguration = protocolConfiguration
-            profile.inputCostUSDPerMillion = try providerCostRate(inputCostUSDPerMillion, label: "Provider input token cost")
-            profile.outputCostUSDPerMillion = try providerCostRate(outputCostUSDPerMillion, label: "Provider output token cost")
-            profile.storesFullRequestRecords = storesFullRequestRecords ?? false
             profile.updatedAtMilliseconds = WorkspaceCatalog.now()
             catalog.providerProfiles[index] = profile
             try coordinator?.updateWorkspaceCatalog(catalog)

@@ -332,14 +332,50 @@ public enum ProviderProtocolRegistry {
             return model(type, .openAIResponsesV1, "https://api.openai.com/v1", "/responses", .openAIResponses)
         case .openAICompatible:
             return model(type, .openAIChatCompletionsV1, nil, "/chat/completions", .openAIChatCompletions, override: true)
+        case .deepSeek:
+            return model(type, .openAIChatCompletionsV1, "https://api.deepseek.com/v1", "/chat/completions", .openAIChatCompletions)
         case .gemini:
             return model(type, .geminiGenerateContentV1Beta, "https://generativelanguage.googleapis.com/v1beta", "/models/{model}:generateContent", .geminiGenerateContent, authentication: .apiKeyHeader, header: "x-goog-api-key")
         case .anthropic:
             return model(type, .anthropicMessagesV1, "https://api.anthropic.com/v1", "/messages", .anthropicMessages, authentication: .apiKeyHeader, header: "x-api-key", headers: ["anthropic-version": "2023-06-01"])
+        case .mistral:
+            return model(type, .openAIChatCompletionsV1, "https://api.mistral.ai/v1", "/chat/completions", .openAIChatCompletions)
         case .cohere:
             return model(type, .cohereChatV2, "https://api.cohere.com/v2", "/chat", .cohereChat)
+        case .groq:
+            return model(type, .openAIChatCompletionsV1, "https://api.groq.com/openai/v1", "/chat/completions", .openAIChatCompletions)
+        case .openRouter:
+            return model(type, .openAIChatCompletionsV1, "https://openrouter.ai/api/v1", "/chat/completions", .openAIChatCompletions)
         case .ollama:
             return model(type, .ollamaChatV1, "http://127.0.0.1:11434", "/api/chat", .ollamaChat, authentication: .none, credentials: [], override: true, loopback: true)
+        case .youtubeData:
+            return external(type, .youtubeDataV3, "https://www.googleapis.com/youtube/v3", "/videos", .readPublicContent, authentication: .apiKeyQuery, header: "key")
+        case .twitch:
+            return external(type, .twitchHelixV1, "https://api.twitch.tv/helix", "/videos", .readPublicContent, authentication: .bearerTokenAndClientID, configuration: [.init(.clientID)])
+        case .reddit:
+            return external(type, .redditOAuthV1, "https://oauth.reddit.com", "/r/{contentID}/new", .readPublicContent, configuration: [.init(.userAgent, defaultValue: "VaultClassifier/1.0")])
+        case .xPlatform:
+            return external(type, .xAPIV2, "https://api.x.com/2", "/tweets/{contentID}", .readPublicContent)
+        case .tikTok:
+            return external(type, .tikTokDisplayV2, "https://open.tiktokapis.com/v2", "/video/list/", .readPublicContent)
+        case .instagramGraph, .facebookGraph:
+            return external(type, .metaGraphV1, "https://graph.facebook.com", "/{apiVersion}/{contentID}", .readPublicContent, configuration: [.init(.apiVersion, defaultValue: "v24.0")])
+        case .linkedIn:
+            return external(type, .linkedInRestV1, "https://api.linkedin.com/rest", "/posts/{contentID}", .readPublicContent)
+        case .pinterest:
+            return external(type, .pinterestV5, "https://api.pinterest.com/v5", "/pins/{contentID}", .readPublicContent)
+        case .bluesky:
+            return external(type, .blueskyATProtoV1, "https://bsky.social/xrpc", "/app.bsky.feed.getPostThread", .readPublicContent)
+        case .mastodon:
+            return external(type, .mastodonV1, nil, "/api/v1/statuses/{contentID}", .readPublicContent, override: true)
+        case .vimeo:
+            return external(type, .vimeoV3, "https://api.vimeo.com", "/videos/{contentID}", .readPublicContent)
+        case .dailyMotion:
+            return external(type, .dailymotionV1, "https://api.dailymotion.com", "/video/{contentID}", .readPublicContent)
+        case .spotify:
+            return external(type, .spotifyWebV1, "https://api.spotify.com/v1", "/tracks/{contentID}", .readPublicContent)
+        case .custom:
+            return model(type, .openAIChatCompletionsV1, nil, "/chat/completions", .openAIChatCompletions, override: true)
         }
     }
 
