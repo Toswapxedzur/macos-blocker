@@ -88,6 +88,9 @@ final class VaultClassifierViewModel: ObservableObject {
     @Published var title = "Clash Royale deck gameplay - ranked match"
     @Published var sourceID = "youtube:channel:demo"
     @Published var surface: EntrySurface = .feed
+    /// Manual inspection uses a real platform binding so it exercises the
+    /// same selected classifier type as the browser bridge.
+    @Published var manualPlatformID = "youtube"
     @Published var result: ClassificationResult?
     @Published var issue: String?
     @Published var localState: LocalClassifierState?
@@ -143,6 +146,7 @@ final class VaultClassifierViewModel: ObservableObject {
     /// callbacks do not otherwise guarantee an `NSAlert` remains retained.
     private var activeProviderCredentialAlert: NSAlert?
     private var testingProviderProfileIDs = Set<String>()
+    @Published private(set) var providerClassificationRunning = false
 
     init() {
         do {
@@ -153,6 +157,7 @@ final class VaultClassifierViewModel: ObservableObject {
             self.coordinator = coordinator
             self.policies = coordinator.policies()
             self.localState = coordinator.snapshot()
+            self.manualPlatformID = self.localState?.workspaceCatalog.bindings.first?.id ?? "manual"
             loadResourceSettings(from: coordinator.snapshot().settings)
             loadAuditConfiguration(from: coordinator.snapshot().auditState.configuration)
             loadBackupConfiguration(from: coordinator.snapshot().backupConfiguration)
@@ -376,6 +381,10 @@ final class VaultClassifierViewModel: ObservableObject {
 
     func refreshLocalState() {
         localState = coordinator?.snapshot()
+        if let bindings = localState?.workspaceCatalog.bindings,
+           !bindings.contains(where: { $0.id == manualPlatformID }) {
+            manualPlatformID = bindings.first?.id ?? "manual"
+        }
     }
 
     func createProviderProfile(typeRaw: String) {
@@ -536,6 +545,134 @@ final class VaultClassifierViewModel: ObservableObject {
             self.testingProviderProfileIDs.remove(profileID)
             self.onWebStateChange?()
         }
+    }
+
+    /// Generic provider classification is intentionally available only from
+    /// this manual inspector action. Shared-hub/browser requests always call
+    /// the coordinator's local dispatch and can never enter this method.
+    func classifyCurrentEntryWithLLM() {
+        guard !providerClassificationRunning else { return }
+        do {
+            guard let catalog = localState?.workspaceCatalog,
+                  let binding = catalog.bindings.first(where: { $0.id == manualPlatformID }),
+                  let classifierTypeID = binding.activeClassifierTypeID,
+                  let classifierType = catalog.classifierTypes.first(where: { $0.id == classifierTypeID }),
+                  classifierType.entryDecisionSources.contains(.llmAssist),
+                  let profileID = classifierType.llmProfileIDs.first,
+                  let profile = catalog.providerProfiles.first(where: { $0.id == profileID }),
+                  let tree = catalog.trees.first(where: { $0.id == binding.treeID }) else {
+                throw WebBridgeInputError.invalidChoice("manual LLM classifier type")
+            }
+            let taxonomy = try tree.inferenceTaxonomy()
+            let allowedTagIDs = taxonomy.predictableLeafIDs
+            let entry = currentManualEntry()
+            providerClassificationRunning = true
+            issue = nil
+            Task { [weak self] in
+                guard let self else { return }
+                let startedAt = Date()
+                var prepared: ProviderTestPreparedRequest?
+                do {
+                    let credential = try self.providerCredential(for: profile.id)
+                    let request = try ProviderClassificationProtocol.prepare(
+                        profile: profile,
+                        entry: entry,
+                        allowedLeafTagIDs: allowedTagIDs
+                    )
+                    prepared = request
+                    var urlRequest = URLRequest(url: request.plan.url)
+                    urlRequest.httpMethod = request.plan.method
+                    urlRequest.httpBody = request.body
+                    urlRequest.timeoutInterval = 30
+                    request.plan.headers.forEach { urlRequest.setValue($0.value, forHTTPHeaderField: $0.key) }
+                    try self.apply(credential: credential, to: &urlRequest, plan: request.plan)
+                    let (data, response) = try await URLSession.shared.data(for: urlRequest)
+                    let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
+                    guard let http = response as? HTTPURLResponse else { throw ProviderTestProtocolError.invalidResponse }
+                    guard (200..<300).contains(http.statusCode) else { throw ProviderTestHTTPError.status(http.statusCode) }
+                    let parsed = try ProviderTestProtocol.parseResponse(data, format: request.plan.bodyFormat, operation: request.operation)
+                    let labelIDs = try ProviderClassificationProtocol.parseLabelIDs(parsed.content, allowedLeafTagIDs: allowedTagIDs)
+                    self.result = ProviderClassificationProtocol.result(
+                        entry: entry,
+                        classifierType: classifierType,
+                        profile: profile,
+                        taxonomy: taxonomy,
+                        policies: self.policies,
+                        labelIDs: labelIDs
+                    )
+                    self.latestLedgerID = nil
+                    try self.recordLLMSuggestion(entry: entry, labelIDs: labelIDs, classifierType: classifierType, profile: profile)
+                    try self.appendProviderTestRecord(.init(
+                        profileID: profile.id,
+                        provider: profile.type.rawValue,
+                        model: profile.modelIdentifier,
+                        operation: "classify",
+                        endpoint: ProviderTestProtocol.safeEndpoint(request.plan.url),
+                        method: request.plan.method,
+                        statusCode: http.statusCode,
+                        durationMilliseconds: duration,
+                        inputTokens: parsed.usage.inputTokens,
+                        outputTokens: parsed.usage.outputTokens,
+                        estimatedCostUSD: ProviderTestProtocol.estimatedCost(profile: profile, usage: parsed.usage),
+                        outcome: "succeeded",
+                        requestContent: profile.storesFullRequestRecords ? request.prompt : nil,
+                        responseContent: profile.storesFullRequestRecords ? parsed.content : nil
+                    ))
+                    self.issue = nil
+                } catch {
+                    let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
+                    if let prepared {
+                        try? self.appendProviderTestRecord(.init(
+                            profileID: profile.id,
+                            provider: profile.type.rawValue,
+                            model: profile.modelIdentifier,
+                            operation: "classify",
+                            endpoint: ProviderTestProtocol.safeEndpoint(prepared.plan.url),
+                            method: prepared.plan.method,
+                            statusCode: nil,
+                            durationMilliseconds: duration,
+                            inputTokens: nil,
+                            outputTokens: nil,
+                            estimatedCostUSD: nil,
+                            outcome: "failed"
+                        ))
+                    }
+                    self.issue = error.localizedDescription
+                }
+                self.providerClassificationRunning = false
+                self.onWebStateChange?()
+            }
+        } catch {
+            issue = error.localizedDescription
+        }
+    }
+
+    private func recordLLMSuggestion(
+        entry: EntryEvidence,
+        labelIDs: [String],
+        classifierType: ClassifierTypeAsset,
+        profile: APIKeyProviderProfile
+    ) throws {
+        guard var catalog = localState?.workspaceCatalog,
+              let binding = catalog.bindings.first(where: { $0.id == entry.platform }),
+              let datasetIndex = catalog.datasets.firstIndex(where: { $0.id == binding.datasetID }),
+              let tree = catalog.trees.first(where: { $0.id == binding.treeID }),
+              let title = entry.evidence.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else {
+            throw WebBridgeInputError.invalidChoice("LLM suggestion")
+        }
+        catalog.datasets[datasetIndex].records.append(.init(
+            title: title,
+            tagIDs: labelIDs,
+            origin: .llmAssist,
+            review: .pending,
+            platformID: binding.id,
+            treeRevision: tree.revision,
+            modelVersion: "llm-assist-\(classifierType.id)-\(profile.id)"
+        ))
+        // Pending provider suggestions are not approved training data and
+        // therefore must not invalidate the active neural model revision.
+        try coordinator?.updateWorkspaceCatalog(catalog)
+        refreshLocalState()
     }
 
     private func providerCredential(for profileID: String) throws -> ProviderCredentialRecord {
@@ -834,6 +971,7 @@ final class VaultClassifierViewModel: ObservableObject {
             catalog.models.remove(at: modelIndex)
             for bindingIndex in catalog.bindings.indices where catalog.bindings[bindingIndex].activeModelID == modelID {
                 catalog.bindings[bindingIndex].activeModelID = nil
+                catalog.bindings[bindingIndex].activeClassifierTypeID = nil
             }
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
@@ -916,7 +1054,7 @@ final class VaultClassifierViewModel: ObservableObject {
             let compatibleModelID: String?
             if let normalizedModelID, !normalizedModelID.isEmpty,
                catalog.models.contains(where: { model in
-                   model.id == normalizedModelID && model.isReady &&
+                   model.id == normalizedModelID && model.isReady && model.embeddedNeuralModel != nil &&
                    model.treeID == tree.id && model.treeRevision == tree.revision &&
                    model.datasetID == dataset.id && model.datasetRevision == dataset.revision
                }) {
@@ -952,6 +1090,50 @@ final class VaultClassifierViewModel: ObservableObject {
         } catch { issue = error.localizedDescription }
     }
 
+    func setActiveClassifierType(platformID: String, classifierTypeID: String?) {
+        do {
+            guard var catalog = localState?.workspaceCatalog,
+                  let bindingIndex = catalog.bindings.firstIndex(where: { $0.id == platformID }),
+                  let tree = catalog.trees.first(where: { $0.id == catalog.bindings[bindingIndex].treeID }),
+                  let dataset = catalog.datasets.first(where: { $0.id == catalog.bindings[bindingIndex].datasetID }) else {
+                throw WebBridgeInputError.invalidChoice("classifier type")
+            }
+            let normalizedTypeID = classifierTypeID?.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let normalizedTypeID, !normalizedTypeID.isEmpty else {
+                catalog.bindings[bindingIndex].activeClassifierTypeID = nil
+                catalog.bindings[bindingIndex].activeModelID = nil
+                try coordinator?.updateWorkspaceCatalog(catalog)
+                refreshLocalState()
+                issue = nil
+                return
+            }
+            guard let classifierType = catalog.classifierTypes.first(where: { $0.id == normalizedTypeID }),
+                  classifierType.treeID == tree.id,
+                  classifierType.treeRevision == tree.revision,
+                  classifierType.datasetID == dataset.id,
+                  classifierType.datasetRevision == dataset.revision else {
+                throw WebBridgeInputError.invalidChoice("classifier type")
+            }
+            if classifierType.entryDecisionSources.contains(.localModel) {
+                guard let modelID = classifierType.localModelID,
+                      catalog.models.contains(where: { model in
+                          model.id == modelID && model.isReady && model.embeddedNeuralModel != nil &&
+                          model.treeID == tree.id && model.treeRevision == tree.revision &&
+                          model.datasetID == dataset.id && model.datasetRevision == dataset.revision
+                      }) else {
+                    throw WebBridgeInputError.invalidChoice("ready local neural model")
+                }
+                catalog.bindings[bindingIndex].activeModelID = modelID
+            } else {
+                catalog.bindings[bindingIndex].activeModelID = nil
+            }
+            catalog.bindings[bindingIndex].activeClassifierTypeID = normalizedTypeID
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
     func deleteClassifierType(typeID: String) {
         do {
             guard var catalog = localState?.workspaceCatalog,
@@ -959,6 +1141,10 @@ final class VaultClassifierViewModel: ObservableObject {
                 throw WebBridgeInputError.invalidChoice("classifier type")
             }
             catalog.classifierTypes.removeAll(where: { $0.id == typeID })
+            for index in catalog.bindings.indices where catalog.bindings[index].activeClassifierTypeID == typeID {
+                catalog.bindings[index].activeClassifierTypeID = nil
+                catalog.bindings[index].activeModelID = nil
+            }
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
             issue = nil
@@ -1084,6 +1270,7 @@ final class VaultClassifierViewModel: ObservableObject {
             catalog.models[modelIndex].trainedAtMilliseconds = nil
             for bindingIndex in catalog.bindings.indices where catalog.bindings[bindingIndex].activeModelID == modelID {
                 catalog.bindings[bindingIndex].activeModelID = nil
+                catalog.bindings[bindingIndex].activeClassifierTypeID = nil
             }
         }
     }
@@ -1293,6 +1480,7 @@ final class VaultClassifierViewModel: ObservableObject {
         let treeID = catalog.trees[treeIndex].id
         for bindingIndex in catalog.bindings.indices where catalog.bindings[bindingIndex].treeID == treeID {
             catalog.bindings[bindingIndex].activeModelID = nil
+            catalog.bindings[bindingIndex].activeClassifierTypeID = nil
         }
     }
 
@@ -1532,26 +1720,8 @@ final class VaultClassifierViewModel: ObservableObject {
             guard let coordinator else { return }
             let epochs = try positiveInteger(trainingEpochs, label: "Training epochs")
             let run = try coordinator.retrainLocalModel(epochs: epochs)
-            guard var catalog = localState?.workspaceCatalog,
-                  let bindingIndex = catalog.bindings.firstIndex(where: { $0.id == "youtube" }),
-                  let tree = catalog.trees.first(where: { $0.id == catalog.bindings[bindingIndex].treeID }),
-                  let dataset = catalog.datasets.first(where: { $0.id == catalog.bindings[bindingIndex].datasetID }) else {
-                refreshLocalState()
-                return
-            }
-            let modelID = catalog.bindings[bindingIndex].activeModelID ?? catalog.models.first(where: { $0.treeID == tree.id && $0.datasetID == dataset.id })?.id ?? UUID().uuidString
-            if let modelIndex = catalog.models.firstIndex(where: { $0.id == modelID }) {
-                catalog.models[modelIndex].treeRevision = tree.revision
-                catalog.models[modelIndex].datasetRevision = dataset.revision
-                catalog.models[modelIndex].version += 1
-                catalog.models[modelIndex].isReady = true
-            } else {
-                catalog.models.append(.init(id: modelID, name: "Local neural model", treeID: tree.id, treeRevision: tree.revision, datasetID: dataset.id, datasetRevision: dataset.revision, isReady: true))
-            }
-            catalog.bindings[bindingIndex].activeModelID = modelID
-            try coordinator.updateWorkspaceCatalog(catalog)
             refreshLocalState()
-            trainingNotice = "Rebuilt this Mac's correction layer from \(run.exampleCount) explicit label\(run.exampleCount == 1 ? "" : "s") in \(run.epochs) pass\(run.epochs == 1 ? "" : "es")."
+            trainingNotice = "Rebuilt the legacy correction layer from \(run.exampleCount) explicit label\(run.exampleCount == 1 ? "" : "s") in \(run.epochs) pass\(run.epochs == 1 ? "" : "es"). Train a workspace local model to update an active classifier type."
             issue = nil
         } catch {
             trainingNotice = nil
@@ -1681,7 +1851,7 @@ final class VaultClassifierViewModel: ObservableObject {
             .map { String(format: "%02x", $0) }
             .joined()
         return .init(
-            platform: "manual",
+            platform: manualPlatformID,
             entryID: "manual-\(digest)",
             sourceID: source.isEmpty ? nil : source,
             surface: surface,
@@ -1758,10 +1928,24 @@ final class VaultClassifierViewModel: ObservableObject {
             "backup": backupNotice ?? NSNull(),
             "auditDiagnostic": auditDiagnosticNotice ?? NSNull(),
         ]
+        let inspectCatalog = state?.workspaceCatalog ?? .starter()
+        let manualBinding = inspectCatalog.bindings.first(where: { $0.id == manualPlatformID })
+        let manualClassifierType = manualBinding.flatMap { binding in
+            binding.activeClassifierTypeID.flatMap { typeID in
+                inspectCatalog.classifierTypes.first(where: { $0.id == typeID })
+            }
+        }
+        let manualLLMAvailable = manualClassifierType?.entryDecisionSources.contains(.llmAssist) == true &&
+            manualClassifierType?.llmProfileIDs.contains(where: { profileID in
+                inspectCatalog.providerProfiles.contains(where: { $0.id == profileID })
+            }) == true
         let inspect: [String: Any] = [
             "title": title,
             "sourceID": sourceID,
             "surface": surface.rawValue,
+            "platformID": manualPlatformID,
+            "llmAvailable": manualLLMAvailable,
+            "llmRunning": providerClassificationRunning,
             "result": result.map(webResult) ?? NSNull(),
         ]
         let policyItems: [[String: Any]] = policies.map { policy in
@@ -1881,7 +2065,7 @@ final class VaultClassifierViewModel: ObservableObject {
             "candidates": candidates,
             "results": auditResults,
         ]
-        let catalog = state?.workspaceCatalog ?? .starter()
+        let catalog = inspectCatalog
         let assets: [String: Any] = [
             "trees": catalog.trees.map { tree in
                 ["id": tree.id, "name": tree.name, "revision": tree.revision, "nodes": tree.nodes.enumerated().map { index, node -> [String: Any] in
@@ -2015,7 +2199,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     ])
                 }),
             "bindings": catalog.bindings.map { binding in
-                ["id": binding.id, "name": binding.name, "browser": binding.browser, "treeID": binding.treeID, "datasetID": binding.datasetID, "activeModelID": binding.activeModelID ?? NSNull(), "policyID": binding.policyID ?? NSNull(), "collectionEnabled": binding.collectionEnabled] as [String: Any]
+                ["id": binding.id, "name": binding.name, "browser": binding.browser, "treeID": binding.treeID, "datasetID": binding.datasetID, "activeClassifierTypeID": binding.activeClassifierTypeID ?? NSNull(), "activeModelID": binding.activeModelID ?? NSNull(), "policyID": binding.policyID ?? NSNull(), "collectionEnabled": binding.collectionEnabled] as [String: Any]
             },
             "collectionPlatforms": CollectionPlatformRegistry.definitions.map { definition in
                 ["id": definition.id, "name": definition.name, "browser": definition.browser, "collectorAvailable": definition.collectorAvailable] as [String: Any]
@@ -2092,6 +2276,11 @@ final class VaultClassifierViewModel: ObservableObject {
                 setCollectionEnabled(
                     platformID: try webString(data, key: "platformID", limit: 64),
                     enabled: try webBool(data, key: "enabled")
+                )
+            case "setActiveClassifierType":
+                setActiveClassifierType(
+                    platformID: try webString(data, key: "platformID", limit: 64),
+                    classifierTypeID: try webOptionalString(data, key: "classifierTypeID", limit: 256)
                 )
             case "createLocalModel":
                 createLocalModel(name: try webString(data, key: "name", limit: 128))
@@ -2207,10 +2396,27 @@ final class VaultClassifierViewModel: ObservableObject {
             case "classify":
                 title = try webString(data, key: "title", limit: 4_096)
                 sourceID = try webString(data, key: "sourceID", limit: 1_024)
+                let platformID = try webString(data, key: "platformID", limit: 64)
+                guard localState?.workspaceCatalog.bindings.contains(where: { $0.id == platformID }) == true else {
+                    throw WebBridgeInputError.invalidChoice("classification platform")
+                }
+                manualPlatformID = platformID
                 let surfaceValue = try webString(data, key: "surface", limit: 16)
                 guard let value = EntrySurface(rawValue: surfaceValue) else { throw WebBridgeInputError.invalidChoice("surface") }
                 surface = value
                 classify()
+            case "classifyWithLLM":
+                title = try webString(data, key: "title", limit: 4_096)
+                sourceID = try webString(data, key: "sourceID", limit: 1_024)
+                let platformID = try webString(data, key: "platformID", limit: 64)
+                guard localState?.workspaceCatalog.bindings.contains(where: { $0.id == platformID }) == true else {
+                    throw WebBridgeInputError.invalidChoice("classification platform")
+                }
+                manualPlatformID = platformID
+                let surfaceValue = try webString(data, key: "surface", limit: 16)
+                guard let value = EntrySurface(rawValue: surfaceValue) else { throw WebBridgeInputError.invalidChoice("surface") }
+                surface = value
+                classifyCurrentEntryWithLLM()
             case "markCorrection":
                 let raw = try webString(data, key: "correction", limit: 32)
                 guard let correction = UserCorrection(rawValue: raw) else { throw WebBridgeInputError.invalidChoice("correction") }

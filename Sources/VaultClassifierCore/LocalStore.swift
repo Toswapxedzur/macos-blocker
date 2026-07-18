@@ -501,9 +501,18 @@ public final class LocalClassifierCoordinator {
     public func classifyWithLedger(_ entry: EntryEvidence) throws -> (result: ClassificationResult, ledgerID: UUID) {
         lock.lock()
         defer { lock.unlock() }
-        let requiresCausalReplay = state.cacheBackfill != nil
+        let workspaceClassifier = try state.workspaceCatalog.workspaceClassifier(
+            for: entry.platform,
+            policies: engine.policies
+        )
+        // Causal replay protects the legacy source-prior engine only. The
+        // workspace neural model has no source-profile mutation, so it can
+        // serve an explicit classifier type immediately and deterministically.
+        let requiresCausalReplay = workspaceClassifier == nil && state.cacheBackfill != nil
         let result: ClassificationResult
-        if requiresCausalReplay {
+        if let workspaceClassifier {
+            result = try workspaceClassifier.classify(entry)
+        } else if requiresCausalReplay {
             // Do not let a foreground entry mutate a partial causal source
             // profile. It receives the same explicitly provisional direct-only
             // treatment as stage one and restarts the retained snapshot.

@@ -2,6 +2,8 @@ import XCTest
 @testable import VaultClassifierCore
 
 final class WorkspaceAssetsTests: XCTestCase {
+    private func seed() throws -> VerifiedSeedPackage { try SeedPackageLoader.bundled() }
+
     func testCollectionRegistryMarksOnlyInstalledPublicContentCollectorsAvailable() {
         let available = Set(CollectionPlatformRegistry.definitions.lazy.filter(\.collectorAvailable).map(\.id))
         XCTAssertEqual(available, Set([
@@ -83,7 +85,17 @@ final class WorkspaceAssetsTests: XCTestCase {
 
     func testClassifierTypeRequiresMatchingAssetsAndReconcilesStaleDependencies() throws {
         var catalog = WorkspaceCatalog.starter()
-        catalog.models[0].isReady = true
+        catalog.trees[0].nodes = [.init(id: "games", name: "Games")]
+        catalog.datasets[0].records = [
+            .init(title: "Deck game guide", tagIDs: ["games"], origin: .manual, review: .approved, platformID: "youtube", treeRevision: catalog.trees[0].revision),
+        ]
+        catalog.models[0] = try LocalModelTrainer.train(
+            catalog.models[0],
+            tree: catalog.trees[0],
+            dataset: catalog.datasets[0],
+            epochs: 1,
+            configuration: .init(vocabularyLimit: 16, embeddingDimension: 4, hiddenDimension: 4, initializationSeed: 3)
+        )
         let profile = APIKeyProviderProfile(id: "gemini-profile", type: .gemini)
         catalog.providerProfiles = [profile]
         let tree = try XCTUnwrap(catalog.trees.first)
@@ -118,6 +130,56 @@ final class WorkspaceAssetsTests: XCTestCase {
         catalog.reconcileClassifierTypes()
         XCTAssertTrue(catalog.classifierTypes[0].llmProfileIDs.isEmpty)
         XCTAssertFalse(catalog.classifierTypes[0].creatorDecisionSources.contains(.llmAssist))
+    }
+
+    func testCoordinatorDispatchesAnActiveClassifierTypeToThePersistedNeuralModel() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let coordinator = try LocalClassifierCoordinator(
+            verifiedPackage: seed(),
+            stateFile: .init(url: root.appendingPathComponent("state.json"))
+        )
+        var catalog = coordinator.snapshot().workspaceCatalog
+        catalog.trees[0].nodes = [.init(id: "games", name: "Games")]
+        let example = EmbeddedNeuralTrainingExample(text: "ranked deck game", positiveLabelIDs: ["games"])
+        var neural = try EmbeddedNeuralTextClassifier(
+            configuration: .init(vocabularyLimit: 16, embeddingDimension: 4, hiddenDimension: 4, initializationSeed: 9),
+            labelIDs: ["games"],
+            trainingExamples: [example]
+        )
+        _ = try neural.train([example], epochs: 2)
+        catalog.models[0].isReady = true
+        catalog.models[0].version = 7
+        catalog.models[0].embeddedNeuralModel = neural
+        catalog.models[0].embeddedTrainingReport = .init(epochs: 2, exampleCount: 1, labelUpdateCount: 2, meanBinaryCrossEntropy: 0)
+        let tree = try XCTUnwrap(catalog.trees.first)
+        let dataset = try XCTUnwrap(catalog.datasets.first)
+        let classifierType = ClassifierTypeAsset(
+            id: "games-neural",
+            name: "Games neural",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            datasetID: dataset.id,
+            datasetRevision: dataset.revision,
+            localModelID: catalog.models[0].id,
+            entryDecisionSources: [.localModel]
+        )
+        catalog.classifierTypes = [classifierType]
+        catalog.bindings[0].activeClassifierTypeID = classifierType.id
+        catalog.bindings[0].activeModelID = catalog.models[0].id
+        try coordinator.updateWorkspaceCatalog(catalog)
+
+        let result = try coordinator.classifyWithLedger(.init(
+            platform: "youtube",
+            entryID: "browser-entry",
+            sourceID: "creator",
+            surface: .feed,
+            evidence: .init(title: "ranked deck game")
+        )).result
+
+        XCTAssertEqual(result.packageID, "workspace-classifier-type-games-neural")
+        XCTAssertEqual(result.modelVersion, "local-neural-local-neural-model-v7")
+        XCTAssertEqual(result.scores.map(\.tagID), ["games"])
     }
 
     func testModelTrainingUsesOnlyApprovedRecordsForItsTreeAndPlatform() throws {
