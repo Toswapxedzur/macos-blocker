@@ -332,6 +332,28 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
     case voyageAI
     case jinaAI
     case ollama
+    case twitch
+    case reddit
+    case discord
+    case xPlatform
+    case tikTok
+    case instagramGraph
+    case facebookGraph
+    case linkedIn
+    case pinterest
+    case bluesky
+    case mastodon
+    case vimeo
+    case dailyMotion
+    case spotify
+    case soundCloud
+    case steam
+    case github
+    case gitlab
+    case slack
+    case telegram
+    case notion
+    case microsoftGraph
     case braveSearch
     case tavily
     case serpAPI
@@ -342,7 +364,12 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
 
     public var supportsLLMConfiguration: Bool {
         switch self {
-        case .youtubeData, .braveSearch, .tavily, .serpAPI, .firecrawl, .googleCustomSearch, .bingWebSearch:
+        case .youtubeData, .twitch, .reddit, .discord, .xPlatform, .tikTok,
+             .instagramGraph, .facebookGraph, .linkedIn, .pinterest, .bluesky,
+             .mastodon, .vimeo, .dailyMotion, .spotify, .soundCloud, .steam,
+             .github, .gitlab, .slack, .telegram, .notion, .microsoftGraph,
+             .braveSearch, .tavily, .serpAPI, .firecrawl, .googleCustomSearch,
+             .bingWebSearch:
             return false
         default:
             return true
@@ -377,6 +404,28 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
         case .voyageAI: return "Voyage AI key"
         case .jinaAI: return "Jina AI key"
         case .ollama: return "Ollama profile"
+        case .twitch: return "Twitch credential"
+        case .reddit: return "Reddit credential"
+        case .discord: return "Discord credential"
+        case .xPlatform: return "X credential"
+        case .tikTok: return "TikTok credential"
+        case .instagramGraph: return "Instagram Graph credential"
+        case .facebookGraph: return "Facebook Graph credential"
+        case .linkedIn: return "LinkedIn credential"
+        case .pinterest: return "Pinterest credential"
+        case .bluesky: return "Bluesky credential"
+        case .mastodon: return "Mastodon credential"
+        case .vimeo: return "Vimeo credential"
+        case .dailyMotion: return "Dailymotion credential"
+        case .spotify: return "Spotify credential"
+        case .soundCloud: return "SoundCloud credential"
+        case .steam: return "Steam Web API key"
+        case .github: return "GitHub credential"
+        case .gitlab: return "GitLab credential"
+        case .slack: return "Slack credential"
+        case .telegram: return "Telegram bot token"
+        case .notion: return "Notion credential"
+        case .microsoftGraph: return "Microsoft Graph credential"
         case .braveSearch: return "Brave Search API key"
         case .tavily: return "Tavily API key"
         case .serpAPI: return "SerpAPI key"
@@ -414,7 +463,12 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
         case .voyageAI: return "voyage-4"
         case .jinaAI: return "jina-embeddings-v4"
         case .ollama: return "llama3.3"
-        case .youtubeData, .braveSearch, .tavily, .serpAPI, .firecrawl, .googleCustomSearch, .bingWebSearch: return ""
+        case .youtubeData, .twitch, .reddit, .discord, .xPlatform, .tikTok,
+             .instagramGraph, .facebookGraph, .linkedIn, .pinterest, .bluesky,
+             .mastodon, .vimeo, .dailyMotion, .spotify, .soundCloud, .steam,
+             .github, .gitlab, .slack, .telegram, .notion, .microsoftGraph,
+             .braveSearch, .tavily, .serpAPI, .firecrawl, .googleCustomSearch,
+             .bingWebSearch: return ""
         case .custom: return "custom-model"
         }
     }

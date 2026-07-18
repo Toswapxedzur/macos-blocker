@@ -179,9 +179,12 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertTrue(APIKeyProviderType.allCases.contains(.mistral))
         XCTAssertTrue(APIKeyProviderType.allCases.contains(.voyageAI))
         XCTAssertTrue(APIKeyProviderType.allCases.contains(.googleCustomSearch))
+        XCTAssertTrue(APIKeyProviderType.allCases.contains(.twitch))
+        XCTAssertTrue(APIKeyProviderType.allCases.contains(.microsoftGraph))
         XCTAssertNoThrow(try azure.validate())
         XCTAssertNoThrow(try brave.validate())
         XCTAssertFalse(APIKeyProviderType.braveSearch.supportsLLMConfiguration)
+        XCTAssertFalse(APIKeyProviderType.twitch.supportsLLMConfiguration)
         XCTAssertTrue(APIKeyProviderType.nvidiaNIM.supportsLLMConfiguration)
 
         let invalidDataProfile = APIKeyProviderProfile(
