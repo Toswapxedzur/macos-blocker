@@ -289,6 +289,24 @@ public final class LocalStateFile {
     }
 }
 
+public enum PlatformCollectionError: Error, Equatable, LocalizedError, Sendable {
+    case disabled(String)
+    case missingEntryIdentifier
+    case missingCreatorIdentifier
+    case missingTitle
+    case advertisement
+
+    public var errorDescription: String? {
+        switch self {
+        case .disabled: return "Collection is not enabled for this platform."
+        case .missingEntryIdentifier: return "The platform did not provide a stable entry identifier."
+        case .missingCreatorIdentifier: return "The platform did not provide a stable creator identifier."
+        case .missingTitle: return "The platform entry does not contain a title."
+        case .advertisement: return "Advertisements are not collected."
+        }
+    }
+}
+
 /// Coordinates the deterministic engine with the bounded on-device cache and decision ledger.
 /// It has no network dependency; later sync and LLM-audit tiers can be layered around this API.
 public final class LocalClassifierCoordinator {
@@ -609,6 +627,93 @@ public final class LocalClassifierCoordinator {
         try catalog.validate()
         state.workspaceCatalog = catalog
         try stateFile.save(state)
+    }
+
+    /// Returns only locally enabled collection bindings. The browser asks for
+    /// this small inventory before it sends any rendered public-content
+    /// metadata, so an off toggle prevents title/creator data leaving the page.
+    public func enabledCollectionPlatformIDs() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return state.workspaceCatalog.bindings
+            .filter(\.collectionEnabled)
+            .map(\.id)
+            .sorted()
+    }
+
+    /// Persists one bounded, already-rendered platform entry. This is separate
+    /// from classification and labels: a collected entry is never eligible for
+    /// model training until an explicit manual or approved LLM record exists.
+    @discardableResult
+    public func collectPlatformEntry(_ entry: EntryEvidence, at milliseconds: Int64 = WorkspaceCatalog.now()) throws -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+
+        try EntryEvidenceValidator().validate(entry)
+        guard let binding = state.workspaceCatalog.bindings.first(where: { $0.id == entry.platform }),
+              binding.collectionEnabled else {
+            throw PlatformCollectionError.disabled(entry.platform)
+        }
+        guard let entryID = entry.entryID?.trimmingCharacters(in: .whitespacesAndNewlines), !entryID.isEmpty else {
+            throw PlatformCollectionError.missingEntryIdentifier
+        }
+        guard let creatorID = entry.sourceID?.trimmingCharacters(in: .whitespacesAndNewlines), !creatorID.isEmpty else {
+            throw PlatformCollectionError.missingCreatorIdentifier
+        }
+        guard let title = entry.evidence.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else {
+            throw PlatformCollectionError.missingTitle
+        }
+
+        let metadata = collectionMetadata(from: entry.evidence.metadata)
+        guard metadata["isAdvertisement"] != "true" else {
+            throw PlatformCollectionError.advertisement
+        }
+        let entryType = metadata["entryType"]?.lowercased() ?? "content"
+        guard entryType != "advertisement", entryType != "ad" else {
+            throw PlatformCollectionError.advertisement
+        }
+        let creatorName = metadata["sourceName"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let canonicalURL = metadata["canonicalURL"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let stableMaterial = "\(entry.platform)\u{1F}\(entryID)"
+        let stableID = SHA256.hash(data: Data(stableMaterial.utf8)).map { String(format: "%02x", $0) }.joined()
+        let collected = CollectedPlatformEntry(
+            id: "collected-\(stableID)",
+            platformID: entry.platform,
+            entryID: entryID,
+            creatorID: creatorID,
+            creatorName: creatorName?.isEmpty == false ? creatorName! : creatorID,
+            entryType: entryType,
+            title: title,
+            canonicalURL: canonicalURL?.isEmpty == false ? canonicalURL : nil,
+            attributes: metadata.filter { key, _ in key != "sourceName" && key != "canonicalURL" && key != "entryType" && key != "isAdvertisement" },
+            firstObservedAtMilliseconds: milliseconds,
+            lastObservedAtMilliseconds: milliseconds
+        )
+        guard let datasetIndex = state.workspaceCatalog.datasets.firstIndex(where: { $0.id == binding.datasetID }) else {
+            throw WorkspaceCatalogError.missingDataset(binding.datasetID)
+        }
+        let inserted = state.workspaceCatalog.datasets[datasetIndex].upsertCollectedEntry(collected)
+        try state.workspaceCatalog.validate()
+        try stateFile.save(state)
+        return inserted
+    }
+
+    private func collectionMetadata(from metadata: [String: JSONValue]) -> [String: String] {
+        var output: [String: String] = [:]
+        for key in metadata.keys.sorted() {
+            guard output.count < CollectedPlatformEntry.maximumAttributes + 4,
+                  key.count <= CollectedPlatformEntry.maximumAttributeKeyLength,
+                  let value = metadata[key] else { continue }
+            let rendered: String
+            switch value {
+            case .string(let text): rendered = text
+            case .number(let number): rendered = number.formatted(.number.grouping(.never))
+            case .bool(let bool): rendered = bool ? "true" : "false"
+            }
+            guard !rendered.isEmpty, rendered.count <= CollectedPlatformEntry.maximumAttributeValueLength else { continue }
+            output[key] = rendered
+        }
+        return output
     }
 
     @discardableResult

@@ -205,6 +205,78 @@ final class VaultClassifierCoreTests: XCTestCase {
         XCTAssertThrowsError(try separateWindow.verifyAndRecord(tampered, secret: secret, nowMilliseconds: 1_001))
     }
 
+    func testSharedBrowserBridgeFramesAreStrictlyBounded() {
+        XCTAssertEqual(
+            SharedHubPairingKeyStore.normalized("  " + String(repeating: "A", count: 64) + "\n"),
+            String(repeating: "a", count: 64)
+        )
+        XCTAssertNil(SharedHubPairingKeyStore.normalized(String(repeating: "z", count: 64)))
+        XCTAssertTrue(SharedBrowserBridgeProtocol.isValidRequestID("request-001"))
+        XCTAssertFalse(SharedBrowserBridgeProtocol.isValidRequestID("request\n001"))
+        XCTAssertTrue(SharedBrowserBridgeProtocol.isValidBody(["entry": ["title": "Visible card"]]))
+        XCTAssertFalse(SharedBrowserBridgeProtocol.isValidBody(["entry": String(repeating: "x", count: SharedBrowserBridgeProtocol.maximumBodyBytes + 1)]))
+    }
+
+    func testCollectedEntriesDeduplicateWithoutChangingDatasetRevision() {
+        var dataset = ClassificationDataset(id: "dataset", name: "Local data")
+        let originalRevision = dataset.revision
+        let initial = CollectedPlatformEntry(
+            id: "collected-video",
+            platformID: "youtube",
+            entryID: "youtube:video:one",
+            creatorID: "youtube:channel:one",
+            creatorName: "Creator one",
+            entryType: "video",
+            title: "First visible title",
+            attributes: ["subscriberCount": "12K"],
+            firstObservedAtMilliseconds: 100,
+            lastObservedAtMilliseconds: 100
+        )
+        XCTAssertTrue(dataset.upsertCollectedEntry(initial))
+        var refreshed = initial
+        refreshed.title = "Updated visible title"
+        refreshed.lastObservedAtMilliseconds = 200
+        XCTAssertFalse(dataset.upsertCollectedEntry(refreshed))
+        XCTAssertEqual(dataset.revision, originalRevision)
+        XCTAssertEqual(dataset.collectedEntries.count, 1)
+        XCTAssertEqual(dataset.collectedEntries[0].title, "Updated visible title")
+        XCTAssertEqual(dataset.collectedEntries[0].firstObservedAtMilliseconds, 100)
+        XCTAssertEqual(dataset.collectedEntries[0].observationCount, 2)
+    }
+
+    func testCollectionRequiresExplicitPlatformOptInAndKeepsLabelsSeparate() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stateFile = LocalStateFile(url: root.appendingPathComponent("state.json"))
+        let coordinator = try LocalClassifierCoordinator(verifiedPackage: seed(), stateFile: stateFile)
+        let collected = EntryEvidence(
+            platform: "youtube",
+            entryID: "youtube:video:collection-test",
+            sourceID: "youtube:channel:collection-test",
+            surface: .feed,
+            evidence: .init(title: "Visible platform entry", metadata: [
+                "sourceName": .string("Creator test"),
+                "entryType": .string("video"),
+                "subscriberCount": .string("4K"),
+                "published": .string("2 days ago"),
+            ])
+        )
+        XCTAssertThrowsError(try coordinator.collectPlatformEntry(collected))
+
+        var catalog = coordinator.snapshot().workspaceCatalog
+        catalog.bindings[0].collectionEnabled = true
+        try coordinator.updateWorkspaceCatalog(catalog)
+        XCTAssertEqual(coordinator.enabledCollectionPlatformIDs(), ["youtube"])
+        XCTAssertTrue(try coordinator.collectPlatformEntry(collected, at: 123))
+
+        let dataset = try XCTUnwrap(coordinator.snapshot().workspaceCatalog.datasets.first)
+        XCTAssertEqual(dataset.records.count, 0)
+        XCTAssertEqual(dataset.collectedEntries.count, 1)
+        XCTAssertEqual(dataset.collectedEntries[0].creatorName, "Creator test")
+        XCTAssertEqual(dataset.collectedEntries[0].attributes["subscriberCount"], "4K")
+        XCTAssertEqual(dataset.collectedEntries[0].attributes["published"], "2 days ago")
+    }
+
     func testLocalIPCRoundTripsOnlyToTheCurrentUserSocket() throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }

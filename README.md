@@ -2,8 +2,8 @@
 
 This isolated macOS Swift package contains the source-only local foundations
 for Vault Classifier. It deliberately does not change an existing product
-version, installer, native-host registration, release build, central endpoint,
-account system, or deployment.
+version, installer, release build, central endpoint, account system, or
+deployment.
 
 Included now:
 
@@ -29,11 +29,10 @@ Included now:
   activity cache, decision ledger, or audit history. It is written only to a
   user-chosen local folder and retains the current snapshot plus three prior
   snapshots. No backup is uploaded.
-- An opt-in Chrome/Edge YouTube bridge with an authenticated native host and
-  app-owned local IPC; see [PHASE2.md](PHASE2.md). Register the local product
-  host with `./scripts/install-browser-bridge.sh`, then explicitly enable it
-  from the Vault extension. Missing host/app, invalid frames, and timeouts all
-  fail open.
+- An opt-in Chrome/Edge YouTube bridge over Mac Vault's existing authenticated
+  localhost hub; see [PHASE2.md](PHASE2.md). Mac Vault is the only server on
+  port 8787; Vault Classifier and the extension are paired clients. Missing
+  peers, invalid frames, and timeouts all fail open.
 - Optional personal audit and local polishing: the user stores a Gemini key in
   this Mac's Keychain, enables a local token budget, queues a local candidate,
   and explicitly presses **Run Gemini**. The fixed adapter sends one bounded,

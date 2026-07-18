@@ -156,6 +156,39 @@ public struct NativeBridgeInfoResponse: Codable, Equatable, Sendable {
     }
 }
 
+/// A browser obtains this tiny local-only inventory before it sends any
+/// rendered platform metadata. It contains no titles, creator identities,
+/// trees, datasets, labels, models, or credentials.
+public struct NativeCollectionInfoRequest: Codable, Equatable, Sendable {
+    public init() {}
+}
+
+public struct NativeCollectionInfoResponse: Codable, Equatable, Sendable {
+    public var enabledPlatformIDs: [String]
+
+    public init(enabledPlatformIDs: [String]) {
+        self.enabledPlatformIDs = enabledPlatformIDs.sorted()
+    }
+}
+
+public struct NativeCollectionRequest: Codable, Equatable, Sendable {
+    public var entry: EntryEvidence
+
+    public init(entry: EntryEvidence) {
+        self.entry = entry
+    }
+}
+
+public struct NativeCollectionResponse: Codable, Equatable, Sendable {
+    public var accepted: Bool
+    public var inserted: Bool
+
+    public init(accepted: Bool, inserted: Bool) {
+        self.accepted = accepted
+        self.inserted = inserted
+    }
+}
+
 public struct NativeClassificationRequest: Codable, Equatable, Sendable {
     public var entry: EntryEvidence
     public init(entry: EntryEvidence) { self.entry = entry }

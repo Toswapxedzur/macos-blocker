@@ -95,6 +95,8 @@ public struct EntryEvidenceValidator: Sendable {
     public static let tagLimit = 64
     public static let tagLengthLimit = 256
     public static let metadataLimit = 64
+    public static let metadataKeyLengthLimit = 64
+    public static let metadataValueLengthLimit = 512
 
     public init() {}
 
@@ -110,6 +112,20 @@ public struct EntryEvidenceValidator: Sendable {
         guard entry.evidence.metadata.count <= Self.metadataLimit else { throw EntryEvidenceValidationError.exceedsLimit("metadata", Self.metadataLimit) }
         for tag in entry.evidence.suppliedTags {
             try required(tag, field: "suppliedTags[]", limit: Self.tagLengthLimit)
+        }
+        for (key, value) in entry.evidence.metadata {
+            try required(key, field: "metadata key", limit: Self.metadataKeyLengthLimit)
+            guard key.unicodeScalars.allSatisfy({ $0.value >= 0x20 && $0.value != 0x7f }) else {
+                throw EntryEvidenceValidationError.invalidValue("metadata key")
+            }
+            switch value {
+            case .string(let text):
+                try required(text, field: "metadata value", limit: Self.metadataValueLengthLimit)
+                guard text.unicodeScalars.allSatisfy({ $0.value >= 0x20 && $0.value != 0x7f }) else {
+                    throw EntryEvidenceValidationError.invalidValue("metadata value")
+                }
+            case .number, .bool: break
+            }
         }
         guard entry.evidence.hasReadableContent else { throw EntryEvidenceValidationError.missing("evidence") }
     }

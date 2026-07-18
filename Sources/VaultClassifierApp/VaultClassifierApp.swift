@@ -132,7 +132,7 @@ final class VaultClassifierViewModel: ObservableObject {
     var onWebStateChange: (() -> Void)?
 
     private var coordinator: LocalClassifierCoordinator?
-    private var ipcServer: LocalIPCServer?
+    private var sharedHubClient: SharedHubClient?
     private var latestLedgerID: UUID?
     /// Credentials saved without Keychain are intentionally process-scoped.
     /// They support a one-session explicit provider run without writing a raw
@@ -149,7 +149,6 @@ final class VaultClassifierViewModel: ObservableObject {
             let appSupport = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             let vaultDirectory = appSupport.appendingPathComponent("VaultClassifier", isDirectory: true)
             let coordinator = try LocalClassifierCoordinator(verifiedPackage: package, stateFile: LocalStateFile(url: vaultDirectory.appendingPathComponent("state.json")), defaultPolicies: [StarterPolicies.clashRoyale])
-            _ = try DevicePairingSecretStore.ensure()
             self.coordinator = coordinator
             self.policies = coordinator.policies()
             self.localState = coordinator.snapshot()
@@ -158,33 +157,86 @@ final class VaultClassifierViewModel: ObservableObject {
             loadBackupConfiguration(from: coordinator.snapshot().backupConfiguration)
             self.hasStoredGeminiAPIKey = PersonalAuditCredentialStore.hasGeminiAPIKey()
             self.hasBackupOwnerCode = LocalBackupOwnerCodeStore.hasOwnerCode
-            let server = LocalIPCServer(socketURL: vaultDirectory.appendingPathComponent("classifier-v1.sock")) { request in
-                do {
-                    try coordinator.verifyAndRecordNativeEnvelope(request.envelope)
-                    switch request.envelope.kind {
-                    case "bridge-info":
-                        _ = try JSONDecoder().decode(NativeBridgeInfoRequest.self, from: request.envelope.bodyData())
-                        let policies = coordinator.policies().prefix(64).map {
-                            NativeBridgePolicy(id: $0.id, name: $0.name)
-                        }
-                        return .init(requestID: request.requestID, bridgeInfo: .init(policies: policies))
-                    case "classify":
-                        let classification = try JSONDecoder().decode(NativeClassificationRequest.self, from: request.envelope.bodyData())
-                        let output = try coordinator.classifyWithLedger(classification.entry)
-                        return .init(requestID: request.requestID, classification: .init(result: output.result, ledgerID: output.ledgerID))
-                    case "correct":
-                        let correction = try JSONDecoder().decode(NativeCorrectionRequest.self, from: request.envelope.bodyData())
-                        try coordinator.setCorrection(ledgerID: correction.ledgerID, correction: correction.correction)
-                        return .init(requestID: request.requestID, correction: .init(accepted: true))
-                    default:
-                        return .init(requestID: request.requestID, error: "Unsupported local IPC operation.")
-                    }
-                } catch {
-                    return .init(requestID: request.requestID, error: error.localizedDescription)
-                }
+            let sharedHubClient = SharedHubClient()
+            self.sharedHubClient = sharedHubClient
+            sharedHubClient.onRequest = { [weak self] request in
+                self?.handleSharedHubRequest(request) ?? .failure("classifier-unavailable")
             }
-            try server.start()
-            self.ipcServer = server
+            sharedHubClient.onStateChange = { [weak self] in
+                self?.onWebStateChange?()
+            }
+            sharedHubClient.connectUsingStoredKey()
+        } catch {
+            issue = error.localizedDescription
+        }
+    }
+
+    private func handleSharedHubRequest(_ request: SharedHubClient.Request) -> SharedHubClient.Reply {
+        do {
+            guard let coordinator else { return .failure("classifier-unavailable") }
+            switch request.operation {
+            case .bridgeInfo:
+                _ = try JSONDecoder().decode(NativeBridgeInfoRequest.self, from: request.bodyData)
+                let response = NativeBridgeInfoResponse(policies: coordinator.policies().prefix(64).map {
+                    NativeBridgePolicy(id: $0.id, name: $0.name)
+                })
+                return try sharedHubReply(response)
+            case .collectionInfo:
+                _ = try JSONDecoder().decode(NativeCollectionInfoRequest.self, from: request.bodyData)
+                return try sharedHubReply(NativeCollectionInfoResponse(
+                    enabledPlatformIDs: coordinator.enabledCollectionPlatformIDs()
+                ))
+            case .collect:
+                let request = try JSONDecoder().decode(NativeCollectionRequest.self, from: request.bodyData)
+                let inserted = try coordinator.collectPlatformEntry(request.entry)
+                return try sharedHubReply(NativeCollectionResponse(accepted: true, inserted: inserted))
+            case .classify:
+                let classification = try JSONDecoder().decode(NativeClassificationRequest.self, from: request.bodyData)
+                let output = try coordinator.classifyWithLedger(classification.entry)
+                return try sharedHubReply(NativeClassificationResponse(result: output.result, ledgerID: output.ledgerID))
+            case .correct:
+                let correction = try JSONDecoder().decode(NativeCorrectionRequest.self, from: request.bodyData)
+                try coordinator.setCorrection(ledgerID: correction.ledgerID, correction: correction.correction)
+                return try sharedHubReply(NativeCorrectionResponse(accepted: true))
+            }
+        } catch {
+            return .failure(error.localizedDescription)
+        }
+    }
+
+    private func sharedHubReply<Body: Encodable>(_ body: Body) throws -> SharedHubClient.Reply {
+        let encoded = try JSONEncoder().encode(body)
+        guard let object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any],
+              SharedBrowserBridgeProtocol.isValidBody(object) else {
+            return .failure("classifier-response-invalid")
+        }
+        return .success(object)
+    }
+
+    func presentSharedHubPairingEntry() {
+        let alert = NSAlert()
+        alert.messageText = "Connect to Mac Vault"
+        alert.informativeText = "Enter the 64-character pairing key shown by Mac Vault. It is stored only in this Mac's Keychain and joins the existing local Vault bridge at ws://127.0.0.1:8787."
+        alert.addButton(withTitle: "Connect")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        field.placeholderString = "Mac Vault pairing key"
+        alert.accessoryView = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            try SharedHubPairingKeyStore.save(field.stringValue)
+            sharedHubClient?.connectUsingStoredKey()
+            issue = nil
+        } catch {
+            issue = error.localizedDescription
+        }
+    }
+
+    func disconnectSharedHub() {
+        do {
+            try SharedHubPairingKeyStore.remove()
+            sharedHubClient?.disconnect()
+            issue = nil
         } catch {
             issue = error.localizedDescription
         }
@@ -655,6 +707,45 @@ final class VaultClassifierViewModel: ObservableObject {
         } catch { issue = error.localizedDescription }
     }
 
+    func addCollectionPlatform(platformID: String) {
+        do {
+            guard let definition = CollectionPlatformRegistry.definition(for: platformID),
+                  var catalog = localState?.workspaceCatalog else {
+                throw WebBridgeInputError.invalidChoice("collection platform")
+            }
+            guard !catalog.bindings.contains(where: { $0.id == definition.id }) else {
+                throw WebBridgeInputError.invalidChoice("collection platform already exists")
+            }
+            guard let tree = catalog.trees.first, let dataset = catalog.datasets.first else {
+                throw WebBridgeInputError.invalidChoice("workspace assets")
+            }
+            catalog.bindings.append(.init(
+                id: definition.id,
+                name: definition.name,
+                browser: definition.browser,
+                treeID: tree.id,
+                datasetID: dataset.id,
+                collectionEnabled: false
+            ))
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
+    func setCollectionEnabled(platformID: String, enabled: Bool) {
+        do {
+            guard var catalog = localState?.workspaceCatalog,
+                  let bindingIndex = catalog.bindings.firstIndex(where: { $0.id == platformID }) else {
+                throw WebBridgeInputError.invalidChoice("collection platform")
+            }
+            catalog.bindings[bindingIndex].collectionEnabled = enabled
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
     func createLocalModel(name: String) {
         do {
             let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1041,10 +1132,10 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
-    func recordManualClassification(title: String, tags: String) {
+    func recordManualClassification(title: String, tags: String, platformID: String) {
         do {
             guard var catalog = localState?.workspaceCatalog,
-                  let binding = catalog.bindings.first,
+                  let binding = catalog.bindings.first(where: { $0.id == platformID }),
                   let tree = catalog.trees.first(where: { $0.id == binding.treeID }),
                   let datasetIndex = catalog.datasets.firstIndex(where: { $0.id == binding.datasetID }) else { return }
             let labels = splitTagList(tags)
@@ -1635,7 +1726,30 @@ final class VaultClassifierViewModel: ObservableObject {
                 }] as [String: Any]
             },
             "datasets": catalog.datasets.map { dataset in
-                ["id": dataset.id, "name": dataset.name, "revision": dataset.revision, "records": dataset.records.map { record -> [String: Any] in ["id": record.id, "title": record.title, "tags": record.tagIDs, "origin": record.origin.rawValue, "review": record.review.rawValue, "platformID": record.platformID] }] as [String: Any]
+                [
+                    "id": dataset.id,
+                    "name": dataset.name,
+                    "revision": dataset.revision,
+                    "records": dataset.records.map { record -> [String: Any] in
+                        ["id": record.id, "title": record.title, "tags": record.tagIDs, "origin": record.origin.rawValue, "review": record.review.rawValue, "platformID": record.platformID]
+                    },
+                    "collectedEntries": dataset.collectedEntries.map { entry -> [String: Any] in
+                        [
+                            "id": entry.id,
+                            "platformID": entry.platformID,
+                            "entryID": entry.entryID,
+                            "creatorID": entry.creatorID,
+                            "creatorName": entry.creatorName,
+                            "entryType": entry.entryType,
+                            "title": entry.title,
+                            "canonicalURL": entry.canonicalURL ?? NSNull(),
+                            "attributes": entry.attributes,
+                            "firstObservedAtMilliseconds": entry.firstObservedAtMilliseconds,
+                            "lastObservedAtMilliseconds": entry.lastObservedAtMilliseconds,
+                            "observationCount": entry.observationCount,
+                        ] as [String: Any]
+                    },
+                ] as [String: Any]
             },
             "models": catalog.models.map { model in
                 [
@@ -1722,7 +1836,10 @@ final class VaultClassifierViewModel: ObservableObject {
                     ])
                 }),
             "bindings": catalog.bindings.map { binding in
-                ["id": binding.id, "name": binding.name, "browser": binding.browser, "treeID": binding.treeID, "datasetID": binding.datasetID, "activeModelID": binding.activeModelID ?? NSNull(), "policyID": binding.policyID ?? NSNull()] as [String: Any]
+                ["id": binding.id, "name": binding.name, "browser": binding.browser, "treeID": binding.treeID, "datasetID": binding.datasetID, "activeModelID": binding.activeModelID ?? NSNull(), "policyID": binding.policyID ?? NSNull(), "collectionEnabled": binding.collectionEnabled] as [String: Any]
+            },
+            "collectionPlatforms": CollectionPlatformRegistry.definitions.map { definition in
+                ["id": definition.id, "name": definition.name, "browser": definition.browser, "collectorAvailable": definition.collectorAvailable] as [String: Any]
             },
             "tokenUsage": budgetRecords.suffix(12).reversed().map { record -> [String: Any] in
                 let usage = record.settledUsage ?? record.usageCeiling
@@ -1737,6 +1854,12 @@ final class VaultClassifierViewModel: ObservableObject {
                 ]
             },
         ]
+        let sharedHub: [String: Any] = [
+            "address": SharedBrowserBridgeProtocol.address,
+            "state": sharedHubClient?.state.rawValue ?? "off",
+            "error": sharedHubClient?.error ?? "",
+            "hasPairingKey": sharedHubClient?.hasStoredPairingKey ?? false,
+        ]
         return [
             "workspace": workspace.rawValue,
             "issue": issue ?? NSNull(),
@@ -1748,6 +1871,7 @@ final class VaultClassifierViewModel: ObservableObject {
             "backup": backupPayload,
             "audit": audit,
             "assets": assets,
+            "bridge": sharedHub,
         ]
     }
 
@@ -1766,8 +1890,19 @@ final class VaultClassifierViewModel: ObservableObject {
                 if value == .localModel || value == .llmAssist || value == .browserBridge || value == .classificationData {
                     refreshLocalState()
                 }
+            case "connectSharedHub":
+                presentSharedHubPairingEntry()
+            case "disconnectSharedHub":
+                disconnectSharedHub()
             case "createTree":
                 createTree(name: try webString(data, key: "name", limit: 128))
+            case "addCollectionPlatform":
+                addCollectionPlatform(platformID: try webString(data, key: "platformID", limit: 64))
+            case "setCollectionEnabled":
+                setCollectionEnabled(
+                    platformID: try webString(data, key: "platformID", limit: 64),
+                    enabled: try webBool(data, key: "enabled")
+                )
             case "createLocalModel":
                 createLocalModel(name: try webString(data, key: "name", limit: 128))
             case "createProviderProfile":
@@ -1843,7 +1978,11 @@ final class VaultClassifierViewModel: ObservableObject {
             case "deleteTag":
                 deleteTag(treeID: try webString(data, key: "treeID", limit: 256), nodeID: try webString(data, key: "nodeID", limit: 256))
             case "recordManualClassification":
-                recordManualClassification(title: try webString(data, key: "title", limit: 512), tags: try webString(data, key: "tags", limit: 1_024))
+                recordManualClassification(
+                    title: try webString(data, key: "title", limit: 512),
+                    tags: try webString(data, key: "tags", limit: 1_024),
+                    platformID: try webString(data, key: "platformID", limit: 64)
+                )
             case "classify":
                 title = try webString(data, key: "title", limit: 4_096)
                 sourceID = try webString(data, key: "sourceID", limit: 1_024)
@@ -2780,7 +2919,7 @@ private struct VaultClassifierRootView: View {
                                     .buttonStyle(.bordered)
                             }
                         }
-                        Text("The extension, native host, local state file, diagnostics, and Vault server never receive this credential. An entry is sent to Gemini only after you press Run Gemini below.")
+                        Text("The extension, shared local bridge, state file, diagnostics, and Vault server never receive this credential. An entry is sent to Gemini only after you press Run Gemini below.")
                             .font(.system(size: 10))
                             .foregroundStyle(VaultPalette.muted)
                             .fixedSize(horizontal: false, vertical: true)
@@ -2920,7 +3059,7 @@ private struct VaultClassifierRootView: View {
             }
 
             Text(configuration == nil
-                ? "Provider credentials are never stored in the extension, native host, this state file, or a server."
+                ? "Provider credentials are never stored in the extension, shared local bridge, this state file, or a server."
                 : "The saved configuration has no provider credential; it only controls local selection and budget reservations. Gemini returns actual input, output, and thinking/other usage for the local ledger.")
                 .font(.system(size: 11))
                 .foregroundStyle(VaultPalette.muted)
