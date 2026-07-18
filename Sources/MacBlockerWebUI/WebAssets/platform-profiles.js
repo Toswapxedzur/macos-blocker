@@ -61,10 +61,7 @@ function isPlatformProfileGroupType(groupType) {
 //   include      → applies only to the listed authors
 //   exclude      → applies to every author except the listed ones
 //   nobody       → applies to no author (author axis blocks nothing)
-//   tagInclude   → YouTube-only stub: authors carrying a tag (no logic yet)
-//   tagExclude   → YouTube-only stub: authors without a tag (no logic yet)
-const PLATFORM_AUTHOR_MODES = ["all", "include", "exclude", "nobody", "tagInclude", "tagExclude"];
-const PLATFORM_AUTHOR_TAG_MODES = ["tagInclude", "tagExclude"];
+const PLATFORM_AUTHOR_MODES = ["all", "include", "exclude", "nobody"];
 
 function normalizePlatformAuthorMode(value) {
   if (value === "none") return "all"; // legacy value meant "apply to all authors"
@@ -75,11 +72,6 @@ function normalizePlatformAuthorMode(value) {
 function platformAuthorModeUsesList(mode) {
   const m = normalizePlatformAuthorMode(mode);
   return m === "include" || m === "exclude";
-}
-
-// True for the YouTube tag-based stubs (visual only for now).
-function isPlatformAuthorTagMode(mode) {
-  return PLATFORM_AUTHOR_TAG_MODES.includes(normalizePlatformAuthorMode(mode));
 }
 
 function normalizeVideoMode(value) {
@@ -586,7 +578,7 @@ function matchesPlatformVideoGroup(group, pageContext) {
   if (!matchesVideoMode(group, pageContext)) return false;
 
   if (authorMode === "all") return true;
-  // "nobody" and the YouTube tag stubs don't block via the author axis yet.
+  // "nobody" does not block via the author axis.
   if (authorMode !== "include" && authorMode !== "exclude") return false;
 
   if (!Array.isArray(group.platformAuthors) || group.platformAuthors.length === 0) return false;
@@ -1112,9 +1104,7 @@ const __cbPlatformRegistry = {
   surfaceHideEntryScope,
   platformGroupAuthorAxisMatchesPage,
   platformAuthorModeUsesList,
-  isPlatformAuthorTagMode,
-  PLATFORM_AUTHOR_MODES,
-  PLATFORM_AUTHOR_TAG_MODES
+  PLATFORM_AUTHOR_MODES
 };
 
 if (typeof module !== "undefined" && module.exports) {
