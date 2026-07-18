@@ -215,6 +215,9 @@ final class VaultClassifierCoreTests: XCTestCase {
         XCTAssertFalse(SharedBrowserBridgeProtocol.isValidRequestID("request\n001"))
         XCTAssertTrue(SharedBrowserBridgeProtocol.isValidBody(["entry": ["title": "Visible card"]]))
         XCTAssertFalse(SharedBrowserBridgeProtocol.isValidBody(["entry": String(repeating: "x", count: SharedBrowserBridgeProtocol.maximumBodyBytes + 1)]))
+        XCTAssertTrue(SharedBrowserBridgeProtocol.isAcceptedHubProgram("macapp"))
+        XCTAssertTrue(SharedBrowserBridgeProtocol.isAcceptedHubProgram("classifier"))
+        XCTAssertFalse(SharedBrowserBridgeProtocol.isAcceptedHubProgram("browser"))
     }
 
     func testCollectedEntriesDeduplicateWithoutChangingDatasetRevision() {

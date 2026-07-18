@@ -39,6 +39,13 @@ public enum SharedBrowserBridgeProtocol {
         return try? JSONSerialization.data(withJSONObject: value)
     }
 
+    /// Either Vault desktop app can own the one shared loopback listener. This
+    /// is intentionally a host identity check, not a permission to send a
+    /// classifier request: requests are still accepted only from browser peers.
+    public static func isAcceptedHubProgram(_ value: String) -> Bool {
+        value == "macapp" || value == "classifier"
+    }
+
     private static func isVisibleIdentifier(_ value: String, maximumLength: Int) -> Bool {
         !value.isEmpty && value.count <= maximumLength && value.unicodeScalars.allSatisfy {
             $0.value >= 0x21 && $0.value <= 0x7e

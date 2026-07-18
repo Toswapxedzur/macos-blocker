@@ -130,9 +130,27 @@
     if (!utilityPanel) return "";
     if (utilityPanel === "settings") {
       const settings = state.activity.settings;
-      return `<section class="utility-panel cyan" data-form-id="utility-settings-form"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="utility-close" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}" title="${tx("utility.close")}">×</button></div><div class="form-row">${selectField("activity.profile", "activity.profileHint", "profile", settings.profile, [["light", "enum.profile.light"], ["balanced", "enum.profile.balanced"], ["aggressive", "enum.profile.aggressive"]])}${field("activity.cacheCapacity", "activity.uniqueEntries", "cacheCapacity", settings.cacheCapacity)}${selectField("activity.packageUpdates", "activity.preference", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div><div class="utility-toggles">${toggle("activity.idleWork", "allowIdleWork", settings.allowIdleWork)}${toggle("activity.backgroundSync", "allowBackgroundSync", settings.allowBackgroundSync)}${toggle("activity.auditDispatch", "allowLocalLLMAudit", settings.allowLocalLLMAudit)}</div><div class="action-row"><button class="primary" data-action="saveResourceSettings" data-form="utility-settings-form">${tx("activity.save")}</button></div></section>`;
+      return `<section class="utility-panel cyan" data-form-id="utility-settings-form"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="utility-close" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}" title="${tx("utility.close")}">×</button></div><div class="form-row">${selectField("activity.profile", "activity.profileHint", "profile", settings.profile, [["light", "enum.profile.light"], ["balanced", "enum.profile.balanced"], ["aggressive", "enum.profile.aggressive"]])}${field("activity.cacheCapacity", "activity.uniqueEntries", "cacheCapacity", settings.cacheCapacity)}${selectField("activity.packageUpdates", "activity.preference", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div><div class="utility-toggles">${toggle("activity.idleWork", "allowIdleWork", settings.allowIdleWork)}${toggle("activity.backgroundSync", "allowBackgroundSync", settings.allowBackgroundSync)}${toggle("activity.auditDispatch", "allowLocalLLMAudit", settings.allowLocalLLMAudit)}</div><div class="action-row"><button class="primary" data-action="saveResourceSettings" data-form="utility-settings-form">${tx("activity.save")}</button></div><section class="utility-setting-card navy"><div><h3>${tx("bridge.settingsTitle")}</h3><p class="section-copy">${tx("bridge.settingsCopy")}</p></div><button class="secondary" data-action="openUtilityPanel" data-utility-panel="browserBridge">${tx("bridge.openSettings")}</button></section></section>`;
+    }
+    if (utilityPanel === "browserBridge") {
+      return browserBridgeSettingsPopover();
     }
     return "";
+  }
+
+  function browserBridgeSettingsPopover() {
+    const hub = state.bridge || {};
+    const hosting = hub.isHosting === true;
+    const connected = hub.state === "connected";
+    const stateKey = hosting ? `bridge.status.${hub.serverState || "starting"}` : `bridge.status.${hub.state || "off"}`;
+    const serverButton = hosting
+      ? `<button class="danger" data-action="stopSharedHubServer">${tx("bridge.stopServer")}</button>`
+      : `<button class="secondary" data-action="hostSharedHub">${tx("bridge.hostServer")}</button>`;
+    const connectionButton = hosting ? "" : (connected
+      ? `<button class="secondary" data-action="disconnectSharedHub">${tx("bridge.disconnect")}</button>`
+      : `<button class="primary" data-action="connectSharedHub">${tx("bridge.connect")}</button>`);
+    const error = hosting ? hub.serverError : hub.error;
+    return `<section class="utility-panel navy"><div class="utility-panel-head"><div><h2>${tx("bridge.settingsTitle")}</h2><p class="section-copy">${tx("bridge.settingsCopy")}</p></div><div class="action-row"><button class="secondary" data-action="openUtilityPanel" data-utility-panel="settings">${tx("bridge.backToSettings")}</button><button class="utility-close" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}" title="${tx("utility.close")}">×</button></div></div><div class="bridge-settings-status"><div class="status-line"><strong>${tx("bridge.hubAddress")}</strong><span class="spacer"></span><span>${esc(hub.address || "ws://127.0.0.1:8787")}</span></div><div class="status-line"><strong>${tx("bridge.hubStatus")}</strong><span class="spacer"></span>${statusPill(tx(stateKey), hosting ? "navy" : (connected ? "cyan" : "muted"))}</div><div class="status-line"><strong>${tx("bridge.pairing")}</strong><span class="spacer"></span><span>${tx(hub.hasPairingKey ? "bridge.pairingStored" : "bridge.pairingMissing")}</span></div></div><div class="bridge-settings-actions">${connectionButton}${serverButton}</div><p class="small-copy">${tx("bridge.hostCopy")}</p>${error ? notice(error, "red") : ""}</section>`;
   }
 
   function navButton(workspace, symbol, titleKey, metaKey, tone) {
@@ -528,14 +546,8 @@
   }
 
   function browserBridgeWorkspace() {
-    const binding = state.assets.bindings[0];
-    const hub = state.bridge || {};
-    const connected = hub.state === "connected";
-    const hubStatus = tx(`bridge.status.${hub.state || "off"}`);
-    return `<div class="workspace">${header("bridge.title", "bridge.copy", t("bridge.macOnly"), "navy")}
-      <section class="section-card navy"><div class="section-header"><div><h3>${tx("bridge.sharedHub")}</h3><p class="section-copy">${tx("bridge.sharedHubCopy")}</p></div><div class="action-row">${connected ? `<button class="danger" data-action="disconnectSharedHub">${tx("bridge.disconnect")}</button>` : `<button class="primary" data-action="connectSharedHub">${tx("bridge.connect")}</button>`}</div></div><div class="status-line"><strong>${tx("bridge.hubAddress")}</strong><span class="spacer"></span><span>${esc(hub.address || "ws://127.0.0.1:8787")}</span></div><div class="status-line"><strong>${tx("bridge.hubStatus")}</strong><span class="spacer"></span>${statusPill(hubStatus, connected ? "navy" : "muted")}</div><div class="status-line"><strong>${tx("bridge.pairing")}</strong><span class="spacer"></span><span>${tx(hub.hasPairingKey ? "bridge.pairingStored" : "bridge.pairingMissing")}</span></div>${hub.error ? notice(esc(hub.error), "red") : ""}</section>
-      <section class="section-card navy"><div class="section-header"><div><h3>${tx("bridge.platform")}</h3><p class="section-copy">${tx("bridge.platformCopy")}</p></div></div><div class="status-line"><strong>${esc(binding?.name || t("bridge.none"))}</strong><span class="spacer"></span><span>${esc(binding?.browser || "")}</span></div><div class="status-line"><strong>${tx("bridge.assetBinding")}</strong><span class="spacer"></span><span>${tx("bridge.oneTreeDataset")}</span></div></section>
-      <section class="section-card navy"><div class="section-header"><div><h3>${tx("bridge.policy")}</h3><p class="section-copy">${tx("bridge.policyCopy")}</p></div></div>${state.policies.items.length ? `<div class="list">${state.policies.items.map((policy) => `<div class="list-row"><span class="list-symbol">⌗</span><span class="list-copy"><span class="list-title">${esc(policy.name || policy.id)}</span><span class="list-meta">${esc(policy.id)}</span></span></div>`).join("")}</div>` : `<div class="empty">${tx("bridge.noPolicy")}</div>`}</section>${notice(state.issue, "red")}</div>`;
+    return `<div class="workspace">${header("bridge.title", "bridge.futureCopy", t("bridge.reserved"), "navy")}
+      <section class="section-card navy"><div class="section-header"><div><h3>${tx("bridge.reserved")}</h3><p class="section-copy">${tx("bridge.reservedCopy")}</p></div><button class="secondary" data-action="openUtilityPanel" data-utility-panel="browserBridge">${tx("bridge.openSettings")}</button></div></section>${notice(state.issue, "red")}</div>`;
   }
 
   function classificationDataWorkspace() {
