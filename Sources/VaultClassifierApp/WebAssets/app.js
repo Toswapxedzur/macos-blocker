@@ -822,13 +822,11 @@
       return;
     }
     if (action === "deleteLocalModel") {
-      if (!window.confirm(`${t("model.confirmDelete")}\n\n${t("model.confirmDeleteCopy")}`)) return;
-      send(action, data);
+      send("confirmDeleteLocalModel", data);
       return;
     }
     if (action === "deleteProviderProfile") {
-      if (!window.confirm(`${t("llm.confirmDelete")}\n\n${t("llm.confirmDeleteCopy")}`)) return;
-      send(action, data);
+      send("confirmDeleteProviderProfile", data);
       return;
     }
     if (action === "addTag") {
