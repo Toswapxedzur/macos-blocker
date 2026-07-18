@@ -529,18 +529,61 @@
 
   function browserBridgeWorkspace() {
     const binding = state.assets.bindings[0];
+    const hub = state.bridge || {};
+    const connected = hub.state === "connected";
+    const hubStatus = tx(`bridge.status.${hub.state || "off"}`);
     return `<div class="workspace">${header("bridge.title", "bridge.copy", t("bridge.macOnly"), "navy")}
+      <section class="section-card navy"><div class="section-header"><div><h3>${tx("bridge.sharedHub")}</h3><p class="section-copy">${tx("bridge.sharedHubCopy")}</p></div><div class="action-row">${connected ? `<button class="danger" data-action="disconnectSharedHub">${tx("bridge.disconnect")}</button>` : `<button class="primary" data-action="connectSharedHub">${tx("bridge.connect")}</button>`}</div></div><div class="status-line"><strong>${tx("bridge.hubAddress")}</strong><span class="spacer"></span><span>${esc(hub.address || "ws://127.0.0.1:8787")}</span></div><div class="status-line"><strong>${tx("bridge.hubStatus")}</strong><span class="spacer"></span>${statusPill(hubStatus, connected ? "navy" : "muted")}</div><div class="status-line"><strong>${tx("bridge.pairing")}</strong><span class="spacer"></span><span>${tx(hub.hasPairingKey ? "bridge.pairingStored" : "bridge.pairingMissing")}</span></div>${hub.error ? notice(esc(hub.error), "red") : ""}</section>
       <section class="section-card navy"><div class="section-header"><div><h3>${tx("bridge.platform")}</h3><p class="section-copy">${tx("bridge.platformCopy")}</p></div></div><div class="status-line"><strong>${esc(binding?.name || t("bridge.none"))}</strong><span class="spacer"></span><span>${esc(binding?.browser || "")}</span></div><div class="status-line"><strong>${tx("bridge.assetBinding")}</strong><span class="spacer"></span><span>${tx("bridge.oneTreeDataset")}</span></div></section>
-      <section class="section-card navy"><div class="section-header"><div><h3>${tx("bridge.policy")}</h3><p class="section-copy">${tx("bridge.policyCopy")}</p></div><button class="secondary" data-action="workspace" data-workspace="browserBridge">${tx("bridge.configure")}</button></div>${state.policies.items.length ? `<div class="list">${state.policies.items.map((policy) => `<div class="list-row"><span class="list-symbol">⌗</span><span class="list-copy"><span class="list-title">${esc(policy.name || policy.id)}</span><span class="list-meta">${esc(policy.id)}</span></span></div>`).join("")}</div>` : `<div class="empty">${tx("bridge.noPolicy")}</div>`}</section>${notice(state.issue, "red")}</div>`;
+      <section class="section-card navy"><div class="section-header"><div><h3>${tx("bridge.policy")}</h3><p class="section-copy">${tx("bridge.policyCopy")}</p></div></div>${state.policies.items.length ? `<div class="list">${state.policies.items.map((policy) => `<div class="list-row"><span class="list-symbol">⌗</span><span class="list-copy"><span class="list-title">${esc(policy.name || policy.id)}</span><span class="list-meta">${esc(policy.id)}</span></span></div>`).join("")}</div>` : `<div class="empty">${tx("bridge.noPolicy")}</div>`}</section>${notice(state.issue, "red")}</div>`;
   }
 
   function classificationDataWorkspace() {
-    const dataset = state.assets.datasets[0];
-    const records = dataset?.records || [];
-    const tree = state.assets.trees[0];
-    return `<div class="workspace">${header("data.title", "data.copy", t("data.records", { count: records.length }), "cyan")}
-      <section class="section-card cyan" data-form-id="manual-record-form"><div class="section-header"><div><h3>${tx("data.manual")}</h3><p class="section-copy">${tx("data.manualCopy")}</p></div></div><div class="form-stack">${field("data.entryTitle", "", "title", "")}${field("data.tagIDs", "data.tagIDsHint", "tags", tree?.nodes.filter((node) => !node.retired).map((node) => node.id).join(", ") || "")}<div class="action-row"><button class="primary" data-action="recordManualClassification" data-form="manual-record-form">${tx("data.record")}</button></div></div></section>
-      <section class="section-card cyan"><div class="section-header"><div><h3>${tx("data.ledger")}</h3><p class="section-copy">${tx("data.ledgerCopy")}</p></div></div>${records.length ? `<div class="list">${records.map((record) => `<div class="list-row"><span class="list-symbol">${record.origin === "manual" ? "✓" : "◌"}</span><span class="list-copy"><span class="list-title">${esc(record.title)}</span><span class="list-meta">${esc(record.tags.join(", "))} · ${tx(`data.origin.${record.origin}`)} · ${tx(`data.review.${record.review}`)}</span></span></div>`).join("")}</div>` : `<div class="empty">${tx("data.empty")}</div>`}</section>${notice(state.issue, "red")}</div>`;
+    const assets = state.assets;
+    const bindings = assets.bindings || [];
+    const datasets = assets.datasets || [];
+    const definitions = assets.collectionPlatforms || [];
+    const datasetByID = new Map(datasets.map((dataset) => [dataset.id, dataset]));
+    const treeByID = new Map((assets.trees || []).map((tree) => [tree.id, tree]));
+    const allRecords = datasets.flatMap((dataset) => dataset.records || []);
+    const allCollected = datasets.flatMap((dataset) => dataset.collectedEntries || []);
+    const availablePlatforms = definitions.filter((definition) => !bindings.some((binding) => binding.id === definition.id));
+    const manualBinding = bindings[0];
+    const manualTree = manualBinding ? treeByID.get(manualBinding.treeID) : null;
+    const manualPlatformOptions = bindings.map((binding) => [binding.id, binding.name]);
+    const observedAt = (value) => {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(numeric)) : t("data.unknownDate");
+    };
+    const bindingPanel = (binding) => {
+      const definition = definitions.find((candidate) => candidate.id === binding.id);
+      const dataset = datasetByID.get(binding.datasetID);
+      const entries = (dataset?.collectedEntries || []).filter((entry) => entry.platformID === binding.id);
+      const creators = new Map();
+      entries.forEach((entry) => {
+        const creatorID = entry.creatorID || "unknown";
+        const group = creators.get(creatorID) || { id: creatorID, name: entry.creatorName || creatorID, entries: [] };
+        group.entries.push(entry);
+        creators.set(creatorID, group);
+      });
+      const creatorRows = [...creators.values()]
+        .sort((lhs, rhs) => Math.max(...rhs.entries.map((entry) => Number(entry.lastObservedAtMilliseconds) || 0)) - Math.max(...lhs.entries.map((entry) => Number(entry.lastObservedAtMilliseconds) || 0)))
+        .map((creator) => {
+          const creatorEntries = creator.entries.sort((lhs, rhs) => (Number(rhs.lastObservedAtMilliseconds) || 0) - (Number(lhs.lastObservedAtMilliseconds) || 0));
+          return `<details class="collection-creator"><summary><span class="collection-creator-name">${esc(creator.name)}</span><span class="collection-creator-count">${tx("data.entryCount", { count: creatorEntries.length })}</span></summary><div class="collection-entry-list">${creatorEntries.map((entry) => {
+            const attributes = Object.entries(entry.attributes || {}).slice(0, 5).map(([key, value]) => `${esc(key)}: ${esc(value)}`).join(" · ");
+            return `<div class="collection-entry"><span class="collection-entry-title">${esc(entry.title)}</span><span class="collection-entry-meta">${esc(entry.entryType)} · ${observedAt(entry.lastObservedAtMilliseconds)}${attributes ? ` · ${attributes}` : ""}</span></div>`;
+          }).join("")}</div></details>`;
+        }).join("");
+      const formID = `collection-platform-${binding.id}`;
+      const availability = definition?.collectorAvailable ? "data.collectorAvailable" : "data.collectorPlanned";
+      return `<section class="collection-platform-panel" data-form-id="${esc(formID)}"><div class="collection-platform-head"><div><span class="eyebrow">${tx("data.platformPanel")}</span><h3>${esc(binding.name)}</h3><p class="section-copy">${esc(binding.browser)} · ${tx(availability)}</p></div>${statusPill(t(binding.collectionEnabled ? "data.collecting" : "data.collectionOff"), binding.collectionEnabled ? "cyan" : "muted")}</div><div class="collection-platform-controls">${toggle("data.collectToggle", "enabled", Boolean(binding.collectionEnabled))}<button class="primary" data-action="setCollectionEnabled" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyCollection")}</button><span class="small-copy">${tx("data.creatorCount", { count: creators.size })} · ${tx("data.entryCount", { count: entries.length })}</span></div>${entries.length ? `<div class="collection-creators">${creatorRows}</div>` : `<div class="empty collection-empty">${tx(binding.collectionEnabled ? "data.waitingForEntries" : "data.collectionDisabledCopy")}</div>`}</section>`;
+    };
+    return `<div class="workspace collection-workspace">${header("data.title", "data.copy", t("data.entries", { count: allCollected.length }), "cyan")}
+      <section class="collection-platform-create" data-form-id="collection-platform-create-form"><div><span class="eyebrow">${tx("data.addPlatform")}</span><p class="section-copy">${tx("data.addPlatformCopy")}</p></div>${availablePlatforms.length ? `${valueSelectField("data.platform", "", "platformID", availablePlatforms[0].id, availablePlatforms.map((platform) => [platform.id, platform.name]))}<button class="primary" data-action="addCollectionPlatform" data-form="collection-platform-create-form">${tx("data.addPlatformAction")}</button>` : `<span class="small-copy">${tx("data.allPlatformsAdded")}</span>`}</section>
+      <div class="collection-platform-panels">${bindings.length ? bindings.map(bindingPanel).join("") : `<div class="empty">${tx("data.noPlatforms")}</div>`}</div>
+      <section class="section-card cyan" data-form-id="manual-record-form"><div class="section-header"><div><h3>${tx("data.manual")}</h3><p class="section-copy">${tx("data.manualCopy")}</p></div></div><div class="form-stack">${manualPlatformOptions.length ? valueSelectField("data.platform", "", "platformID", manualBinding.id, manualPlatformOptions) : ""}${field("data.entryTitle", "", "title", "")}${field("data.tagIDs", "data.tagIDsHint", "tags", manualTree?.nodes.filter((node) => !node.retired).map((node) => node.id).join(", ") || "")}<div class="action-row"><button class="primary" data-action="recordManualClassification" data-form="manual-record-form"${disabled(!manualPlatformOptions.length)}>${tx("data.record")}</button></div></div></section>
+      <section class="section-card cyan"><div class="section-header"><div><h3>${tx("data.ledger")}</h3><p class="section-copy">${tx("data.ledgerCopy")}</p></div></div>${allRecords.length ? `<div class="list">${allRecords.map((record) => `<div class="list-row"><span class="list-symbol">${record.origin === "manual" ? "✓" : "◌"}</span><span class="list-copy"><span class="list-title">${esc(record.title)}</span><span class="list-meta">${esc(record.tags.join(", "))} · ${tx(`data.origin.${record.origin}`)} · ${tx(`data.review.${record.review}`)}</span></span></div>`).join("")}</div>` : `<div class="empty">${tx("data.empty")}</div>`}</section>${notice(state.issue, "red")}</div>`;
   }
 
   function workspace() {
@@ -757,6 +800,7 @@
     if (button.dataset.treeId) data.treeID = button.dataset.treeId;
     if (button.dataset.nodeId) data.nodeID = button.dataset.nodeId;
     if (button.dataset.parentId) data.parentID = button.dataset.parentId;
+    if (button.dataset.platformId) data.platformID = button.dataset.platformId;
     if (action === "configureProviderProfile") {
       const protocolConfiguration = {};
       Object.keys(data).filter((key) => key.startsWith("protocol.")).forEach((key) => {

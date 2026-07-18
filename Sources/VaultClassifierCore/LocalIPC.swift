@@ -16,13 +16,17 @@ public struct LocalIPCRequest: Codable, Equatable, Sendable {
 public struct LocalIPCResponse: Codable, Equatable, Sendable {
     public var requestID: String
     public var bridgeInfo: NativeBridgeInfoResponse?
+    public var collectionInfo: NativeCollectionInfoResponse?
+    public var collection: NativeCollectionResponse?
     public var classification: NativeClassificationResponse?
     public var correction: NativeCorrectionResponse?
     public var error: String?
 
-    public init(requestID: String, bridgeInfo: NativeBridgeInfoResponse? = nil, classification: NativeClassificationResponse? = nil, correction: NativeCorrectionResponse? = nil, error: String? = nil) {
+    public init(requestID: String, bridgeInfo: NativeBridgeInfoResponse? = nil, collectionInfo: NativeCollectionInfoResponse? = nil, collection: NativeCollectionResponse? = nil, classification: NativeClassificationResponse? = nil, correction: NativeCorrectionResponse? = nil, error: String? = nil) {
         self.requestID = requestID
         self.bridgeInfo = bridgeInfo
+        self.collectionInfo = collectionInfo
+        self.collection = collection
         self.classification = classification
         self.correction = correction
         self.error = error

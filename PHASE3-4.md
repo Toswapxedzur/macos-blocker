@@ -36,7 +36,7 @@ The optional personal-audit path is intentionally narrow:
    choose when to rebuild. Views, clicks, normal corrections, and unconfirmed
    provider output remain non-labels.
 
-The extension, native host, local state file, diagnostic export, and Vault
+The extension, shared local bridge, local state file, diagnostic export, and Vault
 server never receive the provider key. The redacted diagnostic copy action
 excludes raw evidence, entry/source/audit identifiers, rationales, credentials,
 and stable evidence digests.

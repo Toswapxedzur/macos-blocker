@@ -113,17 +113,120 @@ public struct ClassificationRecord: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+/// Rendered public-content metadata the user has explicitly chosen to retain
+/// from a supported browser platform. It is not a classification label and
+/// therefore never changes the dataset revision or enters training until the
+/// user creates or approves a separate `ClassificationRecord`.
+public struct CollectedPlatformEntry: Codable, Equatable, Sendable, Identifiable {
+    public static let maximumRetainedEntries = 5_000
+    public static let maximumAttributes = 16
+    public static let maximumAttributeKeyLength = 64
+    public static let maximumAttributeValueLength = 512
+
+    /// The platform's durable public-content identifier. It is scoped by
+    /// `platformID`, so the same raw identifier on different platforms is
+    /// retained independently.
+    public var id: String
+    public var platformID: String
+    public var entryID: String
+    public var creatorID: String
+    public var creatorName: String
+    /// A small, platform-provided content kind such as `video`, `short`,
+    /// `live`, `post`, or `track`. Advertisement kinds are rejected before
+    /// persistence.
+    public var entryType: String
+    public var title: String
+    public var canonicalURL: String?
+    public var attributes: [String: String]
+    public var firstObservedAtMilliseconds: Int64
+    public var lastObservedAtMilliseconds: Int64
+    public var observationCount: Int
+
+    public init(
+        id: String,
+        platformID: String,
+        entryID: String,
+        creatorID: String,
+        creatorName: String,
+        entryType: String,
+        title: String,
+        canonicalURL: String? = nil,
+        attributes: [String: String] = [:],
+        firstObservedAtMilliseconds: Int64 = WorkspaceCatalog.now(),
+        lastObservedAtMilliseconds: Int64 = WorkspaceCatalog.now(),
+        observationCount: Int = 1
+    ) {
+        self.id = id
+        self.platformID = platformID
+        self.entryID = entryID
+        self.creatorID = creatorID
+        self.creatorName = creatorName
+        self.entryType = entryType
+        self.title = title
+        self.canonicalURL = canonicalURL
+        self.attributes = attributes
+        self.firstObservedAtMilliseconds = firstObservedAtMilliseconds
+        self.lastObservedAtMilliseconds = lastObservedAtMilliseconds
+        self.observationCount = max(1, observationCount)
+    }
+
+    public var deduplicationKey: String { "\(platformID)\u{1F}\(entryID)" }
+}
+
 public struct ClassificationDataset: Codable, Equatable, Sendable, Identifiable {
     public var id: String
     public var name: String
     public var records: [ClassificationRecord]
+    /// Browser-collected entries are deliberately separate from labelled
+    /// records. They support reviewing a creator's observed public entries,
+    /// but cannot silently become model-training material.
+    public var collectedEntries: [CollectedPlatformEntry]
     public var revision: Int
 
-    public init(id: String = UUID().uuidString, name: String, records: [ClassificationRecord] = [], revision: Int = 1) {
+    public init(id: String = UUID().uuidString, name: String, records: [ClassificationRecord] = [], collectedEntries: [CollectedPlatformEntry] = [], revision: Int = 1) {
         self.id = id
         self.name = name
         self.records = records
+        self.collectedEntries = Array(collectedEntries.suffix(CollectedPlatformEntry.maximumRetainedEntries))
         self.revision = revision
+    }
+
+    /// Updates a previously seen public entry in place, preserving its first
+    /// observation. New raw entries are bounded independently from training
+    /// labels and never advance the dataset revision.
+    @discardableResult
+    public mutating func upsertCollectedEntry(_ entry: CollectedPlatformEntry) -> Bool {
+        if let index = collectedEntries.firstIndex(where: { $0.deduplicationKey == entry.deduplicationKey }) {
+            let firstSeen = collectedEntries[index].firstObservedAtMilliseconds
+            let sightings = collectedEntries[index].observationCount
+            var refreshed = entry
+            refreshed.firstObservedAtMilliseconds = firstSeen
+            refreshed.observationCount = min(Int.max, sightings + 1)
+            collectedEntries[index] = refreshed
+            return false
+        }
+        collectedEntries.append(entry)
+        if collectedEntries.count > CollectedPlatformEntry.maximumRetainedEntries {
+            collectedEntries.sort { lhs, rhs in
+                if lhs.lastObservedAtMilliseconds == rhs.lastObservedAtMilliseconds { return lhs.id < rhs.id }
+                return lhs.lastObservedAtMilliseconds > rhs.lastObservedAtMilliseconds
+            }
+            collectedEntries = Array(collectedEntries.prefix(CollectedPlatformEntry.maximumRetainedEntries))
+        }
+        return true
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, records, collectedEntries, revision
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        records = try container.decodeIfPresent([ClassificationRecord].self, forKey: .records) ?? []
+        collectedEntries = Array((try container.decodeIfPresent([CollectedPlatformEntry].self, forKey: .collectedEntries) ?? []).suffix(CollectedPlatformEntry.maximumRetainedEntries))
+        revision = try container.decodeIfPresent(Int.self, forKey: .revision) ?? 1
     }
 }
 
@@ -262,6 +365,51 @@ public enum LocalModelTrainer {
     }
 }
 
+public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
+    public var id: String
+    public var name: String
+    public var browser: String
+    /// Only a registered adapter can send collection requests today. The
+    /// remaining platform entries are intentionally selectable now so their
+    /// local tree/dataset binding exists before an adapter is added.
+    public var collectorAvailable: Bool
+
+    public init(id: String, name: String, browser: String = "Chrome and Edge", collectorAvailable: Bool = false) {
+        self.id = id
+        self.name = name
+        self.browser = browser
+        self.collectorAvailable = collectorAvailable
+    }
+}
+
+public enum CollectionPlatformRegistry {
+    public static let definitions: [CollectionPlatformDefinition] = [
+        .init(id: "youtube", name: "YouTube", collectorAvailable: true),
+        .init(id: "tiktok", name: "TikTok"),
+        .init(id: "facebook", name: "Facebook"),
+        .init(id: "instagram", name: "Instagram"),
+        .init(id: "twitch", name: "Twitch"),
+        .init(id: "reddit", name: "Reddit"),
+        .init(id: "discord", name: "Discord"),
+        .init(id: "twitter", name: "Twitter / X"),
+        .init(id: "pinterest", name: "Pinterest"),
+        .init(id: "bluesky", name: "Bluesky"),
+        .init(id: "threads", name: "Threads"),
+        .init(id: "substack", name: "Substack"),
+        .init(id: "bilibili", name: "Bilibili"),
+        .init(id: "rumble", name: "Rumble"),
+        .init(id: "kick", name: "Kick"),
+        .init(id: "tumblr", name: "Tumblr"),
+        .init(id: "peertube", name: "PeerTube"),
+        .init(id: "pixelfed", name: "Pixelfed"),
+        .init(id: "kuaishou", name: "Kuaishou"),
+    ]
+
+    public static func definition(for id: String) -> CollectionPlatformDefinition? {
+        definitions.first(where: { $0.id == id })
+    }
+}
+
 public struct PlatformBinding: Codable, Equatable, Sendable, Identifiable {
     public var id: String
     public var name: String
@@ -270,8 +418,11 @@ public struct PlatformBinding: Codable, Equatable, Sendable, Identifiable {
     public var datasetID: String
     public var activeModelID: String?
     public var policyID: String?
+    /// Raw public-content collection is off by default. A browser may only
+    /// send title/creator metadata after this local binding is explicitly on.
+    public var collectionEnabled: Bool
 
-    public init(id: String = "youtube", name: String = "YouTube", browser: String = "Chrome and Edge", treeID: String, datasetID: String, activeModelID: String? = nil, policyID: String? = nil) {
+    public init(id: String = "youtube", name: String = "YouTube", browser: String = "Chrome and Edge", treeID: String, datasetID: String, activeModelID: String? = nil, policyID: String? = nil, collectionEnabled: Bool = false) {
         self.id = id
         self.name = name
         self.browser = browser
@@ -279,6 +430,23 @@ public struct PlatformBinding: Codable, Equatable, Sendable, Identifiable {
         self.datasetID = datasetID
         self.activeModelID = activeModelID
         self.policyID = policyID
+        self.collectionEnabled = collectionEnabled
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, browser, treeID, datasetID, activeModelID, policyID, collectionEnabled
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        browser = try container.decodeIfPresent(String.self, forKey: .browser) ?? "Chrome and Edge"
+        treeID = try container.decode(String.self, forKey: .treeID)
+        datasetID = try container.decode(String.self, forKey: .datasetID)
+        activeModelID = try container.decodeIfPresent(String.self, forKey: .activeModelID)
+        policyID = try container.decodeIfPresent(String.self, forKey: .policyID)
+        collectionEnabled = try container.decodeIfPresent(Bool.self, forKey: .collectionEnabled) ?? false
     }
 }
 
@@ -689,6 +857,8 @@ public enum WorkspaceCatalogError: Error, Equatable, LocalizedError, Sendable {
     case missingDataset(String)
     case missingModel(String)
     case incompatibleActiveModel(String)
+    case unsupportedCollectionPlatform(String)
+    case invalidCollectedEntry(String)
     case invalidProviderProfile(String)
     case missingYouTubeProvider(String)
 
@@ -699,6 +869,8 @@ public enum WorkspaceCatalogError: Error, Equatable, LocalizedError, Sendable {
         case .missingDataset(let value): return "The platform binding references a missing classification dataset: \(value)."
         case .missingModel(let value): return "The platform binding references a missing local model: \(value)."
         case .incompatibleActiveModel(let value): return "The active local model is not compatible with the platform tree and dataset: \(value)."
+        case .unsupportedCollectionPlatform(let value): return "The collection platform is not supported: \(value)."
+        case .invalidCollectedEntry(let value): return "The collected platform entry is invalid: \(value)."
         case .invalidProviderProfile(let value): return "The API provider profile is invalid: \(value)."
         case .missingYouTubeProvider(let value): return "The LLM profile references a missing YouTube Data API profile: \(value)."
         }
@@ -740,12 +912,41 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     public func validate() throws {
         try unique(trees.map(\.id) + datasets.map(\.id) + models.map(\.id) + bindings.map(\.id) + providerProfiles.map(\.id))
         for binding in bindings {
+            guard CollectionPlatformRegistry.definition(for: binding.id) != nil else {
+                throw WorkspaceCatalogError.unsupportedCollectionPlatform(binding.id)
+            }
             guard let tree = trees.first(where: { $0.id == binding.treeID }) else { throw WorkspaceCatalogError.missingTree(binding.treeID) }
             guard let dataset = datasets.first(where: { $0.id == binding.datasetID }) else { throw WorkspaceCatalogError.missingDataset(binding.datasetID) }
             guard let activeModelID = binding.activeModelID else { continue }
             guard let model = models.first(where: { $0.id == activeModelID }) else { throw WorkspaceCatalogError.missingModel(activeModelID) }
             guard model.isReady, model.treeID == tree.id, model.treeRevision == tree.revision, model.datasetID == dataset.id, model.datasetRevision == dataset.revision else {
                 throw WorkspaceCatalogError.incompatibleActiveModel(activeModelID)
+            }
+        }
+        for dataset in datasets {
+            guard dataset.collectedEntries.count <= CollectedPlatformEntry.maximumRetainedEntries else {
+                throw WorkspaceCatalogError.invalidCollectedEntry(dataset.id)
+            }
+            var seenEntries = Set<String>()
+            for entry in dataset.collectedEntries {
+                guard CollectionPlatformRegistry.definition(for: entry.platformID) != nil,
+                      !entry.id.isEmpty,
+                      !entry.entryID.isEmpty,
+                      !entry.creatorID.isEmpty,
+                      !entry.creatorName.isEmpty,
+                      !entry.entryType.isEmpty,
+                      !entry.title.isEmpty,
+                      entry.attributes.count <= CollectedPlatformEntry.maximumAttributes,
+                      entry.attributes.allSatisfy({ key, value in
+                          !key.isEmpty && key.count <= CollectedPlatformEntry.maximumAttributeKeyLength &&
+                          value.count <= CollectedPlatformEntry.maximumAttributeValueLength &&
+                          key.unicodeScalars.allSatisfy({ $0.value >= 0x20 && $0.value != 0x7f }) &&
+                          value.unicodeScalars.allSatisfy({ $0.value >= 0x20 && $0.value != 0x7f })
+                      }),
+                      entry.observationCount > 0,
+                      seenEntries.insert(entry.deduplicationKey).inserted else {
+                    throw WorkspaceCatalogError.invalidCollectedEntry(entry.id)
+                }
             }
         }
         for profile in providerProfiles {
