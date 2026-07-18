@@ -168,6 +168,30 @@ final class WorkspaceAssetsTests: XCTestCase {
         }
     }
 
+    func testExpandedProviderPresetsSeparateModelAndDataProfiles() throws {
+        let azure = APIKeyProviderProfile(
+            id: "azure",
+            type: .azureOpenAI,
+            customEndpoint: "https://example.openai.azure.com"
+        )
+        let brave = APIKeyProviderProfile(id: "brave", type: .braveSearch)
+
+        XCTAssertTrue(APIKeyProviderType.allCases.contains(.mistral))
+        XCTAssertTrue(APIKeyProviderType.allCases.contains(.voyageAI))
+        XCTAssertTrue(APIKeyProviderType.allCases.contains(.googleCustomSearch))
+        XCTAssertNoThrow(try azure.validate())
+        XCTAssertNoThrow(try brave.validate())
+        XCTAssertFalse(APIKeyProviderType.braveSearch.supportsLLMConfiguration)
+        XCTAssertTrue(APIKeyProviderType.nvidiaNIM.supportsLLMConfiguration)
+
+        let invalidDataProfile = APIKeyProviderProfile(
+            id: "invalid-brave",
+            type: .braveSearch,
+            modelIdentifier: "not-a-model"
+        )
+        XCTAssertThrowsError(try invalidDataProfile.validate())
+    }
+
     func testLegacyCatalogDecodesWithoutProviderProfiles() throws {
         let encoded = try JSONEncoder().encode(WorkspaceCatalog.starter())
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])

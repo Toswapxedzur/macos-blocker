@@ -328,12 +328,8 @@ final class VaultClassifierViewModel: ObservableObject {
                 let normalizedYouTubeID = youtubeProviderID?.trimmingCharacters(in: .whitespacesAndNewlines)
                 profile.youtubeProviderID = normalizedYouTubeID?.isEmpty == false ? normalizedYouTubeID : nil
                 profile.searchEnabled = searchEnabled
-                if profile.type == .custom {
-                    let normalizedEndpoint = customEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines)
-                    profile.customEndpoint = normalizedEndpoint?.isEmpty == false ? normalizedEndpoint : nil
-                } else {
-                    profile.customEndpoint = nil
-                }
+                let normalizedEndpoint = customEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines)
+                profile.customEndpoint = normalizedEndpoint?.isEmpty == false ? normalizedEndpoint : nil
             } else {
                 profile.modelIdentifier = ""
                 profile.batchSize = 1

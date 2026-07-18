@@ -98,6 +98,10 @@
     return `<label class="field"><span class="field-label">${tx(labelKey)}${hintKey ? ` · ${tx(hintKey)}` : ""}</span><select class="select-control" data-field="${esc(key)}" ${extra}>${options.map(([id, label]) => `<option value="${esc(id)}"${selected(value, id)}>${esc(label)}</option>`).join("")}</select></label>`;
   }
 
+  function groupedValueSelectField(labelKey, hintKey, key, value, groups, extra = "") {
+    return `<label class="field"><span class="field-label">${tx(labelKey)}${hintKey ? ` · ${tx(hintKey)}` : ""}</span><select class="select-control" data-field="${esc(key)}" ${extra}>${groups.map(([groupKey, options]) => `<optgroup label="${tx(groupKey)}">${options.map(([id, label]) => `<option value="${esc(id)}"${selected(value, id)}>${esc(label)}</option>`).join("")}</optgroup>`).join("")}</select></label>`;
+  }
+
   function toggle(labelKey, key, value) {
     return `<label class="toggle-row"><input type="checkbox" data-field="${esc(key)}"${checked(value)}><span>${tx(labelKey)}</span></label>`;
   }
@@ -387,6 +391,33 @@
       deepSeek: "llm.provider.deepSeek",
       youtubeData: "llm.provider.youtubeData",
       claude: "llm.provider.claude",
+      mistral: "llm.provider.mistral",
+      cohere: "llm.provider.cohere",
+      groq: "llm.provider.groq",
+      xAI: "llm.provider.xAI",
+      perplexity: "llm.provider.perplexity",
+      openRouter: "llm.provider.openRouter",
+      togetherAI: "llm.provider.togetherAI",
+      fireworksAI: "llm.provider.fireworksAI",
+      huggingFace: "llm.provider.huggingFace",
+      replicate: "llm.provider.replicate",
+      azureOpenAI: "llm.provider.azureOpenAI",
+      awsBedrock: "llm.provider.awsBedrock",
+      googleVertexAI: "llm.provider.googleVertexAI",
+      cloudflareWorkersAI: "llm.provider.cloudflareWorkersAI",
+      nvidiaNIM: "llm.provider.nvidiaNIM",
+      cerebras: "llm.provider.cerebras",
+      sambaNova: "llm.provider.sambaNova",
+      ai21: "llm.provider.ai21",
+      voyageAI: "llm.provider.voyageAI",
+      jinaAI: "llm.provider.jinaAI",
+      ollama: "llm.provider.ollama",
+      braveSearch: "llm.provider.braveSearch",
+      tavily: "llm.provider.tavily",
+      serpAPI: "llm.provider.serpAPI",
+      firecrawl: "llm.provider.firecrawl",
+      googleCustomSearch: "llm.provider.googleCustomSearch",
+      bingWebSearch: "llm.provider.bingWebSearch",
       custom: "llm.provider.custom",
     };
     return keys[type] || "llm.provider.custom";
@@ -394,17 +425,25 @@
 
   function llmAssistWorkspace() {
     const profiles = state.assets.providerProfiles || [];
-    const profileTypeOptions = ["chatGPT", "gemini", "deepSeek", "youtubeData", "claude", "custom"].map((type) => [type, t(providerTypeLabelKey(type))]);
+    const profileTypeGroups = [
+      ["llm.providerGroup.models", ["chatGPT", "gemini", "claude", "deepSeek", "mistral", "cohere", "xAI", "perplexity", "ai21"]],
+      ["llm.providerGroup.inference", ["groq", "cerebras", "sambaNova", "nvidiaNIM", "openRouter", "togetherAI", "fireworksAI", "huggingFace", "replicate", "ollama"]],
+      ["llm.providerGroup.cloud", ["azureOpenAI", "awsBedrock", "googleVertexAI", "cloudflareWorkersAI"]],
+      ["llm.providerGroup.embeddings", ["voyageAI", "jinaAI"]],
+      ["llm.providerGroup.data", ["youtubeData", "braveSearch", "tavily", "serpAPI", "firecrawl", "googleCustomSearch", "bingWebSearch"]],
+      ["llm.providerGroup.custom", ["custom"]],
+    ].map(([groupKey, types]) => [groupKey, types.map((type) => [type, t(providerTypeLabelKey(type))])]);
     const youtubeProfiles = profiles.filter((profile) => profile.type === "youtubeData");
     const panel = (profile) => {
       const formID = `provider-profile-${profile.id}`;
       const supportsLLM = profile.type !== "youtubeData";
       const credentialStatus = profile.hasStoredCredential ? "llm.credentialStored" : "llm.credentialNeeded";
       const youtubeOptions = [["", t("llm.noYouTubeTool")], ...youtubeProfiles.filter((candidate) => candidate.id !== profile.id).map((candidate) => [candidate.id, candidate.name])];
-      const setup = supportsLLM ? `<div class="provider-setup"><div class="section-header"><div><h3>${tx("llm.modelSetup")}</h3><p class="section-copy">${tx("llm.modelSetupCopy")}</p></div></div><div class="provider-setup-fields">${field("llm.modelIdentifier", "", "modelIdentifier", profile.modelIdentifier)}${field("llm.batchSize", "", "batchSize", profile.batchSize, "text", "inputmode=\"numeric\"")}${field("llm.maximumTokens", "", "maximumTokens", profile.maximumTokens, "text", "inputmode=\"numeric\"")}</div>${profile.type === "custom" ? field("llm.customEndpoint", "llm.customEndpointCopy", "customEndpoint", profile.customEndpoint || "") : ""}<div class="provider-tools"><span class="eyebrow">${tx("llm.externalTools")}</span>${valueSelectField("llm.youtubeTool", "llm.youtubeToolCopy", "youtubeProviderID", profile.youtubeProviderID || "", youtubeOptions)}${toggle("llm.search", "searchEnabled", profile.searchEnabled)}</div></div>` : `<div class="provider-api-note"><span class="eyebrow">${tx("llm.externalTool")}</span><p class="section-copy">${tx("llm.youtubeOnlyCopy")}</p></div>`;
+      const externalOnlyCopy = profile.type === "youtubeData" ? "llm.youtubeOnlyCopy" : "llm.dataAPIOnlyCopy";
+      const setup = supportsLLM ? `<div class="provider-setup"><div class="section-header"><div><h3>${tx("llm.modelSetup")}</h3><p class="section-copy">${tx("llm.modelSetupCopy")}</p></div></div><div class="provider-setup-fields">${field("llm.modelIdentifier", "", "modelIdentifier", profile.modelIdentifier)}${field("llm.batchSize", "", "batchSize", profile.batchSize, "text", "inputmode=\"numeric\"")}${field("llm.maximumTokens", "", "maximumTokens", profile.maximumTokens, "text", "inputmode=\"numeric\"")}</div>${field("llm.apiEndpoint", "llm.apiEndpointCopy", "customEndpoint", profile.customEndpoint || "")}<div class="provider-tools"><span class="eyebrow">${tx("llm.externalTools")}</span>${valueSelectField("llm.youtubeTool", "llm.youtubeToolCopy", "youtubeProviderID", profile.youtubeProviderID || "", youtubeOptions)}${toggle("llm.search", "searchEnabled", profile.searchEnabled)}</div></div>` : `<div class="provider-api-note"><span class="eyebrow">${tx("llm.externalTool")}</span><p class="section-copy">${tx(externalOnlyCopy)}</p></div>`;
       return `<section class="provider-panel" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}"><div class="provider-panel-head"><div><span class="eyebrow">${tx("llm.providerPanel")}</span><h3>${esc(profile.name)}</h3><p class="section-copy">${tx(providerTypeLabelKey(profile.type))}</p></div><div class="provider-panel-status">${statusPill(t(credentialStatus), profile.hasStoredCredential ? "gold" : "muted")}</div></div><div class="provider-name-row">${field("llm.profileName", "", "name", profile.name)}<button class="secondary" data-action="configureProviderProfile" data-form="${esc(formID)}" data-profile-id="${esc(profile.id)}">${tx("llm.saveProfile")}</button><button class="danger" data-action="deleteProviderProfile" data-profile-id="${esc(profile.id)}">${tx("llm.deleteProfile")}</button></div><section class="provider-credential"><div class="section-header"><div><h3>${tx("llm.apiKey")}</h3><p class="section-copy">${tx("llm.keychainCopy")}</p></div></div><div class="provider-credential-row">${field("llm.keychainCredential", profile.hasStoredCredential ? "llm.replaceCredential" : "llm.enterCredential", "apiKey", "", "password")}<button class="secondary" data-action="storeProviderCredential" data-form="${esc(formID)}" data-profile-id="${esc(profile.id)}">${tx(profile.hasStoredCredential ? "llm.replaceKey" : "llm.storeKey")}</button>${profile.hasStoredCredential ? `<button class="danger" data-action="removeProviderCredential" data-profile-id="${esc(profile.id)}">${tx("llm.removeKey")}</button>` : ""}</div></section>${setup}</section>`;
     };
-    return `<div class="workspace provider-workspace">${header("llm.title", "llm.copy", t("llm.keyLibrary"), "gold")}<section class="provider-create" data-form-id="new-provider-profile-form">${valueSelectField("llm.providerType", "", "type", "gemini", profileTypeOptions)}<button class="gold-action" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button><span class="small-copy">${tx("llm.createCopy")}</span></section><div class="provider-panels">${profiles.length ? profiles.map(panel).join("") : `<div class="empty">${tx("llm.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
+    return `<div class="workspace provider-workspace">${header("llm.title", "llm.copy", t("llm.keyLibrary"), "gold")}<section class="provider-create" data-form-id="new-provider-profile-form">${groupedValueSelectField("llm.providerType", "", "type", "gemini", profileTypeGroups)}<button class="gold-action" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button><span class="small-copy">${tx("llm.createCopy")}</span></section><div class="provider-panels">${profiles.length ? profiles.map(panel).join("") : `<div class="empty">${tx("llm.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
   }
 
   function browserBridgeWorkspace() {

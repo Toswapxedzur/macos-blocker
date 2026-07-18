@@ -311,9 +311,43 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
     case deepSeek
     case youtubeData
     case claude
+    case mistral
+    case cohere
+    case groq
+    case xAI
+    case perplexity
+    case openRouter
+    case togetherAI
+    case fireworksAI
+    case huggingFace
+    case replicate
+    case azureOpenAI
+    case awsBedrock
+    case googleVertexAI
+    case cloudflareWorkersAI
+    case nvidiaNIM
+    case cerebras
+    case sambaNova
+    case ai21
+    case voyageAI
+    case jinaAI
+    case ollama
+    case braveSearch
+    case tavily
+    case serpAPI
+    case firecrawl
+    case googleCustomSearch
+    case bingWebSearch
     case custom
 
-    public var supportsLLMConfiguration: Bool { self != .youtubeData }
+    public var supportsLLMConfiguration: Bool {
+        switch self {
+        case .youtubeData, .braveSearch, .tavily, .serpAPI, .firecrawl, .googleCustomSearch, .bingWebSearch:
+            return false
+        default:
+            return true
+        }
+    }
 
     public var defaultProfileName: String {
         switch self {
@@ -322,6 +356,33 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
         case .deepSeek: return "DeepSeek key"
         case .youtubeData: return "YouTube Data API key"
         case .claude: return "Claude key"
+        case .mistral: return "Mistral key"
+        case .cohere: return "Cohere key"
+        case .groq: return "Groq key"
+        case .xAI: return "xAI key"
+        case .perplexity: return "Perplexity key"
+        case .openRouter: return "OpenRouter key"
+        case .togetherAI: return "Together AI key"
+        case .fireworksAI: return "Fireworks AI key"
+        case .huggingFace: return "Hugging Face key"
+        case .replicate: return "Replicate key"
+        case .azureOpenAI: return "Azure OpenAI key"
+        case .awsBedrock: return "AWS Bedrock key"
+        case .googleVertexAI: return "Google Vertex AI key"
+        case .cloudflareWorkersAI: return "Cloudflare Workers AI key"
+        case .nvidiaNIM: return "NVIDIA NIM key"
+        case .cerebras: return "Cerebras key"
+        case .sambaNova: return "SambaNova key"
+        case .ai21: return "AI21 key"
+        case .voyageAI: return "Voyage AI key"
+        case .jinaAI: return "Jina AI key"
+        case .ollama: return "Ollama profile"
+        case .braveSearch: return "Brave Search API key"
+        case .tavily: return "Tavily API key"
+        case .serpAPI: return "SerpAPI key"
+        case .firecrawl: return "Firecrawl API key"
+        case .googleCustomSearch: return "Google Custom Search key"
+        case .bingWebSearch: return "Bing Web Search key"
         case .custom: return "Custom API key"
         }
     }
@@ -332,7 +393,28 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
         case .gemini: return "gemini-3.1-flash-lite"
         case .deepSeek: return "deepseek-chat"
         case .claude: return "claude-sonnet-4-5"
-        case .youtubeData: return ""
+        case .mistral: return "mistral-large-latest"
+        case .cohere: return "command-a-plus-05-2026"
+        case .groq: return "llama-3.3-70b-versatile"
+        case .xAI: return "grok-4.5"
+        case .perplexity: return "sonar"
+        case .openRouter: return "openai/gpt-4.1-mini"
+        case .togetherAI: return "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+        case .fireworksAI: return "accounts/fireworks/models/llama-v3p3-70b-instruct"
+        case .huggingFace: return "meta-llama/Llama-3.3-70B-Instruct"
+        case .replicate: return "meta/meta-llama-3-70b-instruct"
+        case .azureOpenAI: return "gpt-4.1-mini"
+        case .awsBedrock: return "anthropic.claude-sonnet-4-5-20250929-v1:0"
+        case .googleVertexAI: return "gemini-3.1-flash-lite"
+        case .cloudflareWorkersAI: return "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+        case .nvidiaNIM: return "meta/llama-3.3-70b-instruct"
+        case .cerebras: return "gpt-oss-120b"
+        case .sambaNova: return "Meta-Llama-3.3-70B-Instruct"
+        case .ai21: return "jamba-large-1.7"
+        case .voyageAI: return "voyage-4"
+        case .jinaAI: return "jina-embeddings-v4"
+        case .ollama: return "llama3.3"
+        case .youtubeData, .braveSearch, .tavily, .serpAPI, .firecrawl, .googleCustomSearch, .bingWebSearch: return ""
         case .custom: return "custom-model"
         }
     }
@@ -355,8 +437,9 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
     public var maximumTokens: Int
     public var youtubeProviderID: String?
     public var searchEnabled: Bool
-    /// An explicit endpoint is reserved for the Custom entry. It is stored as
-    /// configuration only; this source slice performs no network dispatch.
+    /// An optional endpoint override supports compatible cloud, self-hosted,
+    /// and custom entries. It is configuration only; this source slice makes
+    /// no network dispatch.
     public var customEndpoint: String?
     public var updatedAtMilliseconds: Int64
 
@@ -403,7 +486,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         }
 
         let normalizedEndpoint = customEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if type == .custom, let normalizedEndpoint {
+        if type.supportsLLMConfiguration, let normalizedEndpoint {
             guard normalizedEndpoint.count <= Self.maximumEndpointLength,
                   let components = URLComponents(string: normalizedEndpoint),
                   components.scheme != nil,
