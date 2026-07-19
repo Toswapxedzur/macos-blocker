@@ -1313,6 +1313,81 @@ textarea:disabled {
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.22);
 }
 
+/* Keep the existing Mac controls, but give Settings the same spacious
+   three-column shell as the extension. The grid is presentation-only: each
+   control keeps its original DOM position and behavior. */
+#settingsModal .modal-card {
+  width: min(1100px, 100%);
+  max-height: min(90vh, 880px);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: auto auto auto 1fr auto auto;
+  gap: 14px;
+  overflow: auto;
+}
+
+#settingsModal .manual-modal-header,
+#settingsModal .modal-actions,
+#settingsModal #settingsStatus {
+  grid-column: 1 / -1;
+}
+
+#settingsModal .manual-modal-header {
+  margin: 0;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+#settingsModal .settings-grid {
+  grid-column: 1;
+  align-self: start;
+  grid-template-columns: 1fr;
+  margin: 0;
+}
+
+#settingsModal > .modal-card > label[for="settingsDebugMode"],
+#settingsModal > .modal-card > label[for="settingsDebugMode"] + .field-help {
+  grid-column: 1;
+  margin: 0;
+}
+
+#settingsModal #connectionSection {
+  grid-column: 2;
+  grid-row: 2;
+  margin: 0;
+}
+
+#settingsModal #connectionSection + .section-card {
+  grid-column: 2;
+  grid-row: 3;
+  margin: 0;
+}
+
+#settingsModal #connectionSection + .section-card + .section-card {
+  grid-column: 3;
+  grid-row: 2;
+  margin: 0;
+}
+
+#settingsModal .modal-actions {
+  margin: 0;
+  padding-top: 14px;
+  border-top: 1px solid #e2e8f0;
+}
+
+@media (max-width: 900px) {
+  #settingsModal .modal-card {
+    display: flex;
+    max-height: min(90vh, 880px);
+  }
+
+  #settingsModal #connectionSection,
+  #settingsModal #connectionSection + .section-card,
+  #settingsModal #connectionSection + .section-card + .section-card {
+    margin-top: 14px;
+  }
+}
+
 .manual-modal-card {
   width: min(920px, 100%);
   max-height: min(88vh, 900px);
