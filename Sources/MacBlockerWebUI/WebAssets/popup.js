@@ -834,8 +834,10 @@ function connectionStatusLabel(status) {
     case "server-running-not-connected":
       return t("connection.statusRunning") + ", " + t("connection.statusDisconnected");
     case "running":
+    case "hosting":
       return t("connection.statusRunning");
     case "connected":
+    case "joined":
       return t("connection.statusConnected");
     case "connecting":
       return t("connection.statusConnecting");
@@ -860,7 +862,7 @@ function renderConnectionSettings() {
 
   if (connectionServerControls) connectionServerControls.classList.add("hidden");
   if (connectionClientControls) connectionClientControls.classList.remove("hidden");
-  const connected = status.state === "connected" || status.state === "connecting" || status.state === "running";
+  const connected = status.state === "connected" || status.state === "connecting" || status.state === "running" || status.state === "hosting" || status.state === "joined";
   if (connectionConnectButton) connectionConnectButton.classList.toggle("hidden", connected);
   if (connectionDisconnectButton) connectionDisconnectButton.classList.toggle("hidden", !connected);
 
@@ -949,6 +951,7 @@ function requestConnectionStatus() {
 const CONNECTION_PROGRAM_LABELS = {
   macapp: "Mac Vault",
   windowsapp: "Windows Vault",
+  classifier: "Vault Classifier",
   chrome: "Chrome",
   edge: "Edge",
   firefox: "Firefox",
@@ -963,7 +966,7 @@ function connectionProgramLabel(programId) {
 
 function bridgeIsOnline() {
   const s = state.connectionStatus || {};
-  return s.state === "connected" || s.state === "running";
+  return s.state === "connected" || s.state === "running" || s.state === "hosting" || s.state === "joined";
 }
 
 function isBridgeEligibleGroup(group) {

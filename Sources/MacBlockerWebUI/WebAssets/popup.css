@@ -572,6 +572,9 @@ textarea:focus {
   background: #16a34a;
 }
 
+.connection-dot.hosting { background: #d97706; }
+.connection-dot.joined { background: #0891b2; }
+
 .connection-dot.connecting {
   background: #f59e0b;
 }
