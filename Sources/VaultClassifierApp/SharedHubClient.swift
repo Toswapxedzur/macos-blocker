@@ -1,8 +1,8 @@
 import Foundation
 import VaultClassifierCore
 
-/// The classifier is a client of the one ephemeral Vault broker. It never
-/// listens on a local port and the broker never persists its requests.
+/// The classifier joins the fixed local Vault hub and becomes its lightweight
+/// classifier host when Mac Vault is not open.
 @MainActor
 final class SharedHubClient {
     enum State: String {
@@ -42,6 +42,7 @@ final class SharedHubClient {
 
     func connect() {
         desired = true
+        LocalClassifierHub.shared.startIfNeeded()
         reconnectTimer?.invalidate()
         reconnectTimer = nil
         handshakeTimer?.invalidate()
@@ -81,6 +82,7 @@ final class SharedHubClient {
         handshakeTimer?.invalidate()
         handshakeTimer = nil
         closeSocket()
+        LocalClassifierHub.shared.stop()
         peers = []
         transition(to: .off, error: "")
     }

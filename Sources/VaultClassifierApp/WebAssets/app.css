@@ -397,6 +397,18 @@ h3 { font-size: 13px; }
 .utility-setting-card .section-copy { margin: 3px 0 0; }
 .bridge-settings-status { display: grid; gap: 8px; }
 .bridge-settings-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.utility-bridge-modal { padding: 28px 34px 30px 36px; background: #fff9e8; overflow: hidden; }
+.utility-bridge-modal::before { content: ""; display: block; position: absolute; inset: 22px auto 24px 0; width: 7px; border-radius: 0 7px 7px 0; background: var(--gold-600); }
+.utility-bridge-modal .utility-panel-head { padding-bottom: 2px; border-bottom: 0; }
+.utility-bridge-modal .utility-panel-head h2 { color: #5d4d38; font-size: 29px; letter-spacing: -0.04em; }
+.utility-bridge-modal .section-copy { max-width: 640px; color: var(--navy-700); font-size: 17px; line-height: 1.35; }
+.bridge-local-status { display: flex; align-items: center; gap: 12px; color: #111827; font-size: 17px; }
+.bridge-local-status .status-dot { width: 13px; height: 13px; background: #94a3b8; }
+.bridge-local-status .status-dot.connected { background: var(--cyan-700); }
+.bridge-address { margin: 0; color: var(--navy-700); font-size: 15px; }
+.bridge-address code { color: var(--navy-700); font-size: 16px; }
+.bridge-server-toggle { min-height: 30px; color: var(--navy-700); font-size: 16px; }
+.bridge-peer-copy { margin: 0; color: var(--navy-700); font-size: 15px; }
 
 @media (max-width: 620px) {
   .utility-popover-layer { padding: 12px; }

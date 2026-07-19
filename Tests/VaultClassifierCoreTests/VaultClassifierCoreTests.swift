@@ -207,13 +207,14 @@ final class VaultClassifierCoreTests: XCTestCase {
 
     func testSharedBrowserBridgeFramesAreStrictlyBounded() {
         XCTAssertEqual(SharedBrowserBridgeProtocol.version, 3)
-        XCTAssertEqual(SharedBrowserBridgeProtocol.address, "wss://customblocker.com/api/vault-bridge")
+        XCTAssertEqual(SharedBrowserBridgeProtocol.address, "ws://127.0.0.1:8787")
         XCTAssertTrue(SharedBrowserBridgeProtocol.isValidRequestID("request-001"))
         XCTAssertFalse(SharedBrowserBridgeProtocol.isValidRequestID("request\n001"))
         XCTAssertTrue(SharedBrowserBridgeProtocol.isValidBody(["entry": ["title": "Visible card"]]))
         XCTAssertFalse(SharedBrowserBridgeProtocol.isValidBody(["entry": String(repeating: "x", count: SharedBrowserBridgeProtocol.maximumBodyBytes + 1)]))
-        XCTAssertTrue(SharedBrowserBridgeProtocol.isAcceptedHubProgram("vault-broker"))
-        XCTAssertFalse(SharedBrowserBridgeProtocol.isAcceptedHubProgram("macapp"))
+        XCTAssertTrue(SharedBrowserBridgeProtocol.isAcceptedHubProgram("macapp"))
+        XCTAssertTrue(SharedBrowserBridgeProtocol.isAcceptedHubProgram("classifier"))
+        XCTAssertFalse(SharedBrowserBridgeProtocol.isAcceptedHubProgram("vault-broker"))
         XCTAssertFalse(SharedBrowserBridgeProtocol.isAcceptedHubProgram("browser"))
     }
 
