@@ -181,9 +181,9 @@ const cbDialog = (function () {
 
 // Extension-wide preferences. Keep these defaults in sync with the
 // placeholder text in popup.html's Settings modal.
-// Both the native app and browser extension connect out to the shared broker.
+// The first open native Vault app owns the fixed local hub; later apps join it.
 const CONNECTION_PROTOCOL_VERSION = window.CBBridgeProtocol.PROTOCOL_VERSION;
-const CONNECTION_DEFAULT_ADDRESS = "wss://customblocker.com/api/vault-bridge";
+const CONNECTION_DEFAULT_ADDRESS = "ws://127.0.0.1:8787";
 const DEFAULT_CONNECTION_SETTINGS = {
   serverEnabled: false,
   clientEnabled: false
@@ -831,6 +831,8 @@ async function updateConnectionSettings(patch) {
 
 function connectionStatusLabel(status) {
   switch (status && status.state) {
+    case "server-running-not-connected":
+      return t("connection.statusRunning") + ", " + t("connection.statusDisconnected");
     case "running":
       return t("connection.statusRunning");
     case "connected":

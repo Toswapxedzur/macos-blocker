@@ -8,7 +8,7 @@
 
   var PROTOCOL_VERSION = 3;
   var DESKTOP_PROGRAMS = ["macapp", "windowsapp", "classifier"];
-  var HUB_PROGRAMS = DESKTOP_PROGRAMS.concat(["vault-broker"]);
+  var HUB_PROGRAMS = DESKTOP_PROGRAMS.slice();
   var REMOTE_PROGRAMS = ["chrome", "edge", "firefox", "safari", "opera", "browser"];
 
   function isDesktopProgram(program) {
