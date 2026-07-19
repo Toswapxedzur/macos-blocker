@@ -41,6 +41,18 @@ final class VaultClassifierWebShell {
         coordinator.webView?.navigationDelegate = nil
     }
 
+    /// Builds a data-only native-to-WebKit update. `atob` returns a binary
+    /// string, so decode its bytes as UTF-8 before parsing JSON; otherwise
+    /// curly quotes and other non-ASCII collected metadata render garbled.
+    static func stateUpdateJavaScript(payload: [String: Any]) -> String? {
+        guard JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else {
+            return nil
+        }
+        let encoded = data.base64EncodedString()
+        return "window.VaultClassifier && window.VaultClassifier.receive(JSON.parse(new TextDecoder().decode(Uint8Array.from(atob('\(encoded)'), value => value.charCodeAt(0)))));"
+    }
+
     private final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         static let messageHandlerName = "vaultClassifier"
         private static let layoutLogger = TagTreeLayoutLogger()
@@ -93,14 +105,10 @@ final class VaultClassifierWebShell {
             let payload = model.webSnapshot()
             Self.layoutLogger.recordNativeSnapshot(payload)
             guard let webView,
-                  JSONSerialization.isValidJSONObject(payload),
-                  let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else {
+                  let script = VaultClassifierWebShell.stateUpdateJavaScript(payload: payload) else {
                 return
             }
-            // Base64 keeps local strings as data rather than source code when
-            // crossing the native-to-web boundary.
-            let encoded = data.base64EncodedString()
-            webView.evaluateJavaScript("window.VaultClassifier && window.VaultClassifier.receive(JSON.parse(atob('\(encoded)')));")
+            webView.evaluateJavaScript(script)
         }
     }
 }
