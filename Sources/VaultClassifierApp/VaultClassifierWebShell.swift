@@ -8,10 +8,13 @@ import WebKit
 final class VaultClassifierWebShell {
     private let model: VaultClassifierViewModel
     private let coordinator: Coordinator
+    private let creatorAvatarSchemeHandler: CreatorAvatarSchemeHandler
 
+    @MainActor
     init(model: VaultClassifierViewModel) {
         self.model = model
         self.coordinator = Coordinator(model: model)
+        self.creatorAvatarSchemeHandler = CreatorAvatarSchemeHandler(cache: model.creatorAvatarCache)
         Task { @MainActor [weak coordinator] in
             model.onWebStateChange = { [weak coordinator] in
                 Task { @MainActor in coordinator?.sendState() }
@@ -21,6 +24,7 @@ final class VaultClassifierWebShell {
 
     func makeWebView() -> WKWebView {
         let configuration = WKWebViewConfiguration()
+        configuration.setURLSchemeHandler(creatorAvatarSchemeHandler, forURLScheme: CreatorAvatarCache.scheme)
         configuration.websiteDataStore = .nonPersistent()
         configuration.userContentController.add(coordinator, name: Coordinator.messageHandlerName)
 

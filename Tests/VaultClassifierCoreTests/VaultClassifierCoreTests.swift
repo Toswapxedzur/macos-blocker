@@ -278,6 +278,7 @@ final class VaultClassifierCoreTests: XCTestCase {
                 "entryType": .string("video"),
                 "subscriberCount": .string("4K"),
                 "published": .string("2 days ago"),
+                "creatorAvatarURL": .string("https://yt3.ggpht.com/creator-avatar=s88"),
             ])
         )
         XCTAssertEqual(coordinator.enabledCollectionPlatformIDs(), ["youtube"])
@@ -289,6 +290,28 @@ final class VaultClassifierCoreTests: XCTestCase {
         XCTAssertEqual(dataset.collectedEntries[0].creatorName, "Creator test")
         XCTAssertEqual(dataset.collectedEntries[0].attributes["subscriberCount"], "4K")
         XCTAssertEqual(dataset.collectedEntries[0].attributes["published"], "2 days ago")
+        XCTAssertEqual(dataset.collectedEntries[0].attributes["creatorAvatarURL"], "https://yt3.ggpht.com/creator-avatar=s88")
+    }
+
+    func testCollectionDropsUntrustedCreatorAvatarURLsWithoutDroppingTheEntry() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let coordinator = try LocalClassifierCoordinator(verifiedPackage: seed(), stateFile: LocalStateFile(url: root.appendingPathComponent("state.json")))
+        let collected = EntryEvidence(
+            platform: "youtube",
+            entryID: "youtube:video:untrusted-avatar",
+            sourceID: "youtube:channel:untrusted-avatar",
+            surface: .feed,
+            evidence: .init(title: "Visible platform entry", metadata: [
+                "sourceName": .string("Creator test"),
+                "entryType": .string("video"),
+                "creatorAvatarURL": .string("https://images.example.invalid/not-an-author.png"),
+            ])
+        )
+        XCTAssertTrue(try coordinator.collectPlatformEntry(collected, at: 123))
+        let dataset = try XCTUnwrap(coordinator.snapshot().workspaceCatalog.datasets.first)
+        XCTAssertNil(dataset.collectedEntries[0].attributes["creatorAvatarURL"])
+        XCTAssertFalse(CreatorAvatarURLPolicy.isAccepted(platformID: "youtube", value: "https://images.example.invalid/not-an-author.png"))
     }
 
     func testLocalIPCRoundTripsOnlyToTheCurrentUserSocket() throws {
