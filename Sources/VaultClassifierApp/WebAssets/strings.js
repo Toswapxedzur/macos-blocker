@@ -597,5 +597,9 @@ window.VaultClassifierStrings = Object.freeze({
   "data.waitingForEntries": "Collection is on. New rendered, non-ad entries will appear here by creator.",
   "data.creatorCount": "{count} CREATORS",
   "data.entryCount": "{count} ENTRIES",
-  "data.unknownDate": "Unknown observation time"
+  "data.unknownDate": "Unknown observation time",
+  "data.diagnostics": "COLLECTION DIAGNOSTICS",
+  "data.diagnosticsCopy": "Local pipeline checkpoints only. They never include page text, titles, creators, URLs, or entry IDs.",
+  "data.clearDiagnostics": "Clear diagnostics",
+  "data.noDiagnostics": "No collection checkpoints yet. Open a supported page to record the next attempt."
 });

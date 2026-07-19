@@ -642,6 +642,11 @@
       const numeric = Number(value);
       return Number.isFinite(numeric) ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(numeric)) : t("data.unknownDate");
     };
+    const diagnostics = Array.isArray(state.collectionDiagnostics) ? state.collectionDiagnostics : [];
+    const diagnosticsPanel = `<section class="collection-diagnostics"><div class="collection-diagnostics-head"><div><span class="eyebrow">${tx("data.diagnostics")}</span><p class="section-copy">${tx("data.diagnosticsCopy")}</p></div><button class="secondary" data-action="clearCollectionDiagnostics">${tx("data.clearDiagnostics")}</button></div>${diagnostics.length ? `<div class="collection-diagnostic-list">${diagnostics.map((entry) => {
+      const checkpoint = [entry.platformID, entry.event, entry.detail, entry.outcome].filter(Boolean).join(" · ");
+      return `<div class="collection-diagnostic-row"><span>${esc(checkpoint)}</span><time>${esc(observedAt(entry.recordedAtMilliseconds))}</time></div>`;
+    }).join("")}</div>` : `<div class="empty collection-diagnostics-empty">${tx("data.noDiagnostics")}</div>`}</section>`;
     const collectionAttributeLabel = (key) => ({
       subscriberCount: "Subscribers",
       viewCount: "Views",
@@ -688,6 +693,7 @@
     };
     return `<div class="workspace collection-workspace">${header("data.title", "data.copy", t("data.entries", { count: allCollected.length }), "cyan")}
       <section class="collection-platform-create" data-form-id="collection-platform-create-form"><div><span class="eyebrow">${tx("data.addPlatform")}</span><p class="section-copy">${tx("data.addPlatformCopy")}</p></div>${availablePlatforms.length ? `${valueSelectField("data.platform", "", "platformID", availablePlatforms[0].id, availablePlatforms.map((platform) => [platform.id, platform.name]))}<button class="primary" data-action="addCollectionPlatform" data-form="collection-platform-create-form">${tx("data.addPlatformAction")}</button>` : `<span class="small-copy">${tx("data.allPlatformsAdded")}</span>`}</section>
+      ${diagnosticsPanel}
       <div class="collection-platform-panels">${bindings.length ? bindings.map(bindingPanel).join("") : `<div class="empty">${tx("data.noPlatforms")}</div>`}</div>
       ${notice(state.issue, "red")}</div>`;
   }
