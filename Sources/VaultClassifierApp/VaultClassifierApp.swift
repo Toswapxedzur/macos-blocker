@@ -411,6 +411,7 @@ final class VaultClassifierViewModel: ObservableObject {
         maximumTokens: String?,
         customEndpoint: String?,
         protocolConfiguration: [String: String],
+        externalToolProfileIDs: [String],
         inputCostUSDPerMillion: String?,
         outputCostUSDPerMillion: String?,
         storesFullRequestRecords: Bool?
@@ -435,6 +436,18 @@ final class VaultClassifierViewModel: ObservableObject {
                 profile.inputCostUSDPerMillion = try providerCostRate(inputCostUSDPerMillion, label: "Provider input token cost")
                 profile.outputCostUSDPerMillion = try providerCostRate(outputCostUSDPerMillion, label: "Provider output token cost")
                 profile.storesFullRequestRecords = storesFullRequestRecords ?? false
+                let selectedToolProfileIDs = Array(Set(externalToolProfileIDs)).sorted()
+                guard selectedToolProfileIDs.count <= APIKeyProviderProfile.maximumExternalToolProfiles,
+                      selectedToolProfileIDs.allSatisfy({ selectedID in
+                          catalog.providerProfiles.contains(where: { candidate in
+                              candidate.id == selectedID &&
+                              !ProviderProtocolRegistry.descriptor(for: candidate.type).supportsLLMConfiguration &&
+                              ProviderProtocolRegistry.descriptor(for: candidate.type).requestFormats.contains(where: { $0.operation == .readPublicContent })
+                          })
+                      }) else {
+                    throw WebBridgeInputError.invalidChoice("external data tools")
+                }
+                profile.externalToolProfileIDs = selectedToolProfileIDs
             } else {
                 profile.modelIdentifier = ""
                 profile.batchSize = 1
@@ -442,6 +455,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 profile.inputCostUSDPerMillion = nil
                 profile.outputCostUSDPerMillion = nil
                 profile.storesFullRequestRecords = false
+                profile.externalToolProfileIDs = []
             }
             let normalizedEndpoint = customEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines)
             profile.customEndpoint = normalizedEndpoint?.isEmpty == false ? normalizedEndpoint : nil
@@ -546,32 +560,25 @@ final class VaultClassifierViewModel: ObservableObject {
             let taxonomy = try tree.inferenceTaxonomy()
             let allowedTagIDs = taxonomy.predictableLeafIDs
             let entry = currentManualEntry()
+            let recordPlan = try ProviderClassificationProtocol.prepare(
+                profile: profile,
+                entry: entry,
+                allowedLeafTagIDs: allowedTagIDs
+            )
             providerClassificationRunning = true
             issue = nil
             Task { [weak self] in
                 guard let self else { return }
                 let startedAt = Date()
-                var prepared: ProviderTestPreparedRequest?
                 do {
-                    let credential = try self.providerCredential(for: profile.id)
-                    let request = try ProviderClassificationProtocol.prepare(
+                    let run = try await self.runProviderClassification(
                         profile: profile,
                         entry: entry,
-                        allowedLeafTagIDs: allowedTagIDs
+                        allowedTagIDs: allowedTagIDs,
+                        catalog: catalog
                     )
-                    prepared = request
-                    var urlRequest = URLRequest(url: request.plan.url)
-                    urlRequest.httpMethod = request.plan.method
-                    urlRequest.httpBody = request.body
-                    urlRequest.timeoutInterval = 30
-                    request.plan.headers.forEach { urlRequest.setValue($0.value, forHTTPHeaderField: $0.key) }
-                    try self.apply(credential: credential, to: &urlRequest, plan: request.plan)
-                    let (data, response) = try await URLSession.shared.data(for: urlRequest)
                     let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
-                    guard let http = response as? HTTPURLResponse else { throw ProviderTestProtocolError.invalidResponse }
-                    guard (200..<300).contains(http.statusCode) else { throw ProviderTestHTTPError.status(http.statusCode) }
-                    let parsed = try ProviderTestProtocol.parseResponse(data, format: request.plan.bodyFormat, operation: request.operation)
-                    let labelIDs = try ProviderClassificationProtocol.parseLabelIDs(parsed.content, allowedLeafTagIDs: allowedTagIDs)
+                    let labelIDs = try ProviderClassificationProtocol.parseLabelIDs(run.content, allowedLeafTagIDs: allowedTagIDs)
                     self.result = ProviderClassificationProtocol.result(
                         entry: entry,
                         classifierType: classifierType,
@@ -592,36 +599,34 @@ final class VaultClassifierViewModel: ObservableObject {
                         provider: profile.type.rawValue,
                         model: profile.modelIdentifier,
                         operation: "classify",
-                        endpoint: ProviderTestProtocol.safeEndpoint(request.plan.url),
-                        method: request.plan.method,
-                        statusCode: http.statusCode,
+                        endpoint: ProviderTestProtocol.safeEndpoint(recordPlan.plan.url),
+                        method: recordPlan.plan.method,
+                        statusCode: run.statusCode,
                         durationMilliseconds: duration,
-                        inputTokens: parsed.usage.inputTokens,
-                        outputTokens: parsed.usage.outputTokens,
-                        estimatedCostUSD: ProviderTestProtocol.estimatedCost(profile: profile, usage: parsed.usage),
+                        inputTokens: run.usage.inputTokens,
+                        outputTokens: run.usage.outputTokens,
+                        estimatedCostUSD: ProviderTestProtocol.estimatedCost(profile: profile, usage: run.usage),
                         outcome: "succeeded",
-                        requestContent: profile.storesFullRequestRecords ? request.prompt : nil,
-                        responseContent: profile.storesFullRequestRecords ? parsed.content : nil
+                        requestContent: profile.storesFullRequestRecords ? run.prompt : nil,
+                        responseContent: profile.storesFullRequestRecords ? run.content : nil
                     ))
                     self.issue = nil
                 } catch {
                     let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
-                    if let prepared {
-                        try? self.appendProviderTestRecord(.init(
-                            profileID: profile.id,
-                            provider: profile.type.rawValue,
-                            model: profile.modelIdentifier,
-                            operation: "classify",
-                            endpoint: ProviderTestProtocol.safeEndpoint(prepared.plan.url),
-                            method: prepared.plan.method,
-                            statusCode: nil,
-                            durationMilliseconds: duration,
-                            inputTokens: nil,
-                            outputTokens: nil,
-                            estimatedCostUSD: nil,
-                            outcome: "failed"
-                        ))
-                    }
+                    try? self.appendProviderTestRecord(.init(
+                        profileID: profile.id,
+                        provider: profile.type.rawValue,
+                        model: profile.modelIdentifier,
+                        operation: "classify",
+                        endpoint: ProviderTestProtocol.safeEndpoint(recordPlan.plan.url),
+                        method: recordPlan.plan.method,
+                        statusCode: nil,
+                        durationMilliseconds: duration,
+                        inputTokens: nil,
+                        outputTokens: nil,
+                        estimatedCostUSD: nil,
+                        outcome: "failed"
+                    ))
                     self.issue = error.localizedDescription
                 }
                 self.providerClassificationRunning = false
@@ -638,6 +643,150 @@ final class VaultClassifierViewModel: ObservableObject {
         throw ProviderTestProtocolError.missingCredential
     }
 
+    private struct ProviderClassificationRun {
+        var prompt: String
+        var content: String
+        var usage: ProviderTestUsage
+        var statusCode: Int
+    }
+
+    /// Runs an explicit classification through the selected LLM. Attached
+    /// platform profiles are optional, bounded local tools; without at least
+    /// one ready tool this retains the direct classification request path.
+    private func runProviderClassification(
+        profile: APIKeyProviderProfile,
+        entry: EntryEvidence,
+        allowedTagIDs: Set<String>,
+        catalog: WorkspaceCatalog
+    ) async throws -> ProviderClassificationRun {
+        let mainCredential = try providerCredential(for: profile.id)
+        let selectedTools = profile.externalToolProfileIDs.compactMap { selectedID in
+            catalog.providerProfiles.first(where: { $0.id == selectedID })
+        }.filter { toolProfile in
+            let descriptor = ProviderProtocolRegistry.descriptor(for: toolProfile.type)
+            guard !descriptor.supportsLLMConfiguration,
+                  (try? toolProfile.validateForDispatch()) != nil else { return false }
+            return descriptor.credentialFields.isEmpty || (try? providerCredential(for: toolProfile.id)) != nil
+        }
+
+        guard !selectedTools.isEmpty else {
+            let request = try ProviderClassificationProtocol.prepare(
+                profile: profile,
+                entry: entry,
+                allowedLeafTagIDs: allowedTagIDs
+            )
+            let response = try await performProviderRequest(plan: request.plan, body: request.body, credential: mainCredential, timeout: 30)
+            let parsed = try ProviderTestProtocol.parseResponse(response.data, format: request.plan.bodyFormat, operation: request.operation)
+            return .init(prompt: request.prompt, content: parsed.content, usage: parsed.usage, statusCode: response.response.statusCode)
+        }
+
+        var request = try ProviderToolCallingProtocol.prepare(
+            profile: profile,
+            entry: entry,
+            allowedLeafTagIDs: allowedTagIDs,
+            toolProfiles: selectedTools
+        )
+        var totalInputTokens: Int?
+        var totalOutputTokens: Int?
+        var totalToolCalls = 0
+        for _ in 0..<3 {
+            let response = try await performProviderRequest(plan: request.plan, body: request.body, credential: mainCredential, timeout: 30)
+            let turn = try ProviderToolCallingProtocol.parseResponse(response.data, format: request.plan.bodyFormat)
+            totalInputTokens = addingTokenUsage(totalInputTokens, turn.usage.inputTokens)
+            totalOutputTokens = addingTokenUsage(totalOutputTokens, turn.usage.outputTokens)
+            guard !turn.toolCalls.isEmpty else {
+                return .init(
+                    prompt: request.prompt,
+                    content: turn.content,
+                    usage: .init(inputTokens: totalInputTokens, outputTokens: totalOutputTokens),
+                    statusCode: response.response.statusCode
+                )
+            }
+            guard totalToolCalls + turn.toolCalls.count <= 4 else {
+                throw ProviderToolCallingProtocolError.invalidToolContinuation
+            }
+            totalToolCalls += turn.toolCalls.count
+            var results: [ProviderToolCallingResult] = []
+            for call in turn.toolCalls {
+                results.append(await executeExternalToolCall(call, definitions: request.toolDefinitions, profiles: selectedTools, entry: entry))
+            }
+            request = try ProviderToolCallingProtocol.continueRequest(
+                prepared: request,
+                profile: profile,
+                turn: turn,
+                results: results
+            )
+        }
+        throw ProviderToolCallingProtocolError.invalidToolContinuation
+    }
+
+    private func addingTokenUsage(_ current: Int?, _ additional: Int?) -> Int? {
+        guard let additional else { return current }
+        return (current ?? 0) + additional
+    }
+
+    private func performProviderRequest(
+        plan: ProviderRequestPlan,
+        body: Data?,
+        credential: ProviderCredentialRecord,
+        timeout: TimeInterval
+    ) async throws -> (data: Data, response: HTTPURLResponse) {
+        var request = URLRequest(url: plan.url)
+        request.httpMethod = plan.method
+        request.httpBody = body
+        request.timeoutInterval = timeout
+        plan.headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
+        try apply(credential: credential, to: &request, plan: plan)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw ProviderTestProtocolError.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else { throw ProviderTestHTTPError.status(http.statusCode) }
+        return (data, http)
+    }
+
+    private func executeExternalToolCall(
+        _ call: ExternalPlatformToolCall,
+        definitions: [ExternalPlatformToolDefinition],
+        profiles: [APIKeyProviderProfile],
+        entry: EntryEvidence
+    ) async -> ProviderToolCallingResult {
+        guard let definition = definitions.first(where: { $0.name == call.name }),
+              let profile = profiles.first(where: { $0.id == definition.profileID }) else {
+            return .init(id: call.id, name: call.name, content: "{\"ok\":false,\"error\":\"Unknown external-data tool.\"}")
+        }
+        do {
+            let prepared = try ExternalPlatformToolProtocol.prepare(profile: profile, entry: entry, call: call)
+            let credential = try providerCredential(for: profile.id)
+            var request = URLRequest(url: prepared.plan.url)
+            request.httpMethod = prepared.plan.method
+            request.httpBody = prepared.body
+            request.timeoutInterval = 20
+            prepared.plan.headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
+            try apply(credential: credential, to: &request, plan: prepared.plan)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw ProviderTestProtocolError.invalidResponse }
+            return .init(
+                id: call.id,
+                name: call.name,
+                content: ExternalPlatformToolProtocol.result(
+                    data: data,
+                    statusCode: http.statusCode,
+                    providerType: prepared.providerType,
+                    target: prepared.target
+                )
+            )
+        } catch {
+            return .init(
+                id: call.id,
+                name: call.name,
+                content: ExternalPlatformToolProtocol.failureResult(
+                    providerType: profile.type,
+                    target: .entry,
+                    message: error.localizedDescription
+                )
+            )
+        }
+    }
+
     private func apply(credential: ProviderCredentialRecord, to request: inout URLRequest, plan: ProviderRequestPlan) throws {
         func value(_ preferred: ProviderCredentialField) throws -> String {
             guard let value = credential.values[preferred] ?? credential.values[.apiKey] ?? credential.values[.bearerToken] else {
@@ -648,7 +797,7 @@ final class VaultClassifierViewModel: ObservableObject {
         switch plan.authentication {
         case .none:
             return
-        case .bearerToken:
+        case .bearerToken, .bearerTokenAndClientID:
             request.setValue("Bearer \(try value(.bearerToken))", forHTTPHeaderField: plan.authenticationHeader ?? "Authorization")
         case .apiKeyHeader:
             request.setValue(try value(.apiKey), forHTTPHeaderField: plan.authenticationHeader ?? "X-API-Key")
@@ -656,7 +805,7 @@ final class VaultClassifierViewModel: ObservableObject {
             guard var components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false) else { throw ProviderTestProtocolError.invalidResponse }
             components.queryItems = (components.queryItems ?? []) + [.init(name: plan.authenticationHeader ?? "key", value: try value(.apiKey))]
             request.url = components.url
-        case .bearerTokenAndClientID, .awsSignatureV4:
+        case .awsSignatureV4:
             throw ProviderTestProtocolError.unsupportedProvider
         }
     }
@@ -792,6 +941,9 @@ final class VaultClassifierViewModel: ObservableObject {
                 throw WebBridgeInputError.invalidChoice("provider profile")
             }
             catalog.providerProfiles.removeAll(where: { $0.id == profileID })
+            for index in catalog.providerProfiles.indices {
+                catalog.providerProfiles[index].externalToolProfileIDs.removeAll(where: { $0 == profileID })
+            }
             catalog.providerRequestRecords.removeAll(where: { $0.profileID == profileID })
             try coordinator?.updateWorkspaceCatalog(catalog)
             try ProviderCredentialStore.removeCredential(for: profileID)
@@ -1617,32 +1769,25 @@ final class VaultClassifierViewModel: ObservableObject {
             )
             let taxonomy = try tree.inferenceTaxonomy()
             let allowedTagIDs = taxonomy.predictableLeafIDs
+            let recordPlan = try ProviderClassificationProtocol.prepare(
+                profile: profile,
+                entry: entry,
+                allowedLeafTagIDs: allowedTagIDs
+            )
             providerClassificationRunning = true
             issue = nil
             Task { [weak self] in
                 guard let self else { return }
                 let startedAt = Date()
-                var prepared: ProviderTestPreparedRequest?
                 do {
-                    let credential = try self.providerCredential(for: profile.id)
-                    let request = try ProviderClassificationProtocol.prepare(
+                    let run = try await self.runProviderClassification(
                         profile: profile,
                         entry: entry,
-                        allowedLeafTagIDs: allowedTagIDs
+                        allowedTagIDs: allowedTagIDs,
+                        catalog: catalog
                     )
-                    prepared = request
-                    var urlRequest = URLRequest(url: request.plan.url)
-                    urlRequest.httpMethod = request.plan.method
-                    urlRequest.httpBody = request.body
-                    urlRequest.timeoutInterval = 30
-                    request.plan.headers.forEach { urlRequest.setValue($0.value, forHTTPHeaderField: $0.key) }
-                    try self.apply(credential: credential, to: &urlRequest, plan: request.plan)
-                    let (data, response) = try await URLSession.shared.data(for: urlRequest)
                     let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
-                    guard let http = response as? HTTPURLResponse else { throw ProviderTestProtocolError.invalidResponse }
-                    guard (200..<300).contains(http.statusCode) else { throw ProviderTestHTTPError.status(http.statusCode) }
-                    let parsed = try ProviderTestProtocol.parseResponse(data, format: request.plan.bodyFormat, operation: request.operation)
-                    let labelIDs = try ProviderClassificationProtocol.parseLabelIDs(parsed.content, allowedLeafTagIDs: allowedTagIDs)
+                    let labelIDs = try ProviderClassificationProtocol.parseLabelIDs(run.content, allowedLeafTagIDs: allowedTagIDs)
                     try self.recordLLMCreatorClassification(
                         typeID: classifierType.id,
                         creatorID: representative.creatorID,
@@ -1655,36 +1800,34 @@ final class VaultClassifierViewModel: ObservableObject {
                         provider: profile.type.rawValue,
                         model: profile.modelIdentifier,
                         operation: "classify-creator",
-                        endpoint: ProviderTestProtocol.safeEndpoint(request.plan.url),
-                        method: request.plan.method,
-                        statusCode: http.statusCode,
+                        endpoint: ProviderTestProtocol.safeEndpoint(recordPlan.plan.url),
+                        method: recordPlan.plan.method,
+                        statusCode: run.statusCode,
                         durationMilliseconds: duration,
-                        inputTokens: parsed.usage.inputTokens,
-                        outputTokens: parsed.usage.outputTokens,
-                        estimatedCostUSD: ProviderTestProtocol.estimatedCost(profile: profile, usage: parsed.usage),
+                        inputTokens: run.usage.inputTokens,
+                        outputTokens: run.usage.outputTokens,
+                        estimatedCostUSD: ProviderTestProtocol.estimatedCost(profile: profile, usage: run.usage),
                         outcome: "succeeded",
-                        requestContent: profile.storesFullRequestRecords ? request.prompt : nil,
-                        responseContent: profile.storesFullRequestRecords ? parsed.content : nil
+                        requestContent: profile.storesFullRequestRecords ? run.prompt : nil,
+                        responseContent: profile.storesFullRequestRecords ? run.content : nil
                     ))
                     self.issue = nil
                 } catch {
                     let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
-                    if let prepared {
-                        try? self.appendProviderTestRecord(.init(
-                            profileID: profile.id,
-                            provider: profile.type.rawValue,
-                            model: profile.modelIdentifier,
-                            operation: "classify-creator",
-                            endpoint: ProviderTestProtocol.safeEndpoint(prepared.plan.url),
-                            method: prepared.plan.method,
-                            statusCode: nil,
-                            durationMilliseconds: duration,
-                            inputTokens: nil,
-                            outputTokens: nil,
-                            estimatedCostUSD: nil,
-                            outcome: "failed"
-                        ))
-                    }
+                    try? self.appendProviderTestRecord(.init(
+                        profileID: profile.id,
+                        provider: profile.type.rawValue,
+                        model: profile.modelIdentifier,
+                        operation: "classify-creator",
+                        endpoint: ProviderTestProtocol.safeEndpoint(recordPlan.plan.url),
+                        method: recordPlan.plan.method,
+                        statusCode: nil,
+                        durationMilliseconds: duration,
+                        inputTokens: nil,
+                        outputTokens: nil,
+                        estimatedCostUSD: nil,
+                        outcome: "failed"
+                    ))
                     self.issue = error.localizedDescription
                 }
                 self.providerClassificationRunning = false
@@ -2430,6 +2573,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     "maximumTokens": profile.maximumTokens,
                     "customEndpoint": profile.customEndpoint ?? NSNull(),
                     "protocolConfiguration": profile.protocolConfiguration,
+                    "externalToolProfileIDs": profile.externalToolProfileIDs,
                     "inputCostUSDPerMillion": profile.inputCostUSDPerMillion ?? NSNull(),
                     "outputCostUSDPerMillion": profile.outputCostUSDPerMillion ?? NSNull(),
                     "storesFullRequestRecords": profile.storesFullRequestRecords,
@@ -2630,6 +2774,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     maximumTokens: try webOptionalString(data, key: "maximumTokens", limit: 16),
                     customEndpoint: try webOptionalString(data, key: "customEndpoint", limit: APIKeyProviderProfile.maximumEndpointLength),
                     protocolConfiguration: try webProviderConfiguration(data),
+                    externalToolProfileIDs: try webProviderExternalToolProfiles(data),
                     inputCostUSDPerMillion: try webOptionalString(data, key: "inputCostUSDPerMillion", limit: 32),
                     outputCostUSDPerMillion: try webOptionalString(data, key: "outputCostUSDPerMillion", limit: 32),
                     storesFullRequestRecords: data["storesFullRequestRecords"] as? Bool
@@ -2883,6 +3028,23 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             return (key, string)
         })
+    }
+
+    private func webProviderExternalToolProfiles(_ data: [String: Any]) throws -> [String] {
+        guard let raw = data["externalToolProfileIDs"] as? [Any] else { return [] }
+        guard raw.count <= APIKeyProviderProfile.maximumExternalToolProfiles else {
+            throw WebBridgeInputError.exceedsLimit("external data tools", APIKeyProviderProfile.maximumExternalToolProfiles)
+        }
+        let values = try raw.map { value -> String in
+            guard let identifier = value as? String, !identifier.isEmpty, identifier.count <= 128 else {
+                throw WebBridgeInputError.invalidChoice("external data tools")
+            }
+            return identifier
+        }
+        guard Set(values).count == values.count else {
+            throw WebBridgeInputError.invalidChoice("external data tools")
+        }
+        return values
     }
 
     private func webClassifierTypeLLMProfiles(_ data: [String: Any]) throws -> [String] {

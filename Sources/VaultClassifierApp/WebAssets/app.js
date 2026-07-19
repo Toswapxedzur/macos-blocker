@@ -520,11 +520,14 @@
       }), { input: 0, output: 0, cost: 0, priced: false });
       const credentialStatus = !protocol.credentialRequired ? "llm.noCredentialStatus" : (profile.hasStoredCredential ? "llm.credentialStored" : (hasSessionCredential ? "llm.sessionCredential" : "llm.credentialNeeded"));
       const protocolFields = (protocol.configurationRequirements || []).map((requirement) => protocolConfigurationField(requirement, profile)).join("");
+      const externalToolProfiles = profiles.filter((candidate) => !protocols[candidate.type]?.supportsLLMConfiguration);
+      const selectedExternalToolProfiles = new Set(profile.externalToolProfileIDs || []);
+      const externalTools = supportsLLM ? `<section class="provider-tools"><div><span class="eyebrow">${tx("llm.externalTools")}</span><h3>${tx("llm.toolProfiles")}</h3><p class="section-copy">${tx("llm.toolProfilesCopy")}</p></div>${externalToolProfiles.length ? `<div>${externalToolProfiles.map((candidate) => toggle("llm.toolProfile", `externalToolProfile.${candidate.id}`, selectedExternalToolProfiles.has(candidate.id)).replace(tx("llm.toolProfile"), `${esc(candidate.name)} · ${tx(providerTypeLabelKey(candidate.type))}`)).join("")}</div>` : `<p class="small-copy">${tx("llm.noToolProfiles")}</p>`}</section>` : "";
       const requiresCompatibleEndpoint = ["openAICompatible", "custom"].includes(profile.type);
       const endpointField = protocol.allowsEndpointOverride ? field("llm.apiEndpoint", requiresCompatibleEndpoint ? "llm.compatibleEndpointCopy" : "llm.apiEndpointCopy", "customEndpoint", profile.customEndpoint || "") : "";
       const pricing = supportsLLM ? `<section class="provider-pricing"><div class="section-header"><div><h3>${tx("llm.tokenCost")}</h3><p class="section-copy">${tx("llm.tokenCostCopy")}</p></div></div><div class="provider-pricing-fields">${field("llm.inputCost", "", "inputCostUSDPerMillion", profile.inputCostUSDPerMillion ?? "", "text", "inputmode=\"decimal\"")}${field("llm.outputCost", "", "outputCostUSDPerMillion", profile.outputCostUSDPerMillion ?? "", "text", "inputmode=\"decimal\"")}</div>${toggle("llm.fullRecords", "storesFullRequestRecords", Boolean(profile.storesFullRequestRecords))}<p class="small-copy">${tx("llm.fullRecordsCopy")}</p></section>` : "";
       const setup = supportsLLM
-        ? `<div class="provider-setup"><div class="section-header"><div><h3>${tx("llm.modelSetup")}</h3><p class="section-copy">${tx("llm.modelSetupCopy")}</p></div></div><div class="provider-setup-fields">${field("llm.modelIdentifier", "", "modelIdentifier", profile.modelIdentifier)}${field("llm.batchSize", "", "batchSize", profile.batchSize, "text", "inputmode=\"numeric\"")}${field("llm.maximumTokens", "", "maximumTokens", profile.maximumTokens, "text", "inputmode=\"numeric\"")}</div>${endpointField}</div>${pricing}`
+        ? `<div class="provider-setup"><div class="section-header"><div><h3>${tx("llm.modelSetup")}</h3><p class="section-copy">${tx("llm.modelSetupCopy")}</p></div></div><div class="provider-setup-fields">${field("llm.modelIdentifier", "", "modelIdentifier", profile.modelIdentifier)}${field("llm.batchSize", "", "batchSize", profile.batchSize, "text", "inputmode=\"numeric\"")}${field("llm.maximumTokens", "", "maximumTokens", profile.maximumTokens, "text", "inputmode=\"numeric\"")}</div>${endpointField}</div>${externalTools}${pricing}`
         : `<div class="provider-setup"><div class="section-header"><div><span class="eyebrow">${tx("llm.externalTool")}</span><h3>${tx("llm.platformDataSetup")}</h3><p class="section-copy">${tx("llm.dataAPIOnlyCopy")}</p></div></div>${endpointField}</div>`;
       const credentialFormID = `${formID}-credential`;
       const credentialFields = (protocol.credentialFields || []).map((fieldName) => field(credentialFieldLabelKey(fieldName), "", `credential.${fieldName}`, "", "password", "autocomplete=\"off\" autocapitalize=\"off\" spellcheck=\"false\"")).join("");
@@ -927,6 +930,10 @@
         delete data[key];
       });
       data.protocolConfiguration = protocolConfiguration;
+      data.externalToolProfileIDs = Object.keys(data)
+        .filter((key) => key.startsWith("externalToolProfile.") && data[key] === true)
+        .map((key) => key.slice("externalToolProfile.".length));
+      Object.keys(data).filter((key) => key.startsWith("externalToolProfile.")).forEach((key) => delete data[key]);
     }
     if (action === "saveProviderCredential") {
       const credentials = {};
