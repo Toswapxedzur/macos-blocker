@@ -1435,7 +1435,13 @@ final class VaultClassifierViewModel: ObservableObject {
             catalog.trees[treeIndex].nodes[nodeIndex].name = cleaned
             advanceTreeRevision(in: &catalog, treeIndex: treeIndex)
             try coordinator?.updateWorkspaceCatalog(catalog)
-            if refreshState { refreshLocalState() }
+            // Live typing deliberately avoids a full WebKit re-render, but
+            // later tree actions must still start from the renamed catalog.
+            if refreshState {
+                refreshLocalState()
+            } else {
+                localState = coordinator?.snapshot()
+            }
         } catch { issue = error.localizedDescription }
     }
 
