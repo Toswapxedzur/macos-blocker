@@ -42,6 +42,7 @@
   let selectedLanguage = "en";
   let navigationPanelWidth = navigationWidthRange.fallback;
   let navigationResize = null;
+  let pointerActivatedWorkspaceButton = null;
 
   try {
     const storedLanguage = window.localStorage.getItem("vaultClassifier.language");
@@ -178,6 +179,12 @@
   function navButton(workspace, symbol, titleKey, metaKey) {
     const active = state.workspace === workspace ? " active" : "";
     return `<button class="sidebar-row${active}" type="button" data-action="workspace" data-workspace="${esc(workspace)}"><span class="sidebar-symbol" aria-hidden="true">${symbol}</span><span class="sidebar-copy"><span class="sidebar-name">${tx(titleKey)}</span><span class="sidebar-meta">${tx(metaKey)}</span></span></button>`;
+  }
+
+  function requestWorkspace(button) {
+    const workspace = button?.dataset?.workspace;
+    if (!workspace || !state || state.workspace === workspace) return;
+    send("workspace", { workspace });
   }
 
   function shell(content) {
@@ -910,6 +917,14 @@
     }
     if (button.disabled) return;
     const action = button.dataset.action;
+    if (action === "workspace") {
+      if (button === pointerActivatedWorkspaceButton) {
+        pointerActivatedWorkspaceButton = null;
+        return;
+      }
+      requestWorkspace(button);
+      return;
+    }
     const data = button.dataset.form ? collect(button.dataset.form) : {};
     if (button.dataset.workspace) data.workspace = button.dataset.workspace;
     if (button.dataset.id) data.id = button.dataset.id;
@@ -1119,6 +1134,21 @@
 
   document.addEventListener("pointerup", finishNavigationResize);
   document.addEventListener("pointercancel", finishNavigationResize);
+
+  // A click is normally synthesized after pointer-up, but WKWebView can
+  // suppress that click after a trackpad gesture. Workspace cards must remain
+  // dependable navigation controls in both paths. The following click is
+  // consumed to avoid dispatching the same workspace request twice; keyboard
+  // activation still follows the click-only path above.
+  document.addEventListener("pointerup", (event) => {
+    const button = event.target.closest?.(".sidebar-row[data-action='workspace']");
+    if (!button || button.disabled || event.button !== 0) return;
+    pointerActivatedWorkspaceButton = button;
+    requestWorkspace(button);
+    window.setTimeout(() => {
+      if (pointerActivatedWorkspaceButton === button) pointerActivatedWorkspaceButton = null;
+    }, 0);
+  });
 
   document.addEventListener("keydown", (event) => {
     const resizer = event.target.closest?.("[data-navigation-resizer]");
