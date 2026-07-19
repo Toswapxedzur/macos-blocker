@@ -404,11 +404,16 @@ h3 { font-size: 13px; }
 .utility-bridge-modal .section-copy { max-width: 640px; color: var(--navy-700); font-size: 17px; line-height: 1.35; }
 .bridge-local-status { display: flex; align-items: center; gap: 12px; color: #111827; font-size: 17px; }
 .bridge-local-status .status-dot { width: 13px; height: 13px; background: #94a3b8; }
-.bridge-local-status .status-dot.connected { background: var(--cyan-700); }
+.bridge-local-status .status-dot.hosting { background: var(--gold-700); }
+.bridge-local-status .status-dot.joined-macapp,
+.bridge-local-status .status-dot.joined-classifier { background: var(--cyan-700); }
+.bridge-local-status .status-dot.connecting,
+.bridge-local-status .status-dot.disconnected { background: var(--navy-600); }
 .bridge-address { margin: 0; color: var(--navy-700); font-size: 15px; }
 .bridge-address code { color: var(--navy-700); font-size: 16px; }
-.bridge-server-toggle { min-height: 30px; color: var(--navy-700); font-size: 16px; }
 .bridge-peer-copy { margin: 0; color: var(--navy-700); font-size: 15px; }
+.utility-bridge-modal .bridge-settings-actions { margin-top: 2px; }
+.utility-bridge-modal .bridge-settings-actions button { min-width: 116px; }
 
 @media (max-width: 620px) {
   .utility-popover-layer { padding: 12px; }

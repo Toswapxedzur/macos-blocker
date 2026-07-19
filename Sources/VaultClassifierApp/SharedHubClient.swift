@@ -26,6 +26,7 @@ final class SharedHubClient {
     private(set) var state: State = .off { didSet { onStateChange?() } }
     private(set) var error = "" { didSet { onStateChange?() } }
     private(set) var peers: [[String: Any]] = [] { didSet { onStateChange?() } }
+    private(set) var hubProgram = "" { didSet { onStateChange?() } }
     private var task: URLSessionWebSocketTask?
     private var session: URLSession?
     private var reconnectTimer: Timer?
@@ -42,6 +43,14 @@ final class SharedHubClient {
 
     func connect() {
         desired = true
+        attemptHostOrJoin()
+    }
+
+    /// Every fresh attempt begins with listener ownership. If a verified peer
+    /// still owns the address we join it; if the prior host disappeared, this
+    /// app becomes the replacement host instead of reconnecting blindly.
+    private func attemptHostOrJoin() {
+        guard desired else { return }
         // First app owns the port. If another process already does, the socket
         // below joins only after its welcome identifies Mac Vault or Vault
         // Classifier as the local hub.
@@ -87,6 +96,7 @@ final class SharedHubClient {
         closeSocket()
         LocalClassifierHub.shared.stop()
         peers = []
+        hubProgram = ""
         transition(to: .off, error: "")
     }
 
@@ -131,6 +141,7 @@ final class SharedHubClient {
             handshakeTimer?.invalidate()
             handshakeTimer = nil
             peers = object["peers"] as? [[String: Any]] ?? []
+            self.hubProgram = hubProgram
             transition(to: .connected, error: "")
         case "peers":
             peers = object["peers"] as? [[String: Any]] ?? []
@@ -191,18 +202,21 @@ final class SharedHubClient {
     }
 
     private func connectionFailed(_ reason: String, retry: Bool) {
+        let wasJoinedHost = state == .connected && !LocalClassifierHub.shared.isHosting
         handshakeTimer?.invalidate()
         handshakeTimer = nil
         closeSocket()
         peers = []
+        hubProgram = ""
         let canRetry = retry && desired
         transition(to: canRetry ? .disconnected : .error, error: reason)
         guard canRetry else { return }
         reconnectTimer?.invalidate()
-        reconnectTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
+        let delay = wasJoinedHost ? 0.25 : 2.0
+        reconnectTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.desired else { return }
-                self.connect()
+                self.attemptHostOrJoin()
             }
         }
     }

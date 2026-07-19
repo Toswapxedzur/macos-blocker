@@ -170,6 +170,9 @@ final class VaultClassifierViewModel: ObservableObject {
             sharedHubClient.onStateChange = { [weak self] in
                 self?.onWebStateChange?()
             }
+            LocalClassifierHub.shared.onStateChange = { [weak self] in
+                Task { @MainActor in self?.onWebStateChange?() }
+            }
             sharedHubClient.connect()
         } catch {
             issue = error.localizedDescription
@@ -2437,11 +2440,25 @@ final class VaultClassifierViewModel: ObservableObject {
                 ]
             },
         ]
+        let localHub = LocalClassifierHub.shared
+        let hubClient = sharedHubClient
+        let hostProgram = hubClient?.hubProgram ?? ""
+        let bridgeState: String
+        if localHub.isHosting {
+            bridgeState = "hosting"
+        } else if hubClient?.state == .connected, hostProgram == "macapp" {
+            bridgeState = "joined-macapp"
+        } else if hubClient?.state == .connected, hostProgram == "classifier" {
+            bridgeState = "joined-classifier"
+        } else {
+            bridgeState = hubClient?.state.rawValue ?? "off"
+        }
         let sharedHub: [String: Any] = [
             "address": SharedBrowserBridgeProtocol.address,
-            "state": sharedHubClient?.state.rawValue ?? "off",
-            "error": sharedHubClient?.error ?? "",
-            "peers": sharedHubClient?.peers ?? [],
+            "state": bridgeState,
+            "error": hubClient?.error ?? localHub.lastError,
+            "peers": localHub.isHosting ? localHub.peerSnapshot() : (hubClient?.peers ?? []),
+            "hostProgram": localHub.isHosting ? "classifier" : hostProgram,
         ]
         return [
             "workspace": workspace.rawValue,
