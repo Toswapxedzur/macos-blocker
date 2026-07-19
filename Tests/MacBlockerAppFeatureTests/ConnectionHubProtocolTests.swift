@@ -58,6 +58,11 @@ final class ConnectionHubProtocolTests: XCTestCase {
             "body": [:]
         ]))
         XCTAssertNil(ConnectionHub.classifierRequestRejectionReason([
+            "requestID": "classifier-diagnostic-1",
+            "operation": "diagnostic",
+            "body": ["platformID": "youtube", "event": "collector-started"]
+        ]))
+        XCTAssertNil(ConnectionHub.classifierRequestRejectionReason([
             "requestID": "classifier-collection-2",
             "operation": "collect",
             "body": ["entry": ["platform": "youtube"]]
