@@ -126,4 +126,123 @@ final class ProviderTestProtocolTests: XCTestCase {
             XCTAssertThrowsError(try ProviderTestProtocol.prepare(profile: profile), type.rawValue)
         }
     }
+
+    func testEveryLanguageModelBuildsAndContinuesABoundedToolExchange() throws {
+        let profiles: [APIKeyProviderProfile] = [
+            .init(type: .openAI),
+            .init(type: .openAICompatible, modelIdentifier: "compatible", customEndpoint: "https://api.example.test/v1"),
+            .init(type: .deepSeek),
+            .init(type: .gemini),
+            .init(type: .anthropic),
+            .init(type: .mistral),
+            .init(type: .cohere),
+            .init(type: .groq),
+            .init(type: .openRouter),
+            .init(type: .ollama),
+            .init(type: .custom, customEndpoint: "https://api.example.test/v1"),
+        ]
+        let entry = EntryEvidence(platform: "youtube", entryID: "video-id", sourceID: "creator-id", surface: .feed, evidence: .init(title: "Deck gameplay"))
+        let platformProfile = APIKeyProviderProfile(id: "youtube-data", type: .youtubeData)
+
+        for profile in profiles {
+            let prepared = try ProviderToolCallingProtocol.prepare(
+                profile: profile,
+                entry: entry,
+                allowedLeafTagIDs: ["games"],
+                toolProfiles: [platformProfile]
+            )
+            XCTAssertEqual(prepared.toolDefinitions.count, 1, profile.type.rawValue)
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: prepared.body) as? [String: Any])
+            XCTAssertNotNil(body["tools"], profile.type.rawValue)
+            let response = toolCallResponse(format: prepared.plan.bodyFormat, name: prepared.toolDefinitions[0].name)
+            let turn = try ProviderToolCallingProtocol.parseResponse(response, format: prepared.plan.bodyFormat)
+            XCTAssertEqual(turn.toolCalls.count, 1, profile.type.rawValue)
+            let continued = try ProviderToolCallingProtocol.continueRequest(
+                prepared: prepared,
+                profile: profile,
+                turn: turn,
+                results: [.init(id: turn.toolCalls[0].id, name: turn.toolCalls[0].name, content: #"{"ok":true}"#)]
+            )
+            XCTAssertFalse(continued.body.isEmpty, profile.type.rawValue)
+        }
+    }
+
+    func testEveryPlatformProfileHasABoundedToolDefinitionAndRoute() throws {
+        let types: [APIKeyProviderType] = [
+            .youtubeData, .twitch, .reddit, .xPlatform, .tikTok,
+            .instagramGraph, .facebookGraph, .linkedIn, .pinterest, .bluesky,
+            .mastodon, .vimeo, .dailyMotion, .spotify,
+        ]
+        let entry = EntryEvidence(platform: "youtube", entryID: "at://did:plc:creator/app.bsky.feed.post/post", sourceID: "creator-id", surface: .feed, evidence: .init(title: "Public entry"))
+        let profiles = types.map(platformProfile)
+        XCTAssertEqual(try ExternalPlatformToolProtocol.definitions(profiles: profiles, entry: entry).count, types.count)
+
+        for profile in profiles {
+            let call = ExternalPlatformToolCall(
+                id: "call-\(profile.type.rawValue)",
+                name: ExternalPlatformToolProtocol.toolName(for: profile),
+                arguments: #"{"target":"entry"}"#
+            )
+            let request = try ExternalPlatformToolProtocol.prepare(profile: profile, entry: entry, call: call)
+            XCTAssertEqual(request.plan.method, profile.type == .tikTok ? "POST" : "GET", profile.type.rawValue)
+            if profile.type == .tikTok {
+                XCTAssertNotNil(request.body)
+                XCTAssertEqual(request.plan.bodyFormat, .customJSON)
+            }
+            XCTAssertNil(URLComponents(url: request.plan.url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "access_token" }), profile.type.rawValue)
+        }
+    }
+
+    func testPlatformToolResultRedactsTokenLikeFieldsAndCapsPayload() throws {
+        let payload = Data(#"{"token":"secret","title":"Kept","nested":{"access_token":"secret","description":"Kept"}}"#.utf8)
+        let result = ExternalPlatformToolProtocol.result(data: payload, statusCode: 200, providerType: .youtubeData, target: .entry)
+        XCTAssertTrue(result.contains("Kept"))
+        XCTAssertFalse(result.contains("secret"))
+    }
+
+    func testCatalogAllowsOnlySelectedPlatformProfilesAsModelTools() throws {
+        let model = APIKeyProviderProfile(id: "llm-tool-model", type: .deepSeek, externalToolProfileIDs: ["provider-tool-youtube"])
+        let youtube = APIKeyProviderProfile(id: "provider-tool-youtube", type: .youtubeData)
+        var catalog = WorkspaceCatalog.starter()
+        catalog.providerProfiles = [model, youtube]
+        XCTAssertNoThrow(try catalog.validate())
+
+        catalog.providerProfiles[0].externalToolProfileIDs = ["missing"]
+        XCTAssertThrowsError(try catalog.validate())
+
+        catalog.providerProfiles[0].externalToolProfileIDs = []
+        catalog.providerProfiles[1].externalToolProfileIDs = ["llm-tool-model"]
+        XCTAssertThrowsError(try catalog.validate())
+    }
+
+    private func platformProfile(_ type: APIKeyProviderType) -> APIKeyProviderProfile {
+        var configuration: [String: String]?
+        var endpoint: String?
+        if type == .twitch { configuration = [ProviderConfigurationField.clientID.rawValue: "client-id"] }
+        if type == .mastodon { endpoint = "https://mastodon.example.test" }
+        return .init(id: "platform-\(type.rawValue)", type: type, customEndpoint: endpoint, protocolConfiguration: configuration)
+    }
+
+    private func toolCallResponse(format: ProviderRequestBodyFormat, name: String) -> Data {
+        let arguments = #"{"target":"entry"}"#
+        let object: [String: Any]
+        switch format {
+        case .openAIResponses:
+            object = ["output": [["type": "function_call", "call_id": "call-1", "name": name, "arguments": arguments]]]
+        case .openAIChatCompletions:
+            object = ["choices": [["message": ["role": "assistant", "tool_calls": [["id": "call-1", "type": "function", "function": ["name": name, "arguments": arguments]]]]]]]
+        case .anthropicMessages:
+            object = ["content": [["type": "tool_use", "id": "call-1", "name": name, "input": ["target": "entry"]]]]
+        case .geminiGenerateContent, .vertexGenerateContent:
+            object = ["candidates": [["content": ["role": "model", "parts": [["functionCall": ["id": "call-1", "name": name, "args": ["target": "entry"]]]]]]]]
+        case .cohereChat:
+            object = ["message": ["role": "assistant", "tool_calls": [["id": "call-1", "type": "function", "function": ["name": name, "arguments": arguments]]]]]
+        case .ollamaChat:
+            object = ["message": ["role": "assistant", "tool_calls": [["function": ["name": name, "arguments": ["target": "entry"]]]]]]
+        default:
+            XCTFail("Unexpected provider format")
+            return Data()
+        }
+        return try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    }
 }

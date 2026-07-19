@@ -357,7 +357,7 @@ public enum ProviderProtocolRegistry {
         case .xPlatform:
             return external(type, .xAPIV2, "https://api.x.com/2", "/tweets/{contentID}", .readPublicContent)
         case .tikTok:
-            return external(type, .tikTokDisplayV2, "https://open.tiktokapis.com/v2", "/video/list/", .readPublicContent)
+            return external(type, .tikTokDisplayV2, "https://open.tiktokapis.com/v2", "/video/query/", .readPublicContent, method: "POST", body: .customJSON)
         case .instagramGraph, .facebookGraph:
             return external(type, .metaGraphV1, "https://graph.facebook.com", "/{apiVersion}/{contentID}", .readPublicContent, configuration: [.init(.apiVersion, defaultValue: "v24.0")])
         case .linkedIn:
@@ -406,7 +406,9 @@ public enum ProviderProtocolRegistry {
         authentication: ProviderAuthenticationMethod = .bearerToken,
         header: String? = nil,
         override: Bool = false,
-        configuration: [ProviderConfigurationRequirement] = []
+        configuration: [ProviderConfigurationRequirement] = [],
+        method: String = "GET",
+        body: ProviderRequestBodyFormat = .queryOnly
     ) -> ProviderProtocolDescriptor {
         let credentials: [ProviderCredentialField]
         switch authentication {
@@ -419,6 +421,6 @@ public enum ProviderProtocolRegistry {
         case .awsSignatureV4:
             credentials = [.accessKeyID, .secretAccessKey]
         }
-        return .init(identifier: type.rawValue, family: family, defaultBaseURL: baseURL, allowsEndpointOverride: override, authentication: authentication, authenticationHeader: header, credentialFields: credentials, configurationRequirements: configuration, requestFormats: [.init(operation: operation, method: "GET", pathTemplate: path, bodyFormat: .queryOnly)])
+        return .init(identifier: type.rawValue, family: family, defaultBaseURL: baseURL, allowsEndpointOverride: override, authentication: authentication, authenticationHeader: header, credentialFields: credentials, configurationRequirements: configuration, requestFormats: [.init(operation: operation, method: method, pathTemplate: path, bodyFormat: body)])
     }
 }

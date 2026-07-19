@@ -813,7 +813,7 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
         switch self {
         case .openAI: return "gpt-4.1-mini"
         case .openAICompatible: return ""
-        case .deepSeek: return "deepseek-chat"
+        case .deepSeek: return "deepseek-v4-flash"
         case .gemini: return "gemini-3.1-flash-lite"
         case .anthropic: return "claude-sonnet-4-5"
         case .mistral: return "mistral-large-latest"
@@ -851,6 +851,9 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
     public static let maximumEndpointLength = 2_048
     public static let maximumBatchSize = 256
     public static let maximumTokenLimit = 1_000_000
+    /// A model profile may expose a bounded set of explicitly selected
+    /// platform-data profiles as local external tools.
+    public static let maximumExternalToolProfiles = ExternalPlatformToolProtocol.maximumToolDefinitions
 
     public var id: String
     public var name: String
@@ -865,6 +868,10 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
     /// Non-secret protocol settings such as cloud account, region, or API
     /// version. The versioned descriptor controls which keys are allowed.
     public var protocolConfiguration: [String: String]
+    /// Local IDs of platform-data profiles explicitly available to this model
+    /// during a manually started classification. They never imply automatic
+    /// browser collection or provider dispatch.
+    public var externalToolProfileIDs: [String]
     /// Optional user-supplied USD rates per million provider-reported tokens.
     /// A missing rate deliberately produces an unavailable cost, not a guess.
     public var inputCostUSDPerMillion: Double?
@@ -883,6 +890,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         maximumTokens: Int = 1_024,
         customEndpoint: String? = nil,
         protocolConfiguration: [String: String]? = nil,
+        externalToolProfileIDs: [String] = [],
         inputCostUSDPerMillion: Double? = nil,
         outputCostUSDPerMillion: Double? = nil,
         storesFullRequestRecords: Bool = false,
@@ -896,6 +904,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         self.maximumTokens = maximumTokens
         self.customEndpoint = customEndpoint
         self.protocolConfiguration = protocolConfiguration ?? ProviderProtocolRegistry.descriptor(for: type).defaultConfiguration()
+        self.externalToolProfileIDs = externalToolProfileIDs
         self.inputCostUSDPerMillion = inputCostUSDPerMillion
         self.outputCostUSDPerMillion = outputCostUSDPerMillion
         self.storesFullRequestRecords = storesFullRequestRecords
@@ -907,7 +916,10 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         guard !id.isEmpty, id.count <= 128,
               !cleanedName.isEmpty, cleanedName.count <= Self.maximumNameLength,
               batchSize > 0, batchSize <= Self.maximumBatchSize,
-              maximumTokens > 0, maximumTokens <= Self.maximumTokenLimit else {
+              maximumTokens > 0, maximumTokens <= Self.maximumTokenLimit,
+              externalToolProfileIDs.count <= Self.maximumExternalToolProfiles,
+              Set(externalToolProfileIDs).count == externalToolProfileIDs.count,
+              externalToolProfileIDs.allSatisfy({ !$0.isEmpty && $0.count <= 128 }) else {
             throw APIKeyProviderProfileError.invalidConfiguration
         }
 
@@ -952,7 +964,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, type, modelIdentifier, batchSize, maximumTokens, customEndpoint, protocolConfiguration, inputCostUSDPerMillion, outputCostUSDPerMillion, storesFullRequestRecords, updatedAtMilliseconds
+        case id, name, type, modelIdentifier, batchSize, maximumTokens, customEndpoint, protocolConfiguration, externalToolProfileIDs, inputCostUSDPerMillion, outputCostUSDPerMillion, storesFullRequestRecords, updatedAtMilliseconds
     }
 
     public init(from decoder: Decoder) throws {
@@ -966,6 +978,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         customEndpoint = try container.decodeIfPresent(String.self, forKey: .customEndpoint)
         protocolConfiguration = try container.decodeIfPresent([String: String].self, forKey: .protocolConfiguration)
             ?? ProviderProtocolRegistry.descriptor(for: type).defaultConfiguration()
+        externalToolProfileIDs = try container.decodeIfPresent([String].self, forKey: .externalToolProfileIDs) ?? []
         inputCostUSDPerMillion = try container.decodeIfPresent(Double.self, forKey: .inputCostUSDPerMillion)
         outputCostUSDPerMillion = try container.decodeIfPresent(Double.self, forKey: .outputCostUSDPerMillion)
         storesFullRequestRecords = try container.decodeIfPresent(Bool.self, forKey: .storesFullRequestRecords) ?? false
@@ -1197,6 +1210,17 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             do {
                 try profile.validate()
             } catch {
+                throw WorkspaceCatalogError.invalidProviderProfile(profile.id)
+            }
+            let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
+            guard (descriptor.supportsLLMConfiguration || profile.externalToolProfileIDs.isEmpty),
+                  profile.externalToolProfileIDs.allSatisfy({ toolProfileID in
+                      providerProfiles.contains(where: { candidate in
+                          candidate.id == toolProfileID &&
+                          !ProviderProtocolRegistry.descriptor(for: candidate.type).supportsLLMConfiguration &&
+                          ProviderProtocolRegistry.descriptor(for: candidate.type).requestFormats.contains(where: { $0.operation == .readPublicContent })
+                      })
+                  }) else {
                 throw WorkspaceCatalogError.invalidProviderProfile(profile.id)
             }
         }
