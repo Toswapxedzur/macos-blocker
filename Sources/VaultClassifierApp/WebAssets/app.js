@@ -37,7 +37,6 @@
   const layoutTraceSignatures = new Map();
   const treeViewportPositions = new Map();
   const editorViewportPositions = new Map();
-  const pendingTagRenameTimers = new Map();
   const pendingTagRenames = new Map();
   let utilityPanel = null;
   let selectedLanguage = "en";
@@ -361,7 +360,7 @@
           : isTreeEdit
             ? `<button class="primary" data-action="saveTreeName" data-form="tag-popover-form" data-tree-id="${esc(tree.id)}">${tx("tree.saveTreeName")}</button>`
             : isEdit
-          ? `<button class="secondary" data-action="beginConnection" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.connection")}</button><button class="secondary" data-action="disconnectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}"${disabled(!popoverNode.parentID)}>${tx("tree.disconnection")}</button><button class="danger" data-action="deleteTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.deleteNode")}</button>`
+          ? `<button class="primary" data-action="saveTagName" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.saveNode")}</button><button class="secondary" data-action="beginConnection" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.connection")}</button><button class="secondary" data-action="disconnectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}"${disabled(!popoverNode.parentID)}>${tx("tree.disconnection")}</button><button class="danger" data-action="deleteTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.deleteNode")}</button>`
           : `<button class="primary" data-action="addTag" data-form="tag-popover-form" data-tree-id="${esc(tree.id)}">${tx("tree.createNode")}</button>`;
         const content = isTreeDelete
           ? `<p class="small-copy">${tx("tree.confirmDeleteCopy")}</p><div class="action-row">${actions}</div>`
@@ -790,13 +789,18 @@
 
   function flushLiveTagRename(treeID, nodeID) {
     const key = tagRenameKey(treeID, nodeID);
-    const timer = pendingTagRenameTimers.get(key);
-    if (timer) window.clearTimeout(timer);
-    pendingTagRenameTimers.delete(key);
     const name = pendingTagRenames.get(key);
     pendingTagRenames.delete(key);
     if (!name?.trim()) return;
     send("renameTag", { treeID, nodeID, name });
+  }
+
+  function flushTagNameInput(input) {
+    if (!input) return;
+    const { treeId: treeID, nodeId: nodeID } = input.dataset;
+    if (!treeID || !nodeID) return;
+    pendingTagRenames.set(tagRenameKey(treeID, nodeID), input.value);
+    flushLiveTagRename(treeID, nodeID);
   }
 
   function updateRenderedTagName(treeID, nodeID, name) {
@@ -839,9 +843,6 @@
     const key = tagRenameKey(treeID, nodeID);
     pendingTagRenames.set(key, input.value);
     updateRenderedTagName(treeID, nodeID, input.value);
-    const timer = pendingTagRenameTimers.get(key);
-    if (timer) window.clearTimeout(timer);
-    pendingTagRenameTimers.set(key, window.setTimeout(() => flushLiveTagRename(treeID, nodeID), 250));
   });
 
   function rememberTreeViewportPositions() {
@@ -893,6 +894,7 @@
     if (!button) {
       const map = event.target.closest("[data-tree-map]");
       if (map && !event.target.closest(".tree-map-node, [data-tree-popover]")) {
+        flushTagNameInput(map.querySelector("input[data-live-tag-name]"));
         activeTagPanel = null;
         connectionSource = null;
         selectedTagNode = null;
@@ -938,6 +940,13 @@
       Object.keys(data).filter((key) => key.startsWith("llmProfile.")).forEach((key) => delete data[key]);
     }
     if (action === "cancelTagPanel") {
+      flushTagNameInput(button.closest("[data-tree-popover]")?.querySelector("input[data-live-tag-name]"));
+      activeTagPanel = null;
+      render();
+      return;
+    }
+    if (action === "saveTagName") {
+      flushTagNameInput(button.closest("[data-tree-popover]")?.querySelector("input[data-live-tag-name]"));
       activeTagPanel = null;
       render();
       return;
@@ -966,6 +975,7 @@
         send("connectTag", { treeID: source.treeID, nodeID: source.nodeID, parentID: button.dataset.nodeId });
         return;
       }
+      flushTagNameInput(root.querySelector("[data-tree-popover] input[data-live-tag-name]"));
       openTagEditor(button.dataset.treeId, button.dataset.nodeId);
       return;
     }
