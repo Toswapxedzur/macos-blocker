@@ -42,6 +42,9 @@ final class SharedHubClient {
 
     func connect() {
         desired = true
+        // First app owns the port. If another process already does, the socket
+        // below joins only after its welcome identifies Mac Vault or Vault
+        // Classifier as the local hub.
         LocalClassifierHub.shared.startIfNeeded()
         reconnectTimer?.invalidate()
         reconnectTimer = nil
