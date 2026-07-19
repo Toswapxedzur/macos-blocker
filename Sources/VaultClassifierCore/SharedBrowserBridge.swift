@@ -5,6 +5,7 @@ import Foundation
 public enum SharedBrowserBridgeOperation: String, CaseIterable, Codable, Sendable {
     case bridgeInfo = "bridge-info"
     case collectionInfo = "collection-info"
+    case diagnostic = "diagnostic"
     case collect
     case classify
     case correct

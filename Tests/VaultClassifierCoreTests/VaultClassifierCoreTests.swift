@@ -208,6 +208,7 @@ final class VaultClassifierCoreTests: XCTestCase {
     func testSharedBrowserBridgeFramesAreStrictlyBounded() {
         XCTAssertEqual(SharedBrowserBridgeProtocol.version, 3)
         XCTAssertEqual(SharedBrowserBridgeProtocol.address, "ws://127.0.0.1:8787")
+        XCTAssertEqual(SharedBrowserBridgeOperation.diagnostic.rawValue, "diagnostic")
         XCTAssertTrue(SharedBrowserBridgeProtocol.isValidRequestID("request-001"))
         XCTAssertFalse(SharedBrowserBridgeProtocol.isValidRequestID("request\n001"))
         XCTAssertTrue(SharedBrowserBridgeProtocol.isValidBody(["entry": ["title": "Visible card"]]))
@@ -216,6 +217,23 @@ final class VaultClassifierCoreTests: XCTestCase {
         XCTAssertTrue(SharedBrowserBridgeProtocol.isAcceptedHubProgram("classifier"))
         XCTAssertFalse(SharedBrowserBridgeProtocol.isAcceptedHubProgram("vault-broker"))
         XCTAssertFalse(SharedBrowserBridgeProtocol.isAcceptedHubProgram("browser"))
+    }
+
+    func testCollectionDiagnosticsUseOnlySafePlatformIdentifiers() throws {
+        let diagnostic = NativeCollectionDiagnosticRequest(
+            platformID: "youtube",
+            event: .pageEvidenceMissing,
+            detail: .missingCreator
+        )
+        XCTAssertNoThrow(try diagnostic.validate())
+        XCTAssertThrowsError(try NativeCollectionDiagnosticRequest(
+            platformID: "youtube raw title",
+            event: .collectionRequested
+        ).validate()) { error in
+            guard case NativeCollectionDiagnosticError.invalidPlatform = error else {
+                return XCTFail("Expected invalid platform diagnostic error")
+            }
+        }
     }
 
     func testCollectedEntriesDeduplicateWithoutChangingDatasetRevision() {

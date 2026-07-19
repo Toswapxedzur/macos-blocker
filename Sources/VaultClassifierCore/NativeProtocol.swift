@@ -189,6 +189,75 @@ public struct NativeCollectionResponse: Codable, Equatable, Sendable {
     }
 }
 
+/// Fixed, metadata-free checkpoints for diagnosing the local collection path.
+/// These records deliberately exclude page text, titles, creator identity,
+/// URLs, entry IDs, and credentials. They only make it possible to identify
+/// which hop (content script, extension bridge, hub, or local app) stopped.
+public enum NativeCollectionDiagnosticEvent: String, CaseIterable, Codable, Sendable {
+    case collectorStarted = "collector-started"
+    case collectionInfoRequested = "collection-info-requested"
+    case collectionInfoEnabled = "collection-info-enabled"
+    case collectionInfoDisabled = "collection-info-disabled"
+    case collectionInfoFailed = "collection-info-failed"
+    case pageEvidenceReady = "page-evidence-ready"
+    case pageEvidenceMissing = "page-evidence-missing"
+    case collectionRequested = "collection-requested"
+    case collectionAccepted = "collection-accepted"
+    case collectionRejected = "collection-rejected"
+}
+
+public enum NativeCollectionDiagnosticDetail: String, CaseIterable, Codable, Sendable {
+    case missingVideoID = "missing-video-id"
+    case missingWatchRoot = "missing-watch-root"
+    case missingTitle = "missing-title"
+    case missingCreator = "missing-creator"
+    case runtimeLastError = "runtime-last-error"
+    case bridgeUnavailable = "bridge-unavailable"
+    case rejected = "rejected"
+    case timeout = "timeout"
+}
+
+public struct NativeCollectionDiagnosticRequest: Codable, Equatable, Sendable {
+    public var platformID: String
+    public var event: NativeCollectionDiagnosticEvent
+    public var detail: NativeCollectionDiagnosticDetail?
+
+    public init(platformID: String, event: NativeCollectionDiagnosticEvent, detail: NativeCollectionDiagnosticDetail? = nil) {
+        self.platformID = platformID
+        self.event = event
+        self.detail = detail
+    }
+
+    public func validate() throws {
+        guard !platformID.isEmpty, platformID.count <= 64,
+              platformID.unicodeScalars.allSatisfy({ scalar in
+                  (scalar.value >= 0x61 && scalar.value <= 0x7a) ||
+                  (scalar.value >= 0x30 && scalar.value <= 0x39) ||
+                  scalar.value == 0x2d
+              }) else {
+            throw NativeCollectionDiagnosticError.invalidPlatform
+        }
+    }
+}
+
+public struct NativeCollectionDiagnosticResponse: Codable, Equatable, Sendable {
+    public var accepted: Bool
+
+    public init(accepted: Bool) {
+        self.accepted = accepted
+    }
+}
+
+public enum NativeCollectionDiagnosticError: Error, LocalizedError, Sendable {
+    case invalidPlatform
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidPlatform: return "The collection diagnostic platform is invalid."
+        }
+    }
+}
+
 public struct NativeClassificationRequest: Codable, Equatable, Sendable {
     public var entry: EntryEvidence
     public init(entry: EntryEvidence) { self.entry = entry }

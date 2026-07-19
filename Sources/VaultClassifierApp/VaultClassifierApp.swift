@@ -136,6 +136,7 @@ final class VaultClassifierViewModel: ObservableObject {
 
     private var coordinator: LocalClassifierCoordinator?
     private var sharedHubClient: SharedHubClient?
+    private var collectionDiagnostics: CollectionDiagnosticsStore?
     private var latestLedgerID: UUID?
     /// Credentials saved without Keychain are intentionally process-scoped.
     /// They support a one-session explicit provider run without writing a raw
@@ -152,6 +153,9 @@ final class VaultClassifierViewModel: ObservableObject {
             let package = try SeedPackageLoader.bundled()
             let appSupport = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             let vaultDirectory = appSupport.appendingPathComponent("VaultClassifier", isDirectory: true)
+            let collectionDiagnostics = CollectionDiagnosticsStore(fileURL: vaultDirectory.appendingPathComponent("collection-diagnostics.json"))
+            self.collectionDiagnostics = collectionDiagnostics
+            collectionDiagnostics.record(event: "app-started", outcome: "ready")
             let coordinator = try LocalClassifierCoordinator(verifiedPackage: package, stateFile: LocalStateFile(url: vaultDirectory.appendingPathComponent("state.json")), defaultPolicies: [StarterPolicies.clashRoyale])
             self.coordinator = coordinator
             self.policies = coordinator.policies()
@@ -167,8 +171,15 @@ final class VaultClassifierViewModel: ObservableObject {
             sharedHubClient.onRequest = { [weak self] request in
                 self?.handleSharedHubRequest(request) ?? .failure("classifier-unavailable")
             }
-            sharedHubClient.onStateChange = { [weak self] in
-                self?.onWebStateChange?()
+            sharedHubClient.onStateChange = { [weak self, weak sharedHubClient] in
+                guard let self else { return }
+                let hubError = sharedHubClient?.error ?? ""
+                self.collectionDiagnostics?.record(
+                    event: "hub-state",
+                    detail: hubError.isEmpty ? nil : hubError,
+                    outcome: sharedHubClient?.state.rawValue ?? "off"
+                )
+                self.onWebStateChange?()
             }
             LocalClassifierHub.shared.onStateChange = { [weak self] in
                 Task { @MainActor in self?.onWebStateChange?() }
@@ -191,12 +202,24 @@ final class VaultClassifierViewModel: ObservableObject {
                 return try sharedHubReply(response)
             case .collectionInfo:
                 _ = try JSONDecoder().decode(NativeCollectionInfoRequest.self, from: request.bodyData)
-                return try sharedHubReply(NativeCollectionInfoResponse(
-                    enabledPlatformIDs: coordinator.enabledCollectionPlatformIDs()
-                ))
+                let response = NativeCollectionInfoResponse(enabledPlatformIDs: coordinator.enabledCollectionPlatformIDs())
+                collectionDiagnostics?.record(event: "collection-info-served", outcome: response.enabledPlatformIDs.isEmpty ? "disabled" : "enabled")
+                return try sharedHubReply(response)
+            case .diagnostic:
+                let diagnostic = try JSONDecoder().decode(NativeCollectionDiagnosticRequest.self, from: request.bodyData)
+                try diagnostic.validate()
+                collectionDiagnostics?.record(
+                    platformID: diagnostic.platformID,
+                    event: diagnostic.event.rawValue,
+                    detail: diagnostic.detail?.rawValue,
+                    outcome: "received"
+                )
+                return try sharedHubReply(NativeCollectionDiagnosticResponse(accepted: true))
             case .collect:
                 let request = try JSONDecoder().decode(NativeCollectionRequest.self, from: request.bodyData)
+                collectionDiagnostics?.record(platformID: request.entry.platform, event: "collection-received", outcome: "received")
                 let inserted = try coordinator.collectPlatformEntry(request.entry)
+                collectionDiagnostics?.record(platformID: request.entry.platform, event: "collection-stored", outcome: inserted ? "inserted" : "duplicate")
                 return try sharedHubReply(NativeCollectionResponse(accepted: true, inserted: inserted))
             case .classify:
                 let classification = try JSONDecoder().decode(NativeClassificationRequest.self, from: request.bodyData)
@@ -208,6 +231,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 return try sharedHubReply(NativeCorrectionResponse(accepted: true))
             }
         } catch {
+            collectionDiagnostics?.record(event: "request-rejected", outcome: "rejected")
             return .failure(error.localizedDescription)
         }
     }
@@ -861,6 +885,11 @@ final class VaultClassifierViewModel: ObservableObject {
             refreshLocalState()
             issue = nil
         } catch { issue = error.localizedDescription }
+    }
+
+    func clearCollectionDiagnostics() {
+        collectionDiagnostics?.clear()
+        onWebStateChange?()
     }
 
     func createLocalModel(name: String) {
@@ -2460,6 +2489,16 @@ final class VaultClassifierViewModel: ObservableObject {
             "peers": localHub.isHosting ? localHub.peerSnapshot() : (hubClient?.peers ?? []),
             "hostProgram": localHub.isHosting ? "classifier" : hostProgram,
         ]
+        let collectionDiagnosticsPayload: [[String: Any]] = (collectionDiagnostics?.records ?? []).suffix(80).reversed().map { record in
+            [
+                "id": record.id.uuidString,
+                "recordedAtMilliseconds": record.recordedAtMilliseconds,
+                "platformID": record.platformID ?? NSNull(),
+                "event": record.event,
+                "detail": record.detail ?? NSNull(),
+                "outcome": record.outcome,
+            ]
+        }
         return [
             "workspace": workspace.rawValue,
             "issue": issue ?? NSNull(),
@@ -2472,6 +2511,7 @@ final class VaultClassifierViewModel: ObservableObject {
             "audit": audit,
             "assets": assets,
             "bridge": sharedHub,
+            "collectionDiagnostics": collectionDiagnosticsPayload,
         ]
     }
 
@@ -2505,6 +2545,8 @@ final class VaultClassifierViewModel: ObservableObject {
                     platformID: try webString(data, key: "platformID", limit: 64),
                     enabled: try webBool(data, key: "enabled")
                 )
+            case "clearCollectionDiagnostics":
+                clearCollectionDiagnostics()
             case "setActiveClassifierType":
                 setActiveClassifierType(
                     platformID: try webString(data, key: "platformID", limit: 64),
