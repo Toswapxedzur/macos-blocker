@@ -1,0 +1,40 @@
+import Foundation
+
+/// Accepts only public avatar URLs issued by a collection platform or that
+/// platform's reviewed image delivery hosts. Collection may contain a URL but
+/// never raw image bytes; the app cache is therefore unable to fetch an
+/// arbitrary page-provided address.
+public enum CreatorAvatarURLPolicy {
+    private static let hostsByPlatform: [String: [String]] = [
+        "youtube": ["youtube.com", "yt3.ggpht.com", "yt3.googleusercontent.com", "googleusercontent.com"],
+        "tiktok": ["tiktok.com", "tiktokcdn.com", "tiktokcdn-us.com", "muscdn.com", "ibytedtos.com"],
+        "facebook": ["facebook.com", "fbcdn.net", "fbsbx.com"],
+        "instagram": ["instagram.com", "cdninstagram.com", "fbcdn.net"],
+        "twitch": ["twitch.tv", "jtvnw.net"],
+        "reddit": ["reddit.com", "redd.it", "redditstatic.com", "redditmedia.com"],
+        "twitter": ["x.com", "twitter.com", "twimg.com"],
+        "bluesky": ["bsky.app", "cdn.bsky.app"],
+        "threads": ["threads.com", "instagram.com", "cdninstagram.com", "fbcdn.net"],
+        "substack": ["substack.com", "substackcdn.com"],
+        "bilibili": ["bilibili.com", "biliimg.com", "hdslb.com"],
+        "rumble": ["rumble.com", "rumblecdn.com"],
+        "pinterest": ["pinterest.com", "pinimg.com"],
+        "tumblr": ["tumblr.com"],
+        "peertube": ["peertube.tv"],
+        "pixelfed": ["pixelfed.social"],
+    ]
+
+    public static func isAccepted(platformID: String, value: String) -> Bool {
+        guard value.utf8.count <= CollectedPlatformEntry.maximumAttributeValueLength,
+              let url = URL(string: value),
+              url.scheme?.lowercased() == "https",
+              url.user == nil,
+              url.password == nil,
+              let host = url.host?.lowercased() else {
+            return false
+        }
+        return (hostsByPlatform[platformID] ?? []).contains { suffix in
+            host == suffix || host.hasSuffix(".\(suffix)")
+        }
+    }
+}

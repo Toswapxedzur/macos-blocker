@@ -137,6 +137,7 @@ final class VaultClassifierViewModel: ObservableObject {
     private var coordinator: LocalClassifierCoordinator?
     private var sharedHubClient: SharedHubClient?
     private var collectionDiagnostics: CollectionDiagnosticsStore?
+    private(set) var creatorAvatarCache: CreatorAvatarCache?
     private var latestLedgerID: UUID?
     /// Credentials saved without Keychain are intentionally process-scoped.
     /// They support a one-session explicit provider run without writing a raw
@@ -155,6 +156,7 @@ final class VaultClassifierViewModel: ObservableObject {
             let vaultDirectory = appSupport.appendingPathComponent("VaultClassifier", isDirectory: true)
             let collectionDiagnostics = CollectionDiagnosticsStore(fileURL: vaultDirectory.appendingPathComponent("collection-diagnostics.json"))
             self.collectionDiagnostics = collectionDiagnostics
+            self.creatorAvatarCache = CreatorAvatarCache(directory: vaultDirectory.appendingPathComponent("creator-avatars", isDirectory: true))
             collectionDiagnostics.record(event: "app-started", outcome: "ready")
             let coordinator = try LocalClassifierCoordinator(verifiedPackage: package, stateFile: LocalStateFile(url: vaultDirectory.appendingPathComponent("state.json")), defaultPolicies: [StarterPolicies.clashRoyale])
             self.coordinator = coordinator
@@ -220,6 +222,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 let request = try JSONDecoder().decode(NativeCollectionRequest.self, from: request.bodyData)
                 collectionDiagnostics?.record(platformID: request.entry.platform, event: "collection-received", outcome: "received")
                 let inserted = try coordinator.collectPlatformEntry(request.entry)
+                cacheCreatorAvatar(from: request.entry)
                 collectionDiagnostics?.record(platformID: request.entry.platform, event: "collection-stored", outcome: inserted ? "inserted" : "duplicate")
                 // Browser collection bypasses WebKit actions, so publish the
                 // freshly persisted catalog to the already-open app now.
@@ -239,6 +242,16 @@ final class VaultClassifierViewModel: ObservableObject {
             collectionDiagnostics?.record(event: "request-rejected", outcome: "rejected")
             onWebStateChange?()
             return .failure(error.localizedDescription)
+        }
+    }
+
+    private func cacheCreatorAvatar(from entry: EntryEvidence) {
+        guard case .string(let avatarURL)? = entry.evidence.metadata["creatorAvatarURL"],
+              CreatorAvatarURLPolicy.isAccepted(platformID: entry.platform, value: avatarURL) else {
+            return
+        }
+        creatorAvatarCache?.cache(remoteURL: avatarURL) { [weak self] in
+            Task { @MainActor in self?.onWebStateChange?() }
         }
     }
 
@@ -2357,6 +2370,9 @@ final class VaultClassifierViewModel: ObservableObject {
                             "title": entry.title,
                             "canonicalURL": entry.canonicalURL ?? NSNull(),
                             "attributes": entry.attributes,
+                            "cachedCreatorAvatarURL": entry.attributes["creatorAvatarURL"].flatMap {
+                                creatorAvatarCache?.cachedURL(for: $0)?.absoluteString
+                            } ?? NSNull(),
                             "firstObservedAtMilliseconds": entry.firstObservedAtMilliseconds,
                             "lastObservedAtMilliseconds": entry.lastObservedAtMilliseconds,
                             "observationCount": entry.observationCount,

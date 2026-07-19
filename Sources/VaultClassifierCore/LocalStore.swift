@@ -675,7 +675,7 @@ public final class LocalClassifierCoordinator {
             throw PlatformCollectionError.missingTitle
         }
 
-        let metadata = collectionMetadata(from: entry.evidence.metadata)
+        let metadata = collectionMetadata(from: entry.evidence.metadata, platformID: entry.platform)
         guard metadata["isAdvertisement"] != "true" else {
             throw PlatformCollectionError.advertisement
         }
@@ -709,7 +709,7 @@ public final class LocalClassifierCoordinator {
         return inserted
     }
 
-    private func collectionMetadata(from metadata: [String: JSONValue]) -> [String: String] {
+    private func collectionMetadata(from metadata: [String: JSONValue], platformID: String) -> [String: String] {
         var output: [String: String] = [:]
         for key in metadata.keys.sorted() {
             guard output.count < CollectedPlatformEntry.maximumAttributes + 4,
@@ -722,6 +722,9 @@ public final class LocalClassifierCoordinator {
             case .bool(let bool): rendered = bool ? "true" : "false"
             }
             guard !rendered.isEmpty, rendered.count <= CollectedPlatformEntry.maximumAttributeValueLength else { continue }
+            if key == "creatorAvatarURL", !CreatorAvatarURLPolicy.isAccepted(platformID: platformID, value: rendered) {
+                continue
+            }
             output[key] = rendered
         }
         return output
