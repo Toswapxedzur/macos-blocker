@@ -630,11 +630,12 @@ public struct PlatformBinding: Codable, Equatable, Sendable, Identifiable {
     public var activeClassifierTypeID: String?
     public var activeModelID: String?
     public var policyID: String?
-    /// Raw public-content collection is off by default. A browser may only
-    /// send title/creator metadata after this local binding is explicitly on.
+    /// Raw public-content collection is on by default for a newly added local
+    /// platform binding. The browser still sends nothing unless this binding
+    /// exists and its extension-side collection setting is also on.
     public var collectionEnabled: Bool
 
-    public init(id: String = "youtube", name: String = "YouTube", browser: String = "Chrome and Edge", treeID: String, datasetID: String, activeClassifierTypeID: String? = nil, activeModelID: String? = nil, policyID: String? = nil, collectionEnabled: Bool = false) {
+    public init(id: String = "youtube", name: String = "YouTube", browser: String = "Chrome and Edge", treeID: String, datasetID: String, activeClassifierTypeID: String? = nil, activeModelID: String? = nil, policyID: String? = nil, collectionEnabled: Bool = true) {
         self.id = id
         self.name = name
         self.browser = browser
@@ -660,7 +661,7 @@ public struct PlatformBinding: Codable, Equatable, Sendable, Identifiable {
         activeClassifierTypeID = try container.decodeIfPresent(String.self, forKey: .activeClassifierTypeID)
         activeModelID = try container.decodeIfPresent(String.self, forKey: .activeModelID)
         policyID = try container.decodeIfPresent(String.self, forKey: .policyID)
-        collectionEnabled = try container.decodeIfPresent(Bool.self, forKey: .collectionEnabled) ?? false
+        collectionEnabled = try container.decodeIfPresent(Bool.self, forKey: .collectionEnabled) ?? true
     }
 }
 

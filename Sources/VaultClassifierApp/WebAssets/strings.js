@@ -574,7 +574,7 @@ window.VaultClassifierStrings = Object.freeze({
   "data.copy": "Add each public-content platform once, choose whether its rendered metadata is collected locally, and review entries by creator.",
   "data.entries": "{count} COLLECTED ENTRIES",
   "data.addPlatform": "Add platform",
-  "data.addPlatformCopy": "A platform owns one local tree and dataset binding. Collection stays off until you explicitly enable it.",
+  "data.addPlatformCopy": "A platform owns one local tree and dataset binding. Collection starts on and sends only rendered public entries when this browser is connected.",
   "data.addPlatformAction": "Add platform",
   "data.allPlatformsAdded": "Every currently known public-content platform has been added.",
   "data.noPlatforms": "Add a platform to begin a local collection library.",

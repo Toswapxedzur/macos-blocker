@@ -812,7 +812,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 browser: definition.browser,
                 treeID: tree.id,
                 datasetID: dataset.id,
-                collectionEnabled: false
+                collectionEnabled: true
             ))
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()

@@ -642,6 +642,15 @@
       const numeric = Number(value);
       return Number.isFinite(numeric) ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(numeric)) : t("data.unknownDate");
     };
+    const collectionAttributeLabel = (key) => ({
+      subscriberCount: "Subscribers",
+      viewCount: "Views",
+      published: "Published",
+      duration: "Duration",
+      details: "Details",
+      metadata: "Feed details",
+      creatorURL: "Creator page"
+    })[key] || String(key).replaceAll(/([A-Z])/g, " $1").replaceAll(/[._-]/g, " ").replace(/^./, (letter) => letter.toUpperCase());
     const bindingPanel = (binding) => {
       const definition = definitions.find((candidate) => candidate.id === binding.id);
       const dataset = datasetByID.get(binding.datasetID);
@@ -658,7 +667,10 @@
         .map((creator) => {
           const creatorEntries = creator.entries.sort((lhs, rhs) => (Number(rhs.lastObservedAtMilliseconds) || 0) - (Number(lhs.lastObservedAtMilliseconds) || 0));
           return `<details class="collection-creator"><summary><span class="collection-creator-name">${esc(creator.name)}</span><span class="collection-creator-count">${tx("data.entryCount", { count: creatorEntries.length })}</span></summary><div class="collection-entry-list">${creatorEntries.map((entry) => {
-            const attributes = Object.entries(entry.attributes || {}).slice(0, 5).map(([key, value]) => `${esc(key)}: ${esc(value)}`).join(" · ");
+            const attributes = Object.entries(entry.attributes || {})
+              .slice(0, 5)
+              .map(([key, value]) => `${esc(collectionAttributeLabel(key))}: ${esc(value)}`)
+              .join(" · ");
             return `<div class="collection-entry"><span class="collection-entry-title">${esc(entry.title)}</span><span class="collection-entry-meta">${esc(entry.entryType)} · ${observedAt(entry.lastObservedAtMilliseconds)}${attributes ? ` · ${attributes}` : ""}</span></div>`;
           }).join("")}</div></details>`;
         }).join("");
