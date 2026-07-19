@@ -214,12 +214,17 @@ final class VaultClassifierViewModel: ObservableObject {
                     detail: diagnostic.detail?.rawValue,
                     outcome: "received"
                 )
+                onWebStateChange?()
                 return try sharedHubReply(NativeCollectionDiagnosticResponse(accepted: true))
             case .collect:
                 let request = try JSONDecoder().decode(NativeCollectionRequest.self, from: request.bodyData)
                 collectionDiagnostics?.record(platformID: request.entry.platform, event: "collection-received", outcome: "received")
                 let inserted = try coordinator.collectPlatformEntry(request.entry)
                 collectionDiagnostics?.record(platformID: request.entry.platform, event: "collection-stored", outcome: inserted ? "inserted" : "duplicate")
+                // Browser collection bypasses WebKit actions, so publish the
+                // freshly persisted catalog to the already-open app now.
+                refreshLocalState()
+                onWebStateChange?()
                 return try sharedHubReply(NativeCollectionResponse(accepted: true, inserted: inserted))
             case .classify:
                 let classification = try JSONDecoder().decode(NativeClassificationRequest.self, from: request.bodyData)
@@ -232,6 +237,7 @@ final class VaultClassifierViewModel: ObservableObject {
             }
         } catch {
             collectionDiagnostics?.record(event: "request-rejected", outcome: "rejected")
+            onWebStateChange?()
             return .failure(error.localizedDescription)
         }
     }
