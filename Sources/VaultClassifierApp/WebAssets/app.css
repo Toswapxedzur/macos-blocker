@@ -383,37 +383,51 @@ h3 { font-size: 13px; }
 .utility-modal-actions { display: flex; justify-content: flex-end; padding-top: 2px; }
 
 .utility-setting-card {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   margin: 0;
-  padding: 14px;
-  border: 1px solid #e2e8f0;
+  padding: 14px 14px 14px 18px;
+  border: 0;
   border-radius: 12px;
-  background: #f8fafc;
+  background: var(--gold-50);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+  overflow: hidden;
 }
-.utility-setting-card h3 { font-size: 13px; }
+.utility-setting-card::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 0;
+  width: 4px;
+  border-radius: 0 999px 999px 0;
+  background: linear-gradient(180deg, #fbbf24 0%, var(--gold-700) 100%);
+}
+.utility-setting-card h3 { color: color-mix(in srgb, var(--gold-text) 36%, #334155); font-size: 14px; }
 .utility-setting-card .section-copy { margin: 3px 0 0; }
 .bridge-settings-status { display: grid; gap: 8px; }
 .bridge-settings-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.utility-bridge-modal { padding: 28px 34px 30px 36px; background: #fff9e8; overflow: hidden; }
-.utility-bridge-modal::before { content: ""; display: block; position: absolute; inset: 22px auto 24px 0; width: 7px; border-radius: 0 7px 7px 0; background: var(--gold-600); }
-.utility-bridge-modal .utility-panel-head { padding-bottom: 2px; border-bottom: 0; }
-.utility-bridge-modal .utility-panel-head h2 { color: #5d4d38; font-size: 29px; letter-spacing: -0.04em; }
-.utility-bridge-modal .section-copy { max-width: 640px; color: var(--navy-700); font-size: 17px; line-height: 1.35; }
-.bridge-local-status { display: flex; align-items: center; gap: 12px; color: #111827; font-size: 17px; }
-.bridge-local-status .status-dot { width: 13px; height: 13px; background: #94a3b8; }
+.utility-bridge-modal { padding: 14px 14px 14px 18px; border-radius: 12px; background: var(--gold-50); box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05); overflow: hidden; }
+.utility-bridge-modal::before { content: ""; display: block; position: absolute; inset: 12px auto 12px 0; width: 4px; border-radius: 0 999px 999px 0; background: linear-gradient(180deg, #fbbf24 0%, var(--gold-700) 100%); }
+.utility-bridge-modal .utility-panel-head { padding-bottom: 0; border-bottom: 0; }
+.utility-bridge-modal .utility-panel-head h2 { color: color-mix(in srgb, var(--gold-text) 36%, #334155); font-size: 14px; letter-spacing: normal; }
+.utility-bridge-modal .section-copy { max-width: none; color: color-mix(in srgb, var(--gold-text) 36%, #334155); font-size: 12px; line-height: 1.4; }
+.bridge-local-status { display: flex; align-items: center; gap: 8px; color: #1f2937; font-size: 13px; }
+.bridge-local-status .status-dot { width: 10px; height: 10px; background: #94a3b8; }
 .bridge-local-status .status-dot.hosting { background: var(--gold-700); }
 .bridge-local-status .status-dot.joined-macapp,
 .bridge-local-status .status-dot.joined-classifier { background: var(--cyan-700); }
 .bridge-local-status .status-dot.connecting,
 .bridge-local-status .status-dot.disconnected { background: var(--navy-600); }
-.bridge-address { margin: 0; color: var(--navy-700); font-size: 15px; }
-.bridge-address code { color: var(--navy-700); font-size: 16px; }
-.bridge-peer-copy { margin: 0; color: var(--navy-700); font-size: 15px; }
-.utility-bridge-modal .bridge-settings-actions { margin-top: 2px; }
-.utility-bridge-modal .bridge-settings-actions button { min-width: 116px; }
+.bridge-address { margin: 0; color: color-mix(in srgb, var(--gold-text) 36%, #334155); font-size: 12px; }
+.bridge-address code { color: inherit; font-size: 12px; }
+.bridge-peer-copy { margin: 0; color: color-mix(in srgb, var(--gold-text) 36%, #334155); font-size: 12px; }
+.utility-bridge-modal .small-copy { color: color-mix(in srgb, var(--gold-text) 36%, #334155); }
+.utility-bridge-modal .bridge-settings-actions { margin-top: 0; }
+.utility-bridge-modal .bridge-settings-actions button { min-width: 0; }
 
 @media (max-width: 620px) {
   .utility-popover-layer { padding: 12px; }
