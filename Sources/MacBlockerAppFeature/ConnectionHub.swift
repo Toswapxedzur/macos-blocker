@@ -2,10 +2,11 @@
 import Foundation
 import Network
 
-/// Client for the one ephemeral Vault WebSocket broker.
+/// The fixed local Vault WebSocket hub.
 ///
-/// Mac Vault no longer listens on a loopback port. The public broker retains
-/// only live peer and group-sync state, while this app keeps enforcement local.
+/// The first open Vault app owns the loopback listener. Other Vault apps join
+/// that hub as local peers; when the owner quits, a remaining app retries the
+/// listener so the hub needs only one open app to stay available.
 final class ConnectionHub: ObservableObject {
     static let protocolVersion = 3
     static let localProgram = "macapp"
@@ -47,7 +48,7 @@ final class ConnectionHub: ObservableObject {
     private var peers: [ObjectIdentifier: Peer] = [:]
     private var classifierRequests: [String: ClassifierRequest] = [:]
     private var running = false
-    private static let brokerAddress = "wss://customblocker.com/api/vault-bridge"
+    private static let brokerAddress = "ws://127.0.0.1:8787"
     private var lastError = ""
     private var brokerPeers: [[String: Any]] = []
     private var brokerSession: URLSession?
@@ -55,6 +56,7 @@ final class ConnectionHub: ObservableObject {
     private var reconnectWorkItem: DispatchWorkItem?
     private var pingTimer: DispatchSourceTimer?
     private var wantsBrokerConnection = false
+    private var hostingLocalHub = false
     private var lastBridgeAnnouncement: [String: Any]?
     static func helloRejectionReason(_ obj: [String: Any]) -> String? {
         let version = (obj["v"] as? NSNumber)?.intValue
@@ -185,7 +187,7 @@ final class ConnectionHub: ObservableObject {
         guard !wantsBrokerConnection else { return }
         wantsBrokerConnection = true
         lastError = ""
-        connectToBroker()
+        startLocalHubOrJoinExisting()
     }
 
     func stop() {
@@ -204,8 +206,50 @@ final class ConnectionHub: ObservableObject {
         let conns = peers.values.map { $0.connection }
         peers.removeAll()
         running = false
+        hostingLocalHub = false
         lock.unlock()
         for conn in conns { conn.cancel() }
+    }
+
+    private func startLocalHubOrJoinExisting() {
+        guard wantsBrokerConnection, listener == nil else { return }
+        do {
+            let parameters = NWParameters.tcp
+            parameters.defaultProtocolStack.applicationProtocols.insert(NWProtocolWebSocket.Options(), at: 0)
+            let listener = try NWListener(using: parameters, on: 8787)
+            self.listener = listener
+            listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
+            listener.stateUpdateHandler = { [weak self, weak listener] state in
+                guard let self, self.listener === listener else { return }
+                switch state {
+                case .ready:
+                    self.lock.lock()
+                    self.running = true
+                    self.hostingLocalHub = true
+                    self.lastError = ""
+                    self.brokerPeers = []
+                    self.lock.unlock()
+                case .failed:
+                    self.listener?.cancel()
+                    self.listener = nil
+                    self.lock.lock()
+                    self.running = false
+                    self.hostingLocalHub = false
+                    self.lastError = "server-running-not-connected"
+                    self.lock.unlock()
+                    self.connectToBroker()
+                default:
+                    break
+                }
+            }
+            listener.start(queue: queue)
+        } catch {
+            lock.lock()
+            hostingLocalHub = false
+            lastError = "server-running-not-connected"
+            lock.unlock()
+            connectToBroker()
+        }
     }
 
     private func connectToBroker() {
@@ -252,7 +296,8 @@ final class ConnectionHub: ObservableObject {
         switch kind {
         case "welcome":
             guard (object["v"] as? NSNumber)?.intValue == Self.protocolVersion,
-                  object["hubProgram"] as? String == "vault-broker" else {
+                  let hubProgram = object["hubProgram"] as? String,
+                  ["macapp", "classifier"].contains(hubProgram) else {
                 brokerDisconnected("protocol-mismatch", retry: false)
                 return
             }
@@ -277,7 +322,8 @@ final class ConnectionHub: ObservableObject {
             pendingLocalRejection = (object["reason"] as? String) ?? ""
             lock.unlock()
         case "rejected":
-            brokerDisconnected((object["reason"] as? String) ?? "rejected", retry: false)
+            let reason = (object["reason"] as? String) ?? "rejected"
+            brokerDisconnected(reason, retry: reason == "hub-yield-to-macapp")
         default:
             break
         }
@@ -295,9 +341,10 @@ final class ConnectionHub: ObservableObject {
         pingTimer = nil
         guard retry, wantsBrokerConnection else { return }
         reconnectWorkItem?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.connectToBroker() }
+        let delay: DispatchTimeInterval = reason == "hub-yield-to-macapp" ? .milliseconds(250) : .seconds(2)
+        let work = DispatchWorkItem { [weak self] in self?.startLocalHubOrJoinExisting() }
         reconnectWorkItem = work
-        queue.asyncAfter(deadline: .now() + 5, execute: work)
+        queue.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     private func sendBroker(_ frame: [String: Any], on task: URLSessionWebSocketTask? = nil) {
@@ -323,6 +370,12 @@ final class ConnectionHub: ObservableObject {
     // MARK: Connections
 
     private func accept(_ conn: NWConnection) {
+        // NWListener cannot bind a specific local host. Reject the connection
+        // before allocating peer state unless the TCP peer is this Mac.
+        guard Self.isLoopback(conn) else {
+            conn.cancel()
+            return
+        }
         let key = ObjectIdentifier(conn)
         lock.lock()
         peers[key] = Peer(id: UUID().uuidString, program: "", connected: false, connection: conn)
@@ -346,6 +399,16 @@ final class ConnectionHub: ObservableObject {
             if isPending {
                 self.rejectAndClose(conn, reason: "authentication-timeout")
             }
+        }
+    }
+
+    private static func isLoopback(_ connection: NWConnection) -> Bool {
+        guard case let .hostPort(host, _) = connection.endpoint else { return false }
+        switch host.debugDescription.lowercased() {
+        case "127.0.0.1", "::1", "[::1]":
+            return true
+        default:
+            return false
         }
     }
 
@@ -664,14 +727,16 @@ final class ConnectionHub: ObservableObject {
         let running = self.running
         let err = self.lastError
         let peerList = self.brokerPeers
+        let hosting = self.hostingLocalHub
         lock.unlock()
+        let visiblePeers = hosting ? peerListJSON() : peerList
         let status: [String: Any] = [
             "running": running,
-            "state": err.isEmpty ? (running ? "running" : "off") : "error",
+            "state": err.isEmpty ? (running ? (hosting ? "running" : "connected") : "off") : err,
             "address": Self.brokerAddress,
-            "peers": peerList,
+            "peers": visiblePeers,
             "error": err,
-            "hubProgram": "vault-broker"
+            "hubProgram": hosting ? "macapp" : "local-hub"
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: status),
               let json = String(data: data, encoding: .utf8) else {
@@ -945,7 +1010,7 @@ final class ConnectionHub: ObservableObject {
         contribution["groupName"] = groupName
         contribution["groupType"] = "site"
         contribution["ts"] = 0
-        sendBroker(contribution)
+        submitBridgeFrame(contribution)
     }
 
     /// The hub-authoritative shared usage budget for a Mac-clustered Default
@@ -965,7 +1030,7 @@ final class ConnectionHub: ObservableObject {
 
     func syncFromBridge(json: String) {
         guard let obj = decode(json) else { return }
-        sendBroker(obj)
+        submitBridgeFrame(obj)
     }
 
     /// JSON array of all clusters, pushed to the Mac's own web editor each tick.
@@ -999,17 +1064,57 @@ final class ConnectionHub: ObservableObject {
     func announceFromBridge(json: String) {
         guard let obj = decode(json) else { return }
         lastBridgeAnnouncement = obj
-        sendBroker(obj)
+        submitBridgeFrame(obj)
     }
 
     func connectFromBridge(json: String) {
         guard let obj = decode(json) else { return }
-        sendBroker(obj)
+        submitBridgeFrame(obj)
     }
 
     func disconnectFromBridge(json: String) {
         guard let obj = decode(json) else { return }
-        sendBroker(obj)
+        submitBridgeFrame(obj)
+    }
+
+    /// The hosting Mac is itself a local endpoint, so its editor frames are
+    /// applied straight to the hub state. A non-host sends the exact same frame
+    /// through the one shared loopback socket.
+    private func submitBridgeFrame(_ frame: [String: Any]) {
+        lock.lock()
+        let isHosting = hostingLocalHub
+        lock.unlock()
+        guard isHosting else {
+            sendBroker(frame)
+            return
+        }
+        switch frame["kind"] as? String {
+        case "groups-announce":
+            setRoster(program: Self.localProgram, groups: frame["groups"] as? [[String: Any]] ?? [])
+        case "connect-group":
+            connectGroup(
+                from: Self.localProgram,
+                to: frame["toProgram"] as? String ?? "",
+                groupName: frame["groupName"] as? String ?? "",
+                groupType: frame["groupType"] as? String ?? ""
+            )
+        case "disconnect-group":
+            disconnectGroup(
+                clusterId: frame["clusterId"] as? String ?? "",
+                groupName: frame["groupName"] as? String ?? "",
+                program: Self.localProgram
+            )
+        case "group-sync":
+            applySync(
+                program: Self.localProgram,
+                groupName: frame["groupName"] as? String ?? "",
+                groupType: frame["groupType"] as? String ?? "",
+                contribution: frame,
+                ts: frame["ts"] as? Double ?? 0
+            )
+        default:
+            break
+        }
     }
 
     private func replaceBrokerClusters(_ snapshots: [[String: Any]]) {
