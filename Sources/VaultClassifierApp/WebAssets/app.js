@@ -171,10 +171,7 @@
     const stateKey = `bridge.status.${hub.state || "off"}`;
     const peers = Array.isArray(hub.peers) ? hub.peers : [];
     const peerLabels = peers.filter((peer) => peer && peer.program).map((peer) => esc(peer.program)).join(", ") || tx("bridge.noPeers");
-    const connectionButton = connected
-      ? `<button class="secondary" data-action="disconnectSharedHub">${tx("bridge.disconnect")}</button>`
-      : `<button class="primary" data-action="connectSharedHub">${tx("bridge.connect")}</button>`;
-    return `<section class="utility-panel utility-bridge-modal"><div class="utility-panel-head"><div><h2>${tx("bridge.settingsTitle")}</h2><p class="section-copy">${tx("bridge.settingsCopy")}</p></div><div class="action-row"><button class="secondary" data-action="openUtilityPanel" data-utility-panel="settings">${tx("bridge.backToSettings")}</button><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div></div><div class="bridge-settings-status"><div class="status-line"><strong>${tx("bridge.hubAddress")}</strong><span class="spacer"></span><span>${esc(hub.address || "wss://customblocker.com/api/vault-bridge")}</span></div><div class="status-line"><strong>${tx("bridge.hubStatus")}</strong><span class="spacer"></span>${statusPill(tx(stateKey), connected ? "cyan" : "muted")}</div><div class="status-line"><strong>${tx("bridge.peers")}</strong><span class="spacer"></span><span>${peerLabels}</span></div></div><div class="bridge-settings-actions">${connectionButton}</div><p class="small-copy">${tx("bridge.hostCopy")}</p>${hub.error ? notice(hub.error, "red") : ""}</section>`;
+    return `<section class="utility-panel utility-bridge-modal"><div class="utility-panel-head"><div><h2>${tx("bridge.settingsTitle")}</h2><p class="section-copy">${tx("bridge.settingsCopy")}</p></div><div class="action-row"><button class="secondary" data-action="openUtilityPanel" data-utility-panel="settings">${tx("bridge.backToSettings")}</button><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div></div><div class="bridge-local-status"><span class="status-dot ${connected ? "connected" : ""}"></span><strong>${tx(stateKey)}</strong></div><p class="bridge-address"><strong>${tx("bridge.hubAddress")}:</strong> <code>${esc(hub.address || "ws://127.0.0.1:8787")}</code></p><label class="toggle-row bridge-server-toggle"><input type="checkbox" data-bridge-server-toggle${connected ? " checked" : ""}><span>${tx("bridge.connect")}</span></label><p class="small-copy">${tx("bridge.hostCopy")}</p><p class="bridge-peer-copy">${tx("bridge.peers")}: ${peerLabels}</p>${hub.error ? notice(hub.error, "red") : ""}</section>`;
   }
 
   function navButton(workspace, symbol, titleKey, metaKey) {
@@ -1037,6 +1034,11 @@
   });
 
   document.addEventListener("change", (event) => {
+    const bridgeServerToggle = event.target.closest("[data-bridge-server-toggle]");
+    if (bridgeServerToggle) {
+      send(bridgeServerToggle.checked ? "connectSharedHub" : "disconnectSharedHub");
+      return;
+    }
     const languageControl = event.target.closest("[data-language-selection]");
     if (languageControl) {
       if (!languageChoices.some(([identifier]) => identifier === languageControl.value)) return;

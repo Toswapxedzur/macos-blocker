@@ -1,7 +1,7 @@
 import Foundation
 
-/// The browser-facing operation vocabulary carried by the shared Vault broker.
-/// The broker relays only these bounded request shapes and never classifies.
+/// The browser-facing operation vocabulary carried by the shared local Vault
+/// hub. The hub relays only these bounded request shapes and never classifies.
 public enum SharedBrowserBridgeOperation: String, CaseIterable, Codable, Sendable {
     case bridgeInfo = "bridge-info"
     case collectionInfo = "collection-info"
@@ -11,7 +11,7 @@ public enum SharedBrowserBridgeOperation: String, CaseIterable, Codable, Sendabl
 }
 
 public enum SharedBrowserBridgeProtocol {
-    public static let address = "wss://customblocker.com/api/vault-bridge"
+    public static let address = "ws://127.0.0.1:8787"
     public static let version = 3
     public static let maximumBodyBytes = 88_000
     public static let maximumRequestIDLength = 128
@@ -39,7 +39,7 @@ public enum SharedBrowserBridgeProtocol {
     }
 
     public static func isAcceptedHubProgram(_ value: String) -> Bool {
-        value == "vault-broker"
+        value == "macapp" || value == "classifier"
     }
 
     private static func isVisibleIdentifier(_ value: String, maximumLength: Int) -> Bool {
