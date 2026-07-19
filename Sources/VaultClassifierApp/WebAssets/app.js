@@ -671,12 +671,12 @@
         .sort((lhs, rhs) => Math.max(...rhs.entries.map((entry) => Number(entry.lastObservedAtMilliseconds) || 0)) - Math.max(...lhs.entries.map((entry) => Number(entry.lastObservedAtMilliseconds) || 0)))
         .map((creator) => {
           const creatorEntries = creator.entries.sort((lhs, rhs) => (Number(rhs.lastObservedAtMilliseconds) || 0) - (Number(lhs.lastObservedAtMilliseconds) || 0));
-          return `<details class="collection-creator"><summary><span class="collection-creator-name">${esc(creator.name)}</span><span class="collection-creator-count">${tx("data.entryCount", { count: creatorEntries.length })}</span></summary><div class="collection-entry-list">${creatorEntries.map((entry) => {
+          return `<details class="collection-creator"><summary><span class="collection-creator-name" dir="auto">${esc(creator.name)}</span><span class="collection-creator-count">${tx("data.entryCount", { count: creatorEntries.length })}</span></summary><div class="collection-entry-list">${creatorEntries.map((entry) => {
             const attributes = Object.entries(entry.attributes || {})
               .slice(0, 5)
               .map(([key, value]) => `${esc(collectionAttributeLabel(key))}: ${esc(value)}`)
               .join(" · ");
-            return `<div class="collection-entry"><span class="collection-entry-title">${esc(entry.title)}</span><span class="collection-entry-meta">${esc(entry.entryType)} · ${observedAt(entry.lastObservedAtMilliseconds)}${attributes ? ` · ${attributes}` : ""}</span></div>`;
+            return `<div class="collection-entry"><span class="collection-entry-title" dir="auto">${esc(entry.title)}</span><span class="collection-entry-meta">${esc(entry.entryType)} · ${observedAt(entry.lastObservedAtMilliseconds)}${attributes ? ` · ${attributes}` : ""}</span></div>`;
           }).join("")}</div></details>`;
         }).join("");
       const formID = `collection-platform-${binding.id}`;
