@@ -51,6 +51,7 @@ final class ConnectionHub: ObservableObject {
     private static let brokerAddress = "ws://127.0.0.1:8787"
     private var lastError = ""
     private var brokerPeers: [[String: Any]] = []
+    private var joinedHubProgram = ""
     private var brokerSession: URLSession?
     private var brokerTask: URLSessionWebSocketTask?
     private var reconnectWorkItem: DispatchWorkItem?
@@ -207,6 +208,7 @@ final class ConnectionHub: ObservableObject {
         peers.removeAll()
         running = false
         hostingLocalHub = false
+        joinedHubProgram = ""
         lock.unlock()
         for conn in conns { conn.cancel() }
     }
@@ -228,6 +230,7 @@ final class ConnectionHub: ObservableObject {
                     self.hostingLocalHub = true
                     self.lastError = ""
                     self.brokerPeers = []
+                    self.joinedHubProgram = ""
                     self.lock.unlock()
                 case .failed:
                     self.listener?.cancel()
@@ -236,8 +239,9 @@ final class ConnectionHub: ObservableObject {
                     self.running = false
                     self.hostingLocalHub = false
                     self.lastError = "server-running-not-connected"
+                    self.joinedHubProgram = ""
                     self.lock.unlock()
-                    self.connectToBroker()
+                    self.joinExistingLocalHub()
                 default:
                     break
                 }
@@ -247,12 +251,16 @@ final class ConnectionHub: ObservableObject {
             lock.lock()
             hostingLocalHub = false
             lastError = "server-running-not-connected"
+            joinedHubProgram = ""
             lock.unlock()
-            connectToBroker()
+            joinExistingLocalHub()
         }
     }
 
-    private func connectToBroker() {
+    /// The listener attempt always comes first. Reaching this method means a
+    /// peer already owns the fixed local port, so the welcome below must prove
+    /// it is a current Mac Vault or Vault Classifier hub before we join it.
+    private func joinExistingLocalHub() {
         guard wantsBrokerConnection, let url = URL(string: Self.brokerAddress) else {
             setError("invalid-broker-address")
             return
@@ -305,6 +313,7 @@ final class ConnectionHub: ObservableObject {
             running = true
             lastError = ""
             brokerPeers = object["peers"] as? [[String: Any]] ?? []
+            joinedHubProgram = hubProgram
             lock.unlock()
             if let clusters = object["clusters"] as? [[String: Any]] { replaceBrokerClusters(clusters) }
             if let announcement = lastBridgeAnnouncement { sendBroker(announcement) }
@@ -331,9 +340,11 @@ final class ConnectionHub: ObservableObject {
 
     private func brokerDisconnected(_ reason: String, retry: Bool = true) {
         lock.lock()
+        let wasJoinedHost = running && !hostingLocalHub
         running = false
         lastError = reason
         brokerPeers.removeAll()
+        joinedHubProgram = ""
         lock.unlock()
         brokerTask?.cancel(with: .goingAway, reason: nil)
         brokerTask = nil
@@ -341,7 +352,10 @@ final class ConnectionHub: ObservableObject {
         pingTimer = nil
         guard retry, wantsBrokerConnection else { return }
         reconnectWorkItem?.cancel()
-        let delay: DispatchTimeInterval = reason == "hub-yield-to-macapp" ? .milliseconds(250) : .seconds(2)
+        // If the server we had joined disappeared, run a new host election
+        // instead of blindly reconnecting to its old socket. This method tries
+        // to listen first and joins only if another verified app wins the port.
+        let delay: DispatchTimeInterval = (wasJoinedHost || reason == "hub-yield-to-macapp") ? .milliseconds(250) : .seconds(2)
         let work = DispatchWorkItem { [weak self] in self?.startLocalHubOrJoinExisting() }
         reconnectWorkItem = work
         queue.asyncAfter(deadline: .now() + delay, execute: work)
@@ -728,15 +742,26 @@ final class ConnectionHub: ObservableObject {
         let err = self.lastError
         let peerList = self.brokerPeers
         let hosting = self.hostingLocalHub
+        let joinedProgram = self.joinedHubProgram
         lock.unlock()
         let visiblePeers = hosting ? peerListJSON() : peerList
+        let state: String
+        if !err.isEmpty {
+            state = err
+        } else if hosting {
+            state = "hosting"
+        } else if running {
+            state = "joined"
+        } else {
+            state = "off"
+        }
         let status: [String: Any] = [
             "running": running,
-            "state": err.isEmpty ? (running ? (hosting ? "running" : "connected") : "off") : err,
+            "state": state,
             "address": Self.brokerAddress,
             "peers": visiblePeers,
             "error": err,
-            "hubProgram": hosting ? "macapp" : "local-hub"
+            "hubProgram": hosting ? "macapp" : joinedProgram
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: status),
               let json = String(data: data, encoding: .utf8) else {
