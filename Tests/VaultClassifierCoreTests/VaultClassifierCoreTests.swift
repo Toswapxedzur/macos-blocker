@@ -245,7 +245,7 @@ final class VaultClassifierCoreTests: XCTestCase {
         XCTAssertEqual(dataset.collectedEntries[0].observationCount, 2)
     }
 
-    func testCollectionRequiresExplicitPlatformOptInAndKeepsLabelsSeparate() throws {
+    func testCollectionDefaultsOnForKnownBindingsAndKeepsLabelsSeparate() throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let stateFile = LocalStateFile(url: root.appendingPathComponent("state.json"))
@@ -262,11 +262,6 @@ final class VaultClassifierCoreTests: XCTestCase {
                 "published": .string("2 days ago"),
             ])
         )
-        XCTAssertThrowsError(try coordinator.collectPlatformEntry(collected))
-
-        var catalog = coordinator.snapshot().workspaceCatalog
-        catalog.bindings[0].collectionEnabled = true
-        try coordinator.updateWorkspaceCatalog(catalog)
         XCTAssertEqual(coordinator.enabledCollectionPlatformIDs(), ["youtube"])
         XCTAssertTrue(try coordinator.collectPlatformEntry(collected, at: 123))
 
