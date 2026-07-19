@@ -545,8 +545,6 @@ window.VaultClassifierStrings = Object.freeze({
   "bridge.reservedCopy": "Browser bridge connection and server controls were moved to Settings. Keep this workspace for the next bridge workflow.",
   "bridge.settingsTitle": "Web-app bridge",
   "bridge.settingsCopy": "Run this app as the local hub or join a verified Mac Vault or Vault Classifier server.",
-  "bridge.openSettings": "Open bridge settings",
-  "bridge.backToSettings": "Back to Settings",
   "bridge.sharedHub": "Shared local Vault hub",
   "bridge.sharedHubCopy": "Mac Vault, Vault Classifier, and the Vault extension share one local address.",
   "bridge.hubAddress": "SERVER ADDRESS",
