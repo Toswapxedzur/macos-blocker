@@ -184,12 +184,6 @@
   function requestWorkspace(button) {
     const workspace = button?.dataset?.workspace;
     if (!workspace || !state || state.workspace === workspace) return;
-    // Navigation is locally presentational. Update it immediately so a WebKit
-    // state round trip cannot make an activated sidebar card appear inert; the
-    // next native snapshot remains authoritative and reconciles this value.
-    state = { ...state, workspace };
-    renderedPayloadSignature = "";
-    render();
     send("workspace", { workspace });
   }
 
