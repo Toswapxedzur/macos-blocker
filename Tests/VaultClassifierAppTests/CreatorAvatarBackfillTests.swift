@@ -3,6 +3,17 @@ import XCTest
 @testable import VaultClassifierApp
 
 final class CreatorAvatarBackfillTests: XCTestCase {
+    func testWebViewContentSecurityPolicyPermitsCachedCreatorAvatarScheme() throws {
+        let testDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let indexURL = testDirectory
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/VaultClassifierApp/WebAssets/index.html")
+        let index = try String(contentsOf: indexURL, encoding: .utf8)
+
+        XCTAssertTrue(index.contains("img-src 'self' data: vaultclassifieravatar:"))
+    }
+
     func testBackfillExtractsAnApprovedOpenGraphAvatar() throws {
         let html = """
         <html><head>
