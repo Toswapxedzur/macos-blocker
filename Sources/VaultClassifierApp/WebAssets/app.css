@@ -1337,74 +1337,12 @@ textarea:focus {
 .spacer { flex: 1; }
 
 /*
- * Classifier visual language
+ * Workspace interior
  *
- * The workspace shell is intentionally white and flat. It uses divider lines
- * for hierarchy; expressive colour stays inside controls, data, and status.
+ * The app shell keeps its original Vault treatment. Inside each workspace,
+ * content becomes a calm white document: thin rules and spacing define the
+ * sections, never a different surface colour or raised card.
  */
-:root {
-  --surface: #fff;
-  --canvas: #fff;
-  --line: rgba(100, 116, 139, .28);
-  --panel-shadow: none;
-}
-
-html,
-body,
-#app,
-body {
-  background: #fff;
-}
-
-.popup {
-  padding: 0 24px;
-  background: #fff;
-}
-
-.hero {
-  margin: 0;
-  padding: 18px 0 14px;
-  border-bottom: 1px solid var(--line);
-}
-
-.hero-mark {
-  border-radius: 6px;
-  background: var(--navy-700);
-  box-shadow: none;
-}
-
-.layout {
-  grid-template-columns: var(--navigation-panel-width) 1px minmax(0, 1fr);
-  column-gap: 18px;
-}
-
-.layout-resizer {
-  width: 1px;
-  margin: 0;
-  background: var(--line);
-}
-
-.layout-resizer::before {
-  display: none;
-}
-
-.navigation-panel,
-.editor-panel {
-  border-radius: 0;
-  background: #fff;
-  box-shadow: none;
-}
-
-.navigation-panel {
-  padding: 18px 18px 18px 0;
-}
-
-.editor-panel {
-  padding: 18px 0 24px;
-}
-
-.sidebar-list,
-.workspace,
 .collection-workspace,
 .classifier-type-workspace,
 .model-workspace,
@@ -1414,31 +1352,18 @@ body {
 .classifier-type-panels,
 .model-panels,
 .provider-panels,
-.tree-panels {
+.tree-panels,
+.creator-tag-browser,
+.creator-tag-columns,
+.classifier-profile-list,
+.classifier-source-list,
+.classifier-decision-grid,
+.metric-row,
+.list,
+.score-list {
   gap: 0;
 }
 
-.sidebar-row {
-  padding: 12px 8px;
-  border-radius: 0;
-  background: #fff;
-  box-shadow: inset 0 -1px 0 var(--line);
-}
-
-.sidebar-row:hover,
-.sidebar-row.active {
-  transform: none;
-  background: #fff;
-  box-shadow: inset 3px 0 0 var(--navy-700), inset 0 -1px 0 var(--line);
-}
-
-.workspace-head {
-  min-height: auto;
-  padding: 0 0 14px;
-  border-bottom: 1px solid var(--line);
-}
-
-/* Only the outer workspace panels are flattened. */
 .collection-platform-create,
 .collection-platform-panel,
 .collection-diagnostics,
@@ -1465,7 +1390,11 @@ body {
 .classifier-type-create,
 .model-create,
 .provider-create,
-.tree-create,
+.tree-create {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+}
+
 .collection-platform-panel,
 .collection-diagnostics,
 .classifier-type-panel,
@@ -1476,26 +1405,20 @@ body {
   border-bottom: 1px solid var(--line);
 }
 
-.collection-platform-create,
-.classifier-type-create,
-.model-create,
-.provider-create,
-.tree-create {
-  padding: 16px 0;
-}
-
 .collection-platform-panel::before,
 .collection-diagnostics::before,
 .classifier-type-panel::before,
 .model-panel::before,
 .provider-panel::before,
-.section-card::before,
-.utility-bridge-card::before {
+.section-card::before {
   display: none;
 }
 
 .collection-platform-head,
 .collection-platform-controls,
+.collection-creator,
+.collection-entry,
+.collection-diagnostic-row,
 .classifier-type-head,
 .classifier-name-row,
 .classifier-type-section,
@@ -1512,41 +1435,168 @@ body {
 .provider-tools {
   padding-left: 0;
   padding-right: 0;
-}
-
-/* Settings is a white sheet with the same divider vocabulary. */
-.utility-panel {
-  border-radius: 0;
   background: #fff;
   box-shadow: none;
 }
 
-.utility-panel-head {
-  border-bottom-color: var(--line);
-}
-
-.utility-settings-body {
-  gap: 0;
-}
-
-.utility-settings-section {
-  padding: 18px 0;
+.collection-platform-head,
+.collection-platform-controls,
+.collection-creator,
+.collection-entry,
+.collection-diagnostic-row,
+.classifier-type-head,
+.classifier-name-row,
+.classifier-type-section,
+.model-panel-head,
+.model-name-row,
+.model-setup,
+.model-training-row,
+.provider-panel-head,
+.provider-name-row,
+.provider-credential,
+.provider-pricing,
+.provider-history,
+.provider-setup,
+.provider-tools {
   border-bottom: 1px solid var(--line);
 }
 
-.utility-resource-section,
-.utility-bridge-card {
-  padding: 0;
+/* Classifier-specific inner sections use the same single white surface. */
+.creator-classification-section,
+.classifier-llm-section,
+.creator-tag-navigation,
+.creator-tag-column,
+.creator-tag-card,
+.classifier-profile-choice,
+.classifier-source-toggle,
+.classifier-decision-grid > section,
+.provider-api-note,
+.result-card,
+.list-row,
+.notice,
+.empty {
   border: 0;
   border-radius: 0;
   background: #fff;
   box-shadow: none;
 }
 
-.utility-bridge-card-head h2,
-.utility-bridge-card .section-copy,
-.bridge-address,
-.bridge-peer-copy,
-.utility-bridge-card .small-copy {
-  color: inherit;
+.creator-classification-section,
+.classifier-llm-section,
+.provider-api-note,
+.result-card,
+.list-row,
+.notice,
+.empty {
+  border-top: 1px solid var(--line);
+}
+
+.creator-tag-navigation {
+  padding: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.creator-tag-tab,
+.creator-tag-tab:hover {
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+}
+
+.creator-tag-tab.active {
+  color: var(--navy-700);
+  background: #fff;
+  box-shadow: inset 0 -2px 0 var(--navy-700);
+}
+
+.creator-tag-column,
+.creator-tag-column:nth-child(1),
+.creator-tag-column:nth-child(2),
+.creator-tag-column:nth-child(3) {
+  border: 0;
+  border-radius: 0;
+  border-top: 0;
+  background: #fff;
+}
+
+.creator-tag-column + .creator-tag-column {
+  border-left: 1px solid var(--line);
+}
+
+.creator-tag-card {
+  border-bottom: 1px solid var(--line);
+}
+
+.classifier-profile-choice,
+.classifier-source-toggle,
+.classifier-decision-grid > section {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.workspace input[type="text"],
+.workspace input[type="password"],
+.workspace select,
+.workspace textarea,
+.workspace .choice-row {
+  border-radius: 0;
+  background-color: #fff;
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+
+.workspace input:focus,
+.workspace select:focus,
+.workspace textarea:focus {
+  box-shadow: inset 0 -2px 0 var(--navy-700);
+}
+
+.workspace .choice-row {
+  overflow: visible;
+}
+
+.workspace .choice-row input:checked + span {
+  color: var(--navy-700);
+  background: #fff;
+  box-shadow: inset 0 -2px 0 var(--navy-700);
+}
+
+.workspace .metric,
+.workspace .metric.cyan,
+.workspace .metric.gold,
+.workspace .metric.pink {
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
+}
+
+.workspace .metric + .metric {
+  border-left: 1px solid var(--line);
+}
+
+.workspace .status-pill,
+.workspace .status-pill.navy,
+.workspace .status-pill.cyan,
+.workspace .status-pill.gold,
+.workspace .status-pill.pink,
+.workspace .status-pill.red,
+.workspace .status-pill.muted,
+.workspace .chip {
+  background: #fff;
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+
+.tree-map {
+  border-radius: 0;
+  background-color: #fff;
+  background-image: linear-gradient(rgba(148, 163, 184, .08) 1px, transparent 1px), linear-gradient(90deg, rgba(148, 163, 184, .08) 1px, transparent 1px);
+  box-shadow: none;
+}
+
+.tree-map-title,
+.tree-connection-mode,
+.tree-popover,
+.tree-popover-close {
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
 }
