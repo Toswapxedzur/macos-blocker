@@ -268,6 +268,23 @@ public struct ClassificationDataset: Codable, Equatable, Sendable, Identifiable 
         return classification
     }
 
+    /// Removes the current decision for one classifier type and creator. This
+    /// is used only after a user explicitly removes that creator's final tag.
+    @discardableResult
+    public mutating func removeCreatorClassification(
+        classifierTypeID: String,
+        platformID: String,
+        creatorID: String
+    ) -> Bool {
+        let initialCount = creatorClassifications.count
+        creatorClassifications.removeAll { classification in
+            classification.classifierTypeID == classifierTypeID &&
+            classification.platformID == platformID &&
+            classification.creatorID == creatorID
+        }
+        return creatorClassifications.count != initialCount
+    }
+
     /// Updates a previously seen public entry in place, preserving its first
     /// observation. New raw entries are bounded independently from training
     /// labels and never advance the dataset revision.

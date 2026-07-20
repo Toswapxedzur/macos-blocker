@@ -38,6 +38,7 @@
   const treeViewportPositions = new Map();
   const editorViewportPositions = new Map();
   const pendingTagRenames = new Map();
+  const selectedCreatorTagByType = new Map();
   let utilityPanel = null;
   let selectedLanguage = "en";
   let navigationPanelWidth = navigationWidthRange.fallback;
@@ -608,7 +609,26 @@
           const existing = currentDecisionByCreator.get(key);
           return [key, `${platformName} · ${entry.creatorName}${existing ? ` · ${t("bridge.creatorClassified")}` : ""}`];
         });
-      const canClassifyCreator = creatorSources.has("human") && creatorOptions.length && leafTagOptions.length;
+      let selectedCreatorTagID = selectedCreatorTagByType.get(classifierType.id);
+      if (!leafTagOptions.some(([tagID]) => tagID === selectedCreatorTagID)) {
+        selectedCreatorTagID = leafTagOptions[0]?.[0] || "";
+        if (selectedCreatorTagID) selectedCreatorTagByType.set(classifierType.id, selectedCreatorTagID);
+        else selectedCreatorTagByType.delete(classifierType.id);
+      }
+      const selectedCreatorTagName = leafTagOptions.find(([tagID]) => tagID === selectedCreatorTagID)?.[1]?.split(" · ")[0] || "";
+      const creatorRecords = [...creatorCandidates.entries()]
+        .map(([key, entry]) => {
+          const classification = currentDecisionByCreator.get(key);
+          return {
+            key,
+            platformName: platformDefinitions.get(entry.platformID)?.name || entry.platformID,
+            name: entry.creatorName,
+            subscriberCount: entry.attributes?.subscriberCount || "",
+            avatarURL: typeof entry.cachedCreatorAvatarURL === "string" ? entry.cachedCreatorAvatarURL : "",
+            tagIDs: classification?.tags || [],
+          };
+        })
+        .sort((lhs, rhs) => lhs.name.localeCompare(rhs.name));
       const creatorLLMProfiles = llmProfiles.filter((profile) => selectedLLMIDs.has(profile.id));
       const creatorLLMReady = creatorLLMProfiles.some((profile) =>
         (profile.hasStoredCredential || profile.hasSessionCredential) &&
@@ -617,12 +637,31 @@
       const llmRunning = Boolean(state.inspect?.llmRunning);
       const creatorLLMClassification = creatorSources.has("llmAssist")
         ? creatorLLMProfiles.length
-          ? `<div class="creator-llm-row">${valueSelectField("bridge.creatorLLMProfile", "bridge.creatorLLMProfileCopy", "creatorLLMProfileID", creatorLLMProfiles[0].id, creatorLLMProfiles.map((profile) => [profile.id, `${profile.name} · ${profile.modelIdentifier}`]))}<button class="gold-action" data-action="classifyCreatorWithLLM" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}"${disabled(!creatorOptions.length || !creatorLLMReady || llmRunning)}>${tx(llmRunning ? "bridge.creatorLLMClassifying" : "bridge.classifyCreatorWithLLM")}</button></div><p class="small-copy">${tx("bridge.creatorLLMExplicitOnly")}</p>`
+          ? `<div class="creator-llm-row">${valueSelectField("bridge.creator", "bridge.creatorCopy", "creatorKey", creatorOptions[0]?.[0] || "", creatorOptions)}${valueSelectField("bridge.creatorLLMProfile", "bridge.creatorLLMProfileCopy", "creatorLLMProfileID", creatorLLMProfiles[0].id, creatorLLMProfiles.map((profile) => [profile.id, `${profile.name} · ${profile.modelIdentifier}`]))}<button class="gold-action" data-action="classifyCreatorWithLLM" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}"${disabled(!creatorOptions.length || !creatorLLMReady || llmRunning)}>${tx(llmRunning ? "bridge.creatorLLMClassifying" : "bridge.classifyCreatorWithLLM")}</button></div><p class="small-copy">${tx("bridge.creatorLLMExplicitOnly")}</p>`
           : `<p class="small-copy">${tx("bridge.creatorLLMRequired")}</p>`
         : "";
-      const creatorClassification = creatorOptions.length && leafTagOptions.length
-        ? `<div class="creator-classification-fields">${valueSelectField("bridge.creator", "bridge.creatorCopy", "creatorKey", creatorOptions[0][0], creatorOptions)}${multiValueSelectField("bridge.creatorTags", "bridge.creatorTagsCopy", "tagIDs", [], leafTagOptions)}</div><div class="action-row"><button class="primary" data-action="recordCreatorClassification" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}"${disabled(!canClassifyCreator)}>${tx("bridge.classifyCreator")}</button>${!creatorSources.has("human") ? `<span class="small-copy">${tx("bridge.creatorHumanRequired")}</span>` : ""}</div>${creatorLLMClassification}`
-        : `<div class="empty compact-empty">${tx(!creatorOptions.length ? "bridge.noCreators" : "bridge.noCreatorTags")}</div>`;
+      const creatorClassification = creatorRecords.length && leafTagOptions.length
+        ? (() => {
+          const columnData = [
+            ["unclassified", "bridge.creatorTagUnclassified", creatorRecords.filter((creator) => !creator.tagIDs.length)],
+            ["selected", "bridge.creatorTagSelected", creatorRecords.filter((creator) => creator.tagIDs.includes(selectedCreatorTagID))],
+            ["other", "bridge.creatorTagOther", creatorRecords.filter((creator) => creator.tagIDs.length && !creator.tagIDs.includes(selectedCreatorTagID))],
+          ];
+          const creatorCard = (creator, selected) => {
+            const nextTagIDs = selected
+              ? creator.tagIDs.filter((tagID) => tagID !== selectedCreatorTagID)
+              : [...new Set([...creator.tagIDs, selectedCreatorTagID])].sort();
+            const avatar = creator.avatarURL
+              ? `<img class="creator-tag-card-avatar" src="${esc(creator.avatarURL)}" alt="" aria-hidden="true">`
+              : `<span class="creator-tag-card-avatar creator-tag-card-avatar-fallback" aria-hidden="true">${esc(creator.name.slice(0, 1).toUpperCase())}</span>`;
+            const actionKey = selected ? "bridge.creatorTagRemove" : "bridge.creatorTagAdd";
+            const actionLabel = t(actionKey, { tag: selectedCreatorTagName });
+            return `<article class="creator-tag-card"><div class="creator-tag-card-profile">${avatar}<div><strong dir="auto">${esc(creator.name)}</strong><span>${esc(creator.platformName)}${creator.subscriberCount ? ` · ${tx("bridge.creatorSubscribers", { count: creator.subscriberCount })}` : ""}</span></div></div><button class="${selected ? "secondary" : "primary"} creator-tag-card-action" data-action="recordCreatorClassification" data-type-id="${esc(classifierType.id)}" data-creator-key="${esc(creator.key)}" data-tag-ids="${esc(JSON.stringify(nextTagIDs))}"${disabled(!creatorSources.has("human"))}>${esc(actionLabel)}</button></article>`;
+          };
+          const columns = columnData.map(([kind, titleKey, creators]) => `<section class="creator-tag-column"><div class="creator-tag-column-head"><h4>${tx(titleKey, { tag: selectedCreatorTagName })}</h4><span>${creators.length}</span></div><div class="creator-tag-column-list">${creators.length ? creators.map((creator) => creatorCard(creator, kind === "selected")).join("") : `<p class="creator-tag-empty">${tx("bridge.creatorTagEmpty")}</p>`}</div></section>`).join("");
+          return `<div class="creator-tag-browser"><nav class="creator-tag-navigation" aria-label="${tx("bridge.creatorTagNavigation")}" role="tablist">${leafTagOptions.map(([tagID, label]) => `<button class="creator-tag-tab${selectedCreatorTagID === tagID ? " active" : ""}" type="button" data-action="selectCreatorTag" data-type-id="${esc(classifierType.id)}" data-tag-id="${esc(tagID)}" role="tab" aria-selected="${selectedCreatorTagID === tagID}">${esc(label.split(" · ")[0])}</button>`).join("")}</nav><div class="creator-tag-columns">${columns}</div>${!creatorSources.has("human") ? `<p class="small-copy creator-tag-human-required">${tx("bridge.creatorHumanRequired")}</p>` : ""}</div>${creatorLLMClassification}`;
+        })()
+        : `<div class="empty compact-empty">${tx(!creatorRecords.length ? "bridge.noCreators" : "bridge.noCreatorTags")}</div>`;
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}"><div class="classifier-type-head"><div><span class="eyebrow">${tx("bridge.typePanel")}</span><h3>${esc(classifierType.name)}</h3><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div>${statusPill(typeStatus, creatorSources.size || entrySources.size ? "navy" : "muted")}</div><div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}<button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("bridge.saveType")}</button><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}">${tx("bridge.deleteType")}</button></div><section class="classifier-type-section"><div class="section-header"><div><h3>${tx("bridge.assetSelection")}</h3><p class="section-copy">${tx("bridge.assetSelectionCopy")}</p></div></div><div class="classifier-asset-grid">${valueSelectField("bridge.tagTree", "", "treeID", classifierType.treeID, treeOptions)}${valueSelectField("bridge.classificationData", "", "datasetID", classifierType.datasetID, datasetOptions)}${valueSelectField("bridge.localModel", "bridge.localModelCopy", "localModelID", classifierType.localModelID || "", modelOptions)}</div><div class="classifier-data-source-field">${multiValueSelectField("bridge.dataSources", "bridge.dataSourcesCopy", "dataSourcePlatformIDs", dataSourcePlatformIDs, dataSourceOptions)}</div></section><section class="classifier-type-section creator-classification-section"><div class="section-header"><div><h3>${tx("bridge.manualCreator")}</h3><p class="section-copy">${tx("bridge.manualCreatorCopy")}</p></div><span class="small-copy">${tx("bridge.creatorCount", { count: creatorOptions.length })}</span></div>${creatorClassification}</section><section class="classifier-type-section classifier-llm-section"><div class="section-header"><div><h3>${tx("bridge.llmAssist")}</h3><p class="section-copy">${tx("bridge.llmAssistCopy")}</p></div><span class="small-copy">${tx("bridge.llmExplicitOnly")}</span></div>${llmProfiles.length ? `<div class="classifier-profile-list">${llmProfiles.map((profile) => `<label class="classifier-profile-choice"><input type="checkbox" data-field="llmProfile.${esc(profile.id)}"${checked(selectedLLMIDs.has(profile.id))}><span>${esc(profile.name)}</span><small>${esc(profile.modelIdentifier)}</small></label>`).join("")}</div>` : `<div class="empty compact-empty">${tx("bridge.noLLMProfiles")}</div>`}</section><section class="classifier-type-section"><div class="section-header"><div><h3>${tx("bridge.decisionPolicy")}</h3><p class="section-copy">${tx("bridge.decisionPolicyCopy")}</p></div></div><div class="classifier-priority-grid">${valueSelectField("bridge.priorityFirst", "", "priorityFirst", priority[0], sourceOptions)}${valueSelectField("bridge.prioritySecond", "", "prioritySecond", priority[1], sourceOptions)}${valueSelectField("bridge.priorityThird", "", "priorityThird", priority[2], sourceOptions)}</div><div class="classifier-decision-grid"><section><span class="eyebrow">${tx("bridge.creatorDecision")}</span><p class="small-copy">${tx("bridge.creatorDecisionCopy")}</p><div class="classifier-source-list">${sourceToggle("creatorHuman", "human", creatorSources.has("human"), true)}${sourceToggle("creatorLLM", "llmAssist", creatorSources.has("llmAssist"), llmAvailable)}${sourceToggle("creatorLocalModel", "localModel", creatorSources.has("localModel"), localAvailable)}</div></section><section><span class="eyebrow">${tx("bridge.entryDecision")}</span><p class="small-copy">${tx("bridge.entryDecisionCopy")}</p><div class="classifier-source-list">${sourceToggle("entryHuman", "human", entrySources.has("human"), true)}${sourceToggle("entryLLM", "llmAssist", entrySources.has("llmAssist"), llmAvailable)}${sourceToggle("entryLocalModel", "localModel", entrySources.has("localModel"), localAvailable)}</div></section></div></section></section>`;
     };
     return `<div class="workspace classifier-type-workspace">${header("bridge.title", "bridge.copy", t("bridge.typeLibrary"), "navy")}
@@ -924,6 +963,24 @@
     if (button.dataset.parentId) data.parentID = button.dataset.parentId;
     if (button.dataset.platformId) data.platformID = button.dataset.platformId;
     if (button.dataset.typeId) data.typeID = button.dataset.typeId;
+    if (button.dataset.creatorKey) data.creatorKey = button.dataset.creatorKey;
+    if (button.dataset.tagIds) {
+      try {
+        const tagIDs = JSON.parse(button.dataset.tagIds);
+        if (!Array.isArray(tagIDs) || !tagIDs.every((tagID) => typeof tagID === "string")) return;
+        data.tagIDs = tagIDs;
+      } catch (_) {
+        return;
+      }
+    }
+    if (action === "selectCreatorTag") {
+      const typeID = button.dataset.typeId;
+      const tagID = button.dataset.tagId;
+      if (!typeID || !tagID) return;
+      selectedCreatorTagByType.set(typeID, tagID);
+      render();
+      return;
+    }
     if (action === "configureProviderProfile") {
       const protocolConfiguration = {};
       Object.keys(data).filter((key) => key.startsWith("protocol.")).forEach((key) => {

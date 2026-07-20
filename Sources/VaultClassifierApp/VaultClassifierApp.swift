@@ -1701,6 +1701,19 @@ final class VaultClassifierViewModel: ObservableObject {
             }) else {
                 throw WebBridgeInputError.invalidChoice("creator")
             }
+            if tagIDs.isEmpty {
+                if catalog.datasets[datasetIndex].removeCreatorClassification(
+                    classifierTypeID: classifierType.id,
+                    platformID: platformID,
+                    creatorID: creatorID
+                ) {
+                    catalog.datasets[datasetIndex].revision += 1
+                    try coordinator?.updateWorkspaceCatalog(catalog)
+                }
+                refreshLocalState()
+                issue = nil
+                return
+            }
             try storeCreatorClassification(
                 in: &catalog,
                 classifierType: classifierType,
