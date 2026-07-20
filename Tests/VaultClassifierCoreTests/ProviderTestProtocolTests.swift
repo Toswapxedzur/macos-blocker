@@ -113,8 +113,7 @@ final class ProviderTestProtocolTests: XCTestCase {
     func testPlatformDataProfilesDoNotPrepareLanguageModelRequests() throws {
         let platformTypes: [APIKeyProviderType] = [
             .youtubeData, .twitch, .reddit, .xPlatform, .tikTok,
-            .instagramGraph, .facebookGraph, .linkedIn, .pinterest, .bluesky,
-            .mastodon, .vimeo, .dailyMotion, .spotify,
+            .instagramGraph, .facebookGraph,
         ]
 
         for type in platformTypes {
@@ -170,8 +169,7 @@ final class ProviderTestProtocolTests: XCTestCase {
     func testEveryPlatformProfileHasABoundedToolDefinitionAndRoute() throws {
         let types: [APIKeyProviderType] = [
             .youtubeData, .twitch, .reddit, .xPlatform, .tikTok,
-            .instagramGraph, .facebookGraph, .linkedIn, .pinterest, .bluesky,
-            .mastodon, .vimeo, .dailyMotion, .spotify,
+            .instagramGraph, .facebookGraph,
         ]
         let entry = EntryEvidence(platform: "youtube", entryID: "at://did:plc:creator/app.bsky.feed.post/post", sourceID: "creator-id", surface: .feed, evidence: .init(title: "Public entry"))
         let profiles = types.map(platformProfile)
@@ -216,11 +214,10 @@ final class ProviderTestProtocolTests: XCTestCase {
     }
 
     private func platformProfile(_ type: APIKeyProviderType) -> APIKeyProviderProfile {
-        var configuration: [String: String]?
-        var endpoint: String?
-        if type == .twitch { configuration = [ProviderConfigurationField.clientID.rawValue: "client-id"] }
-        if type == .mastodon { endpoint = "https://mastodon.example.test" }
-        return .init(id: "platform-\(type.rawValue)", type: type, customEndpoint: endpoint, protocolConfiguration: configuration)
+        let configuration: [String: String]? = type == .twitch
+            ? [ProviderConfigurationField.clientID.rawValue: "client-id"]
+            : nil
+        return .init(id: "platform-\(type.rawValue)", type: type, protocolConfiguration: configuration)
     }
 
     private func toolCallResponse(format: ProviderRequestBodyFormat, name: String) -> Data {

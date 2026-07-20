@@ -666,8 +666,7 @@ final class WorkspaceAssetsTests: XCTestCase {
                 .openAI, .openAICompatible, .deepSeek, .gemini, .anthropic,
                 .mistral, .cohere, .groq, .openRouter, .ollama,
                 .youtubeData, .twitch, .reddit, .xPlatform, .tikTok,
-                .instagramGraph, .facebookGraph, .linkedIn, .pinterest,
-                .bluesky, .mastodon, .vimeo, .dailyMotion, .spotify, .custom,
+                .instagramGraph, .facebookGraph, .custom,
             ]
         )
         let encoded = try JSONEncoder().encode(catalog)
@@ -675,16 +674,23 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(WorkspaceCatalog.self, from: encoded).providerProfiles, profiles)
     }
 
-    func testDirectPresetsRemainReadableAndRetiredNamesMigrateToCompatibleTransport() throws {
+    func testRemovedPlatformProfileIsResetAndDroppedDuringReconciliation() throws {
         let direct = Data(#"{"id":"direct","name":"Direct","type":"deepSeek","modelIdentifier":"deepseek-chat","batchSize":1,"maximumTokens":10,"updatedAtMilliseconds":1}"#.utf8)
         let decoded = try JSONDecoder().decode(APIKeyProviderProfile.self, from: direct)
         XCTAssertEqual(decoded.type, .deepSeek)
         XCTAssertEqual(decoded.modelIdentifier, "deepseek-chat")
 
-        let retired = Data(#"{"id":"retired","name":"Retired","type":"xAI","modelIdentifier":"grok","batchSize":1,"maximumTokens":10,"updatedAtMilliseconds":1}"#.utf8)
-        let migrated = try JSONDecoder().decode(APIKeyProviderProfile.self, from: retired)
-        XCTAssertEqual(migrated.type, .openAICompatible)
-        XCTAssertEqual(migrated.modelIdentifier, "grok")
+        let retired = Data(#"{"id":"retired","name":"Retired","type":"spotify","modelIdentifier":"grok","batchSize":1,"maximumTokens":10,"updatedAtMilliseconds":1}"#.utf8)
+        let reset = try JSONDecoder().decode(APIKeyProviderProfile.self, from: retired)
+        XCTAssertEqual(reset.type, .openAICompatible)
+        XCTAssertEqual(reset.name, "")
+        XCTAssertThrowsError(try reset.validate())
+
+        var catalog = WorkspaceCatalog.starter()
+        catalog.providerProfiles = [reset]
+        catalog.reconcileClassifierTypes()
+        XCTAssertTrue(catalog.providerProfiles.isEmpty)
+        XCTAssertNoThrow(try catalog.validate())
     }
 
     func testProviderProtocolsExposeWorkingRequestPlansForEverySupportedType() throws {
