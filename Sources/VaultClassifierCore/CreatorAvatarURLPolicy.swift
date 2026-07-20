@@ -13,15 +13,7 @@ public enum CreatorAvatarURLPolicy {
         "twitch": ["twitch.tv", "jtvnw.net"],
         "reddit": ["reddit.com", "redd.it", "redditstatic.com", "redditmedia.com"],
         "twitter": ["x.com", "twitter.com", "twimg.com"],
-        "bluesky": ["bsky.app", "cdn.bsky.app"],
-        "threads": ["threads.com", "instagram.com", "cdninstagram.com", "fbcdn.net"],
-        "substack": ["substack.com", "substackcdn.com"],
         "bilibili": ["bilibili.com", "biliimg.com", "hdslb.com"],
-        "rumble": ["rumble.com", "rumblecdn.com"],
-        "pinterest": ["pinterest.com", "pinimg.com"],
-        "tumblr": ["tumblr.com"],
-        "peertube": ["peertube.tv"],
-        "pixelfed": ["pixelfed.social"],
     ]
 
     /// Public creator pages may be revisited only after an explicit user
@@ -36,15 +28,7 @@ public enum CreatorAvatarURLPolicy {
         "twitch": ["twitch.tv"],
         "reddit": ["reddit.com"],
         "twitter": ["x.com", "twitter.com"],
-        "bluesky": ["bsky.app"],
-        "threads": ["threads.com"],
-        "substack": ["substack.com"],
         "bilibili": ["bilibili.com"],
-        "rumble": ["rumble.com"],
-        "pinterest": ["pinterest.com"],
-        "tumblr": ["tumblr.com"],
-        "peertube": ["peertube.tv"],
-        "pixelfed": ["pixelfed.social"],
     ]
 
     public static func isAccepted(platformID: String, value: String) -> Bool {

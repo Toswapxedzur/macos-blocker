@@ -136,10 +136,6 @@ public enum ExternalPlatformToolProtocol {
         if profile.type == .reddit, let userAgent = profile.protocolConfiguration[ProviderConfigurationField.userAgent.rawValue] {
             headers["User-Agent"] = userAgent
         }
-        if profile.type == .linkedIn {
-            headers["LinkedIn-Version"] = "202601"
-            headers["X-Restli-Protocol-Version"] = "2.0.0"
-        }
         let body = try route.body.map { try JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]) }
         let plan = ProviderRequestPlan(
             url: url,
@@ -256,7 +252,6 @@ public enum ExternalPlatformToolProtocol {
         func post(_ path: [String], _ queryItems: [URLQueryItem], _ body: [String: Any]) -> Route {
             .init(method: "POST", path: path, queryItems: queryItems, body: body)
         }
-        let fields = URLQueryItem(name: "fields", value: "id,title,description,created_time,permalink_url,public_metrics,statistics")
         switch type {
         case .youtubeData:
             return target == .entry
@@ -294,34 +289,6 @@ public enum ExternalPlatformToolProtocol {
             return target == .entry
                 ? get([identifier], [.init(name: "fields", value: "id,message,story,created_time,from,permalink_url")])
                 : get([identifier], [.init(name: "fields", value: "id,name,about,description,fan_count")])
-        case .linkedIn:
-            guard target == .entry else { throw ExternalPlatformToolProtocolError.unsupportedTarget }
-            return get(["posts", identifier])
-        case .pinterest:
-            guard target == .entry else { throw ExternalPlatformToolProtocolError.unsupportedTarget }
-            return get(["pins", identifier], [.init(name: "pin_metrics", value: "true")])
-        case .bluesky:
-            if target == .entry {
-                guard identifier.hasPrefix("at://") else { throw ExternalPlatformToolProtocolError.unsupportedTarget }
-                return get(["app.bsky.feed.getPostThread"], [.init(name: "uri", value: identifier)])
-            }
-            return get(["app.bsky.actor.getProfile"], [.init(name: "actor", value: identifier)])
-        case .mastodon:
-            return target == .entry
-                ? get(["api", "v1", "statuses", identifier])
-                : get(["api", "v1", "accounts", identifier])
-        case .vimeo:
-            return target == .entry
-                ? get(["videos", identifier])
-                : get(["users", identifier])
-        case .dailyMotion:
-            return target == .entry
-                ? get(["video", identifier], [fields])
-                : get(["user", identifier], [.init(name: "fields", value: "id,screenname,description,followers_total")])
-        case .spotify:
-            return target == .entry
-                ? get(["tracks", identifier])
-                : get(["artists", identifier])
         default:
             throw ExternalPlatformToolProtocolError.invalidConfiguration
         }

@@ -788,13 +788,6 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
     case tikTok
     case instagramGraph
     case facebookGraph
-    case linkedIn
-    case pinterest
-    case bluesky
-    case mastodon
-    case vimeo
-    case dailyMotion
-    case spotify
     case custom
 
     public var supportsLLMConfiguration: Bool {
@@ -820,13 +813,6 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
         case .tikTok: return "TikTok credential"
         case .instagramGraph: return "Instagram Graph API credential"
         case .facebookGraph: return "Facebook Graph API credential"
-        case .linkedIn: return "LinkedIn credential"
-        case .pinterest: return "Pinterest credential"
-        case .bluesky: return "Bluesky credential"
-        case .mastodon: return "Mastodon credential"
-        case .vimeo: return "Vimeo credential"
-        case .dailyMotion: return "Dailymotion credential"
-        case .spotify: return "Spotify credential"
         case .custom: return "Custom API key"
         }
     }
@@ -844,26 +830,20 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
         case .openRouter: return "openai/gpt-4.1-mini"
         case .ollama: return "llama3.3"
         case .youtubeData, .twitch, .reddit, .xPlatform, .tikTok,
-             .instagramGraph, .facebookGraph, .linkedIn, .pinterest, .bluesky,
-             .mastodon, .vimeo, .dailyMotion, .spotify: return ""
+             .instagramGraph, .facebookGraph: return ""
         case .custom: return "custom-model"
         }
     }
 
-    /// Existing local profiles must remain decodable. Current direct presets
-    /// retain their type; retired or unknown values migrate to the configurable
-    /// OpenAI-compatible profile, which requires endpoint review before use.
+    /// A removed profile type is reset to an inert configurable profile while
+    /// its enclosing catalog is reconciled. It never restores the old adapter.
     public init(from decoder: Decoder) throws {
         let raw = try decoder.singleValueContainer().decode(String.self)
         if let type = APIKeyProviderType(rawValue: raw) {
             self = type
             return
         }
-        switch raw {
-        case "chatGPT": self = .openAI
-        case "claude": self = .anthropic
-        default: self = .openAICompatible
-        }
+        self = .openAICompatible
     }
 }
 
@@ -992,8 +972,13 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
-        name = try container.decode(String.self, forKey: .name)
-        type = try container.decode(APIKeyProviderType.self, forKey: .type)
+        let rawType = try container.decode(String.self, forKey: .type)
+        let isRetiredType = APIKeyProviderType(rawValue: rawType) == nil
+        type = APIKeyProviderType(rawValue: rawType) ?? .openAICompatible
+        // The catalog reconciler removes this invalid placeholder before it is
+        // exposed. That keeps old local state from crashing the app without
+        // preserving a removed adapter behind a compatibility path.
+        name = isRetiredType ? "" : try container.decode(String.self, forKey: .name)
         modelIdentifier = try container.decodeIfPresent(String.self, forKey: .modelIdentifier) ?? type.defaultModelIdentifier
         batchSize = try container.decodeIfPresent(Int.self, forKey: .batchSize) ?? 1
         maximumTokens = try container.decodeIfPresent(Int.self, forKey: .maximumTokens) ?? 1_024
@@ -1355,6 +1340,18 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     /// user-visible brain editable while never letting an old model decide for
     /// a changed tree or dataset.
     public mutating func reconcileClassifierTypes() {
+        providerProfiles = providerProfiles.filter { (try? $0.validate()) != nil }
+        let validExternalToolProfileIDs = Set(providerProfiles.compactMap { profile -> String? in
+            let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
+            return !descriptor.supportsLLMConfiguration &&
+                descriptor.requestFormats.contains(where: { $0.operation == .readPublicContent })
+                ? profile.id
+                : nil
+        })
+        for index in providerProfiles.indices where ProviderProtocolRegistry.descriptor(for: providerProfiles[index].type).supportsLLMConfiguration {
+            providerProfiles[index].externalToolProfileIDs = providerProfiles[index].externalToolProfileIDs
+                .filter(validExternalToolProfileIDs.contains)
+        }
         models = models.compactMap { model in
             var reconciled = model
             let eligiblePlatformIDs = model.effectiveTrainingPlatformIDs.filter {

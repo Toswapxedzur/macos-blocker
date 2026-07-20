@@ -21,13 +21,6 @@ public enum ProviderProtocolFamily: String, Codable, Equatable, Sendable, CaseIt
     case xAPIV2
     case tikTokDisplayV2
     case metaGraphV1
-    case linkedInRestV1
-    case pinterestV5
-    case blueskyATProtoV1
-    case mastodonV1
-    case vimeoV3
-    case dailymotionV1
-    case spotifyWebV1
     case soundCloudV2
     case steamWebV1
     case braveSearchV1
@@ -360,20 +353,6 @@ public enum ProviderProtocolRegistry {
             return external(type, .tikTokDisplayV2, "https://open.tiktokapis.com/v2", "/video/query/", .readPublicContent, method: "POST", body: .customJSON)
         case .instagramGraph, .facebookGraph:
             return external(type, .metaGraphV1, "https://graph.facebook.com", "/{apiVersion}/{contentID}", .readPublicContent, configuration: [.init(.apiVersion, defaultValue: "v24.0")])
-        case .linkedIn:
-            return external(type, .linkedInRestV1, "https://api.linkedin.com/rest", "/posts/{contentID}", .readPublicContent)
-        case .pinterest:
-            return external(type, .pinterestV5, "https://api.pinterest.com/v5", "/pins/{contentID}", .readPublicContent)
-        case .bluesky:
-            return external(type, .blueskyATProtoV1, "https://bsky.social/xrpc", "/app.bsky.feed.getPostThread", .readPublicContent)
-        case .mastodon:
-            return external(type, .mastodonV1, nil, "/api/v1/statuses/{contentID}", .readPublicContent, override: true)
-        case .vimeo:
-            return external(type, .vimeoV3, "https://api.vimeo.com", "/videos/{contentID}", .readPublicContent)
-        case .dailyMotion:
-            return external(type, .dailymotionV1, "https://api.dailymotion.com", "/video/{contentID}", .readPublicContent)
-        case .spotify:
-            return external(type, .spotifyWebV1, "https://api.spotify.com/v1", "/tracks/{contentID}", .readPublicContent)
         case .custom:
             return model(type, .openAIChatCompletionsV1, nil, "/chat/completions", .openAIChatCompletions, override: true)
         }

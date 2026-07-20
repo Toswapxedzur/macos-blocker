@@ -449,13 +449,6 @@
       tikTok: "llm.provider.tikTok",
       instagramGraph: "llm.provider.instagramGraph",
       facebookGraph: "llm.provider.facebookGraph",
-      linkedIn: "llm.provider.linkedIn",
-      pinterest: "llm.provider.pinterest",
-      bluesky: "llm.provider.bluesky",
-      mastodon: "llm.provider.mastodon",
-      vimeo: "llm.provider.vimeo",
-      dailyMotion: "llm.provider.dailyMotion",
-      spotify: "llm.provider.spotify",
       custom: "llm.provider.custom",
     };
     return keys[type] || "llm.provider.openAICompatible";
@@ -506,7 +499,7 @@
     const protocols = state.assets.providerProtocols || {};
     const profileTypeGroups = [
       ["llm.providerGroup.models", ["openAI", "deepSeek", "gemini", "anthropic", "mistral", "cohere", "groq", "openRouter", "ollama"].map((type) => [type, t(providerTypeLabelKey(type))])],
-      ["llm.providerGroup.platform", ["youtubeData", "twitch", "reddit", "xPlatform", "tikTok", "instagramGraph", "facebookGraph", "linkedIn", "pinterest", "bluesky", "mastodon", "vimeo", "dailyMotion", "spotify"].map((type) => [type, t(providerTypeLabelKey(type))])],
+      ["llm.providerGroup.platform", ["youtubeData", "twitch", "reddit", "xPlatform", "tikTok", "instagramGraph", "facebookGraph"].map((type) => [type, t(providerTypeLabelKey(type))])],
       ["llm.providerGroup.custom", ["openAICompatible", "custom"].map((type) => [type, t(providerTypeLabelKey(type))])],
     ];
     const panel = (profile) => {
