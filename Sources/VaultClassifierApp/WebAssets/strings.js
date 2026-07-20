@@ -504,6 +504,8 @@ window.VaultClassifierStrings = Object.freeze({
   "bridge.classificationData": "CLASSIFICATION DATA",
   "bridge.dataSources": "CLASSIFICATION-DATA SOURCES",
   "bridge.dataSourcesCopy": "Choose one or more compatible platform sources, such as YouTube and Instagram.",
+  "bridge.manualOnly": "Manual only",
+  "bridge.manualOnlyCopy": "Twitch, Reddit, and Discord keep normal manual collection and tagging, but Local model and LLM Assist are unavailable for this classifier type.",
   "bridge.localModel": "LOCAL MODEL",
   "bridge.localModelCopy": "Only ready models matching the selected tree and data are available.",
   "bridge.noLocalModel": "No local model",

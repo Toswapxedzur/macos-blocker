@@ -555,6 +555,7 @@ final class VaultClassifierViewModel: ObservableObject {
         do {
             guard let catalog = localState?.workspaceCatalog,
                   let binding = catalog.bindings.first(where: { $0.id == manualPlatformID }),
+                  CollectionPlatformRegistry.definition(for: binding.id)?.supportsLLMAssist == true,
                   let classifierTypeID = binding.activeClassifierTypeID,
                   let classifierType = catalog.classifierTypes.first(where: { $0.id == classifierTypeID }),
                   classifierType.entryDecisionSources.contains(.llmAssist),
@@ -1074,7 +1075,9 @@ final class VaultClassifierViewModel: ObservableObject {
             let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleaned.isEmpty else { throw WebBridgeInputError.invalidChoice("local model name") }
             guard var catalog = localState?.workspaceCatalog,
-                  let binding = catalog.bindings.first,
+                  let binding = catalog.bindings.first(where: {
+                      CollectionPlatformRegistry.definition(for: $0.id)?.supportsLocalModel == true
+                  }),
                   let tree = catalog.trees.first(where: { $0.id == binding.treeID }),
                   let dataset = catalog.datasets.first(where: { $0.id == binding.datasetID }) else {
                 throw WebBridgeInputError.invalidChoice("workspace assets")
@@ -1204,9 +1207,15 @@ final class VaultClassifierViewModel: ObservableObject {
                       catalog.bindings.contains(where: { binding in
                           binding.id == platformID && binding.treeID == tree.id && binding.datasetID == dataset.id
                       })
-                  }) else {
+            }) else {
                 throw WebBridgeInputError.invalidChoice("classification data sources")
             }
+            let selectedDefinitions = selectedDataSourcePlatformIDs.compactMap(CollectionPlatformRegistry.definition(for:))
+            guard selectedDefinitions.count == selectedDataSourcePlatformIDs.count else {
+                throw WebBridgeInputError.invalidChoice("classification data sources")
+            }
+            let supportsLocalModel = selectedDefinitions.allSatisfy(\.supportsLocalModel)
+            let supportsLLMAssist = selectedDefinitions.allSatisfy(\.supportsLLMAssist)
             guard selectedLLMIDs.count <= ClassifierTypeAsset.maximumLLMProfiles,
                   selectedLLMIDs.allSatisfy({ profileID in
                       catalog.providerProfiles.contains(where: { $0.id == profileID && $0.type.supportsLLMConfiguration })
@@ -1215,7 +1224,8 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             let normalizedModelID = localModelID?.trimmingCharacters(in: .whitespacesAndNewlines)
             let compatibleModelID: String?
-            if let normalizedModelID, !normalizedModelID.isEmpty,
+            if supportsLocalModel,
+               let normalizedModelID, !normalizedModelID.isEmpty,
                catalog.models.contains(where: { model in
                    model.id == normalizedModelID && model.isReady && model.embeddedNeuralModel != nil &&
                    model.treeID == tree.id && model.treeRevision == tree.revision &&
@@ -1230,8 +1240,8 @@ final class VaultClassifierViewModel: ObservableObject {
             func decisionSources(human: Bool, llm: Bool, localModel: Bool) -> [ClassifierDecisionSource] {
                 var sources: [ClassifierDecisionSource] = []
                 if human { sources.append(.human) }
-                if llm && !selectedLLMIDs.isEmpty { sources.append(.llmAssist) }
-                if localModel && compatibleModelID != nil { sources.append(.localModel) }
+                if supportsLLMAssist && llm && !selectedLLMIDs.isEmpty { sources.append(.llmAssist) }
+                if supportsLocalModel && localModel && compatibleModelID != nil { sources.append(.localModel) }
                 return sources
             }
 
@@ -1244,7 +1254,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 datasetRevision: dataset.revision,
                 dataSourcePlatformIDs: selectedDataSourcePlatformIDs,
                 localModelID: compatibleModelID,
-                llmProfileIDs: selectedLLMIDs,
+                llmProfileIDs: supportsLLMAssist ? selectedLLMIDs : [],
                 decisionPriority: priority,
                 creatorDecisionSources: decisionSources(human: creatorHuman, llm: creatorLLM, localModel: creatorLocalModel),
                 entryDecisionSources: decisionSources(human: entryHuman, llm: entryLLM, localModel: entryLocalModel)
@@ -1278,6 +1288,16 @@ final class VaultClassifierViewModel: ObservableObject {
                   classifierType.datasetID == dataset.id,
                   classifierType.datasetRevision == dataset.revision else {
                 throw WebBridgeInputError.invalidChoice("classifier type")
+            }
+            guard let platform = CollectionPlatformRegistry.definition(for: platformID) else {
+                throw WebBridgeInputError.invalidChoice("collection platform")
+            }
+            let enabledSources = Set(classifierType.creatorDecisionSources + classifierType.entryDecisionSources)
+            guard (platform.supportsLocalModel ||
+                   (!enabledSources.contains(.localModel) && classifierType.localModelID == nil)),
+                  (platform.supportsLLMAssist ||
+                   (!enabledSources.contains(.llmAssist) && classifierType.llmProfileIDs.isEmpty)) else {
+                throw WebBridgeInputError.invalidChoice("manual-only platform classifier type")
             }
             if classifierType.entryDecisionSources.contains(.localModel) {
                 guard let modelID = classifierType.localModelID,
@@ -1414,7 +1434,10 @@ final class VaultClassifierViewModel: ObservableObject {
         }
         let selectedPlatformIDs = Array(Set(platformIDs)).sorted()
         guard !selectedPlatformIDs.isEmpty,
-              selectedPlatformIDs.count <= LocalModelAsset.maximumTrainingPlatforms else {
+              selectedPlatformIDs.count <= LocalModelAsset.maximumTrainingPlatforms,
+              selectedPlatformIDs.allSatisfy({
+                  CollectionPlatformRegistry.definition(for: $0)?.supportsLocalModel == true
+              }) else {
             throw WebBridgeInputError.invalidChoice("local model data sources")
         }
         let bindings = selectedPlatformIDs.compactMap { platformID in
@@ -1699,7 +1722,8 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             let platformID = String(keyParts[0])
             let creatorID = String(keyParts[1])
-            guard classifierType.dataSourcePlatformIDs.contains(platformID) else {
+            guard classifierType.dataSourcePlatformIDs.contains(platformID),
+                  CollectionPlatformRegistry.definition(for: platformID)?.supportsLLMAssist == true else {
                 throw WebBridgeInputError.invalidChoice("creator data source")
             }
             guard let creatorEntry = catalog.datasets[datasetIndex].collectedEntries.first(where: {
@@ -1952,6 +1976,7 @@ final class VaultClassifierViewModel: ObservableObject {
         guard var catalog = localState?.workspaceCatalog,
               let classifierType = catalog.classifierTypes.first(where: { $0.id == typeID }),
               classifierType.creatorDecisionSources.contains(.llmAssist),
+              CollectionPlatformRegistry.definition(for: platformID)?.supportsLLMAssist == true,
               let tree = catalog.trees.first(where: { $0.id == classifierType.treeID }) else {
             throw WebBridgeInputError.invalidChoice("creator LLM classifier type")
         }
@@ -2448,7 +2473,8 @@ final class VaultClassifierViewModel: ObservableObject {
                 inspectCatalog.classifierTypes.first(where: { $0.id == typeID })
             }
         }
-        let manualLLMAvailable = manualClassifierType?.entryDecisionSources.contains(.llmAssist) == true &&
+        let manualLLMAvailable = CollectionPlatformRegistry.definition(for: manualPlatformID)?.supportsLLMAssist == true &&
+            manualClassifierType?.entryDecisionSources.contains(.llmAssist) == true &&
             manualClassifierType?.llmProfileIDs.contains(where: { profileID in
                 inspectCatalog.providerProfiles.contains(where: { $0.id == profileID })
             }) == true
@@ -2731,10 +2757,11 @@ final class VaultClassifierViewModel: ObservableObject {
                     ])
                 }),
             "bindings": catalog.bindings.map { binding in
-                ["id": binding.id, "name": binding.name, "browser": binding.browser, "treeID": binding.treeID, "datasetID": binding.datasetID, "activeClassifierTypeID": binding.activeClassifierTypeID ?? NSNull(), "activeModelID": binding.activeModelID ?? NSNull(), "policyID": binding.policyID ?? NSNull(), "collectionEnabled": binding.collectionEnabled] as [String: Any]
+                let definition = CollectionPlatformRegistry.definition(for: binding.id)
+                return ["id": binding.id, "name": binding.name, "browser": binding.browser, "treeID": binding.treeID, "datasetID": binding.datasetID, "activeClassifierTypeID": binding.activeClassifierTypeID ?? NSNull(), "activeModelID": binding.activeModelID ?? NSNull(), "policyID": binding.policyID ?? NSNull(), "collectionEnabled": binding.collectionEnabled, "supportsLocalModel": definition?.supportsLocalModel ?? false, "supportsLLMAssist": definition?.supportsLLMAssist ?? false] as [String: Any]
             },
             "collectionPlatforms": CollectionPlatformRegistry.definitions.map { definition in
-                ["id": definition.id, "name": definition.name, "browser": definition.browser, "collectorAvailable": definition.collectorAvailable] as [String: Any]
+                ["id": definition.id, "name": definition.name, "browser": definition.browser, "collectorAvailable": definition.collectorAvailable, "supportsLocalModel": definition.supportsLocalModel, "supportsLLMAssist": definition.supportsLLMAssist] as [String: Any]
             },
             "tokenUsage": budgetRecords.suffix(12).reversed().map { record -> [String: Any] in
                 let usage = record.settledUsage ?? record.usageCeiling
