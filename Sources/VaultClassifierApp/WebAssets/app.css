@@ -1335,3 +1335,218 @@ textarea:focus {
 .notice.red { color: var(--red-text); background: var(--red-50); }
 .empty { padding: 14px; border-radius: 12px; color: var(--muted); background: rgba(238, 242, 255, 0.62); }
 .spacer { flex: 1; }
+
+/*
+ * Classifier visual language
+ *
+ * The workspace shell is intentionally white and flat. It uses divider lines
+ * for hierarchy; expressive colour stays inside controls, data, and status.
+ */
+:root {
+  --surface: #fff;
+  --canvas: #fff;
+  --line: rgba(100, 116, 139, .28);
+  --panel-shadow: none;
+}
+
+html,
+body,
+#app,
+body {
+  background: #fff;
+}
+
+.popup {
+  padding: 0 24px;
+  background: #fff;
+}
+
+.hero {
+  margin: 0;
+  padding: 18px 0 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.hero-mark {
+  border-radius: 6px;
+  background: var(--navy-700);
+  box-shadow: none;
+}
+
+.layout {
+  grid-template-columns: var(--navigation-panel-width) 1px minmax(0, 1fr);
+  column-gap: 18px;
+}
+
+.layout-resizer {
+  width: 1px;
+  margin: 0;
+  background: var(--line);
+}
+
+.layout-resizer::before {
+  display: none;
+}
+
+.navigation-panel,
+.editor-panel {
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
+}
+
+.navigation-panel {
+  padding: 18px 18px 18px 0;
+}
+
+.editor-panel {
+  padding: 18px 0 24px;
+}
+
+.sidebar-list,
+.workspace,
+.collection-workspace,
+.classifier-type-workspace,
+.model-workspace,
+.provider-workspace,
+.tree-workspace,
+.collection-platform-panels,
+.classifier-type-panels,
+.model-panels,
+.provider-panels,
+.tree-panels {
+  gap: 0;
+}
+
+.sidebar-row {
+  padding: 12px 8px;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+
+.sidebar-row:hover,
+.sidebar-row.active {
+  transform: none;
+  background: #fff;
+  box-shadow: inset 3px 0 0 var(--navy-700), inset 0 -1px 0 var(--line);
+}
+
+.workspace-head {
+  min-height: auto;
+  padding: 0 0 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* Only the outer workspace panels are flattened. */
+.collection-platform-create,
+.collection-platform-panel,
+.collection-diagnostics,
+.classifier-type-create,
+.classifier-type-panel,
+.model-create,
+.model-panel,
+.provider-create,
+.provider-panel,
+.tree-create,
+.tree-panel,
+.section-card,
+.section-card.cyan,
+.section-card.gold,
+.section-card.pink,
+.section-card.red {
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
+}
+
+.collection-platform-create,
+.classifier-type-create,
+.model-create,
+.provider-create,
+.tree-create,
+.collection-platform-panel,
+.collection-diagnostics,
+.classifier-type-panel,
+.model-panel,
+.provider-panel,
+.tree-panel,
+.section-card {
+  border-bottom: 1px solid var(--line);
+}
+
+.collection-platform-create,
+.classifier-type-create,
+.model-create,
+.provider-create,
+.tree-create {
+  padding: 16px 0;
+}
+
+.collection-platform-panel::before,
+.collection-diagnostics::before,
+.classifier-type-panel::before,
+.model-panel::before,
+.provider-panel::before,
+.section-card::before,
+.utility-bridge-card::before {
+  display: none;
+}
+
+.collection-platform-head,
+.collection-platform-controls,
+.classifier-type-head,
+.classifier-name-row,
+.classifier-type-section,
+.model-panel-head,
+.model-name-row,
+.model-setup,
+.model-training-row,
+.provider-panel-head,
+.provider-name-row,
+.provider-credential,
+.provider-pricing,
+.provider-history,
+.provider-setup,
+.provider-tools {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* Settings is a white sheet with the same divider vocabulary. */
+.utility-panel {
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
+}
+
+.utility-panel-head {
+  border-bottom-color: var(--line);
+}
+
+.utility-settings-body {
+  gap: 0;
+}
+
+.utility-settings-section {
+  padding: 18px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.utility-resource-section,
+.utility-bridge-card {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
+}
+
+.utility-bridge-card-head h2,
+.utility-bridge-card .section-copy,
+.bridge-address,
+.bridge-peer-copy,
+.utility-bridge-card .small-copy {
+  color: inherit;
+}
