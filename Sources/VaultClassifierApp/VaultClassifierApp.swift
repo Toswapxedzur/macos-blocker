@@ -148,6 +148,8 @@ final class VaultClassifierViewModel: ObservableObject {
     private var activeProviderCredentialAlert: NSAlert?
     private var testingProviderProfileIDs = Set<String>()
     @Published private(set) var providerClassificationRunning = false
+    @Published private(set) var creatorAvatarBackfillRunning = false
+    @Published private(set) var creatorAvatarBackfillFoundCount: Int?
 
     init() {
         do {
@@ -250,7 +252,11 @@ final class VaultClassifierViewModel: ObservableObject {
               CreatorAvatarURLPolicy.isAccepted(platformID: entry.platform, value: avatarURL) else {
             return
         }
-        creatorAvatarCache?.cache(remoteURL: avatarURL) { [weak self] in
+        cacheCreatorAvatar(remoteURL: avatarURL)
+    }
+
+    private func cacheCreatorAvatar(remoteURL: String) {
+        creatorAvatarCache?.cache(remoteURL: remoteURL) { [weak self] in
             Task { @MainActor in self?.onWebStateChange?() }
         }
     }
@@ -1730,6 +1736,91 @@ final class VaultClassifierViewModel: ObservableObject {
         } catch { issue = error.localizedDescription }
     }
 
+    /// Revisits only public creator pages the user already collected and only
+    /// after an explicit WebView action. Discovered images must pass the same
+    /// platform allowlist as browser-collected avatar URLs before they are
+    /// persisted and cached for the local WebView.
+    func backfillCreatorAvatars(typeID: String) {
+        guard !creatorAvatarBackfillRunning else { return }
+        do {
+            guard let catalog = localState?.workspaceCatalog,
+                  let classifierType = catalog.classifierTypes.first(where: { $0.id == typeID }),
+                  let dataset = catalog.datasets.first(where: { $0.id == classifierType.datasetID }) else {
+                throw WebBridgeInputError.invalidChoice("creator avatar backfill")
+            }
+            let candidates = CreatorAvatarBackfill.candidates(
+                entries: dataset.collectedEntries,
+                allowedPlatformIDs: Set(classifierType.dataSourcePlatformIDs)
+            )
+            creatorAvatarBackfillFoundCount = nil
+            guard !candidates.isEmpty else {
+                creatorAvatarBackfillFoundCount = 0
+                issue = nil
+                onWebStateChange?()
+                return
+            }
+            creatorAvatarBackfillRunning = true
+            issue = nil
+            onWebStateChange?()
+            Task { @MainActor [weak self] in
+                var foundCount = 0
+                for candidate in candidates {
+                    guard let avatarURL = await CreatorAvatarBackfill.resolveAvatarURL(for: candidate) else { continue }
+                    guard let self else { return }
+                    do {
+                        try self.storeCreatorAvatarURL(
+                            avatarURL,
+                            datasetID: classifierType.datasetID,
+                            platformID: candidate.platformID,
+                            creatorID: candidate.creatorID
+                        )
+                        self.cacheCreatorAvatar(remoteURL: avatarURL)
+                        foundCount += 1
+                    } catch {
+                        self.issue = error.localizedDescription
+                    }
+                }
+                guard let self else { return }
+                self.creatorAvatarBackfillRunning = false
+                self.creatorAvatarBackfillFoundCount = foundCount
+                self.refreshLocalState()
+                self.onWebStateChange?()
+            }
+        } catch {
+            issue = error.localizedDescription
+        }
+    }
+
+    private func storeCreatorAvatarURL(
+        _ avatarURL: String,
+        datasetID: String,
+        platformID: String,
+        creatorID: String
+    ) throws {
+        guard CreatorAvatarURLPolicy.isAccepted(platformID: platformID, value: avatarURL),
+              var catalog = localState?.workspaceCatalog,
+              let datasetIndex = catalog.datasets.firstIndex(where: { $0.id == datasetID }) else {
+            throw WebBridgeInputError.invalidChoice("creator avatar")
+        }
+        var changed = false
+        for entryIndex in catalog.datasets[datasetIndex].collectedEntries.indices {
+            guard catalog.datasets[datasetIndex].collectedEntries[entryIndex].platformID == platformID,
+                  catalog.datasets[datasetIndex].collectedEntries[entryIndex].creatorID == creatorID else {
+                continue
+            }
+            let existing = catalog.datasets[datasetIndex].collectedEntries[entryIndex].attributes["creatorAvatarURL"]
+            guard existing != avatarURL,
+                  existing != nil || catalog.datasets[datasetIndex].collectedEntries[entryIndex].attributes.count < CollectedPlatformEntry.maximumAttributes else {
+                continue
+            }
+            catalog.datasets[datasetIndex].collectedEntries[entryIndex].attributes["creatorAvatarURL"] = avatarURL
+            changed = true
+        }
+        guard changed else { return }
+        try coordinator?.updateWorkspaceCatalog(catalog)
+        refreshLocalState()
+    }
+
     /// An LLM creator run is still explicitly initiated from the classifier
     /// type. A valid answer replaces that type's current creator decision and
     /// is approved by that deliberate action, making its collected titles
@@ -2370,6 +2461,10 @@ final class VaultClassifierViewModel: ObservableObject {
             "llmRunning": providerClassificationRunning,
             "result": result.map(webResult) ?? NSNull(),
         ]
+        let creatorAvatarBackfill: [String: Any] = [
+            "running": creatorAvatarBackfillRunning,
+            "foundCount": creatorAvatarBackfillFoundCount ?? NSNull(),
+        ]
         let policyItems: [[String: Any]] = policies.map { policy in
             [
                 "id": policy.id,
@@ -2695,6 +2790,7 @@ final class VaultClassifierViewModel: ObservableObject {
             "backup": backupPayload,
             "audit": audit,
             "assets": assets,
+            "creatorAvatarBackfill": creatorAvatarBackfill,
             "bridge": sharedHub,
             "collectionDiagnostics": collectionDiagnosticsPayload,
         ]
@@ -2848,6 +2944,8 @@ final class VaultClassifierViewModel: ObservableObject {
                     creatorKey: try webString(data, key: "creatorKey", limit: 768),
                     tagIDs: try webStringArray(data, key: "tagIDs", limit: CreatorClassificationRecord.maximumTagIDs, elementLimit: 256)
                 )
+            case "backfillCreatorAvatars":
+                backfillCreatorAvatars(typeID: try webString(data, key: "typeID", limit: 256))
             case "classifyCreatorWithLLM":
                 classifyCreatorWithLLM(
                     typeID: try webString(data, key: "typeID", limit: 256),

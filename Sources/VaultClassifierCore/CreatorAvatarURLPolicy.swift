@@ -24,7 +24,42 @@ public enum CreatorAvatarURLPolicy {
         "pixelfed": ["pixelfed.social"],
     ]
 
+    /// Public creator pages may be revisited only after an explicit user
+    /// request to fill missing profile images. Keep this narrower than image
+    /// delivery hosts so a stored creator URL cannot become an arbitrary
+    /// network request.
+    private static let creatorPageHostsByPlatform: [String: [String]] = [
+        "youtube": ["youtube.com"],
+        "tiktok": ["tiktok.com"],
+        "facebook": ["facebook.com"],
+        "instagram": ["instagram.com"],
+        "twitch": ["twitch.tv"],
+        "reddit": ["reddit.com"],
+        "twitter": ["x.com", "twitter.com"],
+        "bluesky": ["bsky.app"],
+        "threads": ["threads.com"],
+        "substack": ["substack.com"],
+        "bilibili": ["bilibili.com"],
+        "rumble": ["rumble.com"],
+        "pinterest": ["pinterest.com"],
+        "tumblr": ["tumblr.com"],
+        "peertube": ["peertube.tv"],
+        "pixelfed": ["pixelfed.social"],
+    ]
+
     public static func isAccepted(platformID: String, value: String) -> Bool {
+        isAccepted(value: value, platformID: platformID, hosts: hostsByPlatform)
+    }
+
+    public static func isAcceptedCreatorPageURL(platformID: String, value: String) -> Bool {
+        isAccepted(value: value, platformID: platformID, hosts: creatorPageHostsByPlatform)
+    }
+
+    private static func isAccepted(
+        value: String,
+        platformID: String,
+        hosts: [String: [String]]
+    ) -> Bool {
         guard value.utf8.count <= CollectedPlatformEntry.maximumAttributeValueLength,
               let url = URL(string: value),
               url.scheme?.lowercased() == "https",
@@ -33,7 +68,7 @@ public enum CreatorAvatarURLPolicy {
               let host = url.host?.lowercased() else {
             return false
         }
-        return (hostsByPlatform[platformID] ?? []).contains { suffix in
+        return (hosts[platformID] ?? []).contains { suffix in
             host == suffix || host.hasSuffix(".\(suffix)")
         }
     }
