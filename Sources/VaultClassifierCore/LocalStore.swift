@@ -395,6 +395,11 @@ public final class LocalClassifierCoordinator {
         var loaded = try stateFile.load()
         let originalState = loaded
         if loaded.policies.isEmpty { loaded.policies = defaultPolicies }
+        // Capability rules are durable catalog constraints. Reconcile a
+        // catalog from an earlier build before it is exposed so a manual-only
+        // platform cannot retain a stale model or LLM-assist assignment.
+        loaded.workspaceCatalog.reconcileClassifierTypes()
+        try loaded.workspaceCatalog.validate()
         let taxonomy = try verifiedPackage.taxonomy
         // Persisted policies are input, not trusted derived state. Validate
         // before publishing an engine so a removed/renamed taxonomy tag cannot

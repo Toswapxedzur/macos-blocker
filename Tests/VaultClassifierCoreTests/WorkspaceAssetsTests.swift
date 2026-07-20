@@ -4,16 +4,78 @@ import XCTest
 final class WorkspaceAssetsTests: XCTestCase {
     private func seed() throws -> VerifiedSeedPackage { try SeedPackageLoader.bundled() }
 
-    func testCollectionRegistryMarksOnlyInstalledPublicContentCollectorsAvailable() {
+    func testCollectionRegistryLimitsTheClassifierToSixAutomatedAndThreeManualPlatforms() {
+        XCTAssertEqual(Set(CollectionPlatformRegistry.definitions.map(\.id)), Set([
+            "youtube", "tiktok", "facebook", "instagram", "twitter", "bilibili",
+            "twitch", "reddit", "discord",
+        ]))
         let available = Set(CollectionPlatformRegistry.definitions.lazy.filter(\.collectorAvailable).map(\.id))
         XCTAssertEqual(available, Set([
-            "youtube", "tiktok", "facebook", "instagram", "twitch", "reddit",
-            "twitter", "bluesky", "threads", "substack", "bilibili", "rumble",
-            "pinterest", "tumblr", "peertube", "pixelfed",
+            "youtube", "tiktok", "facebook", "instagram", "twitch", "reddit", "twitter", "bilibili",
         ]))
-        XCTAssertFalse(CollectionPlatformRegistry.definition(for: "discord")?.collectorAvailable ?? true)
-        XCTAssertFalse(CollectionPlatformRegistry.definition(for: "kick")?.collectorAvailable ?? true)
-        XCTAssertFalse(CollectionPlatformRegistry.definition(for: "kuaishou")?.collectorAvailable ?? true)
+        for platformID in ["twitch", "reddit", "discord"] {
+            let platform = try! XCTUnwrap(CollectionPlatformRegistry.definition(for: platformID))
+            XCTAssertFalse(platform.supportsLocalModel)
+            XCTAssertFalse(platform.supportsLLMAssist)
+        }
+        for platformID in ["youtube", "tiktok", "facebook", "instagram", "twitter", "bilibili"] {
+            let platform = try! XCTUnwrap(CollectionPlatformRegistry.definition(for: platformID))
+            XCTAssertTrue(platform.supportsLocalModel)
+            XCTAssertTrue(platform.supportsLLMAssist)
+        }
+        XCTAssertFalse(CollectionPlatformRegistry.definition(for: "pinterest") != nil)
+    }
+
+    func testManualOnlyPlatformRejectsModelAndLLMAssistButKeepsHumanClassification() throws {
+        var catalog = WorkspaceCatalog.starter()
+        let tree = try XCTUnwrap(catalog.trees.first)
+        let dataset = try XCTUnwrap(catalog.datasets.first)
+        catalog.bindings.append(.init(id: "twitch", name: "Twitch", treeID: tree.id, datasetID: dataset.id))
+
+        let humanOnly = ClassifierTypeAsset(
+            id: "twitch-manual",
+            name: "Twitch manual",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            datasetID: dataset.id,
+            datasetRevision: dataset.revision,
+            dataSourcePlatformIDs: ["twitch"],
+            creatorDecisionSources: [.human],
+            entryDecisionSources: [.human]
+        )
+        catalog.classifierTypes = [humanOnly]
+        XCTAssertNoThrow(try catalog.validate())
+
+        catalog.models[0].trainingPlatformID = "twitch"
+        catalog.models[0].trainingPlatformIDs = ["twitch"]
+        XCTAssertThrowsError(try catalog.validate()) { error in
+            XCTAssertEqual(error as? WorkspaceCatalogError, .invalidLocalModel(catalog.models[0].id))
+        }
+
+        catalog.models[0].trainingPlatformID = "youtube"
+        catalog.models[0].trainingPlatformIDs = ["youtube"]
+        let profile = APIKeyProviderProfile(id: "manual-only-profile", type: .gemini)
+        catalog.providerProfiles = [profile]
+        catalog.classifierTypes = [.init(
+            id: "twitch-automated",
+            name: "Twitch automated",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            datasetID: dataset.id,
+            datasetRevision: dataset.revision,
+            dataSourcePlatformIDs: ["twitch"],
+            llmProfileIDs: [profile.id],
+            creatorDecisionSources: [.human, .llmAssist]
+        )]
+        XCTAssertThrowsError(try catalog.validate()) { error in
+            XCTAssertEqual(error as? WorkspaceCatalogError, .invalidClassifierType("twitch-automated"))
+        }
+
+        catalog.reconcileClassifierTypes()
+        XCTAssertEqual(catalog.classifierTypes[0].dataSourcePlatformIDs, ["twitch"])
+        XCTAssertTrue(catalog.classifierTypes[0].llmProfileIDs.isEmpty)
+        XCTAssertFalse(catalog.classifierTypes[0].creatorDecisionSources.contains(.llmAssist))
+        XCTAssertNoThrow(try catalog.validate())
     }
 
     func testStarterCatalogBindsOneTreeAndDatasetToYouTube() {

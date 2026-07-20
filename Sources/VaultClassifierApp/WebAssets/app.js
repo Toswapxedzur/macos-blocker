@@ -396,6 +396,7 @@
   function localModelWorkspace() {
     const assets = state.assets;
     const models = assets.models || [];
+    const localModelBindings = (assets.bindings || []).filter((binding) => binding.supportsLocalModel);
     const panel = (model) => {
       const formID = `local-model-${model.id}`;
       const tree = assets.trees.find((candidate) => candidate.id === model.treeID);
@@ -404,7 +405,7 @@
         : [model.platformID || assets.bindings.find((binding) => binding.datasetID === model.datasetID)?.id].filter(Boolean);
       const dataset = assets.datasets.find((candidate) => candidate.id === model.datasetID);
       const treeOptions = assets.trees.map((candidate) => [candidate.id, `${candidate.name} · r${candidate.revision}`]);
-      const platformOptions = assets.bindings.map((binding) => [binding.id, `${binding.name} · ${binding.browser}`]);
+      const platformOptions = localModelBindings.map((binding) => [binding.id, `${binding.name} · ${binding.browser}`]);
       const baseOptions = [["", t("model.base.none")], ...(assets.baseEmbeddings || []).map((identifier) => [identifier, t(baseEmbeddingLabelKey(identifier))])];
       const tagCount = tree?.nodes.filter((node) => !node.retired).length || 0;
       const sourcePlatforms = new Set(platformIDs);
@@ -425,7 +426,7 @@
       </section>`;
     };
     return `<div class="workspace model-workspace">${header("model.title", "model.copy", t("model.sharedLibrary"), "pink")}
-      <section class="model-create" data-form-id="new-local-model-form">${field("model.modelName", "", "name", "")}<button class="pink-action" data-action="createLocalModel" data-form="new-local-model-form"${disabled(!assets.trees.length || !assets.bindings.length)}>${tx("model.create")}</button><span class="small-copy">${tx("model.multiplePanels")}</span></section>
+      <section class="model-create" data-form-id="new-local-model-form">${field("model.modelName", "", "name", "")}<button class="pink-action" data-action="createLocalModel" data-form="new-local-model-form"${disabled(!assets.trees.length || !localModelBindings.length)}>${tx("model.create")}</button><span class="small-copy">${tx("model.multiplePanels")}</span></section>
       <div class="model-panels">${models.length ? models.map(panel).join("") : `<div class="empty">${tx("model.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
   }
 
@@ -569,14 +570,20 @@
         ? classifierType.dataSourcePlatformIDs
         : sourceBindings.map((binding) => binding.id);
       const dataSourcePlatforms = new Set(dataSourcePlatformIDs);
-      const dataSourceOptions = sourceBindings.map((binding) => [binding.id, `${binding.name} · ${binding.browser}`]);
-      const compatibleModels = models.filter((model) => model.ready &&
+      const sourceDefinitions = dataSourcePlatformIDs.map((platformID) => platformDefinitions.get(platformID));
+      const supportsLocalModel = sourceDefinitions.every((definition) => definition?.supportsLocalModel);
+      const supportsLLMAssist = sourceDefinitions.every((definition) => definition?.supportsLLMAssist);
+      const dataSourceOptions = sourceBindings.map((binding) => {
+        const manualOnly = !platformDefinitions.get(binding.id)?.supportsLocalModel;
+        return [binding.id, `${binding.name} · ${binding.browser}${manualOnly ? ` · ${t("bridge.manualOnly")}` : ""}`];
+      });
+      const compatibleModels = supportsLocalModel ? models.filter((model) => model.ready &&
         model.treeID === classifierType.treeID &&
         model.treeRevision === selectedTree?.revision &&
         model.datasetID === classifierType.datasetID &&
         model.datasetRevision === selectedDataset?.revision &&
         new Set(model.platformIDs || [model.platformID].filter(Boolean)).size === dataSourcePlatforms.size &&
-        (model.platformIDs || [model.platformID].filter(Boolean)).every((platformID) => dataSourcePlatforms.has(platformID)));
+        (model.platformIDs || [model.platformID].filter(Boolean)).every((platformID) => dataSourcePlatforms.has(platformID))) : [];
       const treeOptions = trees.map((tree) => [tree.id, `${tree.name} · r${tree.revision}`]);
       const datasetOptions = datasets.map((dataset) => [dataset.id, `${dataset.name} · r${dataset.revision}`]);
       const modelOptions = [["", t("bridge.noLocalModel")], ...compatibleModels.map((model) => [model.id, `${model.name} · v${model.version}`])];
@@ -584,9 +591,9 @@
       const creatorSources = new Set(classifierType.creatorDecisionSources || []);
       const entrySources = new Set(classifierType.entryDecisionSources || []);
       const priority = classifierType.decisionPriority || ["human", "llmAssist", "localModel"];
-      const localAvailable = Boolean(classifierType.localModelID) && compatibleModels.some((model) => model.id === classifierType.localModelID);
-      const llmAvailable = selectedLLMIDs.size > 0;
-      const sourceToggle = (fieldName, source, enabled, available) => `<label class="classifier-source-toggle"><input type="checkbox" data-field="${esc(fieldName)}"${checked(enabled)}${disabled(!available)}><span>${tx(`bridge.source.${source}`)}</span>${!available ? `<small>${tx(`bridge.sourceUnavailable.${source}`)}</small>` : ""}</label>`;
+      const localAvailable = supportsLocalModel && Boolean(classifierType.localModelID) && compatibleModels.some((model) => model.id === classifierType.localModelID);
+      const llmAvailable = supportsLLMAssist && selectedLLMIDs.size > 0;
+      const sourceToggle = (fieldName, source, enabled, available, unavailableKey = `bridge.sourceUnavailable.${source}`) => `<label class="classifier-source-toggle"><input type="checkbox" data-field="${esc(fieldName)}"${checked(enabled)}${disabled(!available)}><span>${tx(`bridge.source.${source}`)}</span>${!available ? `<small>${tx(unavailableKey)}</small>` : ""}</label>`;
       const typeStatus = `${creatorSources.size || entrySources.size ? t("bridge.configured") : t("bridge.needsSource")}`;
       const leafTagOptions = (selectedTree?.nodes || [])
         .filter((node) => !node.retired && !(selectedTree?.nodes || []).some((candidate) => candidate.parentID === node.id))
@@ -735,6 +742,9 @@
       const tree = treeByID.get(binding.treeID);
       const selectableTypes = classifierTypes.filter((classifierType) => {
         if (classifierType.treeID !== binding.treeID || classifierType.datasetID !== binding.datasetID || classifierType.treeRevision !== tree?.revision || classifierType.datasetRevision !== dataset?.revision) return false;
+        const decisionSources = new Set([...(classifierType.creatorDecisionSources || []), ...(classifierType.entryDecisionSources || [])]);
+        if (!definition?.supportsLocalModel && (decisionSources.has("localModel") || classifierType.localModelID)) return false;
+        if (!definition?.supportsLLMAssist && (decisionSources.has("llmAssist") || (classifierType.llmProfileIDs || []).length)) return false;
         if (!(classifierType.entryDecisionSources || []).includes("localModel")) return true;
         return models.some((model) => model.id === classifierType.localModelID && model.ready && model.training);
       });
@@ -928,10 +938,37 @@
     editor.scrollTop = position.y;
   }
 
+  function applyManualOnlyPlatformCapabilities() {
+    const definitions = new Map((state?.assets?.collectionPlatforms || []).map((platform) => [platform.id, platform]));
+    root.querySelectorAll(".classifier-type-panel").forEach((panel) => {
+      const sourceControl = panel.querySelector('[data-field="dataSourcePlatformIDs"]');
+      if (!sourceControl) return;
+      const hasManualOnlySource = Array.from(sourceControl.selectedOptions).some((option) => {
+        const platform = definitions.get(option.value);
+        return platform && (!platform.supportsLocalModel || !platform.supportsLLMAssist);
+      });
+      let note = panel.querySelector("[data-manual-only-platform-note]");
+      if (!note) {
+        note = document.createElement("p");
+        note.className = "small-copy";
+        note.dataset.manualOnlyPlatformNote = "";
+        note.textContent = t("bridge.manualOnlyCopy");
+        panel.querySelector(".classifier-data-source-field")?.append(note);
+      }
+      if (note) note.hidden = !hasManualOnlySource;
+      panel.querySelectorAll('[data-field="localModelID"], [data-field^="llmProfile."], [data-field="creatorLLM"], [data-field="entryLLM"], [data-field="creatorLocalModel"], [data-field="entryLocalModel"]').forEach((control) => {
+        control.disabled = hasManualOnlySource;
+        if (hasManualOnlySource && control.type === "checkbox") control.checked = false;
+        if (hasManualOnlySource && control.dataset.field === "localModelID") control.value = "";
+      });
+    });
+  }
+
   function render() {
     rememberTreeViewportPositions();
     rememberEditorViewportPosition();
     root.innerHTML = state ? shell(workspace()) : `<div class="popup"><div class="empty">${tx("app.loading")}</div></div>`;
+    applyManualOnlyPlatformCapabilities();
     window.requestAnimationFrame(() => {
       applyNavigationPanelWidth();
       restoreEditorViewportPosition();
@@ -1144,6 +1181,10 @@
       selectedLanguage = languageControl.value;
       document.documentElement.lang = selectedLanguage;
       try { window.localStorage.setItem("vaultClassifier.language", selectedLanguage); } catch (_) {}
+      return;
+    }
+    if (event.target.closest('[data-field="dataSourcePlatformIDs"]')) {
+      applyManualOnlyPlatformCapabilities();
       return;
     }
     const control = event.target.closest("[data-local-model-setup]");

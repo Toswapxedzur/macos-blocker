@@ -598,12 +598,27 @@ public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
     /// remaining platform entries are intentionally selectable now so their
     /// local tree/dataset binding exists before an adapter is added.
     public var collectorAvailable: Bool
+    /// A manual-only platform can retain public entries and human tags, but
+    /// never contributes training examples to a local model.
+    public var supportsLocalModel: Bool
+    /// A manual-only platform can retain public entries and human tags, but
+    /// must never be sent through an LLM-assist classification path.
+    public var supportsLLMAssist: Bool
 
-    public init(id: String, name: String, browser: String = "Chrome and Edge", collectorAvailable: Bool = false) {
+    public init(
+        id: String,
+        name: String,
+        browser: String = "Chrome and Edge",
+        collectorAvailable: Bool = false,
+        supportsLocalModel: Bool = true,
+        supportsLLMAssist: Bool = true
+    ) {
         self.id = id
         self.name = name
         self.browser = browser
         self.collectorAvailable = collectorAvailable
+        self.supportsLocalModel = supportsLocalModel
+        self.supportsLLMAssist = supportsLLMAssist
     }
 }
 
@@ -613,21 +628,11 @@ public enum CollectionPlatformRegistry {
         .init(id: "tiktok", name: "TikTok", collectorAvailable: true),
         .init(id: "facebook", name: "Facebook", collectorAvailable: true),
         .init(id: "instagram", name: "Instagram", collectorAvailable: true),
-        .init(id: "twitch", name: "Twitch", collectorAvailable: true),
-        .init(id: "reddit", name: "Reddit", collectorAvailable: true),
-        .init(id: "discord", name: "Discord"),
+        .init(id: "twitch", name: "Twitch", collectorAvailable: true, supportsLocalModel: false, supportsLLMAssist: false),
+        .init(id: "reddit", name: "Reddit", collectorAvailable: true, supportsLocalModel: false, supportsLLMAssist: false),
+        .init(id: "discord", name: "Discord", supportsLocalModel: false, supportsLLMAssist: false),
         .init(id: "twitter", name: "Twitter / X", collectorAvailable: true),
-        .init(id: "pinterest", name: "Pinterest", collectorAvailable: true),
-        .init(id: "bluesky", name: "Bluesky", collectorAvailable: true),
-        .init(id: "threads", name: "Threads", collectorAvailable: true),
-        .init(id: "substack", name: "Substack", collectorAvailable: true),
         .init(id: "bilibili", name: "Bilibili", collectorAvailable: true),
-        .init(id: "rumble", name: "Rumble", collectorAvailable: true),
-        .init(id: "kick", name: "Kick"),
-        .init(id: "tumblr", name: "Tumblr", collectorAvailable: true),
-        .init(id: "peertube", name: "PeerTube", collectorAvailable: true),
-        .init(id: "pixelfed", name: "Pixelfed", collectorAvailable: true),
-        .init(id: "kuaishou", name: "Kuaishou"),
     ]
 
     public static func definition(for id: String) -> CollectionPlatformDefinition? {
@@ -1099,6 +1104,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             let sourcePlatformIDs = model.effectiveTrainingPlatformIDs
             guard sourcePlatformIDs.count <= LocalModelAsset.maximumTrainingPlatforms,
                   sourcePlatformIDs.allSatisfy({ platformID in
+                      CollectionPlatformRegistry.definition(for: platformID)?.supportsLocalModel == true &&
                       bindings.contains(where: { binding in
                           binding.id == platformID &&
                           binding.treeID == model.treeID &&
@@ -1197,6 +1203,14 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                   (!enabledSources.contains(.llmAssist) || !classifierType.llmProfileIDs.isEmpty) else {
                 throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
             }
+            let sourceDefinitions = classifierType.dataSourcePlatformIDs.compactMap(CollectionPlatformRegistry.definition(for:))
+            let usesLocalModel = classifierType.localModelID != nil || enabledSources.contains(.localModel)
+            let usesLLMAssist = !classifierType.llmProfileIDs.isEmpty || enabledSources.contains(.llmAssist)
+            guard sourceDefinitions.count == classifierType.dataSourcePlatformIDs.count,
+                  (!usesLocalModel || sourceDefinitions.allSatisfy(\.supportsLocalModel)),
+                  (!usesLLMAssist || sourceDefinitions.allSatisfy(\.supportsLLMAssist)) else {
+                throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
+            }
         }
         for binding in bindings {
             guard let classifierTypeID = binding.activeClassifierTypeID else { continue }
@@ -1207,8 +1221,16 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                   classifierType.datasetID == binding.datasetID,
                   let tree = trees.first(where: { $0.id == binding.treeID }),
                   let dataset = datasets.first(where: { $0.id == binding.datasetID }),
+                  let platform = CollectionPlatformRegistry.definition(for: binding.id),
                   classifierType.treeRevision == tree.revision,
                   classifierType.datasetRevision == dataset.revision else {
+                throw WorkspaceCatalogError.incompatibleActiveClassifierType(classifierTypeID)
+            }
+            let enabledSources = Set(classifierType.creatorDecisionSources + classifierType.entryDecisionSources)
+            guard (platform.supportsLocalModel ||
+                   (!enabledSources.contains(.localModel) && classifierType.localModelID == nil)),
+                  (platform.supportsLLMAssist ||
+                   (!enabledSources.contains(.llmAssist) && classifierType.llmProfileIDs.isEmpty)) else {
                 throw WorkspaceCatalogError.incompatibleActiveClassifierType(classifierTypeID)
             }
             if classifierType.entryDecisionSources.contains(.localModel) {
@@ -1333,6 +1355,22 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     /// user-visible brain editable while never letting an old model decide for
     /// a changed tree or dataset.
     public mutating func reconcileClassifierTypes() {
+        models = models.compactMap { model in
+            var reconciled = model
+            let eligiblePlatformIDs = model.effectiveTrainingPlatformIDs.filter {
+                CollectionPlatformRegistry.definition(for: $0)?.supportsLocalModel == true
+            }
+            guard !eligiblePlatformIDs.isEmpty else { return nil }
+            if eligiblePlatformIDs != model.effectiveTrainingPlatformIDs {
+                reconciled.trainingPlatformID = eligiblePlatformIDs.first
+                reconciled.trainingPlatformIDs = eligiblePlatformIDs
+                reconciled.isReady = false
+                reconciled.embeddedNeuralModel = nil
+                reconciled.embeddedTrainingReport = nil
+                reconciled.trainedAtMilliseconds = nil
+            }
+            return reconciled
+        }
         classifierTypes = classifierTypes.compactMap { classifierType in
             guard let tree = trees.first(where: { $0.id == classifierType.treeID }),
                   let dataset = datasets.first(where: { $0.id == classifierType.datasetID }) else {
@@ -1351,8 +1389,18 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             } else {
                 reconciled.dataSourcePlatformIDs = reconciled.dataSourcePlatformIDs.filter(compatibleSourcePlatformIDs.contains)
             }
+            let sourceDefinitions = reconciled.dataSourcePlatformIDs.compactMap(CollectionPlatformRegistry.definition(for:))
+            let supportsLocalModel = sourceDefinitions.count == reconciled.dataSourcePlatformIDs.count &&
+                sourceDefinitions.allSatisfy(\.supportsLocalModel)
+            let supportsLLMAssist = sourceDefinitions.count == reconciled.dataSourcePlatformIDs.count &&
+                sourceDefinitions.allSatisfy(\.supportsLLMAssist)
             reconciled.llmProfileIDs = reconciled.llmProfileIDs.filter { profileID in
                 providerProfiles.contains(where: { $0.id == profileID && $0.type.supportsLLMConfiguration })
+            }
+            if !supportsLLMAssist {
+                reconciled.llmProfileIDs = []
+                reconciled.creatorDecisionSources.removeAll(where: { $0 == .llmAssist })
+                reconciled.entryDecisionSources.removeAll(where: { $0 == .llmAssist })
             }
             if let modelID = reconciled.localModelID {
                 let compatible = models.contains(where: { model in
@@ -1362,6 +1410,11 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                     Set(model.effectiveTrainingPlatformIDs) == Set(reconciled.dataSourcePlatformIDs)
                 })
                 if !compatible { reconciled.localModelID = nil }
+            }
+            if !supportsLocalModel {
+                reconciled.localModelID = nil
+                reconciled.creatorDecisionSources.removeAll(where: { $0 == .localModel })
+                reconciled.entryDecisionSources.removeAll(where: { $0 == .localModel })
             }
             if reconciled.localModelID == nil {
                 reconciled.creatorDecisionSources.removeAll(where: { $0 == .localModel })
@@ -1381,10 +1434,20 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             guard let classifierType = classifierTypes.first(where: { $0.id == classifierTypeID }),
                   let tree = trees.first(where: { $0.id == bindings[index].treeID }),
                   let dataset = datasets.first(where: { $0.id == bindings[index].datasetID }),
+                  let platform = CollectionPlatformRegistry.definition(for: bindings[index].id),
                   classifierType.treeID == tree.id,
                   classifierType.treeRevision == tree.revision,
                   classifierType.datasetID == dataset.id,
                   classifierType.datasetRevision == dataset.revision else {
+                bindings[index].activeClassifierTypeID = nil
+                bindings[index].activeModelID = nil
+                continue
+            }
+            let enabledSources = Set(classifierType.creatorDecisionSources + classifierType.entryDecisionSources)
+            if (!platform.supportsLocalModel &&
+                (enabledSources.contains(.localModel) || classifierType.localModelID != nil)) ||
+                (!platform.supportsLLMAssist &&
+                (enabledSources.contains(.llmAssist) || !classifierType.llmProfileIDs.isEmpty)) {
                 bindings[index].activeClassifierTypeID = nil
                 bindings[index].activeModelID = nil
                 continue
