@@ -501,6 +501,7 @@
   function llmAssistWorkspace() {
     const profiles = state.assets.providerProfiles || [];
     const requestRecords = state.assets.providerRequestRecords || [];
+    const protocols = state.assets.providerProtocols || {};
     const profileTypeGroups = [
       ["llm.providerGroup.models", ["openAI", "deepSeek", "gemini", "anthropic", "mistral", "cohere", "groq", "openRouter", "ollama"].map((type) => [type, t(providerTypeLabelKey(type))])],
       ["llm.providerGroup.platform", ["youtubeData", "twitch", "reddit", "xPlatform", "tikTok", "instagramGraph", "facebookGraph", "linkedIn", "pinterest", "bluesky", "mastodon", "vimeo", "dailyMotion", "spotify"].map((type) => [type, t(providerTypeLabelKey(type))])],
@@ -508,7 +509,7 @@
     ];
     const panel = (profile) => {
       const formID = `provider-profile-${profile.id}`;
-      const protocol = state.assets.providerProtocols?.[profile.type] || {};
+      const protocol = protocols[profile.type] || {};
       const supportsLLM = Boolean(protocol.supportsLLMConfiguration);
       const hasSessionCredential = Boolean(profile.hasSessionCredential);
       const profileRecords = requestRecords.filter((record) => record.profileID === profile.id);
