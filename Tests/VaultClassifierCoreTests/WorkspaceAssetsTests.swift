@@ -73,6 +73,44 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(record.platformID, "youtube")
     }
 
+    func testRemovingCreatorClassificationTargetsOnlyThatCreatorAndType() {
+        let retained = CreatorClassificationRecord(
+            classifierTypeID: "other-type",
+            creatorID: "youtube:channel:one",
+            creatorName: "Creator one",
+            platformID: "youtube",
+            treeID: "tree",
+            treeRevision: 1,
+            tagIDs: ["games"],
+            origin: .manual,
+            review: .approved
+        )
+        let removed = CreatorClassificationRecord(
+            classifierTypeID: "creator-type",
+            creatorID: "youtube:channel:one",
+            creatorName: "Creator one",
+            platformID: "youtube",
+            treeID: "tree",
+            treeRevision: 1,
+            tagIDs: ["games"],
+            origin: .manual,
+            review: .approved
+        )
+        var dataset = ClassificationDataset(name: "Labels", creatorClassifications: [retained, removed])
+
+        XCTAssertTrue(dataset.removeCreatorClassification(
+            classifierTypeID: "creator-type",
+            platformID: "youtube",
+            creatorID: "youtube:channel:one"
+        ))
+        XCTAssertEqual(dataset.creatorClassifications, [retained])
+        XCTAssertFalse(dataset.removeCreatorClassification(
+            classifierTypeID: "creator-type",
+            platformID: "youtube",
+            creatorID: "youtube:channel:one"
+        ))
+    }
+
     func testCreatorClassificationsAreTheOnlyActiveTrainingLabels() throws {
         let tree = TagTreeAsset(
             id: "interests",

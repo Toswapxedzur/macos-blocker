@@ -552,7 +552,62 @@ h3 { font-size: 13px; }
 .creator-classification-section { background: rgba(236, 253, 245, .48); }
 .creator-classification-fields { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr); gap: 10px; }
 .creator-classification-fields + .action-row { margin-top: 10px; }
-.creator-llm-row { display: grid; grid-template-columns: minmax(220px, 1fr) auto; align-items: end; gap: 10px; margin-top: 12px; }
+.creator-tag-browser { display: flex; flex-direction: column; gap: 12px; }
+.creator-tag-navigation {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding: 3px;
+  border: 1px solid rgba(8, 145, 178, .18);
+  border-radius: 12px;
+  background: rgba(236, 254, 255, .58);
+  scrollbar-width: thin;
+}
+.creator-tag-tab {
+  flex: 0 0 auto;
+  min-height: 31px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #155e75;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.creator-tag-tab:hover { background: rgba(255, 255, 255, .8); }
+.creator-tag-tab.active { border-color: rgba(8, 145, 178, .28); color: #fff; background: var(--cyan-700); box-shadow: 0 3px 8px rgba(8, 145, 178, .2); }
+.creator-tag-columns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.creator-tag-column {
+  display: flex;
+  min-width: 0;
+  min-height: 300px;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, .25);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, .72);
+}
+.creator-tag-column:nth-child(1) { border-top: 3px solid #94a3b8; }
+.creator-tag-column:nth-child(2) { border-top: 3px solid var(--cyan-700); }
+.creator-tag-column:nth-child(3) { border-top: 3px solid #6366f1; }
+.creator-tag-column-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 11px 8px; border-bottom: 1px solid rgba(148, 163, 184, .18); }
+.creator-tag-column-head h4 { margin: 0; color: var(--ink); font-size: 11px; font-weight: 800; letter-spacing: .03em; }
+.creator-tag-column-head span { min-width: 20px; padding: 2px 6px; border-radius: 999px; color: var(--muted); background: #f1f5f9; font-size: 10px; font-weight: 800; text-align: center; }
+.creator-tag-column-list { display: flex; min-height: 0; max-height: 390px; flex: 1; flex-direction: column; gap: 7px; overflow: auto; padding: 9px; overscroll-behavior: contain; }
+.creator-tag-card { display: flex; flex-direction: column; gap: 8px; padding: 9px; border: 1px solid rgba(148, 163, 184, .2); border-radius: 9px; background: #fff; box-shadow: 0 2px 6px rgba(15, 23, 42, .04); }
+.creator-tag-card-profile { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.creator-tag-card-avatar { width: 30px; height: 30px; flex: 0 0 30px; border-radius: 50%; background: #e0f2fe; object-fit: cover; }
+.creator-tag-card-avatar-fallback { display: grid; place-items: center; color: #155e75; font-size: 12px; font-weight: 800; }
+.creator-tag-card-profile > div { min-width: 0; }
+.creator-tag-card-profile strong,
+.creator-tag-card-profile span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.creator-tag-card-profile strong { color: var(--ink); font-size: 11px; }
+.creator-tag-card-profile span { margin-top: 2px; color: var(--muted); font-size: 9.5px; font-weight: 600; }
+.creator-tag-card-action { width: 100%; min-height: 27px; padding: 5px 8px; border-radius: 7px; font-size: 10px; }
+.creator-tag-empty { margin: auto 0; color: var(--muted); font-size: 10.5px; font-weight: 600; text-align: center; }
+.creator-tag-human-required { margin: 0; }
+.creator-llm-row { display: grid; grid-template-columns: minmax(170px, 1fr) minmax(170px, 1fr) auto; align-items: end; gap: 10px; margin-top: 12px; }
 .creator-llm-row + .small-copy { margin: 6px 0 0; }
 .classifier-priority-grid { grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 10px; }
 .classifier-llm-section { background: rgba(255, 251, 235, .52); }
@@ -603,6 +658,7 @@ h3 { font-size: 13px; }
   .classifier-asset-grid,
   .creator-classification-fields,
   .creator-llm-row,
+  .creator-tag-columns,
   .classifier-priority-grid,
   .classifier-decision-grid { grid-template-columns: 1fr; }
 }
