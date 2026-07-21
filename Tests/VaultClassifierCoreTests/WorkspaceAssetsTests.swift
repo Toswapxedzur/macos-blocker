@@ -173,6 +173,15 @@ final class WorkspaceAssetsTests: XCTestCase {
         ))
     }
 
+    func testLegacyCreatorClassificationKeepsOtherTagsUndecided() throws {
+        let legacy = Data(#"{"id":"creator","classifierTypeID":"type","creatorID":"channel","creatorName":"Creator","platformID":"youtube","treeID":"tree","treeRevision":1,"tagIDs":["games"],"origin":"manual","review":"approved","createdAtMilliseconds":1,"updatedAtMilliseconds":1}"#.utf8)
+        let classification = try JSONDecoder().decode(CreatorClassificationRecord.self, from: legacy)
+
+        XCTAssertEqual(classification.tagIDs, ["games"])
+        XCTAssertTrue(classification.negativeTagIDs.isEmpty)
+        XCTAssertEqual(try JSONDecoder().decode(CreatorClassificationRecord.self, from: JSONEncoder().encode(classification)), classification)
+    }
+
     func testCreatorClassificationsAreTheOnlyActiveTrainingLabels() throws {
         let tree = TagTreeAsset(
             id: "interests",
@@ -191,6 +200,7 @@ final class WorkspaceAssetsTests: XCTestCase {
             treeID: tree.id,
             treeRevision: tree.revision,
             tagIDs: ["games"],
+            negativeTagIDs: ["technology"],
             origin: .manual,
             review: .approved,
             createdAtMilliseconds: 100,
@@ -236,17 +246,20 @@ final class WorkspaceAssetsTests: XCTestCase {
         let examples = LocalModelTrainer.approvedExamples(for: tree, dataset: dataset, platformID: "youtube")
         XCTAssertEqual(examples.count, 3)
         XCTAssertEqual(Set(examples.flatMap(\.positiveLabelIDs)), ["games", "technology"])
+        XCTAssertEqual(Set(examples.flatMap(\.negativeLabelIDs)), ["technology"])
         XCTAssertFalse(examples.contains(where: { $0.text == "Do not train this" }))
         XCTAssertFalse(examples.contains(where: { $0.text == "Legacy entry label" }))
 
         var updated = manual
         updated.tagIDs = ["technology"]
+        updated.negativeTagIDs = ["games"]
         updated.updatedAtMilliseconds = 200
         let retained = dataset.upsertCreatorClassification(updated)
         XCTAssertEqual(dataset.creatorClassifications.count, 3)
         XCTAssertEqual(retained.id, manual.id)
         XCTAssertEqual(retained.createdAtMilliseconds, 100)
         XCTAssertEqual(retained.tagIDs, ["technology"])
+        XCTAssertEqual(retained.negativeTagIDs, ["games"])
         XCTAssertEqual(try JSONDecoder().decode(ClassificationDataset.self, from: JSONEncoder().encode(dataset)), dataset)
     }
 

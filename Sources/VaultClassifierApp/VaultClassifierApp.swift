@@ -1690,7 +1690,12 @@ final class VaultClassifierViewModel: ObservableObject {
     /// Saves the current creator-level source of truth for a classifier type.
     /// The dataset revision advances because approved creator decisions are
     /// explicit local-model training material through their collected entries.
-    func recordCreatorClassification(typeID: String, creatorKey: String, tagIDs: [String]) {
+    func recordCreatorClassification(
+        typeID: String,
+        creatorKey: String,
+        tagIDs: [String],
+        negativeTagIDs: [String]
+    ) {
         do {
             guard var catalog = localState?.workspaceCatalog,
                   let typeIndex = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }) else {
@@ -1711,7 +1716,7 @@ final class VaultClassifierViewModel: ObservableObject {
             let platformID = String(keyParts[0])
             let creatorID = String(keyParts[1])
             guard classifierType.applicablePlatformID == platformID,
-                  CollectionPlatformRegistry.definition(for: platformID)?.supportsLLMAssist == true else {
+                  CollectionPlatformRegistry.definition(for: platformID) != nil else {
                 throw WebBridgeInputError.invalidChoice("creator data source")
             }
             guard let creatorEntry = catalog.datasets[datasetIndex].collectedEntries.first(where: {
@@ -1719,7 +1724,7 @@ final class VaultClassifierViewModel: ObservableObject {
             }) else {
                 throw WebBridgeInputError.invalidChoice("creator")
             }
-            if tagIDs.isEmpty {
+            if tagIDs.isEmpty && negativeTagIDs.isEmpty {
                 if catalog.datasets[datasetIndex].removeCreatorClassification(
                     classifierTypeID: classifierType.id,
                     platformID: platformID,
@@ -1740,6 +1745,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 creatorName: creatorEntry.creatorName,
                 platformID: creatorEntry.platformID,
                 tagIDs: tagIDs,
+                negativeTagIDs: negativeTagIDs,
                 origin: .manual
             )
             try coordinator?.updateWorkspaceCatalog(catalog)
@@ -1995,6 +2001,7 @@ final class VaultClassifierViewModel: ObservableObject {
         creatorName: String,
         platformID: String,
         tagIDs: [String],
+        negativeTagIDs: [String] = [],
         origin: ClassificationRecordOrigin
     ) throws {
         guard classifierType.applicablePlatformID == platformID,
@@ -2005,13 +2012,16 @@ final class VaultClassifierViewModel: ObservableObject {
         }
         let cleanedCreatorID = creatorID.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanedCreatorName = creatorName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let labels = Array(Set(tagIDs)).sorted()
+        let positiveLabels = Array(Set(tagIDs)).sorted()
+        let negativeLabels = Array(Set(negativeTagIDs)).sorted()
         let availableLeafIDs = try tree.inferenceTaxonomy().predictableLeafIDs
         guard !cleanedCreatorID.isEmpty,
               !cleanedCreatorName.isEmpty,
-              !labels.isEmpty,
-              labels.count <= CreatorClassificationRecord.maximumTagIDs,
-              labels.allSatisfy(availableLeafIDs.contains) else {
+              !positiveLabels.isEmpty || !negativeLabels.isEmpty,
+              positiveLabels.count + negativeLabels.count <= CreatorClassificationRecord.maximumTagIDs,
+              Set(positiveLabels).isDisjoint(with: negativeLabels),
+              positiveLabels.allSatisfy(availableLeafIDs.contains),
+              negativeLabels.allSatisfy(availableLeafIDs.contains) else {
             throw WebBridgeInputError.invalidChoice("creator tag IDs")
         }
         _ = catalog.datasets[datasetIndex].upsertCreatorClassification(.init(
@@ -2021,7 +2031,8 @@ final class VaultClassifierViewModel: ObservableObject {
             platformID: platformID,
             treeID: tree.id,
             treeRevision: tree.revision,
-            tagIDs: labels,
+            tagIDs: positiveLabels,
+            negativeTagIDs: negativeLabels,
             origin: origin,
             review: .approved
         ))
@@ -2620,6 +2631,7 @@ final class VaultClassifierViewModel: ObservableObject {
                             "treeID": classification.treeID,
                             "treeRevision": classification.treeRevision,
                             "tags": classification.tagIDs,
+                            "negativeTags": classification.negativeTagIDs,
                             "origin": classification.origin.rawValue,
                             "review": classification.review.rawValue,
                             "updatedAtMilliseconds": classification.updatedAtMilliseconds,
@@ -2956,7 +2968,8 @@ final class VaultClassifierViewModel: ObservableObject {
                 recordCreatorClassification(
                     typeID: try webString(data, key: "typeID", limit: 256),
                     creatorKey: try webString(data, key: "creatorKey", limit: 768),
-                    tagIDs: try webStringArray(data, key: "tagIDs", limit: CreatorClassificationRecord.maximumTagIDs, elementLimit: 256)
+                    tagIDs: try webStringArray(data, key: "tagIDs", limit: CreatorClassificationRecord.maximumTagIDs, elementLimit: 256),
+                    negativeTagIDs: try webStringArray(data, key: "negativeTagIDs", limit: CreatorClassificationRecord.maximumTagIDs, elementLimit: 256)
                 )
             case "backfillCreatorAvatars":
                 backfillCreatorAvatars(typeID: try webString(data, key: "typeID", limit: 256))
