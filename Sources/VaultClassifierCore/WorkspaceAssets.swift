@@ -435,27 +435,49 @@ public enum ClassifierDecisionSource: String, Codable, Sendable, CaseIterable {
 /// current process only.
 public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
     public static let maximumModelIdentifierLength = 256
-    public static let maximumTokenLimit = 1_000_000
+    public static let defaultDailyOutputTokenLimit = 10_000
+    public static let maximumDailyOutputTokenLimit = 1_000_000
+    public static let defaultBatchSize = 5
+    public static let maximumBatchSize = 32
+    public static let defaultMaximumTagCount = 8
 
     public var providerProfileID: String
     public var modelIdentifier: String
-    public var maximumTokens: Int
-    /// An optional, matching platform-data connection. It is selected by this
-    /// classifier type rather than by the LLM credential connection, so it can
-    /// never grant every type global tool access.
-    public var externalToolProfileID: String?
+    /// A per-classifier-type daily ceiling. Individual provider requests are
+    /// capped by the remaining allowance and the protocol's fixed hard cap.
+    public var dailyOutputTokenLimit: Int
+    /// The number of creators an explicit batch action may classify in order.
+    public var batchSize: Int
+    /// A bounded response may contain no more than this many tag IDs.
+    public var maximumTagCount: Int
+    /// When enabled, only active leaf tags are included in the model prompt.
+    /// When disabled, active parent tags are also available as generic labels.
+    public var restrictToLeafTags: Bool
+    /// OpenAI Responses supports a hosted web-search tool. Other providers
+    /// ignore this setting and the UI does not expose it for them.
+    public var webSearchEnabled: Bool
+    /// A matching platform-data connection is selected deterministically by
+    /// the native app when available; the user never chooses a tool profile.
+    public var externalToolEnabled: Bool
 
     public init(
         providerProfileID: String,
         modelIdentifier: String,
-        maximumTokens: Int = 1_024,
-        externalToolProfileID: String? = nil
+        dailyOutputTokenLimit: Int = Self.defaultDailyOutputTokenLimit,
+        batchSize: Int = Self.defaultBatchSize,
+        maximumTagCount: Int = Self.defaultMaximumTagCount,
+        restrictToLeafTags: Bool = true,
+        webSearchEnabled: Bool = false,
+        externalToolEnabled: Bool = false
     ) {
         self.providerProfileID = providerProfileID
         self.modelIdentifier = modelIdentifier
-        self.maximumTokens = maximumTokens
-        let cleanedToolProfileID = externalToolProfileID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        self.externalToolProfileID = cleanedToolProfileID.isEmpty ? nil : cleanedToolProfileID
+        self.dailyOutputTokenLimit = dailyOutputTokenLimit
+        self.batchSize = batchSize
+        self.maximumTagCount = maximumTagCount
+        self.restrictToLeafTags = restrictToLeafTags
+        self.webSearchEnabled = webSearchEnabled
+        self.externalToolEnabled = externalToolEnabled
     }
 
     public func validate() throws {
@@ -463,12 +485,46 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         let cleanedModelIdentifier = modelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanedProviderProfileID.isEmpty, cleanedProviderProfileID.count <= 128,
               !cleanedModelIdentifier.isEmpty, cleanedModelIdentifier.count <= Self.maximumModelIdentifierLength,
-              maximumTokens > 0, maximumTokens <= Self.maximumTokenLimit else {
+              dailyOutputTokenLimit > 0, dailyOutputTokenLimit <= Self.maximumDailyOutputTokenLimit,
+              batchSize > 0, batchSize <= Self.maximumBatchSize,
+              maximumTagCount > 0, maximumTagCount <= EntryEvidenceValidator.tagLimit else {
             throw LLMAssistConfigurationError.invalidConfiguration
         }
-        guard externalToolProfileID?.count ?? 0 <= 128 else {
-            throw LLMAssistConfigurationError.invalidConfiguration
-        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case providerProfileID, modelIdentifier, dailyOutputTokenLimit, batchSize,
+             maximumTagCount, restrictToLeafTags, webSearchEnabled,
+             externalToolEnabled, maximumTokens, externalToolProfileID
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        providerProfileID = try container.decode(String.self, forKey: .providerProfileID)
+        modelIdentifier = try container.decode(String.self, forKey: .modelIdentifier)
+        // Previous per-request token caps and hand-picked tool profile IDs are
+        // retired. Decode them only as ignored keys so existing local state
+        // opens safely; never restore their old behaviour.
+        dailyOutputTokenLimit = try container.decodeIfPresent(Int.self, forKey: .dailyOutputTokenLimit)
+            ?? Self.defaultDailyOutputTokenLimit
+        batchSize = try container.decodeIfPresent(Int.self, forKey: .batchSize) ?? Self.defaultBatchSize
+        maximumTagCount = try container.decodeIfPresent(Int.self, forKey: .maximumTagCount)
+            ?? Self.defaultMaximumTagCount
+        restrictToLeafTags = try container.decodeIfPresent(Bool.self, forKey: .restrictToLeafTags) ?? true
+        webSearchEnabled = try container.decodeIfPresent(Bool.self, forKey: .webSearchEnabled) ?? false
+        externalToolEnabled = try container.decodeIfPresent(Bool.self, forKey: .externalToolEnabled) ?? false
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(providerProfileID, forKey: .providerProfileID)
+        try container.encode(modelIdentifier, forKey: .modelIdentifier)
+        try container.encode(dailyOutputTokenLimit, forKey: .dailyOutputTokenLimit)
+        try container.encode(batchSize, forKey: .batchSize)
+        try container.encode(maximumTagCount, forKey: .maximumTagCount)
+        try container.encode(restrictToLeafTags, forKey: .restrictToLeafTags)
+        try container.encode(webSearchEnabled, forKey: .webSearchEnabled)
+        try container.encode(externalToolEnabled, forKey: .externalToolEnabled)
     }
 }
 
@@ -849,6 +905,9 @@ public struct ProviderRequestRecord: Codable, Equatable, Sendable, Identifiable 
     public var durationMilliseconds: Int
     public var inputTokens: Int?
     public var outputTokens: Int?
+    /// Nil for connection tests. LLM classification runs identify the one
+    /// classifier type whose daily output allowance they consume.
+    public var classifierTypeID: String?
     public var outcome: String
     public var requestContent: String?
     public var responseContent: String?
@@ -866,6 +925,7 @@ public struct ProviderRequestRecord: Codable, Equatable, Sendable, Identifiable 
         durationMilliseconds: Int,
         inputTokens: Int?,
         outputTokens: Int?,
+        classifierTypeID: String? = nil,
         outcome: String,
         requestContent: String? = nil,
         responseContent: String? = nil,
@@ -882,6 +942,8 @@ public struct ProviderRequestRecord: Codable, Equatable, Sendable, Identifiable 
         self.durationMilliseconds = durationMilliseconds
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
+        let cleanedClassifierTypeID = classifierTypeID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.classifierTypeID = cleanedClassifierTypeID.isEmpty ? nil : cleanedClassifierTypeID
         self.outcome = outcome
         self.requestContent = requestContent.map { String($0.prefix(Self.maximumContentCharacters)) }
         self.responseContent = responseContent.map { String($0.prefix(Self.maximumContentCharacters)) }
@@ -1250,13 +1312,6 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                 }) else {
                     throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
                 }
-                if let toolProfileID = llmAssist.externalToolProfileID {
-                    guard let applicablePlatformID = classifierType.applicablePlatformID,
-                          let expectedToolType = CollectionPlatformRegistry.definition(for: applicablePlatformID)?.apiProviderType,
-                          providerProfiles.contains(where: { $0.id == toolProfileID && $0.type == expectedToolType }) else {
-                        throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
-                    }
-                }
             }
             if let localModelID = classifierType.localModelID {
                 guard let model = models.first(where: { $0.id == localModelID }),
@@ -1476,16 +1531,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                supportsLLMAssist,
                providerProfiles.contains(where: { $0.id == llmAssist.providerProfileID && $0.type.supportsLLMConfiguration }),
                (try? llmAssist.validate()) != nil {
-                let expectedToolType = reconciled.applicablePlatformID
-                    .flatMap(CollectionPlatformRegistry.definition(for:))?.apiProviderType
-                if let toolProfileID = llmAssist.externalToolProfileID,
-                   providerProfiles.contains(where: { $0.id == toolProfileID && $0.type == expectedToolType }) {
-                    reconciled.llmAssistConfiguration = llmAssist
-                } else {
-                    var withoutUnavailableTool = llmAssist
-                    withoutUnavailableTool.externalToolProfileID = nil
-                    reconciled.llmAssistConfiguration = withoutUnavailableTool
-                }
+                reconciled.llmAssistConfiguration = llmAssist
             } else {
                 reconciled.llmAssistConfiguration = nil
             }

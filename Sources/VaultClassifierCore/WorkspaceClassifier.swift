@@ -70,7 +70,11 @@ public struct WorkspaceNeuralClassifier: Sendable {
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
-        let allowedTags = taxonomy.predictableLeafIDs
+        // LLM-assisted creator decisions may deliberately use an active
+        // parent tag when that classifier type does not restrict its prompt
+        // to leaves. Local neural predictions remain leaf-only, but every
+        // explicit creator decision still contributes to policy evaluation.
+        let allowedTags = Set(taxonomy.nodes.values.filter(\.predictable).map(\.id))
         var signals = [String: [ClassifierDecisionSource: Double]]()
         let creatorID = entry.sourceID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !creatorID.isEmpty {
