@@ -589,7 +589,14 @@
       const modelCatalogErrors = assets.providerModelCatalogErrors || {};
       const loadingModelCatalogs = new Set(assets.loadingProviderModelProfileIDs || []);
       const fetchedModels = selectedLLMProfile ? (modelCatalogs[selectedLLMProfile.id] || []) : [];
-      const currentModel = fetchedModels.includes(llmModelIdentifier) ? llmModelIdentifier : "";
+      // The fetched list is deliberately session-only, but the classifier
+      // type's chosen model is durable. Keep that saved value visible while a
+      // fixed provider is loading (or temporarily unavailable) so a relaunch
+      // cannot make the form look as though its LLM settings were lost.
+      const visibleModels = llmModelIdentifier && !fetchedModels.includes(llmModelIdentifier)
+        ? [llmModelIdentifier, ...fetchedModels]
+        : fetchedModels;
+      const currentModel = llmModelIdentifier;
       const priority = classifierType.decisionPriority || ["human", "llmAssist", "localModel"];
       const typeStatus = applicablePlatformID ? t("bridge.configured") : t("bridge.needsSource");
       const leafTagOptions = (selectedTree?.nodes || [])
@@ -717,8 +724,8 @@
       const selectedIsCustom = selectedLLMProfile?.type === "custom";
       const llmModelControl = !selectedLLMProfile
         ? `<p class="small-copy">${tx("bridge.llmChooseProviderFirst")}</p>`
-        : fetchedModels.length
-            ? valueSelectField("bridge.llmModel", "bridge.llmModelCopy", "llmModelIdentifier", currentModel, [["", t("bridge.llmChooseModel")], ...fetchedModels.map((model) => [model, model])])
+        : visibleModels.length
+            ? valueSelectField("bridge.llmModel", "bridge.llmModelCopy", "llmModelIdentifier", currentModel, [["", t("bridge.llmChooseModel")], ...visibleModels.map((model) => [model, model])])
             : selectedIsCustom
               ? `<div class="field"><span class="field-label">${tx("bridge.llmModel")} · ${tx("bridge.llmModelCopy")}</span><div class="action-row"><button class="secondary" data-action="fetchCustomProviderModelCatalog" data-profile-id="${esc(selectedLLMProfile.id)}"${disabled(loadingModelCatalogs.has(selectedLLMProfile.id))}>${tx(loadingModelCatalogs.has(selectedLLMProfile.id) ? "bridge.llmLoadingModels" : "bridge.llmFetchModels")}</button><span class="small-copy">${esc(modelCatalogErrors[selectedLLMProfile.id] || tx("bridge.llmFetchModelsCopy"))}</span></div></div>`
               : `<div class="field"><span class="field-label">${tx("bridge.llmModel")} · ${tx("bridge.llmModelCopy")}</span><p class="small-copy">${esc(loadingModelCatalogs.has(selectedLLMProfile.id) ? tx("bridge.llmLoadingModels") : modelCatalogErrors[selectedLLMProfile.id] || tx("bridge.llmFixedModelsAtLaunch"))}</p></div>`;
@@ -726,7 +733,7 @@
         ? `<div class="action-row"><span class="small-copy">${tx(llmAssist.isActive ? (llmRunning ? "bridge.llmActivationRunning" : "bridge.llmActive") : "bridge.llmInactive")}</span><button class="${llmAssist.isActive ? "secondary" : "gold-action"}" data-action="setLLMAssistActive" data-type-id="${esc(classifierType.id)}" data-is-active="${llmAssist.isActive ? "false" : "true"}"${disabled(!llmAssist.isActive && (!creatorLLMReady || llmRunning))}>${tx(llmAssist.isActive ? "bridge.llmDeactivate" : "bridge.llmActivate")}</button></div>`
         : "";
       const llmSettings = selectedLLMProfile ? `<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}${llmModelControl}${field("bridge.llmDailyOutputBudget", "bridge.llmDailyOutputBudgetCopy", "llmDailyOutputTokenLimit", llmAssist?.dailyOutputTokenLimit || 10000, "text", "inputmode=\"numeric\"")}${llmAssist ? `<p class="small-copy">${tx("bridge.llmDailyOutputUsage", { used: llmAssist.dailyOutputTokensUsed || 0, limit: llmAssist.dailyOutputTokenLimit || 10000 })}</p>` : ""}${field("bridge.llmBatchSize", "bridge.llmBatchSizeCopy", "llmBatchSize", llmAssist?.batchSize || 5, "text", "inputmode=\"numeric\"")}${field("bridge.llmMaximumTagCount", "bridge.llmMaximumTagCountCopy", "llmMaximumTagCount", llmAssist?.maximumTagCount || 8, "text", "inputmode=\"numeric\"")}${toggle("bridge.llmLeafOnly", "llmRestrictToLeafTags", llmAssist?.restrictToLeafTags ?? true)}<p class="small-copy">${tx("bridge.llmLeafOnlyCopy")}</p>${selectedLLMProfile && protocols[selectedLLMProfile.type]?.supportsWebSearch ? `${toggle("bridge.llmWebSearch", "llmWebSearchEnabled", llmAssist?.webSearchEnabled ?? false)}<p class="small-copy">${tx("bridge.llmWebSearchCopy")}</p>` : ""}${applicablePlatform?.apiProviderType ? `${toggle("bridge.llmExternalTool", "llmExternalToolEnabled", llmAssist?.externalToolEnabled ?? false)}<p class="small-copy">${tx("bridge.llmExternalToolCopy", { platform: applicablePlatform.name })}</p>` : ""}${applicablePlatform?.supportsCreatorAvatarAPIFallback ? `${toggle("bridge.llmUsePlatformAPIKey", "llmUsePlatformAPIKeyFallback", llmAssist?.usePlatformAPIKeyFallback ?? false)}<p class="small-copy">${tx("bridge.llmUsePlatformAPIKeyCopy", { platform: applicablePlatform.name })}</p>` : ""}</div>` : `<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}</div>`;
-      return `<section class="classifier-type-panel" data-form-id="${esc(formID)}">
+      return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}">
         <div class="classifier-type-head"><div><span class="eyebrow">${tx("bridge.typePanel")}</span><h3>${esc(classifierType.name)}</h3><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div>${statusPill(typeStatus, applicablePlatformID ? "navy" : "muted")}</div>
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}<button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("bridge.saveType")}</button><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}">${tx("bridge.deleteType")}</button></div>
         <section class="classifier-type-section classifier-applicable-platform-section"><div class="section-header"><div><h3>${tx("bridge.applicablePlatform")}</h3><p class="section-copy">${tx("bridge.assetSelectionCopy")}</p></div></div><div class="classifier-applicable-platform-row">${valueSelectField("bridge.applicablePlatform", "bridge.applicablePlatformCopy", "applicablePlatformID", applicablePlatformID, applicablePlatformOptions)}<div class="classifier-platform-data-status"><span class="eyebrow">${tx("bridge.platformData")}</span><p class="small-copy">${esc(platformDataStatus)}</p></div></div>${applicablePlatform && !supportsLocalModel && !supportsLLMAssist ? `<p class="small-copy" data-manual-only-platform-note>${tx("bridge.manualOnlyCopy")}</p>` : ""}</section>
@@ -1044,6 +1051,19 @@
     });
   }
 
+  function saveLLMClassifierTypeFields(panel) {
+    const formID = panel?.dataset.formId;
+    const typeID = panel?.dataset.typeId;
+    if (!formID || !typeID) return;
+    const data = collect(formID);
+    // A provider alone is intentionally not a valid LLM attachment. Once the
+    // user selects its fetched model, persist the complete type form on each
+    // subsequent LLM-field change instead of leaving a session-only draft.
+    if (!data.llmProviderProfileID || !data.llmModelIdentifier) return;
+    data.typeID = typeID;
+    send("configureClassifierType", data);
+  }
+
   document.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-action]");
     if (!button) {
@@ -1259,6 +1279,11 @@
       const typeID = panel?.querySelector("[data-type-id]")?.dataset.typeId;
       if (typeID) selectedLLMProfileByType.set(typeID, llmProviderControl.value);
       render();
+      return;
+    }
+    const llmField = event.target.closest('[data-field^="llm"]');
+    if (llmField) {
+      saveLLMClassifierTypeFields(llmField.closest(".classifier-type-panel"));
       return;
     }
     const control = event.target.closest("[data-local-model-setup]");
