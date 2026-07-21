@@ -145,6 +145,7 @@ public extension WorkspaceCatalog {
         }
         guard classifierType.treeID == binding.treeID,
               classifierType.datasetID == binding.datasetID,
+              classifierType.applicablePlatformID == binding.id,
               let tree = trees.first(where: { $0.id == binding.treeID }),
               let dataset = datasets.first(where: { $0.id == binding.datasetID }),
               classifierType.treeRevision == tree.revision,

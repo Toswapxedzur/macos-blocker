@@ -39,7 +39,7 @@ final class WorkspaceAssetsTests: XCTestCase {
             treeRevision: tree.revision,
             datasetID: dataset.id,
             datasetRevision: dataset.revision,
-            dataSourcePlatformIDs: ["twitch"],
+            applicablePlatformID: "twitch",
             creatorDecisionSources: [.human],
             entryDecisionSources: [.human]
         )
@@ -63,7 +63,7 @@ final class WorkspaceAssetsTests: XCTestCase {
             treeRevision: tree.revision,
             datasetID: dataset.id,
             datasetRevision: dataset.revision,
-            dataSourcePlatformIDs: ["twitch"],
+            applicablePlatformID: "twitch",
             llmProfileIDs: [profile.id],
             creatorDecisionSources: [.human, .llmAssist]
         )]
@@ -72,7 +72,7 @@ final class WorkspaceAssetsTests: XCTestCase {
         }
 
         catalog.reconcileClassifierTypes()
-        XCTAssertEqual(catalog.classifierTypes[0].dataSourcePlatformIDs, ["twitch"])
+        XCTAssertEqual(catalog.classifierTypes[0].applicablePlatformID, "twitch")
         XCTAssertTrue(catalog.classifierTypes[0].llmProfileIDs.isEmpty)
         XCTAssertFalse(catalog.classifierTypes[0].creatorDecisionSources.contains(.llmAssist))
         XCTAssertNoThrow(try catalog.validate())
@@ -310,18 +310,27 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(Set(examples.flatMap(\.positiveLabelIDs)), ["games", "technology"])
     }
 
-    func testLegacyClassifierTypeMigratesToAllCompatiblePlatformSources() throws {
+    func testLegacyCombinedSourceTypeIsResetUntilOneApplicablePlatformIsChosen() throws {
         let legacy = Data(#"{"id":"legacy-type","name":"Legacy type","treeID":"vault-starter","treeRevision":1,"datasetID":"local-dataset","datasetRevision":1,"localModelID":null,"llmProfileIDs":[],"decisionPriority":["human","llmAssist","localModel"],"creatorDecisionSources":["human"],"entryDecisionSources":[],"updatedAtMilliseconds":0}"#.utf8)
         let type = try JSONDecoder().decode(ClassifierTypeAsset.self, from: legacy)
-        XCTAssertTrue(type.dataSourcePlatformIDs.isEmpty)
+        XCTAssertNil(type.applicablePlatformID)
 
         var catalog = WorkspaceCatalog.starter()
         catalog.bindings.append(.init(id: "instagram", treeID: "vault-starter", datasetID: "local-dataset"))
         catalog.classifierTypes = [type]
         catalog.reconcileClassifierTypes()
 
-        XCTAssertEqual(catalog.classifierTypes[0].dataSourcePlatformIDs, ["instagram", "youtube"])
+        XCTAssertNil(catalog.classifierTypes[0].applicablePlatformID)
         XCTAssertNoThrow(try catalog.validate())
+    }
+
+    func testLegacySingleSourceTypeKeepsItsOneApplicablePlatform() throws {
+        let legacy = Data(#"{"id":"legacy-type","name":"Legacy type","treeID":"vault-starter","treeRevision":1,"datasetID":"local-dataset","datasetRevision":1,"dataSourcePlatformIDs":["youtube"],"localModelID":null,"llmProfileIDs":[],"decisionPriority":["human","llmAssist","localModel"],"creatorDecisionSources":["human"],"entryDecisionSources":[],"updatedAtMilliseconds":0}"#.utf8)
+        let type = try JSONDecoder().decode(ClassifierTypeAsset.self, from: legacy)
+        XCTAssertEqual(type.applicablePlatformID, "youtube")
+
+        let encoded = String(decoding: try JSONEncoder().encode(type), as: UTF8.self)
+        XCTAssertFalse(encoded.contains("dataSourcePlatformIDs"))
     }
 
     func testRemovingPlatformBindingPurgesItsDataAndReconcilesDependents() throws {
@@ -366,7 +375,7 @@ final class WorkspaceAssetsTests: XCTestCase {
             treeRevision: tree.revision,
             datasetID: dataset.id,
             datasetRevision: dataset.revision,
-            dataSourcePlatformIDs: ["youtube", "instagram"],
+            applicablePlatformID: "youtube",
             creatorDecisionSources: [.human]
         )]
 
@@ -375,7 +384,7 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(catalog.datasets[0].collectedEntries.map(\.platformID), ["youtube"])
         XCTAssertEqual(catalog.datasets[0].creatorClassifications.map(\.platformID), ["youtube"])
         XCTAssertEqual(catalog.datasets[0].revision, dataset.revision + 1)
-        XCTAssertEqual(catalog.classifierTypes[0].dataSourcePlatformIDs, ["youtube"])
+        XCTAssertEqual(catalog.classifierTypes[0].applicablePlatformID, "youtube")
         XCTAssertFalse(catalog.models.contains(where: { $0.id == "instagram-only-model" }))
         let combined = try XCTUnwrap(catalog.models.first(where: { $0.id == "combined-model" }))
         XCTAssertEqual(combined.effectiveTrainingPlatformIDs, ["youtube"])
@@ -438,6 +447,7 @@ final class WorkspaceAssetsTests: XCTestCase {
             treeRevision: tree.revision,
             datasetID: dataset.id,
             datasetRevision: dataset.revision,
+            applicablePlatformID: "youtube",
             localModelID: catalog.models[0].id,
             llmProfileIDs: [profile.id],
             creatorDecisionSources: [.human, .llmAssist, .localModel],
@@ -492,6 +502,7 @@ final class WorkspaceAssetsTests: XCTestCase {
             treeRevision: tree.revision,
             datasetID: dataset.id,
             datasetRevision: dataset.revision,
+            applicablePlatformID: "youtube",
             localModelID: catalog.models[0].id,
             entryDecisionSources: [.localModel]
         )

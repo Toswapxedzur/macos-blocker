@@ -497,7 +497,6 @@ h3 { font-size: 13px; }
 .classifier-type-workspace { gap: 14px; }
 .classifier-type-create,
 .classifier-name-row,
-.classifier-asset-grid,
 .classifier-priority-grid,
 .classifier-decision-grid,
 .classifier-profile-list,
@@ -547,8 +546,10 @@ h3 { font-size: 13px; }
 .classifier-type-section { padding: 14px 14px 14px 18px; border-bottom: 1px solid var(--line); }
 .classifier-type-section:last-child { border-bottom: 0; }
 .classifier-type-section .section-header { margin-bottom: 10px; }
-.classifier-asset-grid { grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 10px; }
-.classifier-data-source-field { margin-top: 10px; max-width: 520px; }
+.classifier-applicable-platform-row { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr); gap: 14px; align-items: end; }
+.classifier-platform-data-status { border: 1px solid var(--line); border-radius: 10px; background: var(--cream); padding: 9px 11px; min-height: 56px; }
+.classifier-platform-data-status .small-copy { margin: 4px 0 0; }
+.classifier-local-model-field { max-width: 520px; }
 .creator-classification-section { background: rgba(236, 253, 245, .48); }
 .creator-classification-fields { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr); gap: 10px; }
 .creator-classification-fields + .action-row { margin-top: 10px; }
@@ -655,7 +656,7 @@ h3 { font-size: 13px; }
 @media (max-width: 760px) {
   .classifier-type-create,
   .classifier-name-row,
-  .classifier-asset-grid,
+  .classifier-applicable-platform-row,
   .creator-classification-fields,
   .creator-llm-row,
   .creator-tag-columns,
