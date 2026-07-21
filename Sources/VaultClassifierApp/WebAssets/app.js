@@ -516,20 +516,17 @@
       }), { input: 0, output: 0, cost: 0, priced: false });
       const credentialStatus = !protocol.credentialRequired ? "llm.noCredentialStatus" : (profile.hasStoredCredential ? "llm.credentialStored" : (hasSessionCredential ? "llm.sessionCredential" : "llm.credentialNeeded"));
       const protocolFields = (protocol.configurationRequirements || []).map((requirement) => protocolConfigurationField(requirement, profile)).join("");
-      const externalToolProfiles = profiles.filter((candidate) => !protocols[candidate.type]?.supportsLLMConfiguration);
-      const selectedExternalToolProfiles = new Set(profile.externalToolProfileIDs || []);
-      const externalTools = supportsLLM ? `<section class="provider-tools"><div><span class="eyebrow">${tx("llm.externalTools")}</span><h3>${tx("llm.toolProfiles")}</h3><p class="section-copy">${tx("llm.toolProfilesCopy")}</p></div>${externalToolProfiles.length ? `<div>${externalToolProfiles.map((candidate) => toggle("llm.toolProfile", `externalToolProfile.${candidate.id}`, selectedExternalToolProfiles.has(candidate.id)).replace(tx("llm.toolProfile"), `${esc(candidate.name)} · ${tx(providerTypeLabelKey(candidate.type))}`)).join("")}</div>` : `<p class="small-copy">${tx("llm.noToolProfiles")}</p>`}</section>` : "";
       const requiresCompatibleEndpoint = ["openAICompatible", "custom"].includes(profile.type);
       const endpointField = protocol.allowsEndpointOverride ? field("llm.apiEndpoint", requiresCompatibleEndpoint ? "llm.compatibleEndpointCopy" : "llm.apiEndpointCopy", "customEndpoint", profile.customEndpoint || "") : "";
-      const pricing = supportsLLM ? `<section class="provider-pricing"><div class="section-header"><div><h3>${tx("llm.tokenCost")}</h3><p class="section-copy">${tx("llm.tokenCostCopy")}</p></div></div><div class="provider-pricing-fields">${field("llm.inputCost", "", "inputCostUSDPerMillion", profile.inputCostUSDPerMillion ?? "", "text", "inputmode=\"decimal\"")}${field("llm.outputCost", "", "outputCostUSDPerMillion", profile.outputCostUSDPerMillion ?? "", "text", "inputmode=\"decimal\"")}</div>${toggle("llm.fullRecords", "storesFullRequestRecords", Boolean(profile.storesFullRequestRecords))}<p class="small-copy">${tx("llm.fullRecordsCopy")}</p></section>` : "";
+      const connectionPrivacy = supportsLLM ? `<section class="provider-pricing"><div class="section-header"><div><h3>${tx("llm.connectionPrivacy")}</h3><p class="section-copy">${tx("llm.connectionPrivacyCopy")}</p></div></div>${toggle("llm.fullRecords", "storesFullRequestRecords", Boolean(profile.storesFullRequestRecords))}<p class="small-copy">${tx("llm.fullRecordsCopy")}</p></section>` : "";
       const setup = supportsLLM
-        ? `<div class="provider-setup"><div class="section-header"><div><h3>${tx("llm.modelSetup")}</h3><p class="section-copy">${tx("llm.modelSetupCopy")}</p></div></div><div class="provider-setup-fields">${field("llm.modelIdentifier", "", "modelIdentifier", profile.modelIdentifier)}${field("llm.batchSize", "", "batchSize", profile.batchSize, "text", "inputmode=\"numeric\"")}${field("llm.maximumTokens", "", "maximumTokens", profile.maximumTokens, "text", "inputmode=\"numeric\"")}</div>${endpointField}</div>${externalTools}${pricing}`
+        ? `<div class="provider-setup"><div class="section-header"><div><h3>${tx("llm.connectionSetup")}</h3><p class="section-copy">${tx("llm.connectionSetupCopy")}</p></div></div>${endpointField}</div>${connectionPrivacy}`
         : `<div class="provider-setup"><div class="section-header"><div><span class="eyebrow">${tx("llm.externalTool")}</span><h3>${tx("llm.platformDataSetup")}</h3><p class="section-copy">${tx("llm.dataAPIOnlyCopy")}</p></div></div>${endpointField}</div>`;
       const credentialFormID = `${formID}-credential`;
       const credentialFields = (protocol.credentialFields || []).map((fieldName) => field(credentialFieldLabelKey(fieldName), "", `credential.${fieldName}`, "", "password", "autocomplete=\"off\" autocapitalize=\"off\" spellcheck=\"false\"")).join("");
       const credentials = protocol.credentialRequired ? `<div class="provider-credential-entry" data-form-id="${esc(credentialFormID)}">${credentialFields}<p class="small-copy">${tx("llm.keychainCopy")}</p><div class="provider-credential-row">${toggle("llm.storeInKeychain", "storeInKeychain", false)}<button class="secondary" data-action="saveProviderCredential" data-form="${esc(credentialFormID)}" data-profile-id="${esc(profile.id)}">${tx("llm.saveCredential")}</button>${(profile.hasStoredCredential || hasSessionCredential) ? `<button class="danger" data-action="removeProviderCredential" data-profile-id="${esc(profile.id)}">${tx("llm.removeKey")}</button>` : ""}</div></div>` : `<p class="small-copy">${tx("llm.noCredential")}</p>`;
       const endpointReady = !requiresCompatibleEndpoint || Boolean(profile.customEndpoint);
-      const testAvailable = supportsLLM && endpointReady && (!protocol.credentialRequired || profile.hasStoredCredential || hasSessionCredential);
+      const testAvailable = supportsLLM && Boolean(profile.defaultModelIdentifier) && endpointReady && (!protocol.credentialRequired || profile.hasStoredCredential || hasSessionCredential);
       const history = supportsLLM ? `<section class="provider-history"><div class="section-header"><div><h3>${tx("llm.requestHistory")}</h3><p class="section-copy">${tx("llm.requestHistoryCopy")}</p></div><span class="small-copy">${tx("llm.tokenTotals", { input: tokenTotals.input, output: tokenTotals.output, cost: tokenTotals.priced ? tokenCost(tokenTotals.cost) : t("llm.costUnavailable") })}</span></div>${profileRecords.length ? `<div class="list">${profileRecords.slice(0, 8).map((record) => `<div class="list-row"><span class="list-symbol">${record.outcome === "succeeded" ? "✓" : "!"}</span><span class="list-copy"><span class="list-title">${esc(record.model)} · ${esc(record.outcome)}</span><span class="list-meta">${esc(record.method)} · ${esc(record.endpoint)} · ${record.statusCode ?? "—"} · ${record.durationMilliseconds}ms · ${tx("llm.tokens", { input: record.inputTokens ?? "—", output: record.outputTokens ?? "—" })} · ${tokenCost(record.estimatedCostUSD)}</span>${record.requestContent || record.responseContent ? `<span class="request-record-content"><strong>${tx("llm.request")}</strong> ${esc(record.requestContent || "")}<strong>${tx("llm.response")}</strong> ${esc(record.responseContent || "")}</span>` : ""}</span></div>`).join("")}</div>` : `<p class="small-copy">${tx("llm.noRequests")}</p>`}</section>` : "";
       const testButton = supportsLLM ? `<button class="gold-action" data-action="testProviderProfile" data-profile-id="${esc(profile.id)}"${disabled(!testAvailable || profile.testing)}>${tx(profile.testing ? "llm.testing" : "llm.test")}</button>` : "";
       return `<section class="provider-panel" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}"><div class="provider-panel-head"><div><span class="eyebrow">${tx(supportsLLM ? "llm.providerPanel" : "llm.externalTool")}</span><h3>${esc(profile.name)}</h3><p class="section-copy">${tx(providerTypeLabelKey(profile.type))}</p></div><div class="provider-panel-status">${statusPill(t(credentialStatus), profile.hasStoredCredential ? "gold" : "muted")}</div></div><div class="provider-name-row">${field("llm.profileName", "", "name", profile.name)}<button class="secondary" data-action="configureProviderProfile" data-form="${esc(formID)}" data-profile-id="${esc(profile.id)}">${tx("llm.saveProfile")}</button>${testButton}<button class="danger" data-action="deleteProviderProfile" data-profile-id="${esc(profile.id)}">${tx("llm.deleteProfile")}</button></div><section class="provider-credential"><div class="section-header"><div><h3>${tx("llm.apiKey")}</h3></div>${credentials}</section>${protocolFields ? `<section class="provider-setup"><div class="section-header"><div><h3>${tx("llm.protocolSetup")}</h3><p class="section-copy">${tx("llm.protocolSetupCopy")}</p></div></div><div class="provider-setup-fields">${protocolFields}</div></section>` : ""}${setup}${history}</section>`;
@@ -587,7 +584,12 @@
         new Set(model.platformIDs || [model.platformID].filter(Boolean)).size === dataSourcePlatforms.size &&
         (model.platformIDs || [model.platformID].filter(Boolean)).every((platformID) => dataSourcePlatforms.has(platformID))) : [];
       const modelOptions = [["", t("bridge.noLocalModel")], ...compatibleModels.map((model) => [model.id, `${model.name} · v${model.version}`])];
-      const selectedLLMIDs = new Set(classifierType.llmProfileIDs || []);
+      const llmAssist = classifierType.llmAssistConfiguration || null;
+      const selectedLLMProfileID = llmAssist?.providerProfileID || "";
+      const selectedLLMProfile = llmProfiles.find((profile) => profile.id === selectedLLMProfileID) || null;
+      const llmProviderOptions = [["", t("bridge.noLLMModel")], ...llmProfiles.map((profile) => [profile.id, `${profile.name} · ${tx(providerTypeLabelKey(profile.type))}`])];
+      const llmModelIdentifier = llmAssist?.modelIdentifier || selectedLLMProfile?.defaultModelIdentifier || "";
+      const llmToolOptions = [["", t("bridge.noLLMTool")], ...platformAPIProfiles.map((profile) => [profile.id, `${profile.name} · ${tx(providerTypeLabelKey(profile.type))}`])];
       const priority = classifierType.decisionPriority || ["human", "llmAssist", "localModel"];
       const typeStatus = applicablePlatformID ? t("bridge.configured") : t("bridge.needsSource");
       const leafTagOptions = (selectedTree?.nodes || [])
@@ -632,10 +634,9 @@
           };
         })
         .sort((lhs, rhs) => lhs.name.localeCompare(rhs.name));
-      const creatorLLMProfiles = llmProfiles.filter((profile) => selectedLLMIDs.has(profile.id));
-      const creatorLLMReady = creatorLLMProfiles.some((profile) =>
-        (profile.hasStoredCredential || profile.hasSessionCredential) &&
-        (!["openAICompatible", "custom"].includes(profile.type) || Boolean(profile.customEndpoint))
+      const creatorLLMReady = Boolean(selectedLLMProfile &&
+        (selectedLLMProfile.hasStoredCredential || selectedLLMProfile.hasSessionCredential) &&
+        (!["openAICompatible", "custom"].includes(selectedLLMProfile.type) || Boolean(selectedLLMProfile.customEndpoint))
       );
       const llmRunning = Boolean(state.inspect?.llmRunning);
       const avatarBackfill = state.creatorAvatarBackfill || {};
@@ -644,8 +645,8 @@
         : Number.isInteger(avatarBackfill.foundCount)
           ? `<span class="small-copy">${tx("bridge.creatorAvatarBackfillComplete", { count: avatarBackfill.foundCount })}</span>`
           : "";
-      const creatorLLMClassification = creatorLLMProfiles.length
-          ? `<div class="creator-llm-row">${valueSelectField("bridge.creator", "bridge.creatorCopy", "creatorKey", creatorOptions[0]?.[0] || "", creatorOptions)}${valueSelectField("bridge.creatorLLMProfile", "bridge.creatorLLMProfileCopy", "creatorLLMProfileID", creatorLLMProfiles[0].id, creatorLLMProfiles.map((profile) => [profile.id, `${profile.name} · ${profile.modelIdentifier}`]))}<button class="gold-action" data-action="classifyCreatorWithLLM" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}"${disabled(!creatorOptions.length || !creatorLLMReady || llmRunning)}>${tx(llmRunning ? "bridge.creatorLLMClassifying" : "bridge.classifyCreatorWithLLM")}</button></div><p class="small-copy">${tx("bridge.creatorLLMExplicitOnly")}</p>`
+      const creatorLLMClassification = selectedLLMProfile && llmAssist
+          ? `<div class="creator-llm-row">${valueSelectField("bridge.creator", "bridge.creatorCopy", "creatorKey", creatorOptions[0]?.[0] || "", creatorOptions)}<span class="small-copy">${esc(selectedLLMProfile.name)} · ${esc(llmAssist.modelIdentifier)}</span><button class="gold-action" data-action="classifyCreatorWithLLM" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}"${disabled(!creatorOptions.length || !creatorLLMReady || llmRunning)}>${tx(llmRunning ? "bridge.creatorLLMClassifying" : "bridge.classifyCreatorWithLLM")}</button></div><p class="small-copy">${tx("bridge.creatorLLMExplicitOnly")}</p>`
           : "";
       const creatorClassification = creatorRecords.length && leafTagOptions.length
         ? (() => {
@@ -699,7 +700,7 @@
         <section class="classifier-type-section classifier-applicable-platform-section"><div class="section-header"><div><h3>${tx("bridge.applicablePlatform")}</h3><p class="section-copy">${tx("bridge.assetSelectionCopy")}</p></div></div><div class="classifier-applicable-platform-row">${valueSelectField("bridge.applicablePlatform", "bridge.applicablePlatformCopy", "applicablePlatformID", applicablePlatformID, applicablePlatformOptions)}<div class="classifier-platform-data-status"><span class="eyebrow">${tx("bridge.platformData")}</span><p class="small-copy">${esc(platformDataStatus)}</p></div></div>${applicablePlatform && !supportsLocalModel && !supportsLLMAssist ? `<p class="small-copy" data-manual-only-platform-note>${tx("bridge.manualOnlyCopy")}</p>` : ""}</section>
         <section class="classifier-type-section classifier-local-model-section" data-local-model-section${supportsLocalModel ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.localModel")}</h3><p class="section-copy">${tx("bridge.localModelCopy")}</p></div></div><div class="classifier-local-model-field">${valueSelectField("bridge.localModel", "", "localModelID", classifierType.localModelID || "", modelOptions)}</div></section>
         <section class="classifier-type-section creator-classification-section"><div class="section-header"><div><h3>${tx("bridge.manualCreator")}</h3><p class="section-copy">${tx("bridge.manualCreatorCopy")}</p></div><div class="action-row"><span class="small-copy">${tx("bridge.creatorCount", { count: creatorOptions.length })}</span><button class="secondary" data-action="backfillCreatorAvatars" data-type-id="${esc(classifierType.id)}"${disabled(avatarBackfill.running || !creatorRecords.length)}>${tx(avatarBackfill.running ? "bridge.creatorAvatarBackfillRunning" : "bridge.creatorAvatarBackfill")}</button>${avatarBackfillStatus}</div></div><p class="small-copy">${tx("bridge.creatorAvatarBackfillCopy")}</p>${creatorClassification}</section>
-        <section class="classifier-type-section classifier-llm-section" data-llm-assist-section${supportsLLMAssist ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.llmAssist")}</h3><p class="section-copy">${tx("bridge.llmAssistCopy")}</p></div><span class="small-copy">${tx("bridge.llmExplicitOnly")}</span></div>${llmProfiles.length ? `<div class="classifier-profile-list">${llmProfiles.map((profile) => `<label class="classifier-profile-choice"><input type="checkbox" data-field="llmProfile.${esc(profile.id)}"${checked(selectedLLMIDs.has(profile.id))}><span>${esc(profile.name)}</span><small>${esc(profile.modelIdentifier)}</small></label>`).join("")}</div>` : `<div class="empty compact-empty">${tx("bridge.noLLMProfiles")}</div>`}</section>
+        <section class="classifier-type-section classifier-llm-section" data-llm-assist-section${supportsLLMAssist ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.llmAssist")}</h3><p class="section-copy">${tx("bridge.llmAssistCopy")}</p></div><span class="small-copy">${tx("bridge.llmExplicitOnly")}</span></div>${llmProfiles.length ? `<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}${field("bridge.llmModel", "bridge.llmModelCopy", "llmModelIdentifier", llmModelIdentifier)}${field("bridge.llmMaximumTokens", "bridge.llmMaximumTokensCopy", "llmMaximumTokens", llmAssist?.maximumTokens || 1024, "text", "inputmode=\"numeric\"")}${valueSelectField("bridge.llmPlatformData", "bridge.llmPlatformDataCopy", "llmExternalToolProfileID", llmAssist?.externalToolProfileID || "", llmToolOptions)}${field("bridge.llmInputCost", "", "llmInputCostUSDPerMillion", llmAssist?.inputCostUSDPerMillion ?? "", "text", "inputmode=\"decimal\"")}${field("bridge.llmOutputCost", "", "llmOutputCostUSDPerMillion", llmAssist?.outputCostUSDPerMillion ?? "", "text", "inputmode=\"decimal\"")}</div>` : `<div class="empty compact-empty">${tx("bridge.noLLMProfiles")}</div>`}</section>
         <section class="classifier-type-section classifier-decision-policy-section" data-decision-policy-section${supportsLocalModel || supportsLLMAssist ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.decisionPolicy")}</h3><p class="section-copy">${tx("bridge.decisionPolicyCopy")}</p></div></div><div class="classifier-priority-grid">${valueSelectField("bridge.priorityFirst", "", "priorityFirst", priority[0], sourceOptions)}${valueSelectField("bridge.prioritySecond", "", "prioritySecond", priority[1], sourceOptions)}${valueSelectField("bridge.priorityThird", "", "priorityThird", priority[2], sourceOptions)}</div></section>
       </section>`;
     };
@@ -769,7 +770,7 @@
       const selectableTypes = classifierTypes.filter((classifierType) => {
         if (classifierType.applicablePlatformID !== binding.id || classifierType.treeID !== binding.treeID || classifierType.datasetID !== binding.datasetID || classifierType.treeRevision !== tree?.revision || classifierType.datasetRevision !== dataset?.revision) return false;
         if (!definition?.supportsLocalModel && classifierType.localModelID) return false;
-        if (!definition?.supportsLLMAssist && (classifierType.llmProfileIDs || []).length) return false;
+        if (!definition?.supportsLLMAssist && classifierType.llmAssistConfiguration) return false;
         return !classifierType.localModelID || models.some((model) => model.id === classifierType.localModelID && model.ready && model.training);
       });
       const typeOptions = [["", t("data.noClassifierType")], ...selectableTypes.map((classifierType) => [classifierType.id, classifierType.name])];
@@ -988,9 +989,10 @@
         if (!supportsLocalModel && control.type === "checkbox") control.checked = false;
         if (!supportsLocalModel && control.dataset.field === "localModelID") control.value = "";
       });
-      panel.querySelectorAll('[data-field^="llmProfile."], [data-field="creatorLLM"], [data-field="entryLLM"]').forEach((control) => {
+      panel.querySelectorAll('[data-field^="llm"], [data-field="creatorLLM"], [data-field="entryLLM"]').forEach((control) => {
         control.disabled = !supportsLLMAssist;
         if (!supportsLLMAssist && control.type === "checkbox") control.checked = false;
+        if (!supportsLLMAssist && control.type !== "checkbox") control.value = "";
       });
     });
   }
@@ -1071,10 +1073,6 @@
         delete data[key];
       });
       data.protocolConfiguration = protocolConfiguration;
-      data.externalToolProfileIDs = Object.keys(data)
-        .filter((key) => key.startsWith("externalToolProfile.") && data[key] === true)
-        .map((key) => key.slice("externalToolProfile.".length));
-      Object.keys(data).filter((key) => key.startsWith("externalToolProfile.")).forEach((key) => delete data[key]);
     }
     if (action === "saveProviderCredential") {
       const credentials = {};
@@ -1083,12 +1081,6 @@
         delete data[key];
       });
       data.credentials = credentials;
-    }
-    if (action === "configureClassifierType") {
-      data.llmProfileIDs = Object.keys(data)
-        .filter((key) => key.startsWith("llmProfile.") && data[key] === true)
-        .map((key) => key.slice("llmProfile.".length));
-      Object.keys(data).filter((key) => key.startsWith("llmProfile.")).forEach((key) => delete data[key]);
     }
     if (action === "cancelTagPanel") {
       flushTagNameInput(button.closest("[data-tree-popover]")?.querySelector("input[data-live-tag-name]"));
@@ -1225,6 +1217,14 @@
     }
     if (event.target.closest('[data-field="applicablePlatformID"]')) {
       applyApplicablePlatformCapabilities();
+      return;
+    }
+    const llmProviderControl = event.target.closest('[data-field="llmProviderProfileID"]');
+    if (llmProviderControl) {
+      const panel = llmProviderControl.closest(".classifier-type-panel");
+      const modelControl = panel?.querySelector('[data-field="llmModelIdentifier"]');
+      const profile = (state?.assets?.providerProfiles || []).find((candidate) => candidate.id === llmProviderControl.value);
+      if (modelControl && profile?.defaultModelIdentifier) modelControl.value = profile.defaultModelIdentifier;
       return;
     }
     const control = event.target.closest("[data-local-model-setup]");

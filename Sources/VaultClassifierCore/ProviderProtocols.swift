@@ -243,7 +243,8 @@ public protocol ProviderRequestProtocol: Sendable {
     var descriptor: ProviderProtocolDescriptor { get }
     func requestPlan(
         for profile: APIKeyProviderProfile,
-        operation: ProviderOperation
+        operation: ProviderOperation,
+        modelIdentifier: String?
     ) throws -> ProviderRequestPlan
 }
 
@@ -256,7 +257,8 @@ public struct DescriptorBackedProviderProtocol: ProviderRequestProtocol {
 
     public func requestPlan(
         for profile: APIKeyProviderProfile,
-        operation: ProviderOperation
+        operation: ProviderOperation,
+        modelIdentifier: String? = nil
     ) throws -> ProviderRequestPlan {
         guard profile.type.rawValue == descriptor.identifier,
               let format = descriptor.requestFormats.first(where: { $0.operation == operation }) else {
@@ -266,8 +268,8 @@ public struct DescriptorBackedProviderProtocol: ProviderRequestProtocol {
         let baseURL = profile.customEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines)
             .nonEmpty ?? descriptor.defaultBaseURL
         guard let baseURL else { throw ProviderProtocolError.missingEndpoint }
-        let path = substitute(format.pathTemplate, profile: profile)
-        let resolvedBaseURL = substitute(baseURL, profile: profile)
+        let path = substitute(format.pathTemplate, profile: profile, modelIdentifier: modelIdentifier)
+        let resolvedBaseURL = substitute(baseURL, profile: profile, modelIdentifier: modelIdentifier)
         guard let url = URL(string: resolvedBaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/" + path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))) else {
             throw ProviderProtocolError.invalidEndpoint
         }
@@ -284,8 +286,10 @@ public struct DescriptorBackedProviderProtocol: ProviderRequestProtocol {
         )
     }
 
-    private func substitute(_ template: String, profile: APIKeyProviderProfile) -> String {
-        var result = template.replacingOccurrences(of: "{model}", with: profile.modelIdentifier.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? profile.modelIdentifier)
+    private func substitute(_ template: String, profile: APIKeyProviderProfile, modelIdentifier: String?) -> String {
+        let model = modelIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+            ?? profile.type.defaultModelIdentifier
+        var result = template.replacingOccurrences(of: "{model}", with: model.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? model)
         for (field, value) in profile.protocolConfiguration {
             let encoded = value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? value
             result = result.replacingOccurrences(of: "{\(field)}", with: encoded)

@@ -498,7 +498,7 @@ h3 { font-size: 13px; }
 .classifier-type-create,
 .classifier-name-row,
 .classifier-priority-grid,
-.classifier-profile-list { display: grid; }
+.classifier-llm-config { display: grid; }
 
 .classifier-type-create {
   grid-template-columns: minmax(220px, 1fr) auto;
@@ -610,32 +610,7 @@ h3 { font-size: 13px; }
 .creator-llm-row + .small-copy { margin: 6px 0 0; }
 .classifier-priority-grid { grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 10px; }
 .classifier-llm-section { background: rgba(255, 251, 235, .52); }
-
-.classifier-profile-list {
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 8px;
-}
-
-.classifier-profile-choice {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 7px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: rgba(255, 255, 255, .78);
-  padding: 8px 9px;
-  color: var(--ink);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.classifier-profile-choice small {
-  grid-column: 2;
-  color: var(--muted);
-  font-size: 9px;
-  font-weight: 600;
-}
+.classifier-llm-config { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 
 .compact-empty { padding: 13px; }
 
@@ -961,7 +936,8 @@ h3 { font-size: 13px; }
   .model-setup-fields,
   .provider-setup-fields,
   .provider-pricing-fields,
-  .provider-tools { grid-template-columns: 1fr; }
+  .provider-tools,
+  .classifier-llm-config { grid-template-columns: 1fr; }
   .provider-tools .eyebrow { grid-column: auto; }
 }
 
@@ -1346,7 +1322,6 @@ textarea:focus {
 .tree-panels,
 .creator-tag-browser,
 .creator-tag-columns,
-.classifier-profile-list,
 .metric-row,
 .list,
 .score-list {
@@ -1456,7 +1431,6 @@ textarea:focus {
 .creator-tag-navigation,
 .creator-tag-column,
 .creator-tag-card,
-.classifier-profile-choice,
 .provider-api-note,
 .result-card,
 .list-row,
@@ -1511,11 +1485,6 @@ textarea:focus {
 }
 
 .creator-tag-card {
-  border-bottom: 1px solid var(--line);
-}
-
-.classifier-profile-choice {
-  padding: 10px 0;
   border-bottom: 1px solid var(--line);
 }
 
