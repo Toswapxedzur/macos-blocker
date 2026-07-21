@@ -292,7 +292,10 @@ final class ProviderTestProtocolTests: XCTestCase {
             try ProviderModelCatalogProtocol.parse(Data(#"{"models":[{"name":"models/gemini-usable","supportedGenerationMethods":["generateContent"]},{"name":"models/embedding-only","supportedGenerationMethods":["embedContent"]}]}"#.utf8), providerType: .gemini),
             ["gemini-usable"]
         )
-        XCTAssertThrowsError(try ProviderModelCatalogProtocol.prepare(profile: .init(type: .custom, customEndpoint: "https://example.test")))
+        let custom = try ProviderModelCatalogProtocol.prepare(profile: .init(type: .custom, customEndpoint: "https://example.test"))
+        XCTAssertEqual(custom.url.absoluteString, "https://example.test/models")
+        let ollama = try ProviderModelCatalogProtocol.prepare(profile: .init(type: .ollama))
+        XCTAssertEqual(ollama.url.absoluteString, "http://127.0.0.1:11434/api/tags")
     }
 
     func testClassificationAllowsConfiguredGenericTagsWhenTheyAreInThePromptVocabulary() throws {

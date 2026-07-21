@@ -195,6 +195,8 @@ final class VaultClassifierViewModel: ObservableObject {
                 Task { @MainActor in self?.onWebStateChange?() }
             }
             sharedHubClient.connect()
+            loadFixedProviderModelCatalogsAtLaunch()
+            startActiveLLMClassification()
         } catch {
             issue = error.localizedDescription
         }
@@ -236,6 +238,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 // freshly persisted catalog to the already-open app now.
                 refreshLocalState()
                 onWebStateChange?()
+                startActiveLLMClassification(platformID: request.entry.platform)
                 return try sharedHubReply(NativeCollectionResponse(accepted: true, inserted: inserted))
             case .classify:
                 let classification = try JSONDecoder().decode(NativeClassificationRequest.self, from: request.bodyData)
@@ -513,10 +516,11 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
-    /// Model identifiers are fetched only after an explicit user action using
-    /// the selected connection's credential. The response remains transient:
-    /// the classifier type persists just the chosen identifier.
-    func refreshProviderModelCatalog(profileID: String) {
+    /// Fixed provider types are loaded once at launch. Custom endpoints keep
+    /// one explicit fetch because their operator controls the model service.
+    /// Results remain transient; a classifier type persists only its chosen
+    /// identifier.
+    private func fetchProviderModelCatalog(profileID: String, reportFailure: Bool) {
         guard !loadingProviderModelProfileIDs.contains(profileID) else { return }
         do {
             guard let profile = localState?.workspaceCatalog.providerProfiles.first(where: { $0.id == profileID }) else {
@@ -536,14 +540,37 @@ final class VaultClassifierViewModel: ObservableObject {
                 } catch {
                     self.providerModelCatalogs.removeValue(forKey: profileID)
                     self.providerModelCatalogErrors[profileID] = error.localizedDescription
-                    self.issue = error.localizedDescription
+                    if reportFailure { self.issue = error.localizedDescription }
                 }
                 self.loadingProviderModelProfileIDs.remove(profileID)
                 self.onWebStateChange?()
             }
         } catch {
             providerModelCatalogErrors[profileID] = error.localizedDescription
-            issue = error.localizedDescription
+            if reportFailure { issue = error.localizedDescription }
+            onWebStateChange?()
+        }
+    }
+
+    func fetchCustomProviderModelCatalog(profileID: String) {
+        guard let profile = localState?.workspaceCatalog.providerProfiles.first(where: { $0.id == profileID }),
+              profile.type == .custom else {
+            issue = WebBridgeInputError.invalidChoice("custom provider profile").localizedDescription
+            return
+        }
+        fetchProviderModelCatalog(profileID: profileID, reportFailure: true)
+    }
+
+    private func loadFixedProviderModelCatalogsAtLaunch() {
+        guard let catalog = localState?.workspaceCatalog else { return }
+        for profile in catalog.providerProfiles where profile.type.supportsLLMConfiguration && profile.type != .custom {
+            let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
+            guard descriptor.credentialFields.isEmpty ||
+                    sessionProviderCredentials[profile.id] != nil ||
+                    ProviderCredentialStore.hasCredential(for: profile.id) else {
+                continue
+            }
+            fetchProviderModelCatalog(profileID: profile.id, reportFailure: false)
         }
     }
 
@@ -702,6 +729,10 @@ final class VaultClassifierViewModel: ObservableObject {
     private func providerCredential(for profileID: String) throws -> ProviderCredentialRecord {
         if let credential = sessionProviderCredentials[profileID] { return credential }
         if let credential = ProviderCredentialStore.loadCredentialRecord(for: profileID) { return credential }
+        if let profile = localState?.workspaceCatalog.providerProfiles.first(where: { $0.id == profileID }),
+           ProviderProtocolRegistry.descriptor(for: profile.type).credentialFields.isEmpty {
+            return .init(values: [:])
+        }
         throw ProviderTestProtocolError.missingCredential
     }
 
@@ -1369,10 +1400,8 @@ final class VaultClassifierViewModel: ObservableObject {
                 guard !cleanedLLMModelIdentifier.isEmpty else {
                     throw WebBridgeInputError.invalidChoice("LLM model")
                 }
-                if profile.type != .custom {
-                    guard providerModelCatalogs[profile.id]?.contains(cleanedLLMModelIdentifier) == true else {
-                        throw WebBridgeInputError.invalidChoice("a model fetched from this provider")
-                    }
+                guard providerModelCatalogs[profile.id]?.contains(cleanedLLMModelIdentifier) == true else {
+                    throw WebBridgeInputError.invalidChoice("a model fetched from this provider")
                 }
                 let configuration = LLMAssistConfiguration(
                     providerProfileID: cleanedLLMProviderID,
@@ -1395,7 +1424,8 @@ final class VaultClassifierViewModel: ObservableObject {
                     restrictToLeafTags: llmRestrictToLeafTags,
                     webSearchEnabled: profile.type == .openAI && llmWebSearchEnabled,
                     externalToolEnabled: selectedDefinition.apiProviderType != nil && llmExternalToolEnabled,
-                    usePlatformAPIKeyFallback: selectedDefinition.supportsCreatorAvatarAPIFallback && llmUsePlatformAPIKeyFallback
+                    usePlatformAPIKeyFallback: selectedDefinition.supportsCreatorAvatarAPIFallback && llmUsePlatformAPIKeyFallback,
+                    isActive: false
                 )
                 try configuration.validate()
                 selectedLLMAssist = configuration
@@ -2029,9 +2059,142 @@ final class VaultClassifierViewModel: ObservableObject {
         refreshLocalState()
     }
 
-    /// An LLM creator run is still explicitly initiated from the classifier
-    /// type. A valid answer remains alongside a human decision for the same
-    /// creator and is approved by that deliberate action, making its collected titles
+    private struct LLMCreatorWorkItem {
+        let representative: CollectedPlatformEntry
+        let entry: EntryEvidence
+    }
+
+    /// An active model never receives a partial creator record. The prompt
+    /// contains only the creator identity and collected titles, so those are
+    /// the required fields for every retained entry for that creator.
+    private func llmCreatorWorkItem(
+        platformID: String,
+        creatorID: String,
+        entries: [CollectedPlatformEntry]
+    ) -> LLMCreatorWorkItem? {
+        let creatorEntries = entries.filter {
+            $0.platformID == platformID && $0.creatorID == creatorID
+        }
+        guard !creatorEntries.isEmpty,
+              creatorEntries.allSatisfy({ entry in
+                  !entry.entryID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                  !entry.creatorID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                  !entry.creatorName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                  !entry.entryType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                  !entry.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+              }),
+              let representative = creatorEntries.max(by: { lhs, rhs in
+                  if lhs.lastObservedAtMilliseconds == rhs.lastObservedAtMilliseconds { return lhs.id < rhs.id }
+                  return lhs.lastObservedAtMilliseconds < rhs.lastObservedAtMilliseconds
+              }) else {
+            return nil
+        }
+        let titles = creatorEntries
+            .sorted { lhs, rhs in
+                if lhs.lastObservedAtMilliseconds == rhs.lastObservedAtMilliseconds { return lhs.id < rhs.id }
+                return lhs.lastObservedAtMilliseconds > rhs.lastObservedAtMilliseconds
+            }
+            .prefix(25)
+            .map(\.title)
+            .joined(separator: "\n")
+        guard !titles.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return .init(
+            representative: representative,
+            entry: .init(
+                platform: platformID,
+                sourceID: creatorID,
+                surface: .page,
+                evidence: .init(
+                    title: String("Creator: \(representative.creatorName)".prefix(EntryEvidenceValidator.titleLimit)),
+                    text: String(titles.prefix(EntryEvidenceValidator.textLimit))
+                )
+            )
+        )
+    }
+
+    private func unclassifiedLLMCreatorWorkItems(
+        dataset: ClassificationDataset,
+        classifierType: ClassifierTypeAsset,
+        platformID: String
+    ) -> [LLMCreatorWorkItem] {
+        let classifiedCreatorIDs = Set(dataset.creatorClassifications.compactMap { record -> String? in
+            guard record.classifierTypeID == classifierType.id,
+                  record.platformID == platformID,
+                  record.origin == .llmAssist else { return nil }
+            return record.creatorID
+        })
+        let creatorIDs = Set(dataset.collectedEntries.compactMap { entry -> String? in
+            guard entry.platformID == platformID,
+                  !entry.creatorID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !classifiedCreatorIDs.contains(entry.creatorID) else {
+                return nil
+            }
+            return entry.creatorID
+        })
+        return creatorIDs.compactMap {
+            llmCreatorWorkItem(platformID: platformID, creatorID: $0, entries: dataset.collectedEntries)
+        }.sorted { lhs, rhs in
+            let comparison = lhs.representative.creatorName.localizedCaseInsensitiveCompare(rhs.representative.creatorName)
+            return comparison == .orderedSame
+                ? lhs.representative.creatorID < rhs.representative.creatorID
+                : comparison == .orderedAscending
+        }
+    }
+
+    private func isLLMAssistActive(typeID: String) -> Bool {
+        localState?.workspaceCatalog.classifierTypes.first(where: { $0.id == typeID })?.llmAssistConfiguration?.isActive == true
+    }
+
+    func setLLMAssistActive(typeID: String, isActive: Bool) {
+        do {
+            guard var catalog = localState?.workspaceCatalog,
+                  let typeIndex = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }),
+                  var configuration = catalog.classifierTypes[typeIndex].llmAssistConfiguration,
+                  let profile = catalog.providerProfiles.first(where: { $0.id == configuration.providerProfileID }),
+                  catalog.classifierTypes[typeIndex].applicablePlatformID.flatMap(CollectionPlatformRegistry.definition(for:))?.supportsLLMAssist == true else {
+                throw WebBridgeInputError.invalidChoice("active LLM classifier type")
+            }
+            guard !configuration.modelIdentifier.isEmpty else {
+                throw WebBridgeInputError.invalidChoice("LLM model")
+            }
+            if isActive { _ = try providerCredential(for: profile.id) }
+            configuration.isActive = isActive
+            catalog.classifierTypes[typeIndex].llmAssistConfiguration = configuration
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+            issue = nil
+            if isActive { startActiveLLMClassification() }
+        } catch {
+            issue = error.localizedDescription
+        }
+    }
+
+    private func startActiveLLMClassification(platformID: String? = nil) {
+        guard !providerClassificationRunning,
+              let catalog = localState?.workspaceCatalog else { return }
+        let activeTypes = catalog.classifierTypes
+            .filter {
+                $0.llmAssistConfiguration?.isActive == true &&
+                (platformID == nil || $0.applicablePlatformID == platformID)
+            }
+            .sorted { $0.id < $1.id }
+        for classifierType in activeTypes {
+            guard let dataset = catalog.datasets.first(where: { $0.id == classifierType.datasetID }),
+                  let activePlatformID = classifierType.applicablePlatformID,
+                  !unclassifiedLLMCreatorWorkItems(
+                      dataset: dataset,
+                      classifierType: classifierType,
+                      platformID: activePlatformID
+                  ).isEmpty else {
+                continue
+            }
+            classifyCreatorBatchWithLLM(typeID: classifierType.id, activatedRun: true)
+            return
+        }
+    }
+
+    /// A valid answer remains alongside a human decision for the same creator
+    /// and is approved by this deliberate action, making its collected titles
     /// available to a compatible local-model retraining run.
     func classifyCreatorWithLLM(typeID: String, creatorKey: String) {
         guard !providerClassificationRunning else { return }
@@ -2055,29 +2218,15 @@ final class VaultClassifierViewModel: ObservableObject {
             guard classifierType.applicablePlatformID == platformID else {
                 throw WebBridgeInputError.invalidChoice("creator data source")
             }
-            guard let representative = dataset.collectedEntries.first(where: {
-                $0.platformID == platformID && $0.creatorID == creatorID
-            }) else {
-                throw WebBridgeInputError.invalidChoice("creator")
+            guard let workItem = llmCreatorWorkItem(
+                platformID: platformID,
+                creatorID: creatorID,
+                entries: dataset.collectedEntries
+            ) else {
+                throw WebBridgeInputError.invalidChoice("complete creator evidence")
             }
-            let evidenceTitles = dataset.collectedEntries
-                .filter { $0.platformID == platformID && $0.creatorID == creatorID }
-                .sorted { lhs, rhs in
-                    if lhs.lastObservedAtMilliseconds == rhs.lastObservedAtMilliseconds { return lhs.id < rhs.id }
-                    return lhs.lastObservedAtMilliseconds > rhs.lastObservedAtMilliseconds
-                }
-                .prefix(25)
-                .map(\.title)
-                .joined(separator: "\n")
-            let entry = EntryEvidence(
-                platform: platformID,
-                sourceID: creatorID,
-                surface: .page,
-                evidence: .init(
-                    title: String("Creator: \(representative.creatorName)".prefix(EntryEvidenceValidator.titleLimit)),
-                    text: String(evidenceTitles.prefix(EntryEvidenceValidator.textLimit))
-                )
-            )
+            let representative = workItem.representative
+            let entry = workItem.entry
             let taxonomy = try tree.inferenceTaxonomy()
             let allowedTagIDs = llmAllowedTagIDs(taxonomy: taxonomy, configuration: llmAssist)
             let outputTokenLimit = try remainingLLMOutputTokens(
@@ -2162,10 +2311,11 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
-    /// Runs one bounded request for each currently unclassified creator. A
-    /// provider response without usage metadata consumes its requested cap so
-    /// the persisted daily budget stays safe and visible.
-    func classifyCreatorBatchWithLLM(typeID: String) {
+    /// Runs eligible creators one at a time. An activated model processes the
+    /// full current queue, while the manual control keeps its configured batch
+    /// limit. A provider response without usage metadata consumes its
+    /// requested cap so the persisted daily budget stays safe and visible.
+    func classifyCreatorBatchWithLLM(typeID: String, activatedRun: Bool = false) {
         guard !providerClassificationRunning else { return }
         do {
             guard let catalog = localState?.workspaceCatalog,
@@ -2177,29 +2327,14 @@ final class VaultClassifierViewModel: ObservableObject {
                   let platformID = classifierType.applicablePlatformID else {
                 throw WebBridgeInputError.invalidChoice("creator LLM classifier type")
             }
-            let classifiedCreatorIDs = Set(dataset.creatorClassifications.compactMap { record -> String? in
-                guard record.classifierTypeID == classifierType.id,
-                      record.platformID == platformID,
-                      record.origin == .llmAssist else { return nil }
-                return record.creatorID
-            })
-            let representatives = Dictionary(grouping: dataset.collectedEntries.filter {
-                $0.platformID == platformID && !$0.creatorID.isEmpty && !$0.creatorName.isEmpty
-            }, by: \.creatorID)
-                .compactMap { creatorID, entries -> (String, CollectedPlatformEntry)? in
-                    guard !classifiedCreatorIDs.contains(creatorID),
-                          let representative = entries.max(by: { lhs, rhs in
-                              if lhs.lastObservedAtMilliseconds == rhs.lastObservedAtMilliseconds { return lhs.id < rhs.id }
-                              return lhs.lastObservedAtMilliseconds < rhs.lastObservedAtMilliseconds
-                          }) else { return nil }
-                    return (creatorID, representative)
-                }
-                .sorted { lhs, rhs in
-                    let comparison = lhs.1.creatorName.localizedCaseInsensitiveCompare(rhs.1.creatorName)
-                    return comparison == .orderedSame ? lhs.0 < rhs.0 : comparison == .orderedAscending
-                }
-                .prefix(configuration.batchSize)
-            guard !representatives.isEmpty else {
+            let workItems = unclassifiedLLMCreatorWorkItems(
+                dataset: dataset,
+                classifierType: classifierType,
+                platformID: platformID
+            )
+            let queuedWorkItems = activatedRun ? workItems : Array(workItems.prefix(configuration.batchSize))
+            guard !queuedWorkItems.isEmpty else {
+                if activatedRun { return }
                 throw WebBridgeInputError.invalidChoice("unclassified creators")
             }
             let taxonomy = try tree.inferenceTaxonomy()
@@ -2217,26 +2352,11 @@ final class VaultClassifierViewModel: ObservableObject {
                 guard let self else { return }
                 var successCount = 0
                 var firstFailure: Error?
-                for (_, representative) in representatives {
+                for workItem in queuedWorkItems {
+                    if activatedRun && !self.isLLMAssistActive(typeID: typeID) { break }
                     guard remainingOutputTokens > 0 else { break }
-                    let evidenceTitles = dataset.collectedEntries
-                        .filter { $0.platformID == platformID && $0.creatorID == representative.creatorID }
-                        .sorted { lhs, rhs in
-                            if lhs.lastObservedAtMilliseconds == rhs.lastObservedAtMilliseconds { return lhs.id < rhs.id }
-                            return lhs.lastObservedAtMilliseconds > rhs.lastObservedAtMilliseconds
-                        }
-                        .prefix(25)
-                        .map(\.title)
-                        .joined(separator: "\n")
-                    let entry = EntryEvidence(
-                        platform: platformID,
-                        sourceID: representative.creatorID,
-                        surface: .page,
-                        evidence: .init(
-                            title: String("Creator: \(representative.creatorName)".prefix(EntryEvidenceValidator.titleLimit)),
-                            text: String(evidenceTitles.prefix(EntryEvidenceValidator.textLimit))
-                        )
-                    )
+                    let representative = workItem.representative
+                    let entry = workItem.entry
                     let outputTokenLimit = min(ProviderClassificationProtocol.maximumOutputTokens, remainingOutputTokens)
                     let startedAt = Date()
                     var recordPlan: ProviderTestPreparedRequest?
@@ -2274,7 +2394,7 @@ final class VaultClassifierViewModel: ObservableObject {
                             profileID: profile.id,
                             provider: profile.type.rawValue,
                             model: configuration.modelIdentifier,
-                            operation: "classify-creator-batch",
+                            operation: activatedRun ? "classify-creator-active" : "classify-creator-batch",
                             endpoint: ProviderTestProtocol.safeEndpoint(recordPlan!.plan.url),
                             method: recordPlan!.plan.method,
                             statusCode: run.statusCode,
@@ -2294,7 +2414,7 @@ final class VaultClassifierViewModel: ObservableObject {
                                 profileID: profile.id,
                                 provider: profile.type.rawValue,
                                 model: configuration.modelIdentifier,
-                                operation: "classify-creator-batch",
+                                operation: activatedRun ? "classify-creator-active" : "classify-creator-batch",
                                 endpoint: ProviderTestProtocol.safeEndpoint(recordPlan.plan.url),
                                 method: recordPlan.plan.method,
                                 statusCode: nil,
@@ -2305,11 +2425,15 @@ final class VaultClassifierViewModel: ObservableObject {
                                 outcome: "failed"
                             ))
                         }
+                        if activatedRun { break }
                     }
                 }
                 self.providerClassificationRunning = false
                 self.issue = successCount == 0 ? firstFailure?.localizedDescription : nil
                 self.onWebStateChange?()
+                if activatedRun, firstFailure == nil, remainingOutputTokens > 0 {
+                    self.startActiveLLMClassification()
+                }
             }
         } catch {
             issue = error.localizedDescription
@@ -3066,6 +3190,7 @@ final class VaultClassifierViewModel: ObservableObject {
                             "webSearchEnabled": configuration.webSearchEnabled,
                             "externalToolEnabled": configuration.externalToolEnabled,
                             "usePlatformAPIKeyFallback": configuration.usePlatformAPIKeyFallback,
+                            "isActive": configuration.isActive,
                         ] as [String: Any]
                     } ?? NSNull(),
                     "decisionPriority": classifierType.decisionPriority.map(\.rawValue),
@@ -3292,8 +3417,13 @@ final class VaultClassifierViewModel: ObservableObject {
                 )
             case "testProviderProfile":
                 testProviderProfile(profileID: try webString(data, key: "profileID", limit: 128))
-            case "refreshProviderModelCatalog":
-                refreshProviderModelCatalog(profileID: try webString(data, key: "profileID", limit: 128))
+            case "fetchCustomProviderModelCatalog":
+                fetchCustomProviderModelCatalog(profileID: try webString(data, key: "profileID", limit: 128))
+            case "setLLMAssistActive":
+                setLLMAssistActive(
+                    typeID: try webString(data, key: "typeID", limit: 256),
+                    isActive: data["isActive"] as? Bool ?? false
+                )
             case "classifyCreatorBatchWithLLM":
                 classifyCreatorBatchWithLLM(typeID: try webString(data, key: "typeID", limit: 256))
             case "removeProviderCredential":
