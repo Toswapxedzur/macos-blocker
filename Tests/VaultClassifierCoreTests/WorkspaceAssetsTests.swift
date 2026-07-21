@@ -424,6 +424,19 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertFalse(encoded.contains("entryDecisionSources"))
     }
 
+    func testLegacyLLMPricingDecodesWithoutRetainingPricingConfiguration() throws {
+        let legacy = Data(#"{"id":"legacy-type","name":"Legacy type","treeID":"vault-starter","treeRevision":1,"datasetID":"local-dataset","datasetRevision":1,"applicablePlatformID":"youtube","llmAssistConfiguration":{"providerProfileID":"gemini","modelIdentifier":"gemini-3.1-flash-lite","maximumTokens":512,"inputCostUSDPerMillion":0.2,"outputCostUSDPerMillion":0.8},"decisionPriority":["human","llmAssist","localModel"],"updatedAtMilliseconds":0}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(ClassifierTypeAsset.self, from: legacy)
+        XCTAssertEqual(decoded.llmAssistConfiguration?.providerProfileID, "gemini")
+        XCTAssertEqual(decoded.llmAssistConfiguration?.modelIdentifier, "gemini-3.1-flash-lite")
+        XCTAssertEqual(decoded.llmAssistConfiguration?.maximumTokens, 512)
+
+        let reencoded = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
+        XCTAssertFalse(reencoded.contains("inputCostUSDPerMillion"))
+        XCTAssertFalse(reencoded.contains("outputCostUSDPerMillion"))
+    }
+
     func testRemovingPlatformBindingPurgesItsDataAndReconcilesDependents() throws {
         var catalog = WorkspaceCatalog.starter()
         let tree = try XCTUnwrap(catalog.trees.first)

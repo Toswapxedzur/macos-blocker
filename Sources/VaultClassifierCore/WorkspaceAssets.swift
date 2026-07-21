@@ -444,26 +444,18 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
     /// classifier type rather than by the LLM credential connection, so it can
     /// never grant every type global tool access.
     public var externalToolProfileID: String?
-    /// Optional user-supplied USD rates per million provider-reported tokens.
-    /// A missing rate deliberately produces an unavailable cost, not a guess.
-    public var inputCostUSDPerMillion: Double?
-    public var outputCostUSDPerMillion: Double?
 
     public init(
         providerProfileID: String,
         modelIdentifier: String,
         maximumTokens: Int = 1_024,
-        externalToolProfileID: String? = nil,
-        inputCostUSDPerMillion: Double? = nil,
-        outputCostUSDPerMillion: Double? = nil
+        externalToolProfileID: String? = nil
     ) {
         self.providerProfileID = providerProfileID
         self.modelIdentifier = modelIdentifier
         self.maximumTokens = maximumTokens
         let cleanedToolProfileID = externalToolProfileID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.externalToolProfileID = cleanedToolProfileID.isEmpty ? nil : cleanedToolProfileID
-        self.inputCostUSDPerMillion = inputCostUSDPerMillion
-        self.outputCostUSDPerMillion = outputCostUSDPerMillion
     }
 
     public func validate() throws {
@@ -471,11 +463,7 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         let cleanedModelIdentifier = modelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanedProviderProfileID.isEmpty, cleanedProviderProfileID.count <= 128,
               !cleanedModelIdentifier.isEmpty, cleanedModelIdentifier.count <= Self.maximumModelIdentifierLength,
-              maximumTokens > 0, maximumTokens <= Self.maximumTokenLimit,
-              [inputCostUSDPerMillion, outputCostUSDPerMillion].allSatisfy({ rate in
-                  guard let rate else { return true }
-                  return rate.isFinite && (0...1_000_000).contains(rate)
-              }) else {
+              maximumTokens > 0, maximumTokens <= Self.maximumTokenLimit else {
             throw LLMAssistConfigurationError.invalidConfiguration
         }
         guard externalToolProfileID?.count ?? 0 <= 128 else {
@@ -861,7 +849,6 @@ public struct ProviderRequestRecord: Codable, Equatable, Sendable, Identifiable 
     public var durationMilliseconds: Int
     public var inputTokens: Int?
     public var outputTokens: Int?
-    public var estimatedCostUSD: Double?
     public var outcome: String
     public var requestContent: String?
     public var responseContent: String?
@@ -879,7 +866,6 @@ public struct ProviderRequestRecord: Codable, Equatable, Sendable, Identifiable 
         durationMilliseconds: Int,
         inputTokens: Int?,
         outputTokens: Int?,
-        estimatedCostUSD: Double?,
         outcome: String,
         requestContent: String? = nil,
         responseContent: String? = nil,
@@ -896,7 +882,6 @@ public struct ProviderRequestRecord: Codable, Equatable, Sendable, Identifiable 
         self.durationMilliseconds = durationMilliseconds
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
-        self.estimatedCostUSD = estimatedCostUSD
         self.outcome = outcome
         self.requestContent = requestContent.map { String($0.prefix(Self.maximumContentCharacters)) }
         self.responseContent = responseContent.map { String($0.prefix(Self.maximumContentCharacters)) }
@@ -1057,7 +1042,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, type, modelIdentifier, batchSize, maximumTokens, customEndpoint, protocolConfiguration, externalToolProfileIDs, inputCostUSDPerMillion, outputCostUSDPerMillion, storesFullRequestRecords, updatedAtMilliseconds
+        case id, name, type, customEndpoint, protocolConfiguration, storesFullRequestRecords, updatedAtMilliseconds
     }
 
     public init(from decoder: Decoder) throws {
