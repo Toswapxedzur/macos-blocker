@@ -631,6 +631,7 @@
             subscriberCount: entry.attributes?.subscriberCount || "",
             avatarURL: typeof entry.cachedCreatorAvatarURL === "string" ? entry.cachedCreatorAvatarURL : "",
             tagIDs: classification?.tags || [],
+            negativeTagIDs: classification?.negativeTags || [],
           };
         })
         .sort((lhs, rhs) => lhs.name.localeCompare(rhs.name));
@@ -654,22 +655,46 @@
       const creatorClassification = creatorRecords.length && leafTagOptions.length
         ? (() => {
           const columnData = [
-            ["unclassified", "bridge.creatorTagUnclassified", creatorRecords.filter((creator) => !creator.tagIDs.length)],
-            ["selected", "bridge.creatorTagSelected", creatorRecords.filter((creator) => creator.tagIDs.includes(selectedCreatorTagID))],
-            ["other", "bridge.creatorTagOther", creatorRecords.filter((creator) => creator.tagIDs.length && !creator.tagIDs.includes(selectedCreatorTagID))],
+            ["needsDecision", "bridge.creatorTagNeedDecision", creatorRecords.filter((creator) => !creator.tagIDs.includes(selectedCreatorTagID) && !creator.negativeTagIDs.includes(selectedCreatorTagID))],
+            ["tagged", "bridge.creatorTagTagged", creatorRecords.filter((creator) => creator.tagIDs.includes(selectedCreatorTagID))],
+            ["notTagged", "bridge.creatorTagNotTagged", creatorRecords.filter((creator) => creator.negativeTagIDs.includes(selectedCreatorTagID))],
           ];
-          const creatorCard = (creator, selected) => {
-            const nextTagIDs = selected
-              ? creator.tagIDs.filter((tagID) => tagID !== selectedCreatorTagID)
-              : [...new Set([...creator.tagIDs, selectedCreatorTagID])].sort();
+          const creatorCardAction = (creator, labelKey, nextTagIDs, nextNegativeTagIDs, style) => `<button class="${style} creator-tag-card-action" data-action="recordCreatorClassification" data-type-id="${esc(classifierType.id)}" data-creator-key="${esc(creator.key)}" data-tag-ids="${esc(JSON.stringify(nextTagIDs))}" data-negative-tag-ids="${esc(JSON.stringify(nextNegativeTagIDs))}"${disabled(!creatorSources.has("human"))}>${esc(t(labelKey, { tag: selectedCreatorTagName }))}</button>`;
+          const creatorCard = (creator, decision) => {
+            const positiveWithoutActive = creator.tagIDs.filter((tagID) => tagID !== selectedCreatorTagID);
+            const negativeWithoutActive = creator.negativeTagIDs.filter((tagID) => tagID !== selectedCreatorTagID);
+            const tagDecision = creatorCardAction(
+              creator,
+              "bridge.creatorTagTag",
+              [...new Set([...positiveWithoutActive, selectedCreatorTagID])].sort(),
+              negativeWithoutActive,
+              "primary"
+            );
+            const notTagDecision = creatorCardAction(
+              creator,
+              "bridge.creatorTagMarkNot",
+              positiveWithoutActive,
+              [...new Set([...negativeWithoutActive, selectedCreatorTagID])].sort(),
+              "secondary"
+            );
+            const clearDecision = creatorCardAction(
+              creator,
+              "bridge.creatorTagClear",
+              positiveWithoutActive,
+              negativeWithoutActive,
+              "secondary"
+            );
+            const actions = decision === "needsDecision"
+              ? `${tagDecision}${notTagDecision}`
+              : decision === "tagged"
+                ? `${notTagDecision}${clearDecision}`
+                : `${tagDecision}${clearDecision}`;
             const avatar = creator.avatarURL
               ? `<img class="creator-tag-card-avatar" src="${esc(creator.avatarURL)}" alt="" aria-hidden="true">`
               : `<span class="creator-tag-card-avatar creator-tag-card-avatar-fallback" aria-hidden="true">${esc(creator.name.slice(0, 1).toUpperCase())}</span>`;
-            const actionKey = selected ? "bridge.creatorTagRemove" : "bridge.creatorTagAdd";
-            const actionLabel = t(actionKey, { tag: selectedCreatorTagName });
-            return `<article class="creator-tag-card"><div class="creator-tag-card-profile">${avatar}<div><strong dir="auto">${esc(creator.name)}</strong><span>${esc(creator.platformName)}${creator.subscriberCount ? ` · ${tx("bridge.creatorSubscribers", { count: creator.subscriberCount })}` : ""}</span></div></div><button class="${selected ? "secondary" : "primary"} creator-tag-card-action" data-action="recordCreatorClassification" data-type-id="${esc(classifierType.id)}" data-creator-key="${esc(creator.key)}" data-tag-ids="${esc(JSON.stringify(nextTagIDs))}"${disabled(!creatorSources.has("human"))}>${esc(actionLabel)}</button></article>`;
+            return `<article class="creator-tag-card"><div class="creator-tag-card-profile">${avatar}<div><strong dir="auto">${esc(creator.name)}</strong><span>${esc(creator.platformName)}${creator.subscriberCount ? ` · ${tx("bridge.creatorSubscribers", { count: creator.subscriberCount })}` : ""}</span></div></div><div class="creator-tag-card-actions">${actions}</div></article>`;
           };
-          const columns = columnData.map(([kind, titleKey, creators]) => `<section class="creator-tag-column"><div class="creator-tag-column-head"><h4>${tx(titleKey, { tag: selectedCreatorTagName })}</h4><span>${creators.length}</span></div><div class="creator-tag-column-list">${creators.length ? creators.map((creator) => creatorCard(creator, kind === "selected")).join("") : `<p class="creator-tag-empty">${tx("bridge.creatorTagEmpty")}</p>`}</div></section>`).join("");
+          const columns = columnData.map(([kind, titleKey, creators]) => `<section class="creator-tag-column"><div class="creator-tag-column-head"><h4>${tx(titleKey, { tag: selectedCreatorTagName })}</h4><span>${creators.length}</span></div><div class="creator-tag-column-list">${creators.length ? creators.map((creator) => creatorCard(creator, kind)).join("") : `<p class="creator-tag-empty">${tx("bridge.creatorTagEmpty")}</p>`}</div></section>`).join("");
           return `<div class="creator-tag-browser"><nav class="creator-tag-navigation" aria-label="${tx("bridge.creatorTagNavigation")}" role="tablist">${leafTagOptions.map(([tagID, label]) => `<button class="creator-tag-tab${selectedCreatorTagID === tagID ? " active" : ""}" type="button" data-action="selectCreatorTag" data-type-id="${esc(classifierType.id)}" data-tag-id="${esc(tagID)}" role="tab" aria-selected="${selectedCreatorTagID === tagID}">${esc(label.split(" · ")[0])}</button>`).join("")}</nav><div class="creator-tag-columns">${columns}</div>${!creatorSources.has("human") ? `<p class="small-copy creator-tag-human-required">${tx("bridge.creatorHumanRequired")}</p>` : ""}</div>${creatorLLMClassification}`;
         })()
         : `<div class="empty compact-empty">${tx(!creatorRecords.length ? "bridge.noCreators" : "bridge.noCreatorTags")}</div>`;
@@ -1016,6 +1041,15 @@
         const tagIDs = JSON.parse(button.dataset.tagIds);
         if (!Array.isArray(tagIDs) || !tagIDs.every((tagID) => typeof tagID === "string")) return;
         data.tagIDs = tagIDs;
+      } catch (_) {
+        return;
+      }
+    }
+    if (button.dataset.negativeTagIds) {
+      try {
+        const negativeTagIDs = JSON.parse(button.dataset.negativeTagIds);
+        if (!Array.isArray(negativeTagIDs) || !negativeTagIDs.every((tagID) => typeof tagID === "string")) return;
+        data.negativeTagIDs = negativeTagIDs;
       } catch (_) {
         return;
       }

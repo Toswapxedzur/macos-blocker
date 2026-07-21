@@ -127,7 +127,13 @@ public struct CreatorClassificationRecord: Codable, Equatable, Sendable, Identif
     public var platformID: String
     public var treeID: String
     public var treeRevision: Int
+    /// Tags explicitly confirmed for this creator. Tags absent from both this
+    /// list and `negativeTagIDs` remain undecided.
     public var tagIDs: [String]
+    /// Tags explicitly ruled out for this creator. This is deliberately
+    /// separate from absent positive tags so each leaf tag can be decided
+    /// independently.
+    public var negativeTagIDs: [String]
     public var origin: ClassificationRecordOrigin
     public var review: ClassificationReviewStatus
     public var createdAtMilliseconds: Int64
@@ -142,6 +148,7 @@ public struct CreatorClassificationRecord: Codable, Equatable, Sendable, Identif
         treeID: String,
         treeRevision: Int,
         tagIDs: [String],
+        negativeTagIDs: [String] = [],
         origin: ClassificationRecordOrigin,
         review: ClassificationReviewStatus,
         createdAtMilliseconds: Int64 = WorkspaceCatalog.now(),
@@ -155,6 +162,7 @@ public struct CreatorClassificationRecord: Codable, Equatable, Sendable, Identif
         self.treeID = treeID
         self.treeRevision = treeRevision
         self.tagIDs = Array(Set(tagIDs)).sorted()
+        self.negativeTagIDs = Array(Set(negativeTagIDs)).sorted()
         self.origin = origin
         self.review = review
         self.createdAtMilliseconds = createdAtMilliseconds
@@ -165,6 +173,29 @@ public struct CreatorClassificationRecord: Codable, Equatable, Sendable, Identif
     /// display names, which may legitimately change as a platform refreshes
     /// public metadata.
     public var identityKey: String { "\(classifierTypeID)\u{1F}\(platformID)\u{1F}\(creatorID)" }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, classifierTypeID, creatorID, creatorName, platformID, treeID,
+             treeRevision, tagIDs, negativeTagIDs, origin, review,
+             createdAtMilliseconds, updatedAtMilliseconds
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        classifierTypeID = try container.decode(String.self, forKey: .classifierTypeID)
+        creatorID = try container.decode(String.self, forKey: .creatorID)
+        creatorName = try container.decode(String.self, forKey: .creatorName)
+        platformID = try container.decode(String.self, forKey: .platformID)
+        treeID = try container.decode(String.self, forKey: .treeID)
+        treeRevision = try container.decode(Int.self, forKey: .treeRevision)
+        tagIDs = Array(Set(try container.decode([String].self, forKey: .tagIDs))).sorted()
+        negativeTagIDs = Array(Set(try container.decodeIfPresent([String].self, forKey: .negativeTagIDs) ?? [])).sorted()
+        origin = try container.decode(ClassificationRecordOrigin.self, forKey: .origin)
+        review = try container.decode(ClassificationReviewStatus.self, forKey: .review)
+        createdAtMilliseconds = try container.decode(Int64.self, forKey: .createdAtMilliseconds)
+        updatedAtMilliseconds = try container.decode(Int64.self, forKey: .updatedAtMilliseconds)
+    }
 }
 
 /// Rendered public-content metadata the user has explicitly chosen to retain
@@ -565,14 +596,19 @@ public enum LocalModelTrainer {
                 return []
             }
             let positiveLabelIDs = classification.tagIDs.filter { availableTagIDs.contains($0) }
-            guard !positiveLabelIDs.isEmpty else { return [] }
+            let negativeLabelIDs = classification.negativeTagIDs.filter { availableTagIDs.contains($0) }
+            guard !positiveLabelIDs.isEmpty || !negativeLabelIDs.isEmpty else { return [] }
             return dataset.collectedEntries.compactMap { entry in
                 guard entry.platformID == classification.platformID,
                       entry.creatorID == classification.creatorID,
                       !entry.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     return nil
                 }
-                return .init(text: entry.title, positiveLabelIDs: positiveLabelIDs)
+                return .init(
+                    text: entry.title,
+                    positiveLabelIDs: positiveLabelIDs,
+                    negativeLabelIDs: negativeLabelIDs
+                )
             }
         }
         return creatorExamples
@@ -1177,9 +1213,11 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                       !classification.treeID.isEmpty,
                       classification.treeRevision > 0,
                       CollectionPlatformRegistry.definition(for: classification.platformID) != nil,
-                      !classification.tagIDs.isEmpty,
-                      classification.tagIDs.count <= CreatorClassificationRecord.maximumTagIDs,
+                      !classification.tagIDs.isEmpty || !classification.negativeTagIDs.isEmpty,
+                      classification.tagIDs.count + classification.negativeTagIDs.count <= CreatorClassificationRecord.maximumTagIDs,
                       Set(classification.tagIDs).count == classification.tagIDs.count,
+                      Set(classification.negativeTagIDs).count == classification.negativeTagIDs.count,
+                      Set(classification.tagIDs).isDisjoint(with: classification.negativeTagIDs),
                       seenCreatorClassifications.insert(classification.identityKey).inserted else {
                     throw WorkspaceCatalogError.invalidCreatorClassification(classification.id)
                 }
