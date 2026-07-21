@@ -62,7 +62,7 @@ final class WorkspaceAssetsTests: XCTestCase {
             datasetID: dataset.id,
             datasetRevision: dataset.revision,
             applicablePlatformID: "twitch",
-            llmProfileIDs: [profile.id]
+            llmAssistConfiguration: .init(providerProfileID: profile.id, modelIdentifier: "gemini-3.1-flash-lite")
         )]
         XCTAssertThrowsError(try catalog.validate()) { error in
             XCTAssertEqual(error as? WorkspaceCatalogError, .invalidClassifierType("twitch-automated"))
@@ -70,7 +70,7 @@ final class WorkspaceAssetsTests: XCTestCase {
 
         catalog.reconcileClassifierTypes()
         XCTAssertEqual(catalog.classifierTypes[0].applicablePlatformID, "twitch")
-        XCTAssertTrue(catalog.classifierTypes[0].llmProfileIDs.isEmpty)
+        XCTAssertNil(catalog.classifierTypes[0].llmAssistConfiguration)
         XCTAssertNoThrow(try catalog.validate())
     }
 
@@ -539,7 +539,7 @@ final class WorkspaceAssetsTests: XCTestCase {
             datasetRevision: dataset.revision,
             applicablePlatformID: "youtube",
             localModelID: catalog.models[0].id,
-            llmProfileIDs: [profile.id]
+            llmAssistConfiguration: .init(providerProfileID: profile.id, modelIdentifier: "gemini-3.1-flash-lite")
         )
         catalog.classifierTypes = [classifierType]
         XCTAssertNoThrow(try catalog.validate())
@@ -555,7 +555,7 @@ final class WorkspaceAssetsTests: XCTestCase {
 
         catalog.providerProfiles = []
         catalog.reconcileClassifierTypes()
-        XCTAssertTrue(catalog.classifierTypes[0].llmProfileIDs.isEmpty)
+        XCTAssertNil(catalog.classifierTypes[0].llmAssistConfiguration)
     }
 
     func testCoordinatorDispatchesAnActiveClassifierTypeToThePersistedNeuralModel() throws {
@@ -773,7 +773,7 @@ final class WorkspaceAssetsTests: XCTestCase {
         let direct = Data(#"{"id":"direct","name":"Direct","type":"deepSeek","modelIdentifier":"deepseek-chat","batchSize":1,"maximumTokens":10,"updatedAtMilliseconds":1}"#.utf8)
         let decoded = try JSONDecoder().decode(APIKeyProviderProfile.self, from: direct)
         XCTAssertEqual(decoded.type, .deepSeek)
-        XCTAssertEqual(decoded.modelIdentifier, "deepseek-chat")
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self).contains("modelIdentifier"))
 
         let retired = Data(#"{"id":"retired","name":"Retired","type":"spotify","modelIdentifier":"grok","batchSize":1,"maximumTokens":10,"updatedAtMilliseconds":1}"#.utf8)
         let reset = try JSONDecoder().decode(APIKeyProviderProfile.self, from: retired)
@@ -812,9 +812,9 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(geminiPlan.authenticationHeader, "x-goog-api-key")
         XCTAssertEqual(geminiPlan.url.absoluteString, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent")
 
-        let compatible = APIKeyProviderProfile(type: .openAICompatible, modelIdentifier: "deepseek-chat", customEndpoint: "https://api.deepseek.com/v1")
+        let compatible = APIKeyProviderProfile(type: .openAICompatible, customEndpoint: "https://api.deepseek.com/v1")
         let compatiblePlan = try DescriptorBackedProviderProtocol(descriptor: ProviderProtocolRegistry.descriptor(for: .openAICompatible))
-            .requestPlan(for: compatible, operation: .generateText)
+            .requestPlan(for: compatible, operation: .generateText, modelIdentifier: "deepseek-chat")
         XCTAssertEqual(compatiblePlan.url.absoluteString, "https://api.deepseek.com/v1/chat/completions")
         XCTAssertEqual(compatiblePlan.bodyFormat, .openAIChatCompletions)
 
@@ -831,10 +831,10 @@ final class WorkspaceAssetsTests: XCTestCase {
     }
 
     func testProviderProtocolsRejectUnsafeOrIncompleteDispatchSettings() throws {
-        let unsafeEndpoint = APIKeyProviderProfile(type: .openAICompatible, modelIdentifier: "model", customEndpoint: "http://remote.example")
+        let unsafeEndpoint = APIKeyProviderProfile(type: .openAICompatible, customEndpoint: "http://remote.example")
         XCTAssertThrowsError(try unsafeEndpoint.validate())
 
-        let missingEndpoint = APIKeyProviderProfile(type: .openAICompatible, modelIdentifier: "model")
+        let missingEndpoint = APIKeyProviderProfile(type: .openAICompatible)
         XCTAssertNoThrow(try missingEndpoint.validate())
         XCTAssertThrowsError(try missingEndpoint.validateForDispatch())
     }

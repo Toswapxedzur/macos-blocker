@@ -56,17 +56,26 @@ public enum ProviderToolCallingProtocol {
 
     public static func prepare(
         profile: APIKeyProviderProfile,
+        configuration: LLMAssistConfiguration,
         entry: EntryEvidence,
         allowedLeafTagIDs: Set<String>,
         toolProfiles: [APIKeyProviderProfile]
     ) throws -> ProviderToolCallingPreparedRequest {
         try EntryEvidenceValidator().validate(entry)
+        try configuration.validate()
+        guard configuration.providerProfileID == profile.id else {
+            throw ProviderToolCallingProtocolError.invalidConfiguration
+        }
         guard !allowedLeafTagIDs.isEmpty else { throw ProviderToolCallingProtocolError.noAvailableTags }
         let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
         guard descriptor.requestFormats.contains(where: { $0.operation == .generateText }) else {
             throw ProviderToolCallingProtocolError.unsupportedProvider
         }
-        let plan = try DescriptorBackedProviderProtocol(descriptor: descriptor).requestPlan(for: profile, operation: .generateText)
+        let plan = try DescriptorBackedProviderProtocol(descriptor: descriptor).requestPlan(
+            for: profile,
+            operation: .generateText,
+            modelIdentifier: configuration.modelIdentifier
+        )
         let definitions = try ExternalPlatformToolProtocol.definitions(profiles: toolProfiles, entry: entry)
         guard !definitions.isEmpty else { throw ProviderToolCallingProtocolError.noAvailableTools }
         let prompt = classificationPrompt(entry: entry, allowedLeafTagIDs: allowedLeafTagIDs)
@@ -74,7 +83,7 @@ public enum ProviderToolCallingProtocol {
         return .init(
             plan: plan,
             prompt: prompt,
-            body: try requestBody(format: plan.bodyFormat, profile: profile, state: state, definitions: definitions),
+            body: try requestBody(format: plan.bodyFormat, configuration: configuration, state: state, definitions: definitions),
             toolDefinitions: definitions,
             conversation: try encode(state)
         )
@@ -109,6 +118,7 @@ public enum ProviderToolCallingProtocol {
     public static func continueRequest(
         prepared: ProviderToolCallingPreparedRequest,
         profile: APIKeyProviderProfile,
+        configuration: LLMAssistConfiguration,
         turn: ProviderToolCallingTurn,
         results: [ProviderToolCallingResult]
     ) throws -> ProviderToolCallingPreparedRequest {
@@ -125,7 +135,7 @@ public enum ProviderToolCallingProtocol {
         return .init(
             plan: prepared.plan,
             prompt: prepared.prompt,
-            body: try requestBody(format: prepared.plan.bodyFormat, profile: profile, state: state, definitions: prepared.toolDefinitions),
+            body: try requestBody(format: prepared.plan.bodyFormat, configuration: configuration, state: state, definitions: prepared.toolDefinitions),
             toolDefinitions: prepared.toolDefinitions,
             conversation: try encode(state)
         )
@@ -153,20 +163,20 @@ public enum ProviderToolCallingProtocol {
 
     private static func requestBody(
         format: ProviderRequestBodyFormat,
-        profile: APIKeyProviderProfile,
+        configuration: LLMAssistConfiguration,
         state: [String: Any],
         definitions: [ExternalPlatformToolDefinition]
     ) throws -> Data {
-        let output = min(maximumOutputTokens, profile.maximumTokens)
+        let output = min(maximumOutputTokens, configuration.maximumTokens)
         let chatTools = definitions.map(chatToolObject)
         let object: [String: Any]
         switch format {
         case .openAIResponses:
-            object = ["model": profile.modelIdentifier, "input": state["input"] as Any, "max_output_tokens": output, "tools": definitions.map(openAIResponsesToolObject), "tool_choice": "auto"]
+            object = ["model": configuration.modelIdentifier, "input": state["input"] as Any, "max_output_tokens": output, "tools": definitions.map(openAIResponsesToolObject), "tool_choice": "auto"]
         case .openAIChatCompletions:
-            object = ["model": profile.modelIdentifier, "messages": state["messages"] as Any, "max_tokens": output, "tools": chatTools, "tool_choice": "auto", "parallel_tool_calls": false]
+            object = ["model": configuration.modelIdentifier, "messages": state["messages"] as Any, "max_tokens": output, "tools": chatTools, "tool_choice": "auto", "parallel_tool_calls": false]
         case .anthropicMessages:
-            object = ["model": profile.modelIdentifier, "max_tokens": output, "messages": state["messages"] as Any, "tools": definitions.map(anthropicToolObject)]
+            object = ["model": configuration.modelIdentifier, "max_tokens": output, "messages": state["messages"] as Any, "tools": definitions.map(anthropicToolObject)]
         case .geminiGenerateContent, .vertexGenerateContent:
             object = [
                 "contents": state["contents"] as Any,
@@ -175,9 +185,9 @@ public enum ProviderToolCallingProtocol {
                 "toolConfig": ["functionCallingConfig": ["mode": "AUTO"]],
             ]
         case .cohereChat:
-            object = ["model": profile.modelIdentifier, "messages": state["messages"] as Any, "max_tokens": output, "tools": chatTools]
+            object = ["model": configuration.modelIdentifier, "messages": state["messages"] as Any, "max_tokens": output, "tools": chatTools]
         case .ollamaChat:
-            object = ["model": profile.modelIdentifier, "messages": state["messages"] as Any, "stream": false, "options": ["num_predict": output], "tools": chatTools]
+            object = ["model": configuration.modelIdentifier, "messages": state["messages"] as Any, "stream": false, "options": ["num_predict": output], "tools": chatTools]
         default:
             throw ProviderToolCallingProtocolError.unsupportedProvider
         }
@@ -418,6 +428,7 @@ public enum ProviderToolCallingProtocol {
 
 public enum ProviderToolCallingProtocolError: Error, Equatable, LocalizedError, Sendable {
     case unsupportedProvider
+    case invalidConfiguration
     case noAvailableTags
     case noAvailableTools
     case invalidResponse
@@ -426,6 +437,7 @@ public enum ProviderToolCallingProtocolError: Error, Equatable, LocalizedError, 
     public var errorDescription: String? {
         switch self {
         case .unsupportedProvider: return "This provider does not support bounded external tool calling."
+        case .invalidConfiguration: return "The selected LLM model does not belong to this provider connection."
         case .noAvailableTags: return "The selected tag tree has no active leaf tags to classify."
         case .noAvailableTools: return "No selected external-data profiles are ready for this entry."
         case .invalidResponse: return "The provider returned an invalid tool-call response."

@@ -9,23 +9,28 @@ public enum ProviderClassificationProtocol {
 
     public static func prepare(
         profile: APIKeyProviderProfile,
+        configuration: LLMAssistConfiguration,
         entry: EntryEvidence,
         allowedLeafTagIDs: Set<String>
     ) throws -> ProviderTestPreparedRequest {
         try EntryEvidenceValidator().validate(entry)
+        try configuration.validate()
+        guard configuration.providerProfileID == profile.id else {
+            throw ProviderClassificationProtocolError.invalidConfiguration
+        }
         guard !allowedLeafTagIDs.isEmpty else { throw ProviderClassificationProtocolError.noAvailableTags }
         let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
         guard descriptor.requestFormats.contains(where: { $0.operation == .generateText }) else {
             throw ProviderClassificationProtocolError.unsupportedProvider
         }
         let plan = try DescriptorBackedProviderProtocol(descriptor: descriptor)
-            .requestPlan(for: profile, operation: .generateText)
+            .requestPlan(for: profile, operation: .generateText, modelIdentifier: configuration.modelIdentifier)
         let prompt = prompt(entry: entry, allowedLeafTagIDs: allowedLeafTagIDs)
         return .init(
             plan: plan,
             operation: .generateText,
             prompt: prompt,
-            body: try requestBody(format: plan.bodyFormat, profile: profile, prompt: prompt)
+            body: try requestBody(format: plan.bodyFormat, configuration: configuration, prompt: prompt)
         )
     }
 
@@ -54,6 +59,7 @@ public enum ProviderClassificationProtocol {
         entry: EntryEvidence,
         classifierType: ClassifierTypeAsset,
         profile: APIKeyProviderProfile,
+        configuration: LLMAssistConfiguration,
         taxonomy: Taxonomy,
         policies: [NamedPolicy],
         labelIDs: [String]
@@ -70,7 +76,7 @@ public enum ProviderClassificationProtocol {
             scores: selected.map { .init(tagID: $0, directScore: 1, sourceScore: nil, finalScore: 1) },
             decisions: [],
             packageID: "workspace-classifier-type-\(classifierType.id)",
-            modelVersion: "llm-assist-\(profile.id)"
+            modelVersion: "llm-assist-\(profile.id)-\(configuration.modelIdentifier)"
         )
         result.decisions = PolicyEvaluator(taxonomy: taxonomy).evaluate(
             result: result,
@@ -89,22 +95,22 @@ public enum ProviderClassificationProtocol {
         return "Classify the quoted local entry using only the listed tag IDs. Return exactly one JSON object with one key, labelIDs, whose value is an array of zero or more listed IDs. Do not include markdown or explanation.\nAllowed tag IDs: [\(labels)]\nEntry: \(evidence)"
     }
 
-    private static func requestBody(format: ProviderRequestBodyFormat, profile: APIKeyProviderProfile, prompt: String) throws -> Data {
-        let output = min(maximumOutputTokens, profile.maximumTokens)
+    private static func requestBody(format: ProviderRequestBodyFormat, configuration: LLMAssistConfiguration, prompt: String) throws -> Data {
+        let output = min(maximumOutputTokens, configuration.maximumTokens)
         let object: [String: Any]
         switch format {
         case .openAIResponses:
-            object = ["model": profile.modelIdentifier, "input": prompt, "max_output_tokens": output]
+            object = ["model": configuration.modelIdentifier, "input": prompt, "max_output_tokens": output]
         case .openAIChatCompletions:
-            object = ["model": profile.modelIdentifier, "messages": [["role": "user", "content": prompt]], "max_tokens": output]
+            object = ["model": configuration.modelIdentifier, "messages": [["role": "user", "content": prompt]], "max_tokens": output]
         case .anthropicMessages:
-            object = ["model": profile.modelIdentifier, "max_tokens": output, "messages": [["role": "user", "content": prompt]]]
+            object = ["model": configuration.modelIdentifier, "max_tokens": output, "messages": [["role": "user", "content": prompt]]]
         case .geminiGenerateContent, .vertexGenerateContent:
             object = ["contents": [["parts": [["text": prompt]]]], "generationConfig": ["maxOutputTokens": output]]
         case .cohereChat:
-            object = ["model": profile.modelIdentifier, "messages": [["role": "user", "content": prompt]], "max_tokens": output]
+            object = ["model": configuration.modelIdentifier, "messages": [["role": "user", "content": prompt]], "max_tokens": output]
         case .ollamaChat:
-            object = ["model": profile.modelIdentifier, "messages": [["role": "user", "content": prompt]], "stream": false, "options": ["num_predict": output]]
+            object = ["model": configuration.modelIdentifier, "messages": [["role": "user", "content": prompt]], "stream": false, "options": ["num_predict": output]]
         default:
             throw ProviderClassificationProtocolError.unsupportedProvider
         }
@@ -114,12 +120,14 @@ public enum ProviderClassificationProtocol {
 
 public enum ProviderClassificationProtocolError: Error, Equatable, LocalizedError, Sendable {
     case unsupportedProvider
+    case invalidConfiguration
     case noAvailableTags
     case invalidResponse
 
     public var errorDescription: String? {
         switch self {
         case .unsupportedProvider: return "This provider does not support explicit text classification."
+        case .invalidConfiguration: return "The selected LLM model does not belong to this provider connection."
         case .noAvailableTags: return "The selected tag tree has no active leaf tags to classify."
         case .invalidResponse: return "The provider response did not contain valid local tag IDs."
         }

@@ -3,14 +3,14 @@ import XCTest
 
 final class ProviderTestProtocolTests: XCTestCase {
     func testGeminiTestUsesTheFixedBoundedPromptAndParsesUsage() throws {
-        let profile = APIKeyProviderProfile(type: .gemini, maximumTokens: 4)
+        let profile = APIKeyProviderProfile(type: .gemini)
         let prepared = try ProviderTestProtocol.prepare(profile: profile)
 
         XCTAssertEqual(prepared.operation, .generateText)
         XCTAssertEqual(prepared.plan.url.absoluteString, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent")
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: prepared.body) as? [String: Any])
         XCTAssertEqual((((body["contents"] as? [[String: Any]])?.first?["parts"] as? [[String: Any]])?.first?["text"] as? String), ProviderTestProtocol.prompt)
-        XCTAssertEqual((body["generationConfig"] as? [String: Any])?["maxOutputTokens"] as? Int, 4)
+        XCTAssertEqual((body["generationConfig"] as? [String: Any])?["maxOutputTokens"] as? Int, ProviderTestProtocol.maximumOutputTokens)
 
         let response = Data(#"{"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":2},"candidates":[{"content":{"parts":[{"text":"OK"}]}}]}"#.utf8)
         let parsed = try ProviderTestProtocol.parseResponse(response, format: .geminiGenerateContent, operation: .generateText)
@@ -19,22 +19,30 @@ final class ProviderTestProtocolTests: XCTestCase {
     }
 
     func testOpenAIStyleTestParsesUsageAndCalculatesOnlyConfiguredCost() throws {
-        var profile = APIKeyProviderProfile(
+        let profile = APIKeyProviderProfile(
             type: .openAICompatible,
+            customEndpoint: "https://api.deepseek.com/v1"
+        )
+        var configuration = LLMAssistConfiguration(
+            providerProfileID: profile.id,
             modelIdentifier: "deepseek-chat",
-            customEndpoint: "https://api.deepseek.com/v1",
             inputCostUSDPerMillion: 0.28,
             outputCostUSDPerMillion: 0.42
         )
-        let prepared = try ProviderTestProtocol.prepare(profile: profile)
+        let prepared = try ProviderClassificationProtocol.prepare(
+            profile: profile,
+            configuration: configuration,
+            entry: .init(platform: "youtube", entryID: "entry", surface: .feed, evidence: .init(title: "A test entry")),
+            allowedLeafTagIDs: ["games"]
+        )
         XCTAssertEqual(prepared.plan.bodyFormat, .openAIChatCompletions)
         let response = Data(#"{"usage":{"prompt_tokens":1000,"completion_tokens":500},"choices":[{"message":{"content":"OK"}}]}"#.utf8)
         let parsed = try ProviderTestProtocol.parseResponse(response, format: .openAIChatCompletions, operation: .generateText)
         XCTAssertEqual(parsed.content, "OK")
-        XCTAssertEqual(try XCTUnwrap(ProviderTestProtocol.estimatedCost(profile: profile, usage: parsed.usage)), 0.00049, accuracy: 0.0000001)
+        XCTAssertEqual(try XCTUnwrap(ProviderTestProtocol.estimatedCost(configuration: configuration, usage: parsed.usage)), 0.00049, accuracy: 0.0000001)
 
-        profile.outputCostUSDPerMillion = nil
-        XCTAssertNil(ProviderTestProtocol.estimatedCost(profile: profile, usage: parsed.usage))
+        configuration.outputCostUSDPerMillion = nil
+        XCTAssertNil(ProviderTestProtocol.estimatedCost(configuration: configuration, usage: parsed.usage))
     }
 
     func testRequestRecordPreservesMetadataAndOnlyExplicitContent() throws {
@@ -42,7 +50,7 @@ final class ProviderTestProtocolTests: XCTestCase {
         let record = ProviderRequestRecord(
             profileID: profile.id,
             provider: profile.type.rawValue,
-            model: profile.modelIdentifier,
+            model: profile.type.defaultModelIdentifier,
             operation: ProviderOperation.generateText.rawValue,
             endpoint: "https://example.test/v1",
             method: "POST",
@@ -66,10 +74,12 @@ final class ProviderTestProtocolTests: XCTestCase {
     }
 
     func testExplicitProviderClassificationUsesOnlyKnownLeafIDs() throws {
-        let profile = APIKeyProviderProfile(type: .gemini, maximumTokens: 512)
+        let profile = APIKeyProviderProfile(type: .gemini)
+        let configuration = LLMAssistConfiguration(providerProfileID: profile.id, modelIdentifier: "gemini-3.1-flash-lite", maximumTokens: 512)
         let entry = EntryEvidence(platform: "youtube", entryID: "entry", surface: .feed, evidence: .init(title: "Deck gameplay"))
         let prepared = try ProviderClassificationProtocol.prepare(
             profile: profile,
+            configuration: configuration,
             entry: entry,
             allowedLeafTagIDs: ["games", "technology"]
         )
@@ -88,7 +98,7 @@ final class ProviderTestProtocolTests: XCTestCase {
     func testEveryExposedLanguageModelPreparesTestAndClassificationRequests() throws {
         let profiles: [APIKeyProviderProfile] = [
             .init(type: .openAI),
-            .init(type: .openAICompatible, modelIdentifier: "deepseek-chat", customEndpoint: "https://api.deepseek.com/v1"),
+            .init(type: .openAICompatible, customEndpoint: "https://api.deepseek.com/v1"),
             .init(type: .deepSeek),
             .init(type: .gemini),
             .init(type: .anthropic),
@@ -101,9 +111,19 @@ final class ProviderTestProtocolTests: XCTestCase {
         ]
         let entry = EntryEvidence(platform: "youtube", entryID: "entry", surface: .feed, evidence: .init(title: "Deck gameplay"))
         for profile in profiles {
-            XCTAssertEqual(try ProviderTestProtocol.prepare(profile: profile).operation, .generateText, profile.type.rawValue)
+            let modelIdentifier = profile.type.defaultModelIdentifier.isEmpty ? "test-model" : profile.type.defaultModelIdentifier
+            if profile.type.defaultModelIdentifier.isEmpty {
+                XCTAssertThrowsError(try ProviderTestProtocol.prepare(profile: profile), profile.type.rawValue)
+            } else {
+                XCTAssertEqual(try ProviderTestProtocol.prepare(profile: profile).operation, .generateText, profile.type.rawValue)
+            }
             XCTAssertEqual(
-                try ProviderClassificationProtocol.prepare(profile: profile, entry: entry, allowedLeafTagIDs: ["games"]).operation,
+                try ProviderClassificationProtocol.prepare(
+                    profile: profile,
+                    configuration: .init(providerProfileID: profile.id, modelIdentifier: modelIdentifier),
+                    entry: entry,
+                    allowedLeafTagIDs: ["games"]
+                ).operation,
                 .generateText,
                 profile.type.rawValue
             )
@@ -129,7 +149,7 @@ final class ProviderTestProtocolTests: XCTestCase {
     func testEveryLanguageModelBuildsAndContinuesABoundedToolExchange() throws {
         let profiles: [APIKeyProviderProfile] = [
             .init(type: .openAI),
-            .init(type: .openAICompatible, modelIdentifier: "compatible", customEndpoint: "https://api.example.test/v1"),
+            .init(type: .openAICompatible, customEndpoint: "https://api.example.test/v1"),
             .init(type: .deepSeek),
             .init(type: .gemini),
             .init(type: .anthropic),
@@ -144,8 +164,10 @@ final class ProviderTestProtocolTests: XCTestCase {
         let platformProfile = APIKeyProviderProfile(id: "youtube-data", type: .youtubeData)
 
         for profile in profiles {
+            let modelIdentifier = profile.type.defaultModelIdentifier.isEmpty ? "test-model" : profile.type.defaultModelIdentifier
             let prepared = try ProviderToolCallingProtocol.prepare(
                 profile: profile,
+                configuration: .init(providerProfileID: profile.id, modelIdentifier: modelIdentifier),
                 entry: entry,
                 allowedLeafTagIDs: ["games"],
                 toolProfiles: [platformProfile]
@@ -159,6 +181,7 @@ final class ProviderTestProtocolTests: XCTestCase {
             let continued = try ProviderToolCallingProtocol.continueRequest(
                 prepared: prepared,
                 profile: profile,
+                configuration: .init(providerProfileID: profile.id, modelIdentifier: modelIdentifier),
                 turn: turn,
                 results: [.init(id: turn.toolCalls[0].id, name: turn.toolCalls[0].name, content: #"{"ok":true}"#)]
             )
@@ -198,18 +221,34 @@ final class ProviderTestProtocolTests: XCTestCase {
         XCTAssertFalse(result.contains("secret"))
     }
 
-    func testCatalogAllowsOnlySelectedPlatformProfilesAsModelTools() throws {
-        let model = APIKeyProviderProfile(id: "llm-tool-model", type: .deepSeek, externalToolProfileIDs: ["provider-tool-youtube"])
+    func testCatalogAllowsOnlyOneMatchingPlatformProfileForAClassifierLLM() throws {
+        let model = APIKeyProviderProfile(id: "llm-tool-model", type: .deepSeek)
         let youtube = APIKeyProviderProfile(id: "provider-tool-youtube", type: .youtubeData)
         var catalog = WorkspaceCatalog.starter()
         catalog.providerProfiles = [model, youtube]
+        let tree = try XCTUnwrap(catalog.trees.first)
+        let dataset = try XCTUnwrap(catalog.datasets.first)
+        catalog.classifierTypes = [.init(
+            id: "youtube-type",
+            name: "YouTube LLM",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            datasetID: dataset.id,
+            datasetRevision: dataset.revision,
+            applicablePlatformID: "youtube",
+            llmAssistConfiguration: .init(
+                providerProfileID: model.id,
+                modelIdentifier: "deepseek-chat",
+                externalToolProfileID: youtube.id
+            )
+        )]
         XCTAssertNoThrow(try catalog.validate())
 
-        catalog.providerProfiles[0].externalToolProfileIDs = ["missing"]
+        catalog.classifierTypes[0].llmAssistConfiguration?.externalToolProfileID = "missing"
         XCTAssertThrowsError(try catalog.validate())
 
-        catalog.providerProfiles[0].externalToolProfileIDs = []
-        catalog.providerProfiles[1].externalToolProfileIDs = ["llm-tool-model"]
+        catalog.classifierTypes[0].llmAssistConfiguration?.externalToolProfileID = nil
+        catalog.classifierTypes[0].llmAssistConfiguration?.providerProfileID = youtube.id
         XCTAssertThrowsError(try catalog.validate())
     }
 

@@ -17,8 +17,20 @@ public enum ProviderTestProtocol {
         } else {
             throw ProviderTestProtocolError.unsupportedProvider
         }
-        let plan = try DescriptorBackedProviderProtocol(descriptor: descriptor).requestPlan(for: profile, operation: operation)
-        let body = try requestBody(format: plan.bodyFormat, profile: profile, operation: operation)
+        let modelIdentifier = profile.type.defaultModelIdentifier
+        guard !modelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ProviderTestProtocolError.modelRequired
+        }
+        let plan = try DescriptorBackedProviderProtocol(descriptor: descriptor).requestPlan(
+            for: profile,
+            operation: operation,
+            modelIdentifier: modelIdentifier
+        )
+        let body = try requestBody(
+            format: plan.bodyFormat,
+            modelIdentifier: modelIdentifier,
+            operation: operation
+        )
         return .init(plan: plan, operation: operation, prompt: prompt, body: body)
     }
 
@@ -46,10 +58,10 @@ public enum ProviderTestProtocol {
         return .init(content: String(content.prefix(ProviderRequestRecord.maximumContentCharacters)), usage: usage)
     }
 
-    public static func estimatedCost(profile: APIKeyProviderProfile, usage: ProviderTestUsage) -> Double? {
+    public static func estimatedCost(configuration: LLMAssistConfiguration, usage: ProviderTestUsage) -> Double? {
         guard let inputTokens = usage.inputTokens, let outputTokens = usage.outputTokens,
-              let inputRate = profile.inputCostUSDPerMillion,
-              let outputRate = profile.outputCostUSDPerMillion else { return nil }
+              let inputRate = configuration.inputCostUSDPerMillion,
+              let outputRate = configuration.outputCostUSDPerMillion else { return nil }
         return (Double(inputTokens) * inputRate + Double(outputTokens) * outputRate) / 1_000_000
     }
 
@@ -60,24 +72,28 @@ public enum ProviderTestProtocol {
         return components.url?.absoluteString ?? url.deletingPathExtension().absoluteString
     }
 
-    private static func requestBody(format: ProviderRequestBodyFormat, profile: APIKeyProviderProfile, operation: ProviderOperation) throws -> Data {
-        let output = min(maximumOutputTokens, profile.maximumTokens)
+    private static func requestBody(
+        format: ProviderRequestBodyFormat,
+        modelIdentifier: String,
+        operation: ProviderOperation
+    ) throws -> Data {
+        let output = maximumOutputTokens
         let object: [String: Any]
         switch format {
         case .openAIResponses:
-            object = ["model": profile.modelIdentifier, "input": prompt, "max_output_tokens": output]
+            object = ["model": modelIdentifier, "input": prompt, "max_output_tokens": output]
         case .openAIChatCompletions:
-            object = ["model": profile.modelIdentifier, "messages": [["role": "user", "content": prompt]], "max_tokens": output]
+            object = ["model": modelIdentifier, "messages": [["role": "user", "content": prompt]], "max_tokens": output]
         case .anthropicMessages:
-            object = ["model": profile.modelIdentifier, "max_tokens": output, "messages": [["role": "user", "content": prompt]]]
+            object = ["model": modelIdentifier, "max_tokens": output, "messages": [["role": "user", "content": prompt]]]
         case .geminiGenerateContent, .vertexGenerateContent:
             object = ["contents": [["parts": [["text": prompt]]]], "generationConfig": ["maxOutputTokens": output]]
         case .cohereChat:
-            object = ["model": profile.modelIdentifier, "messages": [["role": "user", "content": prompt]], "max_tokens": output]
+            object = ["model": modelIdentifier, "messages": [["role": "user", "content": prompt]], "max_tokens": output]
         case .ollamaChat:
-            object = ["model": profile.modelIdentifier, "messages": [["role": "user", "content": prompt]], "stream": false, "options": ["num_predict": output]]
+            object = ["model": modelIdentifier, "messages": [["role": "user", "content": prompt]], "stream": false, "options": ["num_predict": output]]
         case .embeddingInput:
-            object = ["model": profile.modelIdentifier, "input": [prompt]]
+            object = ["model": modelIdentifier, "input": [prompt]]
         default:
             throw ProviderTestProtocolError.unsupportedProvider
         }
@@ -158,12 +174,14 @@ public struct ProviderTestParsedResponse: Equatable, Sendable {
 
 public enum ProviderTestProtocolError: Error, Equatable, LocalizedError, Sendable {
     case unsupportedProvider
+    case modelRequired
     case missingCredential
     case invalidResponse
 
     public var errorDescription: String? {
         switch self {
         case .unsupportedProvider: return "This provider protocol does not support a safe test request yet."
+        case .modelRequired: return "Select a model in a classifier type before testing this compatible provider connection."
         case .missingCredential: return "Store a provider credential before testing this profile."
         case .invalidResponse: return "The provider test returned an invalid response."
         }

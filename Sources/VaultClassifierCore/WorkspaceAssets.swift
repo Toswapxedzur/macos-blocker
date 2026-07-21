@@ -429,12 +429,74 @@ public enum ClassifierDecisionSource: String, Codable, Sendable, CaseIterable {
     case localModel
 }
 
+/// The one explicit LLM decision configuration a classifier type may use.
+/// It contains no credential material: `providerProfileID` refers to a
+/// separate secure connection whose credential is held by Keychain or the
+/// current process only.
+public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
+    public static let maximumModelIdentifierLength = 256
+    public static let maximumTokenLimit = 1_000_000
+
+    public var providerProfileID: String
+    public var modelIdentifier: String
+    public var maximumTokens: Int
+    /// An optional, matching platform-data connection. It is selected by this
+    /// classifier type rather than by the LLM credential connection, so it can
+    /// never grant every type global tool access.
+    public var externalToolProfileID: String?
+    /// Optional user-supplied USD rates per million provider-reported tokens.
+    /// A missing rate deliberately produces an unavailable cost, not a guess.
+    public var inputCostUSDPerMillion: Double?
+    public var outputCostUSDPerMillion: Double?
+
+    public init(
+        providerProfileID: String,
+        modelIdentifier: String,
+        maximumTokens: Int = 1_024,
+        externalToolProfileID: String? = nil,
+        inputCostUSDPerMillion: Double? = nil,
+        outputCostUSDPerMillion: Double? = nil
+    ) {
+        self.providerProfileID = providerProfileID
+        self.modelIdentifier = modelIdentifier
+        self.maximumTokens = maximumTokens
+        let cleanedToolProfileID = externalToolProfileID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.externalToolProfileID = cleanedToolProfileID.isEmpty ? nil : cleanedToolProfileID
+        self.inputCostUSDPerMillion = inputCostUSDPerMillion
+        self.outputCostUSDPerMillion = outputCostUSDPerMillion
+    }
+
+    public func validate() throws {
+        let cleanedProviderProfileID = providerProfileID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedModelIdentifier = modelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanedProviderProfileID.isEmpty, cleanedProviderProfileID.count <= 128,
+              !cleanedModelIdentifier.isEmpty, cleanedModelIdentifier.count <= Self.maximumModelIdentifierLength,
+              maximumTokens > 0, maximumTokens <= Self.maximumTokenLimit,
+              [inputCostUSDPerMillion, outputCostUSDPerMillion].allSatisfy({ rate in
+                  guard let rate else { return true }
+                  return rate.isFinite && (0...1_000_000).contains(rate)
+              }) else {
+            throw LLMAssistConfigurationError.invalidConfiguration
+        }
+        guard externalToolProfileID?.count ?? 0 <= 128 else {
+            throw LLMAssistConfigurationError.invalidConfiguration
+        }
+    }
+}
+
+public enum LLMAssistConfigurationError: Error, Equatable, LocalizedError, Sendable {
+    case invalidConfiguration
+
+    public var errorDescription: String? {
+        "The LLM-assist configuration is invalid."
+    }
+}
+
 /// A reusable decision brain. It deliberately binds immutable revisions of a
 /// tree and data asset, so a model trained against an older revision cannot be
 /// selected silently after an edit.
 public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     public static let maximumNameLength = 128
-    public static let maximumLLMProfiles = 16
 
     public var id: String
     public var name: String
@@ -448,9 +510,9 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     /// A ready model is optional: a human-only type is valid, while a local
     /// model source is enabled only when this compatible model is selected.
     public var localModelID: String?
-    /// Several configured LLM profiles may be attached for explicit runs.
-    /// Their suggestions never dispatch automatically.
-    public var llmProfileIDs: [String]
+    /// One configured model may be attached for explicit runs. Its credential
+    /// connection stays separate from this classification policy.
+    public var llmAssistConfiguration: LLMAssistConfiguration?
     /// Ordered once by the user. Every available source contributes to a
     /// decision, with relative weights of 3, 2, and 1 in this order.
     public var decisionPriority: [ClassifierDecisionSource]
@@ -465,7 +527,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         datasetRevision: Int,
         applicablePlatformID: String? = nil,
         localModelID: String? = nil,
-        llmProfileIDs: [String] = [],
+        llmAssistConfiguration: LLMAssistConfiguration? = nil,
         decisionPriority: [ClassifierDecisionSource] = [.human, .llmAssist, .localModel],
         updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
     ) {
@@ -478,14 +540,14 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         let cleanedPlatformID = applicablePlatformID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.applicablePlatformID = cleanedPlatformID.isEmpty ? nil : cleanedPlatformID
         self.localModelID = localModelID
-        self.llmProfileIDs = Array(Set(llmProfileIDs)).sorted()
+        self.llmAssistConfiguration = llmAssistConfiguration
         self.decisionPriority = decisionPriority
         self.updatedAtMilliseconds = updatedAtMilliseconds
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, treeID, treeRevision, datasetID, datasetRevision, applicablePlatformID, dataSourcePlatformIDs, localModelID,
-             llmProfileIDs, decisionPriority, updatedAtMilliseconds
+             llmAssistConfiguration, llmProfileIDs, decisionPriority, updatedAtMilliseconds
     }
 
     public init(from decoder: Decoder) throws {
@@ -508,7 +570,10 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
             applicablePlatformID = legacyPlatformIDs.count == 1 ? legacyPlatformIDs[0] : nil
         }
         localModelID = try container.decodeIfPresent(String.self, forKey: .localModelID)
-        llmProfileIDs = Array(Set(try container.decodeIfPresent([String].self, forKey: .llmProfileIDs) ?? [])).sorted()
+        // The former multi-profile selection had no model-specific policy. It
+        // is intentionally ignored rather than recreated as an implicit LLM
+        // attachment; users configure one explicit model again.
+        llmAssistConfiguration = try container.decodeIfPresent(LLMAssistConfiguration.self, forKey: .llmAssistConfiguration)
         decisionPriority = try container.decodeIfPresent([ClassifierDecisionSource].self, forKey: .decisionPriority)
             ?? [.human, .llmAssist, .localModel]
         updatedAtMilliseconds = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMilliseconds)
@@ -525,7 +590,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         try container.encode(datasetRevision, forKey: .datasetRevision)
         try container.encodeIfPresent(applicablePlatformID, forKey: .applicablePlatformID)
         try container.encodeIfPresent(localModelID, forKey: .localModelID)
-        try container.encode(llmProfileIDs, forKey: .llmProfileIDs)
+        try container.encodeIfPresent(llmAssistConfiguration, forKey: .llmAssistConfiguration)
         try container.encode(decisionPriority, forKey: .decisionPriority)
         try container.encode(updatedAtMilliseconds, forKey: .updatedAtMilliseconds)
     }
@@ -921,37 +986,21 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
 
 public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable {
     public static let maximumNameLength = 128
-    public static let maximumModelIdentifierLength = 256
     public static let maximumEndpointLength = 2_048
-    public static let maximumBatchSize = 256
-    public static let maximumTokenLimit = 1_000_000
-    /// A model profile may expose a bounded set of explicitly selected
-    /// platform-data profiles as local external tools.
-    public static let maximumExternalToolProfiles = ExternalPlatformToolProtocol.maximumToolDefinitions
 
     public var id: String
     public var name: String
     public var type: APIKeyProviderType
-    public var modelIdentifier: String
-    public var batchSize: Int
-    public var maximumTokens: Int
     /// An optional endpoint override supports compatible cloud, self-hosted,
-    /// and custom entries. It is configuration only; this source slice makes
-    /// no network dispatch.
+    /// and custom entries. It is connection configuration only; the selected
+    /// LLM model and classification limits belong to `ClassifierTypeAsset`.
     public var customEndpoint: String?
     /// Non-secret protocol settings such as cloud account, region, or API
     /// version. The versioned descriptor controls which keys are allowed.
     public var protocolConfiguration: [String: String]
-    /// Local IDs of platform-data profiles explicitly available to this model
-    /// during a manually started classification. They never imply automatic
-    /// browser collection or provider dispatch.
-    public var externalToolProfileIDs: [String]
-    /// Optional user-supplied USD rates per million provider-reported tokens.
-    /// A missing rate deliberately produces an unavailable cost, not a guess.
-    public var inputCostUSDPerMillion: Double?
-    public var outputCostUSDPerMillion: Double?
     /// Default history is metadata-only. This opt-in permits a bounded test
-    /// prompt and successful response body in the local request record.
+    /// prompt and successful response body in the local request record. It is
+    /// connection privacy, not classifier decision policy.
     public var storesFullRequestRecords: Bool
     public var updatedAtMilliseconds: Int64
 
@@ -959,28 +1008,16 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         id: String = UUID().uuidString,
         name: String? = nil,
         type: APIKeyProviderType,
-        modelIdentifier: String? = nil,
-        batchSize: Int = 1,
-        maximumTokens: Int = 1_024,
         customEndpoint: String? = nil,
         protocolConfiguration: [String: String]? = nil,
-        externalToolProfileIDs: [String] = [],
-        inputCostUSDPerMillion: Double? = nil,
-        outputCostUSDPerMillion: Double? = nil,
         storesFullRequestRecords: Bool = false,
         updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
     ) {
         self.id = id
         self.name = name ?? type.defaultProfileName
         self.type = type
-        self.modelIdentifier = modelIdentifier ?? type.defaultModelIdentifier
-        self.batchSize = batchSize
-        self.maximumTokens = maximumTokens
         self.customEndpoint = customEndpoint
         self.protocolConfiguration = protocolConfiguration ?? ProviderProtocolRegistry.descriptor(for: type).defaultConfiguration()
-        self.externalToolProfileIDs = externalToolProfileIDs
-        self.inputCostUSDPerMillion = inputCostUSDPerMillion
-        self.outputCostUSDPerMillion = outputCostUSDPerMillion
         self.storesFullRequestRecords = storesFullRequestRecords
         self.updatedAtMilliseconds = updatedAtMilliseconds
     }
@@ -988,31 +1025,13 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
     public func validate() throws {
         let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !id.isEmpty, id.count <= 128,
-              !cleanedName.isEmpty, cleanedName.count <= Self.maximumNameLength,
-              batchSize > 0, batchSize <= Self.maximumBatchSize,
-              maximumTokens > 0, maximumTokens <= Self.maximumTokenLimit,
-              externalToolProfileIDs.count <= Self.maximumExternalToolProfiles,
-              Set(externalToolProfileIDs).count == externalToolProfileIDs.count,
-              externalToolProfileIDs.allSatisfy({ !$0.isEmpty && $0.count <= 128 }) else {
+              !cleanedName.isEmpty, cleanedName.count <= Self.maximumNameLength else {
             throw APIKeyProviderProfileError.invalidConfiguration
         }
 
         let descriptor = ProviderProtocolRegistry.descriptor(for: type)
-        if descriptor.supportsLLMConfiguration {
-            let cleanedModel = modelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !cleanedModel.isEmpty, cleanedModel.count <= Self.maximumModelIdentifierLength else {
-                throw APIKeyProviderProfileError.invalidConfiguration
-            }
-        }
-
         let normalizedEndpoint = customEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard normalizedEndpoint?.count ?? 0 <= Self.maximumEndpointLength else {
-            throw APIKeyProviderProfileError.invalidConfiguration
-        }
-        guard [inputCostUSDPerMillion, outputCostUSDPerMillion].allSatisfy({ rate in
-            guard let rate else { return true }
-            return rate.isFinite && (0...1_000_000).contains(rate)
-        }) else {
             throw APIKeyProviderProfileError.invalidConfiguration
         }
         do {
@@ -1051,17 +1070,22 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         // exposed. That keeps old local state from crashing the app without
         // preserving a removed adapter behind a compatibility path.
         name = isRetiredType ? "" : try container.decode(String.self, forKey: .name)
-        modelIdentifier = try container.decodeIfPresent(String.self, forKey: .modelIdentifier) ?? type.defaultModelIdentifier
-        batchSize = try container.decodeIfPresent(Int.self, forKey: .batchSize) ?? 1
-        maximumTokens = try container.decodeIfPresent(Int.self, forKey: .maximumTokens) ?? 1_024
         customEndpoint = try container.decodeIfPresent(String.self, forKey: .customEndpoint)
         protocolConfiguration = try container.decodeIfPresent([String: String].self, forKey: .protocolConfiguration)
             ?? ProviderProtocolRegistry.descriptor(for: type).defaultConfiguration()
-        externalToolProfileIDs = try container.decodeIfPresent([String].self, forKey: .externalToolProfileIDs) ?? []
-        inputCostUSDPerMillion = try container.decodeIfPresent(Double.self, forKey: .inputCostUSDPerMillion)
-        outputCostUSDPerMillion = try container.decodeIfPresent(Double.self, forKey: .outputCostUSDPerMillion)
         storesFullRequestRecords = try container.decodeIfPresent(Bool.self, forKey: .storesFullRequestRecords) ?? false
         updatedAtMilliseconds = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMilliseconds) ?? WorkspaceCatalog.now()
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(type.rawValue, forKey: .type)
+        try container.encodeIfPresent(customEndpoint, forKey: .customEndpoint)
+        try container.encode(protocolConfiguration, forKey: .protocolConfiguration)
+        try container.encode(storesFullRequestRecords, forKey: .storesFullRequestRecords)
+        try container.encode(updatedAtMilliseconds, forKey: .updatedAtMilliseconds)
     }
 }
 
@@ -1226,14 +1250,28 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                   (classifierType.applicablePlatformID == nil || bindings.contains(where: { binding in
                       binding.id == classifierType.applicablePlatformID && binding.treeID == tree.id && binding.datasetID == dataset.id
                   })),
-                  classifierType.llmProfileIDs.count <= ClassifierTypeAsset.maximumLLMProfiles,
-                  Set(classifierType.llmProfileIDs).count == classifierType.llmProfileIDs.count,
-                  classifierType.llmProfileIDs.allSatisfy({ profileID in
-                      providerProfiles.contains(where: { $0.id == profileID && $0.type.supportsLLMConfiguration })
-                  }),
                   classifierType.decisionPriority.count == ClassifierDecisionSource.allCases.count,
                   Set(classifierType.decisionPriority) == Set(ClassifierDecisionSource.allCases) else {
                 throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
+            }
+            if let llmAssist = classifierType.llmAssistConfiguration {
+                do {
+                    try llmAssist.validate()
+                } catch {
+                    throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
+                }
+                guard providerProfiles.contains(where: {
+                    $0.id == llmAssist.providerProfileID && $0.type.supportsLLMConfiguration
+                }) else {
+                    throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
+                }
+                if let toolProfileID = llmAssist.externalToolProfileID {
+                    guard let applicablePlatformID = classifierType.applicablePlatformID,
+                          let expectedToolType = CollectionPlatformRegistry.definition(for: applicablePlatformID)?.apiProviderType,
+                          providerProfiles.contains(where: { $0.id == toolProfileID && $0.type == expectedToolType }) else {
+                        throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
+                    }
+                }
             }
             if let localModelID = classifierType.localModelID {
                 guard let model = models.first(where: { $0.id == localModelID }),
@@ -1248,7 +1286,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             }
             }
             let usesLocalModel = classifierType.localModelID != nil
-            let usesLLMAssist = !classifierType.llmProfileIDs.isEmpty
+            let usesLLMAssist = classifierType.llmAssistConfiguration != nil
             let applicablePlatform = classifierType.applicablePlatformID.flatMap(CollectionPlatformRegistry.definition(for:))
             guard (!usesLocalModel || applicablePlatform?.supportsLocalModel == true),
                   (!usesLLMAssist || applicablePlatform?.supportsLLMAssist == true) else {
@@ -1273,7 +1311,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             guard (platform.supportsLocalModel ||
                    classifierType.localModelID == nil),
                   (platform.supportsLLMAssist ||
-                   classifierType.llmProfileIDs.isEmpty) else {
+                   classifierType.llmAssistConfiguration == nil) else {
                 throw WorkspaceCatalogError.incompatibleActiveClassifierType(classifierTypeID)
             }
             if let localModelID = classifierType.localModelID {
@@ -1291,17 +1329,6 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             do {
                 try profile.validate()
             } catch {
-                throw WorkspaceCatalogError.invalidProviderProfile(profile.id)
-            }
-            let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
-            guard (descriptor.supportsLLMConfiguration || profile.externalToolProfileIDs.isEmpty),
-                  profile.externalToolProfileIDs.allSatisfy({ toolProfileID in
-                      providerProfiles.contains(where: { candidate in
-                          candidate.id == toolProfileID &&
-                          !ProviderProtocolRegistry.descriptor(for: candidate.type).supportsLLMConfiguration &&
-                          ProviderProtocolRegistry.descriptor(for: candidate.type).requestFormats.contains(where: { $0.operation == .readPublicContent })
-                      })
-                  }) else {
                 throw WorkspaceCatalogError.invalidProviderProfile(profile.id)
             }
         }
@@ -1427,17 +1454,6 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     /// a changed tree or dataset.
     public mutating func reconcileClassifierTypes() {
         providerProfiles = providerProfiles.filter { (try? $0.validate()) != nil }
-        let validExternalToolProfileIDs = Set(providerProfiles.compactMap { profile -> String? in
-            let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
-            return !descriptor.supportsLLMConfiguration &&
-                descriptor.requestFormats.contains(where: { $0.operation == .readPublicContent })
-                ? profile.id
-                : nil
-        })
-        for index in providerProfiles.indices where ProviderProtocolRegistry.descriptor(for: providerProfiles[index].type).supportsLLMConfiguration {
-            providerProfiles[index].externalToolProfileIDs = providerProfiles[index].externalToolProfileIDs
-                .filter(validExternalToolProfileIDs.contains)
-        }
         models = models.compactMap { model in
             var reconciled = model
             let eligiblePlatformIDs = model.effectiveTrainingPlatformIDs.filter {
@@ -1471,11 +1487,22 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             let applicablePlatform = reconciled.applicablePlatformID.flatMap(CollectionPlatformRegistry.definition(for:))
             let supportsLocalModel = applicablePlatform?.supportsLocalModel == true
             let supportsLLMAssist = applicablePlatform?.supportsLLMAssist == true
-            reconciled.llmProfileIDs = reconciled.llmProfileIDs.filter { profileID in
-                providerProfiles.contains(where: { $0.id == profileID && $0.type.supportsLLMConfiguration })
-            }
-            if !supportsLLMAssist {
-                reconciled.llmProfileIDs = []
+            if let llmAssist = reconciled.llmAssistConfiguration,
+               supportsLLMAssist,
+               providerProfiles.contains(where: { $0.id == llmAssist.providerProfileID && $0.type.supportsLLMConfiguration }),
+               (try? llmAssist.validate()) != nil {
+                let expectedToolType = reconciled.applicablePlatformID
+                    .flatMap(CollectionPlatformRegistry.definition(for:))?.apiProviderType
+                if let toolProfileID = llmAssist.externalToolProfileID,
+                   providerProfiles.contains(where: { $0.id == toolProfileID && $0.type == expectedToolType }) {
+                    reconciled.llmAssistConfiguration = llmAssist
+                } else {
+                    var withoutUnavailableTool = llmAssist
+                    withoutUnavailableTool.externalToolProfileID = nil
+                    reconciled.llmAssistConfiguration = withoutUnavailableTool
+                }
+            } else {
+                reconciled.llmAssistConfiguration = nil
             }
             if let modelID = reconciled.localModelID {
                 let compatible = models.contains(where: { model in
@@ -1514,7 +1541,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             if (!platform.supportsLocalModel &&
                 classifierType.localModelID != nil) ||
                 (!platform.supportsLLMAssist &&
-                !classifierType.llmProfileIDs.isEmpty) {
+                classifierType.llmAssistConfiguration != nil) {
                 bindings[index].activeClassifierTypeID = nil
                 bindings[index].activeModelID = nil
                 continue
