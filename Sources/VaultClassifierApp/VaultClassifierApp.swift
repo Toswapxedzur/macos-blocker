@@ -147,6 +147,12 @@ final class VaultClassifierViewModel: ObservableObject {
     /// callbacks do not otherwise guarantee an `NSAlert` remains retained.
     private var activeProviderCredentialAlert: NSAlert?
     private var testingProviderProfileIDs = Set<String>()
+    /// Model names are fetched from the selected provider on demand and remain
+    /// in memory only. They are not part of a credential connection or the
+    /// workspace catalog.
+    private var providerModelCatalogs = [String: [String]]()
+    private var providerModelCatalogErrors = [String: String]()
+    private var loadingProviderModelProfileIDs = Set<String>()
     @Published private(set) var providerClassificationRunning = false
     @Published private(set) var creatorAvatarBackfillRunning = false
     @Published private(set) var creatorAvatarBackfillFoundCount: Int?
@@ -507,6 +513,82 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
+    /// Model identifiers are fetched only after an explicit user action using
+    /// the selected connection's credential. The response remains transient:
+    /// the classifier type persists just the chosen identifier.
+    func refreshProviderModelCatalog(profileID: String) {
+        guard !loadingProviderModelProfileIDs.contains(profileID) else { return }
+        do {
+            guard let profile = localState?.workspaceCatalog.providerProfiles.first(where: { $0.id == profileID }) else {
+                throw WebBridgeInputError.invalidChoice("provider profile")
+            }
+            let plan = try ProviderModelCatalogProtocol.prepare(profile: profile)
+            loadingProviderModelProfileIDs.insert(profileID)
+            providerModelCatalogErrors.removeValue(forKey: profileID)
+            issue = nil
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    let credential = try self.providerCredential(for: profileID)
+                    let response = try await self.performProviderRequest(plan: plan, body: nil, credential: credential, timeout: 30)
+                    self.providerModelCatalogs[profileID] = try ProviderModelCatalogProtocol.parse(response.data, providerType: profile.type)
+                    self.issue = nil
+                } catch {
+                    self.providerModelCatalogs.removeValue(forKey: profileID)
+                    self.providerModelCatalogErrors[profileID] = error.localizedDescription
+                    self.issue = error.localizedDescription
+                }
+                self.loadingProviderModelProfileIDs.remove(profileID)
+                self.onWebStateChange?()
+            }
+        } catch {
+            providerModelCatalogErrors[profileID] = error.localizedDescription
+            issue = error.localizedDescription
+        }
+    }
+
+    private func llmAllowedTagIDs(
+        taxonomy: Taxonomy,
+        configuration: LLMAssistConfiguration
+    ) -> Set<String> {
+        if configuration.restrictToLeafTags {
+            return taxonomy.predictableLeafIDs
+        }
+        return Set(taxonomy.nodes.values.filter(\.predictable).map(\.id))
+    }
+
+    private func outputTokensUsedToday(
+        in catalog: WorkspaceCatalog,
+        classifierTypeID: String,
+        now: Date = Date()
+    ) -> Int {
+        let start = Calendar.current.startOfDay(for: now)
+        let startMilliseconds = Int64(start.timeIntervalSince1970 * 1_000)
+        return catalog.providerRequestRecords.reduce(into: 0) { total, record in
+            guard record.classifierTypeID == classifierTypeID,
+                  record.outcome == "succeeded",
+                  record.createdAtMilliseconds >= startMilliseconds else {
+                return
+            }
+            total += max(0, record.outputTokens ?? 0)
+        }
+    }
+
+    private func remainingLLMOutputTokens(
+        in catalog: WorkspaceCatalog,
+        classifierTypeID: String,
+        configuration: LLMAssistConfiguration
+    ) throws -> Int {
+        let remaining = configuration.dailyOutputTokenLimit - outputTokensUsedToday(
+            in: catalog,
+            classifierTypeID: classifierTypeID
+        )
+        guard remaining > 0 else {
+            throw WebBridgeInputError.invalidChoice("daily output token budget")
+        }
+        return min(ProviderClassificationProtocol.maximumOutputTokens, remaining)
+    }
+
     /// Generic provider classification is intentionally available only from
     /// this manual inspector action. Shared-hub/browser requests always call
     /// the coordinator's local dispatch and can never enter this method.
@@ -524,13 +606,19 @@ final class VaultClassifierViewModel: ObservableObject {
                 throw WebBridgeInputError.invalidChoice("manual LLM classifier type")
             }
             let taxonomy = try tree.inferenceTaxonomy()
-            let allowedTagIDs = taxonomy.predictableLeafIDs
+            let allowedTagIDs = llmAllowedTagIDs(taxonomy: taxonomy, configuration: llmAssist)
+            let outputTokenLimit = try remainingLLMOutputTokens(
+                in: catalog,
+                classifierTypeID: classifierType.id,
+                configuration: llmAssist
+            )
             let entry = currentManualEntry()
             let recordPlan = try ProviderClassificationProtocol.prepare(
                 profile: profile,
                 configuration: llmAssist,
                 entry: entry,
-                allowedLeafTagIDs: allowedTagIDs
+                allowedTagIDs: allowedTagIDs,
+                maximumOutputTokens: outputTokenLimit
             )
             providerClassificationRunning = true
             issue = nil
@@ -543,10 +631,15 @@ final class VaultClassifierViewModel: ObservableObject {
                         configuration: llmAssist,
                         entry: entry,
                         allowedTagIDs: allowedTagIDs,
-                        catalog: catalog
+                        catalog: catalog,
+                        maximumOutputTokens: outputTokenLimit
                     )
                     let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
-                    let labelIDs = try ProviderClassificationProtocol.parseLabelIDs(run.content, allowedLeafTagIDs: allowedTagIDs)
+                    let labelIDs = try ProviderClassificationProtocol.parseLabelIDs(
+                        run.content,
+                        allowedTagIDs: allowedTagIDs,
+                        maximumTagCount: llmAssist.maximumTagCount
+                    )
                     self.result = ProviderClassificationProtocol.result(
                         entry: entry,
                         classifierType: classifierType,
@@ -573,7 +666,8 @@ final class VaultClassifierViewModel: ObservableObject {
                         statusCode: run.statusCode,
                         durationMilliseconds: duration,
                         inputTokens: run.usage.inputTokens,
-                        outputTokens: run.usage.outputTokens,
+                        outputTokens: run.usage.outputTokens ?? outputTokenLimit,
+                        classifierTypeID: classifierType.id,
                         outcome: "succeeded",
                         requestContent: profile.storesFullRequestRecords ? run.prompt : nil,
                         responseContent: profile.storesFullRequestRecords ? run.content : nil
@@ -592,6 +686,7 @@ final class VaultClassifierViewModel: ObservableObject {
                         durationMilliseconds: duration,
                         inputTokens: nil,
                         outputTokens: nil,
+                        classifierTypeID: classifierType.id,
                         outcome: "failed"
                     ))
                     self.issue = error.localizedDescription
@@ -625,12 +720,24 @@ final class VaultClassifierViewModel: ObservableObject {
         configuration: LLMAssistConfiguration,
         entry: EntryEvidence,
         allowedTagIDs: Set<String>,
-        catalog: WorkspaceCatalog
+        catalog: WorkspaceCatalog,
+        maximumOutputTokens: Int
     ) async throws -> ProviderClassificationRun {
         let mainCredential = try providerCredential(for: profile.id)
-        let selectedTools = configuration.externalToolProfileID
-            .flatMap { selectedID in catalog.providerProfiles.first(where: { $0.id == selectedID }) }
-            .map { [$0] } ?? []
+        let expectedToolType = CollectionPlatformRegistry.definition(for: entry.platform)?.apiProviderType
+        let selectedTools: [APIKeyProviderProfile]
+        if configuration.externalToolEnabled, let expectedToolType {
+            selectedTools = catalog.providerProfiles
+                .filter { $0.type == expectedToolType }
+                .sorted { lhs, rhs in
+                    if lhs.updatedAtMilliseconds == rhs.updatedAtMilliseconds { return lhs.id < rhs.id }
+                    return lhs.updatedAtMilliseconds > rhs.updatedAtMilliseconds
+                }
+                .prefix(1)
+                .map { $0 }
+        } else {
+            selectedTools = []
+        }
         let readyTools = selectedTools.first { toolProfile in
             let descriptor = ProviderProtocolRegistry.descriptor(for: toolProfile.type)
             guard !descriptor.supportsLLMConfiguration,
@@ -643,7 +750,8 @@ final class VaultClassifierViewModel: ObservableObject {
                 profile: profile,
                 configuration: configuration,
                 entry: entry,
-                allowedLeafTagIDs: allowedTagIDs
+                allowedTagIDs: allowedTagIDs,
+                maximumOutputTokens: maximumOutputTokens
             )
             let response = try await performProviderRequest(plan: request.plan, body: request.body, credential: mainCredential, timeout: 30)
             let parsed = try ProviderTestProtocol.parseResponse(response.data, format: request.plan.bodyFormat, operation: request.operation)
@@ -654,17 +762,20 @@ final class VaultClassifierViewModel: ObservableObject {
             profile: profile,
             configuration: configuration,
             entry: entry,
-            allowedLeafTagIDs: allowedTagIDs,
-            toolProfiles: readyTools
+            allowedTagIDs: allowedTagIDs,
+            toolProfiles: readyTools,
+            maximumOutputTokens: maximumOutputTokens
         )
         var totalInputTokens: Int?
         var totalOutputTokens: Int?
         var totalToolCalls = 0
+        var remainingOutputTokens = maximumOutputTokens
         for _ in 0..<3 {
             let response = try await performProviderRequest(plan: request.plan, body: request.body, credential: mainCredential, timeout: 30)
             let turn = try ProviderToolCallingProtocol.parseResponse(response.data, format: request.plan.bodyFormat)
             totalInputTokens = addingTokenUsage(totalInputTokens, turn.usage.inputTokens)
             totalOutputTokens = addingTokenUsage(totalOutputTokens, turn.usage.outputTokens)
+            remainingOutputTokens -= turn.usage.outputTokens ?? request.maximumOutputTokens
             guard !turn.toolCalls.isEmpty else {
                 return .init(
                     prompt: request.prompt,
@@ -672,6 +783,9 @@ final class VaultClassifierViewModel: ObservableObject {
                     usage: .init(inputTokens: totalInputTokens, outputTokens: totalOutputTokens),
                     statusCode: response.response.statusCode
                 )
+            }
+            guard remainingOutputTokens > 0 else {
+                throw WebBridgeInputError.invalidChoice("remaining daily output token budget")
             }
             guard totalToolCalls + turn.toolCalls.count <= 4 else {
                 throw ProviderToolCallingProtocolError.invalidToolContinuation
@@ -686,7 +800,8 @@ final class VaultClassifierViewModel: ObservableObject {
                 profile: profile,
                 configuration: configuration,
                 turn: turn,
-                results: results
+                results: results,
+                maximumOutputTokens: min(ProviderToolCallingProtocol.maximumOutputTokens, remainingOutputTokens)
             )
         }
         throw ProviderToolCallingProtocolError.invalidToolContinuation
@@ -785,7 +900,19 @@ final class VaultClassifierViewModel: ObservableObject {
     private func appendProviderTestRecord(_ record: ProviderRequestRecord) throws {
         guard var catalog = localState?.workspaceCatalog else { return }
         catalog.providerRequestRecords.insert(record, at: 0)
-        catalog.providerRequestRecords = Array(catalog.providerRequestRecords.prefix(100))
+        // The daily LLM allowance is calculated from successful records. Keep
+        // every current-day classified output while trimming unrelated history;
+        // otherwise a long day could discard its own accounting and bypass the
+        // configured budget.
+        let todayStartMilliseconds = Int64(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970 * 1_000)
+        let budgetRecords = catalog.providerRequestRecords.filter {
+            $0.classifierTypeID != nil &&
+                $0.outcome == "succeeded" &&
+                $0.createdAtMilliseconds >= todayStartMilliseconds
+        }
+        let budgetRecordIDs = Set(budgetRecords.map(\.id))
+        let otherRecords = catalog.providerRequestRecords.filter { !budgetRecordIDs.contains($0.id) }
+        catalog.providerRequestRecords = budgetRecords + Array(otherRecords.prefix(100))
         if record.outcome == "succeeded" {
             catalog.tokenUsage.insert(.init(
                 provider: record.provider,
@@ -914,12 +1041,9 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             catalog.providerProfiles.removeAll(where: { $0.id == profileID })
             for index in catalog.classifierTypes.indices {
-                guard var llmAssist = catalog.classifierTypes[index].llmAssistConfiguration else { continue }
+                guard let llmAssist = catalog.classifierTypes[index].llmAssistConfiguration else { continue }
                 if llmAssist.providerProfileID == profileID {
                     catalog.classifierTypes[index].llmAssistConfiguration = nil
-                } else if llmAssist.externalToolProfileID == profileID {
-                    llmAssist.externalToolProfileID = nil
-                    catalog.classifierTypes[index].llmAssistConfiguration = llmAssist
                 }
             }
             catalog.providerRequestRecords.removeAll(where: { $0.profileID == profileID })
@@ -1134,8 +1258,12 @@ final class VaultClassifierViewModel: ObservableObject {
         localModelID: String?,
         llmProviderProfileID: String?,
         llmModelIdentifier: String?,
-        llmMaximumTokens: String?,
-        llmExternalToolProfileID: String?,
+        llmDailyOutputTokenLimit: String?,
+        llmBatchSize: String?,
+        llmMaximumTagCount: String?,
+        llmRestrictToLeafTags: Bool,
+        llmWebSearchEnabled: Bool,
+        llmExternalToolEnabled: Bool,
         priority: [ClassifierDecisionSource]
     ) {
         do {
@@ -1163,26 +1291,41 @@ final class VaultClassifierViewModel: ObservableObject {
             if supportsLLMAssist, !cleanedLLMProviderID.isEmpty {
                 guard catalog.providerProfiles.contains(where: {
                     $0.id == cleanedLLMProviderID && $0.type.supportsLLMConfiguration
-                }), let llmModelIdentifier, let llmMaximumTokens else {
+                }), let profile = catalog.providerProfiles.first(where: { $0.id == cleanedLLMProviderID }),
+                  let llmModelIdentifier, let llmDailyOutputTokenLimit,
+                  let llmBatchSize, let llmMaximumTagCount else {
                     throw WebBridgeInputError.invalidChoice("LLM assist")
                 }
                 let cleanedLLMModelIdentifier = llmModelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
-                let cleanedToolProfileID = llmExternalToolProfileID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                if !cleanedToolProfileID.isEmpty {
-                    guard let expectedToolType = selectedDefinition.apiProviderType,
-                          catalog.providerProfiles.contains(where: { $0.id == cleanedToolProfileID && $0.type == expectedToolType }) else {
-                        throw WebBridgeInputError.invalidChoice("LLM platform-data connection")
+                guard !cleanedLLMModelIdentifier.isEmpty else {
+                    throw WebBridgeInputError.invalidChoice("LLM model")
+                }
+                if profile.type != .custom {
+                    guard providerModelCatalogs[profile.id]?.contains(cleanedLLMModelIdentifier) == true else {
+                        throw WebBridgeInputError.invalidChoice("a model fetched from this provider")
                     }
                 }
                 let configuration = LLMAssistConfiguration(
                     providerProfileID: cleanedLLMProviderID,
                     modelIdentifier: cleanedLLMModelIdentifier,
-                    maximumTokens: try providerPositiveInteger(
-                        llmMaximumTokens,
-                        maximum: LLMAssistConfiguration.maximumTokenLimit,
-                        label: "LLM maximum tokens"
+                    dailyOutputTokenLimit: try providerPositiveInteger(
+                        llmDailyOutputTokenLimit,
+                        maximum: LLMAssistConfiguration.maximumDailyOutputTokenLimit,
+                        label: "LLM daily output token limit"
                     ),
-                    externalToolProfileID: cleanedToolProfileID.isEmpty ? nil : cleanedToolProfileID
+                    batchSize: try providerPositiveInteger(
+                        llmBatchSize,
+                        maximum: LLMAssistConfiguration.maximumBatchSize,
+                        label: "LLM batch size"
+                    ),
+                    maximumTagCount: try providerPositiveInteger(
+                        llmMaximumTagCount,
+                        maximum: EntryEvidenceValidator.tagLimit,
+                        label: "LLM maximum tag count"
+                    ),
+                    restrictToLeafTags: llmRestrictToLeafTags,
+                    webSearchEnabled: profile.type == .openAI && llmWebSearchEnabled,
+                    externalToolEnabled: selectedDefinition.apiProviderType != nil && llmExternalToolEnabled
                 )
                 try configuration.validate()
                 selectedLLMAssist = configuration
@@ -1858,12 +2001,18 @@ final class VaultClassifierViewModel: ObservableObject {
                 )
             )
             let taxonomy = try tree.inferenceTaxonomy()
-            let allowedTagIDs = taxonomy.predictableLeafIDs
+            let allowedTagIDs = llmAllowedTagIDs(taxonomy: taxonomy, configuration: llmAssist)
+            let outputTokenLimit = try remainingLLMOutputTokens(
+                in: catalog,
+                classifierTypeID: classifierType.id,
+                configuration: llmAssist
+            )
             let recordPlan = try ProviderClassificationProtocol.prepare(
                 profile: profile,
                 configuration: llmAssist,
                 entry: entry,
-                allowedLeafTagIDs: allowedTagIDs
+                allowedTagIDs: allowedTagIDs,
+                maximumOutputTokens: outputTokenLimit
             )
             providerClassificationRunning = true
             issue = nil
@@ -1876,10 +2025,15 @@ final class VaultClassifierViewModel: ObservableObject {
                         configuration: llmAssist,
                         entry: entry,
                         allowedTagIDs: allowedTagIDs,
-                        catalog: catalog
+                        catalog: catalog,
+                        maximumOutputTokens: outputTokenLimit
                     )
                     let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
-                    let labelIDs = try ProviderClassificationProtocol.parseLabelIDs(run.content, allowedLeafTagIDs: allowedTagIDs)
+                    let labelIDs = try ProviderClassificationProtocol.parseLabelIDs(
+                        run.content,
+                        allowedTagIDs: allowedTagIDs,
+                        maximumTagCount: llmAssist.maximumTagCount
+                    )
                     try self.recordLLMCreatorClassification(
                         typeID: classifierType.id,
                         creatorID: representative.creatorID,
@@ -1897,7 +2051,8 @@ final class VaultClassifierViewModel: ObservableObject {
                         statusCode: run.statusCode,
                         durationMilliseconds: duration,
                         inputTokens: run.usage.inputTokens,
-                        outputTokens: run.usage.outputTokens,
+                        outputTokens: run.usage.outputTokens ?? outputTokenLimit,
+                        classifierTypeID: classifierType.id,
                         outcome: "succeeded",
                         requestContent: profile.storesFullRequestRecords ? run.prompt : nil,
                         responseContent: profile.storesFullRequestRecords ? run.content : nil
@@ -1916,11 +2071,166 @@ final class VaultClassifierViewModel: ObservableObject {
                         durationMilliseconds: duration,
                         inputTokens: nil,
                         outputTokens: nil,
+                        classifierTypeID: classifierType.id,
                         outcome: "failed"
                     ))
                     self.issue = error.localizedDescription
                 }
                 self.providerClassificationRunning = false
+                self.onWebStateChange?()
+            }
+        } catch {
+            issue = error.localizedDescription
+        }
+    }
+
+    /// Runs one bounded request for each currently unclassified creator. A
+    /// provider response without usage metadata consumes its requested cap so
+    /// the persisted daily budget stays safe and visible.
+    func classifyCreatorBatchWithLLM(typeID: String) {
+        guard !providerClassificationRunning else { return }
+        do {
+            guard let catalog = localState?.workspaceCatalog,
+                  let classifierType = catalog.classifierTypes.first(where: { $0.id == typeID }),
+                  let configuration = classifierType.llmAssistConfiguration,
+                  let profile = catalog.providerProfiles.first(where: { $0.id == configuration.providerProfileID }),
+                  let tree = catalog.trees.first(where: { $0.id == classifierType.treeID }),
+                  let dataset = catalog.datasets.first(where: { $0.id == classifierType.datasetID }),
+                  let platformID = classifierType.applicablePlatformID else {
+                throw WebBridgeInputError.invalidChoice("creator LLM classifier type")
+            }
+            let classifiedCreatorIDs = Set(dataset.creatorClassifications.compactMap { record -> String? in
+                guard record.classifierTypeID == classifierType.id,
+                      record.platformID == platformID,
+                      record.origin == .llmAssist else { return nil }
+                return record.creatorID
+            })
+            let representatives = Dictionary(grouping: dataset.collectedEntries.filter {
+                $0.platformID == platformID && !$0.creatorID.isEmpty && !$0.creatorName.isEmpty
+            }, by: \.creatorID)
+                .compactMap { creatorID, entries -> (String, CollectedPlatformEntry)? in
+                    guard !classifiedCreatorIDs.contains(creatorID),
+                          let representative = entries.max(by: { lhs, rhs in
+                              if lhs.lastObservedAtMilliseconds == rhs.lastObservedAtMilliseconds { return lhs.id < rhs.id }
+                              return lhs.lastObservedAtMilliseconds < rhs.lastObservedAtMilliseconds
+                          }) else { return nil }
+                    return (creatorID, representative)
+                }
+                .sorted { lhs, rhs in
+                    let comparison = lhs.1.creatorName.localizedCaseInsensitiveCompare(rhs.1.creatorName)
+                    return comparison == .orderedSame ? lhs.0 < rhs.0 : comparison == .orderedAscending
+                }
+                .prefix(configuration.batchSize)
+            guard !representatives.isEmpty else {
+                throw WebBridgeInputError.invalidChoice("unclassified creators")
+            }
+            let taxonomy = try tree.inferenceTaxonomy()
+            let allowedTagIDs = llmAllowedTagIDs(taxonomy: taxonomy, configuration: configuration)
+            var remainingOutputTokens = configuration.dailyOutputTokenLimit - outputTokensUsedToday(
+                in: catalog,
+                classifierTypeID: classifierType.id
+            )
+            guard remainingOutputTokens > 0 else {
+                throw WebBridgeInputError.invalidChoice("daily output token budget")
+            }
+            providerClassificationRunning = true
+            issue = nil
+            Task { [weak self] in
+                guard let self else { return }
+                var successCount = 0
+                var firstFailure: Error?
+                for (_, representative) in representatives {
+                    guard remainingOutputTokens > 0 else { break }
+                    let evidenceTitles = dataset.collectedEntries
+                        .filter { $0.platformID == platformID && $0.creatorID == representative.creatorID }
+                        .sorted { lhs, rhs in
+                            if lhs.lastObservedAtMilliseconds == rhs.lastObservedAtMilliseconds { return lhs.id < rhs.id }
+                            return lhs.lastObservedAtMilliseconds > rhs.lastObservedAtMilliseconds
+                        }
+                        .prefix(25)
+                        .map(\.title)
+                        .joined(separator: "\n")
+                    let entry = EntryEvidence(
+                        platform: platformID,
+                        sourceID: representative.creatorID,
+                        surface: .page,
+                        evidence: .init(
+                            title: String("Creator: \(representative.creatorName)".prefix(EntryEvidenceValidator.titleLimit)),
+                            text: String(evidenceTitles.prefix(EntryEvidenceValidator.textLimit))
+                        )
+                    )
+                    let outputTokenLimit = min(ProviderClassificationProtocol.maximumOutputTokens, remainingOutputTokens)
+                    let startedAt = Date()
+                    var recordPlan: ProviderTestPreparedRequest?
+                    do {
+                        recordPlan = try ProviderClassificationProtocol.prepare(
+                            profile: profile,
+                            configuration: configuration,
+                            entry: entry,
+                            allowedTagIDs: allowedTagIDs,
+                            maximumOutputTokens: outputTokenLimit
+                        )
+                        let run = try await self.runProviderClassification(
+                            profile: profile,
+                            configuration: configuration,
+                            entry: entry,
+                            allowedTagIDs: allowedTagIDs,
+                            catalog: catalog,
+                            maximumOutputTokens: outputTokenLimit
+                        )
+                        let labelIDs = try ProviderClassificationProtocol.parseLabelIDs(
+                            run.content,
+                            allowedTagIDs: allowedTagIDs,
+                            maximumTagCount: configuration.maximumTagCount
+                        )
+                        try self.recordLLMCreatorClassification(
+                            typeID: classifierType.id,
+                            creatorID: representative.creatorID,
+                            platformID: platformID,
+                            creatorName: representative.creatorName,
+                            labelIDs: labelIDs
+                        )
+                        let recordedOutputTokens = run.usage.outputTokens ?? outputTokenLimit
+                        remainingOutputTokens -= max(0, recordedOutputTokens)
+                        try self.appendProviderTestRecord(.init(
+                            profileID: profile.id,
+                            provider: profile.type.rawValue,
+                            model: configuration.modelIdentifier,
+                            operation: "classify-creator-batch",
+                            endpoint: ProviderTestProtocol.safeEndpoint(recordPlan!.plan.url),
+                            method: recordPlan!.plan.method,
+                            statusCode: run.statusCode,
+                            durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
+                            inputTokens: run.usage.inputTokens,
+                            outputTokens: recordedOutputTokens,
+                            classifierTypeID: classifierType.id,
+                            outcome: "succeeded",
+                            requestContent: profile.storesFullRequestRecords ? run.prompt : nil,
+                            responseContent: profile.storesFullRequestRecords ? run.content : nil
+                        ))
+                        successCount += 1
+                    } catch {
+                        firstFailure = firstFailure ?? error
+                        if let recordPlan {
+                            try? self.appendProviderTestRecord(.init(
+                                profileID: profile.id,
+                                provider: profile.type.rawValue,
+                                model: configuration.modelIdentifier,
+                                operation: "classify-creator-batch",
+                                endpoint: ProviderTestProtocol.safeEndpoint(recordPlan.plan.url),
+                                method: recordPlan.plan.method,
+                                statusCode: nil,
+                                durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
+                                inputTokens: nil,
+                                outputTokens: nil,
+                                classifierTypeID: classifierType.id,
+                                outcome: "failed"
+                            ))
+                        }
+                    }
+                }
+                self.providerClassificationRunning = false
+                self.issue = successCount == 0 ? firstFailure?.localizedDescription : nil
                 self.onWebStateChange?()
             }
         } catch {
@@ -1980,14 +2290,24 @@ final class VaultClassifierViewModel: ObservableObject {
         let cleanedCreatorName = creatorName.trimmingCharacters(in: .whitespacesAndNewlines)
         let positiveLabels = Array(Set(tagIDs)).sorted()
         let negativeLabels = Array(Set(negativeTagIDs)).sorted()
-        let availableLeafIDs = try tree.inferenceTaxonomy().predictableLeafIDs
+        let taxonomy = try tree.inferenceTaxonomy()
+        let availableTagIDs: Set<String>
+        if origin == .llmAssist,
+           classifierType.llmAssistConfiguration?.restrictToLeafTags == false {
+            availableTagIDs = Set(taxonomy.nodes.values.filter(\.predictable).map(\.id))
+        } else {
+            availableTagIDs = taxonomy.predictableLeafIDs
+        }
+        let maximumTagCount = origin == .llmAssist
+            ? classifierType.llmAssistConfiguration?.maximumTagCount ?? CreatorClassificationRecord.maximumTagIDs
+            : CreatorClassificationRecord.maximumTagIDs
         guard !cleanedCreatorID.isEmpty,
               !cleanedCreatorName.isEmpty,
               !positiveLabels.isEmpty || !negativeLabels.isEmpty,
-              positiveLabels.count + negativeLabels.count <= CreatorClassificationRecord.maximumTagIDs,
+              positiveLabels.count + negativeLabels.count <= maximumTagCount,
               Set(positiveLabels).isDisjoint(with: negativeLabels),
-              positiveLabels.allSatisfy(availableLeafIDs.contains),
-              negativeLabels.allSatisfy(availableLeafIDs.contains) else {
+              positiveLabels.allSatisfy(availableTagIDs.contains),
+              negativeLabels.allSatisfy(availableTagIDs.contains) else {
             throw WebBridgeInputError.invalidChoice("creator tag IDs")
         }
         _ = catalog.datasets[datasetIndex].upsertCreatorClassification(.init(
@@ -2574,14 +2894,14 @@ final class VaultClassifierViewModel: ObservableObject {
             "results": auditResults,
         ]
         let catalog = inspectCatalog
-        let assets: [String: Any] = [
-            "trees": catalog.trees.map { tree in
+        var assets = [String: Any]()
+        assets["trees"] = catalog.trees.map { tree in
                 ["id": tree.id, "name": tree.name, "revision": tree.revision, "nodes": tree.nodes.enumerated().map { index, node -> [String: Any] in
                     let position = node.resolvedCanvasPosition(index: index)
                     return ["id": node.id, "name": node.name, "parentID": node.parentID ?? NSNull(), "retired": node.isRetired, "positionX": position.x, "positionY": position.y]
                 }] as [String: Any]
-            },
-            "datasets": catalog.datasets.map { dataset in
+            }
+        assets["datasets"] = catalog.datasets.map { dataset in
                 [
                     "id": dataset.id,
                     "name": dataset.name,
@@ -2622,8 +2942,8 @@ final class VaultClassifierViewModel: ObservableObject {
                         ] as [String: Any]
                     },
                 ] as [String: Any]
-            },
-            "models": catalog.models.map { model in
+            }
+        assets["models"] = catalog.models.map { model in
                 [
                     "id": model.id,
                     "name": model.name,
@@ -2645,8 +2965,8 @@ final class VaultClassifierViewModel: ObservableObject {
                         ] as [String: Any]
                     } ?? NSNull(),
                 ] as [String: Any]
-            },
-            "classifierTypes": catalog.classifierTypes.map { classifierType in
+            }
+        assets["classifierTypes"] = catalog.classifierTypes.map { classifierType in
                 [
                     "id": classifierType.id,
                     "name": classifierType.name,
@@ -2660,15 +2980,20 @@ final class VaultClassifierViewModel: ObservableObject {
                         [
                             "providerProfileID": configuration.providerProfileID,
                             "modelIdentifier": configuration.modelIdentifier,
-                            "maximumTokens": configuration.maximumTokens,
-                            "externalToolProfileID": configuration.externalToolProfileID ?? NSNull(),
+                            "dailyOutputTokenLimit": configuration.dailyOutputTokenLimit,
+                            "dailyOutputTokensUsed": outputTokensUsedToday(in: catalog, classifierTypeID: classifierType.id),
+                            "batchSize": configuration.batchSize,
+                            "maximumTagCount": configuration.maximumTagCount,
+                            "restrictToLeafTags": configuration.restrictToLeafTags,
+                            "webSearchEnabled": configuration.webSearchEnabled,
+                            "externalToolEnabled": configuration.externalToolEnabled,
                         ] as [String: Any]
                     } ?? NSNull(),
                     "decisionPriority": classifierType.decisionPriority.map(\.rawValue),
                 ] as [String: Any]
-            },
-            "baseEmbeddings": LocalBaseEmbedding.allCases.map(\.rawValue),
-            "providerProfiles": catalog.providerProfiles.map { profile in
+            }
+        assets["baseEmbeddings"] = LocalBaseEmbedding.allCases.map(\.rawValue)
+        assets["providerProfiles"] = catalog.providerProfiles.map { profile in
                 [
                     "id": profile.id,
                     "name": profile.name,
@@ -2681,8 +3006,8 @@ final class VaultClassifierViewModel: ObservableObject {
                     "hasSessionCredential": sessionProviderCredentials[profile.id] != nil,
                     "testing": testingProviderProfileIDs.contains(profile.id),
                 ] as [String: Any]
-            },
-            "providerRequestRecords": catalog.providerRequestRecords.map { record in
+            }
+        assets["providerRequestRecords"] = catalog.providerRequestRecords.map { record in
                 [
                     "id": record.id,
                     "profileID": record.profileID,
@@ -2695,13 +3020,14 @@ final class VaultClassifierViewModel: ObservableObject {
                     "durationMilliseconds": record.durationMilliseconds,
                     "inputTokens": record.inputTokens ?? NSNull(),
                     "outputTokens": record.outputTokens ?? NSNull(),
+                    "classifierTypeID": record.classifierTypeID ?? NSNull(),
                     "outcome": record.outcome,
                     "requestContent": record.requestContent ?? NSNull(),
                     "responseContent": record.responseContent ?? NSNull(),
                     "createdAtMilliseconds": record.createdAtMilliseconds,
                 ] as [String: Any]
-            },
-            "providerProtocols": Dictionary(uniqueKeysWithValues: APIKeyProviderType.allCases
+            }
+        assets["providerProtocols"] = Dictionary(uniqueKeysWithValues: APIKeyProviderType.allCases
                 .map { type -> (String, [String: Any]) in
                     let descriptor = ProviderProtocolRegistry.descriptor(for: type)
                     return (type.rawValue, [
@@ -2709,6 +3035,7 @@ final class VaultClassifierViewModel: ObservableObject {
                         "revision": descriptor.revision,
                         "family": descriptor.family.rawValue,
                         "supportsLLMConfiguration": descriptor.supportsLLMConfiguration,
+                        "supportsWebSearch": type == .openAI,
                         "allowsEndpointOverride": descriptor.allowsEndpointOverride,
                         "credentialRequired": !descriptor.credentialFields.isEmpty,
                         "credentialFields": descriptor.credentialFields.map(\.rawValue),
@@ -2720,15 +3047,15 @@ final class VaultClassifierViewModel: ObservableObject {
                             ] as [String: Any]
                         },
                     ])
-                }),
-            "bindings": catalog.bindings.map { binding in
+                })
+        assets["bindings"] = catalog.bindings.map { binding in
                 let definition = CollectionPlatformRegistry.definition(for: binding.id)
                 return ["id": binding.id, "name": binding.name, "browser": binding.browser, "treeID": binding.treeID, "datasetID": binding.datasetID, "activeClassifierTypeID": binding.activeClassifierTypeID ?? NSNull(), "activeModelID": binding.activeModelID ?? NSNull(), "policyID": binding.policyID ?? NSNull(), "collectionEnabled": binding.collectionEnabled, "supportsLocalModel": definition?.supportsLocalModel ?? false, "supportsLLMAssist": definition?.supportsLLMAssist ?? false] as [String: Any]
-            },
-            "collectionPlatforms": CollectionPlatformRegistry.definitions.map { definition in
+            }
+        assets["collectionPlatforms"] = CollectionPlatformRegistry.definitions.map { definition in
                 ["id": definition.id, "name": definition.name, "browser": definition.browser, "collectorAvailable": definition.collectorAvailable, "supportsLocalModel": definition.supportsLocalModel, "supportsLLMAssist": definition.supportsLLMAssist, "apiProviderType": definition.apiProviderType?.rawValue ?? NSNull()] as [String: Any]
-            },
-            "tokenUsage": budgetRecords.suffix(12).reversed().map { record -> [String: Any] in
+            }
+        assets["tokenUsage"] = budgetRecords.suffix(12).reversed().map { record -> [String: Any] in
                 let usage = record.settledUsage ?? record.usageCeiling
                 return [
                     "id": record.id.uuidString,
@@ -2739,8 +3066,10 @@ final class VaultClassifierViewModel: ObservableObject {
                     "other": usage.otherBilledTokens,
                     "status": record.state.rawValue,
                 ]
-            },
-        ]
+            }
+        assets["providerModelCatalogs"] = providerModelCatalogs
+        assets["providerModelCatalogErrors"] = providerModelCatalogErrors
+        assets["loadingProviderModelProfileIDs"] = Array(loadingProviderModelProfileIDs).sorted()
         let localHub = LocalClassifierHub.shared
         let hubClient = sharedHubClient
         let hostProgram = hubClient?.hubProgram ?? ""
@@ -2848,8 +3177,12 @@ final class VaultClassifierViewModel: ObservableObject {
                     localModelID: try webOptionalString(data, key: "localModelID", limit: 256),
                     llmProviderProfileID: try webOptionalString(data, key: "llmProviderProfileID", limit: 128),
                     llmModelIdentifier: try webOptionalString(data, key: "llmModelIdentifier", limit: LLMAssistConfiguration.maximumModelIdentifierLength),
-                    llmMaximumTokens: try webOptionalString(data, key: "llmMaximumTokens", limit: 16),
-                    llmExternalToolProfileID: try webOptionalString(data, key: "llmExternalToolProfileID", limit: 128),
+                    llmDailyOutputTokenLimit: try webOptionalString(data, key: "llmDailyOutputTokenLimit", limit: 16),
+                    llmBatchSize: try webOptionalString(data, key: "llmBatchSize", limit: 4),
+                    llmMaximumTagCount: try webOptionalString(data, key: "llmMaximumTagCount", limit: 4),
+                    llmRestrictToLeafTags: data["llmRestrictToLeafTags"] as? Bool ?? false,
+                    llmWebSearchEnabled: data["llmWebSearchEnabled"] as? Bool ?? false,
+                    llmExternalToolEnabled: data["llmExternalToolEnabled"] as? Bool ?? false,
                     priority: priority
                 )
             case "confirmDeleteClassifierType":
@@ -2879,6 +3212,10 @@ final class VaultClassifierViewModel: ObservableObject {
                 )
             case "testProviderProfile":
                 testProviderProfile(profileID: try webString(data, key: "profileID", limit: 128))
+            case "refreshProviderModelCatalog":
+                refreshProviderModelCatalog(profileID: try webString(data, key: "profileID", limit: 128))
+            case "classifyCreatorBatchWithLLM":
+                classifyCreatorBatchWithLLM(typeID: try webString(data, key: "typeID", limit: 256))
             case "removeProviderCredential":
                 removeProviderCredential(profileID: try webString(data, key: "profileID", limit: 128))
             case "confirmDeleteProviderProfile":

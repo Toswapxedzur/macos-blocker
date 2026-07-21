@@ -11,42 +11,56 @@ public enum ProviderClassificationProtocol {
         profile: APIKeyProviderProfile,
         configuration: LLMAssistConfiguration,
         entry: EntryEvidence,
-        allowedLeafTagIDs: Set<String>
+        allowedTagIDs: Set<String>,
+        maximumOutputTokens: Int = Self.maximumOutputTokens
     ) throws -> ProviderTestPreparedRequest {
         try EntryEvidenceValidator().validate(entry)
         try configuration.validate()
         guard configuration.providerProfileID == profile.id else {
             throw ProviderClassificationProtocolError.invalidConfiguration
         }
-        guard !allowedLeafTagIDs.isEmpty else { throw ProviderClassificationProtocolError.noAvailableTags }
+        guard !allowedTagIDs.isEmpty,
+              maximumOutputTokens > 0, maximumOutputTokens <= Self.maximumOutputTokens else {
+            throw ProviderClassificationProtocolError.noAvailableTags
+        }
         let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
         guard descriptor.requestFormats.contains(where: { $0.operation == .generateText }) else {
             throw ProviderClassificationProtocolError.unsupportedProvider
         }
         let plan = try DescriptorBackedProviderProtocol(descriptor: descriptor)
             .requestPlan(for: profile, operation: .generateText, modelIdentifier: configuration.modelIdentifier)
-        let prompt = prompt(entry: entry, allowedLeafTagIDs: allowedLeafTagIDs)
+        let prompt = prompt(entry: entry, allowedTagIDs: allowedTagIDs, maximumTagCount: configuration.maximumTagCount)
         return .init(
             plan: plan,
             operation: .generateText,
             prompt: prompt,
-            body: try requestBody(format: plan.bodyFormat, configuration: configuration, prompt: prompt)
+            body: try requestBody(
+                format: plan.bodyFormat,
+                configuration: configuration,
+                prompt: prompt,
+                maximumOutputTokens: maximumOutputTokens
+            )
         )
     }
 
-    public static func parseLabelIDs(_ content: String, allowedLeafTagIDs: Set<String>) throws -> [String] {
+    public static func parseLabelIDs(
+        _ content: String,
+        allowedTagIDs: Set<String>,
+        maximumTagCount: Int = EntryEvidenceValidator.tagLimit
+    ) throws -> [String] {
         guard let data = content.data(using: .utf8),
               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               Set(object.keys) == Set(["labelIDs"]),
               let rawLabels = object["labelIDs"] as? [Any],
-              rawLabels.count <= EntryEvidenceValidator.tagLimit else {
+              maximumTagCount > 0, maximumTagCount <= EntryEvidenceValidator.tagLimit,
+              rawLabels.count <= maximumTagCount else {
             throw ProviderClassificationProtocolError.invalidResponse
         }
         var seen = Set<String>()
         let labelIDs = try rawLabels.map { value -> String in
             guard let labelID = value as? String,
                   labelID.count <= EntryEvidenceValidator.tagLengthLimit,
-                  allowedLeafTagIDs.contains(labelID),
+                  allowedTagIDs.contains(labelID),
                   seen.insert(labelID).inserted else {
                 throw ProviderClassificationProtocolError.invalidResponse
             }
@@ -86,21 +100,30 @@ public enum ProviderClassificationProtocol {
         return result
     }
 
-    private static func prompt(entry: EntryEvidence, allowedLeafTagIDs: Set<String>) -> String {
+    private static func prompt(entry: EntryEvidence, allowedTagIDs: Set<String>, maximumTagCount: Int) -> String {
         let evidence = [entry.evidence.title, entry.evidence.summary, entry.evidence.text]
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
-        let labels = allowedLeafTagIDs.sorted().prefix(EntryEvidenceValidator.tagLimit).joined(separator: ", ")
-        return "Classify the quoted local entry using only the listed tag IDs. Return exactly one JSON object with one key, labelIDs, whose value is an array of zero or more listed IDs. Do not include markdown or explanation.\nAllowed tag IDs: [\(labels)]\nEntry: \(evidence)"
+        let labels = allowedTagIDs.sorted().prefix(EntryEvidenceValidator.tagLimit).joined(separator: ", ")
+        return "Classify the quoted local entry using only the listed tag IDs. Return exactly one JSON object with one key, labelIDs, whose value is an array of at most \(maximumTagCount) listed IDs. Do not include markdown or explanation.\nAllowed tag IDs: [\(labels)]\nEntry: \(evidence)"
     }
 
-    private static func requestBody(format: ProviderRequestBodyFormat, configuration: LLMAssistConfiguration, prompt: String) throws -> Data {
-        let output = min(maximumOutputTokens, configuration.maximumTokens)
+    private static func requestBody(
+        format: ProviderRequestBodyFormat,
+        configuration: LLMAssistConfiguration,
+        prompt: String,
+        maximumOutputTokens: Int
+    ) throws -> Data {
+        let output = min(Self.maximumOutputTokens, maximumOutputTokens)
         let object: [String: Any]
         switch format {
         case .openAIResponses:
-            object = ["model": configuration.modelIdentifier, "input": prompt, "max_output_tokens": output]
+            var request: [String: Any] = ["model": configuration.modelIdentifier, "input": prompt, "max_output_tokens": output]
+            if configuration.webSearchEnabled {
+                request["tools"] = [["type": "web_search"]]
+            }
+            object = request
         case .openAIChatCompletions:
             object = ["model": configuration.modelIdentifier, "messages": [["role": "user", "content": prompt]], "max_tokens": output]
         case .anthropicMessages:
