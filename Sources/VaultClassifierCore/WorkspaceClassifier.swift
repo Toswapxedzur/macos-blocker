@@ -44,83 +44,108 @@ public struct WorkspaceNeuralClassifier: Sendable {
     public static let maximumSelectedTags = 64
 
     public let classifierType: ClassifierTypeAsset
-    public let model: LocalModelAsset
+    public let model: LocalModelAsset?
     public let taxonomy: Taxonomy
     public let policies: [NamedPolicy]
+    public let creatorClassifications: [CreatorClassificationRecord]
 
     public init(
         classifierType: ClassifierTypeAsset,
-        model: LocalModelAsset,
+        model: LocalModelAsset?,
         taxonomy: Taxonomy,
-        policies: [NamedPolicy]
+        policies: [NamedPolicy],
+        creatorClassifications: [CreatorClassificationRecord]
     ) {
         self.classifierType = classifierType
         self.model = model
         self.taxonomy = taxonomy
         self.policies = policies
+        self.creatorClassifications = creatorClassifications
     }
 
     public func classify(_ entry: EntryEvidence) throws -> ClassificationResult {
         try EntryEvidenceValidator().validate(entry)
 
-        // A type may be deliberately configured for human/LLM entry review.
-        // It is selected, so it must not silently use the old seed engine; it
-        // simply has no automatic decision source for this entry.
-        guard classifierType.entryDecisionSources.contains(.localModel) else {
-            return .init(
-                entryID: entry.entryID,
-                sourceID: entry.sourceID,
-                surface: entry.surface,
-                evidenceState: .limited,
-                threshold: 1,
-                selectedLeafTagIDs: [],
-                ancestorTagIDs: [],
-                scores: [],
-                decisions: [],
-                packageID: "workspace-classifier-type-\(classifierType.id)",
-                modelVersion: "manual-entry-decision"
-            )
-        }
-
-        guard let neuralModel = model.embeddedNeuralModel else {
-            throw WorkspaceClassifierError.missingLocalModel(classifierType.id)
-        }
         let readableText = [entry.evidence.title, entry.evidence.summary, entry.evidence.text]
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
         let allowedTags = taxonomy.predictableLeafIDs
-        var scores: [TagScore] = []
-        for prediction in neuralModel.predictions(for: readableText) {
-            guard allowedTags.contains(prediction.labelID), prediction.probability.isFinite else { continue }
-            let probability = min(1, max(0, prediction.probability))
-            scores.append(.init(
-                tagID: prediction.labelID,
-                directScore: probability,
-                sourceScore: nil,
-                finalScore: probability
-            ))
+        var signals = [String: [ClassifierDecisionSource: Double]]()
+        let creatorID = entry.sourceID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !creatorID.isEmpty {
+            for classification in creatorClassifications where
+                classification.classifierTypeID == classifierType.id &&
+                classification.platformID == entry.platform &&
+                classification.creatorID == creatorID &&
+                classification.review == .approved {
+                let source: ClassifierDecisionSource?
+                switch classification.origin {
+                case .manual: source = .human
+                case .llmAssist: source = .llmAssist
+                case .legacy: source = nil
+                }
+                guard let source else { continue }
+                for tagID in classification.tagIDs where allowedTags.contains(tagID) {
+                    signals[tagID, default: [:]][source] = 1
+                }
+                for tagID in classification.negativeTagIDs where allowedTags.contains(tagID) {
+                    signals[tagID, default: [:]][source] = 0
+                }
+            }
+        }
+
+        var localScores = [String: Double]()
+        if let neuralModel = model?.embeddedNeuralModel, !readableText.isEmpty {
+            for prediction in neuralModel.predictions(for: readableText) {
+                guard allowedTags.contains(prediction.labelID), prediction.probability.isFinite else { continue }
+                let probability = min(1, max(0, prediction.probability))
+                localScores[prediction.labelID] = probability
+                signals[prediction.labelID, default: [:]][.localModel] = probability
+            }
+        }
+
+        var scores: [TagScore] = signals.compactMap { tagID, sourceScores -> TagScore? in
+            let weightedScores = sourceScores.compactMap { source, score -> (Double, Double)? in
+                let weight = classifierType.decisionWeight(for: source)
+                return weight > 0 ? (score, weight) : nil
+            }
+            let weightTotal = weightedScores.reduce(0) { $0 + $1.1 }
+            guard weightTotal > 0 else { return nil }
+            let finalScore = weightedScores.reduce(0) { $0 + ($1.0 * $1.1) } / weightTotal
+            let directSignals = sourceScores.filter { $0.key != .localModel }
+            let directWeightTotal = directSignals.reduce(0) { $0 + classifierType.decisionWeight(for: $1.key) }
+            let sourceScore = directWeightTotal > 0
+                ? directSignals.reduce(0) { $0 + ($1.value * classifierType.decisionWeight(for: $1.key)) } / directWeightTotal
+                : nil
+            return .init(tagID: tagID, directScore: localScores[tagID] ?? 0, sourceScore: sourceScore, finalScore: finalScore)
         }
         scores.sort { lhs, rhs in
-            lhs.finalScore == rhs.finalScore ? lhs.tagID < rhs.tagID : lhs.finalScore > rhs.finalScore
+            if lhs.finalScore == rhs.finalScore { return lhs.tagID < rhs.tagID }
+            return lhs.finalScore > rhs.finalScore
         }
         scores = Array(scores.prefix(Self.maximumScores))
         let selected = scores
             .filter { $0.finalScore >= Self.threshold }
             .prefix(Self.maximumSelectedTags)
             .map { $0.tagID }
+        let modelVersionParts = [
+            !creatorID.isEmpty && creatorClassifications.contains(where: { $0.classifierTypeID == classifierType.id && $0.platformID == entry.platform && $0.creatorID == creatorID && $0.origin == .manual && $0.review == .approved }) ? "human" : nil,
+            !creatorID.isEmpty && creatorClassifications.contains(where: { $0.classifierTypeID == classifierType.id && $0.platformID == entry.platform && $0.creatorID == creatorID && $0.origin == .llmAssist && $0.review == .approved }) ? "llm" : nil,
+            model.map { "local-neural-\($0.id)-v\($0.version)" },
+        ].compactMap { $0 }
         var result = ClassificationResult(
             entryID: entry.entryID,
             sourceID: entry.sourceID,
             surface: entry.surface,
-            evidenceState: readableText.isEmpty ? .limited : .sufficient,
+            evidenceState: scores.isEmpty && readableText.isEmpty ? .limited : .sufficient,
             threshold: Self.threshold,
             selectedLeafTagIDs: selected,
             ancestorTagIDs: taxonomy.ancestorClosure(for: selected),
             scores: scores,
             decisions: [],
             packageID: "workspace-classifier-type-\(classifierType.id)",
-            modelVersion: "local-neural-\(model.id)-v\(model.version)"
+            modelVersion: modelVersionParts.isEmpty ? "weighted-none" : modelVersionParts.joined(separator: "+")
         )
         result.decisions = PolicyEvaluator(taxonomy: taxonomy).evaluate(
             result: result,
@@ -152,36 +177,28 @@ public extension WorkspaceCatalog {
               classifierType.datasetRevision == dataset.revision else {
             throw WorkspaceClassifierError.incompatibleClassifierType(classifierTypeID)
         }
-        guard classifierType.entryDecisionSources.contains(.localModel) else {
-            return .init(
-                classifierType: classifierType,
-                model: .init(
-                    name: "No automatic local model",
-                    treeID: tree.id,
-                    treeRevision: tree.revision,
-                    datasetID: dataset.id,
-                    datasetRevision: dataset.revision
-                ),
-                taxonomy: try tree.inferenceTaxonomy(),
-                policies: policies
-            )
-        }
-        guard let modelID = classifierType.localModelID,
-              binding.activeModelID == modelID,
-              let model = models.first(where: { $0.id == modelID }),
-              model.isReady,
-              model.embeddedNeuralModel != nil,
-              model.treeID == tree.id,
-              model.treeRevision == tree.revision,
-              model.datasetID == dataset.id,
-              model.datasetRevision == dataset.revision else {
-            throw WorkspaceClassifierError.missingLocalModel(classifierTypeID)
+        let model: LocalModelAsset?
+        if let modelID = classifierType.localModelID {
+            guard binding.activeModelID == modelID,
+                  let resolvedModel = models.first(where: { $0.id == modelID }),
+                  resolvedModel.isReady,
+                  resolvedModel.embeddedNeuralModel != nil,
+                  resolvedModel.treeID == tree.id,
+                  resolvedModel.treeRevision == tree.revision,
+                  resolvedModel.datasetID == dataset.id,
+                  resolvedModel.datasetRevision == dataset.revision else {
+                throw WorkspaceClassifierError.missingLocalModel(classifierTypeID)
+            }
+            model = resolvedModel
+        } else {
+            model = nil
         }
         return .init(
             classifierType: classifierType,
             model: model,
             taxonomy: try tree.inferenceTaxonomy(),
-            policies: policies
+            policies: policies,
+            creatorClassifications: dataset.creatorClassifications
         )
     }
 }

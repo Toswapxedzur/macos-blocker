@@ -558,7 +558,6 @@ final class VaultClassifierViewModel: ObservableObject {
                   CollectionPlatformRegistry.definition(for: binding.id)?.supportsLLMAssist == true,
                   let classifierTypeID = binding.activeClassifierTypeID,
                   let classifierType = catalog.classifierTypes.first(where: { $0.id == classifierTypeID }),
-                  classifierType.entryDecisionSources.contains(.llmAssist),
                   let profileID = classifierType.llmProfileIDs.first,
                   let profile = catalog.providerProfiles.first(where: { $0.id == profileID }),
                   let tree = catalog.trees.first(where: { $0.id == binding.treeID }) else {
@@ -1178,13 +1177,7 @@ final class VaultClassifierViewModel: ObservableObject {
         applicablePlatformID: String,
         localModelID: String?,
         llmProfileIDs: [String],
-        priority: [ClassifierDecisionSource],
-        creatorHuman: Bool,
-        creatorLLM: Bool,
-        creatorLocalModel: Bool,
-        entryHuman: Bool,
-        entryLLM: Bool,
-        entryLocalModel: Bool
+        priority: [ClassifierDecisionSource]
     ) {
         do {
             let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1224,14 +1217,6 @@ final class VaultClassifierViewModel: ObservableObject {
                 compatibleModelID = nil
             }
 
-            func decisionSources(human: Bool, llm: Bool, localModel: Bool) -> [ClassifierDecisionSource] {
-                var sources: [ClassifierDecisionSource] = []
-                if human { sources.append(.human) }
-                if supportsLLMAssist && llm && !selectedLLMIDs.isEmpty { sources.append(.llmAssist) }
-                if supportsLocalModel && localModel && compatibleModelID != nil { sources.append(.localModel) }
-                return sources
-            }
-
             catalog.classifierTypes[typeIndex] = .init(
                 id: catalog.classifierTypes[typeIndex].id,
                 name: cleanedName,
@@ -1242,9 +1227,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 applicablePlatformID: selectedBinding.id,
                 localModelID: compatibleModelID,
                 llmProfileIDs: supportsLLMAssist ? selectedLLMIDs : [],
-                decisionPriority: priority,
-                creatorDecisionSources: decisionSources(human: creatorHuman, llm: creatorLLM, localModel: creatorLocalModel),
-                entryDecisionSources: decisionSources(human: entryHuman, llm: entryLLM, localModel: entryLocalModel)
+                decisionPriority: priority
             )
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
@@ -1280,15 +1263,14 @@ final class VaultClassifierViewModel: ObservableObject {
             guard let platform = CollectionPlatformRegistry.definition(for: platformID) else {
                 throw WebBridgeInputError.invalidChoice("collection platform")
             }
-            let enabledSources = Set(classifierType.creatorDecisionSources + classifierType.entryDecisionSources)
             guard (platform.supportsLocalModel ||
-                   (!enabledSources.contains(.localModel) && classifierType.localModelID == nil)),
+                   classifierType.localModelID == nil),
                   (platform.supportsLLMAssist ||
-                   (!enabledSources.contains(.llmAssist) && classifierType.llmProfileIDs.isEmpty)) else {
+                   classifierType.llmProfileIDs.isEmpty) else {
                 throw WebBridgeInputError.invalidChoice("manual-only platform classifier type")
             }
-            if classifierType.entryDecisionSources.contains(.localModel) {
-                guard let modelID = classifierType.localModelID,
+            if let modelID = classifierType.localModelID {
+                guard
                       catalog.models.contains(where: { model in
                           model.id == modelID && model.isReady && model.embeddedNeuralModel != nil &&
                           model.treeID == tree.id && model.treeRevision == tree.revision &&
@@ -1702,8 +1684,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 throw WebBridgeInputError.invalidChoice("classifier type")
             }
             let classifierType = catalog.classifierTypes[typeIndex]
-            guard classifierType.creatorDecisionSources.contains(.human),
-                  let tree = catalog.trees.first(where: { $0.id == classifierType.treeID }),
+            guard let tree = catalog.trees.first(where: { $0.id == classifierType.treeID }),
                   let datasetIndex = catalog.datasets.firstIndex(where: { $0.id == classifierType.datasetID }) else {
                 throw WebBridgeInputError.invalidChoice("creator decision")
             }
@@ -1728,7 +1709,8 @@ final class VaultClassifierViewModel: ObservableObject {
                 if catalog.datasets[datasetIndex].removeCreatorClassification(
                     classifierTypeID: classifierType.id,
                     platformID: platformID,
-                    creatorID: creatorID
+                    creatorID: creatorID,
+                    origin: .manual
                 ) {
                     catalog.datasets[datasetIndex].revision += 1
                     try coordinator?.updateWorkspaceCatalog(catalog)
@@ -1840,15 +1822,14 @@ final class VaultClassifierViewModel: ObservableObject {
     }
 
     /// An LLM creator run is still explicitly initiated from the classifier
-    /// type. A valid answer replaces that type's current creator decision and
-    /// is approved by that deliberate action, making its collected titles
+    /// type. A valid answer remains alongside a human decision for the same
+    /// creator and is approved by that deliberate action, making its collected titles
     /// available to a compatible local-model retraining run.
     func classifyCreatorWithLLM(typeID: String, creatorKey: String, profileID: String) {
         guard !providerClassificationRunning else { return }
         do {
             guard let catalog = localState?.workspaceCatalog,
                   let classifierType = catalog.classifierTypes.first(where: { $0.id == typeID }),
-                  classifierType.creatorDecisionSources.contains(.llmAssist),
                   classifierType.llmProfileIDs.contains(profileID),
                   let profile = catalog.providerProfiles.first(where: { $0.id == profileID }),
                   let tree = catalog.trees.first(where: { $0.id == classifierType.treeID }),
@@ -1970,7 +1951,6 @@ final class VaultClassifierViewModel: ObservableObject {
     ) throws {
         guard var catalog = localState?.workspaceCatalog,
               let classifierType = catalog.classifierTypes.first(where: { $0.id == typeID }),
-              classifierType.creatorDecisionSources.contains(.llmAssist),
               CollectionPlatformRegistry.definition(for: platformID)?.supportsLLMAssist == true,
               let tree = catalog.trees.first(where: { $0.id == classifierType.treeID }) else {
             throw WebBridgeInputError.invalidChoice("creator LLM classifier type")
@@ -2474,7 +2454,6 @@ final class VaultClassifierViewModel: ObservableObject {
             }
         }
         let manualLLMAvailable = CollectionPlatformRegistry.definition(for: manualPlatformID)?.supportsLLMAssist == true &&
-            manualClassifierType?.entryDecisionSources.contains(.llmAssist) == true &&
             manualClassifierType?.llmProfileIDs.contains(where: { profileID in
                 inspectCatalog.providerProfiles.contains(where: { $0.id == profileID })
             }) == true
@@ -2693,8 +2672,6 @@ final class VaultClassifierViewModel: ObservableObject {
                     "localModelID": classifierType.localModelID ?? NSNull(),
                     "llmProfileIDs": classifierType.llmProfileIDs,
                     "decisionPriority": classifierType.decisionPriority.map(\.rawValue),
-                    "creatorDecisionSources": classifierType.creatorDecisionSources.map(\.rawValue),
-                    "entryDecisionSources": classifierType.entryDecisionSources.map(\.rawValue),
                 ] as [String: Any]
             },
             "baseEmbeddings": LocalBaseEmbedding.allCases.map(\.rawValue),
@@ -2883,13 +2860,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     applicablePlatformID: try webString(data, key: "applicablePlatformID", limit: 64),
                     localModelID: try webOptionalString(data, key: "localModelID", limit: 256),
                     llmProfileIDs: try webClassifierTypeLLMProfiles(data),
-                    priority: priority,
-                    creatorHuman: try webBool(data, key: "creatorHuman"),
-                    creatorLLM: try webBool(data, key: "creatorLLM"),
-                    creatorLocalModel: try webBool(data, key: "creatorLocalModel"),
-                    entryHuman: try webBool(data, key: "entryHuman"),
-                    entryLLM: try webBool(data, key: "entryLLM"),
-                    entryLocalModel: try webBool(data, key: "entryLocalModel")
+                    priority: priority
                 )
             case "confirmDeleteClassifierType":
                 confirmClassifierTypeDeletion(typeID: try webString(data, key: "typeID", limit: 256))

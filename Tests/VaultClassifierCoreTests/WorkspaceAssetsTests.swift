@@ -39,9 +39,7 @@ final class WorkspaceAssetsTests: XCTestCase {
             treeRevision: tree.revision,
             datasetID: dataset.id,
             datasetRevision: dataset.revision,
-            applicablePlatformID: "twitch",
-            creatorDecisionSources: [.human],
-            entryDecisionSources: [.human]
+            applicablePlatformID: "twitch"
         )
         catalog.classifierTypes = [humanOnly]
         XCTAssertNoThrow(try catalog.validate())
@@ -64,8 +62,7 @@ final class WorkspaceAssetsTests: XCTestCase {
             datasetID: dataset.id,
             datasetRevision: dataset.revision,
             applicablePlatformID: "twitch",
-            llmProfileIDs: [profile.id],
-            creatorDecisionSources: [.human, .llmAssist]
+            llmProfileIDs: [profile.id]
         )]
         XCTAssertThrowsError(try catalog.validate()) { error in
             XCTAssertEqual(error as? WorkspaceCatalogError, .invalidClassifierType("twitch-automated"))
@@ -74,7 +71,6 @@ final class WorkspaceAssetsTests: XCTestCase {
         catalog.reconcileClassifierTypes()
         XCTAssertEqual(catalog.classifierTypes[0].applicablePlatformID, "twitch")
         XCTAssertTrue(catalog.classifierTypes[0].llmProfileIDs.isEmpty)
-        XCTAssertFalse(catalog.classifierTypes[0].creatorDecisionSources.contains(.llmAssist))
         XCTAssertNoThrow(try catalog.validate())
     }
 
@@ -163,13 +159,15 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertTrue(dataset.removeCreatorClassification(
             classifierTypeID: "creator-type",
             platformID: "youtube",
-            creatorID: "youtube:channel:one"
+            creatorID: "youtube:channel:one",
+            origin: .manual
         ))
         XCTAssertEqual(dataset.creatorClassifications, [retained])
         XCTAssertFalse(dataset.removeCreatorClassification(
             classifierTypeID: "creator-type",
             platformID: "youtube",
-            creatorID: "youtube:channel:one"
+            creatorID: "youtube:channel:one",
+            origin: .manual
         ))
     }
 
@@ -180,6 +178,68 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(classification.tagIDs, ["games"])
         XCTAssertTrue(classification.negativeTagIDs.isEmpty)
         XCTAssertEqual(try JSONDecoder().decode(CreatorClassificationRecord.self, from: JSONEncoder().encode(classification)), classification)
+    }
+
+    func testPriorityWeightsEveryAvailableCreatorDecision() throws {
+        let tree = TagTreeAsset(id: "tree", name: "Topics", nodes: [.init(id: "games", name: "Games")])
+        let human = CreatorClassificationRecord(
+            classifierTypeID: "type",
+            creatorID: "creator",
+            creatorName: "Creator",
+            platformID: "youtube",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            tagIDs: ["games"],
+            origin: .manual,
+            review: .approved
+        )
+        let llm = CreatorClassificationRecord(
+            classifierTypeID: "type",
+            creatorID: "creator",
+            creatorName: "Creator",
+            platformID: "youtube",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            tagIDs: [],
+            negativeTagIDs: ["games"],
+            origin: .llmAssist,
+            review: .approved
+        )
+        var dataset = ClassificationDataset(name: "Labels")
+        dataset.upsertCreatorClassification(human)
+        dataset.upsertCreatorClassification(llm)
+        XCTAssertEqual(dataset.creatorClassifications.count, 2)
+
+        let entry = EntryEvidence(platform: "youtube", entryID: "entry", sourceID: "creator", surface: .feed, evidence: .init(title: "A game"))
+        let humanFirst = ClassifierTypeAsset(
+            id: "type", name: "Human first", treeID: tree.id, treeRevision: tree.revision,
+            datasetID: "dataset", datasetRevision: 1, applicablePlatformID: "youtube",
+            decisionPriority: [.human, .llmAssist, .localModel]
+        )
+        let humanFirstResult = try WorkspaceNeuralClassifier(
+            classifierType: humanFirst,
+            model: nil,
+            taxonomy: try tree.inferenceTaxonomy(),
+            policies: [],
+            creatorClassifications: dataset.creatorClassifications
+        ).classify(entry)
+        XCTAssertEqual(try XCTUnwrap(humanFirstResult.scores.first).finalScore, 0.6, accuracy: 0.0001)
+        XCTAssertEqual(humanFirstResult.selectedLeafTagIDs, ["games"])
+
+        let llmFirst = ClassifierTypeAsset(
+            id: "type", name: "LLM first", treeID: tree.id, treeRevision: tree.revision,
+            datasetID: "dataset", datasetRevision: 1, applicablePlatformID: "youtube",
+            decisionPriority: [.llmAssist, .human, .localModel]
+        )
+        let llmFirstResult = try WorkspaceNeuralClassifier(
+            classifierType: llmFirst,
+            model: nil,
+            taxonomy: try tree.inferenceTaxonomy(),
+            policies: [],
+            creatorClassifications: dataset.creatorClassifications
+        ).classify(entry)
+        XCTAssertEqual(try XCTUnwrap(llmFirstResult.scores.first).finalScore, 0.4, accuracy: 0.0001)
+        XCTAssertTrue(llmFirstResult.selectedLeafTagIDs.isEmpty)
     }
 
     func testCreatorClassificationsAreTheOnlyActiveTrainingLabels() throws {
@@ -323,7 +383,7 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(Set(examples.flatMap(\.positiveLabelIDs)), ["games", "technology"])
     }
 
-    func testLegacyCombinedSourceTypeIsResetUntilOneApplicablePlatformIsChosen() throws {
+    func testRetiredDecisionScopeSettingsAreIgnoredUntilOneApplicablePlatformIsChosen() throws {
         let legacy = Data(#"{"id":"legacy-type","name":"Legacy type","treeID":"vault-starter","treeRevision":1,"datasetID":"local-dataset","datasetRevision":1,"localModelID":null,"llmProfileIDs":[],"decisionPriority":["human","llmAssist","localModel"],"creatorDecisionSources":["human"],"entryDecisionSources":[],"updatedAtMilliseconds":0}"#.utf8)
         let type = try JSONDecoder().decode(ClassifierTypeAsset.self, from: legacy)
         XCTAssertNil(type.applicablePlatformID)
@@ -344,6 +404,8 @@ final class WorkspaceAssetsTests: XCTestCase {
 
         let encoded = String(decoding: try JSONEncoder().encode(type), as: UTF8.self)
         XCTAssertFalse(encoded.contains("dataSourcePlatformIDs"))
+        XCTAssertFalse(encoded.contains("creatorDecisionSources"))
+        XCTAssertFalse(encoded.contains("entryDecisionSources"))
     }
 
     func testRemovingPlatformBindingPurgesItsDataAndReconcilesDependents() throws {
@@ -388,8 +450,7 @@ final class WorkspaceAssetsTests: XCTestCase {
             treeRevision: tree.revision,
             datasetID: dataset.id,
             datasetRevision: dataset.revision,
-            applicablePlatformID: "youtube",
-            creatorDecisionSources: [.human]
+            applicablePlatformID: "youtube"
         )]
 
         XCTAssertTrue(catalog.removePlatformBinding("instagram"))
@@ -462,9 +523,7 @@ final class WorkspaceAssetsTests: XCTestCase {
             datasetRevision: dataset.revision,
             applicablePlatformID: "youtube",
             localModelID: catalog.models[0].id,
-            llmProfileIDs: [profile.id],
-            creatorDecisionSources: [.human, .llmAssist, .localModel],
-            entryDecisionSources: [.localModel]
+            llmProfileIDs: [profile.id]
         )
         catalog.classifierTypes = [classifierType]
         XCTAssertNoThrow(try catalog.validate())
@@ -477,13 +536,10 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertNoThrow(try catalog.validate())
         XCTAssertEqual(catalog.classifierTypes[0].datasetRevision, catalog.datasets[0].revision)
         XCTAssertNil(catalog.classifierTypes[0].localModelID)
-        XCTAssertFalse(catalog.classifierTypes[0].creatorDecisionSources.contains(.localModel))
-        XCTAssertFalse(catalog.classifierTypes[0].entryDecisionSources.contains(.localModel))
 
         catalog.providerProfiles = []
         catalog.reconcileClassifierTypes()
         XCTAssertTrue(catalog.classifierTypes[0].llmProfileIDs.isEmpty)
-        XCTAssertFalse(catalog.classifierTypes[0].creatorDecisionSources.contains(.llmAssist))
     }
 
     func testCoordinatorDispatchesAnActiveClassifierTypeToThePersistedNeuralModel() throws {
@@ -516,8 +572,7 @@ final class WorkspaceAssetsTests: XCTestCase {
             datasetID: dataset.id,
             datasetRevision: dataset.revision,
             applicablePlatformID: "youtube",
-            localModelID: catalog.models[0].id,
-            entryDecisionSources: [.localModel]
+            localModelID: catalog.models[0].id
         )
         catalog.classifierTypes = [classifierType]
         catalog.bindings[0].activeClassifierTypeID = classifierType.id
