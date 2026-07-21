@@ -441,6 +441,43 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertFalse(reencoded.contains("maximumTokens"))
     }
 
+    func testSavedLLMAttachmentSurvivesReconciliationAndEncodingWithoutAModelCatalog() throws {
+        var catalog = WorkspaceCatalog.starter()
+        let tree = try XCTUnwrap(catalog.trees.first)
+        let dataset = try XCTUnwrap(catalog.datasets.first)
+        let provider = APIKeyProviderProfile(id: "local-ollama", name: "Local Ollama", type: .ollama)
+        catalog.providerProfiles = [provider]
+        catalog.classifierTypes = [.init(
+            id: "youtube-llm",
+            name: "YouTube LLM",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            datasetID: dataset.id,
+            datasetRevision: dataset.revision,
+            applicablePlatformID: "youtube",
+            llmAssistConfiguration: .init(
+                providerProfileID: provider.id,
+                modelIdentifier: "llama3.2",
+                dailyOutputTokenLimit: 12_000,
+                batchSize: 3,
+                maximumTagCount: 6,
+                restrictToLeafTags: false,
+                isActive: true
+            )
+        )]
+
+        catalog.reconcileClassifierTypes()
+        let reloaded = try JSONDecoder().decode(WorkspaceCatalog.self, from: JSONEncoder().encode(catalog))
+        let configuration = try XCTUnwrap(reloaded.classifierTypes.first?.llmAssistConfiguration)
+        XCTAssertEqual(configuration.providerProfileID, provider.id)
+        XCTAssertEqual(configuration.modelIdentifier, "llama3.2")
+        XCTAssertEqual(configuration.dailyOutputTokenLimit, 12_000)
+        XCTAssertEqual(configuration.batchSize, 3)
+        XCTAssertEqual(configuration.maximumTagCount, 6)
+        XCTAssertFalse(configuration.restrictToLeafTags)
+        XCTAssertTrue(configuration.isActive)
+    }
+
     func testRemovingPlatformBindingPurgesItsDataAndReconcilesDependents() throws {
         var catalog = WorkspaceCatalog.starter()
         let tree = try XCTUnwrap(catalog.trees.first)

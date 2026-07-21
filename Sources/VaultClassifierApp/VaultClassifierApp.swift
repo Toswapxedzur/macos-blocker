@@ -1377,6 +1377,7 @@ final class VaultClassifierViewModel: ObservableObject {
                   CollectionPlatformRegistry.definition(for: applicablePlatformID) != nil else {
                 throw WebBridgeInputError.invalidChoice("classifier type")
             }
+            let existingLLMAssist = catalog.classifierTypes[typeIndex].llmAssistConfiguration
             let selectedBinding = try catalog.ensurePlatformBinding(applicablePlatformID)
             guard
                   let tree = catalog.trees.first(where: { $0.id == selectedBinding.treeID }),
@@ -1400,7 +1401,9 @@ final class VaultClassifierViewModel: ObservableObject {
                 guard !cleanedLLMModelIdentifier.isEmpty else {
                     throw WebBridgeInputError.invalidChoice("LLM model")
                 }
-                guard providerModelCatalogs[profile.id]?.contains(cleanedLLMModelIdentifier) == true else {
+                let retainsSavedModel = existingLLMAssist?.providerProfileID == cleanedLLMProviderID &&
+                    existingLLMAssist?.modelIdentifier == cleanedLLMModelIdentifier
+                guard providerModelCatalogs[profile.id]?.contains(cleanedLLMModelIdentifier) == true || retainsSavedModel else {
                     throw WebBridgeInputError.invalidChoice("a model fetched from this provider")
                 }
                 let configuration = LLMAssistConfiguration(
@@ -1425,7 +1428,11 @@ final class VaultClassifierViewModel: ObservableObject {
                     webSearchEnabled: profile.type == .openAI && llmWebSearchEnabled,
                     externalToolEnabled: selectedDefinition.apiProviderType != nil && llmExternalToolEnabled,
                     usePlatformAPIKeyFallback: selectedDefinition.supportsCreatorAvatarAPIFallback && llmUsePlatformAPIKeyFallback,
-                    isActive: false
+                    // Editing the limits or prompt options must not silently
+                    // switch off a model the user deliberately activated.
+                    // Changing the provider or model does require another
+                    // explicit activation before any request is sent.
+                    isActive: retainsSavedModel ? existingLLMAssist?.isActive ?? false : false
                 )
                 try configuration.validate()
                 selectedLLMAssist = configuration
@@ -1462,6 +1469,9 @@ final class VaultClassifierViewModel: ObservableObject {
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
             issue = nil
+            if selectedLLMAssist?.isActive == true {
+                startActiveLLMClassification()
+            }
         } catch { issue = error.localizedDescription }
     }
 
