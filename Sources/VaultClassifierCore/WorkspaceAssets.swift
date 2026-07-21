@@ -169,10 +169,10 @@ public struct CreatorClassificationRecord: Codable, Equatable, Sendable, Identif
         self.updatedAtMilliseconds = updatedAtMilliseconds
     }
 
-    /// A decision is current per classifier type and creator. It does not use
-    /// display names, which may legitimately change as a platform refreshes
-    /// public metadata.
-    public var identityKey: String { "\(classifierTypeID)\u{1F}\(platformID)\u{1F}\(creatorID)" }
+    /// A decision is current per classifier type, creator, and decision
+    /// source. Human and explicitly run LLM decisions can therefore both
+    /// contribute to the same creator without overwriting one another.
+    public var identityKey: String { "\(classifierTypeID)\u{1F}\(platformID)\u{1F}\(creatorID)\u{1F}\(origin.rawValue)" }
 
     private enum CodingKeys: String, CodingKey {
         case id, classifierTypeID, creatorID, creatorName, platformID, treeID,
@@ -284,8 +284,8 @@ public struct ClassificationDataset: Codable, Equatable, Sendable, Identifiable 
         self.revision = revision
     }
 
-    /// Replaces the current decision for one classifier type and creator while
-    /// retaining its durable identity and original creation time.
+    /// Replaces the current decision for one classifier type, creator, and
+    /// source while retaining its durable identity and original creation time.
     @discardableResult
     public mutating func upsertCreatorClassification(_ classification: CreatorClassificationRecord) -> CreatorClassificationRecord {
         if let index = creatorClassifications.firstIndex(where: { $0.identityKey == classification.identityKey }) {
@@ -299,19 +299,22 @@ public struct ClassificationDataset: Codable, Equatable, Sendable, Identifiable 
         return classification
     }
 
-    /// Removes the current decision for one classifier type and creator. This
-    /// is used only after a user explicitly removes that creator's final tag.
+    /// Removes the current decision for one classifier type, creator, and
+    /// source. This is used only after a user explicitly removes that source's
+    /// final tag.
     @discardableResult
     public mutating func removeCreatorClassification(
         classifierTypeID: String,
         platformID: String,
-        creatorID: String
+        creatorID: String,
+        origin: ClassificationRecordOrigin
     ) -> Bool {
         let initialCount = creatorClassifications.count
         creatorClassifications.removeAll { classification in
             classification.classifierTypeID == classifierTypeID &&
             classification.platformID == platformID &&
-            classification.creatorID == creatorID
+            classification.creatorID == creatorID &&
+            classification.origin == origin
         }
         return creatorClassifications.count != initialCount
     }
@@ -448,14 +451,9 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     /// Several configured LLM profiles may be attached for explicit runs.
     /// Their suggestions never dispatch automatically.
     public var llmProfileIDs: [String]
-    /// Ordered once by the user and used for both creator and entry decisions.
-    /// The scope source lists below decide which priorities are available.
+    /// Ordered once by the user. Every available source contributes to a
+    /// decision, with relative weights of 3, 2, and 1 in this order.
     public var decisionPriority: [ClassifierDecisionSource]
-    /// Creator decisions normally combine all selected sources.
-    public var creatorDecisionSources: [ClassifierDecisionSource]
-    /// Individual-entry human and LLM decisions are deliberately opt-in; the
-    /// default only enables a compatible local model for this scope.
-    public var entryDecisionSources: [ClassifierDecisionSource]
     public var updatedAtMilliseconds: Int64
 
     public init(
@@ -469,8 +467,6 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         localModelID: String? = nil,
         llmProfileIDs: [String] = [],
         decisionPriority: [ClassifierDecisionSource] = [.human, .llmAssist, .localModel],
-        creatorDecisionSources: [ClassifierDecisionSource] = [.human],
-        entryDecisionSources: [ClassifierDecisionSource] = [],
         updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
     ) {
         self.id = id
@@ -484,15 +480,12 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         self.localModelID = localModelID
         self.llmProfileIDs = Array(Set(llmProfileIDs)).sorted()
         self.decisionPriority = decisionPriority
-        self.creatorDecisionSources = creatorDecisionSources
-        self.entryDecisionSources = entryDecisionSources
         self.updatedAtMilliseconds = updatedAtMilliseconds
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, treeID, treeRevision, datasetID, datasetRevision, applicablePlatformID, dataSourcePlatformIDs, localModelID,
-             llmProfileIDs, decisionPriority, creatorDecisionSources,
-             entryDecisionSources, updatedAtMilliseconds
+             llmProfileIDs, decisionPriority, updatedAtMilliseconds
     }
 
     public init(from decoder: Decoder) throws {
@@ -518,10 +511,6 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         llmProfileIDs = Array(Set(try container.decodeIfPresent([String].self, forKey: .llmProfileIDs) ?? [])).sorted()
         decisionPriority = try container.decodeIfPresent([ClassifierDecisionSource].self, forKey: .decisionPriority)
             ?? [.human, .llmAssist, .localModel]
-        creatorDecisionSources = try container.decodeIfPresent([ClassifierDecisionSource].self, forKey: .creatorDecisionSources)
-            ?? [.human]
-        entryDecisionSources = try container.decodeIfPresent([ClassifierDecisionSource].self, forKey: .entryDecisionSources)
-            ?? []
         updatedAtMilliseconds = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMilliseconds)
             ?? WorkspaceCatalog.now()
     }
@@ -538,9 +527,12 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         try container.encodeIfPresent(localModelID, forKey: .localModelID)
         try container.encode(llmProfileIDs, forKey: .llmProfileIDs)
         try container.encode(decisionPriority, forKey: .decisionPriority)
-        try container.encode(creatorDecisionSources, forKey: .creatorDecisionSources)
-        try container.encode(entryDecisionSources, forKey: .entryDecisionSources)
         try container.encode(updatedAtMilliseconds, forKey: .updatedAtMilliseconds)
+    }
+
+    public func decisionWeight(for source: ClassifierDecisionSource) -> Double {
+        guard let index = decisionPriority.firstIndex(of: source) else { return 0 }
+        return Double(ClassifierDecisionSource.allCases.count - index)
     }
 }
 
@@ -1240,9 +1232,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                       providerProfiles.contains(where: { $0.id == profileID && $0.type.supportsLLMConfiguration })
                   }),
                   classifierType.decisionPriority.count == ClassifierDecisionSource.allCases.count,
-                  Set(classifierType.decisionPriority) == Set(ClassifierDecisionSource.allCases),
-                  Set(classifierType.creatorDecisionSources).count == classifierType.creatorDecisionSources.count,
-                  Set(classifierType.entryDecisionSources).count == classifierType.entryDecisionSources.count else {
+                  Set(classifierType.decisionPriority) == Set(ClassifierDecisionSource.allCases) else {
                 throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
             }
             if let localModelID = classifierType.localModelID {
@@ -1257,13 +1247,8 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                 throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
             }
             }
-            let enabledSources = Set(classifierType.creatorDecisionSources + classifierType.entryDecisionSources)
-            guard (!enabledSources.contains(.localModel) || classifierType.localModelID != nil),
-                  (!enabledSources.contains(.llmAssist) || !classifierType.llmProfileIDs.isEmpty) else {
-                throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
-            }
-            let usesLocalModel = classifierType.localModelID != nil || enabledSources.contains(.localModel)
-            let usesLLMAssist = !classifierType.llmProfileIDs.isEmpty || enabledSources.contains(.llmAssist)
+            let usesLocalModel = classifierType.localModelID != nil
+            let usesLLMAssist = !classifierType.llmProfileIDs.isEmpty
             let applicablePlatform = classifierType.applicablePlatformID.flatMap(CollectionPlatformRegistry.definition(for:))
             guard (!usesLocalModel || applicablePlatform?.supportsLocalModel == true),
                   (!usesLLMAssist || applicablePlatform?.supportsLLMAssist == true) else {
@@ -1285,16 +1270,14 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                   classifierType.datasetRevision == dataset.revision else {
                 throw WorkspaceCatalogError.incompatibleActiveClassifierType(classifierTypeID)
             }
-            let enabledSources = Set(classifierType.creatorDecisionSources + classifierType.entryDecisionSources)
             guard (platform.supportsLocalModel ||
-                   (!enabledSources.contains(.localModel) && classifierType.localModelID == nil)),
+                   classifierType.localModelID == nil),
                   (platform.supportsLLMAssist ||
-                   (!enabledSources.contains(.llmAssist) && classifierType.llmProfileIDs.isEmpty)) else {
+                   classifierType.llmProfileIDs.isEmpty) else {
                 throw WorkspaceCatalogError.incompatibleActiveClassifierType(classifierTypeID)
             }
-            if classifierType.entryDecisionSources.contains(.localModel) {
-                guard let localModelID = classifierType.localModelID,
-                      binding.activeModelID == localModelID,
+            if let localModelID = classifierType.localModelID {
+                guard binding.activeModelID == localModelID,
                       let model = models.first(where: { $0.id == localModelID }),
                       model.isReady,
                       model.embeddedNeuralModel != nil else {
@@ -1464,8 +1447,6 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             }
             if !supportsLLMAssist {
                 reconciled.llmProfileIDs = []
-                reconciled.creatorDecisionSources.removeAll(where: { $0 == .llmAssist })
-                reconciled.entryDecisionSources.removeAll(where: { $0 == .llmAssist })
             }
             if let modelID = reconciled.localModelID {
                 let compatible = models.contains(where: { model in
@@ -1478,19 +1459,11 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             }
             if !supportsLocalModel {
                 reconciled.localModelID = nil
-                reconciled.creatorDecisionSources.removeAll(where: { $0 == .localModel })
-                reconciled.entryDecisionSources.removeAll(where: { $0 == .localModel })
             }
-            if reconciled.localModelID == nil {
-                reconciled.creatorDecisionSources.removeAll(where: { $0 == .localModel })
-                reconciled.entryDecisionSources.removeAll(where: { $0 == .localModel })
+            let retainedPriority = reconciled.decisionPriority.reduce(into: [ClassifierDecisionSource]()) { result, source in
+                if !result.contains(source) { result.append(source) }
             }
-            if reconciled.llmProfileIDs.isEmpty {
-                reconciled.creatorDecisionSources.removeAll(where: { $0 == .llmAssist })
-                reconciled.entryDecisionSources.removeAll(where: { $0 == .llmAssist })
-            }
-            reconciled.creatorDecisionSources = Array(Set(reconciled.creatorDecisionSources)).sorted { $0.rawValue < $1.rawValue }
-            reconciled.entryDecisionSources = Array(Set(reconciled.entryDecisionSources)).sorted { $0.rawValue < $1.rawValue }
+            reconciled.decisionPriority = retainedPriority + ClassifierDecisionSource.allCases.filter { !retainedPriority.contains($0) }
             reconciled.updatedAtMilliseconds = WorkspaceCatalog.now()
             return reconciled
         }
@@ -1509,24 +1482,22 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                 bindings[index].activeModelID = nil
                 continue
             }
-            let enabledSources = Set(classifierType.creatorDecisionSources + classifierType.entryDecisionSources)
             if (!platform.supportsLocalModel &&
-                (enabledSources.contains(.localModel) || classifierType.localModelID != nil)) ||
+                classifierType.localModelID != nil) ||
                 (!platform.supportsLLMAssist &&
-                (enabledSources.contains(.llmAssist) || !classifierType.llmProfileIDs.isEmpty)) {
+                !classifierType.llmProfileIDs.isEmpty) {
                 bindings[index].activeClassifierTypeID = nil
                 bindings[index].activeModelID = nil
                 continue
             }
-            if classifierType.entryDecisionSources.contains(.localModel),
-               let modelID = classifierType.localModelID,
+            if let modelID = classifierType.localModelID,
                models.contains(where: { model in
                    model.id == modelID && model.isReady && model.embeddedNeuralModel != nil &&
                    model.treeID == tree.id && model.treeRevision == tree.revision &&
                    model.datasetID == dataset.id && model.datasetRevision == dataset.revision
                }) {
                 bindings[index].activeModelID = modelID
-            } else if classifierType.entryDecisionSources.contains(.localModel) {
+            } else if classifierType.localModelID != nil {
                 bindings[index].activeClassifierTypeID = nil
                 bindings[index].activeModelID = nil
             } else {
