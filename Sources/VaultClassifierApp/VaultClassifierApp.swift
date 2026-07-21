@@ -582,6 +582,7 @@ final class VaultClassifierViewModel: ObservableObject {
                         profile: profile,
                         entry: entry,
                         allowedTagIDs: allowedTagIDs,
+                        classifierType: classifierType,
                         catalog: catalog
                     )
                     let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
@@ -664,19 +665,24 @@ final class VaultClassifierViewModel: ObservableObject {
         profile: APIKeyProviderProfile,
         entry: EntryEvidence,
         allowedTagIDs: Set<String>,
+        classifierType: ClassifierTypeAsset,
         catalog: WorkspaceCatalog
     ) async throws -> ProviderClassificationRun {
         let mainCredential = try providerCredential(for: profile.id)
-        let selectedTools = profile.externalToolProfileIDs.compactMap { selectedID in
-            catalog.providerProfiles.first(where: { $0.id == selectedID })
-        }.filter { toolProfile in
+        let selectedTools = classifierType.applicablePlatformID
+            .flatMap(CollectionPlatformRegistry.definition(for:))
+            .flatMap(\.apiProviderType)
+            .map { providerType in
+                catalog.providerProfiles.filter { $0.type == providerType }
+            } ?? []
+        let readyTools = selectedTools.first { toolProfile in
             let descriptor = ProviderProtocolRegistry.descriptor(for: toolProfile.type)
             guard !descriptor.supportsLLMConfiguration,
                   (try? toolProfile.validateForDispatch()) != nil else { return false }
             return descriptor.credentialFields.isEmpty || (try? providerCredential(for: toolProfile.id)) != nil
-        }
+        }.map { [$0] } ?? []
 
-        guard !selectedTools.isEmpty else {
+        guard !readyTools.isEmpty else {
             let request = try ProviderClassificationProtocol.prepare(
                 profile: profile,
                 entry: entry,
@@ -691,7 +697,7 @@ final class VaultClassifierViewModel: ObservableObject {
             profile: profile,
             entry: entry,
             allowedLeafTagIDs: allowedTagIDs,
-            toolProfiles: selectedTools
+            toolProfiles: readyTools
         )
         var totalInputTokens: Int?
         var totalOutputTokens: Int?
@@ -715,7 +721,7 @@ final class VaultClassifierViewModel: ObservableObject {
             totalToolCalls += turn.toolCalls.count
             var results: [ProviderToolCallingResult] = []
             for call in turn.toolCalls {
-                results.append(await executeExternalToolCall(call, definitions: request.toolDefinitions, profiles: selectedTools, entry: entry))
+                results.append(await executeExternalToolCall(call, definitions: request.toolDefinitions, profiles: readyTools, entry: entry))
             }
             request = try ProviderToolCallingProtocol.continueRequest(
                 prepared: request,
@@ -1153,17 +1159,12 @@ final class VaultClassifierViewModel: ObservableObject {
                   let dataset = catalog.datasets.first else {
                 throw WebBridgeInputError.invalidChoice("classifier type")
             }
-            let dataSourcePlatformIDs = catalog.bindings
-                .filter { $0.treeID == tree.id && $0.datasetID == dataset.id }
-                .map(\.id)
-                .sorted()
             catalog.classifierTypes.append(.init(
                 name: cleaned,
                 treeID: tree.id,
                 treeRevision: tree.revision,
                 datasetID: dataset.id,
-                datasetRevision: dataset.revision,
-                dataSourcePlatformIDs: dataSourcePlatformIDs
+                datasetRevision: dataset.revision
             ))
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
@@ -1174,9 +1175,7 @@ final class VaultClassifierViewModel: ObservableObject {
     func configureClassifierType(
         typeID: String,
         name: String,
-        treeID: String,
-        datasetID: String,
-        dataSourcePlatformIDs: [String],
+        applicablePlatformID: String,
         localModelID: String?,
         llmProfileIDs: [String],
         priority: [ClassifierDecisionSource],
@@ -1195,27 +1194,15 @@ final class VaultClassifierViewModel: ObservableObject {
                   Set(priority) == Set(ClassifierDecisionSource.allCases),
                   var catalog = localState?.workspaceCatalog,
                   let typeIndex = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }),
-                  let tree = catalog.trees.first(where: { $0.id == treeID }),
-                  let dataset = catalog.datasets.first(where: { $0.id == datasetID }) else {
+                  let selectedBinding = catalog.bindings.first(where: { $0.id == applicablePlatformID }),
+                  let tree = catalog.trees.first(where: { $0.id == selectedBinding.treeID }),
+                  let dataset = catalog.datasets.first(where: { $0.id == selectedBinding.datasetID }),
+                  let selectedDefinition = CollectionPlatformRegistry.definition(for: selectedBinding.id) else {
                 throw WebBridgeInputError.invalidChoice("classifier type")
             }
             let selectedLLMIDs = Array(Set(llmProfileIDs)).sorted()
-            let selectedDataSourcePlatformIDs = Array(Set(dataSourcePlatformIDs)).sorted()
-            guard !selectedDataSourcePlatformIDs.isEmpty,
-                  selectedDataSourcePlatformIDs.count <= ClassifierTypeAsset.maximumDataSourcePlatforms,
-                  selectedDataSourcePlatformIDs.allSatisfy({ platformID in
-                      catalog.bindings.contains(where: { binding in
-                          binding.id == platformID && binding.treeID == tree.id && binding.datasetID == dataset.id
-                      })
-            }) else {
-                throw WebBridgeInputError.invalidChoice("classification data sources")
-            }
-            let selectedDefinitions = selectedDataSourcePlatformIDs.compactMap(CollectionPlatformRegistry.definition(for:))
-            guard selectedDefinitions.count == selectedDataSourcePlatformIDs.count else {
-                throw WebBridgeInputError.invalidChoice("classification data sources")
-            }
-            let supportsLocalModel = selectedDefinitions.allSatisfy(\.supportsLocalModel)
-            let supportsLLMAssist = selectedDefinitions.allSatisfy(\.supportsLLMAssist)
+            let supportsLocalModel = selectedDefinition.supportsLocalModel
+            let supportsLLMAssist = selectedDefinition.supportsLLMAssist
             guard selectedLLMIDs.count <= ClassifierTypeAsset.maximumLLMProfiles,
                   selectedLLMIDs.allSatisfy({ profileID in
                       catalog.providerProfiles.contains(where: { $0.id == profileID && $0.type.supportsLLMConfiguration })
@@ -1230,7 +1217,7 @@ final class VaultClassifierViewModel: ObservableObject {
                    model.id == normalizedModelID && model.isReady && model.embeddedNeuralModel != nil &&
                    model.treeID == tree.id && model.treeRevision == tree.revision &&
                    model.datasetID == dataset.id && model.datasetRevision == dataset.revision &&
-                   Set(model.effectiveTrainingPlatformIDs) == Set(selectedDataSourcePlatformIDs)
+                   model.effectiveTrainingPlatformIDs == [selectedBinding.id]
                }) {
                 compatibleModelID = normalizedModelID
             } else {
@@ -1252,7 +1239,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 treeRevision: tree.revision,
                 datasetID: dataset.id,
                 datasetRevision: dataset.revision,
-                dataSourcePlatformIDs: selectedDataSourcePlatformIDs,
+                applicablePlatformID: selectedBinding.id,
                 localModelID: compatibleModelID,
                 llmProfileIDs: supportsLLMAssist ? selectedLLMIDs : [],
                 decisionPriority: priority,
@@ -1286,7 +1273,8 @@ final class VaultClassifierViewModel: ObservableObject {
                   classifierType.treeID == tree.id,
                   classifierType.treeRevision == tree.revision,
                   classifierType.datasetID == dataset.id,
-                  classifierType.datasetRevision == dataset.revision else {
+                  classifierType.datasetRevision == dataset.revision,
+                  classifierType.applicablePlatformID == platformID else {
                 throw WebBridgeInputError.invalidChoice("classifier type")
             }
             guard let platform = CollectionPlatformRegistry.definition(for: platformID) else {
@@ -1722,7 +1710,7 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             let platformID = String(keyParts[0])
             let creatorID = String(keyParts[1])
-            guard classifierType.dataSourcePlatformIDs.contains(platformID),
+            guard classifierType.applicablePlatformID == platformID,
                   CollectionPlatformRegistry.definition(for: platformID)?.supportsLLMAssist == true else {
                 throw WebBridgeInputError.invalidChoice("creator data source")
             }
@@ -1774,7 +1762,7 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             let candidates = CreatorAvatarBackfill.candidates(
                 entries: dataset.collectedEntries,
-                allowedPlatformIDs: Set(classifierType.dataSourcePlatformIDs)
+                allowedPlatformIDs: Set(classifierType.applicablePlatformID.map { [$0] } ?? [])
             )
             creatorAvatarBackfillFoundCount = nil
             guard !candidates.isEmpty else {
@@ -1869,7 +1857,7 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             let platformID = String(keyParts[0])
             let creatorID = String(keyParts[1])
-            guard classifierType.dataSourcePlatformIDs.contains(platformID) else {
+            guard classifierType.applicablePlatformID == platformID else {
                 throw WebBridgeInputError.invalidChoice("creator data source")
             }
             guard let representative = dataset.collectedEntries.first(where: {
@@ -1912,6 +1900,7 @@ final class VaultClassifierViewModel: ObservableObject {
                         profile: profile,
                         entry: entry,
                         allowedTagIDs: allowedTagIDs,
+                        classifierType: classifierType,
                         catalog: catalog
                     )
                     let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
@@ -2008,7 +1997,7 @@ final class VaultClassifierViewModel: ObservableObject {
         tagIDs: [String],
         origin: ClassificationRecordOrigin
     ) throws {
-        guard classifierType.dataSourcePlatformIDs.contains(platformID),
+        guard classifierType.applicablePlatformID == platformID,
               classifierType.treeID == tree.id,
               classifierType.treeRevision == tree.revision,
               let datasetIndex = catalog.datasets.firstIndex(where: { $0.id == classifierType.datasetID }) else {
@@ -2688,7 +2677,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     "treeRevision": classifierType.treeRevision,
                     "datasetID": classifierType.datasetID,
                     "datasetRevision": classifierType.datasetRevision,
-                    "dataSourcePlatformIDs": classifierType.dataSourcePlatformIDs,
+                    "applicablePlatformID": classifierType.applicablePlatformID ?? NSNull(),
                     "localModelID": classifierType.localModelID ?? NSNull(),
                     "llmProfileIDs": classifierType.llmProfileIDs,
                     "decisionPriority": classifierType.decisionPriority.map(\.rawValue),
@@ -2761,7 +2750,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 return ["id": binding.id, "name": binding.name, "browser": binding.browser, "treeID": binding.treeID, "datasetID": binding.datasetID, "activeClassifierTypeID": binding.activeClassifierTypeID ?? NSNull(), "activeModelID": binding.activeModelID ?? NSNull(), "policyID": binding.policyID ?? NSNull(), "collectionEnabled": binding.collectionEnabled, "supportsLocalModel": definition?.supportsLocalModel ?? false, "supportsLLMAssist": definition?.supportsLLMAssist ?? false] as [String: Any]
             },
             "collectionPlatforms": CollectionPlatformRegistry.definitions.map { definition in
-                ["id": definition.id, "name": definition.name, "browser": definition.browser, "collectorAvailable": definition.collectorAvailable, "supportsLocalModel": definition.supportsLocalModel, "supportsLLMAssist": definition.supportsLLMAssist] as [String: Any]
+                ["id": definition.id, "name": definition.name, "browser": definition.browser, "collectorAvailable": definition.collectorAvailable, "supportsLocalModel": definition.supportsLocalModel, "supportsLLMAssist": definition.supportsLLMAssist, "apiProviderType": definition.apiProviderType?.rawValue ?? NSNull()] as [String: Any]
             },
             "tokenUsage": budgetRecords.suffix(12).reversed().map { record -> [String: Any] in
                 let usage = record.settledUsage ?? record.usageCeiling
@@ -2879,9 +2868,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 configureClassifierType(
                     typeID: try webString(data, key: "typeID", limit: 256),
                     name: try webString(data, key: "name", limit: ClassifierTypeAsset.maximumNameLength),
-                    treeID: try webString(data, key: "treeID", limit: 256),
-                    datasetID: try webString(data, key: "datasetID", limit: 256),
-                    dataSourcePlatformIDs: try webStringArray(data, key: "dataSourcePlatformIDs", limit: ClassifierTypeAsset.maximumDataSourcePlatforms, elementLimit: 64),
+                    applicablePlatformID: try webString(data, key: "applicablePlatformID", limit: 64),
                     localModelID: try webOptionalString(data, key: "localModelID", limit: 256),
                     llmProfileIDs: try webClassifierTypeLLMProfiles(data),
                     priority: priority,

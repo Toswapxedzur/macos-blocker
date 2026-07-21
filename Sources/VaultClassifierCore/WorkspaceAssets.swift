@@ -401,7 +401,6 @@ public enum ClassifierDecisionSource: String, Codable, Sendable, CaseIterable {
 public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     public static let maximumNameLength = 128
     public static let maximumLLMProfiles = 16
-    public static let maximumDataSourcePlatforms = 32
 
     public var id: String
     public var name: String
@@ -409,9 +408,9 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     public var treeRevision: Int
     public var datasetID: String
     public var datasetRevision: Int
-    /// Platform-specific slices from the selected local data asset. A type may
-    /// intentionally combine, for example, YouTube and Instagram sources.
-    public var dataSourcePlatformIDs: [String]
+    /// One platform binding supplies this type's tree and collected local
+    /// classification data. A type cannot combine platform sources.
+    public var applicablePlatformID: String?
     /// A ready model is optional: a human-only type is valid, while a local
     /// model source is enabled only when this compatible model is selected.
     public var localModelID: String?
@@ -435,7 +434,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         treeRevision: Int,
         datasetID: String,
         datasetRevision: Int,
-        dataSourcePlatformIDs: [String] = [],
+        applicablePlatformID: String? = nil,
         localModelID: String? = nil,
         llmProfileIDs: [String] = [],
         decisionPriority: [ClassifierDecisionSource] = [.human, .llmAssist, .localModel],
@@ -449,7 +448,8 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         self.treeRevision = treeRevision
         self.datasetID = datasetID
         self.datasetRevision = datasetRevision
-        self.dataSourcePlatformIDs = Array(Set(dataSourcePlatformIDs)).sorted()
+        let cleanedPlatformID = applicablePlatformID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.applicablePlatformID = cleanedPlatformID.isEmpty ? nil : cleanedPlatformID
         self.localModelID = localModelID
         self.llmProfileIDs = Array(Set(llmProfileIDs)).sorted()
         self.decisionPriority = decisionPriority
@@ -459,7 +459,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, treeID, treeRevision, datasetID, datasetRevision, dataSourcePlatformIDs, localModelID,
+        case id, name, treeID, treeRevision, datasetID, datasetRevision, applicablePlatformID, dataSourcePlatformIDs, localModelID,
              llmProfileIDs, decisionPriority, creatorDecisionSources,
              entryDecisionSources, updatedAtMilliseconds
     }
@@ -472,7 +472,17 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         treeRevision = try container.decode(Int.self, forKey: .treeRevision)
         datasetID = try container.decode(String.self, forKey: .datasetID)
         datasetRevision = try container.decode(Int.self, forKey: .datasetRevision)
-        dataSourcePlatformIDs = Array(Set(try container.decodeIfPresent([String].self, forKey: .dataSourcePlatformIDs) ?? [])).sorted()
+        let decodedPlatformID = (try container.decodeIfPresent(String.self, forKey: .applicablePlatformID)?.trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
+        if !decodedPlatformID.isEmpty {
+            applicablePlatformID = decodedPlatformID
+        } else {
+            // The retired multi-source field is read only as a bounded crash
+            // guard. It can be preserved only when it already described one
+            // platform; a combined legacy type must be configured again.
+            let legacyPlatformIDs = Array(Set(try container.decodeIfPresent([String].self, forKey: .dataSourcePlatformIDs) ?? []))
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            applicablePlatformID = legacyPlatformIDs.count == 1 ? legacyPlatformIDs[0] : nil
+        }
         localModelID = try container.decodeIfPresent(String.self, forKey: .localModelID)
         llmProfileIDs = Array(Set(try container.decodeIfPresent([String].self, forKey: .llmProfileIDs) ?? [])).sorted()
         decisionPriority = try container.decodeIfPresent([ClassifierDecisionSource].self, forKey: .decisionPriority)
@@ -483,6 +493,23 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
             ?? []
         updatedAtMilliseconds = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMilliseconds)
             ?? WorkspaceCatalog.now()
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(treeID, forKey: .treeID)
+        try container.encode(treeRevision, forKey: .treeRevision)
+        try container.encode(datasetID, forKey: .datasetID)
+        try container.encode(datasetRevision, forKey: .datasetRevision)
+        try container.encodeIfPresent(applicablePlatformID, forKey: .applicablePlatformID)
+        try container.encodeIfPresent(localModelID, forKey: .localModelID)
+        try container.encode(llmProfileIDs, forKey: .llmProfileIDs)
+        try container.encode(decisionPriority, forKey: .decisionPriority)
+        try container.encode(creatorDecisionSources, forKey: .creatorDecisionSources)
+        try container.encode(entryDecisionSources, forKey: .entryDecisionSources)
+        try container.encode(updatedAtMilliseconds, forKey: .updatedAtMilliseconds)
     }
 }
 
@@ -604,6 +631,23 @@ public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
     /// A manual-only platform can retain public entries and human tags, but
     /// must never be sent through an LLM-assist classification path.
     public var supportsLLMAssist: Bool
+
+    /// The optional local public-data API profile that belongs to this
+    /// platform. A missing value means the platform keeps local collected data
+    /// only; it never causes a generic provider profile to be selected.
+    public var apiProviderType: APIKeyProviderType? {
+        switch id {
+        case "youtube": return .youtubeData
+        case "tiktok": return .tikTok
+        case "facebook": return .facebookGraph
+        case "instagram": return .instagramGraph
+        case "twitch": return .twitch
+        case "reddit": return .reddit
+        case "twitter": return .xPlatform
+        case "discord", "bilibili": return nil
+        default: return nil
+        }
+    }
 
     public init(
         id: String,
@@ -1148,13 +1192,10 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                   tree.revision == classifierType.treeRevision,
                   let dataset = datasets.first(where: { $0.id == classifierType.datasetID }),
                   dataset.revision == classifierType.datasetRevision,
-                  classifierType.dataSourcePlatformIDs.count <= ClassifierTypeAsset.maximumDataSourcePlatforms,
-                  Set(classifierType.dataSourcePlatformIDs).count == classifierType.dataSourcePlatformIDs.count,
-                  classifierType.dataSourcePlatformIDs.allSatisfy({ platformID in
-                      bindings.contains(where: { binding in
-                          binding.id == platformID && binding.treeID == tree.id && binding.datasetID == dataset.id
-                      })
-                  }),
+                  (classifierType.applicablePlatformID == nil || (classifierType.applicablePlatformID?.count ?? 0) <= 64),
+                  (classifierType.applicablePlatformID == nil || bindings.contains(where: { binding in
+                      binding.id == classifierType.applicablePlatformID && binding.treeID == tree.id && binding.datasetID == dataset.id
+                  })),
                   classifierType.llmProfileIDs.count <= ClassifierTypeAsset.maximumLLMProfiles,
                   Set(classifierType.llmProfileIDs).count == classifierType.llmProfileIDs.count,
                   classifierType.llmProfileIDs.allSatisfy({ profileID in
@@ -1174,26 +1215,20 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                       model.treeRevision == tree.revision,
                       model.datasetID == dataset.id,
                       model.datasetRevision == dataset.revision,
-                      // Empty source selections are accepted only while an
-                      // older saved classifier type is awaiting reconciliation.
-                      // New types are required to select at least one source
-                      // by the app bridge.
-                      (classifierType.dataSourcePlatformIDs.isEmpty ||
-                       Set(model.effectiveTrainingPlatformIDs) == Set(classifierType.dataSourcePlatformIDs)) else {
-                    throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
-                }
+                      classifierType.applicablePlatformID.map({ model.effectiveTrainingPlatformIDs == [$0] }) == true else {
+                throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
+            }
             }
             let enabledSources = Set(classifierType.creatorDecisionSources + classifierType.entryDecisionSources)
             guard (!enabledSources.contains(.localModel) || classifierType.localModelID != nil),
                   (!enabledSources.contains(.llmAssist) || !classifierType.llmProfileIDs.isEmpty) else {
                 throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
             }
-            let sourceDefinitions = classifierType.dataSourcePlatformIDs.compactMap(CollectionPlatformRegistry.definition(for:))
             let usesLocalModel = classifierType.localModelID != nil || enabledSources.contains(.localModel)
             let usesLLMAssist = !classifierType.llmProfileIDs.isEmpty || enabledSources.contains(.llmAssist)
-            guard sourceDefinitions.count == classifierType.dataSourcePlatformIDs.count,
-                  (!usesLocalModel || sourceDefinitions.allSatisfy(\.supportsLocalModel)),
-                  (!usesLLMAssist || sourceDefinitions.allSatisfy(\.supportsLLMAssist)) else {
+            let applicablePlatform = classifierType.applicablePlatformID.flatMap(CollectionPlatformRegistry.definition(for:))
+            guard (!usesLocalModel || applicablePlatform?.supportsLocalModel == true),
+                  (!usesLLMAssist || applicablePlatform?.supportsLLMAssist == true) else {
                 throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
             }
         }
@@ -1204,6 +1239,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             }
             guard classifierType.treeID == binding.treeID,
                   classifierType.datasetID == binding.datasetID,
+                  classifierType.applicablePlatformID == binding.id,
                   let tree = trees.first(where: { $0.id == binding.treeID }),
                   let dataset = datasets.first(where: { $0.id == binding.datasetID }),
                   let platform = CollectionPlatformRegistry.definition(for: binding.id),
@@ -1376,21 +1412,15 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             var reconciled = classifierType
             reconciled.treeRevision = tree.revision
             reconciled.datasetRevision = dataset.revision
-            let compatibleSourcePlatformIDs = bindings.compactMap { binding -> String? in
-                binding.treeID == tree.id && binding.datasetID == dataset.id ? binding.id : nil
-            }.sorted()
-            if reconciled.dataSourcePlatformIDs.isEmpty {
-                // Older saved types predate source selection. Their existing
-                // compatible platform bindings form the safe migration set.
-                reconciled.dataSourcePlatformIDs = compatibleSourcePlatformIDs
-            } else {
-                reconciled.dataSourcePlatformIDs = reconciled.dataSourcePlatformIDs.filter(compatibleSourcePlatformIDs.contains)
+            let applicableBinding = reconciled.applicablePlatformID.flatMap { platformID in
+                bindings.first(where: { binding in
+                    binding.id == platformID && binding.treeID == tree.id && binding.datasetID == dataset.id
+                })
             }
-            let sourceDefinitions = reconciled.dataSourcePlatformIDs.compactMap(CollectionPlatformRegistry.definition(for:))
-            let supportsLocalModel = sourceDefinitions.count == reconciled.dataSourcePlatformIDs.count &&
-                sourceDefinitions.allSatisfy(\.supportsLocalModel)
-            let supportsLLMAssist = sourceDefinitions.count == reconciled.dataSourcePlatformIDs.count &&
-                sourceDefinitions.allSatisfy(\.supportsLLMAssist)
+            reconciled.applicablePlatformID = applicableBinding?.id
+            let applicablePlatform = reconciled.applicablePlatformID.flatMap(CollectionPlatformRegistry.definition(for:))
+            let supportsLocalModel = applicablePlatform?.supportsLocalModel == true
+            let supportsLLMAssist = applicablePlatform?.supportsLLMAssist == true
             reconciled.llmProfileIDs = reconciled.llmProfileIDs.filter { profileID in
                 providerProfiles.contains(where: { $0.id == profileID && $0.type.supportsLLMConfiguration })
             }
@@ -1404,7 +1434,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                     model.id == modelID && model.isReady && model.embeddedNeuralModel != nil &&
                     model.treeID == tree.id && model.treeRevision == tree.revision &&
                     model.datasetID == dataset.id && model.datasetRevision == dataset.revision &&
-                    Set(model.effectiveTrainingPlatformIDs) == Set(reconciled.dataSourcePlatformIDs)
+                    model.effectiveTrainingPlatformIDs == [reconciled.applicablePlatformID ?? ""]
                 })
                 if !compatible { reconciled.localModelID = nil }
             }
@@ -1435,7 +1465,8 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                   classifierType.treeID == tree.id,
                   classifierType.treeRevision == tree.revision,
                   classifierType.datasetID == dataset.id,
-                  classifierType.datasetRevision == dataset.revision else {
+                  classifierType.datasetRevision == dataset.revision,
+                  classifierType.applicablePlatformID == bindings[index].id else {
                 bindings[index].activeClassifierTypeID = nil
                 bindings[index].activeModelID = nil
                 continue
