@@ -701,11 +701,11 @@
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}">
         <div class="classifier-type-head"><div><span class="eyebrow">${tx("bridge.typePanel")}</span><h3>${esc(classifierType.name)}</h3><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div>${statusPill(typeStatus, applicablePlatformID && (creatorSources.size || entrySources.size) ? "navy" : "muted")}</div>
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}<button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("bridge.saveType")}</button><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}">${tx("bridge.deleteType")}</button></div>
-        <section class="classifier-type-section classifier-applicable-platform-section"><div class="section-header"><div><h3>${tx("bridge.applicablePlatform")}</h3><p class="section-copy">${tx("bridge.assetSelectionCopy")}</p></div></div><div class="classifier-applicable-platform-row">${valueSelectField("bridge.applicablePlatform", "bridge.applicablePlatformCopy", "applicablePlatformID", applicablePlatformID, applicablePlatformOptions)}<div class="classifier-platform-data-status"><span class="eyebrow">${tx("bridge.platformData")}</span><p class="small-copy">${esc(platformDataStatus)}</p></div></div>${applicablePlatform && (!supportsLocalModel || !supportsLLMAssist) ? `<p class="small-copy">${tx("bridge.manualOnlyCopy")}</p>` : ""}</section>
-        <section class="classifier-type-section"><div class="section-header"><div><h3>${tx("bridge.localModel")}</h3><p class="section-copy">${tx("bridge.localModelCopy")}</p></div></div><div class="classifier-local-model-field">${valueSelectField("bridge.localModel", "", "localModelID", classifierType.localModelID || "", modelOptions)}</div></section>
+        <section class="classifier-type-section classifier-applicable-platform-section"><div class="section-header"><div><h3>${tx("bridge.applicablePlatform")}</h3><p class="section-copy">${tx("bridge.assetSelectionCopy")}</p></div></div><div class="classifier-applicable-platform-row">${valueSelectField("bridge.applicablePlatform", "bridge.applicablePlatformCopy", "applicablePlatformID", applicablePlatformID, applicablePlatformOptions)}<div class="classifier-platform-data-status"><span class="eyebrow">${tx("bridge.platformData")}</span><p class="small-copy">${esc(platformDataStatus)}</p></div></div>${applicablePlatform && !supportsLocalModel && !supportsLLMAssist ? `<p class="small-copy" data-manual-only-platform-note>${tx("bridge.manualOnlyCopy")}</p>` : ""}</section>
+        <section class="classifier-type-section classifier-local-model-section" data-local-model-section${supportsLocalModel ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.localModel")}</h3><p class="section-copy">${tx("bridge.localModelCopy")}</p></div></div><div class="classifier-local-model-field">${valueSelectField("bridge.localModel", "", "localModelID", classifierType.localModelID || "", modelOptions)}</div></section>
         <section class="classifier-type-section creator-classification-section"><div class="section-header"><div><h3>${tx("bridge.manualCreator")}</h3><p class="section-copy">${tx("bridge.manualCreatorCopy")}</p></div><div class="action-row"><span class="small-copy">${tx("bridge.creatorCount", { count: creatorOptions.length })}</span><button class="secondary" data-action="backfillCreatorAvatars" data-type-id="${esc(classifierType.id)}"${disabled(avatarBackfill.running || !creatorRecords.length)}>${tx(avatarBackfill.running ? "bridge.creatorAvatarBackfillRunning" : "bridge.creatorAvatarBackfill")}</button>${avatarBackfillStatus}</div></div><p class="small-copy">${tx("bridge.creatorAvatarBackfillCopy")}</p>${creatorClassification}</section>
-        <section class="classifier-type-section classifier-llm-section"><div class="section-header"><div><h3>${tx("bridge.llmAssist")}</h3><p class="section-copy">${tx("bridge.llmAssistCopy")}</p></div><span class="small-copy">${tx("bridge.llmExplicitOnly")}</span></div>${llmProfiles.length ? `<div class="classifier-profile-list">${llmProfiles.map((profile) => `<label class="classifier-profile-choice"><input type="checkbox" data-field="llmProfile.${esc(profile.id)}"${checked(selectedLLMIDs.has(profile.id))}><span>${esc(profile.name)}</span><small>${esc(profile.modelIdentifier)}</small></label>`).join("")}</div>` : `<div class="empty compact-empty">${tx("bridge.noLLMProfiles")}</div>`}</section>
-        <section class="classifier-type-section"><div class="section-header"><div><h3>${tx("bridge.decisionPolicy")}</h3><p class="section-copy">${tx("bridge.decisionPolicyCopy")}</p></div></div><div class="classifier-priority-grid">${valueSelectField("bridge.priorityFirst", "", "priorityFirst", priority[0], sourceOptions)}${valueSelectField("bridge.prioritySecond", "", "prioritySecond", priority[1], sourceOptions)}${valueSelectField("bridge.priorityThird", "", "priorityThird", priority[2], sourceOptions)}</div><div class="classifier-decision-grid"><section><span class="eyebrow">${tx("bridge.creatorDecision")}</span><p class="small-copy">${tx("bridge.creatorDecisionCopy")}</p><div class="classifier-source-list">${sourceToggle("creatorHuman", "human", creatorSources.has("human"), true)}${sourceToggle("creatorLLM", "llmAssist", creatorSources.has("llmAssist"), llmAvailable)}${sourceToggle("creatorLocalModel", "localModel", creatorSources.has("localModel"), localAvailable)}</div></section><section><span class="eyebrow">${tx("bridge.entryDecision")}</span><p class="small-copy">${tx("bridge.entryDecisionCopy")}</p><div class="classifier-source-list">${sourceToggle("entryHuman", "human", entrySources.has("human"), true)}${sourceToggle("entryLLM", "llmAssist", entrySources.has("llmAssist"), llmAvailable)}${sourceToggle("entryLocalModel", "localModel", entrySources.has("localModel"), localAvailable)}</div></section></div></section>
+        <section class="classifier-type-section classifier-llm-section" data-llm-assist-section${supportsLLMAssist ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.llmAssist")}</h3><p class="section-copy">${tx("bridge.llmAssistCopy")}</p></div><span class="small-copy">${tx("bridge.llmExplicitOnly")}</span></div>${llmProfiles.length ? `<div class="classifier-profile-list">${llmProfiles.map((profile) => `<label class="classifier-profile-choice"><input type="checkbox" data-field="llmProfile.${esc(profile.id)}"${checked(selectedLLMIDs.has(profile.id))}><span>${esc(profile.name)}</span><small>${esc(profile.modelIdentifier)}</small></label>`).join("")}</div>` : `<div class="empty compact-empty">${tx("bridge.noLLMProfiles")}</div>`}</section>
+        <section class="classifier-type-section classifier-decision-policy-section" data-decision-policy-section${supportsLocalModel || supportsLLMAssist ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.decisionPolicy")}</h3><p class="section-copy">${tx("bridge.decisionPolicyCopy")}</p></div></div><div class="classifier-priority-grid">${valueSelectField("bridge.priorityFirst", "", "priorityFirst", priority[0], sourceOptions)}${valueSelectField("bridge.prioritySecond", "", "prioritySecond", priority[1], sourceOptions)}${valueSelectField("bridge.priorityThird", "", "priorityThird", priority[2], sourceOptions)}</div><div class="classifier-decision-grid"><section><span class="eyebrow">${tx("bridge.creatorDecision")}</span><p class="small-copy">${tx("bridge.creatorDecisionCopy")}</p><div class="classifier-source-list">${sourceToggle("creatorHuman", "human", creatorSources.has("human"), true)}${sourceToggle("creatorLLM", "llmAssist", creatorSources.has("llmAssist"), llmAvailable)}${sourceToggle("creatorLocalModel", "localModel", creatorSources.has("localModel"), localAvailable)}</div></section><section><span class="eyebrow">${tx("bridge.entryDecision")}</span><p class="small-copy">${tx("bridge.entryDecisionCopy")}</p><div class="classifier-source-list">${sourceToggle("entryHuman", "human", entrySources.has("human"), true)}${sourceToggle("entryLLM", "llmAssist", entrySources.has("llmAssist"), llmAvailable)}${sourceToggle("entryLocalModel", "localModel", entrySources.has("localModel"), localAvailable)}</div></section></div></section>
       </section>`;
     };
     return `<div class="workspace classifier-type-workspace">${header("bridge.title", "bridge.copy", t("bridge.typeLibrary"), "navy")}
@@ -969,13 +969,18 @@
     editor.scrollTop = position.y;
   }
 
-  function applyManualOnlyPlatformCapabilities() {
+  function applyApplicablePlatformCapabilities() {
     const definitions = new Map((state?.assets?.collectionPlatforms || []).map((platform) => [platform.id, platform]));
     root.querySelectorAll(".classifier-type-panel").forEach((panel) => {
       const sourceControl = panel.querySelector('[data-field="applicablePlatformID"]');
       if (!sourceControl) return;
       const platform = definitions.get(sourceControl.value);
-      const hasManualOnlySource = platform && (!platform.supportsLocalModel || !platform.supportsLLMAssist);
+      const supportsLocalModel = platform?.supportsLocalModel === true;
+      const supportsLLMAssist = platform?.supportsLLMAssist === true;
+      const isManualOnlyPlatform = Boolean(platform && !supportsLocalModel && !supportsLLMAssist);
+      panel.querySelectorAll("[data-local-model-section]").forEach((section) => { section.hidden = !supportsLocalModel; });
+      panel.querySelectorAll("[data-llm-assist-section]").forEach((section) => { section.hidden = !supportsLLMAssist; });
+      panel.querySelectorAll("[data-decision-policy-section]").forEach((section) => { section.hidden = !supportsLocalModel && !supportsLLMAssist; });
       let note = panel.querySelector("[data-manual-only-platform-note]");
       if (!note) {
         note = document.createElement("p");
@@ -984,11 +989,15 @@
         note.textContent = t("bridge.manualOnlyCopy");
         panel.querySelector(".classifier-applicable-platform-section")?.append(note);
       }
-      if (note) note.hidden = !hasManualOnlySource;
-      panel.querySelectorAll('[data-field="localModelID"], [data-field^="llmProfile."], [data-field="creatorLLM"], [data-field="entryLLM"], [data-field="creatorLocalModel"], [data-field="entryLocalModel"]').forEach((control) => {
-        control.disabled = hasManualOnlySource;
-        if (hasManualOnlySource && control.type === "checkbox") control.checked = false;
-        if (hasManualOnlySource && control.dataset.field === "localModelID") control.value = "";
+      if (note) note.hidden = !isManualOnlyPlatform;
+      panel.querySelectorAll('[data-field="localModelID"], [data-field="creatorLocalModel"], [data-field="entryLocalModel"]').forEach((control) => {
+        control.disabled = !supportsLocalModel;
+        if (!supportsLocalModel && control.type === "checkbox") control.checked = false;
+        if (!supportsLocalModel && control.dataset.field === "localModelID") control.value = "";
+      });
+      panel.querySelectorAll('[data-field^="llmProfile."], [data-field="creatorLLM"], [data-field="entryLLM"]').forEach((control) => {
+        control.disabled = !supportsLLMAssist;
+        if (!supportsLLMAssist && control.type === "checkbox") control.checked = false;
       });
     });
   }
@@ -997,7 +1006,7 @@
     rememberTreeViewportPositions();
     rememberEditorViewportPosition();
     root.innerHTML = state ? shell(workspace()) : `<div class="popup"><div class="empty">${tx("app.loading")}</div></div>`;
-    applyManualOnlyPlatformCapabilities();
+    applyApplicablePlatformCapabilities();
     window.requestAnimationFrame(() => {
       applyNavigationPanelWidth();
       restoreEditorViewportPosition();
@@ -1222,7 +1231,7 @@
       return;
     }
     if (event.target.closest('[data-field="applicablePlatformID"]')) {
-      applyManualOnlyPlatformCapabilities();
+      applyApplicablePlatformCapabilities();
       return;
     }
     const control = event.target.closest("[data-local-model-setup]");
