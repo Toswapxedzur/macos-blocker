@@ -85,6 +85,22 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertTrue(catalog.trees.first?.nodes.isEmpty == true)
     }
 
+    func testEnsuringPlatformBindingAddsTheMissingPlatformToLocalClassificationData() throws {
+        var catalog = WorkspaceCatalog.starter()
+        let defaultBinding = try XCTUnwrap(catalog.bindings.first)
+
+        let created = try catalog.ensurePlatformBinding("discord")
+        let repeated = try catalog.ensurePlatformBinding("discord")
+
+        XCTAssertEqual(created.id, "discord")
+        XCTAssertEqual(created.name, "Discord")
+        XCTAssertEqual(created.treeID, defaultBinding.treeID)
+        XCTAssertEqual(created.datasetID, defaultBinding.datasetID)
+        XCTAssertEqual(repeated, created)
+        XCTAssertEqual(catalog.bindings.filter { $0.id == "discord" }.count, 1)
+        XCTAssertNoThrow(try catalog.validate())
+    }
+
     func testTagNodeCanvasPositionRoundTripsAndLegacyNodeDefaultsToUnplaced() throws {
         let positioned = TagTreeNode(id: "topic", name: "Topic", positionX: 184, positionY: 96)
         let restored = try JSONDecoder().decode(TagTreeNode.self, from: JSONEncoder().encode(positioned))

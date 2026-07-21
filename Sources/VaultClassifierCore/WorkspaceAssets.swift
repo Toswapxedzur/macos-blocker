@@ -1337,6 +1337,35 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         }
     }
 
+    /// Returns the local classification-data binding for a supported platform,
+    /// creating it from this catalog's default tree and dataset when the
+    /// platform has not been added yet. A platform is added at most once.
+    @discardableResult
+    public mutating func ensurePlatformBinding(_ platformID: String) throws -> PlatformBinding {
+        guard let definition = CollectionPlatformRegistry.definition(for: platformID) else {
+            throw WorkspaceCatalogError.unsupportedCollectionPlatform(platformID)
+        }
+        if let existing = bindings.first(where: { $0.id == definition.id }) {
+            return existing
+        }
+        guard let tree = trees.first else {
+            throw WorkspaceCatalogError.missingTree("workspace default")
+        }
+        guard let dataset = datasets.first else {
+            throw WorkspaceCatalogError.missingDataset("workspace default")
+        }
+        let binding = PlatformBinding(
+            id: definition.id,
+            name: definition.name,
+            browser: definition.browser,
+            treeID: tree.id,
+            datasetID: dataset.id,
+            collectionEnabled: true
+        )
+        bindings.append(binding)
+        return binding
+    }
+
     /// Removes one local platform binding together with the public entries and
     /// durable creator decisions that belong to that platform. Shared tree and
     /// dataset assets are deliberately retained. Any model whose source set or

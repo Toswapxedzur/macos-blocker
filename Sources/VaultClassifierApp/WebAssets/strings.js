@@ -496,6 +496,8 @@ window.VaultClassifierStrings = Object.freeze({
   "bridge.applicablePlatformCopy": "Only one platform can be used by a classifier type.",
   "bridge.noApplicablePlatform": "Choose a platform",
   "bridge.platformDataChoose": "Choose a platform to bind its local classification data.",
+  "bridge.platformDataAutoCreate": "adds local data",
+  "bridge.platformDataWillCreate": "Local classification data for {platform} will be added when you save this type.",
   "bridge.platformDataBound": "Local API credential bound: {profile}",
   "bridge.platformDataMissingKey": "No local {platform} API credential is configured.",
   "bridge.platformDataUnavailable": "{platform} has no local API adapter yet.",
