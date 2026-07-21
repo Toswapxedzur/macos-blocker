@@ -1010,17 +1010,7 @@ final class VaultClassifierViewModel: ObservableObject {
             guard !catalog.bindings.contains(where: { $0.id == definition.id }) else {
                 throw WebBridgeInputError.invalidChoice("collection platform already exists")
             }
-            guard let tree = catalog.trees.first, let dataset = catalog.datasets.first else {
-                throw WebBridgeInputError.invalidChoice("workspace assets")
-            }
-            catalog.bindings.append(.init(
-                id: definition.id,
-                name: definition.name,
-                browser: definition.browser,
-                treeID: tree.id,
-                datasetID: dataset.id,
-                collectionEnabled: true
-            ))
+            _ = try catalog.ensurePlatformBinding(definition.id)
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
             issue = nil
@@ -1187,7 +1177,11 @@ final class VaultClassifierViewModel: ObservableObject {
                   Set(priority) == Set(ClassifierDecisionSource.allCases),
                   var catalog = localState?.workspaceCatalog,
                   let typeIndex = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }),
-                  let selectedBinding = catalog.bindings.first(where: { $0.id == applicablePlatformID }),
+                  CollectionPlatformRegistry.definition(for: applicablePlatformID) != nil else {
+                throw WebBridgeInputError.invalidChoice("classifier type")
+            }
+            let selectedBinding = try catalog.ensurePlatformBinding(applicablePlatformID)
+            guard
                   let tree = catalog.trees.first(where: { $0.id == selectedBinding.treeID }),
                   let dataset = catalog.datasets.first(where: { $0.id == selectedBinding.datasetID }),
                   let selectedDefinition = CollectionPlatformRegistry.definition(for: selectedBinding.id) else {

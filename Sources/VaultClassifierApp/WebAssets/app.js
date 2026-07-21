@@ -562,9 +562,9 @@
       const dataSourcePlatforms = new Set(applicablePlatformID ? [applicablePlatformID] : []);
       const supportsLocalModel = applicablePlatform?.supportsLocalModel === true;
       const supportsLLMAssist = applicablePlatform?.supportsLLMAssist === true;
-      const applicablePlatformOptions = [["", t("bridge.noApplicablePlatform")], ...(assets.bindings || []).map((binding) => {
-        const definition = platformDefinitions.get(binding.id);
-        return [binding.id, `${binding.name} · ${binding.browser}${!definition?.supportsLocalModel ? ` · ${t("bridge.manualOnly")}` : ""}`];
+      const applicablePlatformOptions = [["", t("bridge.noApplicablePlatform")], ...(assets.collectionPlatforms || []).map((definition) => {
+        const hasBinding = (assets.bindings || []).some((binding) => binding.id === definition.id);
+        return [definition.id, `${definition.name} · ${definition.browser}${hasBinding ? "" : ` · ${t("bridge.platformDataAutoCreate")}`}${!definition.supportsLocalModel ? ` · ${t("bridge.manualOnly")}` : ""}`];
       })];
       const platformAPIProfiles = applicablePlatform?.apiProviderType
         ? profiles.filter((profile) => profile.type === applicablePlatform.apiProviderType)
@@ -572,6 +572,8 @@
       const boundPlatformAPIProfile = platformAPIProfiles.find((profile) => profile.hasStoredCredential || profile.hasSessionCredential);
       const platformDataStatus = !applicablePlatform
         ? t("bridge.platformDataChoose")
+        : !applicableBinding
+          ? t("bridge.platformDataWillCreate", { platform: applicablePlatform.name })
         : !applicablePlatform.apiProviderType
           ? t("bridge.platformDataUnavailable", { platform: applicablePlatform.name })
           : boundPlatformAPIProfile
