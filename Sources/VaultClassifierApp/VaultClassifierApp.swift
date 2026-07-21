@@ -478,7 +478,6 @@ final class VaultClassifierViewModel: ObservableObject {
                     durationMilliseconds: duration,
                     inputTokens: parsed.usage.inputTokens,
                     outputTokens: parsed.usage.outputTokens,
-                    estimatedCostUSD: nil,
                     outcome: "succeeded",
                     requestContent: profile.storesFullRequestRecords ? request.prompt : nil,
                     responseContent: profile.storesFullRequestRecords ? parsed.content : nil
@@ -498,7 +497,6 @@ final class VaultClassifierViewModel: ObservableObject {
                         durationMilliseconds: duration,
                         inputTokens: nil,
                         outputTokens: nil,
-                        estimatedCostUSD: nil,
                         outcome: "failed"
                     ))
                 }
@@ -576,7 +574,6 @@ final class VaultClassifierViewModel: ObservableObject {
                         durationMilliseconds: duration,
                         inputTokens: run.usage.inputTokens,
                         outputTokens: run.usage.outputTokens,
-                        estimatedCostUSD: ProviderTestProtocol.estimatedCost(configuration: llmAssist, usage: run.usage),
                         outcome: "succeeded",
                         requestContent: profile.storesFullRequestRecords ? run.prompt : nil,
                         responseContent: profile.storesFullRequestRecords ? run.content : nil
@@ -595,7 +592,6 @@ final class VaultClassifierViewModel: ObservableObject {
                         durationMilliseconds: duration,
                         inputTokens: nil,
                         outputTokens: nil,
-                        estimatedCostUSD: nil,
                         outcome: "failed"
                     ))
                     self.issue = error.localizedDescription
@@ -1140,8 +1136,6 @@ final class VaultClassifierViewModel: ObservableObject {
         llmModelIdentifier: String?,
         llmMaximumTokens: String?,
         llmExternalToolProfileID: String?,
-        llmInputCostUSDPerMillion: String?,
-        llmOutputCostUSDPerMillion: String?,
         priority: [ClassifierDecisionSource]
     ) {
         do {
@@ -1188,9 +1182,7 @@ final class VaultClassifierViewModel: ObservableObject {
                         maximum: LLMAssistConfiguration.maximumTokenLimit,
                         label: "LLM maximum tokens"
                     ),
-                    externalToolProfileID: cleanedToolProfileID.isEmpty ? nil : cleanedToolProfileID,
-                    inputCostUSDPerMillion: try providerCostRate(llmInputCostUSDPerMillion, label: "LLM input token cost"),
-                    outputCostUSDPerMillion: try providerCostRate(llmOutputCostUSDPerMillion, label: "LLM output token cost")
+                    externalToolProfileID: cleanedToolProfileID.isEmpty ? nil : cleanedToolProfileID
                 )
                 try configuration.validate()
                 selectedLLMAssist = configuration
@@ -1906,7 +1898,6 @@ final class VaultClassifierViewModel: ObservableObject {
                         durationMilliseconds: duration,
                         inputTokens: run.usage.inputTokens,
                         outputTokens: run.usage.outputTokens,
-                        estimatedCostUSD: ProviderTestProtocol.estimatedCost(configuration: llmAssist, usage: run.usage),
                         outcome: "succeeded",
                         requestContent: profile.storesFullRequestRecords ? run.prompt : nil,
                         responseContent: profile.storesFullRequestRecords ? run.content : nil
@@ -1925,7 +1916,6 @@ final class VaultClassifierViewModel: ObservableObject {
                         durationMilliseconds: duration,
                         inputTokens: nil,
                         outputTokens: nil,
-                        estimatedCostUSD: nil,
                         outcome: "failed"
                     ))
                     self.issue = error.localizedDescription
@@ -2672,8 +2662,6 @@ final class VaultClassifierViewModel: ObservableObject {
                             "modelIdentifier": configuration.modelIdentifier,
                             "maximumTokens": configuration.maximumTokens,
                             "externalToolProfileID": configuration.externalToolProfileID ?? NSNull(),
-                            "inputCostUSDPerMillion": configuration.inputCostUSDPerMillion ?? NSNull(),
-                            "outputCostUSDPerMillion": configuration.outputCostUSDPerMillion ?? NSNull(),
                         ] as [String: Any]
                     } ?? NSNull(),
                     "decisionPriority": classifierType.decisionPriority.map(\.rawValue),
@@ -2707,7 +2695,6 @@ final class VaultClassifierViewModel: ObservableObject {
                     "durationMilliseconds": record.durationMilliseconds,
                     "inputTokens": record.inputTokens ?? NSNull(),
                     "outputTokens": record.outputTokens ?? NSNull(),
-                    "estimatedCostUSD": record.estimatedCostUSD ?? NSNull(),
                     "outcome": record.outcome,
                     "requestContent": record.requestContent ?? NSNull(),
                     "responseContent": record.responseContent ?? NSNull(),
@@ -2863,8 +2850,6 @@ final class VaultClassifierViewModel: ObservableObject {
                     llmModelIdentifier: try webOptionalString(data, key: "llmModelIdentifier", limit: LLMAssistConfiguration.maximumModelIdentifierLength),
                     llmMaximumTokens: try webOptionalString(data, key: "llmMaximumTokens", limit: 16),
                     llmExternalToolProfileID: try webOptionalString(data, key: "llmExternalToolProfileID", limit: 128),
-                    llmInputCostUSDPerMillion: try webOptionalString(data, key: "llmInputCostUSDPerMillion", limit: 32),
-                    llmOutputCostUSDPerMillion: try webOptionalString(data, key: "llmOutputCostUSDPerMillion", limit: 32),
                     priority: priority
                 )
             case "confirmDeleteClassifierType":
@@ -3152,14 +3137,6 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             return (key, credential)
         })
-    }
-
-    private func providerCostRate(_ raw: String?, label: String) throws -> Double? {
-        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
-        guard let value = Double(trimmed), value.isFinite, (0...1_000_000).contains(value) else {
-            throw WebBridgeInputError.invalidChoice(label)
-        }
-        return value
     }
 
     private func webCanvasCoordinate(_ data: [String: Any], key: String) throws -> Double {

@@ -18,16 +18,14 @@ final class ProviderTestProtocolTests: XCTestCase {
         XCTAssertEqual(parsed.usage, .init(inputTokens: 7, outputTokens: 2))
     }
 
-    func testOpenAIStyleTestParsesUsageAndCalculatesOnlyConfiguredCost() throws {
+    func testOpenAIStyleClassificationParsesUsage() throws {
         let profile = APIKeyProviderProfile(
             type: .openAICompatible,
             customEndpoint: "https://api.deepseek.com/v1"
         )
-        var configuration = LLMAssistConfiguration(
+        let configuration = LLMAssistConfiguration(
             providerProfileID: profile.id,
-            modelIdentifier: "deepseek-chat",
-            inputCostUSDPerMillion: 0.28,
-            outputCostUSDPerMillion: 0.42
+            modelIdentifier: "deepseek-chat"
         )
         let prepared = try ProviderClassificationProtocol.prepare(
             profile: profile,
@@ -39,10 +37,7 @@ final class ProviderTestProtocolTests: XCTestCase {
         let response = Data(#"{"usage":{"prompt_tokens":1000,"completion_tokens":500},"choices":[{"message":{"content":"OK"}}]}"#.utf8)
         let parsed = try ProviderTestProtocol.parseResponse(response, format: .openAIChatCompletions, operation: .generateText)
         XCTAssertEqual(parsed.content, "OK")
-        XCTAssertEqual(try XCTUnwrap(ProviderTestProtocol.estimatedCost(configuration: configuration, usage: parsed.usage)), 0.00049, accuracy: 0.0000001)
-
-        configuration.outputCostUSDPerMillion = nil
-        XCTAssertNil(ProviderTestProtocol.estimatedCost(configuration: configuration, usage: parsed.usage))
+        XCTAssertEqual(parsed.usage, .init(inputTokens: 1_000, outputTokens: 500))
     }
 
     func testRequestRecordPreservesMetadataAndOnlyExplicitContent() throws {
@@ -58,7 +53,6 @@ final class ProviderTestProtocolTests: XCTestCase {
             durationMilliseconds: 41,
             inputTokens: 3,
             outputTokens: 1,
-            estimatedCostUSD: 0.0001,
             outcome: "succeeded",
             requestContent: ProviderTestProtocol.prompt,
             responseContent: "OK"
@@ -71,6 +65,15 @@ final class ProviderTestProtocolTests: XCTestCase {
         let restored = try JSONDecoder().decode(WorkspaceCatalog.self, from: JSONEncoder().encode(catalog))
         XCTAssertEqual(restored.providerRequestRecords, [record])
         XCTAssertFalse(String(decoding: try JSONEncoder().encode(restored), as: UTF8.self).contains("apiKey"))
+
+        var legacyRecord = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as? [String: Any])
+        legacyRecord["estimatedCostUSD"] = 0.0001
+        let decodedLegacyRecord = try JSONDecoder().decode(
+            ProviderRequestRecord.self,
+            from: JSONSerialization.data(withJSONObject: legacyRecord)
+        )
+        XCTAssertEqual(decodedLegacyRecord, record)
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(decodedLegacyRecord), as: UTF8.self).contains("estimatedCostUSD"))
     }
 
     func testExplicitProviderClassificationUsesOnlyKnownLeafIDs() throws {

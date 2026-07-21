@@ -58,13 +58,6 @@ public enum ProviderTestProtocol {
         return .init(content: String(content.prefix(ProviderRequestRecord.maximumContentCharacters)), usage: usage)
     }
 
-    public static func estimatedCost(configuration: LLMAssistConfiguration, usage: ProviderTestUsage) -> Double? {
-        guard let inputTokens = usage.inputTokens, let outputTokens = usage.outputTokens,
-              let inputRate = configuration.inputCostUSDPerMillion,
-              let outputRate = configuration.outputCostUSDPerMillion else { return nil }
-        return (Double(inputTokens) * inputRate + Double(outputTokens) * outputRate) / 1_000_000
-    }
-
     public static func safeEndpoint(_ url: URL) -> String {
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url.absoluteString }
         components.query = nil
