@@ -551,6 +551,8 @@ window.VaultClassifierStrings = Object.freeze({
   "bridge.llmWebSearchCopy": "Available only when the selected model provider supports its own search tool.",
   "bridge.llmExternalTool": "Allow automatic platform data tool",
   "bridge.llmExternalToolCopy": "When available, uses the current {platform} API connection automatically. You cannot choose a tool connection here.",
+  "bridge.llmUsePlatformAPIKey": "Use platform API key",
+  "bridge.llmUsePlatformAPIKeyCopy": "Only if the saved {platform} creator URL is missing or its public page cannot provide a profile image, use the matching local API key as a fallback.",
   "bridge.creatorDecisionList": "Creator decisions",
   "bridge.creatorDecisionListCopy": "Human and LLM tags are shown together for every collected creator.",
   "bridge.humanTags": "Human tags",

@@ -12,6 +12,9 @@ enum CreatorAvatarBackfill {
     enum Source: Sendable {
         case cachedAvatarURL(String)
         case creatorPageURL(String)
+        /// The caller may use a separately enabled, matching platform API
+        /// after public-page discovery has no URL to start from.
+        case unavailableCreatorPage
     }
 
     struct Candidate: Sendable {
@@ -22,7 +25,8 @@ enum CreatorAvatarBackfill {
 
     static func candidates(
         entries: [CollectedPlatformEntry],
-        allowedPlatformIDs: Set<String>
+        allowedPlatformIDs: Set<String>,
+        includeUnavailableCreatorPages: Bool = false
     ) -> [Candidate] {
         var candidatesByCreator = [String: Candidate]()
         let orderedEntries = entries.sorted { lhs, rhs in
@@ -44,16 +48,25 @@ enum CreatorAvatarBackfill {
                 )
                 continue
             }
-            guard candidatesByCreator[key] == nil,
-                  let creatorPageURL = entry.attributes["creatorURL"],
-                  CreatorAvatarURLPolicy.isAcceptedCreatorPageURL(platformID: entry.platformID, value: creatorPageURL) else {
-                continue
+            if let creatorPageURL = entry.attributes["creatorURL"],
+               CreatorAvatarURLPolicy.isAcceptedCreatorPageURL(platformID: entry.platformID, value: creatorPageURL) {
+                switch candidatesByCreator[key]?.source {
+                case nil, .some(.unavailableCreatorPage):
+                    candidatesByCreator[key] = Candidate(
+                        platformID: entry.platformID,
+                        creatorID: entry.creatorID,
+                        source: .creatorPageURL(creatorPageURL)
+                    )
+                default:
+                    break
+                }
+            } else if includeUnavailableCreatorPages, candidatesByCreator[key] == nil {
+                candidatesByCreator[key] = Candidate(
+                    platformID: entry.platformID,
+                    creatorID: entry.creatorID,
+                    source: .unavailableCreatorPage
+                )
             }
-            candidatesByCreator[key] = Candidate(
-                platformID: entry.platformID,
-                creatorID: entry.creatorID,
-                source: .creatorPageURL(creatorPageURL)
-            )
         }
 
         return candidatesByCreator.values
@@ -74,6 +87,8 @@ enum CreatorAvatarBackfill {
                 creatorPageURL: creatorPageURL,
                 platformID: candidate.platformID
             )
+        case .unavailableCreatorPage:
+            return nil
         }
     }
 
