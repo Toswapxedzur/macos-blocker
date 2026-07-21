@@ -70,6 +70,17 @@ public enum ExternalPlatformToolProtocol {
     public static let maximumToolResultCharacters = 12_000
     public static let maximumToolResponseBytes = 64 * 1_024
 
+    /// Whether the reviewed platform protocol has a creator route that can
+    /// return the creator-owned image field used by avatar backfill.
+    public static func supportsCreatorAvatarLookup(providerType: APIKeyProviderType) -> Bool {
+        switch providerType {
+        case .youtubeData, .twitch, .reddit, .xPlatform, .instagramGraph, .facebookGraph:
+            return true
+        default:
+            return false
+        }
+    }
+
     /// Builds every usable definition from explicitly attached platform
     /// profiles. Incomplete profiles are intentionally omitted: an LLM never
     /// sees a tool that the native layer cannot safely route.
@@ -193,6 +204,50 @@ public enum ExternalPlatformToolProtocol {
         return String(data: data, encoding: .utf8) ?? "{\"ok\":false}"
     }
 
+    /// Extracts the creator-owned profile image field from a bounded API
+    /// response. The native caller must still apply its platform image-host
+    /// allowlist before persisting or downloading the returned URL.
+    public static func creatorAvatarURL(data: Data, providerType: APIKeyProviderType) -> String? {
+        guard data.count <= maximumToolResponseBytes,
+              let root = try? JSONSerialization.jsonObject(with: data) else {
+            return nil
+        }
+        func value(_ object: Any?, path: [String]) -> String? {
+            guard let key = path.first,
+                  let dictionary = object as? [String: Any],
+                  let next = dictionary[key] else {
+                return nil
+            }
+            return path.count == 1 ? next as? String : value(next, path: Array(path.dropFirst()))
+        }
+        func firstValue(_ object: Any?, path: [String]) -> String? {
+            guard let first = (object as? [String: Any])?["data"] as? [[String: Any]] else { return nil }
+            return value(first.first, path: path)
+        }
+        let raw: String?
+        switch providerType {
+        case .youtubeData:
+            guard let item = (root as? [String: Any])?["items"] as? [[String: Any]] else { return nil }
+            raw = value(item.first, path: ["snippet", "thumbnails", "high", "url"])
+                ?? value(item.first, path: ["snippet", "thumbnails", "medium", "url"])
+                ?? value(item.first, path: ["snippet", "thumbnails", "default", "url"])
+        case .twitch:
+            raw = firstValue(root, path: ["profile_image_url"])
+        case .reddit:
+            raw = value(root, path: ["data", "icon_img"])
+        case .xPlatform:
+            raw = value(root, path: ["data", "profile_image_url"])
+        case .instagramGraph:
+            raw = value(root, path: ["profile_picture_url"])
+        case .facebookGraph:
+            raw = value(root, path: ["picture", "data", "url"])
+        default:
+            raw = nil
+        }
+        let cleaned = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
     private static func availableTargets(entry: EntryEvidence) -> [ExternalPlatformToolTarget] {
         var targets: [ExternalPlatformToolTarget] = []
         if entry.entryID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false { targets.append(.entry) }
@@ -270,7 +325,7 @@ public enum ExternalPlatformToolProtocol {
         case .xPlatform:
             return target == .entry
                 ? get(["tweets", identifier], [.init(name: "tweet.fields", value: "author_id,created_at,entities,public_metrics")])
-                : get(["users", identifier], [.init(name: "user.fields", value: "created_at,description,public_metrics")])
+                : get(["users", identifier], [.init(name: "user.fields", value: "created_at,description,profile_image_url,public_metrics")])
         case .tikTok:
             guard target == .entry else { throw ExternalPlatformToolProtocolError.unsupportedTarget }
             // The Display API itself verifies that the requested video belongs
@@ -284,11 +339,11 @@ public enum ExternalPlatformToolProtocol {
         case .instagramGraph:
             return target == .entry
                 ? get([identifier], [.init(name: "fields", value: "id,caption,media_type,permalink,timestamp,username")])
-                : get([identifier], [.init(name: "fields", value: "id,username,biography,followers_count,media_count")])
+                : get([identifier], [.init(name: "fields", value: "id,username,biography,followers_count,media_count,profile_picture_url")])
         case .facebookGraph:
             return target == .entry
                 ? get([identifier], [.init(name: "fields", value: "id,message,story,created_time,from,permalink_url")])
-                : get([identifier], [.init(name: "fields", value: "id,name,about,description,fan_count")])
+                : get([identifier], [.init(name: "fields", value: "id,name,about,description,fan_count,picture{url}")])
         default:
             throw ExternalPlatformToolProtocolError.invalidConfiguration
         }

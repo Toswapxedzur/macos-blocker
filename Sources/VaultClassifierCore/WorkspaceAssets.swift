@@ -459,6 +459,9 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
     /// A matching platform-data connection is selected deterministically by
     /// the native app when available; the user never chooses a tool profile.
     public var externalToolEnabled: Bool
+    /// Uses the matching platform API only after an already-collected public
+    /// creator URL is unavailable or cannot provide a usable creator avatar.
+    public var usePlatformAPIKeyFallback: Bool
 
     public init(
         providerProfileID: String,
@@ -468,7 +471,8 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         maximumTagCount: Int = Self.defaultMaximumTagCount,
         restrictToLeafTags: Bool = true,
         webSearchEnabled: Bool = false,
-        externalToolEnabled: Bool = false
+        externalToolEnabled: Bool = false,
+        usePlatformAPIKeyFallback: Bool = false
     ) {
         self.providerProfileID = providerProfileID
         self.modelIdentifier = modelIdentifier
@@ -478,6 +482,7 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         self.restrictToLeafTags = restrictToLeafTags
         self.webSearchEnabled = webSearchEnabled
         self.externalToolEnabled = externalToolEnabled
+        self.usePlatformAPIKeyFallback = usePlatformAPIKeyFallback
     }
 
     public func validate() throws {
@@ -495,7 +500,8 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case providerProfileID, modelIdentifier, dailyOutputTokenLimit, batchSize,
              maximumTagCount, restrictToLeafTags, webSearchEnabled,
-             externalToolEnabled, maximumTokens, externalToolProfileID
+             externalToolEnabled, usePlatformAPIKeyFallback,
+             maximumTokens, externalToolProfileID
     }
 
     public init(from decoder: Decoder) throws {
@@ -513,6 +519,7 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         restrictToLeafTags = try container.decodeIfPresent(Bool.self, forKey: .restrictToLeafTags) ?? true
         webSearchEnabled = try container.decodeIfPresent(Bool.self, forKey: .webSearchEnabled) ?? false
         externalToolEnabled = try container.decodeIfPresent(Bool.self, forKey: .externalToolEnabled) ?? false
+        usePlatformAPIKeyFallback = try container.decodeIfPresent(Bool.self, forKey: .usePlatformAPIKeyFallback) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -525,6 +532,7 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         try container.encode(restrictToLeafTags, forKey: .restrictToLeafTags)
         try container.encode(webSearchEnabled, forKey: .webSearchEnabled)
         try container.encode(externalToolEnabled, forKey: .externalToolEnabled)
+        try container.encode(usePlatformAPIKeyFallback, forKey: .usePlatformAPIKeyFallback)
     }
 }
 
@@ -784,6 +792,13 @@ public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
         case "discord", "bilibili": return nil
         default: return nil
         }
+    }
+
+    /// The LLM Assist fallback control is shown only when the matching local
+    /// platform protocol can retrieve a creator-owned avatar field.
+    public var supportsCreatorAvatarAPIFallback: Bool {
+        guard let apiProviderType else { return false }
+        return ExternalPlatformToolProtocol.supportsCreatorAvatarLookup(providerType: apiProviderType)
     }
 
     public init(

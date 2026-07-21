@@ -812,6 +812,32 @@ final class VaultClassifierViewModel: ObservableObject {
         return (current ?? 0) + additional
     }
 
+    /// Chooses the one newest usable API connection for this platform. The
+    /// selection is local and deterministic; the UI never exposes profile
+    /// selection for a classifier type.
+    private func readyPlatformAPIProfile(
+        in catalog: WorkspaceCatalog,
+        platformID: String
+    ) -> APIKeyProviderProfile? {
+        guard let expectedType = CollectionPlatformRegistry.definition(for: platformID)?.apiProviderType else {
+            return nil
+        }
+        return catalog.providerProfiles
+            .filter { $0.type == expectedType }
+            .sorted { lhs, rhs in
+                if lhs.updatedAtMilliseconds == rhs.updatedAtMilliseconds { return lhs.id < rhs.id }
+                return lhs.updatedAtMilliseconds > rhs.updatedAtMilliseconds
+            }
+            .first { profile in
+                let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
+                guard !descriptor.supportsLLMConfiguration,
+                      (try? profile.validateForDispatch()) != nil else {
+                    return false
+                }
+                return descriptor.credentialFields.isEmpty || (try? providerCredential(for: profile.id)) != nil
+            }
+    }
+
     private func performProviderRequest(
         plan: ProviderRequestPlan,
         body: Data?,
@@ -871,6 +897,48 @@ final class VaultClassifierViewModel: ObservableObject {
                     message: error.localizedDescription
                 )
             )
+        }
+    }
+
+    /// Uses a platform credential only after public creator-page discovery has
+    /// produced no image URL. The API response is bounded and its image URL is
+    /// checked against the same platform-owned-host policy before persistence.
+    private func fetchCreatorAvatarURLUsingPlatformAPI(
+        candidate: CreatorAvatarBackfill.Candidate,
+        profile: APIKeyProviderProfile
+    ) async -> String? {
+        do {
+            let call = ExternalPlatformToolCall(
+                id: UUID().uuidString,
+                name: ExternalPlatformToolProtocol.toolName(for: profile),
+                arguments: #"{"target":"creator"}"#
+            )
+            let prepared = try ExternalPlatformToolProtocol.prepare(profile: profile, entry: .init(
+                platform: candidate.platformID,
+                sourceID: candidate.creatorID,
+                surface: .page,
+                evidence: .init(title: "Creator profile")
+            ), call: call)
+            let credential = try providerCredential(for: profile.id)
+            var request = URLRequest(url: prepared.plan.url)
+            request.httpMethod = prepared.plan.method
+            request.httpBody = prepared.body
+            request.timeoutInterval = 20
+            prepared.plan.headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
+            try apply(credential: credential, to: &request, plan: prepared.plan)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode),
+                  let avatarURL = ExternalPlatformToolProtocol.creatorAvatarURL(
+                      data: data,
+                      providerType: prepared.providerType
+                  ),
+                  CreatorAvatarURLPolicy.isAccepted(platformID: candidate.platformID, value: avatarURL) else {
+                return nil
+            }
+            return avatarURL
+        } catch {
+            return nil
         }
     }
 
@@ -1264,6 +1332,7 @@ final class VaultClassifierViewModel: ObservableObject {
         llmRestrictToLeafTags: Bool,
         llmWebSearchEnabled: Bool,
         llmExternalToolEnabled: Bool,
+        llmUsePlatformAPIKeyFallback: Bool,
         priority: [ClassifierDecisionSource]
     ) {
         do {
@@ -1325,7 +1394,8 @@ final class VaultClassifierViewModel: ObservableObject {
                     ),
                     restrictToLeafTags: llmRestrictToLeafTags,
                     webSearchEnabled: profile.type == .openAI && llmWebSearchEnabled,
-                    externalToolEnabled: selectedDefinition.apiProviderType != nil && llmExternalToolEnabled
+                    externalToolEnabled: selectedDefinition.apiProviderType != nil && llmExternalToolEnabled,
+                    usePlatformAPIKeyFallback: selectedDefinition.supportsCreatorAvatarAPIFallback && llmUsePlatformAPIKeyFallback
                 )
                 try configuration.validate()
                 selectedLLMAssist = configuration
@@ -1878,9 +1948,11 @@ final class VaultClassifierViewModel: ObservableObject {
                   let dataset = catalog.datasets.first(where: { $0.id == classifierType.datasetID }) else {
                 throw WebBridgeInputError.invalidChoice("creator avatar backfill")
             }
+            let usePlatformAPIKeyFallback = classifierType.llmAssistConfiguration?.usePlatformAPIKeyFallback == true
             let candidates = CreatorAvatarBackfill.candidates(
                 entries: dataset.collectedEntries,
-                allowedPlatformIDs: Set(classifierType.applicablePlatformID.map { [$0] } ?? [])
+                allowedPlatformIDs: Set(classifierType.applicablePlatformID.map { [$0] } ?? []),
+                includeUnavailableCreatorPages: usePlatformAPIKeyFallback
             )
             creatorAvatarBackfillFoundCount = nil
             guard !candidates.isEmpty else {
@@ -1895,8 +1967,14 @@ final class VaultClassifierViewModel: ObservableObject {
             Task { @MainActor [weak self] in
                 var foundCount = 0
                 for candidate in candidates {
-                    guard let avatarURL = await CreatorAvatarBackfill.resolveAvatarURL(for: candidate) else { continue }
                     guard let self else { return }
+                    var avatarURL = await CreatorAvatarBackfill.resolveAvatarURL(for: candidate)
+                    if avatarURL == nil,
+                       usePlatformAPIKeyFallback,
+                       let profile = self.readyPlatformAPIProfile(in: catalog, platformID: candidate.platformID) {
+                        avatarURL = await self.fetchCreatorAvatarURLUsingPlatformAPI(candidate: candidate, profile: profile)
+                    }
+                    guard let avatarURL else { continue }
                     do {
                         try self.storeCreatorAvatarURL(
                             avatarURL,
@@ -2987,6 +3065,7 @@ final class VaultClassifierViewModel: ObservableObject {
                             "restrictToLeafTags": configuration.restrictToLeafTags,
                             "webSearchEnabled": configuration.webSearchEnabled,
                             "externalToolEnabled": configuration.externalToolEnabled,
+                            "usePlatformAPIKeyFallback": configuration.usePlatformAPIKeyFallback,
                         ] as [String: Any]
                     } ?? NSNull(),
                     "decisionPriority": classifierType.decisionPriority.map(\.rawValue),
@@ -3050,10 +3129,10 @@ final class VaultClassifierViewModel: ObservableObject {
                 })
         assets["bindings"] = catalog.bindings.map { binding in
                 let definition = CollectionPlatformRegistry.definition(for: binding.id)
-                return ["id": binding.id, "name": binding.name, "browser": binding.browser, "treeID": binding.treeID, "datasetID": binding.datasetID, "activeClassifierTypeID": binding.activeClassifierTypeID ?? NSNull(), "activeModelID": binding.activeModelID ?? NSNull(), "policyID": binding.policyID ?? NSNull(), "collectionEnabled": binding.collectionEnabled, "supportsLocalModel": definition?.supportsLocalModel ?? false, "supportsLLMAssist": definition?.supportsLLMAssist ?? false] as [String: Any]
+                return ["id": binding.id, "name": binding.name, "browser": binding.browser, "treeID": binding.treeID, "datasetID": binding.datasetID, "activeClassifierTypeID": binding.activeClassifierTypeID ?? NSNull(), "activeModelID": binding.activeModelID ?? NSNull(), "policyID": binding.policyID ?? NSNull(), "collectionEnabled": binding.collectionEnabled, "supportsLocalModel": definition?.supportsLocalModel ?? false, "supportsLLMAssist": definition?.supportsLLMAssist ?? false, "supportsCreatorAvatarAPIFallback": definition?.supportsCreatorAvatarAPIFallback ?? false] as [String: Any]
             }
         assets["collectionPlatforms"] = CollectionPlatformRegistry.definitions.map { definition in
-                ["id": definition.id, "name": definition.name, "browser": definition.browser, "collectorAvailable": definition.collectorAvailable, "supportsLocalModel": definition.supportsLocalModel, "supportsLLMAssist": definition.supportsLLMAssist, "apiProviderType": definition.apiProviderType?.rawValue ?? NSNull()] as [String: Any]
+                ["id": definition.id, "name": definition.name, "browser": definition.browser, "collectorAvailable": definition.collectorAvailable, "supportsLocalModel": definition.supportsLocalModel, "supportsLLMAssist": definition.supportsLLMAssist, "apiProviderType": definition.apiProviderType?.rawValue ?? NSNull(), "supportsCreatorAvatarAPIFallback": definition.supportsCreatorAvatarAPIFallback] as [String: Any]
             }
         assets["tokenUsage"] = budgetRecords.suffix(12).reversed().map { record -> [String: Any] in
                 let usage = record.settledUsage ?? record.usageCeiling
@@ -3183,6 +3262,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     llmRestrictToLeafTags: data["llmRestrictToLeafTags"] as? Bool ?? false,
                     llmWebSearchEnabled: data["llmWebSearchEnabled"] as? Bool ?? false,
                     llmExternalToolEnabled: data["llmExternalToolEnabled"] as? Bool ?? false,
+                    llmUsePlatformAPIKeyFallback: data["llmUsePlatformAPIKeyFallback"] as? Bool ?? false,
                     priority: priority
                 )
             case "confirmDeleteClassifierType":

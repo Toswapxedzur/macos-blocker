@@ -432,6 +432,7 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(decoded.llmAssistConfiguration?.modelIdentifier, "gemini-3.1-flash-lite")
         XCTAssertEqual(decoded.llmAssistConfiguration?.dailyOutputTokenLimit, LLMAssistConfiguration.defaultDailyOutputTokenLimit)
         XCTAssertEqual(decoded.llmAssistConfiguration?.batchSize, LLMAssistConfiguration.defaultBatchSize)
+        XCTAssertFalse(decoded.llmAssistConfiguration?.usePlatformAPIKeyFallback ?? true)
 
         let reencoded = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
         XCTAssertFalse(reencoded.contains("inputCostUSDPerMillion"))

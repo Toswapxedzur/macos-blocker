@@ -226,6 +226,29 @@ final class ProviderTestProtocolTests: XCTestCase {
         XCTAssertFalse(result.contains("secret"))
     }
 
+    func testPlatformCreatorAvatarExtractionUsesOnlyKnownResponseFields() {
+        XCTAssertTrue(ExternalPlatformToolProtocol.supportsCreatorAvatarLookup(providerType: .youtubeData))
+        XCTAssertFalse(ExternalPlatformToolProtocol.supportsCreatorAvatarLookup(providerType: .tikTok))
+        XCTAssertEqual(
+            ExternalPlatformToolProtocol.creatorAvatarURL(
+                data: Data(#"{"items":[{"snippet":{"thumbnails":{"high":{"url":"https://yt3.googleusercontent.com/avatar"}}}}]}"#.utf8),
+                providerType: .youtubeData
+            ),
+            "https://yt3.googleusercontent.com/avatar"
+        )
+        XCTAssertEqual(
+            ExternalPlatformToolProtocol.creatorAvatarURL(
+                data: Data(#"{"data":[{"profile_image_url":"https://static-cdn.jtvnw.net/avatar.png"}]}"#.utf8),
+                providerType: .twitch
+            ),
+            "https://static-cdn.jtvnw.net/avatar.png"
+        )
+        XCTAssertNil(ExternalPlatformToolProtocol.creatorAvatarURL(
+            data: Data(#"{"unexpected":"https://example.invalid/avatar.png"}"#.utf8),
+            providerType: .youtubeData
+        ))
+    }
+
     func testCatalogAllowsAutomaticMatchingPlatformToolForAClassifierLLM() throws {
         let model = APIKeyProviderProfile(id: "llm-tool-model", type: .deepSeek)
         let youtube = APIKeyProviderProfile(id: "provider-tool-youtube", type: .youtubeData)
