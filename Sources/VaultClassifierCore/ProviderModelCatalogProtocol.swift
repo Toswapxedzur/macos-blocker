@@ -1,15 +1,16 @@
 import Foundation
 
-/// Fetches the models exposed by one configured LLM connection. The request
-/// plan deliberately contains no credential value; the native Keychain
-/// boundary authenticates it immediately before network dispatch.
+/// Fetches the models exposed by one configured LLM connection. Fixed provider
+/// types are loaded when the app launches; Custom keeps this explicit action.
+/// The request plan deliberately contains no credential value; the native
+/// Keychain boundary authenticates it immediately before network dispatch.
 public enum ProviderModelCatalogProtocol {
     public static let maximumModels = 256
     public static let maximumResponseBytes = 512 * 1_024
 
     public static func prepare(profile: APIKeyProviderProfile) throws -> ProviderRequestPlan {
         let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
-        guard descriptor.supportsLLMConfiguration, profile.type != .custom else {
+        guard descriptor.supportsLLMConfiguration else {
             throw ProviderModelCatalogProtocolError.unsupportedProvider
         }
         try profile.validateForDispatch()
@@ -100,7 +101,7 @@ public enum ProviderModelCatalogProtocolError: Error, Equatable, LocalizedError,
 
     public var errorDescription: String? {
         switch self {
-        case .unsupportedProvider: return "This connection uses a custom model identifier and cannot list models."
+        case .unsupportedProvider: return "This connection cannot list models."
         case .invalidConfiguration: return "The provider connection cannot build a model-list request."
         case .invalidResponse: return "The provider returned an unreadable or oversized model list."
         case .noModels: return "The provider returned no usable text-generation models."

@@ -433,6 +433,7 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(decoded.llmAssistConfiguration?.dailyOutputTokenLimit, LLMAssistConfiguration.defaultDailyOutputTokenLimit)
         XCTAssertEqual(decoded.llmAssistConfiguration?.batchSize, LLMAssistConfiguration.defaultBatchSize)
         XCTAssertFalse(decoded.llmAssistConfiguration?.usePlatformAPIKeyFallback ?? true)
+        XCTAssertFalse(decoded.llmAssistConfiguration?.isActive ?? true)
 
         let reencoded = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
         XCTAssertFalse(reencoded.contains("inputCostUSDPerMillion"))

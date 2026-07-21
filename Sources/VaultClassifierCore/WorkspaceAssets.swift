@@ -462,6 +462,9 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
     /// Uses the matching platform API only after an already-collected public
     /// creator URL is unavailable or cannot provide a usable creator avatar.
     public var usePlatformAPIKeyFallback: Bool
+    /// Activation is an explicit per-classifier-type permission for the app to
+    /// classify eligible collected creators sequentially.
+    public var isActive: Bool
 
     public init(
         providerProfileID: String,
@@ -472,7 +475,8 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         restrictToLeafTags: Bool = true,
         webSearchEnabled: Bool = false,
         externalToolEnabled: Bool = false,
-        usePlatformAPIKeyFallback: Bool = false
+        usePlatformAPIKeyFallback: Bool = false,
+        isActive: Bool = false
     ) {
         self.providerProfileID = providerProfileID
         self.modelIdentifier = modelIdentifier
@@ -483,6 +487,7 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         self.webSearchEnabled = webSearchEnabled
         self.externalToolEnabled = externalToolEnabled
         self.usePlatformAPIKeyFallback = usePlatformAPIKeyFallback
+        self.isActive = isActive
     }
 
     public func validate() throws {
@@ -500,7 +505,7 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case providerProfileID, modelIdentifier, dailyOutputTokenLimit, batchSize,
              maximumTagCount, restrictToLeafTags, webSearchEnabled,
-             externalToolEnabled, usePlatformAPIKeyFallback,
+             externalToolEnabled, usePlatformAPIKeyFallback, isActive,
              maximumTokens, externalToolProfileID
     }
 
@@ -520,6 +525,7 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         webSearchEnabled = try container.decodeIfPresent(Bool.self, forKey: .webSearchEnabled) ?? false
         externalToolEnabled = try container.decodeIfPresent(Bool.self, forKey: .externalToolEnabled) ?? false
         usePlatformAPIKeyFallback = try container.decodeIfPresent(Bool.self, forKey: .usePlatformAPIKeyFallback) ?? false
+        isActive = try container.decodeIfPresent(Bool.self, forKey: .isActive) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -533,6 +539,7 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         try container.encode(webSearchEnabled, forKey: .webSearchEnabled)
         try container.encode(externalToolEnabled, forKey: .externalToolEnabled)
         try container.encode(usePlatformAPIKeyFallback, forKey: .usePlatformAPIKeyFallback)
+        try container.encode(isActive, forKey: .isActive)
     }
 }
 
