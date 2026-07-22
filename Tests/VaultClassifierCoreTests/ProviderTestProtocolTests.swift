@@ -279,11 +279,13 @@ final class ProviderTestProtocolTests: XCTestCase {
         XCTAssertThrowsError(try catalog.validate())
     }
 
-    func testModelCatalogUsesProviderEndpointsAndFiltersUnsupportedGeminiModels() throws {
+    func testModelCatalogUsesVaultServiceForFixedProvidersAndDirectEndpointsForCustomProviders() throws {
         let openAI = APIKeyProviderProfile(type: .openAI)
-        let plan = try ProviderModelCatalogProtocol.prepare(profile: openAI)
+        let localVault = try VaultServiceEndpoint(baseURL: try XCTUnwrap(URL(string: "http://127.0.0.1:8080")))
+        let plan = try ProviderModelCatalogProtocol.prepare(profile: openAI, vaultService: localVault)
         XCTAssertEqual(plan.method, "GET")
-        XCTAssertEqual(plan.url.absoluteString, "https://api.openai.com/v1/models")
+        XCTAssertEqual(plan.url.absoluteString, "http://127.0.0.1:8080/api/vault-classifier/llm-model-catalog/openAI")
+        XCTAssertEqual(plan.authentication, .none)
         XCTAssertEqual(
             try ProviderModelCatalogProtocol.parse(Data(#"{"data":[{"id":"gpt-5"},{"id":"gpt-4.1"}]}"#.utf8), providerType: .openAI),
             ["gpt-4.1", "gpt-5"]
@@ -292,8 +294,10 @@ final class ProviderTestProtocolTests: XCTestCase {
             try ProviderModelCatalogProtocol.parse(Data(#"{"models":[{"name":"models/gemini-usable","supportedGenerationMethods":["generateContent"]},{"name":"models/embedding-only","supportedGenerationMethods":["embedContent"]}]}"#.utf8), providerType: .gemini),
             ["gemini-usable"]
         )
-        let custom = try ProviderModelCatalogProtocol.prepare(profile: .init(type: .custom, customEndpoint: "https://example.test"))
+        let custom = try ProviderModelCatalogProtocol.prepare(profile: .init(type: .custom, customEndpoint: "https://example.test"), vaultService: localVault)
         XCTAssertEqual(custom.url.absoluteString, "https://example.test/models")
+        let compatible = try ProviderModelCatalogProtocol.prepare(profile: .init(type: .openAICompatible, customEndpoint: "https://example.test/v1"), vaultService: localVault)
+        XCTAssertEqual(compatible.url.absoluteString, "https://example.test/v1/models")
         let ollama = try ProviderModelCatalogProtocol.prepare(profile: .init(type: .ollama))
         XCTAssertEqual(ollama.url.absoluteString, "http://127.0.0.1:11434/api/tags")
     }

@@ -1,18 +1,36 @@
 import Foundation
 
-/// Fetches the models exposed by one configured LLM connection. Fixed provider
-/// types are loaded when the app launches; Custom keeps this explicit action.
-/// The request plan deliberately contains no credential value; the native
-/// Keychain boundary authenticates it immediately before network dispatch.
+/// Fetches models for one LLM connection. Fixed providers use the Vault
+/// service's credential-free curated catalog at launch. Custom and compatible
+/// providers keep their explicit direct request because only their operator
+/// knows the endpoint and account-specific model inventory.
 public enum ProviderModelCatalogProtocol {
     public static let maximumModels = 256
     public static let maximumResponseBytes = 512 * 1_024
 
-    public static func prepare(profile: APIKeyProviderProfile) throws -> ProviderRequestPlan {
+    public static func prepare(
+        profile: APIKeyProviderProfile,
+        vaultService: VaultServiceEndpoint? = nil
+    ) throws -> ProviderRequestPlan {
         let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
         guard descriptor.supportsLLMConfiguration else {
             throw ProviderModelCatalogProtocolError.unsupportedProvider
         }
+        if usesVaultCatalog(profile.type) {
+            try profile.validate()
+            guard let vaultService else { throw ProviderModelCatalogProtocolError.missingVaultService }
+            let path = "api/vault-classifier/llm-model-catalog/\(profile.type.rawValue)"
+            return .init(
+                url: try vaultService.url(path: path),
+                method: "GET",
+                bodyFormat: .queryOnly,
+                headers: ["Accept": "application/json"],
+                authentication: .none,
+                authenticationHeader: nil,
+                requiredCredentialFields: []
+            )
+        }
+
         try profile.validateForDispatch()
         let path: String
         switch profile.type {
@@ -33,6 +51,16 @@ public enum ProviderModelCatalogProtocol {
             authenticationHeader: descriptor.authenticationHeader,
             requiredCredentialFields: descriptor.credentialFields
         )
+    }
+
+    public static func usesVaultCatalog(_ providerType: APIKeyProviderType) -> Bool {
+        switch providerType {
+        case .openAI, .deepSeek, .gemini, .anthropic, .mistral, .cohere,
+             .groq, .openRouter:
+            return true
+        default:
+            return false
+        }
     }
 
     public static func parse(_ data: Data, providerType: APIKeyProviderType) throws -> [String] {
@@ -95,6 +123,7 @@ public enum ProviderModelCatalogProtocol {
 
 public enum ProviderModelCatalogProtocolError: Error, Equatable, LocalizedError, Sendable {
     case unsupportedProvider
+    case missingVaultService
     case invalidConfiguration
     case invalidResponse
     case noModels
@@ -102,6 +131,7 @@ public enum ProviderModelCatalogProtocolError: Error, Equatable, LocalizedError,
     public var errorDescription: String? {
         switch self {
         case .unsupportedProvider: return "This connection cannot list models."
+        case .missingVaultService: return "The fixed provider model catalog needs a configured Vault service."
         case .invalidConfiguration: return "The provider connection cannot build a model-list request."
         case .invalidResponse: return "The provider returned an unreadable or oversized model list."
         case .noModels: return "The provider returned no usable text-generation models."
