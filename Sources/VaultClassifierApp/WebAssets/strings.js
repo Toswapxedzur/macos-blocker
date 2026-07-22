@@ -637,7 +637,7 @@ window.VaultClassifierStrings = Object.freeze({
   "data.waitingForEntries": "Collection is on. New rendered, non-ad entries will appear here by source.",
   "data.sourceCount": "{count} {sources}",
   "data.entryCount": "{count} ENTRIES",
-  "data.discordLocalOnly": "Discord collects rendered messages from every open server and channel, never direct messages. The collected content stays on this Mac and is never sent to a provider or remote service.",
+  "data.discordLocalOnly": "Discord collects rendered messages from server channels you open in the browser, never direct messages. The collected content stays on this Mac and is never sent to a provider or remote service.",
   "data.unknownDate": "Unknown observation time",
   "data.diagnostics": "COLLECTION DIAGNOSTICS",
   "data.diagnosticsCopy": "Local pipeline checkpoints only. They never include page text, titles, creators, URLs, or entry IDs.",
