@@ -147,6 +147,7 @@ final class VaultClassifierViewModel: ObservableObject {
     /// callbacks do not otherwise guarantee an `NSAlert` remains retained.
     private var activeProviderCredentialAlert: NSAlert?
     private var testingProviderProfileIDs = Set<String>()
+    private let vaultServiceEndpoint: VaultServiceEndpoint
     /// Model names are fetched from the selected provider on demand and remain
     /// in memory only. They are not part of a credential connection or the
     /// workspace catalog.
@@ -159,6 +160,7 @@ final class VaultClassifierViewModel: ObservableObject {
 
     init() {
         do {
+            self.vaultServiceEndpoint = VaultServiceEndpoint.current()
             let package = try SeedPackageLoader.bundled()
             let appSupport = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             let vaultDirectory = appSupport.appendingPathComponent("VaultClassifier", isDirectory: true)
@@ -526,14 +528,16 @@ final class VaultClassifierViewModel: ObservableObject {
             guard let profile = localState?.workspaceCatalog.providerProfiles.first(where: { $0.id == profileID }) else {
                 throw WebBridgeInputError.invalidChoice("provider profile")
             }
-            let plan = try ProviderModelCatalogProtocol.prepare(profile: profile)
+            let plan = try ProviderModelCatalogProtocol.prepare(profile: profile, vaultService: vaultServiceEndpoint)
             loadingProviderModelProfileIDs.insert(profileID)
             providerModelCatalogErrors.removeValue(forKey: profileID)
             issue = nil
             Task { [weak self] in
                 guard let self else { return }
                 do {
-                    let credential = try self.providerCredential(for: profileID)
+                    let credential = plan.requiredCredentialFields.isEmpty
+                        ? .init(values: [:])
+                        : try self.providerCredential(for: profileID)
                     let response = try await self.performProviderRequest(plan: plan, body: nil, credential: credential, timeout: 30)
                     self.providerModelCatalogs[profileID] = try ProviderModelCatalogProtocol.parse(response.data, providerType: profile.type)
                     self.issue = nil
@@ -554,8 +558,8 @@ final class VaultClassifierViewModel: ObservableObject {
 
     func fetchCustomProviderModelCatalog(profileID: String) {
         guard let profile = localState?.workspaceCatalog.providerProfiles.first(where: { $0.id == profileID }),
-              profile.type == .custom else {
-            issue = WebBridgeInputError.invalidChoice("custom provider profile").localizedDescription
+              !ProviderModelCatalogProtocol.usesVaultCatalog(profile.type) else {
+            issue = WebBridgeInputError.invalidChoice("custom or compatible provider profile").localizedDescription
             return
         }
         fetchProviderModelCatalog(profileID: profileID, reportFailure: true)
@@ -563,13 +567,8 @@ final class VaultClassifierViewModel: ObservableObject {
 
     private func loadFixedProviderModelCatalogsAtLaunch() {
         guard let catalog = localState?.workspaceCatalog else { return }
-        for profile in catalog.providerProfiles where profile.type.supportsLLMConfiguration && profile.type != .custom {
-            let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
-            guard descriptor.credentialFields.isEmpty ||
-                    sessionProviderCredentials[profile.id] != nil ||
-                    ProviderCredentialStore.hasCredential(for: profile.id) else {
-                continue
-            }
+        for profile in catalog.providerProfiles where
+            profile.type.supportsLLMConfiguration && ProviderModelCatalogProtocol.usesVaultCatalog(profile.type) {
             fetchProviderModelCatalog(profileID: profile.id, reportFailure: false)
         }
     }
@@ -1116,6 +1115,9 @@ final class VaultClassifierViewModel: ObservableObject {
                 sessionProviderCredentials[profileID] = record
             }
             refreshLocalState()
+            if profile.type.supportsLLMConfiguration {
+                fetchProviderModelCatalog(profileID: profileID, reportFailure: true)
+            }
             issue = nil
         } catch { issue = error.localizedDescription }
     }
