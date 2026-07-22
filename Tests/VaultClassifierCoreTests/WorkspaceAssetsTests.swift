@@ -4,15 +4,18 @@ import XCTest
 final class WorkspaceAssetsTests: XCTestCase {
     private func seed() throws -> VerifiedSeedPackage { try SeedPackageLoader.bundled() }
 
-    func testCollectionRegistryLimitsTheClassifierToSixAutomatedAndThreeManualPlatforms() {
+    func testCollectionRegistryProvidesDedicatedCollectionAndSourceKindsForEveryPlatform() {
         XCTAssertEqual(Set(CollectionPlatformRegistry.definitions.map(\.id)), Set([
             "youtube", "tiktok", "facebook", "instagram", "twitter", "bilibili",
             "twitch", "reddit", "discord",
         ]))
         let available = Set(CollectionPlatformRegistry.definitions.lazy.filter(\.collectorAvailable).map(\.id))
         XCTAssertEqual(available, Set([
-            "youtube", "tiktok", "facebook", "instagram", "twitch", "reddit", "twitter", "bilibili",
+            "youtube", "tiktok", "facebook", "instagram", "twitch", "reddit", "discord", "twitter", "bilibili",
         ]))
+        XCTAssertEqual(CollectionPlatformRegistry.definition(for: "reddit")?.sourceKind, .subreddit)
+        XCTAssertEqual(CollectionPlatformRegistry.definition(for: "discord")?.sourceKind, .server)
+        XCTAssertEqual(CollectionPlatformRegistry.definition(for: "twitter")?.sourceKind, .account)
         for platformID in ["twitch", "reddit", "discord"] {
             let platform = try! XCTUnwrap(CollectionPlatformRegistry.definition(for: platformID))
             XCTAssertFalse(platform.supportsLocalModel)

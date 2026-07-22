@@ -275,6 +275,8 @@ h3 { font-size: 13px; }
 
 .collection-platform-controls .toggle-row { flex: 1; min-width: 250px; }
 
+.collection-local-only { margin: 2px 14px 0; color: var(--muted); max-width: 840px; }
+
 .collection-creators {
   display: grid;
   gap: 7px;

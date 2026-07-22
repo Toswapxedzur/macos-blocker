@@ -147,6 +147,14 @@
     return `<div class="workspace-head"><div><h2>${tx(titleKey)}</h2><p class="section-copy">${tx(copyKey)}</p></div>${statusPill(badge, tone)}</div>`;
   }
 
+  function collectionSourceTerms(sourceKind) {
+    const kind = ["creator", "account", "subreddit", "server"].includes(sourceKind) ? sourceKind : "creator";
+    return {
+      singular: t(`bridge.sourceKind.${kind}`),
+      plural: t(`bridge.sourceKind.${kind}Plural`)
+    };
+  }
+
   function languageSelection() {
     return `<label class="header-language"><span class="visually-hidden">${tx("language.label")}</span><select class="select-control" data-language-selection aria-label="${tx("language.label")}">${languageChoices.map(([identifier, nameKey]) => `<option value="${esc(identifier)}"${selected(selectedLanguage, identifier)}>${tx(nameKey)}</option>`).join("")}</select></label>`;
   }
@@ -549,6 +557,8 @@
       const selectedTree = trees.find((tree) => tree.id === applicableBinding?.treeID);
       const selectedDataset = datasets.find((dataset) => dataset.id === applicableBinding?.datasetID);
       const applicablePlatform = platformDefinitions.get(applicablePlatformID);
+      const sourceTerms = collectionSourceTerms(applicablePlatform?.sourceKind);
+      const sourceHasProfileImage = applicablePlatform?.sourceKind === "creator" || applicablePlatform?.sourceKind === "account";
       const dataSourcePlatforms = new Set(applicablePlatformID ? [applicablePlatformID] : []);
       const supportsLocalModel = applicablePlatform?.supportsLocalModel === true;
       const supportsLLMAssist = applicablePlatform?.supportsLLMAssist === true;
@@ -618,7 +628,7 @@
         .map(([key, entry]) => {
           const platformName = platformDefinitions.get(entry.platformID)?.name || entry.platformID;
           const existing = currentDecisionByCreator.get(key);
-          return [key, `${platformName} · ${entry.creatorName}${existing ? ` · ${t("bridge.creatorClassified")}` : ""}`];
+          return [key, `${platformName} · ${entry.creatorName}${existing ? ` · ${t("bridge.sourceClassified")}` : ""}`];
         });
       let selectedCreatorTagID = selectedCreatorTagByType.get(classifierType.id);
       if (!leafTagOptions.some(([tagID]) => tagID === selectedCreatorTagID)) {
@@ -653,7 +663,7 @@
           ? `<span class="small-copy">${tx("bridge.creatorAvatarBackfillComplete", { count: avatarBackfill.foundCount })}</span>`
           : "";
       const creatorLLMClassification = selectedLLMProfile && !llmAssist?.isActive && llmAssist?.providerProfileID === selectedLLMProfileID
-          ? `<div class="creator-llm-row">${valueSelectField("bridge.creator", "bridge.creatorCopy", "creatorKey", creatorOptions[0]?.[0] || "", creatorOptions)}<span class="small-copy">${esc(selectedLLMProfile.name)} · ${esc(llmAssist.modelIdentifier)}</span><button class="gold-action" data-action="classifyCreatorWithLLM" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}"${disabled(!creatorOptions.length || !creatorLLMReady || llmRunning)}>${tx(llmRunning ? "bridge.creatorLLMClassifying" : "bridge.classifyCreatorWithLLM")}</button><button class="secondary" data-action="classifyCreatorBatchWithLLM" data-type-id="${esc(classifierType.id)}"${disabled(!creatorOptions.length || !creatorLLMReady || llmRunning)}>${tx("bridge.classifyCreatorBatch", { count: llmAssist.batchSize })}</button></div><p class="small-copy">${tx("bridge.creatorLLMExplicitOnly")}</p>`
+          ? `<div class="creator-llm-row">${valueSelectField("bridge.source", "bridge.sourceCopy", "creatorKey", creatorOptions[0]?.[0] || "", creatorOptions)}<span class="small-copy">${esc(selectedLLMProfile.name)} · ${esc(llmAssist.modelIdentifier)}</span><button class="gold-action" data-action="classifyCreatorWithLLM" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}"${disabled(!creatorOptions.length || !creatorLLMReady || llmRunning)}>${tx(llmRunning ? "bridge.sourceLLMClassifying" : "bridge.classifySourceWithLLM", { source: sourceTerms.singular })}</button><button class="secondary" data-action="classifyCreatorBatchWithLLM" data-type-id="${esc(classifierType.id)}"${disabled(!creatorOptions.length || !creatorLLMReady || llmRunning)}>${tx("bridge.classifyCreatorBatch", { count: llmAssist.batchSize })}</button></div><p class="small-copy">${tx("bridge.sourceLLMExplicitOnly", { source: sourceTerms.singular })}</p>`
           : "";
       const creatorClassification = creatorRecords.length && leafTagOptions.length
         ? (() => {
@@ -697,10 +707,10 @@
               : `<span class="creator-tag-card-avatar creator-tag-card-avatar-fallback" aria-hidden="true">${esc(creator.name.slice(0, 1).toUpperCase())}</span>`;
             return `<article class="creator-tag-card"><div class="creator-tag-card-profile">${avatar}<div><strong dir="auto">${esc(creator.name)}</strong><span>${esc(creator.platformName)}${creator.subscriberCount ? ` · ${tx("bridge.creatorSubscribers", { count: creator.subscriberCount })}` : ""}</span></div></div><div class="creator-tag-card-actions">${actions}</div></article>`;
           };
-          const columns = columnData.map(([kind, titleKey, creators]) => `<section class="creator-tag-column"><div class="creator-tag-column-head"><h4>${tx(titleKey, { tag: selectedCreatorTagName })}</h4><span>${creators.length}</span></div><div class="creator-tag-column-list">${creators.length ? creators.map((creator) => creatorCard(creator, kind)).join("") : `<p class="creator-tag-empty">${tx("bridge.creatorTagEmpty")}</p>`}</div></section>`).join("");
+          const columns = columnData.map(([kind, titleKey, creators]) => `<section class="creator-tag-column"><div class="creator-tag-column-head"><h4>${tx(titleKey, { tag: selectedCreatorTagName })}</h4><span>${creators.length}</span></div><div class="creator-tag-column-list">${creators.length ? creators.map((creator) => creatorCard(creator, kind)).join("") : `<p class="creator-tag-empty">${esc(t("bridge.sourceTagEmpty", { sources: sourceTerms.plural }))}</p>`}</div></section>`).join("");
           return `<div class="creator-tag-browser"><nav class="creator-tag-navigation" aria-label="${tx("bridge.creatorTagNavigation")}" role="tablist">${leafTagOptions.map(([tagID, label]) => `<button class="creator-tag-tab${selectedCreatorTagID === tagID ? " active" : ""}" type="button" data-action="selectCreatorTag" data-type-id="${esc(classifierType.id)}" data-tag-id="${esc(tagID)}" role="tab" aria-selected="${selectedCreatorTagID === tagID}">${esc(label.split(" · ")[0])}</button>`).join("")}</nav><div class="creator-tag-columns">${columns}</div></div>`;
         })()
-        : `<div class="empty compact-empty">${tx(!creatorRecords.length ? "bridge.noCreators" : "bridge.noCreatorTags")}</div>`;
+        : `<div class="empty compact-empty">${!creatorRecords.length ? esc(t("bridge.noSources", { sources: sourceTerms.plural })) : tx("bridge.noCreatorTags")}</div>`;
       const tagNameByID = new Map((selectedTree?.nodes || []).map((node) => [node.id, node.name]));
       const creatorDecisionRows = [...creatorCandidates.entries()]
         .map(([key, entry]) => {
@@ -720,7 +730,7 @@
           return `<article class="creator-tag-card"><div class="creator-tag-card-profile">${avatar}<div><strong dir="auto">${esc(entry.creatorName)}</strong><span>${esc(platformDefinitions.get(entry.platformID)?.name || entry.platformID)}</span></div></div><div class="creator-tag-card-actions"><span class="small-copy">${tx("bridge.humanTags")}: ${esc(labelText(human))}</span><span class="small-copy">${tx("bridge.llmTags")}: ${esc(labelText(llm))}</span></div></article>`;
         })
         .sort((lhs, rhs) => lhs.localeCompare(rhs));
-      const creatorDecisionList = `<section class="classifier-type-section creator-classification-section"><div class="section-header"><div><h3>${tx("bridge.creatorDecisionList")}</h3><p class="section-copy">${tx("bridge.creatorDecisionListCopy")}</p></div></div><div class="creator-tag-column-list">${creatorDecisionRows.length ? creatorDecisionRows.join("") : `<div class="empty compact-empty">${tx("bridge.noCreators")}</div>`}</div></section>`;
+      const creatorDecisionList = `<section class="classifier-type-section creator-classification-section"><div class="section-header"><div><h3>${tx("bridge.sourceDecisionList", { source: sourceTerms.singular })}</h3><p class="section-copy">${tx("bridge.sourceDecisionListCopy", { sources: sourceTerms.plural })}</p></div></div><div class="creator-tag-column-list">${creatorDecisionRows.length ? creatorDecisionRows.join("") : `<div class="empty compact-empty">${esc(t("bridge.noSources", { sources: sourceTerms.plural }))}</div>`}</div></section>`;
       const selectedNeedsDirectCatalog = selectedLLMProfile?.type === "custom" || selectedLLMProfile?.type === "openAICompatible";
       const llmModelControl = !selectedLLMProfile
         ? `<p class="small-copy">${tx("bridge.llmChooseProviderFirst")}</p>`
@@ -738,7 +748,7 @@
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}<button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("bridge.saveType")}</button><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}">${tx("bridge.deleteType")}</button></div>
         <section class="classifier-type-section classifier-applicable-platform-section"><div class="section-header"><div><h3>${tx("bridge.applicablePlatform")}</h3><p class="section-copy">${tx("bridge.assetSelectionCopy")}</p></div></div><div class="classifier-applicable-platform-row">${valueSelectField("bridge.applicablePlatform", "bridge.applicablePlatformCopy", "applicablePlatformID", applicablePlatformID, applicablePlatformOptions)}<div class="classifier-platform-data-status"><span class="eyebrow">${tx("bridge.platformData")}</span><p class="small-copy">${esc(platformDataStatus)}</p></div></div>${applicablePlatform && !supportsLocalModel && !supportsLLMAssist ? `<p class="small-copy" data-manual-only-platform-note>${tx("bridge.manualOnlyCopy")}</p>` : ""}</section>
         <section class="classifier-type-section classifier-local-model-section" data-local-model-section${supportsLocalModel ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.localModel")}</h3><p class="section-copy">${tx("bridge.localModelCopy")}</p></div></div><div class="classifier-local-model-field">${valueSelectField("bridge.localModel", "", "localModelID", classifierType.localModelID || "", modelOptions)}</div></section>
-        <section class="classifier-type-section creator-classification-section"><div class="section-header"><div><h3>${tx("bridge.manualCreator")}</h3><p class="section-copy">${tx("bridge.manualCreatorCopy")}</p></div><div class="action-row"><span class="small-copy">${tx("bridge.creatorCount", { count: creatorOptions.length })}</span><button class="secondary" data-action="backfillCreatorAvatars" data-type-id="${esc(classifierType.id)}"${disabled(avatarBackfill.running || !creatorRecords.length)}>${tx(avatarBackfill.running ? "bridge.creatorAvatarBackfillRunning" : "bridge.creatorAvatarBackfill")}</button>${avatarBackfillStatus}</div></div><p class="small-copy">${tx("bridge.creatorAvatarBackfillCopy")}</p>${creatorClassification}</section>
+        <section class="classifier-type-section creator-classification-section"><div class="section-header"><div><h3>${tx("bridge.manualSource", { source: sourceTerms.singular })}</h3><p class="section-copy">${tx("bridge.manualSourceCopy", { source: sourceTerms.singular })}</p></div><div class="action-row"><span class="small-copy">${tx("bridge.sourceCount", { count: creatorOptions.length, sources: sourceTerms.plural })}</span>${sourceHasProfileImage ? `<button class="secondary" data-action="backfillCreatorAvatars" data-type-id="${esc(classifierType.id)}"${disabled(avatarBackfill.running || !creatorRecords.length)}>${tx(avatarBackfill.running ? "bridge.creatorAvatarBackfillRunning" : "bridge.creatorAvatarBackfill")}</button>${avatarBackfillStatus}` : ""}</div></div>${sourceHasProfileImage ? `<p class="small-copy">${tx("bridge.creatorAvatarBackfillCopy")}</p>` : ""}${creatorClassification}</section>
         <section class="classifier-type-section classifier-llm-section" data-llm-assist-section${supportsLLMAssist ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.llmAssist")}</h3><p class="section-copy">${tx("bridge.llmAssistCopy")}</p></div>${llmActivation}</div>${llmProfiles.length ? `${llmSettings}${creatorLLMClassification}` : `<div class="empty compact-empty">${tx("bridge.noLLMProfiles")}</div>`}</section>
         <section class="classifier-type-section classifier-decision-policy-section" data-decision-policy-section${supportsLocalModel || supportsLLMAssist ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.decisionPolicy")}</h3><p class="section-copy">${tx("bridge.decisionPolicyCopy")}</p></div></div><div class="classifier-priority-grid">${valueSelectField("bridge.priorityFirst", "", "priorityFirst", priority[0], sourceOptions)}${valueSelectField("bridge.prioritySecond", "", "prioritySecond", priority[1], sourceOptions)}${valueSelectField("bridge.priorityThird", "", "priorityThird", priority[2], sourceOptions)}</div></section>
         ${creatorDecisionList}
@@ -776,10 +786,12 @@
       duration: "Duration",
       details: "Details",
       metadata: "Feed details",
-      creatorURL: "Creator page"
+      creatorURL: "Creator page",
+      sourceKind: "Source type"
     })[key] || String(key).replaceAll(/([A-Z])/g, " $1").replaceAll(/[._-]/g, " ").replace(/^./, (letter) => letter.toUpperCase());
     const bindingPanel = (binding) => {
       const definition = definitions.find((candidate) => candidate.id === binding.id);
+      const sourceTerms = collectionSourceTerms(definition?.sourceKind);
       const dataset = datasetByID.get(binding.datasetID);
       const entries = (dataset?.collectedEntries || []).filter((entry) => entry.platformID === binding.id);
       const creators = new Map();
@@ -815,7 +827,8 @@
       });
       const typeOptions = [["", t("data.noClassifierType")], ...selectableTypes.map((classifierType) => [classifierType.id, classifierType.name])];
       const typeStatus = binding.activeClassifierTypeID ? "data.classifierTypeActive" : "data.classifierTypeNone";
-      return `<section class="collection-platform-panel" data-form-id="${esc(formID)}"><div class="collection-platform-head"><div><span class="eyebrow">${tx("data.platformPanel")}</span><h3>${esc(binding.name)}</h3><p class="section-copy">${esc(binding.browser)} · ${tx(availability)}</p></div><div class="collection-platform-actions">${statusPill(t(binding.collectionEnabled ? "data.collecting" : "data.collectionOff"), binding.collectionEnabled ? "cyan" : "muted")}<button class="danger" data-action="confirmDeleteCollectionPlatform" data-platform-id="${esc(binding.id)}">${tx("data.deletePlatform")}</button></div></div><div class="collection-platform-controls">${toggle("data.collectToggle", "enabled", Boolean(binding.collectionEnabled))}<button class="primary" data-action="setCollectionEnabled" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyCollection")}</button><span class="small-copy">${tx("data.creatorCount", { count: creators.size })} · ${tx("data.entryCount", { count: entries.length })}</span></div><div class="collection-platform-controls">${valueSelectField("data.classifierType", "data.classifierTypeCopy", "classifierTypeID", binding.activeClassifierTypeID || "", typeOptions)}<button class="secondary" data-action="setActiveClassifierType" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyClassifierType")}</button>${statusPill(t(typeStatus), binding.activeClassifierTypeID ? "navy" : "muted")}</div>${entries.length ? `<div class="collection-creators">${creatorRows}</div>` : `<div class="empty collection-empty">${tx(binding.collectionEnabled ? "data.waitingForEntries" : "data.collectionDisabledCopy")}</div>`}</section>`;
+      const localOnlyNotice = binding.id === "discord" ? `<p class="small-copy collection-local-only">${tx("data.discordLocalOnly")}</p>` : "";
+      return `<section class="collection-platform-panel" data-form-id="${esc(formID)}"><div class="collection-platform-head"><div><span class="eyebrow">${tx("data.platformPanel")}</span><h3>${esc(binding.name)}</h3><p class="section-copy">${esc(binding.browser)} · ${tx(availability)}</p></div><div class="collection-platform-actions">${statusPill(t(binding.collectionEnabled ? "data.collecting" : "data.collectionOff"), binding.collectionEnabled ? "cyan" : "muted")}<button class="danger" data-action="confirmDeleteCollectionPlatform" data-platform-id="${esc(binding.id)}">${tx("data.deletePlatform")}</button></div></div><div class="collection-platform-controls">${toggle("data.collectToggle", "enabled", Boolean(binding.collectionEnabled))}<button class="primary" data-action="setCollectionEnabled" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyCollection")}</button><span class="small-copy">${tx("data.sourceCount", { count: creators.size, sources: sourceTerms.plural })} · ${tx("data.entryCount", { count: entries.length })}</span></div>${localOnlyNotice}<div class="collection-platform-controls">${valueSelectField("data.classifierType", "data.classifierTypeCopy", "classifierTypeID", binding.activeClassifierTypeID || "", typeOptions)}<button class="secondary" data-action="setActiveClassifierType" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyClassifierType")}</button>${statusPill(t(typeStatus), binding.activeClassifierTypeID ? "navy" : "muted")}</div>${entries.length ? `<div class="collection-creators">${creatorRows}</div>` : `<div class="empty collection-empty">${tx(binding.collectionEnabled ? "data.waitingForEntries" : "data.collectionDisabledCopy")}</div>`}</section>`;
     };
     return `<div class="workspace collection-workspace">${header("data.title", "data.copy", t("data.entries", { count: allCollected.length }), "cyan")}
       <section class="collection-platform-create" data-form-id="collection-platform-create-form"><div><span class="eyebrow">${tx("data.addPlatform")}</span><p class="section-copy">${tx("data.addPlatformCopy")}</p></div>${availablePlatforms.length ? `${valueSelectField("data.platform", "", "platformID", availablePlatforms[0].id, availablePlatforms.map((platform) => [platform.id, platform.name]))}<button class="primary" data-action="addCollectionPlatform" data-form="collection-platform-create-form">${tx("data.addPlatformAction")}</button>` : `<span class="small-copy">${tx("data.allPlatformsAdded")}</span>`}</section>
