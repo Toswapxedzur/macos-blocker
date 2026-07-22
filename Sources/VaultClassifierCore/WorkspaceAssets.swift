@@ -769,10 +769,21 @@ public enum LocalModelTrainer {
     }
 }
 
+public enum CollectionSourceKind: String, Equatable, Sendable, CaseIterable {
+    case creator
+    case account
+    case subreddit
+    case server
+}
+
 public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
     public var id: String
     public var name: String
     public var browser: String
+    /// The durable local source that groups a platform's collected entries.
+    /// It is a creator for video platforms, but a subreddit, account, or
+    /// server where that is the platform's real public-content source.
+    public var sourceKind: CollectionSourceKind
     /// Only a registered adapter can send collection requests today. The
     /// remaining platform entries are intentionally selectable now so their
     /// local tree/dataset binding exists before an adapter is added.
@@ -812,6 +823,7 @@ public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
         id: String,
         name: String,
         browser: String = "Chrome and Edge",
+        sourceKind: CollectionSourceKind = .creator,
         collectorAvailable: Bool = false,
         supportsLocalModel: Bool = true,
         supportsLLMAssist: Bool = true
@@ -819,6 +831,7 @@ public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
         self.id = id
         self.name = name
         self.browser = browser
+        self.sourceKind = sourceKind
         self.collectorAvailable = collectorAvailable
         self.supportsLocalModel = supportsLocalModel
         self.supportsLLMAssist = supportsLLMAssist
@@ -832,9 +845,9 @@ public enum CollectionPlatformRegistry {
         .init(id: "facebook", name: "Facebook", collectorAvailable: true),
         .init(id: "instagram", name: "Instagram", collectorAvailable: true),
         .init(id: "twitch", name: "Twitch", collectorAvailable: true, supportsLocalModel: false, supportsLLMAssist: false),
-        .init(id: "reddit", name: "Reddit", collectorAvailable: true, supportsLocalModel: false, supportsLLMAssist: false),
-        .init(id: "discord", name: "Discord", supportsLocalModel: false, supportsLLMAssist: false),
-        .init(id: "twitter", name: "Twitter / X", collectorAvailable: true),
+        .init(id: "reddit", name: "Reddit", sourceKind: .subreddit, collectorAvailable: true, supportsLocalModel: false, supportsLLMAssist: false),
+        .init(id: "discord", name: "Discord", sourceKind: .server, collectorAvailable: true, supportsLocalModel: false, supportsLLMAssist: false),
+        .init(id: "twitter", name: "Twitter / X", sourceKind: .account, collectorAvailable: true),
         .init(id: "bilibili", name: "Bilibili", collectorAvailable: true),
     ]
 
