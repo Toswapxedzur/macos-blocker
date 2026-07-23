@@ -6,10 +6,10 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
 
-  var PROTOCOL_VERSION = 3;
+  var PROTOCOL_VERSION = 4;
   var DESKTOP_PROGRAMS = ["macapp", "windowsapp", "classifier"];
   var HUB_PROGRAMS = DESKTOP_PROGRAMS.slice();
-  var REMOTE_PROGRAMS = ["chrome", "edge", "firefox", "safari", "opera", "browser"];
+  var REMOTE_PROGRAMS = ["chrome", "edge"];
 
   function isDesktopProgram(program) {
     return DESKTOP_PROGRAMS.indexOf(String(program || "")) >= 0;

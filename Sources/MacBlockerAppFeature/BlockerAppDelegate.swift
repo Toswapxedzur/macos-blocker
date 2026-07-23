@@ -20,8 +20,8 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // Every app instance connects out to the single shared broker. It never
-        // opens a local listening socket or requires a pairing key.
+        // Every app instance participates in the single authenticated local
+        // hub, which may listen on loopback when it wins host election.
         ConnectionHub.shared.start()
         syncLoginItem(enabled: false)
     }

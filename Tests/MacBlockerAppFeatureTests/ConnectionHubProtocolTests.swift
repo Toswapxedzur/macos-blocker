@@ -3,46 +3,69 @@ import XCTest
 @testable import MacBlockerAppFeature
 
 final class ConnectionHubProtocolTests: XCTestCase {
-    func testPublicBrokerHelloAcceptsAValidBrowserPeer() {
-        let hello: [String: Any] = [
+    private let secret = Data(repeating: 7, count: 32)
+    private let challenge = String(repeating: "a", count: 43)
+
+    private func authenticatedHello(program: String) throws -> [String: Any] {
+        [
             "kind": "hello",
             "v": ConnectionHub.protocolVersion,
-            "program": "chrome"
+            "program": program,
+            "challenge": challenge,
+            "proof": try LocalHubAuthentication.makeProof(
+                program: program,
+                challenge: challenge,
+                secret: secret
+            )
         ]
-        XCTAssertNil(ConnectionHub.helloRejectionReason(hello))
+    }
+
+    func testAuthenticatedBrowserHelloIsAccepted() throws {
+        XCTAssertEqual(
+            try LocalHubAuthentication.makeProof(program: "chrome", challenge: challenge, secret: secret),
+            "KdU7-EvPwn1g60PF6bYZsqVfl-AD19TbQmtaLmHbyQc"
+        )
+        XCTAssertNil(ConnectionHub.helloRejectionReason(
+            try authenticatedHello(program: "chrome"),
+            challenge: challenge,
+            secret: secret
+        ))
     }
 
     func testOldProtocolIsRejected() {
-        let hello: [String: Any] = [
-            "kind": "hello",
-            "v": 1,
-            "program": "chrome"
-        ]
+        var hello = try! authenticatedHello(program: "chrome")
+        hello["v"] = 1
         XCTAssertEqual(
-            ConnectionHub.helloRejectionReason(hello),
+            ConnectionHub.helloRejectionReason(hello, challenge: challenge, secret: secret),
             "protocol-mismatch"
         )
     }
 
     func testRemoteCannotClaimDesktopIdentity() {
-        let hello: [String: Any] = [
-            "kind": "hello",
-            "v": ConnectionHub.protocolVersion,
-            "program": ConnectionHub.localProgram
-        ]
+        let hello = try! authenticatedHello(program: ConnectionHub.localProgram)
         XCTAssertEqual(
-            ConnectionHub.helloRejectionReason(hello),
+            ConnectionHub.helloRejectionReason(hello, challenge: challenge, secret: secret),
             "invalid-program"
         )
     }
 
-    func testClassifierPeerMayJoinTheSharedBroker() {
-        let hello: [String: Any] = [
-            "kind": "hello",
-            "v": ConnectionHub.protocolVersion,
-            "program": "classifier"
-        ]
-        XCTAssertNil(ConnectionHub.helloRejectionReason(hello))
+    func testAuthenticatedClassifierPeerMayJoinTheSharedBroker() throws {
+        XCTAssertNil(ConnectionHub.helloRejectionReason(
+            try authenticatedHello(program: "classifier"),
+            challenge: challenge,
+            secret: secret
+        ))
+    }
+
+    func testUnauthenticatedHelloIsRejected() {
+        XCTAssertEqual(
+            ConnectionHub.helloRejectionReason([
+                "kind": "hello",
+                "v": ConnectionHub.protocolVersion,
+                "program": "chrome"
+            ], challenge: challenge, secret: secret),
+            "authentication-failed"
+        )
     }
 
     func testClassifierRequestsStaySchemaBounded() {
