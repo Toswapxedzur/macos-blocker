@@ -2,7 +2,7 @@ import Foundation
 
 /// A direct-only refresh is useful for making the newest retained entries
 /// current quickly, but it is not a causal source-prior result. Only the FIFO
-/// phase may produce an audit-eligible cached decision.
+/// phase may produce a final cached decision.
 public enum CacheBackfillPhase: String, Codable, Equatable, Sendable {
     /// Re-evaluate newest retained evidence first with no source profile.
     case directRefresh
@@ -205,7 +205,7 @@ public struct CacheBackfillReport: Codable, Equatable, Sendable {
     public var staleEntriesBeforeBatch: Int
     public var isComplete: Bool
     /// The persisted phase after this batch. A direct refresh is deliberately
-    /// not audit-eligible until the later causal replay completes its row.
+    /// not final until the later causal replay completes its row.
     public var phase: CacheBackfillPhase
     public var directRefreshedEntries: Int
     public var causallyReplayedEntries: Int

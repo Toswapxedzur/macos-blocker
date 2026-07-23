@@ -72,7 +72,6 @@ final class VaultClassifierCoreTests: XCTestCase {
         XCTAssertTrue(feed.ancestorTagIDs.contains("content.entities"))
         let page = try engine.classify(entry(title: "Clash Royale deck gameplay", surface: .page))
         XCTAssertEqual(page.strongestAction, .block)
-        XCTAssertEqual(page.auditGrade(), .correctDimOrBlock)
     }
 
     func testSourcePriorRampsToThirtyPercentAndDoesNotUseTargetItself() throws {
@@ -124,7 +123,6 @@ final class VaultClassifierCoreTests: XCTestCase {
         let latest = try XCTUnwrap(state.ledger.last)
         state.setCorrection(ledgerID: latest.id, correction: .falseAllow)
         XCTAssertEqual(state.ledger.last?.correction, .falseAllow)
-        XCTAssertEqual(state.ledger.last?.auditGrade, .falseAllow)
         state.record(entry: third, result: try engine.classify(third))
         XCTAssertEqual(state.cache.count, 2, "Recording the same item replaces its cache row rather than consuming capacity.")
     }
@@ -144,6 +142,37 @@ final class VaultClassifierCoreTests: XCTestCase {
         XCTAssertEqual(settings.cacheCapacity, 12_000)
         XCTAssertFalse(settings.allowIdleWork)
         XCTAssertEqual(settings.packageUpdateMode, .automatic)
+    }
+
+    func testRetiredAuditStateAndLabelsAreDiscardedOnLoad() throws {
+        let evidence = entry(title: "A saved local label")
+        let trainingExample = LocalTrainingExample(
+            cacheKey: LocalClassifierState.cacheKey(for: evidence),
+            evidence: evidence,
+            positiveLeafTagIDs: ["content.entities.clash-royale"],
+            origin: .explicitUser,
+            taxonomyVersion: "vault-taxonomy-1",
+            createdAtMilliseconds: 1,
+            updatedAtMilliseconds: 1
+        )
+        let state = LocalClassifierState(trainingCorpus: .init(examples: [trainingExample]))
+        var payload = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(state)) as? [String: Any])
+        payload["auditState"] = ["retired": true]
+        var corpus = try XCTUnwrap(payload["trainingCorpus"] as? [String: Any])
+        var examples = try XCTUnwrap(corpus["examples"] as? [[String: Any]])
+        examples[0]["origin"] = "confirmedPersonalAudit"
+        corpus["examples"] = examples
+        payload["trainingCorpus"] = corpus
+
+        let retiredPayload = try JSONSerialization.data(withJSONObject: payload)
+        let migrated = try JSONDecoder().decode(LocalClassifierState.self, from: retiredPayload)
+        XCTAssertTrue(migrated.trainingCorpus.examples.isEmpty)
+        XCTAssertNil(migrated.trainingCorpus.lastRun)
+
+        let saved = String(decoding: try JSONEncoder().encode(migrated), as: UTF8.self)
+        XCTAssertFalse(saved.contains("auditState"))
+        XCTAssertFalse(saved.contains("confirmedPersonalAudit"))
+        XCTAssertFalse(saved.contains("allowLocalLLMAudit"))
     }
 
     func testLocalStateRoundTripsAndSeedBackupRetainsRecentPackages() throws {

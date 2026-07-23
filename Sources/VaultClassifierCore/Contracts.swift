@@ -159,16 +159,6 @@ public enum ClassificationEvidenceState: String, Codable, Equatable, Sendable {
     case invalid
 }
 
-/// A policy-level audit outcome. It is intentionally separate from model confidence:
-/// an apparently confident result can still be a false allow or false restriction.
-public enum PolicyAuditGrade: String, Codable, Equatable, Sendable, CaseIterable {
-    case correctAllow
-    case correctDimOrBlock
-    case falseAllow
-    case falseDimOrBlock
-    case insufficientEvidence
-}
-
 public struct TagScore: Codable, Equatable, Sendable, Identifiable {
     public var tagID: String
     public var directScore: Double
@@ -230,14 +220,6 @@ public struct ClassificationResult: Codable, Equatable, Sendable {
 
     public var strongestAction: PresentationAction { decisions.map(\.action).max() ?? .allow }
 
-    public func auditGrade(correction: UserCorrection? = nil) -> PolicyAuditGrade {
-        if evidenceState != .sufficient { return .insufficientEvidence }
-        switch correction {
-        case .falseAllow: return .falseAllow
-        case .falseDim, .falseBlock: return .falseDimOrBlock
-        case nil: return strongestAction == .allow ? .correctAllow : .correctDimOrBlock
-        }
-    }
 }
 
 public enum ResourceProfile: String, Codable, Sendable, CaseIterable {
@@ -259,7 +241,6 @@ public struct ClassifierSettings: Codable, Equatable, Sendable {
     public var cacheCapacity: Int
     public var allowIdleWork: Bool
     public var allowBackgroundSync: Bool
-    public var allowLocalLLMAudit: Bool
     /// This is only a persisted local preference. A separately configured
     /// transport must still make every manifest request and activation.
     public var packageUpdateMode: PackageUpdateMode
@@ -269,31 +250,35 @@ public struct ClassifierSettings: Codable, Equatable, Sendable {
         cacheCapacity: Int? = nil,
         allowIdleWork: Bool = true,
         allowBackgroundSync: Bool = true,
-        allowLocalLLMAudit: Bool = false,
         packageUpdateMode: PackageUpdateMode = .automatic
     ) {
         self.resourceProfile = resourceProfile
         self.cacheCapacity = max(1, cacheCapacity ?? resourceProfile.defaultCacheCapacity)
         self.allowIdleWork = allowIdleWork
         self.allowBackgroundSync = allowBackgroundSync
-        self.allowLocalLLMAudit = allowLocalLLMAudit
         self.packageUpdateMode = packageUpdateMode
     }
 
     private enum CodingKeys: String, CodingKey {
-        case resourceProfile, cacheCapacity, allowIdleWork, allowBackgroundSync, allowLocalLLMAudit, packageUpdateMode
+        case resourceProfile, cacheCapacity, allowIdleWork, allowBackgroundSync, packageUpdateMode
+    }
+
+    private enum RetiredCodingKeys: String, CodingKey {
+        case allowLocalLLMAudit
     }
 
     /// Local state predating package preferences must remain usable offline.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        // Read the retired key only to make old settings harmless. It is never
+        // retained or written again.
+        _ = try decoder.container(keyedBy: RetiredCodingKeys.self)
         let resourceProfile = try container.decodeIfPresent(ResourceProfile.self, forKey: .resourceProfile) ?? .balanced
         self.init(
             resourceProfile: resourceProfile,
             cacheCapacity: try container.decodeIfPresent(Int.self, forKey: .cacheCapacity),
             allowIdleWork: try container.decodeIfPresent(Bool.self, forKey: .allowIdleWork) ?? true,
             allowBackgroundSync: try container.decodeIfPresent(Bool.self, forKey: .allowBackgroundSync) ?? true,
-            allowLocalLLMAudit: try container.decodeIfPresent(Bool.self, forKey: .allowLocalLLMAudit) ?? false,
             packageUpdateMode: try container.decodeIfPresent(PackageUpdateMode.self, forKey: .packageUpdateMode) ?? .automatic
         )
     }

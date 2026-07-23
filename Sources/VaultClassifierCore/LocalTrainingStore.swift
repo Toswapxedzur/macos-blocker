@@ -5,7 +5,6 @@ import Foundation
 /// deliberately confirming a local classification decision.
 public enum LocalTrainingLabelOrigin: String, Codable, Equatable, Sendable {
     case explicitUser
-    case confirmedPersonalAudit
 }
 
 /// A durable, local-only supervised example. `cacheKey` makes a newer label for
@@ -74,10 +73,51 @@ public struct LocalTrainingRun: Codable, Equatable, Sendable {
 public struct LocalTrainingCorpus: Codable, Equatable, Sendable {
     public var examples: [LocalTrainingExample]
     public var lastRun: LocalTrainingRun?
+    /// This is a load-only migration signal and is never persisted. It lets
+    /// the enclosing state reset a model whose weights may include retired
+    /// audit-derived labels.
+    public private(set) var removedRetiredAuditLabels: Bool
 
     public init(examples: [LocalTrainingExample] = [], lastRun: LocalTrainingRun? = nil) {
         self.examples = examples
         self.lastRun = lastRun
+        self.removedRetiredAuditLabels = false
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case examples, lastRun
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        var retained: [LocalTrainingExample] = []
+        var removedRetiredAuditLabels = false
+        var entries = try container.nestedUnkeyedContainer(forKey: .examples)
+        while !entries.isAtEnd {
+            let entryDecoder = try entries.superDecoder()
+            let origin = try entryDecoder.container(keyedBy: LocalTrainingExampleCodingKeys.self)
+                .decode(String.self, forKey: .origin)
+            if origin == LocalTrainingLabelOrigin.explicitUser.rawValue {
+                retained.append(try LocalTrainingExample(from: entryDecoder))
+            } else {
+                removedRetiredAuditLabels = true
+            }
+        }
+        self.examples = retained
+        self.lastRun = removedRetiredAuditLabels
+            ? nil
+            : try container.decodeIfPresent(LocalTrainingRun.self, forKey: .lastRun)
+        self.removedRetiredAuditLabels = removedRetiredAuditLabels
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(examples, forKey: .examples)
+        try container.encodeIfPresent(lastRun, forKey: .lastRun)
+    }
+
+    public mutating func acknowledgeRetiredAuditLabelRemoval() {
+        removedRetiredAuditLabels = false
     }
 
     public mutating func upsert(_ example: LocalTrainingExample, limit: Int) {
@@ -98,6 +138,10 @@ public struct LocalTrainingCorpus: Codable, Equatable, Sendable {
             examples.removeFirst(examples.count - boundedLimit)
         }
     }
+}
+
+private enum LocalTrainingExampleCodingKeys: String, CodingKey {
+    case origin
 }
 
 public enum LocalTrainingError: Error, Equatable, LocalizedError, Sendable {
