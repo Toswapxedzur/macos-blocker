@@ -208,7 +208,7 @@ public enum ProviderToolCallingProtocol {
                 "toolConfig": ["functionCallingConfig": ["mode": "AUTO"]],
             ]
         case .cohereChat:
-            object = ["model": configuration.modelIdentifier, "messages": state["messages"] as Any, "max_tokens": output, "tools": chatTools]
+            object = ["model": configuration.modelIdentifier, "messages": state["messages"] as Any, "max_tokens": output, "stream": false, "tools": chatTools]
         case .ollamaChat:
             object = ["model": configuration.modelIdentifier, "messages": state["messages"] as Any, "stream": false, "options": ["num_predict": output], "tools": chatTools]
         default:

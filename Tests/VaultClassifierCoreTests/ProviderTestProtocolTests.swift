@@ -73,6 +73,41 @@ final class ProviderTestProtocolTests: XCTestCase {
         XCTAssertEqual(body["model"] as? String, "qwen3:8b")
     }
 
+    func testLanguageModelTestsRequireGeneratedTextAndRequestCompleteResponses() throws {
+        let profiles: [APIKeyProviderProfile] = [
+            .init(type: .openAI),
+            .init(type: .openAICompatible, customEndpoint: "https://api.example.test/v1", testModelIdentifier: "test-model"),
+            .init(type: .deepSeek),
+            .init(type: .gemini),
+            .init(type: .anthropic),
+            .init(type: .mistral),
+            .init(type: .cohere),
+            .init(type: .groq),
+            .init(type: .openRouter),
+            .init(type: .ollama),
+            .init(type: .custom, customEndpoint: "https://api.example.test/v1", testModelIdentifier: "test-model"),
+        ]
+
+        for profile in profiles {
+            let prepared = try ProviderTestProtocol.prepare(profile: profile)
+            XCTAssertThrowsError(
+                try ProviderTestProtocol.parseResponse(Data("{}".utf8), format: prepared.plan.bodyFormat, operation: prepared.operation),
+                profile.type.rawValue
+            )
+            let parsed = try ProviderTestProtocol.parseResponse(
+                testResponse(format: prepared.plan.bodyFormat),
+                format: prepared.plan.bodyFormat,
+                operation: prepared.operation
+            )
+            XCTAssertEqual(parsed.content, "OK", profile.type.rawValue)
+
+            if profile.type == .cohere {
+                let body = try XCTUnwrap(JSONSerialization.jsonObject(with: prepared.body) as? [String: Any])
+                XCTAssertEqual(body["stream"] as? Bool, false)
+            }
+        }
+    }
+
     func testRequestRecordPreservesMetadataWithoutRequestOrResponseBodies() throws {
         let profile = APIKeyProviderProfile(id: "gemini", type: .gemini)
         let record = ProviderRequestRecord(
@@ -155,16 +190,17 @@ final class ProviderTestProtocolTests: XCTestCase {
             } else {
                 XCTAssertEqual(try ProviderTestProtocol.prepare(profile: profile).operation, .generateText, profile.type.rawValue)
             }
-            XCTAssertEqual(
-                try ProviderClassificationProtocol.prepare(
-                    profile: profile,
-                    configuration: .init(providerProfileID: profile.id, modelIdentifier: modelIdentifier),
-                    entry: entry,
-                    allowedTagIDs: ["games"]
-                ).operation,
-                .generateText,
-                profile.type.rawValue
+            let classification = try ProviderClassificationProtocol.prepare(
+                profile: profile,
+                configuration: .init(providerProfileID: profile.id, modelIdentifier: modelIdentifier),
+                entry: entry,
+                allowedTagIDs: ["games"]
             )
+            XCTAssertEqual(classification.operation, .generateText, profile.type.rawValue)
+            if profile.type == .cohere {
+                let body = try XCTUnwrap(JSONSerialization.jsonObject(with: classification.body) as? [String: Any])
+                XCTAssertEqual(body["stream"] as? Bool, false)
+            }
         }
     }
 
@@ -220,6 +256,9 @@ final class ProviderTestProtocolTests: XCTestCase {
             XCTAssertEqual(prepared.toolDefinitions.count, 1, profile.type.rawValue)
             let body = try XCTUnwrap(JSONSerialization.jsonObject(with: prepared.body) as? [String: Any])
             XCTAssertNotNil(body["tools"], profile.type.rawValue)
+            if profile.type == .cohere {
+                XCTAssertEqual(body["stream"] as? Bool, false)
+            }
             let response = toolCallResponse(format: prepared.plan.bodyFormat, name: prepared.toolDefinitions[0].name)
             let turn = try ProviderToolCallingProtocol.parseResponse(response, format: prepared.plan.bodyFormat)
             XCTAssertEqual(turn.toolCalls.count, 1, profile.type.rawValue)
@@ -402,6 +441,28 @@ final class ProviderTestProtocolTests: XCTestCase {
             object = ["message": ["role": "assistant", "tool_calls": [["id": "call-1", "type": "function", "function": ["name": name, "arguments": arguments]]]]]
         case .ollamaChat:
             object = ["message": ["role": "assistant", "tool_calls": [["function": ["name": name, "arguments": ["target": "entry"]]]]]]
+        default:
+            XCTFail("Unexpected provider format")
+            return Data()
+        }
+        return try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    }
+
+    private func testResponse(format: ProviderRequestBodyFormat) -> Data {
+        let object: [String: Any]
+        switch format {
+        case .openAIResponses:
+            object = ["output": [["content": [["text": "OK"]]]]]
+        case .openAIChatCompletions:
+            object = ["choices": [["message": ["content": "OK"]]]]
+        case .anthropicMessages:
+            object = ["content": [["text": "OK"]]]
+        case .geminiGenerateContent, .vertexGenerateContent:
+            object = ["candidates": [["content": ["parts": [["text": "OK"]]]]]]
+        case .cohereChat:
+            object = ["message": ["content": [["text": "OK"]]]]
+        case .ollamaChat:
+            object = ["message": ["content": "OK"]]
         default:
             XCTFail("Unexpected provider format")
             return Data()
