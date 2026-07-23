@@ -40,6 +40,7 @@
   const pendingTagRenames = new Map();
   const selectedCreatorTagByType = new Map();
   const selectedLLMProfileByType = new Map();
+  const credentialDrafts = new Map();
   let utilityPanel = null;
   let selectedLanguage = "en";
   let navigationPanelWidth = navigationWidthRange.fallback;
@@ -515,7 +516,9 @@
         input: total.input + (Number(record.inputTokens) || 0),
         output: total.output + (Number(record.outputTokens) || 0),
       }), { input: 0, output: 0 });
-      const credentialField = protocol.credentialRequired ? `<label class="field"><span class="field-label">${tx("llm.apiKeyOrToken")}</span><span class="credential-input-row"><input type="password" data-field="credential" data-provider-credential data-provider-connection autocomplete="new-password" autocapitalize="off" spellcheck="false"${profile.hasCredential ? ' placeholder="••••••••"' : ""}>${profile.hasCredential ? `<button type="button" class="secondary credential-clear" data-action="clearProviderCredential" data-profile-id="${esc(profile.id)}" aria-label="${tx("common.clear")} ${tx("llm.apiKeyOrToken")}">${tx("common.clear")}</button>` : ""}</span></label>` : "";
+      const hasCredentialDraft = credentialDrafts.has(profile.id);
+      const credentialDraft = credentialDrafts.get(profile.id);
+      const credentialField = protocol.credentialRequired ? `<label class="field"><span class="field-label">${tx("llm.apiKeyOrToken")}</span><span class="credential-input-row"><input type="password" data-field="credential" data-provider-credential data-provider-connection autocomplete="new-password" autocapitalize="off" spellcheck="false"${hasCredentialDraft ? ` value="${esc(credentialDraft)}"` : profile.hasCredential ? ' placeholder="••••••••"' : ""}>${profile.hasCredential || hasCredentialDraft ? `<button type="button" class="secondary credential-clear" data-action="clearProviderCredential" data-profile-id="${esc(profile.id)}" aria-label="${tx("common.clear")} ${tx("llm.apiKeyOrToken")}">${tx("common.clear")}</button>` : ""}</span></label>` : "";
       const endpointField = protocol.allowsEndpointOverride ? field("llm.apiEndpoint", "", "customEndpoint", profile.customEndpoint || "", "text", "data-provider-connection") : "";
       const testModelField = supportsLLM && (protocol.allowsEndpointOverride || !profile.defaultModelIdentifier)
         ? field("llm.testModel", "", "testModelIdentifier", profile.testModelIdentifier || "", "text", `data-provider-connection placeholder=\"${esc(profile.defaultModelIdentifier || "model-name")}\"`)
@@ -985,6 +988,8 @@
       const panel = credentialInput.closest("[data-provider-panel]");
       const profileID = panel?.dataset.providerId;
       if (!profileID) return;
+      if (credentialInput.value) credentialDrafts.set(profileID, credentialInput.value);
+      else credentialDrafts.delete(profileID);
       send("saveProviderCredential", {
         profileID,
         credential: credentialInput.value,
@@ -1107,6 +1112,9 @@
     }
     if (button.disabled) return;
     const action = button.dataset.action;
+    if (action === "clearProviderCredential" || action === "confirmDeleteProviderProfile") {
+      credentialDrafts.delete(button.dataset.profileId);
+    }
     const data = button.dataset.form ? collect(button.dataset.form) : {};
     if (button.dataset.workspace) data.workspace = button.dataset.workspace;
     if (button.dataset.id) data.id = button.dataset.id;
