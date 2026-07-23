@@ -119,7 +119,6 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
     /// Optional private, user-owned local snapshot destination. The owner-code
     /// verifier lives in Keychain, never in this state file.
     public var backupConfiguration: LocalBackupConfiguration?
-    public var nativeReplayWindow: NativeReplayWindow
     public var cacheBackfill: CacheBackfillProgress?
     /// Persisted exact package identity. Missing/invalid legacy state is never
     /// treated as equivalent to a current model.
@@ -133,7 +132,7 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
     public var cache: [CachedEntry]
     public var ledger: [DecisionLedgerEntry]
 
-    public init(schemaVersion: Int = 1, sequence: Int64 = 0, settings: ClassifierSettings = .init(), policies: [NamedPolicy] = [], sourceProfiles: [String: SourceProfile] = [:], personalModel: PersonalFTRLModel = .init(), trainingCorpus: LocalTrainingCorpus = .init(), workspaceCatalog: WorkspaceCatalog = .starter(), backupConfiguration: LocalBackupConfiguration? = nil, nativeReplayWindow: NativeReplayWindow = .init(), cacheBackfill: CacheBackfillProgress? = nil, activeModelIdentity: ActiveModelIdentity? = nil, highestAcceptedSignedRelease: PackageReleaseStamp? = nil, signedRollbackIdentities: [ActiveModelIdentity] = [], cache: [CachedEntry] = [], ledger: [DecisionLedgerEntry] = []) {
+    public init(schemaVersion: Int = 1, sequence: Int64 = 0, settings: ClassifierSettings = .init(), policies: [NamedPolicy] = [], sourceProfiles: [String: SourceProfile] = [:], personalModel: PersonalFTRLModel = .init(), trainingCorpus: LocalTrainingCorpus = .init(), workspaceCatalog: WorkspaceCatalog = .starter(), backupConfiguration: LocalBackupConfiguration? = nil, cacheBackfill: CacheBackfillProgress? = nil, activeModelIdentity: ActiveModelIdentity? = nil, highestAcceptedSignedRelease: PackageReleaseStamp? = nil, signedRollbackIdentities: [ActiveModelIdentity] = [], cache: [CachedEntry] = [], ledger: [DecisionLedgerEntry] = []) {
         self.schemaVersion = schemaVersion
         self.sequence = sequence
         self.settings = settings
@@ -143,7 +142,6 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
         self.trainingCorpus = trainingCorpus
         self.workspaceCatalog = workspaceCatalog
         self.backupConfiguration = backupConfiguration
-        self.nativeReplayWindow = nativeReplayWindow
         self.cacheBackfill = cacheBackfill
         self.activeModelIdentity = activeModelIdentity
         self.highestAcceptedSignedRelease = highestAcceptedSignedRelease
@@ -183,7 +181,7 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, sequence, settings, policies, sourceProfiles, personalModel, trainingCorpus, workspaceCatalog, backupConfiguration, nativeReplayWindow, cacheBackfill, activeModelIdentity, highestAcceptedSignedRelease, signedRollbackIdentities, cache, ledger
+        case schemaVersion, sequence, settings, policies, sourceProfiles, personalModel, trainingCorpus, workspaceCatalog, backupConfiguration, cacheBackfill, activeModelIdentity, highestAcceptedSignedRelease, signedRollbackIdentities, cache, ledger
     }
 
     private enum RetiredCodingKeys: String, CodingKey {
@@ -202,7 +200,6 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
         trainingCorpus = try container.decodeIfPresent(LocalTrainingCorpus.self, forKey: .trainingCorpus) ?? .init()
         workspaceCatalog = try container.decodeIfPresent(WorkspaceCatalog.self, forKey: .workspaceCatalog) ?? .starter()
         backupConfiguration = try container.decodeIfPresent(LocalBackupConfiguration.self, forKey: .backupConfiguration)
-        nativeReplayWindow = try container.decodeIfPresent(NativeReplayWindow.self, forKey: .nativeReplayWindow) ?? .init()
         cacheBackfill = try container.decodeIfPresent(CacheBackfillProgress.self, forKey: .cacheBackfill)
         // Identity fields are defensive migration input. A malformed legacy
         // value must not make the whole local classifier state unreadable; it
@@ -533,7 +530,7 @@ public final class LocalClassifierCoordinator {
         }
         synchronizeEngineState()
         try stateFile.save(state)
-        guard let ledgerID = state.ledger.last?.id else { throw LocalIPCError.malformedFrame }
+        guard let ledgerID = state.ledger.last?.id else { throw LocalClassifierStoreError.missingLedgerEntry }
         return (result, ledgerID)
     }
 
@@ -541,14 +538,6 @@ public final class LocalClassifierCoordinator {
         lock.lock()
         defer { lock.unlock() }
         state.setCorrection(ledgerID: ledgerID, correction: correction)
-        try stateFile.save(state)
-    }
-
-    public func verifyAndRecordNativeEnvelope(_ envelope: NativeEnvelope) throws {
-        lock.lock()
-        defer { lock.unlock() }
-        let secret = try DevicePairingSecretStore.ensure()
-        try state.nativeReplayWindow.verifyAndRecord(envelope, secret: secret)
         try stateFile.save(state)
     }
 

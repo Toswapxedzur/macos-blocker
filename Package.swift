@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .library(name: "VaultClassifierCore", targets: ["VaultClassifierCore"]),
         .executable(name: "VaultClassifierApp", targets: ["VaultClassifierApp"]),
+        .executable(name: "VaultLocalHubNativeHost", targets: ["VaultLocalHubNativeHost"]),
     ],
     targets: [
         .target(
@@ -17,6 +18,10 @@ let package = Package(
             name: "VaultClassifierApp",
             dependencies: ["VaultClassifierCore"],
             resources: [.copy("WebAssets")]
+        ),
+        .executableTarget(
+            name: "VaultLocalHubNativeHost",
+            dependencies: ["VaultClassifierCore"]
         ),
         .testTarget(
             name: "VaultClassifierCoreTests",

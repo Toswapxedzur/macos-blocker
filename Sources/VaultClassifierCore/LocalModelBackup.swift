@@ -48,7 +48,7 @@ public struct LocalModelBackupManifest: Codable, Equatable, Sendable {
 }
 
 /// The intentionally narrow backup payload. Browsing cache, decision ledger,
-/// audit queue/results, source observations, and pairing replay data are not
+/// audit queue/results, source observations, and local-hub authentication data are not
 /// copied: a model backup is for restoring the package and explicit local
 /// training material, not for archiving activity history.
 public struct LocalModelBackupPayload: Codable, Equatable, Sendable {

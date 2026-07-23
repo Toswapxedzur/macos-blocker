@@ -1,22 +1,40 @@
 # Shared local browser bridge
 
-Vault Classifier, Mac Vault, and the Vault extension share one local
-WebSocket hub at `ws://127.0.0.1:8787` using protocol version 3. This is a
-local coordination channel, not a public network service or a Native Messaging
-host.
+Vault Classifier, Mac Vault, and the Chromium Vault extension share one local
+WebSocket hub at `ws://127.0.0.1:8787` using protocol version 4. The hub is a
+loopback coordination channel, not a public network service.
 
-## Host election and connection
+## Authentication and connection
 
 Vault Classifier first attempts to host the fixed loopback address. If the
-address is already owned, it joins only after the peer's protocol-v3 `welcome`
-frame identifies Mac Vault or Vault Classifier as the hub. If that host
-disconnects, the remaining desktop app tries to host again instead of blindly
-reconnecting.
+address is already owned, it joins only after the peer's authenticated v4
+`welcome` frame identifies Mac Vault or Vault Classifier as the hub. If that
+host disconnects, the remaining desktop app tries to host again instead of
+blindly reconnecting.
 
-The listener rejects non-loopback peers before the WebSocket handshake. A
-connecting peer must send a bounded protocol-versioned `hello` identifying its
-program before it can issue requests. This is protocol identity validation;
-the current bridge does not use the retired 64-character pairing-key setup.
+For every WebSocket connection, the listener sends a fresh random `challenge`.
+The peer must send a v4 `hello` containing a HMAC-SHA-256 proof bound to both
+its declared program and that challenge. Old v3 peers and unauthenticated
+peers are rejected before they can issue a request.
+
+Desktop apps keep the 32-byte per-device proof secret in the macOS Keychain.
+The Chromium extension never receives that secret: it asks the registered
+`com.adamancia.vault.local_hub` Native Messaging host to answer the challenge.
+The native host accepts only its exact extension origin and a code-signed
+Chromium-family parent process. The native-host manifest is a template in
+`native-host/`; it is intentionally not registered by the app build. Until a
+matching signed installer registers it with the current extension ID, the
+extension fails closed as disconnected rather than using an unauthenticated
+fallback.
+
+The Keychain record is recreated when it is missing or malformed. This is a
+bounded local recovery path: the extension holds no copy, so the next native
+proof automatically uses the replacement. There is no user-facing rotation
+control in this minimal implementation.
+
+This boundary stops an unrelated local process that merely knows port 8787.
+It does not contain a compromised Chromium extension, browser, native host, or
+same-user malware that can access the relevant Keychain item.
 
 ## Bounded routing
 
@@ -44,7 +62,9 @@ the browser path fails open.
 
 ## Tests that define the boundary
 
-- `SharedHubBrokerTests`: local hub ownership, protocol identity, routing, and
-  failure behavior.
-- `NativeProtocol` and `SharedBrowserBridge`: bounded request/response schema
-  and compatibility rules.
+- `SharedHubBrokerTests`: fixed hub contract, ownership, routing, and failure
+  behavior.
+- `LocalHubAuthentication` tests: a proof is bound to both program and fresh
+  challenge.
+- `ConnectionHubProtocolTests`: Mac Vault rejects unauthenticated, stale, and
+  invalid peer hellos.

@@ -212,30 +212,8 @@ final class VaultClassifierCoreTests: XCTestCase {
         XCTAssertFalse(verifier.verify(.init(payload: Data("tampered".utf8), signature: signature)))
     }
 
-    func testNativeEnvelopeIsBoundedAuthenticatedAndReplayProtected() throws {
-        let secret = Data(repeating: 7, count: 32)
-        var envelope = try NativeEnvelope.unsigned(
-            kind: "classify",
-            body: NativeClassificationRequest(entry: entry(title: "Clash Royale gameplay")),
-            requestID: "native-test",
-            timestampMilliseconds: 1_000,
-            nonce: "0123456789abcdef"
-        )
-        envelope.sign(using: secret)
-        var replayWindow = NativeReplayWindow()
-        XCTAssertNoThrow(try replayWindow.verifyAndRecord(envelope, secret: secret, nowMilliseconds: 1_001))
-        XCTAssertThrowsError(try replayWindow.verifyAndRecord(envelope, secret: secret, nowMilliseconds: 1_002)) { error in
-            XCTAssertEqual(error as? NativeProtocolError, .replay)
-        }
-
-        var tampered = envelope
-        tampered.bodyHash = String(repeating: "0", count: 64)
-        var separateWindow = NativeReplayWindow()
-        XCTAssertThrowsError(try separateWindow.verifyAndRecord(tampered, secret: secret, nowMilliseconds: 1_001))
-    }
-
     func testSharedBrowserBridgeFramesAreStrictlyBounded() {
-        XCTAssertEqual(SharedBrowserBridgeProtocol.version, 3)
+        XCTAssertEqual(SharedBrowserBridgeProtocol.version, 4)
         XCTAssertEqual(SharedBrowserBridgeProtocol.address, "ws://127.0.0.1:8787")
         XCTAssertEqual(SharedBrowserBridgeOperation.diagnostic.rawValue, "diagnostic")
         XCTAssertTrue(SharedBrowserBridgeProtocol.isValidRequestID("request-001"))
@@ -246,6 +224,36 @@ final class VaultClassifierCoreTests: XCTestCase {
         XCTAssertTrue(SharedBrowserBridgeProtocol.isAcceptedHubProgram("classifier"))
         XCTAssertFalse(SharedBrowserBridgeProtocol.isAcceptedHubProgram("vault-broker"))
         XCTAssertFalse(SharedBrowserBridgeProtocol.isAcceptedHubProgram("browser"))
+    }
+
+    func testLocalHubProofBindsTheProgramAndChallenge() throws {
+        let secret = Data(repeating: 7, count: 32)
+        let challenge = String(repeating: "a", count: 43)
+        let proof = try LocalHubAuthentication.makeProof(
+            program: "chrome",
+            challenge: challenge,
+            secret: secret
+        )
+
+        XCTAssertEqual(proof, "KdU7-EvPwn1g60PF6bYZsqVfl-AD19TbQmtaLmHbyQc")
+        XCTAssertTrue(LocalHubAuthentication.verifyProof(
+            program: "chrome",
+            challenge: challenge,
+            proof: proof,
+            secret: secret
+        ))
+        XCTAssertFalse(LocalHubAuthentication.verifyProof(
+            program: "edge",
+            challenge: challenge,
+            proof: proof,
+            secret: secret
+        ))
+        XCTAssertFalse(LocalHubAuthentication.verifyProof(
+            program: "chrome",
+            challenge: String(repeating: "b", count: 43),
+            proof: proof,
+            secret: secret
+        ))
     }
 
     func testCollectionDiagnosticsUseOnlySafePlatformIdentifiers() throws {
@@ -356,65 +364,6 @@ final class VaultClassifierCoreTests: XCTestCase {
             platformID: "youtube",
             value: "https://example.invalid/channel/creator"
         ))
-    }
-
-    func testLocalIPCRoundTripsOnlyToTheCurrentUserSocket() throws {
-        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let socket = root.appendingPathComponent("classifier.sock")
-        let server = LocalIPCServer(socketURL: socket) { request in
-            let submitted = try? JSONDecoder().decode(NativeClassificationRequest.self, from: request.envelope.bodyData())
-            return LocalIPCResponse(
-                requestID: request.requestID,
-                classification: .init(result: ClassificationResult(
-                    entryID: submitted?.entry.entryID,
-                    sourceID: submitted?.entry.sourceID,
-                    surface: submitted?.entry.surface ?? .feed,
-                    evidenceState: .sufficient,
-                    threshold: 0.6,
-                    selectedLeafTagIDs: ["content.entities.clash-royale"],
-                    ancestorTagIDs: ["content.entities", "content"],
-                    scores: [],
-                    decisions: [],
-                    packageID: "test",
-                    modelVersion: "test"
-                ))
-            )
-        }
-        try server.start()
-        defer { server.stop() }
-        let envelope = try NativeEnvelope.unsigned(kind: "classify", body: NativeClassificationRequest(entry: entry(title: "Clash Royale gameplay")), requestID: "ipc-test", nonce: "0123456789abcdef")
-        let request = LocalIPCRequest(envelope: envelope)
-        let response = try LocalIPCClient.send(request, socketURL: socket)
-        XCTAssertEqual(response.requestID, "ipc-test")
-        XCTAssertEqual(response.classification?.result.selectedLeafTagIDs, ["content.entities.clash-royale"])
-    }
-
-    func testLocalIPCServerCreatesPrivateSocketParentAndRejectsSymlinkParent() throws {
-        // Unix-domain sockets have a short platform path limit, so keep this
-        // fixture below /tmp rather than the long per-user NSTemporary path.
-        let root = URL(fileURLWithPath: "/tmp/vault-ipc-\(UUID().uuidString.prefix(8))", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let parent = root.appendingPathComponent("Application Support/Vault Classifier", isDirectory: true)
-        let socket = parent.appendingPathComponent("classifier.sock")
-        let server = LocalIPCServer(socketURL: socket) { request in
-            LocalIPCResponse(requestID: request.requestID)
-        }
-        try server.start()
-        defer { server.stop() }
-
-        let permissions = try FileManager.default.attributesOfItem(atPath: parent.path)[.posixPermissions] as? NSNumber
-        XCTAssertEqual(try XCTUnwrap(permissions).intValue & 0o777, 0o700)
-
-        let outside = root.appendingPathComponent("outside", isDirectory: true)
-        let symlinkParent = root.appendingPathComponent("linked-parent", isDirectory: true)
-        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
-        try FileManager.default.createSymbolicLink(atPath: symlinkParent.path, withDestinationPath: outside.path)
-        let rejected = LocalIPCServer(socketURL: symlinkParent.appendingPathComponent("classifier.sock")) { request in
-            LocalIPCResponse(requestID: request.requestID)
-        }
-        XCTAssertThrowsError(try rejected.start())
-        XCTAssertFalse(FileManager.default.fileExists(atPath: outside.appendingPathComponent("classifier.sock").path))
     }
 
     func testSignedModelPackageManifestBindsChecksumSignatureAndPayloadMetadata() throws {
