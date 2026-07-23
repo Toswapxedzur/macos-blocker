@@ -81,7 +81,15 @@ public enum ProviderTestProtocol {
         if operation == .embedText {
             content = "Embedding test completed."
         } else {
-            content = extractText(root, format: format) ?? "Provider test completed."
+            // A 2xx JSON envelope alone does not demonstrate that the model
+            // connection works. Some gateways return a JSON error or an empty
+            // success envelope with that status. A provider test is successful
+            // only when its declared response grammar contains generated text.
+            guard let generated = extractText(root, format: format),
+                  !generated.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ProviderTestProtocolError.invalidResponse
+            }
+            content = generated
         }
         return .init(content: String(content.prefix(maximumResponseCharacters)), usage: usage)
     }
@@ -110,7 +118,8 @@ public enum ProviderTestProtocol {
         case .geminiGenerateContent, .vertexGenerateContent:
             object = ["contents": [["parts": [["text": prompt]]]], "generationConfig": ["maxOutputTokens": output]]
         case .cohereChat:
-            object = ["model": modelIdentifier, "messages": [["role": "user", "content": prompt]], "max_tokens": output]
+            // The parser accepts one complete JSON reply, never an SSE stream.
+            object = ["model": modelIdentifier, "messages": [["role": "user", "content": prompt]], "max_tokens": output, "stream": false]
         case .ollamaChat:
             object = ["model": modelIdentifier, "messages": [["role": "user", "content": prompt]], "stream": false, "options": ["num_predict": output]]
         case .embeddingInput:

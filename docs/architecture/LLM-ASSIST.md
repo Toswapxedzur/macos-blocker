@@ -3,6 +3,26 @@
 This document describes the current code contract for optional provider work.
 It is not a claim that a provider feature runs automatically.
 
+## Supported profiles
+
+Every profile exposed in the LLM Assist provider picker is ready for its
+declared, explicit operation once the user supplies a valid account credential
+and any shown connection fields. "Ready" here means the app has a Keychain-only
+credential path, a bounded connection test, a model/classification request
+grammar (for language models) or platform health/tool route (for platform
+data), and regression coverage. It does not guarantee that a provider account,
+model, regional availability, quota, or OAuth grant is available to a
+particular user.
+
+- **Language models:** OpenAI, DeepSeek, Gemini, Anthropic, Mistral, Cohere,
+  Groq, OpenRouter, and local Ollama. **OpenAI-compatible** and **Custom** are
+  both explicit HTTPS OpenAI Chat-Completions connections; their owner supplies
+  the endpoint and model.
+- **Platform data:** YouTube Data, Twitch, Reddit, X, TikTok Display,
+  Instagram Graph, and Facebook Graph. They support only explicit connection
+  tests and bounded native tool/creator-avatar reads; they are never language
+  models and never dispatch automatically.
+
 ## Ownership boundary
 
 A **provider profile** is a reusable connection. It contains a provider type,
@@ -54,6 +74,12 @@ request. It does not send collected browser content. Provider classification
 is opt-in: an inactive attachment may be run manually, while activation
 processes only eligible creators sequentially and stops before the next request
 when disabled or the daily allowance is exhausted.
+
+A language-model test succeeds only after a 2xx response matches that
+provider's response grammar and contains generated text. An empty or unrelated
+JSON envelope is an error, not a green "provider is ready" result. Cohere test,
+classification, and tool requests explicitly set `stream: false` because the
+native transport accepts one bounded JSON response rather than an SSE stream.
 
 ## Tools and external platform data
 

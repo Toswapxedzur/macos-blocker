@@ -131,7 +131,7 @@ public enum ProviderClassificationProtocol {
         case .geminiGenerateContent, .vertexGenerateContent:
             object = ["contents": [["parts": [["text": prompt]]]], "generationConfig": ["maxOutputTokens": output]]
         case .cohereChat:
-            object = ["model": configuration.modelIdentifier, "messages": [["role": "user", "content": prompt]], "max_tokens": output]
+            object = ["model": configuration.modelIdentifier, "messages": [["role": "user", "content": prompt]], "max_tokens": output, "stream": false]
         case .ollamaChat:
             object = ["model": configuration.modelIdentifier, "messages": [["role": "user", "content": prompt]], "stream": false, "options": ["num_predict": output]]
         default:
