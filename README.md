@@ -19,9 +19,6 @@ description.
   non-secret connection configuration; credentials are stored only in the
   macOS Keychain. A classifier type explicitly selects one provider/model and
   owns its budget, tag constraints, and opt-in tool settings.
-- A separate **Personal Audit** workflow. It uses the fixed Gemini audit
-  adapter only after the user enables auditing, saves its limits, provides a
-  Keychain credential, queues a suitable candidate, and presses **Run Gemini**.
 - A shared local browser hub at `ws://127.0.0.1:8787`. Mac Vault or Vault
   Classifier hosts it; unavailable peers, invalid frames, and timeouts fail
   open.
@@ -32,7 +29,7 @@ description.
 
 - [LLM Assist and provider connections](docs/architecture/LLM-ASSIST.md)
 - [Shared local browser bridge](docs/architecture/BROWSER-BRIDGE.md)
-- [Personal Audit, backups, and package lifecycle](docs/architecture/LOCAL-FOUNDATIONS.md)
+- [Local backups and package lifecycle](docs/architecture/LOCAL-FOUNDATIONS.md)
 
 ## Development
 
@@ -53,5 +50,5 @@ swift test
 swift build
 ```
 
-No provider credential, raw provider request/response body, raw audit
-evidence, or production signing private key belongs in the repository.
+No provider credential, raw provider request/response body, or production
+signing private key belongs in the repository.

@@ -1,6 +1,6 @@
 import Foundation
 
-/// The exact local model that produced a cache row or personal-audit record.
+/// The exact local model that produced a cache row.
 ///
 /// A bundled seed is identified by the checksum verified beside that resource.
 /// A distributed package is identified by both its monotonic signed release

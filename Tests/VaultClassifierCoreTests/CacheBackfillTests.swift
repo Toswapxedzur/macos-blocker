@@ -6,12 +6,6 @@ import XCTest
 final class CacheBackfillTests: XCTestCase {
     private func seed() throws -> VerifiedSeedPackage { try SeedPackageLoader.bundled() }
 
-    private func enablePersonalAudits(on coordinator: LocalClassifierCoordinator) throws {
-        var settings = coordinator.snapshot().settings
-        settings.allowLocalLLMAudit = true
-        try coordinator.updateSettings(settings)
-    }
-
     private func entry(
         id: String,
         title: String,
@@ -61,24 +55,6 @@ final class CacheBackfillTests: XCTestCase {
     private func temporaryStateFile() -> (root: URL, file: LocalStateFile) {
         let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
         return (root, LocalStateFile(url: root.appendingPathComponent("state.json")))
-    }
-
-    private func auditConfiguration() -> LocalAuditConfiguration {
-        .init(
-            isEnabled: true,
-            selectionMode: .targetedWithRandomSample,
-            provider: .init(
-                provider: .googleGemini,
-                modelIdentifier: "backfill-audit-test-model",
-                reasoningEffort: .low,
-                maximumOutputTokens: 64
-            ),
-            budgetLimits: .init(
-                perRequest: .init(tokenLimit: 128),
-                weekly: .init(tokenLimit: 256),
-                monthly: .init(tokenLimit: 512)
-            )
-        )
     }
 
     func testDirectRefreshesNewestFirstThenCausalReplayRebuildsFIFOSourcePrior() throws {
@@ -229,7 +205,7 @@ final class CacheBackfillTests: XCTestCase {
         XCTAssertEqual(try fixture.file.load(), beforeFailedBatch, "A failed batch must not persist a partial update.")
     }
 
-    func testMutationRestartsBothStagesAndAuditsRequireCausalRows() throws {
+    func testMutationRestartsBothStages() throws {
         let fixture = temporaryStateFile()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let coordinator = try LocalClassifierCoordinator(
@@ -239,30 +215,21 @@ final class CacheBackfillTests: XCTestCase {
         )
         _ = try coordinator.classify(entry(id: "first-allow", title: "A general update"))
         _ = try coordinator.classify(entry(id: "second-allow", title: "Another general update"))
-        try enablePersonalAudits(on: coordinator)
-        try coordinator.updateAuditConfiguration(auditConfiguration())
-        try coordinator.activateVerifiedModelPackage(try verifiedReplacement(modelVersion: "vault-model-audit-gate"))
+        try coordinator.activateVerifiedModelPackage(try verifiedReplacement(modelVersion: "vault-model-backfill-restart"))
 
-        // Direct stage is newest-first but no row is eligible for audit work.
+        // Direct stage is newest-first.
         _ = try coordinator.backfillCachedEntries(try .init(maximumEntries: 1))
         let directStage = try coordinator.backfillCachedEntries(try .init(maximumEntries: 1))
         XCTAssertEqual(directStage.phase, .causalReplay)
-        XCTAssertTrue(try coordinator.enqueueSuggestedFalseAllowAudits(limit: 5).isEmpty)
 
-        // The oldest FIFO result becomes eligible even while the newer row is
-        // still awaiting causal replay.
+        // The oldest FIFO result becomes final while the newer row is still
+        // awaiting causal replay.
         let firstCausal = try coordinator.backfillCachedEntries(try .init(maximumEntries: 1))
         XCTAssertEqual(firstCausal.causallyReplayedEntries, 1)
         XCTAssertFalse(firstCausal.isComplete)
-        let candidates = try coordinator.enqueueSuggestedFalseAllowAudits(limit: 5)
-        let candidate = try XCTUnwrap(candidates.first)
-        let prepared = try coordinator.prepareAuditRequest(
-            auditID: candidate.auditID,
-            usageCeiling: .init(inputTokens: 20, outputTokens: 20)
-        )
 
         // A settings change invalidates both partial stages, marks every row
-        // provisional again, and blocks a previously prepared dispatch.
+        // provisional again, and requires a fresh explicit replay.
         var changedSettings = coordinator.snapshot().settings
         changedSettings.cacheCapacity = max(1, changedSettings.cacheCapacity - 1)
         try coordinator.updateSettings(changedSettings)
@@ -273,9 +240,6 @@ final class CacheBackfillTests: XCTestCase {
         XCTAssertTrue(progress.directRefreshPendingCacheKeys.isEmpty)
         XCTAssertTrue(progress.causalReplayPendingCacheKeys.isEmpty)
         XCTAssertTrue(restarted.cache.allSatisfy { $0.replayState == .awaitingCausalReplay })
-        XCTAssertThrowsError(try coordinator.markAuditRequestPossiblySent(prepared.reservation.id)) { error in
-            XCTAssertEqual(error as? LocalAuditStoreError, .staleModelIdentity)
-        }
 
         // An ordinary cache mutation follows the same restart contract; the
         // next explicit batch begins a new newest-first direct phase.

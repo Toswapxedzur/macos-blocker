@@ -6,12 +6,6 @@ import XCTest
 final class ModelIdentityCoordinatorTests: XCTestCase {
     private func seed() throws -> VerifiedSeedPackage { try SeedPackageLoader.bundled() }
 
-    private func enablePersonalAudits(on coordinator: LocalClassifierCoordinator) throws {
-        var settings = coordinator.snapshot().settings
-        settings.allowLocalLLMAudit = true
-        try coordinator.updateSettings(settings)
-    }
-
     private func signedPackage(
         releaseSequence: Int64,
         releaseVersion: PackageReleaseVersion,
@@ -61,24 +55,6 @@ final class ModelIdentityCoordinatorTests: XCTestCase {
         )
     }
 
-    private func auditConfiguration() -> LocalAuditConfiguration {
-        .init(
-            isEnabled: true,
-            selectionMode: .targetedWithRandomSample,
-            provider: .init(
-                provider: .googleGemini,
-                modelIdentifier: "identity-test-audit-model",
-                reasoningEffort: .low,
-                maximumOutputTokens: 64
-            ),
-            budgetLimits: .init(
-                perRequest: .init(tokenLimit: 128),
-                weekly: .init(tokenLimit: 256),
-                monthly: .init(tokenLimit: 512)
-            )
-        )
-    }
-
     func testSeedFallbackInvalidatesDerivedStateButRetainsCacheAndLedger() throws {
         let fixture = stateFile()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -96,12 +72,8 @@ final class ModelIdentityCoordinatorTests: XCTestCase {
         )
         _ = try signedCoordinator.classify(entry(title: "Clash Royale deck guide"))
         _ = try signedCoordinator.classify(entry(title: "A general update"))
-        try enablePersonalAudits(on: signedCoordinator)
-        try signedCoordinator.updateAuditConfiguration(auditConfiguration())
-        XCTAssertEqual(try signedCoordinator.enqueueSuggestedFalseAllowAudits(limit: 5).count, 1)
         let beforeFallback = signedCoordinator.snapshot()
         XCTAssertFalse(beforeFallback.sourceProfiles.isEmpty)
-        XCTAssertFalse(beforeFallback.auditState.candidates.isEmpty)
 
         let seedCoordinator = try LocalClassifierCoordinator(
             verifiedPackage: seed(),
@@ -113,49 +85,8 @@ final class ModelIdentityCoordinatorTests: XCTestCase {
         XCTAssertEqual(afterFallback.ledger, beforeFallback.ledger)
         XCTAssertTrue(afterFallback.sourceProfiles.isEmpty)
         XCTAssertNil(afterFallback.cacheBackfill)
-        XCTAssertTrue(afterFallback.auditState.candidates.isEmpty)
-        XCTAssertTrue(afterFallback.auditState.results.isEmpty)
         XCTAssertEqual(afterFallback.activeModelIdentity?.kind, .seed)
         XCTAssertTrue(afterFallback.cache.allSatisfy { $0.modelIdentity != afterFallback.activeModelIdentity })
-    }
-
-    func testStaleCacheRowsCannotEnterAuditSelectionOrDispatch() throws {
-        let fixture = stateFile()
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let coordinator = try LocalClassifierCoordinator(
-            verifiedPackage: seed(),
-            stateFile: fixture.file,
-            defaultPolicies: [StarterPolicies.clashRoyale]
-        )
-        _ = try coordinator.classify(entry(id: "stale", title: "A general update"))
-        let originalLedger = try XCTUnwrap(coordinator.snapshot().ledger.last)
-        try enablePersonalAudits(on: coordinator)
-        try coordinator.updateAuditConfiguration(auditConfiguration())
-
-        let privateKey = Curve25519.Signing.PrivateKey()
-        let replacement = try signedPackage(
-            releaseSequence: 2,
-            releaseVersion: try .init(major: 1, minor: 1, patch: 0),
-            modelVersion: "identity-replacement-model",
-            privateKey: privateKey
-        )
-        try coordinator.activateVerifiedModelPackage(replacement)
-
-        XCTAssertTrue(try coordinator.enqueueSuggestedFalseAllowAudits(limit: 5).isEmpty)
-        XCTAssertThrowsError(try coordinator.enqueueUserMarkedAudit(ledgerID: originalLedger.id)) { error in
-            XCTAssertEqual(error as? LocalAuditStoreError, .staleModelIdentity)
-        }
-
-        // Direct refresh and causal replay are separately bounded calls.
-        _ = try coordinator.backfillCachedEntries(.init(maximumEntries: 1))
-        _ = try coordinator.backfillCachedEntries(.init(maximumEntries: 1))
-        let currentCandidates = try coordinator.enqueueSuggestedFalseAllowAudits(limit: 5)
-        let current = try XCTUnwrap(currentCandidates.first)
-        XCTAssertEqual(current.modelIdentity, coordinator.snapshot().activeModelIdentity)
-        XCTAssertNoThrow(try coordinator.prepareAuditRequest(
-            auditID: current.auditID,
-            usageCeiling: .init(inputTokens: 20, outputTokens: 20)
-        ))
     }
 
     func testVerifiedReopenSchedulesOrphanedProvisionalRowsForExplicitRecovery() throws {

@@ -22,7 +22,7 @@ public struct CachedEntry: Codable, Equatable, Sendable, Identifiable {
     public var result: ClassificationResult
     /// The exact local model that produced `result`. Legacy rows decode with a
     /// nil identity and remain retained for local history/backfill, but cannot
-    /// be selected for or dispatched to a personal audit.
+    /// be treated as a current model result.
     public var modelIdentity: ActiveModelIdentity?
     /// Direct-only refreshes are intentionally provisional. This state is
     /// persisted per row because a backfill can span relaunches and batches.
@@ -59,7 +59,7 @@ public struct CachedEntry: Codable, Equatable, Sendable, Identifiable {
         modelIdentity = try container.decodeIfPresent(ActiveModelIdentity.self, forKey: .modelIdentity)
         // A persisted row from before the two-stage contract was produced by
         // the normal causal runtime. Identity checks still keep incompatible
-        // legacy results out of personal-audit paths.
+        // legacy results out of current-model paths.
         replayState = try container.decodeIfPresent(CachedEntryReplayState.self, forKey: .replayState) ?? .causallyReplayed
     }
 
@@ -101,14 +101,6 @@ public struct DecisionLedgerEntry: Codable, Equatable, Sendable, Identifiable {
         self.correction = nil
     }
 
-    public var auditGrade: PolicyAuditGrade {
-        if evidenceState != .sufficient { return .insufficientEvidence }
-        switch correction {
-        case .falseAllow: return .falseAllow
-        case .falseDim, .falseBlock: return .falseDimOrBlock
-        case nil: return actions.values.max() == nil || actions.values.max() == .allow ? .correctAllow : .correctDimOrBlock
-        }
-    }
 }
 
 public struct LocalClassifierState: Codable, Equatable, Sendable {
@@ -128,7 +120,6 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
     /// verifier lives in Keychain, never in this state file.
     public var backupConfiguration: LocalBackupConfiguration?
     public var nativeReplayWindow: NativeReplayWindow
-    public var auditState: LocalAuditState
     public var cacheBackfill: CacheBackfillProgress?
     /// Persisted exact package identity. Missing/invalid legacy state is never
     /// treated as equivalent to a current model.
@@ -142,7 +133,7 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
     public var cache: [CachedEntry]
     public var ledger: [DecisionLedgerEntry]
 
-    public init(schemaVersion: Int = 1, sequence: Int64 = 0, settings: ClassifierSettings = .init(), policies: [NamedPolicy] = [], sourceProfiles: [String: SourceProfile] = [:], personalModel: PersonalFTRLModel = .init(), trainingCorpus: LocalTrainingCorpus = .init(), workspaceCatalog: WorkspaceCatalog = .starter(), backupConfiguration: LocalBackupConfiguration? = nil, nativeReplayWindow: NativeReplayWindow = .init(), auditState: LocalAuditState = .init(), cacheBackfill: CacheBackfillProgress? = nil, activeModelIdentity: ActiveModelIdentity? = nil, highestAcceptedSignedRelease: PackageReleaseStamp? = nil, signedRollbackIdentities: [ActiveModelIdentity] = [], cache: [CachedEntry] = [], ledger: [DecisionLedgerEntry] = []) {
+    public init(schemaVersion: Int = 1, sequence: Int64 = 0, settings: ClassifierSettings = .init(), policies: [NamedPolicy] = [], sourceProfiles: [String: SourceProfile] = [:], personalModel: PersonalFTRLModel = .init(), trainingCorpus: LocalTrainingCorpus = .init(), workspaceCatalog: WorkspaceCatalog = .starter(), backupConfiguration: LocalBackupConfiguration? = nil, nativeReplayWindow: NativeReplayWindow = .init(), cacheBackfill: CacheBackfillProgress? = nil, activeModelIdentity: ActiveModelIdentity? = nil, highestAcceptedSignedRelease: PackageReleaseStamp? = nil, signedRollbackIdentities: [ActiveModelIdentity] = [], cache: [CachedEntry] = [], ledger: [DecisionLedgerEntry] = []) {
         self.schemaVersion = schemaVersion
         self.sequence = sequence
         self.settings = settings
@@ -153,7 +144,6 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
         self.workspaceCatalog = workspaceCatalog
         self.backupConfiguration = backupConfiguration
         self.nativeReplayWindow = nativeReplayWindow
-        self.auditState = auditState
         self.cacheBackfill = cacheBackfill
         self.activeModelIdentity = activeModelIdentity
         self.highestAcceptedSignedRelease = highestAcceptedSignedRelease
@@ -193,11 +183,16 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, sequence, settings, policies, sourceProfiles, personalModel, trainingCorpus, workspaceCatalog, backupConfiguration, nativeReplayWindow, auditState, cacheBackfill, activeModelIdentity, highestAcceptedSignedRelease, signedRollbackIdentities, cache, ledger
+        case schemaVersion, sequence, settings, policies, sourceProfiles, personalModel, trainingCorpus, workspaceCatalog, backupConfiguration, nativeReplayWindow, cacheBackfill, activeModelIdentity, highestAcceptedSignedRelease, signedRollbackIdentities, cache, ledger
+    }
+
+    private enum RetiredCodingKeys: String, CodingKey {
+        case auditState
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let retired = try decoder.container(keyedBy: RetiredCodingKeys.self)
         schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
         sequence = try container.decodeIfPresent(Int64.self, forKey: .sequence) ?? 0
         settings = try container.decodeIfPresent(ClassifierSettings.self, forKey: .settings) ?? .init()
@@ -208,7 +203,6 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
         workspaceCatalog = try container.decodeIfPresent(WorkspaceCatalog.self, forKey: .workspaceCatalog) ?? .starter()
         backupConfiguration = try container.decodeIfPresent(LocalBackupConfiguration.self, forKey: .backupConfiguration)
         nativeReplayWindow = try container.decodeIfPresent(NativeReplayWindow.self, forKey: .nativeReplayWindow) ?? .init()
-        auditState = try container.decodeIfPresent(LocalAuditState.self, forKey: .auditState) ?? .init()
         cacheBackfill = try container.decodeIfPresent(CacheBackfillProgress.self, forKey: .cacheBackfill)
         // Identity fields are defensive migration input. A malformed legacy
         // value must not make the whole local classifier state unreadable; it
@@ -221,6 +215,13 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
         )
         cache = try container.decodeIfPresent([CachedEntry].self, forKey: .cache) ?? []
         ledger = try container.decodeIfPresent([DecisionLedgerEntry].self, forKey: .ledger) ?? []
+        if retired.contains(.auditState) || trainingCorpus.removedRetiredAuditLabels {
+            // Personal Audit was intentionally retired. Its queued records and
+            // any model trained from its labels must not remain active.
+            personalModel = .init()
+            trainingCorpus.lastRun = nil
+        }
+        trainingCorpus.acknowledgeRetiredAuditLabelRemoval()
     }
 
     public static func cacheKey(for entry: EntryEvidence) -> String {
@@ -231,7 +232,7 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
     }
 
     /// Applies a model-bound invalidation while retaining raw cache evidence,
-    /// decision history, user corrections, and conservative audit accounting.
+    /// decision history and user corrections.
     /// Cached rows are deliberately not rewritten: their old identity keeps
     /// them visibly stale until an explicit backfill replaces their result.
     public mutating func resetDerivedModelState(for identity: ActiveModelIdentity) {
@@ -241,7 +242,6 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
         for index in cache.indices {
             cache[index].replayState = .awaitingCausalReplay
         }
-        auditState.invalidatePackageBoundRecords(except: identity)
     }
 
     public func hasOnlyCurrentCacheRows(for identity: ActiveModelIdentity) -> Bool {
@@ -433,9 +433,6 @@ public final class LocalClassifierCoordinator {
             loaded.resetDerivedModelState(for: identity)
         } else {
             loaded.activeModelIdentity = identity
-            // Remove only stale legacy audit data without needlessly changing
-            // a compatible source prior/cache.
-            loaded.auditState.invalidatePackageBoundRecords(except: identity)
         }
 
         if let activeManifest {
@@ -1028,350 +1025,6 @@ public final class LocalClassifierCoordinator {
         return engine.policies
     }
 
-    /// A nil configuration means audits are off. Provider credentials remain
-    /// outside this state file and outside the extension/native-host boundary.
-    public func updateAuditConfiguration(_ configuration: LocalAuditConfiguration?) throws {
-        lock.lock()
-        defer { lock.unlock() }
-        // A disabled configuration is a valid persisted preference. Only an
-        // actual dispatch uses `validateForSubmission`, which additionally
-        // requires `isEnabled`.
-        if let configuration {
-            try configuration.provider.validate()
-            try configuration.budgetLimits.validate()
-        }
-        state.auditState.configuration = configuration
-        state.auditState.trim()
-        try stateFile.save(state)
-    }
-
-    public func enqueueUserMarkedAudit(ledgerID: UUID, at date: Date = .now) throws -> AuditedEntry {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let ledger = state.ledger.first(where: { $0.id == ledgerID }),
-              let cached = state.cache.first(where: { $0.key == ledger.cacheKey }) else {
-            throw LocalAuditStoreError.auditNotFound
-        }
-        guard isCurrentCachedEntry(cached),
-              ledger.packageID == cached.result.packageID,
-              ledger.modelVersion == cached.result.modelVersion else {
-            throw LocalAuditStoreError.staleModelIdentity
-        }
-        let candidate = try makeAuditCandidate(
-            cached: cached,
-            intent: .userMarkedDecisionReview,
-            factors: [.init(kind: .userMarked, severity: 1)],
-            origin: .userSupplied,
-            at: date
-        )
-        state.auditState.upsertCandidate(candidate)
-        try stateFile.save(state)
-        return candidate
-    }
-
-    /// Selects allowed entries using transparent local signals, never provider
-    /// confidence, clicks, or watch time. Selection does not send any data.
-    @discardableResult
-    public func enqueueSuggestedFalseAllowAudits(limit: Int, at date: Date = .now) throws -> [AuditedEntry] {
-        lock.lock()
-        defer { lock.unlock() }
-        guard limit > 0 else { return [] }
-        guard state.settings.allowLocalLLMAudit else { return [] }
-        guard let configuration = state.auditState.configuration,
-              configuration.isEnabled,
-              configuration.selectionMode != .userMarkedOnly else {
-            return []
-        }
-        let existing = Set(state.auditState.candidates.map { "\($0.intent.rawValue):\($0.evidence.evidenceDigest):\($0.localResult.modelVersion)" })
-        var targeted: [AuditedEntry] = []
-        var randomEligible: [(candidate: AuditedEntry, rank: UInt64)] = []
-        for cached in state.cache where isCurrentCachedEntry(cached)
-            && cached.result.strongestAction == .allow
-            && cached.result.evidenceState == .sufficient {
-            guard let context = try? auditPolicyContext(for: cached.evidence) else { continue }
-            let digest = try UntrustedQuotedEvidence.digest(for: cached.evidence)
-            let identity = "\(AuditIntent.potentialFalseAllow.rawValue):\(digest):\(cached.result.modelVersion)"
-            guard !existing.contains(identity) else { continue }
-            let targetedFactors = Self.falseAllowRiskFactors(for: cached.result, menuLeafTagIDs: context.menuLeafTagIDs)
-            if !targetedFactors.isEmpty,
-               let candidate = try? makeAuditCandidate(
-                    cached: cached,
-                    intent: .potentialFalseAllow,
-                    factors: targetedFactors,
-                    origin: .importedLocalRecord,
-                    at: date
-               ), candidate.eligibility.isEligible {
-                targeted.append(candidate)
-            }
-            if configuration.selectionMode == .targetedWithRandomSample,
-               let candidate = try? makeAuditCandidate(
-                    cached: cached,
-                    intent: .potentialFalseAllow,
-                    factors: [.init(kind: .randomSample, severity: 0.01)],
-                    origin: .importedLocalRecord,
-                    at: date
-               ), candidate.eligibility.isEligible {
-                randomEligible.append((candidate, Self.deterministicAuditRank(
-                    evidenceDigest: digest,
-                    modelVersion: cached.result.modelVersion,
-                    context: context
-                )))
-            }
-        }
-
-        let randomQuota = configuration.selectionMode == .targetedWithRandomSample
-            ? Self.randomSampleQuota(for: limit)
-            : 0
-        let targetedLimit = max(0, limit - randomQuota)
-        let selectedTargeted = targeted.sorted {
-            $0.risk.priority == $1.risk.priority
-                ? $0.evidence.evidenceDigest < $1.evidence.evidenceDigest
-                : $0.risk.priority > $1.risk.priority
-        }.prefix(targetedLimit)
-        let selectedTargetedIdentities = Set(selectedTargeted.map { $0.evidence.evidenceDigest })
-        let selectedRandom = randomEligible
-            .filter { !selectedTargetedIdentities.contains($0.candidate.evidence.evidenceDigest) }
-            .sorted { lhs, rhs in
-                lhs.rank == rhs.rank
-                    ? lhs.candidate.evidence.evidenceDigest < rhs.candidate.evidence.evidenceDigest
-                    : lhs.rank < rhs.rank
-            }
-            .prefix(randomQuota)
-            .map(\.candidate)
-        let selected = Array(selectedTargeted) + selectedRandom
-        for candidate in selected { state.auditState.upsertCandidate(candidate) }
-        if !selected.isEmpty { try stateFile.save(state) }
-        return selected
-    }
-
-    /// Reserves a conservative local budget before a future fixed provider
-    /// adapter is allowed to make a request. It is not a claimed hard cap on
-    /// provider reasoning tokens. Call `markAuditRequestPossiblySent` before
-    /// dispatch; only a reservation that has not been sent can be cancelled
-    /// and released.
-    public func prepareAuditRequest(
-        auditID: UUID,
-        usageCeiling: AuditUsage,
-        at date: Date = .now
-    ) throws -> (request: LocalAuditRequest, reservation: AuditBudgetReservation) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard state.settings.allowLocalLLMAudit else {
-            throw LocalAuditStoreError.localAuditDisabledByResourceSettings
-        }
-        guard let configuration = state.auditState.configuration else {
-            throw LocalAuditStoreError.configurationMissing
-        }
-        guard let candidate = state.auditState.candidates.first(where: { $0.auditID == auditID }) else {
-            throw LocalAuditStoreError.auditNotFound
-        }
-        guard isCurrentAuditCandidate(candidate) else {
-            throw LocalAuditStoreError.staleModelIdentity
-        }
-        guard configuration.isEnabled else { throw LocalAuditStoreError.configurationMissing }
-        let context: AuditPolicyContext
-        do {
-            context = try auditPolicyContext(for: candidate.evidence.quotedEntry)
-        } catch {
-            throw LocalAuditStoreError.policyContextUnavailable
-        }
-        let candidateRecords = state.auditState.budgetLedger.records.filter { $0.candidateAuditID == candidate.auditID }
-        guard !candidateRecords.contains(where: { [.reserved, .possiblySent].contains($0.state) }) else {
-            throw LocalAuditStoreError.attemptAlreadyInFlight
-        }
-        // Preserve the old stable first-attempt ID for adapter compatibility;
-        // every subsequent retry receives a distinct attempt identifier.
-        let attemptID = candidateRecords.isEmpty ? candidate.auditID : UUID()
-        let timestamp = Self.milliseconds(date)
-        let request = try LocalAuditRequest(
-            candidate: candidate,
-            policyContext: context,
-            configuration: configuration,
-            usageCeiling: usageCeiling,
-            requestedAtMilliseconds: timestamp,
-            attemptID: attemptID
-        )
-        let reservation = try state.auditState.budgetLedger.reserve(
-            auditID: request.attemptID,
-            candidateAuditID: request.auditID,
-            usageCeiling: usageCeiling,
-            limits: configuration.budgetLimits,
-            at: timestamp
-        )
-        try stateFile.save(state)
-        return (request, reservation)
-    }
-
-    /// Validates a provider response against the exact locally reserved request
-    /// and records it locally. It never trains a personal model automatically:
-    /// a person must later call `applyConfirmedFalseAllowAudit` for a currently
-    /// policy-changing false allow.
-    public func settleAuditResult(
-        _ unvalidated: UnvalidatedAuditResult,
-        for request: LocalAuditRequest,
-        reservationID: UUID
-    ) throws -> ValidatedAuditResult {
-        lock.lock()
-        defer { lock.unlock() }
-        guard state.auditState.candidates.contains(where: { $0.auditID == request.auditID && $0 == request.candidate }),
-              isCurrentAuditCandidate(request.candidate),
-              let reservation = state.auditState.budgetLedger.records.first(where: { $0.id == reservationID }),
-              reservation.auditID == request.attemptID,
-              reservation.candidateAuditID == request.auditID,
-              [.reserved, .possiblySent, .uncertain].contains(reservation.state) else {
-            throw LocalAuditStoreError.reservationMismatch
-        }
-        let currentContext: AuditPolicyContext
-        do {
-            currentContext = try auditPolicyContext(for: request.candidate.evidence.quotedEntry)
-        } catch {
-            throw LocalAuditStoreError.policyContextUnavailable
-        }
-        guard request.policyContext == currentContext else {
-            throw LocalAuditStoreError.policyContextMismatch
-        }
-        var validated = try AuditResultValidator().validate(
-            unvalidated,
-            for: request,
-            allowedLeafTagIDs: currentContext.menuLeafTagIDs
-        )
-        if validated.finding == .potentialFalseAllow,
-           policyChangingDecisions(for: validated.leafTagIDs, candidate: request.candidate, context: currentContext).isEmpty {
-            throw LocalAuditStoreError.auditFindingNotApplicable
-        }
-        validated.modelIdentity = state.activeModelIdentity
-        try state.auditState.budgetLedger.settle(reservationID: reservationID, actualUsage: validated.usage)
-        state.auditState.upsertResult(validated)
-        try stateFile.save(state)
-        return validated
-    }
-
-    /// Call immediately before entering a provider transport. Once marked, a
-    /// timeout/cancellation cannot turn into a free retry because a provider
-    /// may already have billed the request.
-    public func markAuditRequestPossiblySent(_ reservationID: UUID) throws {
-        lock.lock()
-        defer { lock.unlock() }
-        guard state.settings.allowLocalLLMAudit else {
-            throw LocalAuditStoreError.localAuditDisabledByResourceSettings
-        }
-        guard let reservation = state.auditState.budgetLedger.records.first(where: { $0.id == reservationID }),
-              let candidate = state.auditState.candidates.first(where: { $0.auditID == reservation.candidateAuditID }),
-              isCurrentAuditCandidate(candidate) else {
-            throw LocalAuditStoreError.staleModelIdentity
-        }
-        try state.auditState.budgetLedger.markPossiblySent(reservationID: reservationID)
-        try stateFile.save(state)
-    }
-
-    /// Preserve the reservation after a potentially dispatched request fails
-    /// without a trustworthy result. A later retry gets a distinct attempt ID;
-    /// a late attributable response may still settle this reservation.
-    public func markAuditRequestUncertain(_ reservationID: UUID) throws {
-        lock.lock()
-        defer { lock.unlock() }
-        try state.auditState.budgetLedger.markUncertain(reservationID: reservationID)
-        try stateFile.save(state)
-    }
-
-    public func cancelAuditReservation(_ reservationID: UUID) throws {
-        lock.lock()
-        defer { lock.unlock() }
-        try state.auditState.budgetLedger.cancel(reservationID: reservationID)
-        try stateFile.save(state)
-    }
-
-    /// Applies a model update only after a local person explicitly confirms a
-    /// stored validated audit. The finding is re-evaluated against the current
-    /// active policy/taxonomy, so an old provider suggestion cannot train a
-    /// tag that no longer changes the selected policy.
-    public func applyConfirmedFalseAllowAudit(
-        auditID: UUID,
-        policyID: String,
-        at date: Date = .now
-    ) throws {
-        lock.lock()
-        defer { lock.unlock() }
-        guard state.auditState.configuration?.localLearningMode == .localValidatedOnly else {
-            throw LocalAuditStoreError.localLearningDisabled
-        }
-        guard let result = state.auditState.results.first(where: { $0.auditID == auditID }),
-              result.finding == .potentialFalseAllow,
-              let candidate = state.auditState.candidates.first(where: { $0.auditID == auditID }) else {
-            throw LocalAuditStoreError.auditFindingNotApplicable
-        }
-        guard isCurrentAuditCandidate(candidate),
-              result.modelIdentity == state.activeModelIdentity else {
-            throw LocalAuditStoreError.staleModelIdentity
-        }
-        guard !state.auditState.learningApplications.contains(where: { $0.auditID == auditID }) else {
-            throw LocalAuditStoreError.auditAlreadyApplied
-        }
-        let context: AuditPolicyContext
-        do {
-            context = try auditPolicyContext(for: candidate.evidence.quotedEntry)
-        } catch {
-            throw LocalAuditStoreError.policyContextUnavailable
-        }
-        guard let decision = policyChangingDecisions(for: result.leafTagIDs, candidate: candidate, context: context)
-            .first(where: { $0.policyID == policyID }) else {
-            throw LocalAuditStoreError.auditFindingNotApplicable
-        }
-        let applicableLeaves = decision.matchedTagIDs.filter { result.leafTagIDs.contains($0) }
-        guard !applicableLeaves.isEmpty else { throw LocalAuditStoreError.auditFindingNotApplicable }
-        let trainingExample = try makeValidatedTrainingExample(
-            evidence: candidate.evidence.quotedEntry,
-            positiveLeafTagIDs: applicableLeaves,
-            negativeLeafTagIDs: [],
-            origin: .confirmedPersonalAudit,
-            at: date
-        )
-        var replacementState = state
-        replacementState.trainingCorpus.upsert(trainingExample, limit: replacementState.settings.cacheCapacity)
-        var replacementEngine = engine
-        let report = try replacementEngine.rebuildPersonalModel(
-            from: replacementState.trainingCorpus.examples,
-            epochs: 3
-        )
-        replacementState.trainingCorpus.lastRun = .init(
-            exampleCount: report.exampleCount,
-            labelUpdateCount: report.labelUpdateCount,
-            epochs: 3,
-            taxonomyVersion: replacementEngine.package.taxonomyVersion,
-            completedAtMilliseconds: Self.milliseconds(date)
-        )
-        replacementState.auditState.recordLearningApplication(.init(
-            auditID: auditID,
-            policyID: policyID,
-            leafTagIDs: applicableLeaves,
-            appliedAtMilliseconds: Self.milliseconds(date)
-        ))
-        if replacementState.cacheBackfill != nil {
-            // A pending cache continuation must be recomputed from the new
-            // correction model rather than mixing direct scores from before
-            // this confirmed label was added.
-            replacementEngine.sourceProfiles = [:]
-            for index in replacementState.cache.indices {
-                replacementState.cache[index].replayState = .awaitingCausalReplay
-            }
-            replacementState.cacheBackfill?.restart()
-        }
-        synchronize(workingEngine: replacementEngine, into: &replacementState)
-        try stateFile.save(replacementState)
-        engine = replacementEngine
-        state = replacementState
-        backupCurrentModelIfConfigured(state: replacementState, at: date)
-    }
-
-    public func redactedAuditDiagnostics(at date: Date = .now) throws -> Data {
-        lock.lock()
-        defer { lock.unlock() }
-        let export = state.auditState.redactedExport(generatedAtMilliseconds: Self.milliseconds(date))
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        return try encoder.encode(export)
-    }
-
     public func snapshot() -> LocalClassifierState {
         lock.lock()
         defer { lock.unlock() }
@@ -1489,166 +1142,11 @@ public final class LocalClassifierCoordinator {
         state.cacheBackfill?.restart()
     }
 
-    private func makeAuditCandidate(
-        cached: CachedEntry,
-        intent: AuditIntent,
-        factors: [AuditRiskFactor],
-        origin: AuditEvidenceOrigin,
-        at date: Date
-    ) throws -> AuditedEntry {
-        guard let modelIdentity = state.activeModelIdentity,
-              isCurrentCachedEntry(cached) else {
-            throw LocalAuditStoreError.staleModelIdentity
-        }
-        let timestamp = Self.milliseconds(date)
-        let evidence = try UntrustedQuotedEvidence(
-            origin: origin,
-            capturedAtMilliseconds: timestamp,
-            quotedEntry: cached.evidence
-        )
-        let risk = try AuditRiskRecord(factors: factors, assessedAtMilliseconds: timestamp)
-        let candidate = try AuditedEntry(
-            evidence: evidence,
-            localResult: cached.result,
-            modelIdentity: modelIdentity,
-            intent: intent,
-            risk: risk,
-            createdAtMilliseconds: timestamp
-        )
-        guard candidate.eligibility.isEligible else { throw LocalAuditStoreError.auditNotFound }
-        return candidate
-    }
-
     private func isCurrentCachedEntry(_ cached: CachedEntry) -> Bool {
         guard let activeIdentity = state.activeModelIdentity else { return false }
         return cached.replayState == .causallyReplayed
             && cached.modelIdentity == activeIdentity
             && activeIdentity.matches(cached.result)
-    }
-
-    /// Recheck both the identity and the exact retained cache snapshot before
-    /// a queued audit can be sent, settled, or used for local polishing. This
-    /// prevents an old cache row from crossing a package replacement boundary.
-    private func isCurrentAuditCandidate(_ candidate: AuditedEntry) -> Bool {
-        guard let activeIdentity = state.activeModelIdentity,
-              candidate.modelIdentity == activeIdentity,
-              activeIdentity.matches(candidate.localResult) else {
-            return false
-        }
-        let cacheKey = LocalClassifierState.cacheKey(for: candidate.evidence.quotedEntry)
-        return state.cache.contains { cached in
-            cached.key == cacheKey
-                && isCurrentCachedEntry(cached)
-                && cached.evidence == candidate.evidence.quotedEntry
-                && cached.result == candidate.localResult
-        }
-    }
-
-    /// Build the only taxonomy/policy data that may leave the local app with an
-    /// audit request. It is deliberately rebuilt from active state rather than
-    /// trusting browser-provided policy IDs or a stale queued candidate.
-    private func auditPolicyContext(for entry: EntryEvidence) throws -> AuditPolicyContext {
-        let requested: [NamedPolicy]
-        if entry.policyIDs.isEmpty {
-            requested = engine.policies
-        } else {
-            let requestedIDs = Set(entry.policyIDs)
-            requested = engine.policies.filter { requestedIDs.contains($0.id) }
-        }
-        let orderedPolicies = requested.sorted { $0.id < $1.id }
-        guard !orderedPolicies.isEmpty else { throw LocalAuditStoreError.policyContextUnavailable }
-        try PolicyCatalog(taxonomy: engine.taxonomy).validate(orderedPolicies)
-
-        let policies = orderedPolicies.map { policy in
-            AuditPolicyContextPolicy(
-                policyID: policy.id,
-                includeAnyTagIDs: policy.includeAnyTagIDs.sorted(),
-                includeAllTagIDs: policy.includeAllTagIDs.sorted(),
-                excludeTagIDs: policy.excludeTagIDs.sorted(),
-                action: entry.surface == .feed ? policy.feedAction : policy.pageAction
-            )
-        }
-        let criterionIDs = Set(policies.flatMap(\.criterionTagIDs))
-        let leafIDs = engine.taxonomy.predictableLeafIDs
-            .filter { leafID in criterionIDs.contains { engine.taxonomy.isDescendant(leafID, of: $0) } }
-            .sorted()
-        let leaves = leafIDs.compactMap { leafID -> AuditPolicyContextLeaf? in
-            guard let node = engine.taxonomy.nodes[leafID] else { return nil }
-            return .init(tagID: node.id, name: node.name)
-        }
-        return try .init(
-            requestedPolicyIDs: policies.map(\.policyID),
-            policies: policies,
-            leafLabels: leaves
-        )
-    }
-
-    /// Re-evaluate provider-selected leaves as if they were the local result.
-    /// Returning only dim/block decisions makes a false allow policy-changing
-    /// rather than merely a plausible tag suggestion.
-    private func policyChangingDecisions(
-        for leafTagIDs: [String],
-        candidate: AuditedEntry,
-        context: AuditPolicyContext
-    ) -> [PolicyDecision] {
-        guard Set(leafTagIDs).isSubset(of: context.menuLeafTagIDs) else { return [] }
-        var reviewed = candidate.localResult
-        reviewed.selectedLeafTagIDs = leafTagIDs.sorted()
-        reviewed.ancestorTagIDs = engine.taxonomy.ancestorClosure(for: reviewed.selectedLeafTagIDs)
-        reviewed.decisions = []
-        return PolicyEvaluator(taxonomy: engine.taxonomy)
-            .evaluate(result: reviewed, policies: engine.policies, requestedPolicyIDs: context.requestedPolicyIDs)
-            .filter { $0.action > .allow }
-    }
-
-    /// Targeted candidates must be close to, or disagree about, a leaf that
-    /// could actually change an active requested policy. This avoids auditing
-    /// every otherwise allowed entry merely because some unrelated taxonomy
-    /// score exists.
-    private static func falseAllowRiskFactors(
-        for result: ClassificationResult,
-        menuLeafTagIDs: Set<String>
-    ) -> [AuditRiskFactor] {
-        let policyScores = result.scores.filter { menuLeafTagIDs.contains($0.tagID) }
-        guard !policyScores.isEmpty else { return [] }
-        let nearestMargin = policyScores.map { abs($0.finalScore - result.threshold) }.min() ?? 1
-        var factors: [AuditRiskFactor] = []
-        if nearestMargin < 0.15 {
-            let marginSeverity = min(1, max(0.01, (0.15 - nearestMargin) / 0.15))
-            factors.append(.init(kind: .nearPolicyMargin, severity: marginSeverity, measuredValue: nearestMargin))
-        }
-        if let largestDisagreement = policyScores.compactMap({ score -> Double? in
-            guard let source = score.sourceScore else { return nil }
-            return abs(score.directScore - source)
-        }).max(), largestDisagreement >= 0.20 {
-            factors.append(.init(kind: .sourceDirectDisagreement, severity: min(1, largestDisagreement), measuredValue: largestDisagreement))
-        }
-        return factors
-    }
-
-    private static func randomSampleQuota(for limit: Int) -> Int {
-        // Keep targeted candidates dominant. Tiny manually requested batches
-        // stay entirely targeted; larger runs receive a deterministic 20%
-        // sample capped at eight entries.
-        guard limit >= 5 else { return 0 }
-        return min(8, max(1, limit / 5))
-    }
-
-    private static func deterministicAuditRank(
-        evidenceDigest: String,
-        modelVersion: String,
-        context: AuditPolicyContext
-    ) -> UInt64 {
-        let material = [
-            "vault-classifier-audit-random-v1",
-            evidenceDigest,
-            modelVersion,
-            context.requestedPolicyIDs.joined(separator: ","),
-            context.leafLabels.map(\.tagID).joined(separator: ","),
-        ].joined(separator: "|")
-        return SHA256.hash(data: Data(material.utf8)).prefix(8).reduce(UInt64(0)) { partial, byte in
-            (partial << 8) | UInt64(byte)
-        }
     }
 
     private static func milliseconds(_ date: Date) -> Int64 {
