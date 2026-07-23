@@ -1086,9 +1086,9 @@ final class VaultClassifierViewModel: ObservableObject {
         ))
     }
 
-    /// Stores the compact panel's local connection inputs. The WebView never
-    /// receives the secret: its fixed dots mean preserve, a non-empty value
-    /// replaces, and an explicit clear removes the saved local credential.
+    /// Stores the compact panel's local connection inputs. The WebView snapshot
+    /// never receives the secret: an empty field preserves it, a non-empty
+    /// value replaces it, and an explicit clear removes it.
     private func applyProviderConnection(
         profileID: String,
         rawCredential: String?,
