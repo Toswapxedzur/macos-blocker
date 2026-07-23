@@ -875,6 +875,15 @@ h3 { font-size: 13px; }
 .provider-connection-fields .field { margin: 0; gap: 5px; }
 .provider-connection-fields input { min-height: 34px; }
 
+.credential-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.credential-input-row input { min-width: 0; flex: 1; }
+.credential-clear { flex: 0 0 auto; }
+
 .provider-token-usage {
   flex-direction: column;
   align-items: flex-end;

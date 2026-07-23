@@ -1144,16 +1144,15 @@ final class VaultClassifierViewModel: ObservableObject {
         return profile
     }
 
-    /// Saves an edited credential as soon as its input changes. This action
-    /// intentionally returns without publishing a WebView snapshot: input
-    /// state must never be replaced while the user is typing.
-    func saveProviderCredential(profileID: String, rawCredential: String, clearCredential: Bool) -> Bool {
+    /// Autosaves a normal password input without publishing a WebView snapshot.
+    /// The focused field therefore stays intact while the local profile updates.
+    func saveProviderCredential(profileID: String, rawCredential: String) -> Bool {
         successfulProviderTestProfileIDs.remove(profileID)
         do {
             _ = try applyProviderConnection(
                 profileID: profileID,
                 rawCredential: rawCredential,
-                clearCredential: clearCredential,
+                clearCredential: rawCredential.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 customEndpoint: nil,
                 testModelIdentifier: nil,
                 protocolConfiguration: nil,
@@ -3469,10 +3468,17 @@ final class VaultClassifierViewModel: ObservableObject {
             case "saveProviderCredential":
                 let saved = saveProviderCredential(
                     profileID: try webString(data, key: "profileID", limit: 128),
-                    rawCredential: try webString(data, key: "credential", limit: ProviderCredentialRecord.maximumCharacters),
-                    clearCredential: data["clearCredential"] as? Bool ?? false
+                    rawCredential: try webString(data, key: "credential", limit: ProviderCredentialRecord.maximumCharacters)
                 )
                 return !saved
+            case "clearProviderCredential":
+                updateProviderConnection(
+                    profileID: try webString(data, key: "profileID", limit: 128),
+                    clearCredential: true,
+                    customEndpoint: nil,
+                    testModelIdentifier: nil,
+                    protocolConfiguration: nil
+                )
             case "fetchCustomProviderModelCatalog":
                 fetchCustomProviderModelCatalog(profileID: try webString(data, key: "profileID", limit: 128))
             case "setLLMAssistActive":
