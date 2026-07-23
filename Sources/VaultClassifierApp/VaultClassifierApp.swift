@@ -427,11 +427,23 @@ final class VaultClassifierViewModel: ObservableObject {
     /// A provider test is always an explicit user action. It sends only the
     /// fixed harmless prompt declared by `ProviderTestProtocol`, never browser
     /// evidence or catalog data, and records no credential or headers.
-    func testProviderProfile(profileID: String, rawCredential: String? = nil) {
+    func testProviderProfile(
+        profileID: String,
+        rawCredential: String? = nil,
+        customEndpoint: String? = nil,
+        testModelIdentifier: String? = nil,
+        protocolConfiguration: [String: String]? = nil
+    ) {
         guard !testingProviderProfileIDs.contains(profileID) else { return }
         let profile: APIKeyProviderProfile
         do {
-            profile = try applyProviderCredential(profileID: profileID, rawCredential: rawCredential)
+            profile = try applyProviderConnection(
+                profileID: profileID,
+                rawCredential: rawCredential,
+                customEndpoint: customEndpoint,
+                testModelIdentifier: testModelIdentifier,
+                protocolConfiguration: protocolConfiguration
+            )
         } catch {
             issue = error.localizedDescription
             return
@@ -460,7 +472,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 try self.appendProviderTestRecord(.init(
                     profileID: profile.id,
                     provider: profile.type.rawValue,
-                    model: profile.type.defaultModelIdentifier,
+                    model: ProviderTestProtocol.modelIdentifier(for: profile),
                     operation: request.operation.rawValue,
                     endpoint: ProviderTestProtocol.safeEndpoint(request.plan.url),
                     method: request.plan.method,
@@ -477,7 +489,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     try? self.appendProviderTestRecord(.init(
                         profileID: profile.id,
                         provider: profile.type.rawValue,
-                        model: profile.type.defaultModelIdentifier,
+                        model: ProviderTestProtocol.modelIdentifier(for: profile),
                         operation: prepared.operation.rawValue,
                         endpoint: ProviderTestProtocol.safeEndpoint(prepared.plan.url),
                         method: prepared.plan.method,
@@ -1002,30 +1014,69 @@ final class VaultClassifierViewModel: ObservableObject {
         refreshLocalState()
     }
 
-    /// Stores a replacement entered in the compact panel. Blank input keeps
-    /// the current local credential, so a saved key can be tested again
-    /// without being sent back into the WebView snapshot.
-    private func applyProviderCredential(profileID: String, rawCredential: String?) throws -> APIKeyProviderProfile {
+    /// Stores the compact panel's local connection inputs. Blank credential
+    /// input preserves the existing key, while the non-secret endpoint,
+    /// protocol values, and test model can be updated independently.
+    private func applyProviderConnection(
+        profileID: String,
+        rawCredential: String?,
+        customEndpoint: String?,
+        testModelIdentifier: String?,
+        protocolConfiguration: [String: String]?
+    ) throws -> APIKeyProviderProfile {
         guard var catalog = localState?.workspaceCatalog,
               let index = catalog.providerProfiles.firstIndex(where: { $0.id == profileID }) else {
             throw WebBridgeInputError.invalidChoice("provider profile")
         }
         var profile = catalog.providerProfiles[index]
-        let value = rawCredential?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !value.isEmpty else { return profile }
-        let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
-        guard descriptor.credentialFields.count == 1,
-              let field = descriptor.credentialFields.first else {
-            throw WebBridgeInputError.invalidChoice("provider credential")
+        if let customEndpoint {
+            let cleaned = customEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+            profile.customEndpoint = cleaned.isEmpty ? nil : cleaned
         }
-        let credential = ProviderCredentialRecord(values: [field: value])
-        try credential.validate(for: descriptor)
-        profile.credential = credential
+        if let testModelIdentifier {
+            let cleaned = testModelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+            profile.testModelIdentifier = cleaned.isEmpty ? nil : cleaned
+        }
+        if let protocolConfiguration {
+            profile.protocolConfiguration = protocolConfiguration
+        }
+        let value = rawCredential?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
+        if !value.isEmpty {
+            guard descriptor.credentialFields.count == 1,
+                  let field = descriptor.credentialFields.first else {
+                throw WebBridgeInputError.invalidChoice("provider credential")
+            }
+            let credential = ProviderCredentialRecord(values: [field: value])
+            try credential.validate(for: descriptor)
+            profile.credential = credential
+        }
+        try profile.validate()
         profile.updatedAtMilliseconds = WorkspaceCatalog.now()
         catalog.providerProfiles[index] = profile
         try coordinator?.updateWorkspaceCatalog(catalog)
         refreshLocalState()
         return profile
+    }
+
+    func updateProviderConnection(
+        profileID: String,
+        customEndpoint: String?,
+        testModelIdentifier: String?,
+        protocolConfiguration: [String: String]?
+    ) {
+        do {
+            _ = try applyProviderConnection(
+                profileID: profileID,
+                rawCredential: nil,
+                customEndpoint: customEndpoint,
+                testModelIdentifier: testModelIdentifier,
+                protocolConfiguration: protocolConfiguration
+            )
+            issue = nil
+        } catch {
+            issue = error.localizedDescription
+        }
     }
 
     func deleteProviderProfile(profileID: String) {
@@ -3092,6 +3143,9 @@ final class VaultClassifierViewModel: ObservableObject {
                     "name": profile.name,
                     "type": profile.type.rawValue,
                     "defaultModelIdentifier": profile.type.defaultModelIdentifier,
+                    "customEndpoint": profile.customEndpoint ?? NSNull(),
+                    "protocolConfiguration": profile.protocolConfiguration,
+                    "testModelIdentifier": profile.testModelIdentifier ?? NSNull(),
                     "hasCredential": profile.credential != nil,
                     "testing": testingProviderProfileIDs.contains(profile.id),
                 ] as [String: Any]
@@ -3280,7 +3334,17 @@ final class VaultClassifierViewModel: ObservableObject {
             case "testProviderProfile":
                 testProviderProfile(
                     profileID: try webString(data, key: "profileID", limit: 128),
-                    rawCredential: try webOptionalString(data, key: "credential", limit: ProviderCredentialRecord.maximumCharacters)
+                    rawCredential: try webOptionalString(data, key: "credential", limit: ProviderCredentialRecord.maximumCharacters),
+                    customEndpoint: try webOptionalString(data, key: "customEndpoint", limit: APIKeyProviderProfile.maximumEndpointLength),
+                    testModelIdentifier: try webOptionalString(data, key: "testModelIdentifier", limit: APIKeyProviderProfile.maximumTestModelIdentifierLength),
+                    protocolConfiguration: try webProviderConfiguration(data)
+                )
+            case "updateProviderConnection":
+                updateProviderConnection(
+                    profileID: try webString(data, key: "profileID", limit: 128),
+                    customEndpoint: try webOptionalString(data, key: "customEndpoint", limit: APIKeyProviderProfile.maximumEndpointLength),
+                    testModelIdentifier: try webOptionalString(data, key: "testModelIdentifier", limit: APIKeyProviderProfile.maximumTestModelIdentifierLength),
+                    protocolConfiguration: try webProviderConfiguration(data)
                 )
             case "fetchCustomProviderModelCatalog":
                 fetchCustomProviderModelCatalog(profileID: try webString(data, key: "profileID", limit: 128))
@@ -3517,6 +3581,21 @@ final class VaultClassifierViewModel: ObservableObject {
         }
         guard Set(values).count == values.count else { throw WebBridgeInputError.invalidChoice(key) }
         return values
+    }
+
+    private func webProviderConfiguration(_ data: [String: Any]) throws -> [String: String]? {
+        guard let raw = data["protocolConfiguration"] as? [String: Any] else { return nil }
+        guard raw.count <= ProviderConfigurationField.allCases.count else {
+            throw WebBridgeInputError.exceedsLimit("protocol configuration", ProviderConfigurationField.allCases.count)
+        }
+        return try Dictionary(uniqueKeysWithValues: raw.map { key, value in
+            guard ProviderConfigurationField(rawValue: key) != nil,
+                  let string = value as? String,
+                  string.count <= 512 else {
+                throw WebBridgeInputError.invalidChoice("protocol configuration")
+            }
+            return (key, string)
+        })
     }
 
     private func webCanvasCoordinate(_ data: [String: Any], key: String) throws -> Double {

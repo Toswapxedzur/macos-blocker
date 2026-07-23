@@ -864,8 +864,14 @@ h3 { font-size: 13px; }
   padding-top: 12px;
 }
 
-.provider-panel-body .field { margin: 0; gap: 5px; }
-.provider-panel-body input { min-height: 34px; }
+.provider-connection-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr));
+  gap: 10px 12px;
+}
+
+.provider-connection-fields .field { margin: 0; gap: 5px; }
+.provider-connection-fields input { min-height: 34px; }
 
 .provider-token-usage {
   flex-direction: column;
@@ -886,6 +892,7 @@ h3 { font-size: 13px; }
 @media (max-width: 620px) {
   .provider-panel-head { align-items: flex-start; }
   .provider-panel-body { grid-template-columns: 1fr; gap: 9px; }
+  .provider-connection-fields { grid-template-columns: 1fr; }
   .provider-token-usage { align-items: flex-start; padding: 0; }
 }
 
@@ -1434,6 +1441,23 @@ textarea:focus {
 .workspace select:focus,
 .workspace textarea:focus {
   box-shadow: inset 0 -2px 0 var(--navy-700);
+}
+
+/* The global workspace treatment deliberately turns most controls into
+   underlined rows. A credential is sensitive and needs an unmistakable,
+   compact field boundary instead of an almost invisible line. */
+.provider-workspace .provider-connection-fields input[type="text"],
+.provider-workspace .provider-connection-fields input[type="password"] {
+  min-height: 38px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--canvas);
+  box-shadow: inset 0 0 0 1px rgba(30, 58, 138, 0.28);
+}
+
+.provider-workspace .provider-connection-fields input[type="text"]:focus,
+.provider-workspace .provider-connection-fields input[type="password"]:focus {
+  box-shadow: inset 0 0 0 1px var(--navy-700), 0 0 0 3px var(--navy-ring);
 }
 
 .workspace .choice-row {

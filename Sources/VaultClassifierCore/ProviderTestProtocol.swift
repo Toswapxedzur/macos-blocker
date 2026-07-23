@@ -18,7 +18,7 @@ public enum ProviderTestProtocol {
         } else {
             throw ProviderTestProtocolError.unsupportedProvider
         }
-        let modelIdentifier = profile.type.defaultModelIdentifier
+        let modelIdentifier = modelIdentifier(for: profile)
         guard !modelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ProviderTestProtocolError.modelRequired
         }
@@ -33,6 +33,20 @@ public enum ProviderTestProtocol {
             operation: operation
         )
         return .init(plan: plan, operation: operation, prompt: prompt, body: body)
+    }
+
+    public static func modelIdentifier(for profile: APIKeyProviderProfile) -> String {
+        if let selected = profile.testModelIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty {
+            return selected
+        }
+        // Compatible and Custom connections deliberately have no trustworthy
+        // default: their owner chooses both the endpoint and its model.
+        switch profile.type {
+        case .openAICompatible, .custom:
+            return ""
+        default:
+            return profile.type.defaultModelIdentifier
+        }
     }
 
     public static func parseResponse(_ data: Data, format: ProviderRequestBodyFormat, operation: ProviderOperation) throws -> ProviderTestParsedResponse {
@@ -175,7 +189,7 @@ public enum ProviderTestProtocolError: Error, Equatable, LocalizedError, Sendabl
     public var errorDescription: String? {
         switch self {
         case .unsupportedProvider: return "This provider protocol does not support a safe test request yet."
-        case .modelRequired: return "Select a model in a classifier type before testing this compatible provider connection."
+        case .modelRequired: return "Enter a test model for this provider connection."
         case .missingCredential: return "Store a provider credential before testing this profile."
         case .invalidResponse: return "The provider test returned an invalid response."
         }
