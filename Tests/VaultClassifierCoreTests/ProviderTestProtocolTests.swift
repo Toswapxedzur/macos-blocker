@@ -40,6 +40,39 @@ final class ProviderTestProtocolTests: XCTestCase {
         XCTAssertEqual(parsed.usage, .init(inputTokens: 1_000, outputTokens: 500))
     }
 
+    func testCompatibleProviderTestUsesItsSavedTestModel() throws {
+        let profile = APIKeyProviderProfile(
+            type: .openAICompatible,
+            customEndpoint: "https://api.deepseek.com/v1",
+            testModelIdentifier: "deepseek-chat"
+        )
+        let prepared = try ProviderTestProtocol.prepare(profile: profile)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: prepared.body) as? [String: Any])
+        XCTAssertEqual(body["model"] as? String, "deepseek-chat")
+    }
+
+    func testCustomProviderTestRequiresAnEnteredModel() {
+        let profile = APIKeyProviderProfile(
+            type: .custom,
+            customEndpoint: "https://api.example.test/v1"
+        )
+
+        XCTAssertThrowsError(try ProviderTestProtocol.prepare(profile: profile)) { error in
+            XCTAssertEqual(error as? ProviderTestProtocolError, .modelRequired)
+        }
+    }
+
+    func testOllamaTestCanUseAnEnteredModelInsteadOfItsDefault() throws {
+        let profile = APIKeyProviderProfile(
+            type: .ollama,
+            testModelIdentifier: "qwen3:8b"
+        )
+
+        let prepared = try ProviderTestProtocol.prepare(profile: profile)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: prepared.body) as? [String: Any])
+        XCTAssertEqual(body["model"] as? String, "qwen3:8b")
+    }
+
     func testRequestRecordPreservesMetadataWithoutRequestOrResponseBodies() throws {
         let profile = APIKeyProviderProfile(id: "gemini", type: .gemini)
         let record = ProviderRequestRecord(
@@ -117,7 +150,7 @@ final class ProviderTestProtocolTests: XCTestCase {
         let entry = EntryEvidence(platform: "youtube", entryID: "entry", surface: .feed, evidence: .init(title: "Deck gameplay"))
         for profile in profiles {
             let modelIdentifier = profile.type.defaultModelIdentifier.isEmpty ? "test-model" : profile.type.defaultModelIdentifier
-            if profile.type.defaultModelIdentifier.isEmpty {
+            if profile.type.defaultModelIdentifier.isEmpty || profile.type == .custom {
                 XCTAssertThrowsError(try ProviderTestProtocol.prepare(profile: profile), profile.type.rawValue)
             } else {
                 XCTAssertEqual(try ProviderTestProtocol.prepare(profile: profile).operation, .generateText, profile.type.rawValue)

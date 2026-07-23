@@ -1104,6 +1104,7 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
 public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable {
     public static let maximumNameLength = 128
     public static let maximumEndpointLength = 2_048
+    public static let maximumTestModelIdentifierLength = 256
 
     public var id: String
     public var name: String
@@ -1115,6 +1116,10 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
     /// Non-secret protocol settings such as cloud account, region, or API
     /// version. The versioned descriptor controls which keys are allowed.
     public var protocolConfiguration: [String: String]
+    /// A non-secret model used only by the compact connection test when the
+    /// provider does not publish a fixed test model. Classifier types still
+    /// choose their own model for classification.
+    public var testModelIdentifier: String?
     public var credential: ProviderCredentialRecord?
     public var updatedAtMilliseconds: Int64
 
@@ -1124,6 +1129,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         type: APIKeyProviderType,
         customEndpoint: String? = nil,
         protocolConfiguration: [String: String]? = nil,
+        testModelIdentifier: String? = nil,
         credential: ProviderCredentialRecord? = nil,
         updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
     ) {
@@ -1132,6 +1138,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         self.type = type
         self.customEndpoint = customEndpoint
         self.protocolConfiguration = protocolConfiguration ?? ProviderProtocolRegistry.descriptor(for: type).defaultConfiguration()
+        self.testModelIdentifier = testModelIdentifier
         self.credential = credential
         self.updatedAtMilliseconds = updatedAtMilliseconds
     }
@@ -1146,6 +1153,10 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         let descriptor = ProviderProtocolRegistry.descriptor(for: type)
         let normalizedEndpoint = customEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard normalizedEndpoint?.count ?? 0 <= Self.maximumEndpointLength else {
+            throw APIKeyProviderProfileError.invalidConfiguration
+        }
+        let normalizedTestModelIdentifier = testModelIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedTestModelIdentifier?.count ?? 0 <= Self.maximumTestModelIdentifierLength else {
             throw APIKeyProviderProfileError.invalidConfiguration
         }
         do {
@@ -1178,7 +1189,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, type, customEndpoint, protocolConfiguration, credential, updatedAtMilliseconds
+        case id, name, type, customEndpoint, protocolConfiguration, testModelIdentifier, credential, updatedAtMilliseconds
     }
 
     public init(from decoder: Decoder) throws {
@@ -1194,6 +1205,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         customEndpoint = try container.decodeIfPresent(String.self, forKey: .customEndpoint)
         protocolConfiguration = try container.decodeIfPresent([String: String].self, forKey: .protocolConfiguration)
             ?? ProviderProtocolRegistry.descriptor(for: type).defaultConfiguration()
+        testModelIdentifier = try container.decodeIfPresent(String.self, forKey: .testModelIdentifier)
         credential = try container.decodeIfPresent(ProviderCredentialRecord.self, forKey: .credential)
         updatedAtMilliseconds = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMilliseconds) ?? WorkspaceCatalog.now()
     }
@@ -1205,6 +1217,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         try container.encode(type.rawValue, forKey: .type)
         try container.encodeIfPresent(customEndpoint, forKey: .customEndpoint)
         try container.encode(protocolConfiguration, forKey: .protocolConfiguration)
+        try container.encodeIfPresent(testModelIdentifier, forKey: .testModelIdentifier)
         try container.encodeIfPresent(credential, forKey: .credential)
         try container.encode(updatedAtMilliseconds, forKey: .updatedAtMilliseconds)
     }

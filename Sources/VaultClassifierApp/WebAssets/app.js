@@ -106,6 +106,18 @@
     return values;
   }
 
+  function providerConnectionPayload(values) {
+    const protocolConfiguration = {};
+    Object.entries(values).forEach(([key, value]) => {
+      if (key.startsWith("protocol.")) protocolConfiguration[key.slice("protocol.".length)] = value;
+    });
+    return {
+      customEndpoint: values.customEndpoint,
+      testModelIdentifier: values.testModelIdentifier,
+      protocolConfiguration,
+    };
+  }
+
   function field(labelKey, hintKey, key, value, type = "text", extra = "") {
     return `<label class="field"><span class="field-label">${tx(labelKey)}${hintKey ? ` · ${tx(hintKey)}` : ""}</span><input type="${type}" data-field="${esc(key)}" value="${type === "password" ? "" : esc(value)}" ${extra}></label>`;
   }
@@ -463,6 +475,21 @@
     return keys[type] || "llm.provider.openAICompatible";
   }
 
+  function protocolFieldLabelKey(fieldName) {
+    const keys = {
+      accountID: "llm.protocol.accountID",
+      apiVersion: "llm.protocol.apiVersion",
+      clientID: "llm.protocol.clientID",
+      location: "llm.protocol.location",
+      projectID: "llm.protocol.projectID",
+      region: "llm.protocol.region",
+      userAgent: "llm.protocol.userAgent",
+      searchEngineID: "llm.protocol.searchEngineID",
+      protocolFamily: "llm.protocol.protocolFamily",
+    };
+    return keys[fieldName] || "llm.protocol.protocolFamily";
+  }
+
   function llmAssistWorkspace() {
     const profiles = state.assets.providerProfiles || [];
     const requestRecords = state.assets.providerRequestRecords || [];
@@ -481,12 +508,23 @@
         input: total.input + (Number(record.inputTokens) || 0),
         output: total.output + (Number(record.outputTokens) || 0),
       }), { input: 0, output: 0 });
-      const requiresCompatibleEndpoint = ["openAICompatible", "custom"].includes(profile.type);
       const credentialField = protocol.credentialRequired ? field("llm.apiKeyOrToken", "", "credential", "", "password", `autocomplete=\"off\" autocapitalize=\"off\" spellcheck=\"false\"${profile.hasCredential ? ` placeholder=\"${esc(t("llm.replaceCredential"))}\"` : ""}`) : "";
-      const endpointReady = !requiresCompatibleEndpoint || Boolean(profile.customEndpoint);
-      const testAvailable = supportsLLM && Boolean(profile.defaultModelIdentifier) && endpointReady;
+      const endpointField = protocol.allowsEndpointOverride ? field("llm.apiEndpoint", "", "customEndpoint", profile.customEndpoint || "", "text", "data-provider-connection") : "";
+      const testModelField = supportsLLM && (protocol.allowsEndpointOverride || !profile.defaultModelIdentifier)
+        ? field("llm.testModel", "", "testModelIdentifier", profile.testModelIdentifier || "", "text", `data-provider-connection placeholder=\"${esc(profile.defaultModelIdentifier || "model-name")}\"`)
+        : "";
+      const protocolFields = (protocol.configurationRequirements || []).map((requirement) => field(
+        protocolFieldLabelKey(requirement.field),
+        "",
+        `protocol.${requirement.field}`,
+        profile.protocolConfiguration?.[requirement.field] ?? requirement.defaultValue ?? "",
+        "text",
+        "data-provider-connection"
+      )).join("");
+      const connectionFields = [credentialField, endpointField, testModelField, protocolFields].filter(Boolean).join("");
+      const testAvailable = supportsLLM;
       const testButton = supportsLLM ? `<button class="gold-action" data-action="testProviderProfile" data-form="${esc(formID)}" data-profile-id="${esc(profile.id)}"${disabled(!testAvailable || profile.testing)}>${tx(profile.testing ? "llm.testing" : "llm.test")}</button>` : "";
-      return `<section class="provider-panel" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}"><div class="provider-panel-head"><h3>${esc(profile.name)}</h3><div class="provider-panel-actions">${testButton}<button class="danger" data-action="confirmDeleteProviderProfile" data-profile-id="${esc(profile.id)}">${tx("llm.deleteProfile")}</button></div></div><div class="provider-panel-body">${credentialField}<p class="provider-token-usage"><span>${tx("llm.tokenUsage")}</span><strong>${tx("llm.tokenTotals", { input: tokenTotals.input, output: tokenTotals.output })}</strong></p></div></section>`;
+      return `<section class="provider-panel" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}"><div class="provider-panel-head"><h3>${esc(profile.name)}</h3><div class="provider-panel-actions">${testButton}<button class="danger" data-action="confirmDeleteProviderProfile" data-profile-id="${esc(profile.id)}">${tx("llm.deleteProfile")}</button></div></div><div class="provider-panel-body">${connectionFields ? `<div class="provider-connection-fields">${connectionFields}</div>` : ""}<p class="provider-token-usage"><span>${tx("llm.tokenUsage")}</span><strong>${tx("llm.tokenTotals", { input: tokenTotals.input, output: tokenTotals.output })}</strong></p></div></section>`;
     };
     return `<div class="workspace provider-workspace">${header("llm.title", "llm.copy", t("llm.keyLibrary"), "gold")}<section class="provider-create" data-form-id="new-provider-profile-form">${groupedValueSelectField("llm.providerType", "", "type", "gemini", profileTypeGroups)}<button class="gold-action" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button><span class="small-copy">${tx("llm.createCopy")}</span></section><div class="provider-panels">${profiles.length ? profiles.map(panel).join("") : `<div class="empty">${tx("llm.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
   }
@@ -1081,6 +1119,7 @@
         return;
       }
     }
+    if (action === "testProviderProfile") Object.assign(data, providerConnectionPayload(data));
     if (action === "selectCreatorTag") {
       const typeID = button.dataset.typeId;
       const tagID = button.dataset.tagId;
@@ -1220,6 +1259,15 @@
       selectedLanguage = languageControl.value;
       document.documentElement.lang = selectedLanguage;
       try { window.localStorage.setItem("vaultClassifier.language", selectedLanguage); } catch (_) {}
+      return;
+    }
+    const providerConnectionControl = event.target.closest("[data-provider-connection]");
+    if (providerConnectionControl) {
+      const panel = providerConnectionControl.closest("[data-provider-panel]");
+      const formID = panel?.dataset.formId;
+      const profileID = panel?.dataset.providerId;
+      if (!formID || !profileID) return;
+      send("updateProviderConnection", { profileID, ...providerConnectionPayload(collect(formID)) });
       return;
     }
     if (event.target.closest('[data-field="applicablePlatformID"]')) {
