@@ -432,6 +432,7 @@ final class VaultClassifierViewModel: ObservableObject {
     func testProviderProfile(
         profileID: String,
         rawCredential: String? = nil,
+        clearCredential: Bool = false,
         customEndpoint: String? = nil,
         testModelIdentifier: String? = nil,
         protocolConfiguration: [String: String]? = nil
@@ -443,6 +444,7 @@ final class VaultClassifierViewModel: ObservableObject {
             profile = try applyProviderConnection(
                 profileID: profileID,
                 rawCredential: rawCredential,
+                clearCredential: clearCredential,
                 customEndpoint: customEndpoint,
                 testModelIdentifier: testModelIdentifier,
                 protocolConfiguration: protocolConfiguration
@@ -1084,12 +1086,13 @@ final class VaultClassifierViewModel: ObservableObject {
         ))
     }
 
-    /// Stores the compact panel's local connection inputs. Blank credential
-    /// input preserves the existing key, while the non-secret endpoint,
-    /// protocol values, and test model can be updated independently.
+    /// Stores the compact panel's local connection inputs. The WebView never
+    /// receives the secret: its fixed dots mean preserve, a non-empty value
+    /// replaces, and an explicit clear removes the saved local credential.
     private func applyProviderConnection(
         profileID: String,
         rawCredential: String?,
+        clearCredential: Bool,
         customEndpoint: String?,
         testModelIdentifier: String?,
         protocolConfiguration: [String: String]?
@@ -1110,9 +1113,14 @@ final class VaultClassifierViewModel: ObservableObject {
         if let protocolConfiguration {
             profile.protocolConfiguration = protocolConfiguration
         }
-        let value = rawCredential?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let value = rawCredential?.trimmingCharacters(in: .whitespacesAndNewlines)
         let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
-        if !value.isEmpty {
+        if clearCredential {
+            guard value?.isEmpty != false else {
+                throw WebBridgeInputError.invalidChoice("provider credential")
+            }
+            profile.credential = nil
+        } else if let value, !value.isEmpty {
             guard descriptor.credentialFields.count == 1,
                   let field = descriptor.credentialFields.first else {
                 throw WebBridgeInputError.invalidChoice("provider credential")
@@ -1131,6 +1139,8 @@ final class VaultClassifierViewModel: ObservableObject {
 
     func updateProviderConnection(
         profileID: String,
+        rawCredential: String? = nil,
+        clearCredential: Bool = false,
         customEndpoint: String?,
         testModelIdentifier: String?,
         protocolConfiguration: [String: String]?
@@ -1139,7 +1149,8 @@ final class VaultClassifierViewModel: ObservableObject {
         do {
             _ = try applyProviderConnection(
                 profileID: profileID,
-                rawCredential: nil,
+                rawCredential: rawCredential,
+                clearCredential: clearCredential,
                 customEndpoint: customEndpoint,
                 testModelIdentifier: testModelIdentifier,
                 protocolConfiguration: protocolConfiguration
@@ -3409,6 +3420,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 testProviderProfile(
                     profileID: try webString(data, key: "profileID", limit: 128),
                     rawCredential: try webOptionalString(data, key: "credential", limit: ProviderCredentialRecord.maximumCharacters),
+                    clearCredential: data["clearCredential"] as? Bool ?? false,
                     customEndpoint: try webOptionalString(data, key: "customEndpoint", limit: APIKeyProviderProfile.maximumEndpointLength),
                     testModelIdentifier: try webOptionalString(data, key: "testModelIdentifier", limit: APIKeyProviderProfile.maximumTestModelIdentifierLength),
                     protocolConfiguration: try webProviderConfiguration(data)
@@ -3416,6 +3428,8 @@ final class VaultClassifierViewModel: ObservableObject {
             case "updateProviderConnection":
                 updateProviderConnection(
                     profileID: try webString(data, key: "profileID", limit: 128),
+                    rawCredential: try webOptionalString(data, key: "credential", limit: ProviderCredentialRecord.maximumCharacters),
+                    clearCredential: data["clearCredential"] as? Bool ?? false,
                     customEndpoint: try webOptionalString(data, key: "customEndpoint", limit: APIKeyProviderProfile.maximumEndpointLength),
                     testModelIdentifier: try webOptionalString(data, key: "testModelIdentifier", limit: APIKeyProviderProfile.maximumTestModelIdentifierLength),
                     protocolConfiguration: try webProviderConfiguration(data)

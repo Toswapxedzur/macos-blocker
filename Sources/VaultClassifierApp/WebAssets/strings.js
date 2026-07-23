@@ -404,7 +404,6 @@ window.VaultClassifierStrings = Object.freeze({
   "llm.apiKeyOrToken": "API KEY OR TOKEN",
   "llm.apiEndpoint": "API ENDPOINT",
   "llm.testModel": "MODEL FOR TEST",
-  "llm.replaceCredential": "A credential is stored — enter a replacement",
   "llm.test": "Test request",
   "llm.testing": "Testing…",
   "llm.testSucceeded": "Test request succeeded. The provider is ready.",
