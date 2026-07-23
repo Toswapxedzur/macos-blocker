@@ -1,8 +1,9 @@
 import Foundation
 
-/// A bounded, explicit test request for a configured provider profile. It is
-/// intentionally limited to a constant harmless prompt; regular generation is
-/// a separate, user-approved feature.
+/// A bounded, explicit test request for a configured provider profile. Model
+/// profiles use a constant harmless prompt; platform-data profiles use a
+/// provider-specific health route. Regular generation remains a separate,
+/// user-approved feature.
 public enum ProviderTestProtocol {
     public static let prompt = "Return exactly OK."
     public static let maximumOutputTokens = 32
@@ -10,6 +11,15 @@ public enum ProviderTestProtocol {
 
     public static func prepare(profile: APIKeyProviderProfile) throws -> ProviderTestPreparedRequest {
         let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
+        if descriptor.requestFormats.contains(where: { $0.operation == .readPublicContent }) {
+            let request = try ExternalPlatformToolProtocol.prepareConnectionTest(profile: profile)
+            return .init(
+                plan: request.plan,
+                operation: .readPublicContent,
+                prompt: "",
+                body: request.body ?? Data()
+            )
+        }
         let operation: ProviderOperation
         if descriptor.requestFormats.contains(where: { $0.operation == .generateText }) {
             operation = .generateText
@@ -51,6 +61,9 @@ public enum ProviderTestProtocol {
 
     public static func parseResponse(_ data: Data, format: ProviderRequestBodyFormat, operation: ProviderOperation) throws -> ProviderTestParsedResponse {
         let json = try JSONSerialization.jsonObject(with: data)
+        if operation == .readPublicContent {
+            return .init(content: "Platform API test completed.", usage: .init(inputTokens: nil, outputTokens: nil))
+        }
         let root = json as? [String: Any] ?? [:]
         let usage: ProviderTestUsage
         switch format {

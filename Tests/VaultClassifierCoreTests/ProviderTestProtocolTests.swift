@@ -168,19 +168,26 @@ final class ProviderTestProtocolTests: XCTestCase {
         }
     }
 
-    func testPlatformDataProfilesDoNotPrepareLanguageModelRequests() throws {
+    func testPlatformDataProfilesPrepareBoundedConnectionTestsWithoutLanguageModels() throws {
         let platformTypes: [APIKeyProviderType] = [
             .youtubeData, .twitch, .reddit, .xPlatform, .tikTok,
             .instagramGraph, .facebookGraph,
         ]
 
         for type in platformTypes {
-            let profile = APIKeyProviderProfile(type: type)
+            let profile = platformProfile(type)
             let descriptor = ProviderProtocolRegistry.descriptor(for: type)
             XCTAssertFalse(descriptor.supportsLLMConfiguration, type.rawValue)
             XCTAssertTrue(descriptor.requestFormats.contains(where: { $0.operation == .readPublicContent }), type.rawValue)
             XCTAssertNoThrow(try profile.validate(), type.rawValue)
-            XCTAssertThrowsError(try ProviderTestProtocol.prepare(profile: profile), type.rawValue)
+            let prepared = try ProviderTestProtocol.prepare(profile: profile)
+            XCTAssertEqual(prepared.operation, .readPublicContent, type.rawValue)
+            XCTAssertFalse(prepared.plan.url.absoluteString.contains("entry"), type.rawValue)
+            XCTAssertEqual(
+                try ProviderTestProtocol.parseResponse(Data("{}".utf8), format: prepared.plan.bodyFormat, operation: prepared.operation).usage,
+                .init(inputTokens: nil, outputTokens: nil),
+                type.rawValue
+            )
         }
     }
 
@@ -251,6 +258,26 @@ final class ProviderTestProtocolTests: XCTestCase {
             }
             XCTAssertNil(URLComponents(url: request.plan.url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "access_token" }), profile.type.rawValue)
         }
+    }
+
+    func testPlatformConnectionTestsUseProviderSpecificHealthRoutes() throws {
+        let profiles = [
+            platformProfile(.youtubeData), platformProfile(.twitch), platformProfile(.reddit),
+            platformProfile(.xPlatform), platformProfile(.tikTok), platformProfile(.instagramGraph),
+            platformProfile(.facebookGraph),
+        ]
+        for profile in profiles {
+            let request = try ExternalPlatformToolProtocol.prepareConnectionTest(profile: profile)
+            XCTAssertFalse(request.plan.url.absoluteString.contains("contentID"), profile.type.rawValue)
+            XCTAssertEqual(request.plan.method, profile.type == .tikTok ? "POST" : "GET", profile.type.rawValue)
+            XCTAssertEqual(request.plan.bodyFormat, profile.type == .tikTok ? .customJSON : .queryOnly, profile.type.rawValue)
+            XCTAssertNil(URLComponents(url: request.plan.url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "access_token" }), profile.type.rawValue)
+        }
+        let twitch = try ExternalPlatformToolProtocol.prepareConnectionTest(profile: platformProfile(.twitch))
+        XCTAssertEqual(twitch.plan.headers["Client-Id"], "client-id")
+        let tikTok = try ExternalPlatformToolProtocol.prepareConnectionTest(profile: platformProfile(.tikTok))
+        let body = try XCTUnwrap(tikTok.body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] })
+        XCTAssertEqual(body["max_count"] as? Int, 1)
     }
 
     func testPlatformToolResultRedactsTokenLikeFieldsAndCapsPayload() throws {

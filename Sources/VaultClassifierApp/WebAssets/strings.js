@@ -410,6 +410,7 @@ window.VaultClassifierStrings = Object.freeze({
   "llm.testSucceeded": "Test request succeeded. The provider is ready.",
   "llm.tokenUsage": "TOKEN USAGE",
   "llm.tokenTotals": "Input {input} · Output {output}",
+  "llm.apiCalls": "API CALLS",
   "llm.protocol.accountID": "ACCOUNT ID",
   "llm.protocol.apiVersion": "API VERSION",
   "llm.protocol.clientID": "CLIENT ID",
