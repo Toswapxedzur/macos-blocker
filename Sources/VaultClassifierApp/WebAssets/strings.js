@@ -407,6 +407,7 @@ window.VaultClassifierStrings = Object.freeze({
   "llm.replaceCredential": "A credential is stored — enter a replacement",
   "llm.test": "Test request",
   "llm.testing": "Testing…",
+  "llm.testSucceeded": "Test request succeeded. The provider is ready.",
   "llm.tokenUsage": "TOKEN USAGE",
   "llm.tokenTotals": "Input {input} · Output {output}",
   "llm.protocol.accountID": "ACCOUNT ID",

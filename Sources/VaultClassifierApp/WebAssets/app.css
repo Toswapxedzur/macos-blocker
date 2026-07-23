@@ -16,6 +16,8 @@
   --red-100: #fee2e2;
   --red-50: #fef2f2;
   --red-text: #991b1b;
+  --green-50: #f0fdf4;
+  --green-text: #166534;
   --pink-700: #be185d;
   --pink-100: #fce7f3;
   --pink-50: #fdf2f8;
@@ -1255,6 +1257,7 @@ textarea:focus {
 .notice.cyan { color: var(--cyan-text); background: var(--cyan-50); }
 .notice.pink { color: var(--pink-text); background: var(--pink-50); }
 .notice.red { color: var(--red-text); background: var(--red-50); }
+.notice.green { color: var(--green-text); background: var(--green-50); }
 .empty { padding: 14px; border-radius: 12px; color: var(--muted); background: rgba(238, 242, 255, 0.62); }
 .spacer { flex: 1; }
 

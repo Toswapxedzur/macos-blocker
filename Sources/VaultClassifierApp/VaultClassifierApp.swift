@@ -140,6 +140,7 @@ final class VaultClassifierViewModel: ObservableObject {
     private(set) var creatorAvatarCache: CreatorAvatarCache?
     private var latestLedgerID: UUID?
     private var testingProviderProfileIDs = Set<String>()
+    private var successfulProviderTestProfileIDs = Set<String>()
     private let vaultServiceEndpoint: VaultServiceEndpoint
     /// Model names are fetched from the selected provider on demand and remain
     /// in memory only. They are not part of a credential connection or the
@@ -435,6 +436,7 @@ final class VaultClassifierViewModel: ObservableObject {
         protocolConfiguration: [String: String]? = nil
     ) {
         guard !testingProviderProfileIDs.contains(profileID) else { return }
+        successfulProviderTestProfileIDs.remove(profileID)
         let profile: APIKeyProviderProfile
         do {
             profile = try applyProviderConnection(
@@ -482,6 +484,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     outputTokens: parsed.usage.outputTokens,
                     outcome: "succeeded"
                 ))
+                self.successfulProviderTestProfileIDs.insert(profileID)
                 self.issue = nil
             } catch {
                 let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
@@ -500,6 +503,7 @@ final class VaultClassifierViewModel: ObservableObject {
                         outcome: "failed"
                     ))
                 }
+                self.successfulProviderTestProfileIDs.remove(profileID)
                 self.issue = error.localizedDescription
             }
             self.testingProviderProfileIDs.remove(profileID)
@@ -1065,6 +1069,7 @@ final class VaultClassifierViewModel: ObservableObject {
         testModelIdentifier: String?,
         protocolConfiguration: [String: String]?
     ) {
+        successfulProviderTestProfileIDs.remove(profileID)
         do {
             _ = try applyProviderConnection(
                 profileID: profileID,
@@ -1093,6 +1098,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 }
             }
             catalog.providerRequestRecords.removeAll(where: { $0.profileID == profileID })
+            successfulProviderTestProfileIDs.remove(profileID)
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
             issue = nil
@@ -3148,6 +3154,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     "testModelIdentifier": profile.testModelIdentifier ?? NSNull(),
                     "hasCredential": profile.credential != nil,
                     "testing": testingProviderProfileIDs.contains(profile.id),
+                    "testSucceeded": successfulProviderTestProfileIDs.contains(profile.id),
                 ] as [String: Any]
             }
         assets["providerRequestRecords"] = catalog.providerRequestRecords.map { record in
