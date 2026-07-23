@@ -1276,18 +1276,6 @@
     if (credentialInput?.value === credentialInput.dataset.credentialMask) credentialInput.select();
   });
 
-  document.addEventListener("input", (event) => {
-    const credentialInput = event.target.closest('input[data-credential-stored="true"]');
-    if (!credentialInput || credentialInput.value !== "") return;
-    const panel = credentialInput.closest("[data-provider-panel]");
-    const formID = panel?.dataset.formId;
-    const profileID = panel?.dataset.providerId;
-    if (!formID || !profileID) return;
-    credentialInput.dataset.credentialStored = "false";
-    const values = collect(formID);
-    send("updateProviderConnection", { profileID, ...providerConnectionPayload(values, formID), clearCredential: true });
-  });
-
   document.addEventListener("change", (event) => {
     const languageControl = event.target.closest("[data-language-selection]");
     if (languageControl) {
