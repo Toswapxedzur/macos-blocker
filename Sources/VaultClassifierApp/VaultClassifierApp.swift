@@ -1095,7 +1095,8 @@ final class VaultClassifierViewModel: ObservableObject {
         clearCredential: Bool,
         customEndpoint: String?,
         testModelIdentifier: String?,
-        protocolConfiguration: [String: String]?
+        protocolConfiguration: [String: String]?,
+        refreshState: Bool = true
     ) throws -> APIKeyProviderProfile {
         guard var catalog = localState?.workspaceCatalog,
               let index = catalog.providerProfiles.firstIndex(where: { $0.id == profileID }) else {
@@ -1133,8 +1134,37 @@ final class VaultClassifierViewModel: ObservableObject {
         profile.updatedAtMilliseconds = WorkspaceCatalog.now()
         catalog.providerProfiles[index] = profile
         try coordinator?.updateWorkspaceCatalog(catalog)
-        refreshLocalState()
+        if refreshState {
+            refreshLocalState()
+        } else {
+            // Keep native state current for the next keystroke without making
+            // WebKit rebuild the focused credential field.
+            localState = coordinator?.snapshot()
+        }
         return profile
+    }
+
+    /// Saves an edited credential as soon as its input changes. This action
+    /// intentionally returns without publishing a WebView snapshot: input
+    /// state must never be replaced while the user is typing.
+    func saveProviderCredential(profileID: String, rawCredential: String, clearCredential: Bool) -> Bool {
+        successfulProviderTestProfileIDs.remove(profileID)
+        do {
+            _ = try applyProviderConnection(
+                profileID: profileID,
+                rawCredential: rawCredential,
+                clearCredential: clearCredential,
+                customEndpoint: nil,
+                testModelIdentifier: nil,
+                protocolConfiguration: nil,
+                refreshState: false
+            )
+            issue = nil
+            return true
+        } catch {
+            issue = error.localizedDescription
+            return false
+        }
     }
 
     func updateProviderConnection(
@@ -3346,7 +3376,9 @@ final class VaultClassifierViewModel: ObservableObject {
     /// The web renderer is a bundled local asset, but its messages are still
     /// treated as untrusted UI input. Keep the surface small and bounded so it
     /// cannot become another native IPC or provider-control path.
-    func performWebAction(_ action: String, data: [String: Any]) {
+    /// Returns whether the web shell should publish a new snapshot. Credential
+    /// keystrokes are persisted locally but deliberately keep the current DOM.
+    func performWebAction(_ action: String, data: [String: Any]) -> Bool {
         do {
             switch action {
             case "state":
@@ -3434,6 +3466,13 @@ final class VaultClassifierViewModel: ObservableObject {
                     testModelIdentifier: try webOptionalString(data, key: "testModelIdentifier", limit: APIKeyProviderProfile.maximumTestModelIdentifierLength),
                     protocolConfiguration: try webProviderConfiguration(data)
                 )
+            case "saveProviderCredential":
+                let saved = saveProviderCredential(
+                    profileID: try webString(data, key: "profileID", limit: 128),
+                    rawCredential: try webString(data, key: "credential", limit: ProviderCredentialRecord.maximumCharacters),
+                    clearCredential: data["clearCredential"] as? Bool ?? false
+                )
+                return !saved
             case "fetchCustomProviderModelCatalog":
                 fetchCustomProviderModelCatalog(profileID: try webString(data, key: "profileID", limit: 128))
             case "setLLMAssistActive":
@@ -3625,6 +3664,7 @@ final class VaultClassifierViewModel: ObservableObject {
         } catch {
             issue = error.localizedDescription
         }
+        return true
     }
 
     private func webResult(_ value: ClassificationResult) -> [String: Any] {

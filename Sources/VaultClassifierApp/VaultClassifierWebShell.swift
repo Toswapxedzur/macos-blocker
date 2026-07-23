@@ -84,8 +84,9 @@ final class VaultClassifierWebShell {
                     Self.layoutLogger.recordWebTrace(data)
                     return
                 }
-                self.model.performWebAction(action, data: data)
-                self.sendState()
+                if self.model.performWebAction(action, data: data) {
+                    self.sendState()
+                }
             }
         }
 

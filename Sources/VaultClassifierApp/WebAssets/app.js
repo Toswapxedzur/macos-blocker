@@ -524,7 +524,7 @@
         input: total.input + (Number(record.inputTokens) || 0),
         output: total.output + (Number(record.outputTokens) || 0),
       }), { input: 0, output: 0 });
-      const credentialField = protocol.credentialRequired ? `<label class="field"><span class="field-label">${tx("llm.apiKeyOrToken")}</span><input type="password" data-field="credential" data-provider-connection autocomplete="off" autocapitalize="off" spellcheck="false"${profile.hasCredential ? ` data-credential-stored="true" data-credential-mask="${storedCredentialMask}" value="${storedCredentialMask}"` : ""}></label>` : "";
+      const credentialField = protocol.credentialRequired ? `<label class="field"><span class="field-label">${tx("llm.apiKeyOrToken")}</span><input type="password" data-field="credential" data-provider-credential data-provider-connection autocomplete="off" autocapitalize="off" spellcheck="false"${profile.hasCredential ? ` data-credential-stored="true" data-credential-mask="${storedCredentialMask}" value="${storedCredentialMask}"` : ""}></label>` : "";
       const endpointField = protocol.allowsEndpointOverride ? field("llm.apiEndpoint", "", "customEndpoint", profile.customEndpoint || "", "text", "data-provider-connection") : "";
       const testModelField = supportsLLM && (protocol.allowsEndpointOverride || !profile.defaultModelIdentifier)
         ? field("llm.testModel", "", "testModelIdentifier", profile.testModelIdentifier || "", "text", `data-provider-connection placeholder=\"${esc(profile.defaultModelIdentifier || "model-name")}\"`)
@@ -989,6 +989,20 @@
   }
 
   document.addEventListener("input", (event) => {
+    const credentialInput = event.target.closest("input[data-provider-credential]");
+    if (credentialInput) {
+      const panel = credentialInput.closest("[data-provider-panel]");
+      const profileID = panel?.dataset.providerId;
+      if (!profileID) return;
+      credentialInput.dataset.credentialStored = "false";
+      const credential = credentialInput.value;
+      send("saveProviderCredential", {
+        profileID,
+        credential,
+        clearCredential: credential.trim() === "",
+      });
+      return;
+    }
     const input = event.target.closest("input[data-live-tag-name]");
     if (!input) return;
     const { treeId: treeID, nodeId: nodeID } = input.dataset;
@@ -1287,6 +1301,7 @@
     }
     const providerConnectionControl = event.target.closest("[data-provider-connection]");
     if (providerConnectionControl) {
+      if (providerConnectionControl.matches("[data-provider-credential]")) return;
       const panel = providerConnectionControl.closest("[data-provider-panel]");
       const formID = panel?.dataset.formId;
       const profileID = panel?.dataset.providerId;
