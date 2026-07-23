@@ -425,9 +425,10 @@ final class VaultClassifierViewModel: ObservableObject {
         } catch { issue = error.localizedDescription }
     }
 
-    /// A provider test is always an explicit user action. It sends only the
-    /// fixed harmless prompt declared by `ProviderTestProtocol`, never browser
-    /// evidence or catalog data, and records no credential or headers.
+    /// A provider test is always an explicit user action. It sends either the
+    /// fixed harmless language-model prompt or a bounded provider-specific
+    /// platform health request, never browser evidence or catalog data, and
+    /// records no credential or headers.
     func testProviderProfile(
         profileID: String,
         rawCredential: String? = nil,
@@ -462,7 +463,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 prepared = request
                 var urlRequest = URLRequest(url: request.plan.url)
                 urlRequest.httpMethod = request.plan.method
-                urlRequest.httpBody = request.body
+                urlRequest.httpBody = request.body.isEmpty ? nil : request.body
                 urlRequest.timeoutInterval = 30
                 request.plan.headers.forEach { urlRequest.setValue($0.value, forHTTPHeaderField: $0.key) }
                 try self.apply(credential: credential, to: &urlRequest, plan: request.plan)
@@ -889,28 +890,47 @@ final class VaultClassifierViewModel: ObservableObject {
               let profile = profiles.first(where: { $0.id == definition.profileID }) else {
             return .init(id: call.id, name: call.name, content: "{\"ok\":false,\"error\":\"Unknown external-data tool.\"}")
         }
+        let startedAt = Date()
+        var prepared: ExternalPlatformPreparedRequest?
         do {
-            let prepared = try ExternalPlatformToolProtocol.prepare(profile: profile, entry: entry, call: call)
+            let request = try ExternalPlatformToolProtocol.prepare(profile: profile, entry: entry, call: call)
+            prepared = request
             let credential = try providerCredential(for: profile.id)
-            var request = URLRequest(url: prepared.plan.url)
-            request.httpMethod = prepared.plan.method
-            request.httpBody = prepared.body
-            request.timeoutInterval = 20
-            prepared.plan.headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
-            try apply(credential: credential, to: &request, plan: prepared.plan)
-            let (data, response) = try await URLSession.shared.data(for: request)
+            var urlRequest = URLRequest(url: request.plan.url)
+            urlRequest.httpMethod = request.plan.method
+            urlRequest.httpBody = request.body
+            urlRequest.timeoutInterval = 20
+            request.plan.headers.forEach { urlRequest.setValue($0.value, forHTTPHeaderField: $0.key) }
+            try apply(credential: credential, to: &urlRequest, plan: request.plan)
+            let (data, response) = try await URLSession.shared.data(for: urlRequest)
             guard let http = response as? HTTPURLResponse else { throw ProviderTestProtocolError.invalidResponse }
+            recordPlatformAPIRequest(
+                profile: profile,
+                plan: request.plan,
+                statusCode: http.statusCode,
+                durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
+                outcome: (200..<300).contains(http.statusCode) ? "succeeded" : "failed"
+            )
             return .init(
                 id: call.id,
                 name: call.name,
                 content: ExternalPlatformToolProtocol.result(
                     data: data,
                     statusCode: http.statusCode,
-                    providerType: prepared.providerType,
-                    target: prepared.target
+                    providerType: request.providerType,
+                    target: request.target
                 )
             )
         } catch {
+            if let prepared {
+                recordPlatformAPIRequest(
+                    profile: profile,
+                    plan: prepared.plan,
+                    statusCode: nil,
+                    durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
+                    outcome: "failed"
+                )
+            }
             return .init(
                 id: call.id,
                 name: call.name,
@@ -930,37 +950,56 @@ final class VaultClassifierViewModel: ObservableObject {
         candidate: CreatorAvatarBackfill.Candidate,
         profile: APIKeyProviderProfile
     ) async -> String? {
+        let startedAt = Date()
+        var prepared: ExternalPlatformPreparedRequest?
         do {
             let call = ExternalPlatformToolCall(
                 id: UUID().uuidString,
                 name: ExternalPlatformToolProtocol.toolName(for: profile),
                 arguments: #"{"target":"creator"}"#
             )
-            let prepared = try ExternalPlatformToolProtocol.prepare(profile: profile, entry: .init(
+            let request = try ExternalPlatformToolProtocol.prepare(profile: profile, entry: .init(
                 platform: candidate.platformID,
                 sourceID: candidate.creatorID,
                 surface: .page,
                 evidence: .init(title: "Creator profile")
             ), call: call)
+            prepared = request
             let credential = try providerCredential(for: profile.id)
-            var request = URLRequest(url: prepared.plan.url)
-            request.httpMethod = prepared.plan.method
-            request.httpBody = prepared.body
-            request.timeoutInterval = 20
-            prepared.plan.headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
-            try apply(credential: credential, to: &request, plan: prepared.plan)
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse,
-                  (200..<300).contains(http.statusCode),
+            var urlRequest = URLRequest(url: request.plan.url)
+            urlRequest.httpMethod = request.plan.method
+            urlRequest.httpBody = request.body
+            urlRequest.timeoutInterval = 20
+            request.plan.headers.forEach { urlRequest.setValue($0.value, forHTTPHeaderField: $0.key) }
+            try apply(credential: credential, to: &urlRequest, plan: request.plan)
+            let (data, response) = try await URLSession.shared.data(for: urlRequest)
+            guard let http = response as? HTTPURLResponse else { throw ProviderTestProtocolError.invalidResponse }
+            recordPlatformAPIRequest(
+                profile: profile,
+                plan: request.plan,
+                statusCode: http.statusCode,
+                durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
+                outcome: (200..<300).contains(http.statusCode) ? "succeeded" : "failed"
+            )
+            guard (200..<300).contains(http.statusCode),
                   let avatarURL = ExternalPlatformToolProtocol.creatorAvatarURL(
                       data: data,
-                      providerType: prepared.providerType
+                      providerType: request.providerType
                   ),
                   CreatorAvatarURLPolicy.isAccepted(platformID: candidate.platformID, value: avatarURL) else {
                 return nil
             }
             return avatarURL
         } catch {
+            if let prepared {
+                recordPlatformAPIRequest(
+                    profile: profile,
+                    plan: prepared.plan,
+                    statusCode: nil,
+                    durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
+                    outcome: "failed"
+                )
+            }
             return nil
         }
     }
@@ -1004,7 +1043,9 @@ final class VaultClassifierViewModel: ObservableObject {
         let budgetRecordIDs = Set(budgetRecords.map(\.id))
         let otherRecords = catalog.providerRequestRecords.filter { !budgetRecordIDs.contains($0.id) }
         catalog.providerRequestRecords = budgetRecords + Array(otherRecords.prefix(100))
-        if record.outcome == "succeeded" {
+        let isLanguageModel = APIKeyProviderType(rawValue: record.provider)
+            .map { ProviderProtocolRegistry.descriptor(for: $0).supportsLLMConfiguration } ?? false
+        if record.outcome == "succeeded", isLanguageModel {
             catalog.tokenUsage.insert(.init(
                 provider: record.provider,
                 model: record.model,
@@ -1016,6 +1057,31 @@ final class VaultClassifierViewModel: ObservableObject {
         }
         try coordinator?.updateWorkspaceCatalog(catalog)
         refreshLocalState()
+    }
+
+    /// Platform connections use request counts, not language-model tokens.
+    /// Store only bounded transport metadata so the compact profile panel can
+    /// show local API-call usage without retaining request or response bodies.
+    private func recordPlatformAPIRequest(
+        profile: APIKeyProviderProfile,
+        plan: ProviderRequestPlan,
+        statusCode: Int?,
+        durationMilliseconds: Int,
+        outcome: String
+    ) {
+        try? appendProviderTestRecord(.init(
+            profileID: profile.id,
+            provider: profile.type.rawValue,
+            model: "",
+            operation: ProviderOperation.readPublicContent.rawValue,
+            endpoint: ProviderTestProtocol.safeEndpoint(plan.url),
+            method: plan.method,
+            statusCode: statusCode,
+            durationMilliseconds: durationMilliseconds,
+            inputTokens: nil,
+            outputTokens: nil,
+            outcome: outcome
+        ))
     }
 
     /// Stores the compact panel's local connection inputs. Blank credential
@@ -3183,6 +3249,7 @@ final class VaultClassifierViewModel: ObservableObject {
                         "revision": descriptor.revision,
                         "family": descriptor.family.rawValue,
                         "supportsLLMConfiguration": descriptor.supportsLLMConfiguration,
+                        "supportsPlatformData": descriptor.requestFormats.contains(where: { $0.operation == .readPublicContent }),
                         "supportsWebSearch": type == .openAI,
                         "allowsEndpointOverride": descriptor.allowsEndpointOverride,
                         "credentialRequired": !descriptor.credentialFields.isEmpty,

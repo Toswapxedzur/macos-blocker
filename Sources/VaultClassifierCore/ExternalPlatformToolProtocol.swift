@@ -65,6 +65,19 @@ public struct ExternalPlatformPreparedRequest: Equatable, Sendable {
     }
 }
 
+/// A small provider-specific request used only when the user explicitly tests
+/// a platform-data connection. It never includes collected entries, creator
+/// identifiers, or any browser data.
+public struct ExternalPlatformConnectionTestRequest: Equatable, Sendable {
+    public var plan: ProviderRequestPlan
+    public var body: Data?
+
+    public init(plan: ProviderRequestPlan, body: Data? = nil) {
+        self.plan = plan
+        self.body = body
+    }
+}
+
 public enum ExternalPlatformToolProtocol {
     public static let maximumToolDefinitions = 16
     public static let maximumToolResultCharacters = 12_000
@@ -116,6 +129,36 @@ public enum ExternalPlatformToolProtocol {
         "vault_read_\(profile.type.rawValue)_\(stableIdentifier(for: profile.id))"
     }
 
+    /// Prepares a bounded health request for a saved platform-data profile.
+    /// The request verifies its credential and required local configuration,
+    /// but does not send browser evidence or persist any response body.
+    public static func prepareConnectionTest(
+        profile: APIKeyProviderProfile
+    ) throws -> ExternalPlatformConnectionTestRequest {
+        let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
+        guard !descriptor.supportsLLMConfiguration,
+              descriptor.requestFormats.contains(where: { $0.operation == .readPublicContent }) else {
+            throw ExternalPlatformToolProtocolError.invalidConfiguration
+        }
+        try profile.validateForDispatch()
+        let baseURL = try baseURL(profile: profile, descriptor: descriptor)
+        let route = try connectionTestRoute(profile.type, profile: profile)
+        let requestURL = try url(baseURL: baseURL, path: route.path, queryItems: route.queryItems)
+        let body = try route.body.map { try JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]) }
+        return .init(
+            plan: .init(
+                url: requestURL,
+                method: route.method,
+                bodyFormat: route.body == nil ? .queryOnly : .customJSON,
+                headers: headers(profile: profile, descriptor: descriptor, hasBody: route.body != nil),
+                authentication: descriptor.authentication,
+                authenticationHeader: descriptor.authenticationHeader,
+                requiredCredentialFields: descriptor.credentialFields
+            ),
+            body: body
+        )
+    }
+
     /// Prepares a constrained public-content request after a model asks for a
     /// declared tool. It cannot accept a model-provided destination or ID.
     public static func prepare(
@@ -138,21 +181,12 @@ public enum ExternalPlatformToolProtocol {
         let baseURL = try baseURL(profile: profile, descriptor: descriptor)
         let route = try requestRoute(profile.type, target: target, identifier: identifier)
         let url = try url(baseURL: baseURL, path: route.path, queryItems: route.queryItems)
-        var headers = descriptor.staticHeaders
-        headers["Accept"] = "application/json"
-        if route.body != nil { headers["Content-Type"] = "application/json" }
-        if profile.type == .twitch, let clientID = profile.protocolConfiguration[ProviderConfigurationField.clientID.rawValue] {
-            headers["Client-Id"] = clientID
-        }
-        if profile.type == .reddit, let userAgent = profile.protocolConfiguration[ProviderConfigurationField.userAgent.rawValue] {
-            headers["User-Agent"] = userAgent
-        }
         let body = try route.body.map { try JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]) }
         let plan = ProviderRequestPlan(
             url: url,
             method: route.method,
             bodyFormat: route.body == nil ? .queryOnly : .customJSON,
-            headers: headers,
+            headers: headers(profile: profile, descriptor: descriptor, hasBody: route.body != nil),
             authentication: descriptor.authentication,
             authenticationHeader: descriptor.authenticationHeader,
             requiredCredentialFields: descriptor.credentialFields
@@ -347,6 +381,68 @@ public enum ExternalPlatformToolProtocol {
         default:
             throw ExternalPlatformToolProtocolError.invalidConfiguration
         }
+    }
+
+    private static func connectionTestRoute(
+        _ type: APIKeyProviderType,
+        profile: APIKeyProviderProfile
+    ) throws -> Route {
+        func get(_ path: [String], _ queryItems: [URLQueryItem] = []) -> Route {
+            .init(method: "GET", path: path, queryItems: queryItems, body: nil)
+        }
+        func post(_ path: [String], _ queryItems: [URLQueryItem] = [], _ body: [String: Any]) -> Route {
+            .init(method: "POST", path: path, queryItems: queryItems, body: body)
+        }
+        switch type {
+        case .youtubeData:
+            // A stable public video keeps the request independent of the
+            // user's collected data while exercising the key and quota path.
+            return get(["videos"], [
+                .init(name: "part", value: "snippet"),
+                .init(name: "id", value: "dQw4w9WgXcQ"),
+            ])
+        case .twitch:
+            return get(["users"], [.init(name: "login", value: "twitch")])
+        case .reddit:
+            return get(["r", "all", "hot"], [
+                .init(name: "limit", value: "1"),
+                .init(name: "raw_json", value: "1"),
+            ])
+        case .xPlatform:
+            return get(["users", "by", "username", "XDevelopers"])
+        case .tikTok:
+            return post(
+                ["video", "list"],
+                [.init(name: "fields", value: "id")],
+                ["max_count": 1]
+            )
+        case .instagramGraph, .facebookGraph:
+            let version = profile.protocolConfiguration[ProviderConfigurationField.apiVersion.rawValue]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !version.isEmpty else { throw ExternalPlatformToolProtocolError.invalidConfiguration }
+            return get([version, "me"], [.init(name: "fields", value: "id")])
+        default:
+            throw ExternalPlatformToolProtocolError.invalidConfiguration
+        }
+    }
+
+    private static func headers(
+        profile: APIKeyProviderProfile,
+        descriptor: ProviderProtocolDescriptor,
+        hasBody: Bool
+    ) -> [String: String] {
+        var headers = descriptor.staticHeaders
+        headers["Accept"] = "application/json"
+        if hasBody { headers["Content-Type"] = "application/json" }
+        if profile.type == .twitch,
+           let clientID = profile.protocolConfiguration[ProviderConfigurationField.clientID.rawValue] {
+            headers["Client-Id"] = clientID
+        }
+        if profile.type == .reddit,
+           let userAgent = profile.protocolConfiguration[ProviderConfigurationField.userAgent.rawValue] {
+            headers["User-Agent"] = userAgent
+        }
+        return headers
     }
 
     private static func url(baseURL: URL, path: [String], queryItems: [URLQueryItem]) throws -> URL {
