@@ -903,16 +903,37 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertThrowsError(try ProviderCredentialRecord(values: [.bearerToken: "token-value"]).validate(for: descriptor))
     }
 
-    func testClearingProviderCredentialOmitsItFromPersistedProfile() throws {
-        var profile = APIKeyProviderProfile(
-            type: .openAI,
-            credential: .init(values: [.apiKey: "secret-to-remove"])
-        )
-        profile.credential = nil
+    func testProviderCredentialsRoundTripThroughKeychainWithoutEnteringTheCatalog() throws {
+        let profileID = "provider-credential-store-test-\(UUID().uuidString)"
+        let descriptor = ProviderProtocolRegistry.descriptor(for: .openAI)
+        defer { try? ProviderCredentialStore.remove(profileID: profileID) }
 
-        let encoded = try JSONEncoder().encode(profile)
-        XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("secret-to-remove"))
-        XCTAssertNil(try JSONDecoder().decode(APIKeyProviderProfile.self, from: encoded).credential)
+        XCTAssertNil(try ProviderCredentialStore.load(profileID: profileID, descriptor: descriptor))
+        let credential = ProviderCredentialRecord(values: [.apiKey: "keychain-only-secret"])
+        try ProviderCredentialStore.save(credential, profileID: profileID, descriptor: descriptor)
+
+        XCTAssertEqual(
+            try ProviderCredentialStore.load(profileID: profileID, descriptor: descriptor),
+            credential
+        )
+    }
+
+    func testLegacyProviderCredentialIsReadOnceButNeverReencodedIntoWorkspaceState() throws {
+        let credential = ProviderCredentialRecord(values: [.apiKey: "secret-to-migrate"])
+        let encodedCredential = try JSONEncoder().encode(credential)
+        let credentialObject = try XCTUnwrap(JSONSerialization.jsonObject(with: encodedCredential) as? [String: Any])
+        let legacy = try JSONSerialization.data(withJSONObject: [
+            "id": "profile",
+            "name": "OpenAI key",
+            "type": "openAI",
+            "credential": credentialObject,
+        ])
+        let decoded = try JSONDecoder().decode(APIKeyProviderProfile.self, from: legacy)
+
+        XCTAssertEqual(decoded.legacyWorkspaceCredential?.values[.apiKey], "secret-to-migrate")
+        let encoded = try JSONEncoder().encode(decoded)
+        XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("secret-to-migrate"))
+        XCTAssertNil(try JSONDecoder().decode(APIKeyProviderProfile.self, from: encoded).legacyWorkspaceCredential)
     }
 
     func testLegacyCatalogDecodesWithoutProviderProfiles() throws {

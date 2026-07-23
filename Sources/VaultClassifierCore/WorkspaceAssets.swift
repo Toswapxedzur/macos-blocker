@@ -978,9 +978,9 @@ public struct ProviderRequestRecord: Codable, Equatable, Sendable, Identifiable 
     }
 }
 
-/// A locally persisted provider key or token. It remains in the app's local
-/// workspace state and is intentionally omitted from every WebView snapshot,
-/// browser bridge message, diagnostic, and provider-request ledger.
+/// A provider key or token held only in Keychain or transient native memory.
+/// It is never part of a workspace catalog, WebView snapshot, browser bridge
+/// message, diagnostic, or provider-request ledger.
 public struct ProviderCredentialRecord: Codable, Equatable, Sendable {
     public static let maximumCharacters = 2_048
 
@@ -1022,8 +1022,8 @@ public enum ProviderCredentialError: Error, LocalizedError, Sendable {
 }
 
 /// A local credential profile describes how the user intends to use a provider.
-/// Its key or token is retained locally with the profile, while all WebView
-/// snapshots remain credential-free.
+/// Its key or token is referenced by profile ID in the Keychain, while all
+/// workspace and WebView state remains credential-free.
 public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
     case openAI
     case openAICompatible
@@ -1120,7 +1120,10 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
     /// provider does not publish a fixed test model. Classifier types still
     /// choose their own model for classification.
     public var testModelIdentifier: String?
-    public var credential: ProviderCredentialRecord?
+    /// Present only while decoding an old workspace state that embedded a
+    /// secret. Startup moves a valid value to Keychain and saves the catalog
+    /// again without this field; it is never encoded for new state.
+    public var legacyWorkspaceCredential: ProviderCredentialRecord?
     public var updatedAtMilliseconds: Int64
 
     public init(
@@ -1130,7 +1133,6 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         customEndpoint: String? = nil,
         protocolConfiguration: [String: String]? = nil,
         testModelIdentifier: String? = nil,
-        credential: ProviderCredentialRecord? = nil,
         updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
     ) {
         self.id = id
@@ -1139,7 +1141,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         self.customEndpoint = customEndpoint
         self.protocolConfiguration = protocolConfiguration ?? ProviderProtocolRegistry.descriptor(for: type).defaultConfiguration()
         self.testModelIdentifier = testModelIdentifier
-        self.credential = credential
+        self.legacyWorkspaceCredential = nil
         self.updatedAtMilliseconds = updatedAtMilliseconds
     }
 
@@ -1163,13 +1165,6 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
             try descriptor.validateConfiguration(protocolConfiguration, endpointOverride: normalizedEndpoint, requireDispatchReadiness: false)
         } catch {
             throw APIKeyProviderProfileError.invalidConfiguration
-        }
-        if let credential {
-            do {
-                try credential.validate(for: descriptor)
-            } catch {
-                throw APIKeyProviderProfileError.invalidConfiguration
-            }
         }
     }
 
@@ -1206,7 +1201,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         protocolConfiguration = try container.decodeIfPresent([String: String].self, forKey: .protocolConfiguration)
             ?? ProviderProtocolRegistry.descriptor(for: type).defaultConfiguration()
         testModelIdentifier = try container.decodeIfPresent(String.self, forKey: .testModelIdentifier)
-        credential = try container.decodeIfPresent(ProviderCredentialRecord.self, forKey: .credential)
+        legacyWorkspaceCredential = try container.decodeIfPresent(ProviderCredentialRecord.self, forKey: .credential)
         updatedAtMilliseconds = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMilliseconds) ?? WorkspaceCatalog.now()
     }
 
@@ -1218,7 +1213,6 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         try container.encodeIfPresent(customEndpoint, forKey: .customEndpoint)
         try container.encode(protocolConfiguration, forKey: .protocolConfiguration)
         try container.encodeIfPresent(testModelIdentifier, forKey: .testModelIdentifier)
-        try container.encodeIfPresent(credential, forKey: .credential)
         try container.encode(updatedAtMilliseconds, forKey: .updatedAtMilliseconds)
     }
 }
@@ -1275,9 +1269,10 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     public var classifierTypes: [ClassifierTypeAsset]
     public var tokenUsage: [TokenUsageRecord]
     public var providerRequestRecords: [ProviderRequestRecord]
-    /// Provider profiles, including their locally retained key or token, stay
-    /// in the app's local workspace state and are omitted from every WebView
-    /// snapshot, browser bridge message, and diagnostic.
+    /// Provider profiles contain only non-secret configuration. Their
+    /// credentials are keyed by profile ID in Keychain and never enter this
+    /// workspace state, a WebView snapshot, browser bridge message, or
+    /// diagnostic.
     public var providerProfiles: [APIKeyProviderProfile]
 
     public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], models: [LocalModelAsset] = [], bindings: [PlatformBinding] = [], classifierTypes: [ClassifierTypeAsset] = [], tokenUsage: [TokenUsageRecord] = [], providerRequestRecords: [ProviderRequestRecord] = [], providerProfiles: [APIKeyProviderProfile] = []) {
