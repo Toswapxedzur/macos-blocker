@@ -80,7 +80,6 @@
   const selected = (value, expected) => value === expected ? " selected" : "";
   const checked = (value) => value ? " checked" : "";
   const disabled = (value) => value ? " disabled" : "";
-  const storedCredentialMask = "••••••••";
   const enumText = (family, value) => Object.hasOwn(strings, `enum.${family}.${value}`)
     ? t(`enum.${family}.${value}`)
     : String(value ?? "").replaceAll(/([A-Z])/g, " $1").replaceAll(/[._-]/g, " ").replace(/^./, (letter) => letter.toUpperCase());
@@ -118,18 +117,10 @@
       protocolConfiguration,
     };
     delete values.credential;
-    const credentialInput = formID
-      ? root.querySelector(`[data-form-id="${formID}"] [data-field="credential"]`)
-      : null;
-    if (!credentialInput) return payload;
-    const storedCredential = credentialInput.dataset.credentialStored === "true";
-    const value = credentialInput.value;
-    if (storedCredential && value === credentialInput.dataset.credentialMask) return payload;
-    if (storedCredential && value.trim() === "") {
-      payload.clearCredential = true;
-      return payload;
-    }
-    if (value.trim() !== "") payload.credential = value;
+    const credential = formID
+      ? root.querySelector(`[data-form-id="${formID}"] [data-field="credential"]`)?.value
+      : "";
+    if (credential?.trim()) payload.credential = credential;
     return payload;
   }
 
@@ -524,7 +515,7 @@
         input: total.input + (Number(record.inputTokens) || 0),
         output: total.output + (Number(record.outputTokens) || 0),
       }), { input: 0, output: 0 });
-      const credentialField = protocol.credentialRequired ? `<label class="field"><span class="field-label">${tx("llm.apiKeyOrToken")}</span><input type="password" data-field="credential" data-provider-credential data-provider-connection autocomplete="off" autocapitalize="off" spellcheck="false"${profile.hasCredential ? ` data-credential-stored="true" data-credential-mask="${storedCredentialMask}" value="${storedCredentialMask}"` : ""}></label>` : "";
+      const credentialField = protocol.credentialRequired ? `<label class="field"><span class="field-label">${tx("llm.apiKeyOrToken")}</span><span class="credential-input-row"><input type="password" data-field="credential" data-provider-credential data-provider-connection autocomplete="new-password" autocapitalize="off" spellcheck="false"${profile.hasCredential ? ' placeholder="••••••••"' : ""}>${profile.hasCredential ? `<button type="button" class="secondary credential-clear" data-action="clearProviderCredential" data-profile-id="${esc(profile.id)}" aria-label="${tx("common.clear")} ${tx("llm.apiKeyOrToken")}">${tx("common.clear")}</button>` : ""}</span></label>` : "";
       const endpointField = protocol.allowsEndpointOverride ? field("llm.apiEndpoint", "", "customEndpoint", profile.customEndpoint || "", "text", "data-provider-connection") : "";
       const testModelField = supportsLLM && (protocol.allowsEndpointOverride || !profile.defaultModelIdentifier)
         ? field("llm.testModel", "", "testModelIdentifier", profile.testModelIdentifier || "", "text", `data-provider-connection placeholder=\"${esc(profile.defaultModelIdentifier || "model-name")}\"`)
@@ -994,12 +985,9 @@
       const panel = credentialInput.closest("[data-provider-panel]");
       const profileID = panel?.dataset.providerId;
       if (!profileID) return;
-      credentialInput.dataset.credentialStored = "false";
-      const credential = credentialInput.value;
       send("saveProviderCredential", {
         profileID,
-        credential,
-        clearCredential: credential.trim() === "",
+        credential: credentialInput.value,
       });
       return;
     }
@@ -1283,11 +1271,6 @@
     if (event.key !== "Escape" || !utilityPanel) return;
     utilityPanel = null;
     render();
-  });
-
-  document.addEventListener("focusin", (event) => {
-    const credentialInput = event.target.closest('input[data-credential-stored="true"]');
-    if (credentialInput?.value === credentialInput.dataset.credentialMask) credentialInput.select();
   });
 
   document.addEventListener("change", (event) => {
