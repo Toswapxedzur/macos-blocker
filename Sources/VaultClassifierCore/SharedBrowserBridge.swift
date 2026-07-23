@@ -13,7 +13,7 @@ public enum SharedBrowserBridgeOperation: String, CaseIterable, Codable, Sendabl
 
 public enum SharedBrowserBridgeProtocol {
     public static let address = "ws://127.0.0.1:8787"
-    public static let version = 3
+    public static let version = 4
     public static let maximumBodyBytes = 88_000
     public static let maximumRequestIDLength = 128
     public static let maximumPeerIDLength = 128

@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import VaultClassifierCore
 
 /// Minimal local hub used only while Vault Classifier owns the fixed loopback
 /// address. Mac Vault takes over the listener when it opens, because it is the
@@ -7,12 +8,13 @@ import Network
 final class LocalClassifierHub {
     static let shared = LocalClassifierHub()
     static let address = "ws://127.0.0.1:8787"
-    static let protocolVersion = 3
+    static let protocolVersion = LocalHubAuthentication.protocolVersion
 
     private struct Peer {
         let id = UUID().uuidString
         var program = ""
         var ready = false
+        let challenge: String
         let connection: NWConnection
     }
 
@@ -114,14 +116,19 @@ final class LocalClassifierHub {
             return
         }
         let key = ObjectIdentifier(connection)
+        guard let challenge = try? LocalHubAuthentication.makeChallenge() else {
+            connection.cancel()
+            return
+        }
         lock.lock()
-        peers[key] = Peer(connection: connection)
+        peers[key] = Peer(challenge: challenge, connection: connection)
         lock.unlock()
         connection.stateUpdateHandler = { [weak self] state in
             if case .failed = state { self?.removePeer(key) }
             if case .cancelled = state { self?.removePeer(key) }
         }
         connection.start(queue: queue)
+        send(connection, ["kind": "challenge", "v": Self.protocolVersion, "challenge": challenge])
         receive(connection, key: key)
         queue.asyncAfter(deadline: .now() + 5) { [weak self] in
             guard let self else { return }
@@ -180,8 +187,18 @@ final class LocalClassifierHub {
     private func handleHello(_ frame: [String: Any], connection: NWConnection, key: ObjectIdentifier) {
         guard (frame["v"] as? NSNumber)?.intValue == Self.protocolVersion,
               let program = frame["program"] as? String,
-              ["chrome", "edge", "firefox", "safari", "opera", "browser", "classifier", "macapp"].contains(program) else {
+              LocalHubAuthentication.isBrowserProgram(program) || LocalHubAuthentication.isDesktopProgram(program),
+              let submittedChallenge = frame["challenge"] as? String,
+              let proof = frame["proof"] as? String else {
             reject(connection, reason: "protocol-mismatch")
+            return
+        }
+        lock.lock()
+        let challenge = peers[key]?.challenge
+        lock.unlock()
+        guard let challenge, submittedChallenge == challenge,
+              LocalHubAuthentication.verifyProof(program: program, challenge: challenge, proof: proof) else {
+            reject(connection, reason: "authentication-failed")
             return
         }
         // Mac Vault owns the complete cluster registry. Let it bind this fixed
@@ -208,7 +225,7 @@ final class LocalClassifierHub {
               ["bridge-info", "collection-info", "diagnostic", "collect", "classify", "correct"].contains(operation),
               let body = frame["body"] as? [String: Any], JSONSerialization.isValidJSONObject(body) else { return }
         lock.lock()
-        guard let source = peers[key], ["chrome", "edge", "firefox", "safari", "opera", "browser"].contains(source.program),
+        guard let source = peers[key], LocalHubAuthentication.isBrowserProgram(source.program),
               pending[requestID] == nil,
               pending.count < 32,
               let classifier = peers.values.first(where: { $0.ready && $0.program == "classifier" }) else {

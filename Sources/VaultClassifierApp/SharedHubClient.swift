@@ -67,17 +67,6 @@ final class SharedHubClient {
         self.session = session
         self.task = task
         task.resume()
-        send(
-            [
-                "kind": "hello",
-                "v": SharedBrowserBridgeProtocol.version,
-                "program": "classifier",
-            ],
-            on: task
-        ) { [weak self, weak task] error in
-            guard let self, let task, self.task === task, let error else { return }
-            self.connectionFailed(error.localizedDescription, retry: true)
-        }
         receive(on: task)
         handshakeTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self, weak task] _ in
             Task { @MainActor in
@@ -131,6 +120,26 @@ final class SharedHubClient {
             return
         }
         switch kind {
+        case "challenge":
+            guard (object["v"] as? NSNumber)?.intValue == SharedBrowserBridgeProtocol.version,
+                  let challenge = object["challenge"] as? String,
+                  let proof = try? LocalHubAuthentication.makeProof(program: "classifier", challenge: challenge) else {
+                connectionFailed("authentication-unavailable", retry: true)
+                return
+            }
+            send(
+                [
+                    "kind": "hello",
+                    "v": SharedBrowserBridgeProtocol.version,
+                    "program": "classifier",
+                    "challenge": challenge,
+                    "proof": proof,
+                ],
+                on: task
+            ) { [weak self, weak task] error in
+                guard let self, let task, self.task === task, let error else { return }
+                self.connectionFailed(error.localizedDescription, retry: true)
+            }
         case "welcome":
             guard (object["v"] as? NSNumber)?.intValue == SharedBrowserBridgeProtocol.version,
                   let hubProgram = object["hubProgram"] as? String,

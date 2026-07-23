@@ -19,9 +19,9 @@ description.
   non-secret connection configuration; credentials are stored only in the
   macOS Keychain. A classifier type explicitly selects one provider/model and
   owns its budget, tag constraints, and opt-in tool settings.
-- A shared local browser hub at `ws://127.0.0.1:8787`. Mac Vault or Vault
-  Classifier hosts it; unavailable peers, invalid frames, and timeouts fail
-  open.
+- An authenticated v4 local browser hub at `ws://127.0.0.1:8787`. Mac Vault
+  or Vault Classifier hosts it; unavailable peers, invalid frames, and
+  timeouts fail open.
 - Local backups and signed-package lifecycle foundations. They are explicit,
   local operations; no scheduler or automatic package activation is attached.
 
