@@ -7,8 +7,8 @@ It is not a claim that a provider feature runs automatically.
 
 Every profile exposed in the LLM Assist provider picker is ready for its
 declared, explicit operation once the user supplies a valid account credential
-and any shown connection fields. "Ready" here means the app has a Keychain-only
-credential path, a bounded connection test, a model/classification request
+and any shown connection fields. "Ready" here means the app has an ordinary
+saved credential field, a bounded connection test, a model/classification request
 grammar (for language models) or platform health/tool route (for platform
 data), and regression coverage. It does not guarantee that a provider account,
 model, regional availability, quota, or OAuth grant is available to a
@@ -38,21 +38,19 @@ model deactivates the attachment; it never causes background classification.
 
 ## Credential and state boundary
 
-Provider credentials are stored by profile ID in the macOS Keychain. The
-workspace catalog, WebView snapshot, browser bridge, diagnostics, and
-provider-request ledger contain no credential value, headers, prompt, or
-response text.
+Provider credentials are ordinary visible text fields saved in each local
+workspace profile. They are included in the local WebView state so the field
+can display and edit its current value. They do not enter the browser bridge,
+diagnostics, or provider-request ledger.
 
-At startup, the app performs bounded cleanup of the two retired secret
-representations: an embedded workspace credential and the prior provider
-Keychain service. A valid old credential is moved to the current per-profile
-Keychain record; malformed, obsolete, and orphaned records are discarded. The
-old representation is not re-encoded into local state.
+At startup, the app copies any valid value from the retired provider-Keychain
+services into its profile field and deletes the old Keychain item. An old
+embedded credential record is decoded directly into the same field. This is a
+one-way cleanup: provider credentials no longer use Keychain storage.
 
-Clearing a credential or deleting its profile removes its current Keychain
-record. A credential edit is committed on the password field's normal change
-event or when the user explicitly tests the connection; it is never persisted
-per keystroke and the WebView does not retain a secret draft.
+An edit saves on the field's normal change event or when the user explicitly
+tests the connection. Clearing the normal text field and committing the edit
+clears the saved value; deleting a profile removes the value with the profile.
 
 ## Models and network requests
 
@@ -92,8 +90,8 @@ continues without one.
 
 ## Tests that define the boundary
 
-- `WorkspaceAssetsTests`: catalog reconciliation, provider profile validation,
-  Keychain-only credential persistence, and legacy-state cleanup.
+- `WorkspaceAssetsTests`: catalog reconciliation, plain provider-credential
+  persistence, profile validation, and legacy-state cleanup.
 - `ProviderTestProtocolTests`: provider test/classification request grammar,
   bounded tools, and fixed-versus-direct model-catalog routing.
 - `VaultServiceEndpointTests`: validated loopback development and HTTPS public

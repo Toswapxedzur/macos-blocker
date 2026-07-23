@@ -153,7 +153,7 @@ final class VaultClassifierViewModel: ObservableObject {
             self.coordinator = coordinator
             self.policies = coordinator.policies()
             self.localState = coordinator.snapshot()
-            try migrateLegacyProviderCredentials()
+            try migrateRetiredProviderCredentialsToWorkspace()
             self.manualPlatformID = self.localState?.workspaceCatalog.bindings.first?.id ?? "manual"
             loadResourceSettings(from: coordinator.snapshot().settings)
             loadBackupConfiguration(from: coordinator.snapshot().backupConfiguration)
@@ -184,10 +184,10 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
-    /// Moves a valid credential from either pre-Keychain workspace state or
-    /// the retired Keychain service into the current Keychain store. The old
-    /// state field is then omitted on the next atomic catalog save.
-    private func migrateLegacyProviderCredentials() throws {
+    /// Copies a valid retired Keychain credential into the provider's ordinary
+    /// workspace field, then deletes the old Keychain item. Existing plain
+    /// workspace values take precedence.
+    private func migrateRetiredProviderCredentialsToWorkspace() throws {
         guard var catalog = localState?.workspaceCatalog else {
             LegacyProviderCredentialMigration.purgeRemaining()
             return
@@ -197,26 +197,13 @@ final class VaultClassifierViewModel: ObservableObject {
         for index in catalog.providerProfiles.indices {
             let profileID = catalog.providerProfiles[index].id
             let descriptor = ProviderProtocolRegistry.descriptor(for: catalog.providerProfiles[index].type)
-            let workspaceCredential = catalog.providerProfiles[index].legacyWorkspaceCredential
             let retiredKeychainCredential = LegacyProviderCredentialMigration.consume(profileID: profileID)
-            let hasCurrentCredential: Bool
-            do {
-                hasCurrentCredential = try ProviderCredentialStore.load(
-                    profileID: profileID,
-                    descriptor: descriptor
-                ) != nil
-            } catch {
-                try? ProviderCredentialStore.remove(profileID: profileID)
-                hasCurrentCredential = false
-            }
-            if !hasCurrentCredential,
-               let credential = [workspaceCredential, retiredKeychainCredential].compactMap({ $0 }).first(where: {
-                   (try? $0.validate(for: descriptor)) != nil
-               }) {
-                try ProviderCredentialStore.save(credential, profileID: profileID, descriptor: descriptor)
-            }
-            if workspaceCredential != nil {
-                catalog.providerProfiles[index].legacyWorkspaceCredential = nil
+            if catalog.providerProfiles[index].credential == nil,
+               let credential = retiredKeychainCredential,
+               let field = descriptor.credentialFields.first,
+               (try? credential.validate(for: descriptor)) != nil,
+               let value = credential.values[field] {
+                catalog.providerProfiles[index].credential = value
                 catalog.providerProfiles[index].updatedAtMilliseconds = WorkspaceCatalog.now()
                 changed = true
             }
@@ -437,7 +424,6 @@ final class VaultClassifierViewModel: ObservableObject {
     func testProviderProfile(
         profileID: String,
         rawCredential: String? = nil,
-        clearCredential: Bool = false,
         customEndpoint: String? = nil,
         testModelIdentifier: String? = nil,
         protocolConfiguration: [String: String]? = nil
@@ -449,7 +435,6 @@ final class VaultClassifierViewModel: ObservableObject {
             profile = try applyProviderConnection(
                 profileID: profileID,
                 rawCredential: rawCredential,
-                clearCredential: clearCredential,
                 customEndpoint: customEndpoint,
                 testModelIdentifier: testModelIdentifier,
                 protocolConfiguration: protocolConfiguration
@@ -729,9 +714,16 @@ final class VaultClassifierViewModel: ObservableObject {
             throw ProviderTestProtocolError.missingCredential
         }
         let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
-        guard let credential = try ProviderCredentialStore.load(profileID: profileID, descriptor: descriptor) else {
+        guard !descriptor.credentialFields.isEmpty else { return .init(values: [:]) }
+        let normalizedCredential = profile.credential?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard descriptor.credentialFields.count == 1,
+              let field = descriptor.credentialFields.first,
+              !normalizedCredential.isEmpty else {
             throw ProviderTestProtocolError.missingCredential
         }
+        let value = normalizedCredential
+        let credential = ProviderCredentialRecord(values: [field: value])
+        try credential.validate(for: descriptor)
         return credential
     }
 
@@ -1090,14 +1082,12 @@ final class VaultClassifierViewModel: ObservableObject {
         ))
     }
 
-    /// Stores the compact panel's non-secret connection inputs and commits an
-    /// explicitly supplied credential to Keychain. Workspace state never
-    /// receives the secret: an empty field preserves it, a non-empty value
-    /// replaces it, and an explicit clear removes it.
+    /// Stores every compact provider connection field in the local workspace.
+    /// API keys and tokens are ordinary visible text fields: an empty committed
+    /// value clears the saved credential.
     private func applyProviderConnection(
         profileID: String,
         rawCredential: String?,
-        clearCredential: Bool,
         customEndpoint: String?,
         testModelIdentifier: String?,
         protocolConfiguration: [String: String]?
@@ -1119,31 +1109,25 @@ final class VaultClassifierViewModel: ObservableObject {
         if let protocolConfiguration {
             profile.protocolConfiguration = protocolConfiguration
         }
-        let value = rawCredential?.trimmingCharacters(in: .whitespacesAndNewlines)
         let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
-        var credentialChanged = false
-        var replacementCredential: ProviderCredentialRecord?
-        if clearCredential {
-            guard value?.isEmpty != false else {
-                throw WebBridgeInputError.invalidChoice("provider credential")
+        if descriptor.credentialFields.isEmpty {
+            profile.credential = nil
+        } else if let rawCredential {
+            let value = rawCredential.trimmingCharacters(in: .whitespacesAndNewlines)
+            if value.isEmpty {
+                profile.credential = nil
+            } else {
+                guard descriptor.credentialFields.count == 1,
+                      let field = descriptor.credentialFields.first else {
+                    throw WebBridgeInputError.invalidChoice("provider credential")
+                }
+                let credential = ProviderCredentialRecord(values: [field: value])
+                try credential.validate(for: descriptor)
+                profile.credential = credential.values[field]
             }
-            credentialChanged = true
-        } else if let value, !value.isEmpty {
-            guard descriptor.credentialFields.count == 1,
-                  let field = descriptor.credentialFields.first else {
-                throw WebBridgeInputError.invalidChoice("provider credential")
-            }
-            let credential = ProviderCredentialRecord(values: [field: value])
-            try credential.validate(for: descriptor)
-            credentialChanged = true
-            replacementCredential = credential
         }
         try profile.validate()
-        if clearCredential {
-            try ProviderCredentialStore.remove(profileID: profileID)
-        } else if let replacementCredential {
-            try ProviderCredentialStore.save(replacementCredential, profileID: profileID, descriptor: descriptor)
-        }
+        let credentialChanged = originalProfile.credential != profile.credential
 
         let directModelConnectionChanged = !ProviderModelCatalogProtocol.usesVaultCatalog(profile.type) && (
             credentialChanged ||
@@ -1168,7 +1152,6 @@ final class VaultClassifierViewModel: ObservableObject {
     func updateProviderConnection(
         profileID: String,
         rawCredential: String? = nil,
-        clearCredential: Bool = false,
         customEndpoint: String?,
         testModelIdentifier: String?,
         protocolConfiguration: [String: String]?
@@ -1178,7 +1161,6 @@ final class VaultClassifierViewModel: ObservableObject {
             _ = try applyProviderConnection(
                 profileID: profileID,
                 rawCredential: rawCredential,
-                clearCredential: clearCredential,
                 customEndpoint: customEndpoint,
                 testModelIdentifier: testModelIdentifier,
                 protocolConfiguration: protocolConfiguration
@@ -1195,7 +1177,6 @@ final class VaultClassifierViewModel: ObservableObject {
                   catalog.providerProfiles.contains(where: { $0.id == profileID }) else {
                 throw WebBridgeInputError.invalidChoice("provider profile")
             }
-            try ProviderCredentialStore.remove(profileID: profileID)
             catalog.providerProfiles.removeAll(where: { $0.id == profileID })
             for index in catalog.classifierTypes.indices {
                 guard let llmAssist = catalog.classifierTypes[index].llmAssistConfiguration else { continue }
@@ -2959,10 +2940,8 @@ final class VaultClassifierViewModel: ObservableObject {
                     "customEndpoint": profile.customEndpoint ?? NSNull(),
                     "protocolConfiguration": profile.protocolConfiguration,
                     "testModelIdentifier": profile.testModelIdentifier ?? NSNull(),
-                    "hasCredential": !descriptor.credentialFields.isEmpty && ProviderCredentialStore.hasCredential(
-                        profileID: profile.id,
-                        descriptor: descriptor
-                    ),
+                    "credential": profile.credential ?? "",
+                    "hasCredential": !descriptor.credentialFields.isEmpty && profile.credential?.isEmpty == false,
                     "testing": testingProviderProfileIDs.contains(profile.id),
                     "testSucceeded": successfulProviderTestProfileIDs.contains(profile.id),
                 ] as [String: Any]
@@ -3141,7 +3120,6 @@ final class VaultClassifierViewModel: ObservableObject {
                 testProviderProfile(
                     profileID: try webString(data, key: "profileID", limit: 128),
                     rawCredential: try webOptionalString(data, key: "credential", limit: ProviderCredentialRecord.maximumCharacters),
-                    clearCredential: data["clearCredential"] as? Bool ?? false,
                     customEndpoint: try webOptionalString(data, key: "customEndpoint", limit: APIKeyProviderProfile.maximumEndpointLength),
                     testModelIdentifier: try webOptionalString(data, key: "testModelIdentifier", limit: APIKeyProviderProfile.maximumTestModelIdentifierLength),
                     protocolConfiguration: try webProviderConfiguration(data)
@@ -3150,18 +3128,9 @@ final class VaultClassifierViewModel: ObservableObject {
                 updateProviderConnection(
                     profileID: try webString(data, key: "profileID", limit: 128),
                     rawCredential: try webOptionalString(data, key: "credential", limit: ProviderCredentialRecord.maximumCharacters),
-                    clearCredential: data["clearCredential"] as? Bool ?? false,
                     customEndpoint: try webOptionalString(data, key: "customEndpoint", limit: APIKeyProviderProfile.maximumEndpointLength),
                     testModelIdentifier: try webOptionalString(data, key: "testModelIdentifier", limit: APIKeyProviderProfile.maximumTestModelIdentifierLength),
                     protocolConfiguration: try webProviderConfiguration(data)
-                )
-            case "clearProviderCredential":
-                updateProviderConnection(
-                    profileID: try webString(data, key: "profileID", limit: 128),
-                    clearCredential: true,
-                    customEndpoint: nil,
-                    testModelIdentifier: nil,
-                    protocolConfiguration: nil
                 )
             case "fetchCustomProviderModelCatalog":
                 fetchCustomProviderModelCatalog(profileID: try webString(data, key: "profileID", limit: 128))

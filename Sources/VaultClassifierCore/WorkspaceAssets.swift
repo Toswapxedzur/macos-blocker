@@ -978,9 +978,8 @@ public struct ProviderRequestRecord: Codable, Equatable, Sendable, Identifiable 
     }
 }
 
-/// A provider key or token held only in Keychain or transient native memory.
-/// It is never part of a workspace catalog, WebView snapshot, browser bridge
-/// message, diagnostic, or provider-request ledger.
+/// A normalized provider key or token used to build an explicit provider
+/// request. Its storage and presentation are owned by `APIKeyProviderProfile`.
 public struct ProviderCredentialRecord: Codable, Equatable, Sendable {
     public static let maximumCharacters = 2_048
 
@@ -1021,9 +1020,8 @@ public enum ProviderCredentialError: Error, LocalizedError, Sendable {
     }
 }
 
-/// A local credential profile describes how the user intends to use a provider.
-/// Its key or token is referenced by profile ID in the Keychain, while all
-/// workspace and WebView state remains credential-free.
+/// A local provider profile includes its ordinary saved API key or token plus
+/// the connection settings needed for the selected provider protocol.
 public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
     case openAI
     case openAICompatible
@@ -1120,10 +1118,9 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
     /// provider does not publish a fixed test model. Classifier types still
     /// choose their own model for classification.
     public var testModelIdentifier: String?
-    /// Present only while decoding an old workspace state that embedded a
-    /// secret. Startup moves a valid value to Keychain and saves the catalog
-    /// again without this field; it is never encoded for new state.
-    public var legacyWorkspaceCredential: ProviderCredentialRecord?
+    /// A plain, locally persisted API key or token. This is intentionally shown
+    /// and edited as an ordinary text field in the local WebView.
+    public var credential: String?
     public var updatedAtMilliseconds: Int64
 
     public init(
@@ -1133,6 +1130,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         customEndpoint: String? = nil,
         protocolConfiguration: [String: String]? = nil,
         testModelIdentifier: String? = nil,
+        credential: String? = nil,
         updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
     ) {
         self.id = id
@@ -1141,7 +1139,8 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         self.customEndpoint = customEndpoint
         self.protocolConfiguration = protocolConfiguration ?? ProviderProtocolRegistry.descriptor(for: type).defaultConfiguration()
         self.testModelIdentifier = testModelIdentifier
-        self.legacyWorkspaceCredential = nil
+        let normalizedCredential = credential?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.credential = normalizedCredential.isEmpty ? nil : normalizedCredential
         self.updatedAtMilliseconds = updatedAtMilliseconds
     }
 
@@ -1161,6 +1160,11 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         guard normalizedTestModelIdentifier?.count ?? 0 <= Self.maximumTestModelIdentifierLength else {
             throw APIKeyProviderProfileError.invalidConfiguration
         }
+        let normalizedCredential = credential?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedCredential?.count ?? 0 <= ProviderCredentialRecord.maximumCharacters,
+              normalizedCredential?.unicodeScalars.allSatisfy({ $0.properties.generalCategory != .control }) ?? true else {
+            throw APIKeyProviderProfileError.invalidConfiguration
+        }
         do {
             try descriptor.validateConfiguration(protocolConfiguration, endpointOverride: normalizedEndpoint, requireDispatchReadiness: false)
         } catch {
@@ -1168,7 +1172,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         }
     }
 
-    /// Used by an explicit provider run before it reads the local credential.
+    /// Used by an explicit provider run before it reads the saved credential.
     /// Editing a profile intentionally permits incomplete values.
     public func validateForDispatch() throws {
         try validate()
@@ -1201,7 +1205,17 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         protocolConfiguration = try container.decodeIfPresent([String: String].self, forKey: .protocolConfiguration)
             ?? ProviderProtocolRegistry.descriptor(for: type).defaultConfiguration()
         testModelIdentifier = try container.decodeIfPresent(String.self, forKey: .testModelIdentifier)
-        legacyWorkspaceCredential = try container.decodeIfPresent(ProviderCredentialRecord.self, forKey: .credential)
+        let descriptor = ProviderProtocolRegistry.descriptor(for: type)
+        if let plainCredential = try? container.decode(String.self, forKey: .credential) {
+            let normalizedCredential = plainCredential.trimmingCharacters(in: .whitespacesAndNewlines)
+            credential = normalizedCredential.isEmpty ? nil : normalizedCredential
+        } else if let legacyCredential = try? container.decode(ProviderCredentialRecord.self, forKey: .credential),
+                  let descriptorField = descriptor.credentialFields.first,
+                  (try? legacyCredential.validate(for: descriptor)) != nil {
+            credential = legacyCredential.values[descriptorField]
+        } else {
+            credential = nil
+        }
         updatedAtMilliseconds = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMilliseconds) ?? WorkspaceCatalog.now()
     }
 
@@ -1213,6 +1227,7 @@ public struct APIKeyProviderProfile: Codable, Equatable, Sendable, Identifiable 
         try container.encodeIfPresent(customEndpoint, forKey: .customEndpoint)
         try container.encode(protocolConfiguration, forKey: .protocolConfiguration)
         try container.encodeIfPresent(testModelIdentifier, forKey: .testModelIdentifier)
+        try container.encodeIfPresent(credential, forKey: .credential)
         try container.encode(updatedAtMilliseconds, forKey: .updatedAtMilliseconds)
     }
 }
@@ -1269,10 +1284,10 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     public var classifierTypes: [ClassifierTypeAsset]
     public var tokenUsage: [TokenUsageRecord]
     public var providerRequestRecords: [ProviderRequestRecord]
-    /// Provider profiles contain only non-secret configuration. Their
-    /// credentials are keyed by profile ID in Keychain and never enter this
-    /// workspace state, a WebView snapshot, browser bridge message, or
-    /// diagnostic.
+    /// Provider profiles include their saved connection fields, including the
+    /// ordinary API key/token text. They remain local to workspace state and
+    /// the local WebView; browser-bridge messages and request diagnostics do
+    /// not include them.
     public var providerProfiles: [APIKeyProviderProfile]
 
     public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], models: [LocalModelAsset] = [], bindings: [PlatformBinding] = [], classifierTypes: [ClassifierTypeAsset] = [], tokenUsage: [TokenUsageRecord] = [], providerRequestRecords: [ProviderRequestRecord] = [], providerProfiles: [APIKeyProviderProfile] = []) {
