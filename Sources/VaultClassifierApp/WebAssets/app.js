@@ -112,15 +112,11 @@
       if (key.startsWith("protocol.")) protocolConfiguration[key.slice("protocol.".length)] = value;
     });
     const payload = {
+      credential: values.credential || "",
       customEndpoint: values.customEndpoint,
       testModelIdentifier: values.testModelIdentifier,
       protocolConfiguration,
     };
-    delete values.credential;
-    const credential = formID
-      ? root.querySelector(`[data-form-id="${formID}"] [data-field="credential"]`)?.value
-      : "";
-    if (credential?.trim()) payload.credential = credential;
     return payload;
   }
 
@@ -491,7 +487,7 @@
         input: total.input + (Number(record.inputTokens) || 0),
         output: total.output + (Number(record.outputTokens) || 0),
       }), { input: 0, output: 0 });
-      const credentialField = protocol.credentialRequired ? `<label class="field"><span class="field-label">${tx("llm.apiKeyOrToken")}</span><span class="credential-input-row"><input type="password" data-field="credential" data-provider-connection autocomplete="new-password" autocapitalize="off" spellcheck="false"${profile.hasCredential ? ' placeholder="••••••••"' : ""}>${profile.hasCredential ? `<button type="button" class="secondary credential-clear" data-action="clearProviderCredential" data-profile-id="${esc(profile.id)}" aria-label="${tx("common.clear")} ${tx("llm.apiKeyOrToken")}">${tx("common.clear")}</button>` : ""}</span></label>` : "";
+      const credentialField = protocol.credentialRequired ? field("llm.apiKeyOrToken", "", "credential", profile.credential || "", "text", "data-provider-connection autocapitalize=\"off\" spellcheck=\"false\"") : "";
       const endpointField = protocol.allowsEndpointOverride ? field("llm.apiEndpoint", "", "customEndpoint", profile.customEndpoint || "", "text", "data-provider-connection") : "";
       const testModelField = supportsLLM && (protocol.allowsEndpointOverride || !profile.defaultModelIdentifier)
         ? field("llm.testModel", "", "testModelIdentifier", profile.testModelIdentifier || "", "text", `data-provider-connection placeholder=\"${esc(profile.defaultModelIdentifier || "model-name")}\"`)

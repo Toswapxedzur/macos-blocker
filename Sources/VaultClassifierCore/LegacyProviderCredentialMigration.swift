@@ -1,48 +1,50 @@
 import Foundation
 import Security
 
-/// One-time cleanup for credentials saved by the retired provider-Keychain
-/// feature. It is not a credential store: it consumes an old local item during
-/// startup, hands the value to the local workspace migration, and deletes the
-/// Keychain item regardless of whether its old payload was usable.
+/// One-time migration away from retired provider-Keychain storage. It consumes
+/// the old local value during startup, copies a valid value into the ordinary
+/// workspace field, and deletes the old Keychain item in every case.
 public enum LegacyProviderCredentialMigration {
-    private static let service = "com.adamancia.vault-classifier.provider-credential"
+    private static let services = [
+        "com.adamancia.vault-classifier.provider-credential-v2",
+        "com.adamancia.vault-classifier.provider-credential",
+    ]
 
     public static func consume(profileID: String) -> ProviderCredentialRecord? {
         guard isValidProfileID(profileID) else { return nil }
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: profileID,
-            kSecReturnData: true,
-            kSecMatchLimit: kSecMatchLimitOne,
-        ]
-        var result: CFTypeRef?
-        let found = SecItemCopyMatching(query as CFDictionary, &result)
-        // The Keychain-backed feature is retired even when an old record is
-        // malformed: do not keep an unreachable secret behind a compatibility
-        // path.
-        _ = SecItemDelete(query as CFDictionary)
-        guard found == errSecSuccess, let data = result as? Data else { return nil }
-        if let record = try? JSONDecoder().decode(ProviderCredentialRecord.self, from: data) {
-            return record
+        var firstRecord: ProviderCredentialRecord?
+        for service in services {
+            let query: [CFString: Any] = [
+                kSecClass: kSecClassGenericPassword,
+                kSecAttrService: service,
+                kSecAttrAccount: profileID,
+                kSecReturnData: true,
+                kSecMatchLimit: kSecMatchLimitOne,
+            ]
+            var result: CFTypeRef?
+            let found = SecItemCopyMatching(query as CFDictionary, &result)
+            _ = SecItemDelete(query as CFDictionary)
+            guard found == errSecSuccess, let data = result as? Data else { continue }
+            if let record = try? JSONDecoder().decode(ProviderCredentialRecord.self, from: data) {
+                firstRecord = firstRecord ?? record
+            } else if let raw = String(data: data, encoding: .utf8), ProviderCredentialRecord.isValid(raw) {
+                firstRecord = firstRecord ?? .init(values: [.apiKey: raw])
+            }
         }
-        guard let raw = String(data: data, encoding: .utf8), ProviderCredentialRecord.isValid(raw) else {
-            return nil
-        }
-        return .init(values: [.apiKey: raw])
+        return firstRecord
     }
 
-    /// Removes orphaned records for profiles that were deleted before this
-    /// migration ran. The service name is exclusive to the retired provider
-    /// credential feature, so this cannot affect pairing, backup, or audit
-    /// Keychain items.
+    /// Removes orphaned retired records for profiles that were deleted before
+    /// this migration ran. These two services belonged only to the retired
+    /// provider-credential feature.
     public static func purgeRemaining() {
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-        ]
-        _ = SecItemDelete(query as CFDictionary)
+        for service in services {
+            let query: [CFString: Any] = [
+                kSecClass: kSecClassGenericPassword,
+                kSecAttrService: service,
+            ]
+            _ = SecItemDelete(query as CFDictionary)
+        }
     }
 
     private static func isValidProfileID(_ profileID: String) -> Bool {

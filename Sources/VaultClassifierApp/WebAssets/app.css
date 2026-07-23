@@ -875,15 +875,6 @@ h3 { font-size: 13px; }
 .provider-connection-fields .field { margin: 0; gap: 5px; }
 .provider-connection-fields input { min-height: 34px; }
 
-.credential-input-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.credential-input-row input { min-width: 0; flex: 1; }
-.credential-clear { flex: 0 0 auto; }
-
 .provider-token-usage {
   flex-direction: column;
   align-items: flex-end;
@@ -1113,7 +1104,6 @@ h3 { font-size: 13px; }
 .field.wide { flex-basis: 100%; }
 
 input[type="text"],
-input[type="password"],
 select,
 textarea {
   width: 100%;
@@ -1440,7 +1430,6 @@ textarea:focus {
 }
 
 .workspace input[type="text"],
-.workspace input[type="password"],
 .workspace select,
 .workspace textarea,
 .workspace .choice-row {
@@ -1455,11 +1444,8 @@ textarea:focus {
   box-shadow: inset 0 -2px 0 var(--navy-700);
 }
 
-/* The global workspace treatment deliberately turns most controls into
-   underlined rows. A credential is sensitive and needs an unmistakable,
-   compact field boundary instead of an almost invisible line. */
-.provider-workspace .provider-connection-fields input[type="text"],
-.provider-workspace .provider-connection-fields input[type="password"] {
+/* Provider connection fields use a compact, easy-to-scan local form. */
+.provider-workspace .provider-connection-fields input[type="text"] {
   min-height: 38px;
   padding: 9px 11px;
   border-radius: 8px;
@@ -1467,8 +1453,7 @@ textarea:focus {
   box-shadow: inset 0 0 0 1px rgba(30, 58, 138, 0.28);
 }
 
-.provider-workspace .provider-connection-fields input[type="text"]:focus,
-.provider-workspace .provider-connection-fields input[type="password"]:focus {
+.provider-workspace .provider-connection-fields input[type="text"]:focus {
   box-shadow: inset 0 0 0 1px var(--navy-700), 0 0 0 3px var(--navy-ring);
 }
 
