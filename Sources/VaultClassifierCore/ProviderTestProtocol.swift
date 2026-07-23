@@ -6,6 +6,7 @@ import Foundation
 public enum ProviderTestProtocol {
     public static let prompt = "Return exactly OK."
     public static let maximumOutputTokens = 32
+    public static let maximumResponseCharacters = 12_000
 
     public static func prepare(profile: APIKeyProviderProfile) throws -> ProviderTestPreparedRequest {
         let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
@@ -55,7 +56,7 @@ public enum ProviderTestProtocol {
         } else {
             content = extractText(root, format: format) ?? "Provider test completed."
         }
-        return .init(content: String(content.prefix(ProviderRequestRecord.maximumContentCharacters)), usage: usage)
+        return .init(content: String(content.prefix(maximumResponseCharacters)), usage: usage)
     }
 
     public static func safeEndpoint(_ url: URL) -> String {

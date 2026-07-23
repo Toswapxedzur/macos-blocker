@@ -463,39 +463,6 @@
     return keys[type] || "llm.provider.openAICompatible";
   }
 
-  function protocolFieldLabelKey(fieldName) {
-    const keys = {
-      accountID: "llm.protocol.accountID",
-      apiVersion: "llm.protocol.apiVersion",
-      clientID: "llm.protocol.clientID",
-      location: "llm.protocol.location",
-      projectID: "llm.protocol.projectID",
-      region: "llm.protocol.region",
-      userAgent: "llm.protocol.userAgent",
-      searchEngineID: "llm.protocol.searchEngineID",
-      protocolFamily: "llm.protocol.protocolFamily",
-    };
-    return keys[fieldName] || "llm.protocol.protocolFamily";
-  }
-
-  function credentialFieldLabelKey(fieldName) {
-    const keys = {
-      apiKey: "llm.credential.apiKey",
-      bearerToken: "llm.credential.bearerToken",
-      clientSecret: "llm.credential.clientSecret",
-      accessKeyID: "llm.credential.accessKeyID",
-      secretAccessKey: "llm.credential.secretAccessKey",
-      sessionToken: "llm.credential.sessionToken",
-    };
-    return keys[fieldName] || "llm.apiKey";
-  }
-
-  function protocolConfigurationField(requirement, profile) {
-    const value = profile.protocolConfiguration?.[requirement.field] ?? requirement.defaultValue ?? "";
-    const hint = requirement.requiredForDispatch ? "llm.protocol.required" : "";
-    return field(protocolFieldLabelKey(requirement.field), hint, `protocol.${requirement.field}`, value);
-  }
-
   function llmAssistWorkspace() {
     const profiles = state.assets.providerProfiles || [];
     const requestRecords = state.assets.providerRequestRecords || [];
@@ -509,28 +476,17 @@
       const formID = `provider-profile-${profile.id}`;
       const protocol = protocols[profile.type] || {};
       const supportsLLM = Boolean(protocol.supportsLLMConfiguration);
-      const hasSessionCredential = Boolean(profile.hasSessionCredential);
       const profileRecords = requestRecords.filter((record) => record.profileID === profile.id);
       const tokenTotals = profileRecords.filter((record) => record.outcome === "succeeded").reduce((total, record) => ({
         input: total.input + (Number(record.inputTokens) || 0),
         output: total.output + (Number(record.outputTokens) || 0),
       }), { input: 0, output: 0 });
-      const credentialStatus = !protocol.credentialRequired ? "llm.noCredentialStatus" : (profile.hasStoredCredential ? "llm.credentialStored" : (hasSessionCredential ? "llm.sessionCredential" : "llm.credentialNeeded"));
-      const protocolFields = (protocol.configurationRequirements || []).map((requirement) => protocolConfigurationField(requirement, profile)).join("");
       const requiresCompatibleEndpoint = ["openAICompatible", "custom"].includes(profile.type);
-      const endpointField = protocol.allowsEndpointOverride ? field("llm.apiEndpoint", requiresCompatibleEndpoint ? "llm.compatibleEndpointCopy" : "llm.apiEndpointCopy", "customEndpoint", profile.customEndpoint || "") : "";
-      const connectionPrivacy = supportsLLM ? `<section class="provider-pricing"><div class="section-header"><div><h3>${tx("llm.connectionPrivacy")}</h3><p class="section-copy">${tx("llm.connectionPrivacyCopy")}</p></div></div>${toggle("llm.fullRecords", "storesFullRequestRecords", Boolean(profile.storesFullRequestRecords))}<p class="small-copy">${tx("llm.fullRecordsCopy")}</p></section>` : "";
-      const setup = supportsLLM
-        ? `<div class="provider-setup"><div class="section-header"><div><h3>${tx("llm.connectionSetup")}</h3><p class="section-copy">${tx("llm.connectionSetupCopy")}</p></div></div>${endpointField}</div>${connectionPrivacy}`
-        : `<div class="provider-setup"><div class="section-header"><div><span class="eyebrow">${tx("llm.externalTool")}</span><h3>${tx("llm.platformDataSetup")}</h3><p class="section-copy">${tx("llm.dataAPIOnlyCopy")}</p></div></div>${endpointField}</div>`;
-      const credentialFormID = `${formID}-credential`;
-      const credentialFields = (protocol.credentialFields || []).map((fieldName) => field(credentialFieldLabelKey(fieldName), "", `credential.${fieldName}`, "", "password", "autocomplete=\"off\" autocapitalize=\"off\" spellcheck=\"false\"")).join("");
-      const credentials = protocol.credentialRequired ? `<div class="provider-credential-entry" data-form-id="${esc(credentialFormID)}">${credentialFields}<p class="small-copy">${tx("llm.keychainCopy")}</p><div class="provider-credential-row">${toggle("llm.storeInKeychain", "storeInKeychain", true)}<button class="secondary" data-action="saveProviderCredential" data-form="${esc(credentialFormID)}" data-profile-id="${esc(profile.id)}">${tx("llm.saveCredential")}</button>${(profile.hasStoredCredential || hasSessionCredential) ? `<button class="danger" data-action="removeProviderCredential" data-profile-id="${esc(profile.id)}">${tx("llm.removeKey")}</button>` : ""}</div></div>` : `<p class="small-copy">${tx("llm.noCredential")}</p>`;
+      const credentialField = protocol.credentialRequired ? field("llm.apiKeyOrToken", "", "credential", "", "password", `autocomplete=\"off\" autocapitalize=\"off\" spellcheck=\"false\"${profile.hasCredential ? ` placeholder=\"${esc(t("llm.replaceCredential"))}\"` : ""}`) : "";
       const endpointReady = !requiresCompatibleEndpoint || Boolean(profile.customEndpoint);
-      const testAvailable = supportsLLM && Boolean(profile.defaultModelIdentifier) && endpointReady && (!protocol.credentialRequired || profile.hasStoredCredential || hasSessionCredential);
-      const history = supportsLLM ? `<section class="provider-history"><div class="section-header"><div><h3>${tx("llm.requestHistory")}</h3><p class="section-copy">${tx("llm.requestHistoryCopy")}</p></div><span class="small-copy">${tx("llm.tokenTotals", { input: tokenTotals.input, output: tokenTotals.output })}</span></div>${profileRecords.length ? `<div class="list">${profileRecords.slice(0, 8).map((record) => `<div class="list-row"><span class="list-symbol">${record.outcome === "succeeded" ? "✓" : "!"}</span><span class="list-copy"><span class="list-title">${esc(record.model)} · ${esc(record.outcome)}</span><span class="list-meta">${esc(record.method)} · ${esc(record.endpoint)} · ${record.statusCode ?? "—"} · ${record.durationMilliseconds}ms · ${tx("llm.tokens", { input: record.inputTokens ?? "—", output: record.outputTokens ?? "—" })}</span>${record.requestContent || record.responseContent ? `<span class="request-record-content"><strong>${tx("llm.request")}</strong> ${esc(record.requestContent || "")}<strong>${tx("llm.response")}</strong> ${esc(record.responseContent || "")}</span>` : ""}</span></div>`).join("")}</div>` : `<p class="small-copy">${tx("llm.noRequests")}</p>`}</section>` : "";
-      const testButton = supportsLLM ? `<button class="gold-action" data-action="testProviderProfile" data-profile-id="${esc(profile.id)}"${disabled(!testAvailable || profile.testing)}>${tx(profile.testing ? "llm.testing" : "llm.test")}</button>` : "";
-      return `<section class="provider-panel" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}"><div class="provider-panel-head"><div><span class="eyebrow">${tx(supportsLLM ? "llm.providerPanel" : "llm.externalTool")}</span><h3>${esc(profile.name)}</h3><p class="section-copy">${tx(providerTypeLabelKey(profile.type))}</p></div><div class="provider-panel-status">${statusPill(t(credentialStatus), profile.hasStoredCredential ? "gold" : "muted")}</div></div><div class="provider-name-row">${field("llm.profileName", "", "name", profile.name)}<button class="secondary" data-action="configureProviderProfile" data-form="${esc(formID)}" data-profile-id="${esc(profile.id)}">${tx("llm.saveProfile")}</button>${testButton}<button class="danger" data-action="deleteProviderProfile" data-profile-id="${esc(profile.id)}">${tx("llm.deleteProfile")}</button></div><section class="provider-credential"><div class="section-header"><div><h3>${tx("llm.apiKey")}</h3></div>${credentials}</section>${protocolFields ? `<section class="provider-setup"><div class="section-header"><div><h3>${tx("llm.protocolSetup")}</h3><p class="section-copy">${tx("llm.protocolSetupCopy")}</p></div></div><div class="provider-setup-fields">${protocolFields}</div></section>` : ""}${setup}${history}</section>`;
+      const testAvailable = supportsLLM && Boolean(profile.defaultModelIdentifier) && endpointReady;
+      const testButton = supportsLLM ? `<button class="gold-action" data-action="testProviderProfile" data-form="${esc(formID)}" data-profile-id="${esc(profile.id)}"${disabled(!testAvailable || profile.testing)}>${tx(profile.testing ? "llm.testing" : "llm.test")}</button>` : "";
+      return `<section class="provider-panel" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}"><div class="provider-panel-head"><h3>${esc(profile.name)}</h3><div class="provider-panel-actions">${testButton}<button class="danger" data-action="confirmDeleteProviderProfile" data-profile-id="${esc(profile.id)}">${tx("llm.deleteProfile")}</button></div></div>${credentialField ? `<section class="provider-credential">${credentialField}</section>` : ""}<section class="provider-token-usage"><h4>${tx("llm.tokenUsage")}</h4><span class="small-copy">${tx("llm.tokenTotals", { input: tokenTotals.input, output: tokenTotals.output })}</span></section></section>`;
     };
     return `<div class="workspace provider-workspace">${header("llm.title", "llm.copy", t("llm.keyLibrary"), "gold")}<section class="provider-create" data-form-id="new-provider-profile-form">${groupedValueSelectField("llm.providerType", "", "type", "gemini", profileTypeGroups)}<button class="gold-action" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button><span class="small-copy">${tx("llm.createCopy")}</span></section><div class="provider-panels">${profiles.length ? profiles.map(panel).join("") : `<div class="empty">${tx("llm.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
   }
@@ -569,7 +525,7 @@
       const platformAPIProfiles = applicablePlatform?.apiProviderType
         ? profiles.filter((profile) => profile.type === applicablePlatform.apiProviderType)
         : [];
-      const boundPlatformAPIProfile = platformAPIProfiles.find((profile) => profile.hasStoredCredential || profile.hasSessionCredential);
+      const boundPlatformAPIProfile = platformAPIProfiles.find((profile) => profile.hasCredential);
       const platformDataStatus = !applicablePlatform
         ? t("bridge.platformDataChoose")
         : !applicableBinding
@@ -652,7 +608,7 @@
         })
         .sort((lhs, rhs) => lhs.name.localeCompare(rhs.name));
       const creatorLLMReady = Boolean(selectedLLMProfile &&
-        (!protocols[selectedLLMProfile.type]?.credentialRequired || selectedLLMProfile.hasStoredCredential || selectedLLMProfile.hasSessionCredential) &&
+        (!protocols[selectedLLMProfile.type]?.credentialRequired || selectedLLMProfile.hasCredential) &&
         (!["openAICompatible", "custom"].includes(selectedLLMProfile.type) || Boolean(selectedLLMProfile.customEndpoint))
       );
       const llmRunning = Boolean(state.inspect?.llmRunning);
@@ -1132,22 +1088,6 @@
       selectedCreatorTagByType.set(typeID, tagID);
       render();
       return;
-    }
-    if (action === "configureProviderProfile") {
-      const protocolConfiguration = {};
-      Object.keys(data).filter((key) => key.startsWith("protocol.")).forEach((key) => {
-        protocolConfiguration[key.slice("protocol.".length)] = data[key];
-        delete data[key];
-      });
-      data.protocolConfiguration = protocolConfiguration;
-    }
-    if (action === "saveProviderCredential") {
-      const credentials = {};
-      Object.keys(data).filter((key) => key.startsWith("credential.")).forEach((key) => {
-        credentials[key.slice("credential.".length)] = data[key];
-        delete data[key];
-      });
-      data.credentials = credentials;
     }
     if (action === "cancelTagPanel") {
       flushTagNameInput(button.closest("[data-tree-popover]")?.querySelector("input[data-live-tag-name]"));

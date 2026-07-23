@@ -861,86 +861,41 @@ h3 { font-size: 13px; }
 }
 
 .provider-panel-head,
-.provider-panel-status,
-.provider-name-row,
-.provider-credential-row { display: flex; }
+.provider-panel-actions,
+.provider-token-usage { display: flex; }
 
 .provider-panel-head { align-items: flex-start; justify-content: space-between; gap: 12px; padding-left: 4px; }
 .provider-panel-head .eyebrow { margin-bottom: 3px; color: var(--gold-text); }
 .provider-panel-head h3 { color: var(--ink); font-size: 15px; }
-.provider-panel-status { flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
-
-.provider-name-row { align-items: end; gap: 9px; padding-left: 4px; }
-.provider-name-row .field { flex: 1 1 auto; }
+.provider-panel-actions { flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 
 .provider-credential {
   margin-left: 4px;
-  padding: 12px;
+  padding: 9px 10px;
   border: 1px solid rgba(180, 83, 9, 0.24);
   border-radius: 10px;
   background: color-mix(in srgb, var(--gold-50) 72%, #fff);
 }
 
-.provider-credential-row { align-items: end; gap: 9px; margin-top: 11px; }
-.provider-credential-row .field { flex: 1 1 auto; }
-.provider-credential-entry { display: grid; gap: 9px; }
-.provider-credential-entry .field input { box-shadow: inset 0 0 0 1px rgba(180, 83, 9, 0.28); }
-.provider-credential-entry .small-copy { margin: 0; }
-.provider-credential-row .toggle-row { min-height: 38px; margin-right: auto; }
+.provider-credential .field { gap: 5px; }
+.provider-credential input { min-height: 34px; box-shadow: inset 0 0 0 1px rgba(180, 83, 9, 0.28); }
 
-.provider-pricing,
-.provider-history {
-  display: grid;
-  gap: 9px;
+.provider-token-usage {
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   margin-left: 4px;
-  padding: 11px 12px;
+  padding: 8px 10px;
   border: 1px solid rgba(30, 58, 138, 0.18);
-  border-radius: 10px;
+  border-radius: 9px;
   background: rgba(248, 250, 252, 0.88);
 }
-.provider-pricing-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.provider-pricing .small-copy { margin: 0; }
-.provider-history .section-header { gap: 12px; }
-.request-record-content { display: grid; gap: 3px; margin-top: 5px; color: #475569; white-space: pre-wrap; }
-
-.provider-setup {
-  display: flex;
-  flex-direction: column;
-  gap: 11px;
-  margin-left: 4px;
-  padding: 12px;
-  border: 1px solid rgba(8, 145, 178, 0.22);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--cyan-50) 62%, #fff);
-}
-
-.provider-setup-fields { display: grid; grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr)); gap: 10px; }
-.provider-setup-fields .field:nth-child(1) input { box-shadow: inset 0 0 0 1px rgba(30, 58, 138, 0.24); }
-.provider-setup-fields .field:nth-child(2) input,
-.provider-setup-fields .field:nth-child(3) input { box-shadow: inset 0 0 0 1px rgba(180, 83, 9, 0.24); }
-
-.provider-tools {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
-  align-items: end;
-  gap: 10px;
-  padding: 10px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.72);
-}
-
-.provider-tools .eyebrow { grid-column: 1 / -1; margin-bottom: -2px; color: var(--cyan-text); }
-.provider-tools .toggle-row { min-height: 38px; }
-.provider-api-note { margin-left: 4px; padding: 11px 12px; border-radius: 10px; color: var(--cyan-text); background: var(--cyan-50); }
-.provider-api-note .eyebrow { margin-bottom: 3px; color: var(--cyan-text); }
+.provider-token-usage h4 { color: var(--ink); font-size: 11px; letter-spacing: 0.08em; }
+.provider-token-usage .small-copy { margin: 0; }
 
 @media (max-width: 1040px) {
   .model-setup-fields,
-  .provider-setup-fields,
-  .provider-pricing-fields,
-  .provider-tools,
   .classifier-llm-config { grid-template-columns: 1fr; }
-  .provider-tools .eyebrow { grid-column: auto; }
 }
 
 .tree-create {
@@ -1393,12 +1348,8 @@ textarea:focus {
 .model-setup,
 .model-training-row,
 .provider-panel-head,
-.provider-name-row,
 .provider-credential,
-.provider-pricing,
-.provider-history,
-.provider-setup,
-.provider-tools {
+.provider-token-usage {
   padding-left: 0;
   padding-right: 0;
   background: #fff;
@@ -1418,12 +1369,8 @@ textarea:focus {
 .model-setup,
 .model-training-row,
 .provider-panel-head,
-.provider-name-row,
 .provider-credential,
-.provider-pricing,
-.provider-history,
-.provider-setup,
-.provider-tools {
+.provider-token-usage {
   border-bottom: 1px solid var(--line);
 }
 
@@ -1433,7 +1380,6 @@ textarea:focus {
 .creator-tag-navigation,
 .creator-tag-column,
 .creator-tag-card,
-.provider-api-note,
 .result-card,
 .list-row,
 .notice,
@@ -1446,7 +1392,6 @@ textarea:focus {
 
 .creator-classification-section,
 .classifier-llm-section,
-.provider-api-note,
 .result-card,
 .list-row,
 .notice,
