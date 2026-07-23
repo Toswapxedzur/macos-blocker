@@ -903,6 +903,18 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertThrowsError(try ProviderCredentialRecord(values: [.bearerToken: "token-value"]).validate(for: descriptor))
     }
 
+    func testClearingProviderCredentialOmitsItFromPersistedProfile() throws {
+        var profile = APIKeyProviderProfile(
+            type: .openAI,
+            credential: .init(values: [.apiKey: "secret-to-remove"])
+        )
+        profile.credential = nil
+
+        let encoded = try JSONEncoder().encode(profile)
+        XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("secret-to-remove"))
+        XCTAssertNil(try JSONDecoder().decode(APIKeyProviderProfile.self, from: encoded).credential)
+    }
+
     func testLegacyCatalogDecodesWithoutProviderProfiles() throws {
         let encoded = try JSONEncoder().encode(WorkspaceCatalog.starter())
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])

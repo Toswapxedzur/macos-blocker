@@ -80,6 +80,7 @@
   const selected = (value, expected) => value === expected ? " selected" : "";
   const checked = (value) => value ? " checked" : "";
   const disabled = (value) => value ? " disabled" : "";
+  const storedCredentialMask = "••••••••";
   const enumText = (family, value) => Object.hasOwn(strings, `enum.${family}.${value}`)
     ? t(`enum.${family}.${value}`)
     : String(value ?? "").replaceAll(/([A-Z])/g, " $1").replaceAll(/[._-]/g, " ").replace(/^./, (letter) => letter.toUpperCase());
@@ -106,16 +107,30 @@
     return values;
   }
 
-  function providerConnectionPayload(values) {
+  function providerConnectionPayload(values, formID) {
     const protocolConfiguration = {};
     Object.entries(values).forEach(([key, value]) => {
       if (key.startsWith("protocol.")) protocolConfiguration[key.slice("protocol.".length)] = value;
     });
-    return {
+    const payload = {
       customEndpoint: values.customEndpoint,
       testModelIdentifier: values.testModelIdentifier,
       protocolConfiguration,
     };
+    delete values.credential;
+    const credentialInput = formID
+      ? root.querySelector(`[data-form-id="${formID}"] [data-field="credential"]`)
+      : null;
+    if (!credentialInput) return payload;
+    const storedCredential = credentialInput.dataset.credentialStored === "true";
+    const value = credentialInput.value;
+    if (storedCredential && value === credentialInput.dataset.credentialMask) return payload;
+    if (storedCredential && value.trim() === "") {
+      payload.clearCredential = true;
+      return payload;
+    }
+    if (value.trim() !== "") payload.credential = value;
+    return payload;
   }
 
   function field(labelKey, hintKey, key, value, type = "text", extra = "") {
@@ -509,7 +524,7 @@
         input: total.input + (Number(record.inputTokens) || 0),
         output: total.output + (Number(record.outputTokens) || 0),
       }), { input: 0, output: 0 });
-      const credentialField = protocol.credentialRequired ? field("llm.apiKeyOrToken", "", "credential", "", "password", `autocomplete=\"off\" autocapitalize=\"off\" spellcheck=\"false\"${profile.hasCredential ? ` placeholder=\"${esc(t("llm.replaceCredential"))}\"` : ""}`) : "";
+      const credentialField = protocol.credentialRequired ? `<label class="field"><span class="field-label">${tx("llm.apiKeyOrToken")}</span><input type="password" data-field="credential" data-provider-connection autocomplete="off" autocapitalize="off" spellcheck="false"${profile.hasCredential ? ` data-credential-stored="true" data-credential-mask="${storedCredentialMask}" value="${storedCredentialMask}"` : ""}></label>` : "";
       const endpointField = protocol.allowsEndpointOverride ? field("llm.apiEndpoint", "", "customEndpoint", profile.customEndpoint || "", "text", "data-provider-connection") : "";
       const testModelField = supportsLLM && (protocol.allowsEndpointOverride || !profile.defaultModelIdentifier)
         ? field("llm.testModel", "", "testModelIdentifier", profile.testModelIdentifier || "", "text", `data-provider-connection placeholder=\"${esc(profile.defaultModelIdentifier || "model-name")}\"`)
@@ -1123,7 +1138,7 @@
         return;
       }
     }
-    if (action === "testProviderProfile") Object.assign(data, providerConnectionPayload(data));
+    if (action === "testProviderProfile") Object.assign(data, providerConnectionPayload(data, button.dataset.form));
     if (action === "selectCreatorTag") {
       const typeID = button.dataset.typeId;
       const tagID = button.dataset.tagId;
@@ -1256,6 +1271,23 @@
     render();
   });
 
+  document.addEventListener("focusin", (event) => {
+    const credentialInput = event.target.closest('input[data-credential-stored="true"]');
+    if (credentialInput?.value === credentialInput.dataset.credentialMask) credentialInput.select();
+  });
+
+  document.addEventListener("input", (event) => {
+    const credentialInput = event.target.closest('input[data-credential-stored="true"]');
+    if (!credentialInput || credentialInput.value !== "") return;
+    const panel = credentialInput.closest("[data-provider-panel]");
+    const formID = panel?.dataset.formId;
+    const profileID = panel?.dataset.providerId;
+    if (!formID || !profileID) return;
+    credentialInput.dataset.credentialStored = "false";
+    const values = collect(formID);
+    send("updateProviderConnection", { profileID, ...providerConnectionPayload(values, formID), clearCredential: true });
+  });
+
   document.addEventListener("change", (event) => {
     const languageControl = event.target.closest("[data-language-selection]");
     if (languageControl) {
@@ -1271,7 +1303,8 @@
       const formID = panel?.dataset.formId;
       const profileID = panel?.dataset.providerId;
       if (!formID || !profileID) return;
-      send("updateProviderConnection", { profileID, ...providerConnectionPayload(collect(formID)) });
+      const values = collect(formID);
+      send("updateProviderConnection", { profileID, ...providerConnectionPayload(values, formID) });
       return;
     }
     if (event.target.closest('[data-field="applicablePlatformID"]')) {
