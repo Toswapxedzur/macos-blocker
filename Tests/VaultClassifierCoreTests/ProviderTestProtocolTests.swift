@@ -40,8 +40,8 @@ final class ProviderTestProtocolTests: XCTestCase {
         XCTAssertEqual(parsed.usage, .init(inputTokens: 1_000, outputTokens: 500))
     }
 
-    func testRequestRecordPreservesMetadataAndOnlyExplicitContent() throws {
-        let profile = APIKeyProviderProfile(id: "gemini", type: .gemini, storesFullRequestRecords: true)
+    func testRequestRecordPreservesMetadataWithoutRequestOrResponseBodies() throws {
+        let profile = APIKeyProviderProfile(id: "gemini", type: .gemini)
         let record = ProviderRequestRecord(
             profileID: profile.id,
             provider: profile.type.rawValue,
@@ -54,9 +54,7 @@ final class ProviderTestProtocolTests: XCTestCase {
             inputTokens: 3,
             outputTokens: 1,
             classifierTypeID: "youtube-type",
-            outcome: "succeeded",
-            requestContent: ProviderTestProtocol.prompt,
-            responseContent: "OK"
+            outcome: "succeeded"
         )
         var catalog = WorkspaceCatalog.starter()
         catalog.providerProfiles = [profile]
@@ -65,7 +63,10 @@ final class ProviderTestProtocolTests: XCTestCase {
 
         let restored = try JSONDecoder().decode(WorkspaceCatalog.self, from: JSONEncoder().encode(catalog))
         XCTAssertEqual(restored.providerRequestRecords, [record])
-        XCTAssertFalse(String(decoding: try JSONEncoder().encode(restored), as: UTF8.self).contains("apiKey"))
+        let encoded = String(decoding: try JSONEncoder().encode(restored), as: UTF8.self)
+        XCTAssertFalse(encoded.contains("apiKey"))
+        XCTAssertFalse(encoded.contains("requestContent"))
+        XCTAssertFalse(encoded.contains("responseContent"))
 
         var legacyRecord = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as? [String: Any])
         legacyRecord["estimatedCostUSD"] = 0.0001

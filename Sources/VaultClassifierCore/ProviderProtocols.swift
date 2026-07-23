@@ -206,8 +206,8 @@ public struct ProviderProtocolDescriptor: Codable, Equatable, Sendable {
 }
 
 /// A credential-free request plan. Native modules may use this to decide
-/// whether a profile supports an operation before they ask Keychain for any
-/// secret. It deliberately carries field names, never credential values.
+/// whether a profile supports an operation before they read its local
+/// credential. It deliberately carries field names, never credential values.
 public struct ProviderRequestPlan: Equatable, Sendable {
     public var url: URL
     public var method: String
@@ -238,7 +238,7 @@ public struct ProviderRequestPlan: Equatable, Sendable {
 
 /// Native modules implement this protocol to consume a profile's declared
 /// request grammar. It has no network method: dispatch remains a separate,
-/// explicit action with a user-approved payload and Keychain credential.
+/// explicit action with a user-approved payload and local credential.
 public protocol ProviderRequestProtocol: Sendable {
     var descriptor: ProviderProtocolDescriptor { get }
     func requestPlan(

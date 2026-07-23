@@ -139,13 +139,6 @@ final class VaultClassifierViewModel: ObservableObject {
     private var collectionDiagnostics: CollectionDiagnosticsStore?
     private(set) var creatorAvatarCache: CreatorAvatarCache?
     private var latestLedgerID: UUID?
-    /// Credentials saved without Keychain are intentionally process-scoped.
-    /// They support a one-session explicit provider run without writing a raw
-    /// credential into the workspace catalog or to disk.
-    private var sessionProviderCredentials: [String: ProviderCredentialRecord] = [:]
-    /// Keep the AppKit object alive while its sheet is visible. WKScriptMessage
-    /// callbacks do not otherwise guarantee an `NSAlert` remains retained.
-    private var activeProviderCredentialAlert: NSAlert?
     private var testingProviderProfileIDs = Set<String>()
     private let vaultServiceEndpoint: VaultServiceEndpoint
     /// Model names are fetched from the selected provider on demand and remain
@@ -172,6 +165,7 @@ final class VaultClassifierViewModel: ObservableObject {
             self.coordinator = coordinator
             self.policies = coordinator.policies()
             self.localState = coordinator.snapshot()
+            try migrateLegacyProviderCredentials()
             self.manualPlatformID = self.localState?.workspaceCatalog.bindings.first?.id ?? "manual"
             loadResourceSettings(from: coordinator.snapshot().settings)
             loadAuditConfiguration(from: coordinator.snapshot().auditState.configuration)
@@ -202,6 +196,32 @@ final class VaultClassifierViewModel: ObservableObject {
         } catch {
             issue = error.localizedDescription
         }
+    }
+
+    /// Provider Keychain storage is retired. Consume any previous local record
+    /// once, move a valid credential into the local workspace profile, then
+    /// remove the former Keychain item so no compatibility path remains.
+    private func migrateLegacyProviderCredentials() throws {
+        guard var catalog = localState?.workspaceCatalog else {
+            LegacyProviderCredentialMigration.purgeRemaining()
+            return
+        }
+        defer { LegacyProviderCredentialMigration.purgeRemaining() }
+        var changed = false
+        for index in catalog.providerProfiles.indices {
+            let profileID = catalog.providerProfiles[index].id
+            let legacy = LegacyProviderCredentialMigration.consume(profileID: profileID)
+            guard catalog.providerProfiles[index].credential == nil,
+                  let legacy else { continue }
+            let descriptor = ProviderProtocolRegistry.descriptor(for: catalog.providerProfiles[index].type)
+            guard (try? legacy.validate(for: descriptor)) != nil else { continue }
+            catalog.providerProfiles[index].credential = legacy
+            catalog.providerProfiles[index].updatedAtMilliseconds = WorkspaceCatalog.now()
+            changed = true
+        }
+        guard changed else { return }
+        try coordinator?.updateWorkspaceCatalog(catalog)
+        localState = coordinator?.snapshot()
     }
 
     private func handleSharedHubRequest(_ request: SharedHubClient.Request) -> SharedHubClient.Reply {
@@ -404,57 +424,16 @@ final class VaultClassifierViewModel: ObservableObject {
         } catch { issue = error.localizedDescription }
     }
 
-    func renameProviderProfile(profileID: String, name: String) {
-        do {
-            let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !cleaned.isEmpty,
-                  var catalog = localState?.workspaceCatalog,
-                  let index = catalog.providerProfiles.firstIndex(where: { $0.id == profileID }) else {
-                throw WebBridgeInputError.invalidChoice("provider profile")
-            }
-            catalog.providerProfiles[index].name = cleaned
-            catalog.providerProfiles[index].updatedAtMilliseconds = WorkspaceCatalog.now()
-            try coordinator?.updateWorkspaceCatalog(catalog)
-            refreshLocalState()
-            issue = nil
-        } catch { issue = error.localizedDescription }
-    }
-
-    func configureProviderProfile(
-        profileID: String,
-        name: String,
-        customEndpoint: String?,
-        protocolConfiguration: [String: String],
-        storesFullRequestRecords: Bool?
-    ) {
-        do {
-            guard var catalog = localState?.workspaceCatalog,
-                  let index = catalog.providerProfiles.firstIndex(where: { $0.id == profileID }) else {
-                throw WebBridgeInputError.invalidChoice("provider profile")
-            }
-            var profile = catalog.providerProfiles[index]
-            let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !cleanedName.isEmpty else { throw WebBridgeInputError.invalidChoice("provider profile name") }
-            profile.name = cleanedName
-            let normalizedEndpoint = customEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines)
-            profile.customEndpoint = normalizedEndpoint?.isEmpty == false ? normalizedEndpoint : nil
-            profile.protocolConfiguration = protocolConfiguration
-            profile.storesFullRequestRecords = storesFullRequestRecords ?? false
-            profile.updatedAtMilliseconds = WorkspaceCatalog.now()
-            catalog.providerProfiles[index] = profile
-            try coordinator?.updateWorkspaceCatalog(catalog)
-            refreshLocalState()
-            issue = nil
-        } catch { issue = error.localizedDescription }
-    }
-
     /// A provider test is always an explicit user action. It sends only the
     /// fixed harmless prompt declared by `ProviderTestProtocol`, never browser
     /// evidence or catalog data, and records no credential or headers.
-    func testProviderProfile(profileID: String) {
+    func testProviderProfile(profileID: String, rawCredential: String? = nil) {
         guard !testingProviderProfileIDs.contains(profileID) else { return }
-        guard let profile = localState?.workspaceCatalog.providerProfiles.first(where: { $0.id == profileID }) else {
-            issue = WebBridgeInputError.invalidChoice("provider profile").localizedDescription
+        let profile: APIKeyProviderProfile
+        do {
+            profile = try applyProviderCredential(profileID: profileID, rawCredential: rawCredential)
+        } catch {
+            issue = error.localizedDescription
             return
         }
         testingProviderProfileIDs.insert(profileID)
@@ -489,9 +468,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     durationMilliseconds: duration,
                     inputTokens: parsed.usage.inputTokens,
                     outputTokens: parsed.usage.outputTokens,
-                    outcome: "succeeded",
-                    requestContent: profile.storesFullRequestRecords ? request.prompt : nil,
-                    responseContent: profile.storesFullRequestRecords ? parsed.content : nil
+                    outcome: "succeeded"
                 ))
                 self.issue = nil
             } catch {
@@ -694,9 +671,7 @@ final class VaultClassifierViewModel: ObservableObject {
                         inputTokens: run.usage.inputTokens,
                         outputTokens: run.usage.outputTokens ?? outputTokenLimit,
                         classifierTypeID: classifierType.id,
-                        outcome: "succeeded",
-                        requestContent: profile.storesFullRequestRecords ? run.prompt : nil,
-                        responseContent: profile.storesFullRequestRecords ? run.content : nil
+                        outcome: "succeeded"
                     ))
                     self.issue = nil
                 } catch {
@@ -726,8 +701,10 @@ final class VaultClassifierViewModel: ObservableObject {
     }
 
     private func providerCredential(for profileID: String) throws -> ProviderCredentialRecord {
-        if let credential = sessionProviderCredentials[profileID] { return credential }
-        if let credential = ProviderCredentialStore.loadCredentialRecord(for: profileID) { return credential }
+        if let profile = localState?.workspaceCatalog.providerProfiles.first(where: { $0.id == profileID }),
+           let credential = profile.credential {
+            return credential
+        }
         if let profile = localState?.workspaceCatalog.providerProfiles.first(where: { $0.id == profileID }),
            ProviderProtocolRegistry.descriptor(for: profile.type).credentialFields.isEmpty {
             return .init(values: [:])
@@ -1025,113 +1002,30 @@ final class VaultClassifierViewModel: ObservableObject {
         refreshLocalState()
     }
 
-    func presentProviderCredentialEntry(profileID: String) {
-        do {
-            guard activeProviderCredentialAlert == nil else { return }
-            guard let profile = localState?.workspaceCatalog.providerProfiles.first(where: { $0.id == profileID }) else {
-                throw WebBridgeInputError.invalidChoice("provider profile")
-            }
-            let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
-            guard !descriptor.credentialFields.isEmpty else {
-                refreshLocalState()
-                issue = nil
-                return
-            }
-            let alert = NSAlert()
-            alert.messageText = "Store provider credential"
-            alert.informativeText = "This value is entered directly into this Mac’s Keychain. It is not sent through the web workspace."
-            alert.addButton(withTitle: "Store in Keychain")
-            alert.addButton(withTitle: "Cancel")
-            let fields = descriptor.credentialFields.map { field in
-                (field, NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24)))
-            }
-            let stack = NSStackView()
-            stack.orientation = .vertical
-            stack.alignment = .leading
-            stack.spacing = 8
-            for (field, control) in fields {
-                let label = NSTextField(labelWithString: nativeCredentialLabel(field))
-                stack.addArrangedSubview(label)
-                stack.addArrangedSubview(control)
-            }
-            alert.accessoryView = stack
-            alert.window.initialFirstResponder = fields.first?.1
-            guard let window = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible }) else {
-                throw WebBridgeInputError.invalidChoice("application window")
-            }
-            NSApp.activate(ignoringOtherApps: true)
-            activeProviderCredentialAlert = alert
-            alert.beginSheetModal(for: window) { [weak self] response in
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    defer {
-                        self.activeProviderCredentialAlert = nil
-                        self.onWebStateChange?()
-                    }
-                    guard response == .alertFirstButtonReturn else { return }
-                    do {
-                        let record = ProviderCredentialRecord(values: Dictionary(uniqueKeysWithValues: fields.map { ($0.0, $0.1.stringValue) }))
-                        try ProviderCredentialStore.saveCredentialRecord(record, for: profileID, descriptor: descriptor)
-                        self.refreshLocalState()
-                        self.issue = nil
-                    } catch {
-                        self.issue = error.localizedDescription
-                    }
-                }
-            }
-            DispatchQueue.main.async { [weak self, weak window] in
-                guard self?.activeProviderCredentialAlert === alert else { return }
-                window?.makeFirstResponder(fields.first?.1)
-            }
-        } catch { issue = error.localizedDescription }
-    }
-
-    /// The LLM-assist panel deliberately accepts a masked direct entry field.
-    /// It forwards a credential only for this explicit save action, never in a
-    /// snapshot. The user may opt into persistent Keychain storage; otherwise
-    /// the validated value survives only for this process.
-    func saveProviderCredential(profileID: String, credentialValues: [String: String], storeInKeychain: Bool) {
-        do {
-            guard let profile = localState?.workspaceCatalog.providerProfiles.first(where: { $0.id == profileID }) else {
-                throw WebBridgeInputError.invalidChoice("provider profile")
-            }
-            let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
-            var values: [ProviderCredentialField: String] = [:]
-            for (rawField, value) in credentialValues {
-                guard let field = ProviderCredentialField(rawValue: rawField), values[field] == nil else {
-                    throw WebBridgeInputError.invalidChoice("provider credential")
-                }
-                values[field] = value
-            }
-            let record = ProviderCredentialRecord(values: values)
-            try record.validate(for: descriptor)
-            if storeInKeychain {
-                try ProviderCredentialStore.saveCredentialRecord(record, for: profileID, descriptor: descriptor)
-                sessionProviderCredentials.removeValue(forKey: profileID)
-            } else {
-                // An unchecked Keychain option means no credential is retained
-                // after the app exits. Remove any prior persistent replacement.
-                try ProviderCredentialStore.removeCredential(for: profileID)
-                sessionProviderCredentials[profileID] = record
-            }
-            refreshLocalState()
-            if profile.type.supportsLLMConfiguration {
-                fetchProviderModelCatalog(profileID: profileID, reportFailure: true)
-            }
-            issue = nil
-        } catch { issue = error.localizedDescription }
-    }
-
-    func removeProviderCredential(profileID: String) {
-        do {
-            guard localState?.workspaceCatalog.providerProfiles.contains(where: { $0.id == profileID }) == true else {
-                throw WebBridgeInputError.invalidChoice("provider profile")
-            }
-            try ProviderCredentialStore.removeCredential(for: profileID)
-            sessionProviderCredentials.removeValue(forKey: profileID)
-            refreshLocalState()
-            issue = nil
-        } catch { issue = error.localizedDescription }
+    /// Stores a replacement entered in the compact panel. Blank input keeps
+    /// the current local credential, so a saved key can be tested again
+    /// without being sent back into the WebView snapshot.
+    private func applyProviderCredential(profileID: String, rawCredential: String?) throws -> APIKeyProviderProfile {
+        guard var catalog = localState?.workspaceCatalog,
+              let index = catalog.providerProfiles.firstIndex(where: { $0.id == profileID }) else {
+            throw WebBridgeInputError.invalidChoice("provider profile")
+        }
+        var profile = catalog.providerProfiles[index]
+        let value = rawCredential?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !value.isEmpty else { return profile }
+        let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
+        guard descriptor.credentialFields.count == 1,
+              let field = descriptor.credentialFields.first else {
+            throw WebBridgeInputError.invalidChoice("provider credential")
+        }
+        let credential = ProviderCredentialRecord(values: [field: value])
+        try credential.validate(for: descriptor)
+        profile.credential = credential
+        profile.updatedAtMilliseconds = WorkspaceCatalog.now()
+        catalog.providerProfiles[index] = profile
+        try coordinator?.updateWorkspaceCatalog(catalog)
+        refreshLocalState()
+        return profile
     }
 
     func deleteProviderProfile(profileID: String) {
@@ -1149,8 +1043,6 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             catalog.providerRequestRecords.removeAll(where: { $0.profileID == profileID })
             try coordinator?.updateWorkspaceCatalog(catalog)
-            try ProviderCredentialStore.removeCredential(for: profileID)
-            sessionProviderCredentials.removeValue(forKey: profileID)
             refreshLocalState()
             issue = nil
         } catch { issue = error.localizedDescription }
@@ -1163,21 +1055,10 @@ final class VaultClassifierViewModel: ObservableObject {
         }
         presentNativeConfirmation(
             title: "Delete provider profile?",
-            message: "This removes the local setup and its Keychain credential. It cannot be undone.",
+            message: "This removes the local API key or token and token-usage records. It cannot be undone.",
             confirmTitle: "Delete profile"
         ) { [weak self] in
             self?.deleteProviderProfile(profileID: profileID)
-        }
-    }
-
-    private func nativeCredentialLabel(_ field: ProviderCredentialField) -> String {
-        switch field {
-        case .apiKey: return "API key"
-        case .bearerToken: return "Bearer token"
-        case .clientSecret: return "Client secret"
-        case .accessKeyID: return "AWS access key ID"
-        case .secretAccessKey: return "AWS secret access key"
-        case .sessionToken: return "AWS session token"
         }
     }
 
@@ -2292,9 +2173,7 @@ final class VaultClassifierViewModel: ObservableObject {
                         inputTokens: run.usage.inputTokens,
                         outputTokens: run.usage.outputTokens ?? outputTokenLimit,
                         classifierTypeID: classifierType.id,
-                        outcome: "succeeded",
-                        requestContent: profile.storesFullRequestRecords ? run.prompt : nil,
-                        responseContent: profile.storesFullRequestRecords ? run.content : nil
+                        outcome: "succeeded"
                     ))
                     self.issue = nil
                 } catch {
@@ -2414,9 +2293,7 @@ final class VaultClassifierViewModel: ObservableObject {
                             inputTokens: run.usage.inputTokens,
                             outputTokens: recordedOutputTokens,
                             classifierTypeID: classifierType.id,
-                            outcome: "succeeded",
-                            requestContent: profile.storesFullRequestRecords ? run.prompt : nil,
-                            responseContent: profile.storesFullRequestRecords ? run.content : nil
+                            outcome: "succeeded"
                         ))
                         successCount += 1
                     } catch {
@@ -3215,11 +3092,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     "name": profile.name,
                     "type": profile.type.rawValue,
                     "defaultModelIdentifier": profile.type.defaultModelIdentifier,
-                    "customEndpoint": profile.customEndpoint ?? NSNull(),
-                    "protocolConfiguration": profile.protocolConfiguration,
-                    "storesFullRequestRecords": profile.storesFullRequestRecords,
-                    "hasStoredCredential": ProviderCredentialStore.hasCredential(for: profile.id),
-                    "hasSessionCredential": sessionProviderCredentials[profile.id] != nil,
+                    "hasCredential": profile.credential != nil,
                     "testing": testingProviderProfileIDs.contains(profile.id),
                 ] as [String: Any]
             }
@@ -3238,8 +3111,6 @@ final class VaultClassifierViewModel: ObservableObject {
                     "outputTokens": record.outputTokens ?? NSNull(),
                     "classifierTypeID": record.classifierTypeID ?? NSNull(),
                     "outcome": record.outcome,
-                    "requestContent": record.requestContent ?? NSNull(),
-                    "responseContent": record.responseContent ?? NSNull(),
                     "createdAtMilliseconds": record.createdAtMilliseconds,
                 ] as [String: Any]
             }
@@ -3406,29 +3277,11 @@ final class VaultClassifierViewModel: ObservableObject {
                 confirmClassifierTypeDeletion(typeID: try webString(data, key: "typeID", limit: 256))
             case "createProviderProfile":
                 createProviderProfile(typeRaw: try webString(data, key: "type", limit: 32))
-            case "renameProviderProfile":
-                renameProviderProfile(
-                    profileID: try webString(data, key: "profileID", limit: 128),
-                    name: try webString(data, key: "name", limit: APIKeyProviderProfile.maximumNameLength)
-                )
-            case "configureProviderProfile":
-                configureProviderProfile(
-                    profileID: try webString(data, key: "profileID", limit: 128),
-                    name: try webString(data, key: "name", limit: APIKeyProviderProfile.maximumNameLength),
-                    customEndpoint: try webOptionalString(data, key: "customEndpoint", limit: APIKeyProviderProfile.maximumEndpointLength),
-                    protocolConfiguration: try webProviderConfiguration(data),
-                    storesFullRequestRecords: data["storesFullRequestRecords"] as? Bool
-                )
-            case "presentProviderCredentialEntry":
-                presentProviderCredentialEntry(profileID: try webString(data, key: "profileID", limit: 128))
-            case "saveProviderCredential":
-                saveProviderCredential(
-                    profileID: try webString(data, key: "profileID", limit: 128),
-                    credentialValues: try webProviderCredentials(data),
-                    storeInKeychain: data["storeInKeychain"] as? Bool ?? false
-                )
             case "testProviderProfile":
-                testProviderProfile(profileID: try webString(data, key: "profileID", limit: 128))
+                testProviderProfile(
+                    profileID: try webString(data, key: "profileID", limit: 128),
+                    rawCredential: try webOptionalString(data, key: "credential", limit: ProviderCredentialRecord.maximumCharacters)
+                )
             case "fetchCustomProviderModelCatalog":
                 fetchCustomProviderModelCatalog(profileID: try webString(data, key: "profileID", limit: 128))
             case "setLLMAssistActive":
@@ -3438,8 +3291,6 @@ final class VaultClassifierViewModel: ObservableObject {
                 )
             case "classifyCreatorBatchWithLLM":
                 classifyCreatorBatchWithLLM(typeID: try webString(data, key: "typeID", limit: 256))
-            case "removeProviderCredential":
-                removeProviderCredential(profileID: try webString(data, key: "profileID", limit: 128))
             case "confirmDeleteProviderProfile":
                 confirmProviderProfileDeletion(profileID: try webString(data, key: "profileID", limit: 128))
             case "renameLocalModel":
@@ -3666,36 +3517,6 @@ final class VaultClassifierViewModel: ObservableObject {
         }
         guard Set(values).count == values.count else { throw WebBridgeInputError.invalidChoice(key) }
         return values
-    }
-
-    private func webProviderConfiguration(_ data: [String: Any]) throws -> [String: String] {
-        guard let raw = data["protocolConfiguration"] as? [String: Any] else { return [:] }
-        guard raw.count <= ProviderConfigurationField.allCases.count else {
-            throw WebBridgeInputError.exceedsLimit("protocol configuration", ProviderConfigurationField.allCases.count)
-        }
-        return try Dictionary(uniqueKeysWithValues: raw.map { key, value in
-            guard key.count <= 64, let string = value as? String, string.count <= 512 else {
-                throw WebBridgeInputError.invalidChoice("protocol configuration")
-            }
-            return (key, string)
-        })
-    }
-
-    private func webProviderCredentials(_ data: [String: Any]) throws -> [String: String] {
-        guard let raw = data["credentials"] as? [String: Any] else {
-            throw WebBridgeInputError.missingValue("provider credential")
-        }
-        guard raw.count <= ProviderCredentialField.allCases.count else {
-            throw WebBridgeInputError.exceedsLimit("provider credential", ProviderCredentialField.allCases.count)
-        }
-        return try Dictionary(uniqueKeysWithValues: raw.map { key, value in
-            guard ProviderCredentialField(rawValue: key) != nil,
-                  let credential = value as? String,
-                  credential.count <= ProviderCredentialStore.maximumCredentialCharacters else {
-                throw WebBridgeInputError.invalidChoice("provider credential")
-            }
-            return (key, credential)
-        })
     }
 
     private func webCanvasCoordinate(_ data: [String: Any], key: String) throws -> Double {

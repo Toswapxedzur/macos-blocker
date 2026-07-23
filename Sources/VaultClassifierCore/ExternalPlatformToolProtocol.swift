@@ -9,7 +9,7 @@ public enum ExternalPlatformToolTarget: String, Codable, Equatable, Sendable, Ca
 }
 
 /// A credential-free definition exposed to a language model. The profile ID is
-/// local routing data; credentials remain in the native Keychain boundary.
+/// local routing data; credentials remain in native local storage.
 public struct ExternalPlatformToolDefinition: Equatable, Sendable, Identifiable {
     public var profileID: String
     public var profileName: String
