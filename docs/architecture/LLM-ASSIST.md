@@ -64,8 +64,8 @@ text model name.
   inventory.
 - A saved selected model remains editable if a transient catalog request fails.
   Changing a direct provider credential or endpoint clears its transient
-  catalog and detaches affected classifier attachments before another request
-  can use the changed connection.
+  catalog, but retains affected classifier attachments and their selected
+  models.
 
 An explicit **Test request** uses a bounded provider-specific health/test
 request. It does not send collected browser content. Provider classification

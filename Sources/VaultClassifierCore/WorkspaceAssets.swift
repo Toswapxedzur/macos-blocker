@@ -431,8 +431,8 @@ public enum ClassifierDecisionSource: String, Codable, Sendable, CaseIterable {
 
 /// The one explicit LLM decision configuration a classifier type may use.
 /// It contains no credential material: `providerProfileID` refers to a
-/// separate local profile whose credential is never included in this
-/// classifier configuration or a WebView snapshot.
+/// separate local profile. The credential is not duplicated into this
+/// classifier configuration.
 public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
     public static let maximumModelIdentifierLength = 256
     public static let defaultDailyOutputTokenLimit = 10_000

@@ -1137,10 +1137,6 @@ final class VaultClassifierViewModel: ObservableObject {
         if directModelConnectionChanged {
             providerModelCatalogs.removeValue(forKey: profileID)
             providerModelCatalogErrors.removeValue(forKey: profileID)
-            for typeIndex in catalog.classifierTypes.indices where
-                catalog.classifierTypes[typeIndex].llmAssistConfiguration?.providerProfileID == profileID {
-                catalog.classifierTypes[typeIndex].llmAssistConfiguration = nil
-            }
         }
         profile.updatedAtMilliseconds = WorkspaceCatalog.now()
         catalog.providerProfiles[index] = profile
