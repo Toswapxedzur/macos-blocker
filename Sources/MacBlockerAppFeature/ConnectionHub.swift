@@ -8,22 +8,19 @@ import Network
 /// that hub as local peers; when the owner quits, a remaining app retries the
 /// listener so the hub needs only one open app to stay available.
 final class ConnectionHub: ObservableObject {
-    static let protocolVersion = 3
+    static let protocolVersion = LocalHubAuthentication.protocolVersion
     static let localProgram = "macapp"
     private static let maxMessageBytes = 1_048_576
     private static let maxClassifierBodyBytes = 88_000
     private static let maxClassifierRequests = 32
-    private static let remotePrograms: Set<String> = [
-        "chrome", "edge", "firefox", "safari", "opera", "browser", "classifier"
-    ]
-    private static let browserPrograms: Set<String> = [
-        "chrome", "edge", "firefox", "safari", "opera", "browser"
-    ]
+    private static let remotePrograms = LocalHubAuthentication.browserPrograms.union(["classifier"])
+    private static let browserPrograms = LocalHubAuthentication.browserPrograms
 
     private struct Peer {
         let id: String
         var program: String
         var connected: Bool
+        let challenge: String
         let connection: NWConnection
     }
 
@@ -59,11 +56,17 @@ final class ConnectionHub: ObservableObject {
     private var wantsBrokerConnection = false
     private var hostingLocalHub = false
     private var lastBridgeAnnouncement: [String: Any]?
-    static func helloRejectionReason(_ obj: [String: Any]) -> String? {
+    static func helloRejectionReason(_ obj: [String: Any], challenge: String, secret: Data?) -> String? {
         let version = (obj["v"] as? NSNumber)?.intValue
         guard version == protocolVersion else { return "protocol-mismatch" }
         guard let program = obj["program"] as? String, remotePrograms.contains(program) else {
             return "invalid-program"
+        }
+        guard let secret,
+              obj["challenge"] as? String == challenge,
+              let proof = obj["proof"] as? String,
+              LocalHubAuthentication.verifyProof(program: program, challenge: challenge, proof: proof, secret: secret) else {
+            return "authentication-failed"
         }
         return nil
     }
@@ -271,7 +274,6 @@ final class ConnectionHub: ObservableObject {
         brokerSession = session
         brokerTask = task
         task.resume()
-        sendBroker(["kind": "hello", "v": Self.protocolVersion, "program": Self.localProgram], on: task)
         receiveBroker(on: task)
     }
 
@@ -302,6 +304,20 @@ final class ConnectionHub: ObservableObject {
             return
         }
         switch kind {
+        case "challenge":
+            guard (object["v"] as? NSNumber)?.intValue == Self.protocolVersion,
+                  let challenge = object["challenge"] as? String,
+                  let proof = try? LocalHubAuthentication.makeProof(program: Self.localProgram, challenge: challenge) else {
+                brokerDisconnected("authentication-unavailable")
+                return
+            }
+            sendBroker([
+                "kind": "hello",
+                "v": Self.protocolVersion,
+                "program": Self.localProgram,
+                "challenge": challenge,
+                "proof": proof,
+            ])
         case "welcome":
             guard (object["v"] as? NSNumber)?.intValue == Self.protocolVersion,
                   let hubProgram = object["hubProgram"] as? String,
@@ -390,9 +406,13 @@ final class ConnectionHub: ObservableObject {
             conn.cancel()
             return
         }
+        guard let challenge = try? LocalHubAuthentication.makeChallenge() else {
+            conn.cancel()
+            return
+        }
         let key = ObjectIdentifier(conn)
         lock.lock()
-        peers[key] = Peer(id: UUID().uuidString, program: "", connected: false, connection: conn)
+        peers[key] = Peer(id: UUID().uuidString, program: "", connected: false, challenge: challenge, connection: conn)
         lock.unlock()
 
         conn.stateUpdateHandler = { [weak self] state in
@@ -404,6 +424,7 @@ final class ConnectionHub: ObservableObject {
             }
         }
         conn.start(queue: queue)
+        send(conn, dict: ["kind": "challenge", "v": Self.protocolVersion, "challenge": challenge])
         receive(conn, key: key)
         queue.asyncAfter(deadline: .now() + 5) { [weak self] in
             guard let self else { return }
@@ -463,7 +484,15 @@ final class ConnectionHub: ObservableObject {
         }
         switch kind {
         case "hello":
-            if let reason = Self.helloRejectionReason(obj) {
+            lock.lock()
+            let challenge = peers[key]?.challenge
+            lock.unlock()
+            guard let challenge else {
+                rejectAndClose(conn, reason: "authentication-failed")
+                return
+            }
+            let secret = try? LocalHubAuthentication.sharedSecret()
+            if let reason = Self.helloRejectionReason(obj, challenge: challenge, secret: secret) {
                 rejectAndClose(conn, reason: reason)
                 return
             }
