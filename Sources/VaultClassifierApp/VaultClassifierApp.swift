@@ -138,8 +138,6 @@ final class VaultClassifierViewModel: ObservableObject {
     /// the most recent request start lets each type enforce its own selected
     /// pace without allowing a manual run to bypass an active queue's delay.
     private var lastLLMClassificationRequestStartedAt: Date?
-    @Published private(set) var creatorAvatarBackfillRunning = false
-    @Published private(set) var creatorAvatarBackfillFoundCount: Int?
 
     init() {
         do {
@@ -594,12 +592,14 @@ final class VaultClassifierViewModel: ObservableObject {
         allowedTagIDs: Set<String>
     ) -> [String: String] {
         Dictionary(uniqueKeysWithValues: allowedTagIDs.compactMap { identifier in
-            let description = taxonomy.nodes[identifier]?.description?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !description.isEmpty else {
-                return nil
-            }
-            return (identifier, description)
+            guard let node = taxonomy.nodes[identifier] else { return nil }
+            let name = node.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return nil }
+            let description = node.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let glossary = description.isEmpty
+                ? "Tag name: \(name)"
+                : "Tag name: \(name)\nDescription: \(description)"
+            return (identifier, glossary)
         })
     }
 
@@ -807,9 +807,9 @@ final class VaultClassifierViewModel: ObservableObject {
         return (failure.statusCode, failure.responseShape)
     }
 
-    /// Runs an explicit classification through the selected LLM. The one
-    /// platform profile selected by this classifier type is an optional,
-    /// bounded local tool; without a ready selected tool this remains direct.
+    /// Runs an explicit creator classification through the selected LLM. A
+    /// ready matching official platform API is mandatory: its bounded result
+    /// is fetched by the app before the LLM request, never by the model.
     private func runProviderClassification(
         profile: APIKeyProviderProfile,
         configuration: LLMAssistConfiguration,
@@ -820,112 +820,31 @@ final class VaultClassifierViewModel: ObservableObject {
         maximumOutputTokens: Int
     ) async throws -> ProviderClassificationRun {
         let mainCredential = try providerCredential(for: profile.id)
-        let expectedToolType = CollectionPlatformRegistry.definition(for: entry.platform)?.apiProviderType
-        let selectedTools: [APIKeyProviderProfile]
-        if configuration.externalToolEnabled, let expectedToolType {
-            selectedTools = catalog.providerProfiles
-                .filter { $0.type == expectedToolType }
-                .sorted { lhs, rhs in
-                    if lhs.updatedAtMilliseconds == rhs.updatedAtMilliseconds { return lhs.id < rhs.id }
-                    return lhs.updatedAtMilliseconds > rhs.updatedAtMilliseconds
-                }
-                .prefix(1)
-                .map { $0 }
-        } else {
-            selectedTools = []
+        guard CollectionPlatformRegistry.definition(for: entry.platform)?.apiProviderType != nil,
+              let officialProfile = readyPlatformAPIProfile(in: catalog, platformID: entry.platform) else {
+            throw WebBridgeInputError.invalidChoice("a ready official \(entry.platform) API connection")
         }
-        let readyTools = selectedTools.first { toolProfile in
-            let descriptor = ProviderProtocolRegistry.descriptor(for: toolProfile.type)
-            guard !descriptor.supportsLLMConfiguration,
-                  (try? toolProfile.validateForDispatch()) != nil else { return false }
-            return descriptor.credentialFields.isEmpty || (try? providerCredential(for: toolProfile.id)) != nil
-        }.map { [$0] } ?? []
-
-        guard !readyTools.isEmpty else {
-            let request = try ProviderClassificationProtocol.prepare(
-                profile: profile,
-                configuration: configuration,
-                entry: entry,
-                allowedTagIDs: allowedTagIDs,
-                tagDescriptions: tagDescriptions,
-                maximumOutputTokens: maximumOutputTokens
-            )
-            let response = try await performProviderRequest(plan: request.plan, body: request.body, credential: mainCredential, timeout: 30)
-            let parsed: ProviderTestParsedResponse
-            do {
-                parsed = try ProviderTestProtocol.parseResponse(response.data, format: request.plan.bodyFormat, operation: request.operation)
-            } catch {
-                throw ProviderResponseParseFailure(
-                    underlyingError: error,
-                    statusCode: response.response.statusCode,
-                    responseShape: ProviderTestProtocol.responseShape(for: response.data)
-                )
-            }
-            return .init(prompt: request.prompt, content: parsed.content, usage: parsed.usage, statusCode: response.response.statusCode)
-        }
-
-        var request = try ProviderToolCallingProtocol.prepare(
+        let enrichedEntry = try await addingOfficialPlatformEvidence(to: entry, profile: officialProfile)
+        let request = try ProviderClassificationProtocol.prepare(
             profile: profile,
             configuration: configuration,
-            entry: entry,
+            entry: enrichedEntry,
             allowedTagIDs: allowedTagIDs,
             tagDescriptions: tagDescriptions,
-            toolProfiles: readyTools,
             maximumOutputTokens: maximumOutputTokens
         )
-        var totalInputTokens: Int?
-        var totalOutputTokens: Int?
-        var totalToolCalls = 0
-        var remainingOutputTokens = maximumOutputTokens
-        for _ in 0..<3 {
-            let response = try await performProviderRequest(plan: request.plan, body: request.body, credential: mainCredential, timeout: 30)
-            let turn: ProviderToolCallingTurn
-            do {
-                turn = try ProviderToolCallingProtocol.parseResponse(response.data, format: request.plan.bodyFormat)
-            } catch {
-                throw ProviderResponseParseFailure(
-                    underlyingError: error,
-                    statusCode: response.response.statusCode,
-                    responseShape: ProviderTestProtocol.responseShape(for: response.data)
-                )
-            }
-            totalInputTokens = addingTokenUsage(totalInputTokens, turn.usage.inputTokens)
-            totalOutputTokens = addingTokenUsage(totalOutputTokens, turn.usage.outputTokens)
-            remainingOutputTokens -= turn.usage.outputTokens ?? request.maximumOutputTokens
-            guard !turn.toolCalls.isEmpty else {
-                return .init(
-                    prompt: request.prompt,
-                    content: turn.content,
-                    usage: .init(inputTokens: totalInputTokens, outputTokens: totalOutputTokens),
-                    statusCode: response.response.statusCode
-                )
-            }
-            guard remainingOutputTokens > 0 else {
-                throw WebBridgeInputError.invalidChoice("remaining daily output token budget")
-            }
-            guard totalToolCalls + turn.toolCalls.count <= 4 else {
-                throw ProviderToolCallingProtocolError.invalidToolContinuation
-            }
-            totalToolCalls += turn.toolCalls.count
-            var results: [ProviderToolCallingResult] = []
-            for call in turn.toolCalls {
-                results.append(await executeExternalToolCall(call, definitions: request.toolDefinitions, profiles: readyTools, entry: entry))
-            }
-            request = try ProviderToolCallingProtocol.continueRequest(
-                prepared: request,
-                profile: profile,
-                configuration: configuration,
-                turn: turn,
-                results: results,
-                maximumOutputTokens: min(ProviderToolCallingProtocol.maximumOutputTokens, remainingOutputTokens)
+        let response = try await performProviderRequest(plan: request.plan, body: request.body, credential: mainCredential, timeout: 30)
+        let parsed: ProviderTestParsedResponse
+        do {
+            parsed = try ProviderTestProtocol.parseResponse(response.data, format: request.plan.bodyFormat, operation: request.operation)
+        } catch {
+            throw ProviderResponseParseFailure(
+                underlyingError: error,
+                statusCode: response.response.statusCode,
+                responseShape: ProviderTestProtocol.responseShape(for: response.data)
             )
         }
-        throw ProviderToolCallingProtocolError.invalidToolContinuation
-    }
-
-    private func addingTokenUsage(_ current: Int?, _ additional: Int?) -> Int? {
-        guard let additional else { return current }
-        return (current ?? 0) + additional
+        return .init(prompt: request.prompt, content: parsed.content, usage: parsed.usage, statusCode: response.response.statusCode)
     }
 
     /// Chooses the one newest usable API connection for this platform. The
@@ -972,90 +891,15 @@ final class VaultClassifierViewModel: ObservableObject {
         return (data, http)
     }
 
-    private func executeExternalToolCall(
-        _ call: ExternalPlatformToolCall,
-        definitions: [ExternalPlatformToolDefinition],
-        profiles: [APIKeyProviderProfile],
-        entry: EntryEvidence
-    ) async -> ProviderToolCallingResult {
-        guard let definition = definitions.first(where: { $0.name == call.name }),
-              let profile = profiles.first(where: { $0.id == definition.profileID }) else {
-            return .init(id: call.id, name: call.name, content: "{\"ok\":false,\"error\":\"Unknown external-data tool.\"}")
-        }
-        let startedAt = Date()
-        var prepared: ExternalPlatformPreparedRequest?
-        do {
-            let request = try ExternalPlatformToolProtocol.prepare(profile: profile, entry: entry, call: call)
-            prepared = request
-            let credential = try providerCredential(for: profile.id)
-            var urlRequest = URLRequest(url: request.plan.url)
-            urlRequest.httpMethod = request.plan.method
-            urlRequest.httpBody = request.body
-            urlRequest.timeoutInterval = 20
-            request.plan.headers.forEach { urlRequest.setValue($0.value, forHTTPHeaderField: $0.key) }
-            try apply(credential: credential, to: &urlRequest, plan: request.plan)
-            let (data, response) = try await URLSession.shared.data(for: urlRequest)
-            guard let http = response as? HTTPURLResponse else { throw ProviderTestProtocolError.invalidResponse }
-            recordPlatformAPIRequest(
-                profile: profile,
-                plan: request.plan,
-                statusCode: http.statusCode,
-                durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
-                outcome: (200..<300).contains(http.statusCode) ? "succeeded" : "failed"
-            )
-            return .init(
-                id: call.id,
-                name: call.name,
-                content: ExternalPlatformToolProtocol.result(
-                    data: data,
-                    statusCode: http.statusCode,
-                    providerType: request.providerType,
-                    target: request.target
-                )
-            )
-        } catch {
-            if let prepared {
-                recordPlatformAPIRequest(
-                    profile: profile,
-                    plan: prepared.plan,
-                    statusCode: nil,
-                    durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
-                    outcome: "failed"
-                )
-            }
-            return .init(
-                id: call.id,
-                name: call.name,
-                content: ExternalPlatformToolProtocol.failureResult(
-                    providerType: profile.type,
-                    target: .entry,
-                    message: error.localizedDescription
-                )
-            )
-        }
-    }
-
-    /// Uses a platform credential only after public creator-page discovery has
-    /// produced no image URL. The API response is bounded and its image URL is
-    /// checked against the same platform-owned-host policy before persistence.
-    private func fetchCreatorAvatarURLUsingPlatformAPI(
-        candidate: CreatorAvatarBackfill.Candidate,
+    private func addingOfficialPlatformEvidence(
+        to entry: EntryEvidence,
         profile: APIKeyProviderProfile
-    ) async -> String? {
+    ) async throws -> EntryEvidence {
         let startedAt = Date()
-        var prepared: ExternalPlatformPreparedRequest?
+        var prepared: OfficialPlatformEvidencePreparedRequest?
+        var recorded = false
         do {
-            let call = ExternalPlatformToolCall(
-                id: UUID().uuidString,
-                name: ExternalPlatformToolProtocol.toolName(for: profile),
-                arguments: #"{"target":"creator"}"#
-            )
-            let request = try ExternalPlatformToolProtocol.prepare(profile: profile, entry: .init(
-                platform: candidate.platformID,
-                sourceID: candidate.creatorID,
-                surface: .page,
-                evidence: .init(title: "Creator profile")
-            ), call: call)
+            let request = try OfficialPlatformEvidenceProtocol.prepare(profile: profile, entry: entry)
             prepared = request
             let credential = try providerCredential(for: profile.id)
             var urlRequest = URLRequest(url: request.plan.url)
@@ -1073,17 +917,26 @@ final class VaultClassifierViewModel: ObservableObject {
                 durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
                 outcome: (200..<300).contains(http.statusCode) ? "succeeded" : "failed"
             )
-            guard (200..<300).contains(http.statusCode),
-                  let avatarURL = ExternalPlatformToolProtocol.creatorAvatarURL(
-                      data: data,
-                      providerType: request.providerType
-                  ),
-                  CreatorAvatarURLPolicy.isAccepted(platformID: candidate.platformID, value: avatarURL) else {
-                return nil
+            recorded = true
+            guard (200..<300).contains(http.statusCode) else {
+                throw ProviderTestHTTPError.status(http.statusCode)
             }
-            return avatarURL
+            let officialEvidence = try OfficialPlatformEvidenceProtocol.boundedEvidence(
+                data: data,
+                providerType: request.providerType,
+                target: request.target
+            )
+            var enriched = entry
+            let priorSummary = entry.evidence.summary?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let summary = [priorSummary, "Official platform API evidence:\n\(officialEvidence)"]
+                .compactMap { $0 }
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n\n")
+            enriched.evidence.summary = String(summary.prefix(EntryEvidenceValidator.summaryLimit))
+            try EntryEvidenceValidator().validate(enriched)
+            return enriched
         } catch {
-            if let prepared {
+            if let prepared, !recorded {
                 recordPlatformAPIRequest(
                     profile: profile,
                     plan: prepared.plan,
@@ -1092,7 +945,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     outcome: "failed"
                 )
             }
-            return nil
+            throw error
         }
     }
 
@@ -1472,8 +1325,6 @@ final class VaultClassifierViewModel: ObservableObject {
         llmMaximumTagCount: String?,
         llmRestrictToLeafTags: Bool,
         llmWebSearchEnabled: Bool,
-        llmExternalToolEnabled: Bool,
-        llmUsePlatformAPIKeyFallback: Bool,
         priority: [ClassifierDecisionSource]
     ) {
         do {
@@ -1552,8 +1403,6 @@ final class VaultClassifierViewModel: ObservableObject {
                         ),
                         restrictToLeafTags: llmRestrictToLeafTags,
                         webSearchEnabled: profile.type == .openAI && llmWebSearchEnabled,
-                        externalToolEnabled: selectedDefinition.apiProviderType != nil && llmExternalToolEnabled,
-                        usePlatformAPIKeyFallback: selectedDefinition.supportsCreatorAvatarAPIFallback && llmUsePlatformAPIKeyFallback,
                         isActive: retainsSavedModel ? existingLLMAssist?.isActive ?? false : false
                     )
                     try configuration.validate()
@@ -2161,69 +2010,6 @@ final class VaultClassifierViewModel: ObservableObject {
         } catch { issue = error.localizedDescription }
     }
 
-    /// Revisits only public creator pages the user already collected and only
-    /// after an explicit WebView action. Discovered images must pass the same
-    /// platform allowlist as browser-collected avatar URLs before they are
-    /// persisted and cached for the local WebView.
-    func backfillCreatorAvatars(typeID: String) {
-        guard !creatorAvatarBackfillRunning else { return }
-        do {
-            guard let catalog = localState?.workspaceCatalog,
-                  let classifierType = catalog.classifierTypes.first(where: { $0.id == typeID }),
-                  let dataset = catalog.datasets.first(where: { $0.id == classifierType.datasetID }) else {
-                throw WebBridgeInputError.invalidChoice("creator avatar backfill")
-            }
-            let usePlatformAPIKeyFallback = classifierType.llmAssistConfiguration?.usePlatformAPIKeyFallback == true
-            let candidates = CreatorAvatarBackfill.candidates(
-                entries: dataset.collectedEntries,
-                allowedPlatformIDs: Set(classifierType.applicablePlatformID.map { [$0] } ?? []),
-                includeUnavailableCreatorPages: usePlatformAPIKeyFallback
-            )
-            creatorAvatarBackfillFoundCount = nil
-            guard !candidates.isEmpty else {
-                creatorAvatarBackfillFoundCount = 0
-                issue = nil
-                onWebStateChange?()
-                return
-            }
-            creatorAvatarBackfillRunning = true
-            issue = nil
-            onWebStateChange?()
-            Task { @MainActor [weak self] in
-                var foundCount = 0
-                for candidate in candidates {
-                    guard let self else { return }
-                    var avatarURL = await CreatorAvatarBackfill.resolveAvatarURL(for: candidate)
-                    if avatarURL == nil,
-                       usePlatformAPIKeyFallback,
-                       let profile = self.readyPlatformAPIProfile(in: catalog, platformID: candidate.platformID) {
-                        avatarURL = await self.fetchCreatorAvatarURLUsingPlatformAPI(candidate: candidate, profile: profile)
-                    }
-                    guard let avatarURL else { continue }
-                    do {
-                        try self.storeCreatorAvatarURL(
-                            avatarURL,
-                            datasetID: classifierType.datasetID,
-                            platformID: candidate.platformID,
-                            creatorID: candidate.creatorID
-                        )
-                        self.cacheCreatorAvatar(remoteURL: avatarURL)
-                        foundCount += 1
-                    } catch {
-                        self.issue = error.localizedDescription
-                    }
-                }
-                guard let self else { return }
-                self.creatorAvatarBackfillRunning = false
-                self.creatorAvatarBackfillFoundCount = foundCount
-                self.refreshLocalState()
-                self.onWebStateChange?()
-            }
-        } catch {
-            issue = error.localizedDescription
-        }
-    }
-
     private func storeCreatorAvatarURL(
         _ avatarURL: String,
         datasetID: String,
@@ -2259,9 +2045,9 @@ final class VaultClassifierViewModel: ObservableObject {
         let entry: EntryEvidence
     }
 
-    /// An active model never receives a partial creator record. The prompt
-    /// contains only the creator identity and collected titles, so those are
-    /// the required fields for every retained entry for that creator.
+    /// An active model never receives a partial creator record. Collected
+    /// titles establish the local creator evidence, then the run adds one
+    /// required official platform API response before prompting the model.
     private func llmCreatorWorkItem(
         platformID: String,
         creatorID: String,
@@ -2297,6 +2083,7 @@ final class VaultClassifierViewModel: ObservableObject {
             representative: representative,
             entry: .init(
                 platform: platformID,
+                entryID: representative.entryID,
                 sourceID: creatorID,
                 surface: .page,
                 evidence: .init(
@@ -2964,10 +2751,6 @@ final class VaultClassifierViewModel: ObservableObject {
             "llmRunning": providerClassificationRunning,
             "result": result.map(webResult) ?? NSNull(),
         ]
-        let creatorAvatarBackfill: [String: Any] = [
-            "running": creatorAvatarBackfillRunning,
-            "foundCount": creatorAvatarBackfillFoundCount ?? NSNull(),
-        ]
         let policyItems: [[String: Any]] = policies.map { policy in
             [
                 "id": policy.id,
@@ -3143,8 +2926,6 @@ final class VaultClassifierViewModel: ObservableObject {
                             "maximumTagCount": configuration.maximumTagCount,
                             "restrictToLeafTags": configuration.restrictToLeafTags,
                             "webSearchEnabled": configuration.webSearchEnabled,
-                            "externalToolEnabled": configuration.externalToolEnabled,
-                            "usePlatformAPIKeyFallback": configuration.usePlatformAPIKeyFallback,
                             "isActive": configuration.isActive,
                         ] as [String: Any]
                     } ?? NSNull(),
@@ -3211,10 +2992,10 @@ final class VaultClassifierViewModel: ObservableObject {
                 })
         assets["bindings"] = catalog.bindings.map { binding in
                 let definition = CollectionPlatformRegistry.definition(for: binding.id)
-                return ["id": binding.id, "name": binding.name, "browser": binding.browser, "treeID": binding.treeID, "datasetID": binding.datasetID, "activeClassifierTypeID": binding.activeClassifierTypeID ?? NSNull(), "activeModelID": binding.activeModelID ?? NSNull(), "policyID": binding.policyID ?? NSNull(), "collectionEnabled": binding.collectionEnabled, "sourceKind": definition?.sourceKind.rawValue ?? CollectionSourceKind.creator.rawValue, "supportsLocalModel": definition?.supportsLocalModel ?? false, "supportsLLMAssist": definition?.supportsLLMAssist ?? false, "supportsCreatorAvatarAPIFallback": definition?.supportsCreatorAvatarAPIFallback ?? false] as [String: Any]
+                return ["id": binding.id, "name": binding.name, "browser": binding.browser, "treeID": binding.treeID, "datasetID": binding.datasetID, "activeClassifierTypeID": binding.activeClassifierTypeID ?? NSNull(), "activeModelID": binding.activeModelID ?? NSNull(), "policyID": binding.policyID ?? NSNull(), "collectionEnabled": binding.collectionEnabled, "sourceKind": definition?.sourceKind.rawValue ?? CollectionSourceKind.creator.rawValue, "supportsLocalModel": definition?.supportsLocalModel ?? false, "supportsLLMAssist": definition?.supportsLLMAssist ?? false] as [String: Any]
             }
         assets["collectionPlatforms"] = CollectionPlatformRegistry.definitions.map { definition in
-                ["id": definition.id, "name": definition.name, "browser": definition.browser, "sourceKind": definition.sourceKind.rawValue, "collectorAvailable": definition.collectorAvailable, "supportsLocalModel": definition.supportsLocalModel, "supportsLLMAssist": definition.supportsLLMAssist, "apiProviderType": definition.apiProviderType?.rawValue ?? NSNull(), "supportsCreatorAvatarAPIFallback": definition.supportsCreatorAvatarAPIFallback] as [String: Any]
+                ["id": definition.id, "name": definition.name, "browser": definition.browser, "sourceKind": definition.sourceKind.rawValue, "collectorAvailable": definition.collectorAvailable, "supportsLocalModel": definition.supportsLocalModel, "supportsLLMAssist": definition.supportsLLMAssist, "apiProviderType": definition.apiProviderType?.rawValue ?? NSNull()] as [String: Any]
             }
         assets["providerModelCatalogs"] = providerModelCatalogs
         assets["providerModelCatalogErrors"] = providerModelCatalogErrors
@@ -3259,7 +3040,6 @@ final class VaultClassifierViewModel: ObservableObject {
             "training": trainingPayload,
             "backup": backupPayload,
             "assets": assets,
-            "creatorAvatarBackfill": creatorAvatarBackfill,
             "bridge": sharedHub,
             "collectionDiagnostics": collectionDiagnosticsPayload,
         ]
@@ -3334,8 +3114,6 @@ final class VaultClassifierViewModel: ObservableObject {
                     llmMaximumTagCount: try webOptionalString(data, key: "llmMaximumTagCount", limit: 4),
                     llmRestrictToLeafTags: data["llmRestrictToLeafTags"] as? Bool ?? false,
                     llmWebSearchEnabled: data["llmWebSearchEnabled"] as? Bool ?? false,
-                    llmExternalToolEnabled: data["llmExternalToolEnabled"] as? Bool ?? false,
-                    llmUsePlatformAPIKeyFallback: data["llmUsePlatformAPIKeyFallback"] as? Bool ?? false,
                     priority: priority
                 )
             case "selectLLMProvider":
@@ -3431,8 +3209,6 @@ final class VaultClassifierViewModel: ObservableObject {
                     tagIDs: try webStringArray(data, key: "tagIDs", limit: CreatorClassificationRecord.maximumTagIDs, elementLimit: 256),
                     negativeTagIDs: try webStringArray(data, key: "negativeTagIDs", limit: CreatorClassificationRecord.maximumTagIDs, elementLimit: 256)
                 )
-            case "backfillCreatorAvatars":
-                backfillCreatorAvatars(typeID: try webString(data, key: "typeID", limit: 256))
             case "classifyCreatorWithLLM":
                 classifyCreatorWithLLM(
                     typeID: try webString(data, key: "typeID", limit: 256),

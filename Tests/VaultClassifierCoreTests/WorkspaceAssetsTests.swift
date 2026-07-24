@@ -21,7 +21,9 @@ final class WorkspaceAssetsTests: XCTestCase {
             XCTAssertFalse(platform.supportsLocalModel)
             XCTAssertFalse(platform.supportsLLMAssist)
         }
-        for platformID in ["youtube", "tiktok", "facebook", "instagram", "twitter", "bilibili"] {
+        XCTAssertTrue(CollectionPlatformRegistry.definition(for: "bilibili")?.supportsLocalModel == true)
+        XCTAssertFalse(CollectionPlatformRegistry.definition(for: "bilibili")?.supportsLLMAssist == true)
+        for platformID in ["youtube", "tiktok", "facebook", "instagram", "twitter"] {
             let platform = try! XCTUnwrap(CollectionPlatformRegistry.definition(for: platformID))
             XCTAssertTrue(platform.supportsLocalModel)
             XCTAssertTrue(platform.supportsLLMAssist)
@@ -452,13 +454,14 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(decoded.llmAssistConfiguration?.extraDirection, "")
         XCTAssertEqual(decoded.llmAssistConfiguration?.classificationRequestsPerMinute, LLMAssistConfiguration.defaultClassificationRequestsPerMinute)
         XCTAssertEqual(decoded.llmAssistConfiguration?.batchSize, LLMAssistConfiguration.defaultBatchSize)
-        XCTAssertFalse(decoded.llmAssistConfiguration?.usePlatformAPIKeyFallback ?? true)
         XCTAssertFalse(decoded.llmAssistConfiguration?.isActive ?? true)
 
         let reencoded = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
         XCTAssertFalse(reencoded.contains("inputCostUSDPerMillion"))
         XCTAssertFalse(reencoded.contains("outputCostUSDPerMillion"))
         XCTAssertFalse(reencoded.contains("maximumTokens"))
+        XCTAssertFalse(reencoded.contains("externalToolEnabled"))
+        XCTAssertFalse(reencoded.contains("usePlatformAPIKeyFallback"))
     }
 
     func testSelectedLLMProviderPersistsBeforeAModelIsAttached() throws {

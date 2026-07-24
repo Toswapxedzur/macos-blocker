@@ -9,7 +9,7 @@ Every profile exposed in the LLM Assist provider picker is ready for its
 declared, explicit operation once the user supplies a valid account credential
 and any shown connection fields. "Ready" here means the app has an ordinary
 saved credential field, a bounded connection test, a model/classification request
-grammar (for language models) or platform health/tool route (for platform
+grammar (for language models) or platform health/evidence route (for platform
 data), and regression coverage. It does not guarantee that a provider account,
 model, regional availability, quota, or OAuth grant is available to a
 particular user.
@@ -19,24 +19,25 @@ particular user.
   both explicit HTTPS OpenAI Chat-Completions connections; their owner supplies
   the endpoint and model.
 - **Platform data:** YouTube Data, Twitch, Reddit, X, TikTok Display,
-  Instagram Graph, and Facebook Graph. They support only explicit connection
-  tests and bounded native tool/creator-avatar reads; they are never language
-  models and never dispatch automatically.
+  Instagram Graph, and Facebook Graph. They support explicit connection tests
+  and the bounded official evidence fetch required for a matching creator LLM
+  classification; they are never language models.
 
 ## Ownership boundary
 
 A **provider profile** is a reusable connection. It contains a provider type,
 endpoint/protocol configuration, and an optional non-secret test-model
 identifier. It does not select a classifier type, platform, policy, model for
-classification, decision weight, or tool priority.
+classification, or decision weight.
 
 A **classifier type** owns one optional LLM Assist attachment. The attachment
 selects exactly one provider profile and one fetched model identifier, plus its
 daily output-token allowance, **per-request max-token** cap (default 4,096),
 optional **extra direction**, classification pace, batch size, returned-tag
-limit, leaf-only constraint, and explicit tool/API-fallback choices. Changing
-the provider or model deactivates the attachment; it never causes background
-classification.
+limit, leaf-only constraint, and optional provider-native web search. A ready
+matching official platform API connection is required before the attachment can
+classify a creator. Changing the provider or model deactivates the attachment;
+it never causes background classification.
 
 The type also retains its selected provider while no model has been attached
 yet. This is only an editor choice: it cannot activate a provider, dispatch a
@@ -105,8 +106,8 @@ history.
 A language-model test succeeds only after a 2xx response matches that
 provider's response grammar and contains generated text. An empty or unrelated
 JSON envelope is an error, not a green "provider is ready" result. Cohere test,
-classification, and tool requests explicitly set `stream: false` because the
-native transport accepts one bounded JSON response rather than an SSE stream.
+classification requests explicitly set `stream: false` because the native
+transport accepts one bounded JSON response rather than an SSE stream.
 
 When a 2xx provider response cannot be parsed, its local request record retains
 the HTTP status and a bounded **response shape** only: JSON kind, safe field
@@ -116,21 +117,26 @@ header, or request body. The provider panel exposes the latest such diagnostic
 so a later failure can be diagnosed without replaying or logging private model
 output.
 
-## Tools and external platform data
+## Official platform evidence
 
-An LLM attachment may opt into a matching platform-data tool. Native code
-chooses at most one ready matching profile deterministically; the model cannot
-choose credentials, arbitrary URLs, arbitrary identifiers, or a different
-platform profile. Tool calls and results are bounded and retained only for the
-one in-memory exchange. When no ready matching tool exists, classification
-continues without one.
+Before each LLM creator classification, native code deterministically selects
+the newest ready matching official platform API profile and fetches one bounded
+record: the creator where the API supports it, otherwise the representative
+collected entry. The model cannot choose credentials, URLs, identifiers, API
+profiles, or whether to perform the fetch. If the profile is missing, the API
+request fails, or the response is unreadable, the classification does not run.
+
+The prior static public-creator-page scraper and its avatar/API-fallback
+controls are obsolete and removed. Browser-collected, verified avatar URLs may
+still be cached for display; classification evidence comes only from collected
+entries and the official API response.
 
 ## Tests that define the boundary
 
 - `WorkspaceAssetsTests`: catalog reconciliation, plain provider-credential
   persistence, profile validation, and legacy-state cleanup.
 - `ProviderTestProtocolTests`: provider test/classification request grammar,
-  configurable output limits, tag descriptions/extra direction, bounded tools,
-  and direct provider model-list routing.
+  configurable output limits, tag descriptions/extra direction, required
+  official-evidence routing, and direct provider model-list routing.
 - `ProviderModelCatalogStoreTests`: restart persistence and profile-removal
   cleanup for the bounded model-identifier cache.
