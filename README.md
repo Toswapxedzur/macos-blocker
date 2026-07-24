@@ -19,11 +19,11 @@ description.
   non-secret connection configuration plus a visible local credential field.
   A classifier type explicitly selects one provider/model and owns its budget,
   request pace, tag constraints, and web-search setting. Each
-  creator LLM classification uses a bounded matching official-platform API
-  fetch where that API can read the collected creator. TikTok, Instagram, and
-  Bilibili instead require enabled hosted web research: either the classifier
-  provider searches directly, or a separately selected search-capable provider
-  produces a transient memo. There is no static creator-page fallback.
+  creator LLM classification composes independent evidence layers: bounded
+  matching official-platform API evidence when an adapter exists, plus
+  optional hosted web research on every platform. Either the classifier
+  provider searches directly or any separately selected search-capable
+  provider produces a transient memo. There is no static creator-page fallback.
 - An authenticated v4 local browser hub at `ws://127.0.0.1:8787`. Mac Vault
   or Vault Classifier hosts it; unavailable peers, invalid frames, and
   timeouts fail open.

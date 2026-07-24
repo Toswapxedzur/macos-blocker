@@ -229,6 +229,24 @@ final class ProviderTestProtocolTests: XCTestCase {
         )
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: request.body) as? [String: Any])
         XCTAssertEqual((body["tools"] as? [[String: String]])?.first?["type"], "web_search")
+        XCTAssertTrue(request.prompt.contains("Use web search only when the provided evidence is insufficient"))
+
+        let openAIWithSeparateGeminiResearch = try ProviderClassificationProtocol.prepare(
+            profile: openAI,
+            configuration: .init(
+                providerProfileID: openAI.id,
+                modelIdentifier: "gpt-4.1-mini",
+                webSearchEnabled: true,
+                webResearchProviderProfileID: "gemini-research",
+                webResearchModelIdentifier: "gemini-3.1-flash-lite"
+            ),
+            entry: .init(platform: "youtube", entryID: "entry", surface: .page, evidence: .init(title: "Creator: RetroTech")),
+            allowedTagIDs: ["technology"]
+        )
+        let openAIWithSeparateResearchBody = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: openAIWithSeparateGeminiResearch.body) as? [String: Any]
+        )
+        XCTAssertNil(openAIWithSeparateResearchBody["tools"])
 
         let gemini = APIKeyProviderProfile(id: "gemini", type: .gemini)
         let geminiConfiguration = LLMAssistConfiguration(
@@ -269,7 +287,7 @@ final class ProviderTestProtocolTests: XCTestCase {
 
     func testSeparateWebResearchUsesOnlyADeclaredHostedSearchProvider() throws {
         let entry = EntryEvidence(
-            platform: "tiktok",
+            platform: "youtube",
             entryID: "entry",
             sourceID: "creator",
             surface: .page,
@@ -284,6 +302,7 @@ final class ProviderTestProtocolTests: XCTestCase {
         let openAIBody = try XCTUnwrap(JSONSerialization.jsonObject(with: openAIRequest.body) as? [String: Any])
         XCTAssertEqual((openAIBody["tools"] as? [[String: String]])?.first?["type"], "web_search")
         XCTAssertTrue(openAIRequest.prompt.contains("not individual videos"))
+        XCTAssertTrue(openAIRequest.prompt.contains("Use hosted web search only when that evidence is insufficient"))
 
         let gemini = APIKeyProviderProfile(type: .gemini)
         let geminiRequest = try ProviderWebResearchProtocol.prepare(

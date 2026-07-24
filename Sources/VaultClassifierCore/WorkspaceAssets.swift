@@ -853,15 +853,6 @@ public enum CollectionSourceKind: String, Equatable, Sendable, CaseIterable {
     case server
 }
 
-/// The app either retrieves official public evidence itself, or deliberately
-/// leaves retrieval to an explicitly enabled provider-native web-search tool.
-/// The latter is reserved for platforms whose official API cannot read an
-/// arbitrary creator collected from the user's feed.
-public enum LLMCreatorEvidenceStrategy: String, Equatable, Sendable {
-    case officialPlatformAPI
-    case providerWebSearch
-}
-
 public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
     public var id: String
     public var name: String
@@ -880,9 +871,6 @@ public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
     /// A manual-only platform can retain public entries and human tags, but
     /// must never be sent through an LLM-assist classification path.
     public var supportsLLMAssist: Bool
-    /// The required evidence path before an LLM receives a collected creator.
-    public var llmCreatorEvidenceStrategy: LLMCreatorEvidenceStrategy
-
     /// The optional local public-data API profile that belongs to this
     /// platform. A missing value means the platform keeps local collected data
     /// only; it never causes a generic provider profile to be selected.
@@ -907,8 +895,7 @@ public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
         sourceKind: CollectionSourceKind = .creator,
         collectorAvailable: Bool = false,
         supportsLocalModel: Bool = true,
-        supportsLLMAssist: Bool = true,
-        llmCreatorEvidenceStrategy: LLMCreatorEvidenceStrategy = .officialPlatformAPI
+        supportsLLMAssist: Bool = true
     ) {
         self.id = id
         self.name = name
@@ -917,21 +904,20 @@ public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
         self.collectorAvailable = collectorAvailable
         self.supportsLocalModel = supportsLocalModel
         self.supportsLLMAssist = supportsLLMAssist
-        self.llmCreatorEvidenceStrategy = llmCreatorEvidenceStrategy
     }
 }
 
 public enum CollectionPlatformRegistry {
     public static let definitions: [CollectionPlatformDefinition] = [
         .init(id: "youtube", name: "YouTube", collectorAvailable: true),
-        .init(id: "tiktok", name: "TikTok", collectorAvailable: true, llmCreatorEvidenceStrategy: .providerWebSearch),
+        .init(id: "tiktok", name: "TikTok", collectorAvailable: true),
         .init(id: "facebook", name: "Facebook", collectorAvailable: true),
-        .init(id: "instagram", name: "Instagram", collectorAvailable: true, llmCreatorEvidenceStrategy: .providerWebSearch),
+        .init(id: "instagram", name: "Instagram", collectorAvailable: true),
         .init(id: "twitch", name: "Twitch", collectorAvailable: true, supportsLocalModel: false, supportsLLMAssist: false),
         .init(id: "reddit", name: "Reddit", sourceKind: .subreddit, collectorAvailable: true, supportsLocalModel: false, supportsLLMAssist: false),
         .init(id: "discord", name: "Discord", sourceKind: .server, collectorAvailable: true, supportsLocalModel: false, supportsLLMAssist: false),
         .init(id: "twitter", name: "Twitter / X", sourceKind: .account, collectorAvailable: true),
-        .init(id: "bilibili", name: "Bilibili", collectorAvailable: true, llmCreatorEvidenceStrategy: .providerWebSearch),
+        .init(id: "bilibili", name: "Bilibili", collectorAvailable: true),
     ]
 
     public static func definition(for id: String) -> CollectionPlatformDefinition? {

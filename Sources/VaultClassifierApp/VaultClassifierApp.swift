@@ -812,12 +812,9 @@ final class VaultClassifierViewModel: ObservableObject {
         return (failure.statusCode, failure.responseShape)
     }
 
-    /// Runs an explicit creator classification through the selected LLM. Most
-    /// platforms first receive one app-owned official API result. TikTok,
-    /// Instagram, and Bilibili instead need hosted web research because their
-    /// official APIs cannot read arbitrary collected creators. That research
-    /// can run on the classifier provider itself or on one explicit separate
-    /// provider connection.
+    /// Runs an explicit creator classification through the selected LLM.
+    /// Official platform evidence and hosted web research are independent:
+    /// either or both may enrich the same creator before classification.
     private func runProviderClassification(
         profile: APIKeyProviderProfile,
         configuration: LLMAssistConfiguration,
@@ -833,25 +830,20 @@ final class VaultClassifierViewModel: ObservableObject {
         guard let platform = CollectionPlatformRegistry.definition(for: entry.platform) else {
             throw WebBridgeInputError.invalidChoice("creator platform")
         }
-        let enrichedEntry: EntryEvidence
+        var enrichedEntry = entry
         var researchOutputTokens = 0
-        switch platform.llmCreatorEvidenceStrategy {
-        case .officialPlatformAPI:
+        if platform.apiProviderType != nil {
             guard let officialProfile = readyPlatformAPIProfile(in: catalog, platformID: entry.platform) else {
                 throw WebBridgeInputError.invalidChoice("a ready official \(entry.platform) API connection")
             }
             enrichedEntry = try await addingOfficialPlatformEvidence(to: entry, profile: officialProfile)
-        case .providerWebSearch:
-            guard configuration.webSearchEnabled else {
-                throw WebBridgeInputError.invalidChoice("provider web search enabled for \(platform.name)")
-            }
-            if profile.type.supportsProviderNativeWebSearch {
-                enrichedEntry = entry
-            } else {
+        }
+        if configuration.webSearchEnabled {
+            if configuration.webResearchProviderProfileID != nil {
                 let research = try webResearchProfile(in: catalog, configuration: configuration)
                 do {
                     let result = try await addingProviderWebResearch(
-                        to: entry,
+                        to: enrichedEntry,
                         profile: research.profile,
                         modelIdentifier: research.modelIdentifier,
                         classifierTypeID: classifierTypeID,
@@ -865,6 +857,8 @@ final class VaultClassifierViewModel: ObservableObject {
                 } catch {
                     throw ProviderWebResearchFailure(underlyingError: error)
                 }
+            } else if !profile.type.supportsProviderNativeWebSearch {
+                throw WebBridgeInputError.invalidChoice("a ready web research provider and fetched model")
             }
         }
         let effectiveMaximumOutputTokens = min(
@@ -891,7 +885,9 @@ final class VaultClassifierViewModel: ObservableObject {
             body: request.body,
             credential: mainCredential,
             timeout: 30,
-            followAnthropicSearchPause: profile.type == .anthropic && configuration.webSearchEnabled
+            followAnthropicSearchPause: profile.type == .anthropic &&
+                configuration.webSearchEnabled &&
+                configuration.webResearchProviderProfileID == nil
         )
         let parsed: ProviderTestParsedResponse
         do {
@@ -1051,17 +1047,16 @@ final class VaultClassifierViewModel: ObservableObject {
         guard let platform = CollectionPlatformRegistry.definition(for: platformID) else {
             throw WebBridgeInputError.invalidChoice("creator platform")
         }
-        switch platform.llmCreatorEvidenceStrategy {
-        case .officialPlatformAPI:
+        if platform.apiProviderType != nil {
             guard readyPlatformAPIProfile(in: catalog, platformID: platformID) != nil else {
                 throw WebBridgeInputError.invalidChoice("a ready official \(platformID) API connection")
             }
-        case .providerWebSearch:
-            guard configuration.webSearchEnabled else {
-                throw WebBridgeInputError.invalidChoice("provider web search enabled for \(platform.name)")
-            }
-            if !profile.type.supportsProviderNativeWebSearch {
+        }
+        if configuration.webSearchEnabled {
+            if configuration.webResearchProviderProfileID != nil {
                 _ = try webResearchProfile(in: catalog, configuration: configuration)
+            } else if !profile.type.supportsProviderNativeWebSearch {
+                throw WebBridgeInputError.invalidChoice("a ready web research provider and fetched model")
             }
         }
     }
@@ -1605,7 +1600,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     let cleanedWebResearchModelIdentifier = llmWebResearchModelIdentifier?
                         .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                     let webResearchConfiguration: (profileID: String?, modelIdentifier: String?)
-                    if llmWebSearchEnabled && !profile.type.supportsProviderNativeWebSearch {
+                    if llmWebSearchEnabled {
                         guard (cleanedWebResearchProviderID.isEmpty && cleanedWebResearchModelIdentifier.isEmpty) ||
                                 (!cleanedWebResearchProviderID.isEmpty && !cleanedWebResearchModelIdentifier.isEmpty) else {
                             throw WebBridgeInputError.invalidChoice("a provider web research connection and fetched model")
@@ -3283,7 +3278,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 return ["id": binding.id, "name": binding.name, "browser": binding.browser, "treeID": binding.treeID, "datasetID": binding.datasetID, "activeClassifierTypeID": binding.activeClassifierTypeID ?? NSNull(), "activeModelID": binding.activeModelID ?? NSNull(), "policyID": binding.policyID ?? NSNull(), "collectionEnabled": binding.collectionEnabled, "sourceKind": definition?.sourceKind.rawValue ?? CollectionSourceKind.creator.rawValue, "supportsLocalModel": definition?.supportsLocalModel ?? false, "supportsLLMAssist": definition?.supportsLLMAssist ?? false] as [String: Any]
             }
         assets["collectionPlatforms"] = CollectionPlatformRegistry.definitions.map { definition in
-                ["id": definition.id, "name": definition.name, "browser": definition.browser, "sourceKind": definition.sourceKind.rawValue, "collectorAvailable": definition.collectorAvailable, "supportsLocalModel": definition.supportsLocalModel, "supportsLLMAssist": definition.supportsLLMAssist, "llmCreatorEvidenceStrategy": definition.llmCreatorEvidenceStrategy.rawValue, "apiProviderType": definition.apiProviderType?.rawValue ?? NSNull()] as [String: Any]
+                ["id": definition.id, "name": definition.name, "browser": definition.browser, "sourceKind": definition.sourceKind.rawValue, "collectorAvailable": definition.collectorAvailable, "supportsLocalModel": definition.supportsLocalModel, "supportsLLMAssist": definition.supportsLLMAssist, "apiProviderType": definition.apiProviderType?.rawValue ?? NSNull()] as [String: Any]
             }
         assets["providerModelCatalogs"] = providerModelCatalogs
         assets["providerModelCatalogErrors"] = providerModelCatalogErrors

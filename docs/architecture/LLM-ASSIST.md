@@ -34,15 +34,15 @@ A **classifier type** owns one optional LLM Assist attachment. The attachment
 selects exactly one provider profile and one fetched model identifier, plus its
 daily output-token allowance, **per-request max-token** cap (default 4,096),
 optional **extra direction**, classification pace, batch size, returned-tag
-limit, leaf-only constraint, and optional hosted web search. A ready
-matching official platform API connection is required for platforms with that
-evidence path. TikTok, Instagram, and Bilibili deliberately make no
-app-fetched platform-evidence request. They require either the classifier
-provider's direct hosted-search grammar or a separately selected hosted-search
-provider plus one of its fetched models. The separate provider produces a
-transient research memo; the classifier model still returns the tags. Changing
-either selected provider/model deactivates the attachment; it never causes
-background classification.
+limit, leaf-only constraint, and optional hosted web search. Official platform
+evidence and hosted research are independent layers: a ready matching official
+API connection is required where an adapter exists, and search may be enabled
+for every platform. Search can use the classifier provider's direct hosted
+grammar or any separately selected hosted-search provider plus one of its
+fetched models. The separate provider produces a transient research memo; the
+classifier model still returns the tags. Changing either selected
+provider/model deactivates the attachment; it never causes background
+classification.
 
 The type also retains its selected provider while no model has been attached
 yet. This is only an editor choice: it cannot activate a provider, dispatch a
@@ -135,20 +135,21 @@ entry. The model cannot choose credentials, URLs, identifiers, API profiles, or
 whether to perform the fetch. If the profile is missing, the API request fails,
 or the response is unreadable, the classification does not run.
 
-TikTok Display and Instagram Graph only expose data for their authorized
-creator. Bilibili has no arbitrary-creator public evidence adapter here. For
-those three collected platforms, Vault Classifier makes **no** app-owned
-platform-evidence request. Classification requires hosted web search. OpenAI
-Responses (`web_search`), Gemini GenerateContent (`google_search` grounding),
-and Anthropic Messages (`web_search_20250305`) can search directly when the
-selected model supports the provider feature. Every other built-in
-non-custom classifier model can instead use one separately selected profile
-and one fetched model from those three search-capable providers. Its memo is
-added only to the in-flight classifier prompt, then discarded; the ledger
-retains request metadata and token accounting only. Without either direct
-search or a ready separate research connection, classification is disabled
-rather than falling back to scraping. A provider is not advertised as
-searchable merely because a separate agent product can browse.
+Official API evidence does not decide whether hosted search is available.
+OpenAI Responses (`web_search`), Gemini GenerateContent (`google_search`
+grounding), and Anthropic Messages (`web_search_20250305`) can search directly
+when the selected model supports the provider feature. Any classifier provider,
+including one of those three, may instead use one separately selected profile
+and one fetched model from a search-capable provider. This makes combinations
+such as DeepSeek classification + YouTube official evidence + Gemini search
+valid. The research model is instructed to use its hosted search tool only
+when the already provided collected and official evidence is insufficient.
+Its memo is added only to the in-flight classifier prompt, then discarded; the
+ledger retains request metadata and token accounting only. When search is
+enabled without either direct search or a ready separate research connection,
+classification is disabled rather than falling back to scraping. A provider is
+not advertised as searchable merely because a separate agent product can
+browse.
 
 The creator's local prompt evidence is a random sample of up to 25 observed
 titles, bounded before dispatch. It is creator evidence, never individual video
