@@ -483,6 +483,9 @@
       const supportsLLM = Boolean(protocol.supportsLLMConfiguration);
       const supportsPlatformData = Boolean(protocol.supportsPlatformData);
       const profileRecords = requestRecords.filter((record) => record.profileID === profile.id);
+      const latestResponseDiagnostic = profileRecords
+        .filter((record) => typeof record.responseShape === "string" && record.responseShape.length > 0)
+        .sort((left, right) => Number(right.createdAtMilliseconds) - Number(left.createdAtMilliseconds))[0];
       const tokenTotals = profileRecords.filter((record) => record.outcome === "succeeded").reduce((total, record) => ({
         input: total.input + (Number(record.inputTokens) || 0),
         output: total.output + (Number(record.outputTokens) || 0),
@@ -506,7 +509,10 @@
       const usage = supportsPlatformData
         ? `<p class="provider-token-usage"><span>${tx("llm.apiCalls")}</span><strong>${profileRecords.filter((record) => record.operation === "readPublicContent" && Number.isInteger(record.statusCode)).length}</strong></p>`
         : `<p class="provider-token-usage"><span>${tx("llm.tokenUsage")}</span><strong>${tx("llm.tokenTotals", { input: tokenTotals.input, output: tokenTotals.output })}</strong></p>`;
-      return `<section class="provider-panel" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}"><div class="provider-panel-head"><h3>${esc(profile.name)}</h3><div class="provider-panel-actions">${testButton}<button class="danger" data-action="confirmDeleteProviderProfile" data-profile-id="${esc(profile.id)}">${tx("llm.deleteProfile")}</button></div></div><div class="provider-panel-body">${connectionFields ? `<div class="provider-connection-fields">${connectionFields}</div>` : ""}${usage}</div>${profile.testSucceeded ? notice(t("llm.testSucceeded"), "green") : ""}</section>`;
+      const responseDiagnostic = latestResponseDiagnostic
+        ? `<p class="provider-response-shape"><span>${tx("llm.responseShape")}</span><strong>${esc(latestResponseDiagnostic.responseShape)}</strong></p>`
+        : "";
+      return `<section class="provider-panel" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}"><div class="provider-panel-head"><h3>${esc(profile.name)}</h3><div class="provider-panel-actions">${testButton}<button class="danger" data-action="confirmDeleteProviderProfile" data-profile-id="${esc(profile.id)}">${tx("llm.deleteProfile")}</button></div></div><div class="provider-panel-body">${connectionFields ? `<div class="provider-connection-fields">${connectionFields}</div>` : ""}<div class="provider-request-summary">${usage}${responseDiagnostic}</div></div>${profile.testSucceeded ? notice(t("llm.testSucceeded"), "green") : ""}</section>`;
     };
     return `<div class="workspace provider-workspace">${header("llm.title", "llm.copy", t("llm.keyLibrary"), "gold")}<section class="provider-create" data-form-id="new-provider-profile-form">${groupedValueSelectField("llm.providerType", "", "type", "gemini", profileTypeGroups)}<button class="gold-action" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button><span class="small-copy">${tx("llm.createCopy")}</span></section><div class="provider-panels">${profiles.length ? profiles.map(panel).join("") : `<div class="empty">${tx("llm.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
   }

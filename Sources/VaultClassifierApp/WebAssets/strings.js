@@ -348,6 +348,7 @@ window.VaultClassifierStrings = Object.freeze({
   "llm.tokenUsage": "TOKEN USAGE",
   "llm.tokenTotals": "Input {input} · Output {output}",
   "llm.apiCalls": "API CALLS",
+  "llm.responseShape": "LAST UNPARSEABLE RESPONSE SHAPE",
   "llm.protocol.accountID": "ACCOUNT ID",
   "llm.protocol.apiVersion": "API VERSION",
   "llm.protocol.clientID": "CLIENT ID",
