@@ -564,7 +564,7 @@
         (model.platformIDs || [model.platformID].filter(Boolean)).every((platformID) => dataSourcePlatforms.has(platformID))) : [];
       const modelOptions = [["", t("bridge.noLocalModel")], ...compatibleModels.map((model) => [model.id, `${model.name} · v${model.version}`])];
       const llmAssist = classifierType.llmAssistConfiguration || null;
-      const savedLLMProfileID = llmAssist?.providerProfileID || "";
+      const savedLLMProfileID = classifierType.selectedLLMProviderProfileID || llmAssist?.providerProfileID || "";
       const selectedLLMProfileID = selectedLLMProfileByType.get(classifierType.id) || savedLLMProfileID;
       const selectedLLMProfile = llmProfiles.find((profile) => profile.id === selectedLLMProfileID) || null;
       const llmProviderOptions = [["", t("bridge.noLLMModel")], ...llmProfiles.map((profile) => [profile.id, `${profile.name} · ${tx(providerTypeLabelKey(profile.type))}`])];
@@ -1257,6 +1257,7 @@
       const panel = llmProviderControl.closest(".classifier-type-panel");
       const typeID = panel?.querySelector("[data-type-id]")?.dataset.typeId;
       if (typeID) selectedLLMProfileByType.set(typeID, llmProviderControl.value);
+      if (typeID && llmProviderControl.value) send("selectLLMProvider", { typeID, profileID: llmProviderControl.value });
       render();
       return;
     }
