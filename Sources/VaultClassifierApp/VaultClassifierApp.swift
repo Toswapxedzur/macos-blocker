@@ -807,9 +807,11 @@ final class VaultClassifierViewModel: ObservableObject {
         return (failure.statusCode, failure.responseShape)
     }
 
-    /// Runs an explicit creator classification through the selected LLM. A
-    /// ready matching official platform API is mandatory: its bounded result
-    /// is fetched by the app before the LLM request, never by the model.
+    /// Runs an explicit creator classification through the selected LLM. Most
+    /// platforms first receive one app-owned official API result. TikTok,
+    /// Instagram, and Bilibili instead require the selected provider's native
+    /// web search, because their official APIs cannot read arbitrary collected
+    /// creators.
     private func runProviderClassification(
         profile: APIKeyProviderProfile,
         configuration: LLMAssistConfiguration,
@@ -820,11 +822,23 @@ final class VaultClassifierViewModel: ObservableObject {
         maximumOutputTokens: Int
     ) async throws -> ProviderClassificationRun {
         let mainCredential = try providerCredential(for: profile.id)
-        guard CollectionPlatformRegistry.definition(for: entry.platform)?.apiProviderType != nil,
-              let officialProfile = readyPlatformAPIProfile(in: catalog, platformID: entry.platform) else {
-            throw WebBridgeInputError.invalidChoice("a ready official \(entry.platform) API connection")
+        guard let platform = CollectionPlatformRegistry.definition(for: entry.platform) else {
+            throw WebBridgeInputError.invalidChoice("creator platform")
         }
-        let enrichedEntry = try await addingOfficialPlatformEvidence(to: entry, profile: officialProfile)
+        let enrichedEntry: EntryEvidence
+        switch platform.llmCreatorEvidenceStrategy {
+        case .officialPlatformAPI:
+            guard let officialProfile = readyPlatformAPIProfile(in: catalog, platformID: entry.platform) else {
+                throw WebBridgeInputError.invalidChoice("a ready official \(entry.platform) API connection")
+            }
+            enrichedEntry = try await addingOfficialPlatformEvidence(to: entry, profile: officialProfile)
+        case .providerWebSearch:
+            guard configuration.webSearchEnabled,
+                  profile.type.supportsProviderNativeWebSearch else {
+                throw WebBridgeInputError.invalidChoice("a selected LLM provider with web search enabled for \(platform.name)")
+            }
+            enrichedEntry = entry
+        }
         let request = try ProviderClassificationProtocol.prepare(
             profile: profile,
             configuration: configuration,
@@ -871,6 +885,28 @@ final class VaultClassifierViewModel: ObservableObject {
                 }
                 return descriptor.credentialFields.isEmpty || (try? providerCredential(for: profile.id)) != nil
             }
+    }
+
+    private func validateLLMCreatorEvidenceConfiguration(
+        in catalog: WorkspaceCatalog,
+        platformID: String,
+        profile: APIKeyProviderProfile,
+        configuration: LLMAssistConfiguration
+    ) throws {
+        guard let platform = CollectionPlatformRegistry.definition(for: platformID) else {
+            throw WebBridgeInputError.invalidChoice("creator platform")
+        }
+        switch platform.llmCreatorEvidenceStrategy {
+        case .officialPlatformAPI:
+            guard readyPlatformAPIProfile(in: catalog, platformID: platformID) != nil else {
+                throw WebBridgeInputError.invalidChoice("a ready official \(platformID) API connection")
+            }
+        case .providerWebSearch:
+            guard configuration.webSearchEnabled,
+                  profile.type.supportsProviderNativeWebSearch else {
+                throw WebBridgeInputError.invalidChoice("a selected LLM provider with web search enabled for \(platform.name)")
+            }
+        }
     }
 
     private func performProviderRequest(
@@ -1402,7 +1438,7 @@ final class VaultClassifierViewModel: ObservableObject {
                             label: "LLM maximum tag count"
                         ),
                         restrictToLeafTags: llmRestrictToLeafTags,
-                        webSearchEnabled: profile.type == .openAI && llmWebSearchEnabled,
+                        webSearchEnabled: profile.type.supportsProviderNativeWebSearch && llmWebSearchEnabled,
                         isActive: retainsSavedModel ? existingLLMAssist?.isActive ?? false : false
                     )
                     try configuration.validate()
@@ -2070,11 +2106,11 @@ final class VaultClassifierViewModel: ObservableObject {
               }) else {
             return nil
         }
+        // One classification samples a creator's observed work instead of
+        // repeatedly showing the same newest titles. The sample stays bounded
+        // before it enters the provider request.
         let titles = creatorEntries
-            .sorted { lhs, rhs in
-                if lhs.lastObservedAtMilliseconds == rhs.lastObservedAtMilliseconds { return lhs.id < rhs.id }
-                return lhs.lastObservedAtMilliseconds > rhs.lastObservedAtMilliseconds
-            }
+            .shuffled()
             .prefix(25)
             .map(\.title)
             .joined(separator: "\n")
@@ -2175,7 +2211,18 @@ final class VaultClassifierViewModel: ObservableObject {
             guard !configuration.modelIdentifier.isEmpty else {
                 throw WebBridgeInputError.invalidChoice("LLM model")
             }
-            if isActive { _ = try providerCredential(for: profile.id) }
+            if isActive {
+                _ = try providerCredential(for: profile.id)
+                guard let platformID = catalog.classifierTypes[typeIndex].applicablePlatformID else {
+                    throw WebBridgeInputError.invalidChoice("creator platform")
+                }
+                try validateLLMCreatorEvidenceConfiguration(
+                    in: catalog,
+                    platformID: platformID,
+                    profile: profile,
+                    configuration: configuration
+                )
+            }
             configuration.isActive = isActive
             catalog.classifierTypes[typeIndex].llmAssistConfiguration = configuration
             try coordinator?.updateWorkspaceCatalog(catalog)
@@ -2977,7 +3024,7 @@ final class VaultClassifierViewModel: ObservableObject {
                         "family": descriptor.family.rawValue,
                         "supportsLLMConfiguration": descriptor.supportsLLMConfiguration,
                         "supportsPlatformData": descriptor.requestFormats.contains(where: { $0.operation == .readPublicContent }),
-                        "supportsWebSearch": type == .openAI,
+                        "supportsWebSearch": type.supportsProviderNativeWebSearch,
                         "allowsEndpointOverride": descriptor.allowsEndpointOverride,
                         "credentialRequired": !descriptor.credentialFields.isEmpty,
                         "credentialFields": descriptor.credentialFields.map(\.rawValue),
@@ -2995,7 +3042,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 return ["id": binding.id, "name": binding.name, "browser": binding.browser, "treeID": binding.treeID, "datasetID": binding.datasetID, "activeClassifierTypeID": binding.activeClassifierTypeID ?? NSNull(), "activeModelID": binding.activeModelID ?? NSNull(), "policyID": binding.policyID ?? NSNull(), "collectionEnabled": binding.collectionEnabled, "sourceKind": definition?.sourceKind.rawValue ?? CollectionSourceKind.creator.rawValue, "supportsLocalModel": definition?.supportsLocalModel ?? false, "supportsLLMAssist": definition?.supportsLLMAssist ?? false] as [String: Any]
             }
         assets["collectionPlatforms"] = CollectionPlatformRegistry.definitions.map { definition in
-                ["id": definition.id, "name": definition.name, "browser": definition.browser, "sourceKind": definition.sourceKind.rawValue, "collectorAvailable": definition.collectorAvailable, "supportsLocalModel": definition.supportsLocalModel, "supportsLLMAssist": definition.supportsLLMAssist, "apiProviderType": definition.apiProviderType?.rawValue ?? NSNull()] as [String: Any]
+                ["id": definition.id, "name": definition.name, "browser": definition.browser, "sourceKind": definition.sourceKind.rawValue, "collectorAvailable": definition.collectorAvailable, "supportsLocalModel": definition.supportsLocalModel, "supportsLLMAssist": definition.supportsLLMAssist, "llmCreatorEvidenceStrategy": definition.llmCreatorEvidenceStrategy.rawValue, "apiProviderType": definition.apiProviderType?.rawValue ?? NSNull()] as [String: Any]
             }
         assets["providerModelCatalogs"] = providerModelCatalogs
         assets["providerModelCatalogErrors"] = providerModelCatalogErrors

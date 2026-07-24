@@ -20,8 +20,8 @@ particular user.
   the endpoint and model.
 - **Platform data:** YouTube Data, Twitch, Reddit, X, TikTok Display,
   Instagram Graph, and Facebook Graph. They support explicit connection tests
-  and the bounded official evidence fetch required for a matching creator LLM
-  classification; they are never language models.
+  and bounded official evidence where their access scope can read the
+  collected creator; they are never language models.
 
 ## Ownership boundary
 
@@ -35,9 +35,11 @@ selects exactly one provider profile and one fetched model identifier, plus its
 daily output-token allowance, **per-request max-token** cap (default 4,096),
 optional **extra direction**, classification pace, batch size, returned-tag
 limit, leaf-only constraint, and optional provider-native web search. A ready
-matching official platform API connection is required before the attachment can
-classify a creator. Changing the provider or model deactivates the attachment;
-it never causes background classification.
+matching official platform API connection is required for platforms with that
+evidence path. TikTok, Instagram, and Bilibili deliberately make no
+app-fetched platform-evidence request; they require the selected provider's
+native web-search mode instead. Changing the provider or model deactivates the
+attachment; it never causes background classification.
 
 The type also retains its selected provider while no model has been attached
 yet. This is only an editor choice: it cannot activate a provider, dispatch a
@@ -83,7 +85,7 @@ is opt-in: an inactive attachment may be run manually, while activation
 processes only eligible creators sequentially and stops before the next request
 when disabled or the daily allowance is exhausted.
 
-Each attachment persists a **classification pace** of 1–60 provider requests
+Each attachment persists a **classification pace** of 1–120 provider requests
 started per minute (default 6). It is enforced for both manual and activated
 classification paths. The app's one serial classification lane waits between
 request starts, so a lower value deliberately slows provider traffic. This is
@@ -117,14 +119,29 @@ header, or request body. The provider panel exposes the latest such diagnostic
 so a later failure can be diagnosed without replaying or logging private model
 output.
 
-## Official platform evidence
+## Creator evidence
 
-Before each LLM creator classification, native code deterministically selects
-the newest ready matching official platform API profile and fetches one bounded
-record: the creator where the API supports it, otherwise the representative
-collected entry. The model cannot choose credentials, URLs, identifiers, API
-profiles, or whether to perform the fetch. If the profile is missing, the API
-request fails, or the response is unreadable, the classification does not run.
+For YouTube, Facebook, and X, native code deterministically selects the newest
+ready matching official-platform API profile and fetches one bounded record:
+the creator where the API supports it, otherwise the representative collected
+entry. The model cannot choose credentials, URLs, identifiers, API profiles, or
+whether to perform the fetch. If the profile is missing, the API request fails,
+or the response is unreadable, the classification does not run.
+
+TikTok Display and Instagram Graph only expose data for their authorized
+creator. Bilibili has no arbitrary-creator public evidence adapter here. For
+those three collected platforms, Vault Classifier makes **no** app-owned
+platform-evidence request. Classification requires a selected language-model
+provider whose native search request grammar is implemented in the app and
+whose web-search setting is enabled. That provider retrieves public evidence;
+the app does not store its results. Without native search, classification is
+disabled rather than falling back to scraping. Currently, the implemented
+native search grammar is OpenAI Responses `web_search`; a provider is not
+advertised as searchable merely because a separate agent product can browse.
+
+The creator's local prompt evidence is a random sample of up to 25 observed
+titles, bounded before dispatch. It is creator evidence, never individual video
+classification.
 
 The prior static public-creator-page scraper and its avatar/API-fallback
 controls are obsolete and removed. Browser-collected, verified avatar URLs may
@@ -136,7 +153,7 @@ entries and the official API response.
 - `WorkspaceAssetsTests`: catalog reconciliation, plain provider-credential
   persistence, profile validation, and legacy-state cleanup.
 - `ProviderTestProtocolTests`: provider test/classification request grammar,
-  configurable output limits, tag descriptions/extra direction, required
-  official-evidence routing, and direct provider model-list routing.
+  configurable output limits, tag descriptions/extra direction, native-search
+  capability guards, and direct provider model-list routing.
 - `ProviderModelCatalogStoreTests`: restart persistence and profile-removal
   cleanup for the bounded model-identifier cache.

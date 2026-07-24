@@ -449,7 +449,7 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
     public static let maximumExtraDirectionLength = 4_096
     /// The conservative default leaves ten seconds between provider requests.
     public static let defaultClassificationRequestsPerMinute = 6
-    public static let maximumClassificationRequestsPerMinute = 60
+    public static let maximumClassificationRequestsPerMinute = 120
     public static let defaultBatchSize = 5
     public static let maximumBatchSize = 32
     public static let defaultMaximumTagCount = 8
@@ -475,8 +475,8 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
     /// When enabled, only active leaf tags are included in the model prompt.
     /// When disabled, active parent tags are also available as generic labels.
     public var restrictToLeafTags: Bool
-    /// OpenAI Responses supports a hosted web-search tool. Other providers
-    /// ignore this setting and the UI does not expose it for them.
+    /// This is enabled only for providers with a native hosted-web-search
+    /// request grammar implemented by Vault Classifier.
     public var webSearchEnabled: Bool
     /// Activation is an explicit per-classifier-type permission for the app to
     /// classify eligible collected creators sequentially.
@@ -552,9 +552,9 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
             ?? Self.defaultMaximumTagCount
         restrictToLeafTags = try container.decodeIfPresent(Bool.self, forKey: .restrictToLeafTags) ?? true
         webSearchEnabled = try container.decodeIfPresent(Bool.self, forKey: .webSearchEnabled) ?? false
-        // These retired toggles are read only to let existing local state
-        // open safely. Official platform evidence is now required, and public
-        // creator-page scraping has no replacement path.
+        // These retired toggles are read only to let existing local state open
+        // safely. Creator evidence now follows the platform's fixed strategy;
+        // public creator-page scraping has no replacement path.
         _ = try container.decodeIfPresent(Bool.self, forKey: .externalToolEnabled)
         _ = try container.decodeIfPresent(Bool.self, forKey: .usePlatformAPIKeyFallback)
         isActive = try container.decodeIfPresent(Bool.self, forKey: .isActive) ?? false
@@ -825,6 +825,15 @@ public enum CollectionSourceKind: String, Equatable, Sendable, CaseIterable {
     case server
 }
 
+/// The app either retrieves official public evidence itself, or deliberately
+/// leaves retrieval to an explicitly enabled provider-native web-search tool.
+/// The latter is reserved for platforms whose official API cannot read an
+/// arbitrary creator collected from the user's feed.
+public enum LLMCreatorEvidenceStrategy: String, Equatable, Sendable {
+    case officialPlatformAPI
+    case providerWebSearch
+}
+
 public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
     public var id: String
     public var name: String
@@ -843,6 +852,8 @@ public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
     /// A manual-only platform can retain public entries and human tags, but
     /// must never be sent through an LLM-assist classification path.
     public var supportsLLMAssist: Bool
+    /// The required evidence path before an LLM receives a collected creator.
+    public var llmCreatorEvidenceStrategy: LLMCreatorEvidenceStrategy
 
     /// The optional local public-data API profile that belongs to this
     /// platform. A missing value means the platform keeps local collected data
@@ -868,7 +879,8 @@ public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
         sourceKind: CollectionSourceKind = .creator,
         collectorAvailable: Bool = false,
         supportsLocalModel: Bool = true,
-        supportsLLMAssist: Bool = true
+        supportsLLMAssist: Bool = true,
+        llmCreatorEvidenceStrategy: LLMCreatorEvidenceStrategy = .officialPlatformAPI
     ) {
         self.id = id
         self.name = name
@@ -877,20 +889,21 @@ public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
         self.collectorAvailable = collectorAvailable
         self.supportsLocalModel = supportsLocalModel
         self.supportsLLMAssist = supportsLLMAssist
+        self.llmCreatorEvidenceStrategy = llmCreatorEvidenceStrategy
     }
 }
 
 public enum CollectionPlatformRegistry {
     public static let definitions: [CollectionPlatformDefinition] = [
         .init(id: "youtube", name: "YouTube", collectorAvailable: true),
-        .init(id: "tiktok", name: "TikTok", collectorAvailable: true),
+        .init(id: "tiktok", name: "TikTok", collectorAvailable: true, llmCreatorEvidenceStrategy: .providerWebSearch),
         .init(id: "facebook", name: "Facebook", collectorAvailable: true),
-        .init(id: "instagram", name: "Instagram", collectorAvailable: true),
+        .init(id: "instagram", name: "Instagram", collectorAvailable: true, llmCreatorEvidenceStrategy: .providerWebSearch),
         .init(id: "twitch", name: "Twitch", collectorAvailable: true, supportsLocalModel: false, supportsLLMAssist: false),
         .init(id: "reddit", name: "Reddit", sourceKind: .subreddit, collectorAvailable: true, supportsLocalModel: false, supportsLLMAssist: false),
         .init(id: "discord", name: "Discord", sourceKind: .server, collectorAvailable: true, supportsLocalModel: false, supportsLLMAssist: false),
         .init(id: "twitter", name: "Twitter / X", sourceKind: .account, collectorAvailable: true),
-        .init(id: "bilibili", name: "Bilibili", collectorAvailable: true, supportsLLMAssist: false),
+        .init(id: "bilibili", name: "Bilibili", collectorAvailable: true, llmCreatorEvidenceStrategy: .providerWebSearch),
     ]
 
     public static func definition(for id: String) -> CollectionPlatformDefinition? {
@@ -1093,6 +1106,13 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
 
     public var supportsLLMConfiguration: Bool {
         ProviderProtocolRegistry.descriptor(for: self).supportsLLMConfiguration
+    }
+
+    /// A provider-native search invocation has an explicit request grammar in
+    /// this app. Do not advertise search merely because a provider's separate
+    /// consumer product or agent integration can browse the web.
+    public var supportsProviderNativeWebSearch: Bool {
+        self == .openAI
     }
 
     public var defaultProfileName: String {

@@ -32,6 +32,9 @@ public enum ProviderClassificationProtocol {
         guard descriptor.requestFormats.contains(where: { $0.operation == .generateText }) else {
             throw ProviderClassificationProtocolError.unsupportedProvider
         }
+        guard !configuration.webSearchEnabled || profile.type.supportsProviderNativeWebSearch else {
+            throw ProviderClassificationProtocolError.unsupportedWebSearch
+        }
         let plan = try DescriptorBackedProviderProtocol(descriptor: descriptor)
             .requestPlan(for: profile, operation: .generateText, modelIdentifier: configuration.modelIdentifier)
         let prompt = prompt(
@@ -174,6 +177,7 @@ public enum ProviderClassificationProtocol {
 
 public enum ProviderClassificationProtocolError: Error, Equatable, LocalizedError, Sendable {
     case unsupportedProvider
+    case unsupportedWebSearch
     case invalidConfiguration
     case noAvailableTags
     case invalidResponse
@@ -181,6 +185,7 @@ public enum ProviderClassificationProtocolError: Error, Equatable, LocalizedErro
     public var errorDescription: String? {
         switch self {
         case .unsupportedProvider: return "This provider does not support explicit text classification."
+        case .unsupportedWebSearch: return "The selected provider does not support provider-native web search in Vault Classifier."
         case .invalidConfiguration: return "The selected LLM model does not belong to this provider connection."
         case .noAvailableTags: return "The selected tag tree has no active leaf tags to classify."
         case .invalidResponse: return "The provider response did not contain valid local tag IDs."

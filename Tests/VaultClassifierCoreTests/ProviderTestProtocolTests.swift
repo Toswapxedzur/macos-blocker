@@ -214,6 +214,40 @@ final class ProviderTestProtocolTests: XCTestCase {
         XCTAssertTrue(prompt.contains("Return exactly one JSON object"))
     }
 
+    func testProviderNativeWebSearchIsExplicitlySupportedOnlyByOpenAIResponses() throws {
+        let openAI = APIKeyProviderProfile(id: "openai", type: .openAI)
+        let openAIConfiguration = LLMAssistConfiguration(
+            providerProfileID: openAI.id,
+            modelIdentifier: "gpt-4.1-mini",
+            webSearchEnabled: true
+        )
+        let request = try ProviderClassificationProtocol.prepare(
+            profile: openAI,
+            configuration: openAIConfiguration,
+            entry: .init(platform: "bilibili", entryID: "entry", surface: .page, evidence: .init(title: "Creator: RetroTech")),
+            allowedTagIDs: ["technology"]
+        )
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: request.body) as? [String: Any])
+        XCTAssertEqual((body["tools"] as? [[String: String]])?.first?["type"], "web_search")
+
+        let gemini = APIKeyProviderProfile(id: "gemini", type: .gemini)
+        let unsupportedConfiguration = LLMAssistConfiguration(
+            providerProfileID: gemini.id,
+            modelIdentifier: "gemini-3.1-flash-lite",
+            webSearchEnabled: true
+        )
+        XCTAssertThrowsError(
+            try ProviderClassificationProtocol.prepare(
+                profile: gemini,
+                configuration: unsupportedConfiguration,
+                entry: .init(platform: "bilibili", entryID: "entry", surface: .page, evidence: .init(title: "Creator: RetroTech")),
+                allowedTagIDs: ["technology"]
+            )
+        ) { error in
+            XCTAssertEqual(error as? ProviderClassificationProtocolError, .unsupportedWebSearch)
+        }
+    }
+
     func testEveryExposedLanguageModelPreparesTestAndClassificationRequests() throws {
         let profiles: [APIKeyProviderProfile] = [
             .init(type: .openAI),
