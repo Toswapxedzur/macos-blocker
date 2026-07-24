@@ -39,10 +39,6 @@ Run the development shell:
 ./run-vault-classifier.sh
 ```
 
-The launcher uses `http://127.0.0.1:8080` for the credential-free development
-model catalog unless `CB_PUBLIC_SERVER_URL` is already set. Packaged builds
-use the validated public Vault-service default.
-
 Run verification from this directory:
 
 ```sh

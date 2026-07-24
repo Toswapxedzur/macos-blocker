@@ -379,13 +379,23 @@ final class ProviderTestProtocolTests: XCTestCase {
         XCTAssertThrowsError(try catalog.validate())
     }
 
-    func testModelCatalogUsesVaultServiceForFixedProvidersAndDirectEndpointsForCustomProviders() throws {
-        let openAI = APIKeyProviderProfile(type: .openAI)
-        let localVault = try VaultServiceEndpoint(baseURL: try XCTUnwrap(URL(string: "http://127.0.0.1:8080")))
-        let plan = try ProviderModelCatalogProtocol.prepare(profile: openAI, vaultService: localVault)
-        XCTAssertEqual(plan.method, "GET")
-        XCTAssertEqual(plan.url.absoluteString, "http://127.0.0.1:8080/api/vault-classifier/llm-model-catalog/openAI")
-        XCTAssertEqual(plan.authentication, .none)
+    func testModelCatalogProbesEachProviderAtItsOwnModelsEndpoint() throws {
+        func plan(_ type: APIKeyProviderType, endpoint: String? = nil) throws -> ProviderRequestPlan {
+            try ProviderModelCatalogProtocol.prepare(profile: .init(type: type, customEndpoint: endpoint))
+        }
+
+        let openAI = try plan(.openAI)
+        XCTAssertEqual(openAI.method, "GET")
+        XCTAssertEqual(openAI.url.absoluteString, "https://api.openai.com/v1/models")
+        XCTAssertEqual(openAI.authentication, .bearerToken)
+        XCTAssertEqual(openAI.requiredCredentialFields, [.apiKey])
+        XCTAssertEqual(try plan(.deepSeek).url.absoluteString, "https://api.deepseek.com/v1/models")
+        XCTAssertEqual(try plan(.gemini).url.absoluteString, "https://generativelanguage.googleapis.com/v1beta/models?pageSize=256")
+        XCTAssertEqual(try plan(.anthropic).url.absoluteString, "https://api.anthropic.com/v1/models?limit=256")
+        XCTAssertEqual(try plan(.mistral).url.absoluteString, "https://api.mistral.ai/v1/models")
+        XCTAssertEqual(try plan(.cohere).url.absoluteString, "https://api.cohere.com/v1/models?page_size=256")
+        XCTAssertEqual(try plan(.groq).url.absoluteString, "https://api.groq.com/openai/v1/models")
+        XCTAssertEqual(try plan(.openRouter).url.absoluteString, "https://openrouter.ai/api/v1/models")
         XCTAssertEqual(
             try ProviderModelCatalogProtocol.parse(Data(#"{"data":[{"id":"gpt-5"},{"id":"gpt-4.1"}]}"#.utf8), providerType: .openAI),
             ["gpt-4.1", "gpt-5"]
@@ -394,12 +404,17 @@ final class ProviderTestProtocolTests: XCTestCase {
             try ProviderModelCatalogProtocol.parse(Data(#"{"models":[{"name":"models/gemini-usable","supportedGenerationMethods":["generateContent"]},{"name":"models/embedding-only","supportedGenerationMethods":["embedContent"]}]}"#.utf8), providerType: .gemini),
             ["gemini-usable"]
         )
-        let custom = try ProviderModelCatalogProtocol.prepare(profile: .init(type: .custom, customEndpoint: "https://example.test"), vaultService: localVault)
+        XCTAssertEqual(
+            try ProviderModelCatalogProtocol.parse(Data(#"[{"id":"mistral-small"}]"#.utf8), providerType: .mistral),
+            ["mistral-small"]
+        )
+        let custom = try plan(.custom, endpoint: "https://example.test")
         XCTAssertEqual(custom.url.absoluteString, "https://example.test/models")
-        let compatible = try ProviderModelCatalogProtocol.prepare(profile: .init(type: .openAICompatible, customEndpoint: "https://example.test/v1"), vaultService: localVault)
+        let compatible = try plan(.openAICompatible, endpoint: "https://example.test/v1")
         XCTAssertEqual(compatible.url.absoluteString, "https://example.test/v1/models")
-        let ollama = try ProviderModelCatalogProtocol.prepare(profile: .init(type: .ollama))
+        let ollama = try plan(.ollama)
         XCTAssertEqual(ollama.url.absoluteString, "http://127.0.0.1:11434/api/tags")
+        XCTAssertEqual(ollama.authentication, .none)
     }
 
     func testClassificationAllowsConfiguredGenericTagsWhenTheyAreInThePromptVocabulary() throws {
