@@ -569,6 +569,10 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     /// A ready model is optional: a human-only type is valid, while a local
     /// model source is enabled only when this compatible model is selected.
     public var localModelID: String?
+    /// The provider shown in the LLM Assist editor. This is a persistent
+    /// pre-attachment choice, so a user can Probe and choose a provider before
+    /// selecting a model. It cannot authorize or activate provider work.
+    public var selectedLLMProviderProfileID: String?
     /// One configured model may be attached for explicit runs. Its credential
     /// connection stays separate from this classification policy.
     public var llmAssistConfiguration: LLMAssistConfiguration?
@@ -586,6 +590,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         datasetRevision: Int,
         applicablePlatformID: String? = nil,
         localModelID: String? = nil,
+        selectedLLMProviderProfileID: String? = nil,
         llmAssistConfiguration: LLMAssistConfiguration? = nil,
         decisionPriority: [ClassifierDecisionSource] = [.human, .llmAssist, .localModel],
         updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
@@ -599,6 +604,10 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         let cleanedPlatformID = applicablePlatformID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.applicablePlatformID = cleanedPlatformID.isEmpty ? nil : cleanedPlatformID
         self.localModelID = localModelID
+        let cleanedLLMProviderID = selectedLLMProviderProfileID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.selectedLLMProviderProfileID = cleanedLLMProviderID.isEmpty
+            ? llmAssistConfiguration?.providerProfileID
+            : cleanedLLMProviderID
         self.llmAssistConfiguration = llmAssistConfiguration
         self.decisionPriority = decisionPriority
         self.updatedAtMilliseconds = updatedAtMilliseconds
@@ -606,6 +615,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, treeID, treeRevision, datasetID, datasetRevision, applicablePlatformID, dataSourcePlatformIDs, localModelID,
+             selectedLLMProviderProfileID,
              llmAssistConfiguration, llmProfileIDs, decisionPriority, updatedAtMilliseconds
     }
 
@@ -633,6 +643,11 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         // is intentionally ignored rather than recreated as an implicit LLM
         // attachment; users configure one explicit model again.
         llmAssistConfiguration = try container.decodeIfPresent(LLMAssistConfiguration.self, forKey: .llmAssistConfiguration)
+        let decodedSelectedLLMProviderID = (try container.decodeIfPresent(String.self, forKey: .selectedLLMProviderProfileID)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
+        selectedLLMProviderProfileID = decodedSelectedLLMProviderID.isEmpty
+            ? llmAssistConfiguration?.providerProfileID
+            : decodedSelectedLLMProviderID
         decisionPriority = try container.decodeIfPresent([ClassifierDecisionSource].self, forKey: .decisionPriority)
             ?? [.human, .llmAssist, .localModel]
         updatedAtMilliseconds = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMilliseconds)
@@ -649,6 +664,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         try container.encode(datasetRevision, forKey: .datasetRevision)
         try container.encodeIfPresent(applicablePlatformID, forKey: .applicablePlatformID)
         try container.encodeIfPresent(localModelID, forKey: .localModelID)
+        try container.encodeIfPresent(selectedLLMProviderProfileID, forKey: .selectedLLMProviderProfileID)
         try container.encodeIfPresent(llmAssistConfiguration, forKey: .llmAssistConfiguration)
         try container.encode(decisionPriority, forKey: .decisionPriority)
         try container.encode(updatedAtMilliseconds, forKey: .updatedAtMilliseconds)
@@ -1411,6 +1427,15 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                     throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
                 }
             }
+            if let selectedLLMProviderProfileID = classifierType.selectedLLMProviderProfileID {
+                guard !selectedLLMProviderProfileID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      selectedLLMProviderProfileID.count <= 128,
+                      providerProfiles.contains(where: {
+                          $0.id == selectedLLMProviderProfileID && $0.type.supportsLLMConfiguration
+                      }) else {
+                    throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
+                }
+            }
             if let localModelID = classifierType.localModelID {
                 guard let model = models.first(where: { $0.id == localModelID }),
                       model.isReady,
@@ -1630,6 +1655,13 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                 reconciled.llmAssistConfiguration = llmAssist
             } else {
                 reconciled.llmAssistConfiguration = nil
+            }
+            if let selectedProviderID = reconciled.selectedLLMProviderProfileID,
+               supportsLLMAssist,
+               providerProfiles.contains(where: { $0.id == selectedProviderID && $0.type.supportsLLMConfiguration }) {
+                reconciled.selectedLLMProviderProfileID = selectedProviderID
+            } else {
+                reconciled.selectedLLMProviderProfileID = reconciled.llmAssistConfiguration?.providerProfileID
             }
             if let modelID = reconciled.localModelID {
                 let compatible = models.contains(where: { model in

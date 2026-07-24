@@ -36,6 +36,10 @@ daily output-token allowance, batch size, returned-tag limit, leaf-only
 constraint, and explicit tool/API-fallback choices. Changing the provider or
 model deactivates the attachment; it never causes background classification.
 
+The type also retains its selected provider while no model has been attached
+yet. This is only an editor choice: it cannot activate a provider, dispatch a
+request, or change an existing provider/model attachment.
+
 ## Credential and state boundary
 
 Provider credentials are ordinary visible text fields saved in each local
@@ -62,9 +66,10 @@ text model name.
   model-list endpoint. There is no Vault-service model catalog. Provider-specific
   paths, authentication, pagination limits, and response envelopes are handled
   by the native request protocol.
-- The list is an in-memory cache. A successful later Probe replaces it; a
-  failed Probe leaves the previous successful list in place. It is not written
-  to workspace state.
+- The list is a bounded local cache of model identifiers only. A successful
+  later Probe replaces it; a failed Probe leaves the previous successful list
+  in place. It survives an app relaunch but is not written into the workspace
+  catalog and never contains credentials, endpoints, or request/response data.
 - A saved selected model remains visible if the process has no cached list.
   Editing provider fields does not invalidate the cached list or detach an
   affected classifier attachment.
@@ -96,3 +101,5 @@ continues without one.
   persistence, profile validation, and legacy-state cleanup.
 - `ProviderTestProtocolTests`: provider test/classification request grammar,
   bounded tools, and direct provider model-list routing.
+- `ProviderModelCatalogStoreTests`: restart persistence and profile-removal
+  cleanup for the bounded model-identifier cache.

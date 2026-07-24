@@ -444,6 +444,33 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertFalse(reencoded.contains("maximumTokens"))
     }
 
+    func testSelectedLLMProviderPersistsBeforeAModelIsAttached() throws {
+        var catalog = WorkspaceCatalog.starter()
+        let profile = APIKeyProviderProfile(id: "openai-profile", type: .openAI)
+        catalog.providerProfiles = [profile]
+        let tree = try XCTUnwrap(catalog.trees.first)
+        let dataset = try XCTUnwrap(catalog.datasets.first)
+        catalog.classifierTypes = [.init(
+            id: "type",
+            name: "YouTube type",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            datasetID: dataset.id,
+            datasetRevision: dataset.revision,
+            applicablePlatformID: "youtube",
+            selectedLLMProviderProfileID: profile.id
+        )]
+
+        XCTAssertNoThrow(try catalog.validate())
+        let reloaded = try JSONDecoder().decode(WorkspaceCatalog.self, from: JSONEncoder().encode(catalog))
+        XCTAssertEqual(reloaded.classifierTypes[0].selectedLLMProviderProfileID, profile.id)
+        XCTAssertNil(reloaded.classifierTypes[0].llmAssistConfiguration)
+
+        catalog.providerProfiles = []
+        catalog.reconcileClassifierTypes()
+        XCTAssertNil(catalog.classifierTypes[0].selectedLLMProviderProfileID)
+    }
+
     func testSavedLLMAttachmentSurvivesReconciliationAndEncodingWithoutAModelCatalog() throws {
         var catalog = WorkspaceCatalog.starter()
         let tree = try XCTUnwrap(catalog.trees.first)
