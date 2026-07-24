@@ -32,9 +32,10 @@ classification, decision weight, or tool priority.
 
 A **classifier type** owns one optional LLM Assist attachment. The attachment
 selects exactly one provider profile and one fetched model identifier, plus its
-daily output-token allowance, batch size, returned-tag limit, leaf-only
-constraint, and explicit tool/API-fallback choices. Changing the provider or
-model deactivates the attachment; it never causes background classification.
+daily output-token allowance, classification pace, batch size, returned-tag
+limit, leaf-only constraint, and explicit tool/API-fallback choices. Changing
+the provider or model deactivates the attachment; it never causes background
+classification.
 
 The type also retains its selected provider while no model has been attached
 yet. This is only an editor choice: it cannot activate a provider, dispatch a
@@ -79,6 +80,13 @@ request. It does not send collected browser content. Provider classification
 is opt-in: an inactive attachment may be run manually, while activation
 processes only eligible creators sequentially and stops before the next request
 when disabled or the daily allowance is exhausted.
+
+Each attachment persists a **classification pace** of 1–60 provider requests
+started per minute (default 6). It is enforced for both manual and activated
+classification paths. The app's one serial classification lane waits between
+request starts, so a lower value deliberately slows provider traffic. This is
+not a completion-rate promise: provider latency, errors, and token limits can
+always make completed classifications slower.
 
 A language-model test succeeds only after a 2xx response matches that
 provider's response grammar and contains generated text. An empty or unrelated

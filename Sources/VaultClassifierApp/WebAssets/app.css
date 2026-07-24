@@ -615,6 +615,27 @@ h3 { font-size: 13px; }
 .classifier-priority-grid { grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 10px; }
 .classifier-llm-section { background: rgba(255, 251, 235, .52); }
 .classifier-llm-config { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.llm-classification-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 10px;
+  padding: 10px 11px;
+  border: 1px solid rgba(180, 83, 9, .18);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .72);
+}
+.llm-classification-status .small-copy { margin-top: 4px; }
+.llm-classification-metrics { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
+.llm-classification-metrics span {
+  padding: 4px 7px;
+  border-radius: 999px;
+  color: #92400e;
+  background: rgba(254, 243, 199, .82);
+  font-size: 10px;
+  font-weight: 700;
+}
 
 .compact-empty { padding: 13px; }
 
@@ -631,6 +652,8 @@ h3 { font-size: 13px; }
   .creator-llm-row,
   .creator-tag-columns,
   .classifier-priority-grid { grid-template-columns: 1fr; }
+  .llm-classification-status { align-items: flex-start; flex-direction: column; }
+  .llm-classification-metrics { justify-content: flex-start; }
 }
 
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; }

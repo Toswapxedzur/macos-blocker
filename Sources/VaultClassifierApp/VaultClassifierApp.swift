@@ -134,6 +134,10 @@ final class VaultClassifierViewModel: ObservableObject {
     private var providerModelCatalogErrors = [String: String]()
     private var loadingProviderModelProfileIDs = Set<String>()
     @Published private(set) var providerClassificationRunning = false
+    /// One serial classification lane serves every classifier type. Retaining
+    /// the most recent request start lets each type enforce its own selected
+    /// pace without allowing a manual run to bypass an active queue's delay.
+    private var lastLLMClassificationRequestStartedAt: Date?
     @Published private(set) var creatorAvatarBackfillRunning = false
     @Published private(set) var creatorAvatarBackfillFoundCount: Int?
 
@@ -606,6 +610,23 @@ final class VaultClassifierViewModel: ObservableObject {
         return min(ProviderClassificationProtocol.maximumOutputTokens, remaining)
     }
 
+    /// Sleeps only until the next classification request may start. This is a
+    /// request-start cap, not a promise about completed creators: provider
+    /// latency and failures can always make the observed completion rate lower.
+    private func waitForLLMClassificationPace(configuration: LLMAssistConfiguration) async {
+        let minimumInterval = 60.0 / Double(configuration.classificationRequestsPerMinute)
+        if let lastStartedAt = lastLLMClassificationRequestStartedAt {
+            let delay = lastStartedAt.addingTimeInterval(minimumInterval).timeIntervalSinceNow
+            if delay > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            }
+        }
+    }
+
+    private func recordLLMClassificationRequestStart() {
+        lastLLMClassificationRequestStartedAt = Date()
+    }
+
     /// Generic provider classification is intentionally available only from
     /// this manual inspector action. Shared-hub/browser requests always call
     /// the coordinator's local dispatch and can never enter this method.
@@ -641,6 +662,8 @@ final class VaultClassifierViewModel: ObservableObject {
             issue = nil
             Task { [weak self] in
                 guard let self else { return }
+                await self.waitForLLMClassificationPace(configuration: llmAssist)
+                self.recordLLMClassificationRequestStart()
                 let startedAt = Date()
                 do {
                     let run = try await self.runProviderClassification(
@@ -1376,6 +1399,7 @@ final class VaultClassifierViewModel: ObservableObject {
         llmProviderProfileID: String?,
         llmModelIdentifier: String?,
         llmDailyOutputTokenLimit: String?,
+        llmClassificationRequestsPerMinute: String?,
         llmBatchSize: String?,
         llmMaximumTagCount: String?,
         llmRestrictToLeafTags: Bool,
@@ -1418,6 +1442,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 selectedLLMProviderProfileID = profile.id
                 if let llmModelIdentifier,
                    let llmDailyOutputTokenLimit,
+                   let llmClassificationRequestsPerMinute,
                    let llmBatchSize,
                    let llmMaximumTagCount,
                    !llmModelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -1434,6 +1459,11 @@ final class VaultClassifierViewModel: ObservableObject {
                             llmDailyOutputTokenLimit,
                             maximum: LLMAssistConfiguration.maximumDailyOutputTokenLimit,
                             label: "LLM daily output token limit"
+                        ),
+                        classificationRequestsPerMinute: try providerPositiveInteger(
+                            llmClassificationRequestsPerMinute,
+                            maximum: LLMAssistConfiguration.maximumClassificationRequestsPerMinute,
+                            label: "LLM classification requests per minute"
                         ),
                         batchSize: try providerPositiveInteger(
                             llmBatchSize,
@@ -2195,6 +2225,42 @@ final class VaultClassifierViewModel: ObservableObject {
         localState?.workspaceCatalog.classifierTypes.first(where: { $0.id == typeID })?.llmAssistConfiguration?.isActive == true
     }
 
+    private struct LLMClassificationStatus {
+        var queuedCreatorCount: Int
+        var completedToday: Int
+        var lastOutcome: String?
+    }
+
+    private func llmClassificationStatus(
+        in catalog: WorkspaceCatalog,
+        classifierType: ClassifierTypeAsset
+    ) -> LLMClassificationStatus {
+        let queuedCreatorCount: Int
+        if let dataset = catalog.datasets.first(where: { $0.id == classifierType.datasetID }),
+           let platformID = classifierType.applicablePlatformID {
+            queuedCreatorCount = unclassifiedLLMCreatorWorkItems(
+                dataset: dataset,
+                classifierType: classifierType,
+                platformID: platformID
+            ).count
+        } else {
+            queuedCreatorCount = 0
+        }
+        let startOfDayMilliseconds = Int64(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970 * 1_000)
+        let records = catalog.providerRequestRecords.filter { $0.classifierTypeID == classifierType.id }
+        let completedToday = records.filter {
+            $0.outcome == "succeeded" && $0.createdAtMilliseconds >= startOfDayMilliseconds
+        }.count
+        let lastOutcome = records.max { lhs, rhs in
+            lhs.createdAtMilliseconds < rhs.createdAtMilliseconds
+        }?.outcome
+        return .init(
+            queuedCreatorCount: queuedCreatorCount,
+            completedToday: completedToday,
+            lastOutcome: lastOutcome
+        )
+    }
+
     func setLLMAssistActive(typeID: String, isActive: Bool) {
         do {
             guard var catalog = localState?.workspaceCatalog,
@@ -2295,6 +2361,8 @@ final class VaultClassifierViewModel: ObservableObject {
             issue = nil
             Task { [weak self] in
                 guard let self else { return }
+                await self.waitForLLMClassificationPace(configuration: llmAssist)
+                self.recordLLMClassificationRequestStart()
                 let startedAt = Date()
                 do {
                     let run = try await self.runProviderClassification(
@@ -2403,6 +2471,11 @@ final class VaultClassifierViewModel: ObservableObject {
                 for workItem in queuedWorkItems {
                     if activatedRun && !self.isLLMAssistActive(typeID: typeID) { break }
                     guard remainingOutputTokens > 0 else { break }
+                    let currentConfiguration = self.localState?.workspaceCatalog.classifierTypes
+                        .first(where: { $0.id == typeID })?.llmAssistConfiguration ?? configuration
+                    await self.waitForLLMClassificationPace(configuration: currentConfiguration)
+                    if activatedRun && !self.isLLMAssistActive(typeID: typeID) { break }
+                    self.recordLLMClassificationRequestStart()
                     let representative = workItem.representative
                     let entry = workItem.entry
                     let outputTokenLimit = min(ProviderClassificationProtocol.maximumOutputTokens, remainingOutputTokens)
@@ -2915,7 +2988,11 @@ final class VaultClassifierViewModel: ObservableObject {
                 ] as [String: Any]
             }
         assets["classifierTypes"] = catalog.classifierTypes.map { classifierType in
-                [
+                let classificationStatus = llmClassificationStatus(
+                    in: catalog,
+                    classifierType: classifierType
+                )
+                return [
                     "id": classifierType.id,
                     "name": classifierType.name,
                     "treeID": classifierType.treeID,
@@ -2931,6 +3008,10 @@ final class VaultClassifierViewModel: ObservableObject {
                             "modelIdentifier": configuration.modelIdentifier,
                             "dailyOutputTokenLimit": configuration.dailyOutputTokenLimit,
                             "dailyOutputTokensUsed": outputTokensUsedToday(in: catalog, classifierTypeID: classifierType.id),
+                            "classificationRequestsPerMinute": configuration.classificationRequestsPerMinute,
+                            "queuedCreatorCount": classificationStatus.queuedCreatorCount,
+                            "completedToday": classificationStatus.completedToday,
+                            "lastClassificationOutcome": classificationStatus.lastOutcome ?? NSNull(),
                             "batchSize": configuration.batchSize,
                             "maximumTagCount": configuration.maximumTagCount,
                             "restrictToLeafTags": configuration.restrictToLeafTags,
@@ -3118,6 +3199,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     llmProviderProfileID: try webOptionalString(data, key: "llmProviderProfileID", limit: 128),
                     llmModelIdentifier: try webOptionalString(data, key: "llmModelIdentifier", limit: LLMAssistConfiguration.maximumModelIdentifierLength),
                     llmDailyOutputTokenLimit: try webOptionalString(data, key: "llmDailyOutputTokenLimit", limit: 16),
+                    llmClassificationRequestsPerMinute: try webOptionalString(data, key: "llmClassificationRequestsPerMinute", limit: 3),
                     llmBatchSize: try webOptionalString(data, key: "llmBatchSize", limit: 4),
                     llmMaximumTagCount: try webOptionalString(data, key: "llmMaximumTagCount", limit: 4),
                     llmRestrictToLeafTags: data["llmRestrictToLeafTags"] as? Bool ?? false,
