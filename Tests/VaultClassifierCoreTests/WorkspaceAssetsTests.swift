@@ -105,8 +105,9 @@ final class WorkspaceAssetsTests: XCTestCase {
     }
 
     func testTagNodeCanvasPositionRoundTripsAndLegacyNodeDefaultsToUnplaced() throws {
-        let positioned = TagTreeNode(id: "topic", name: "Topic", positionX: 184, positionY: 96)
+        let positioned = TagTreeNode(id: "topic", name: "Topic", description: "A focused local topic.", positionX: 184, positionY: 96)
         let restored = try JSONDecoder().decode(TagTreeNode.self, from: JSONEncoder().encode(positioned))
+        XCTAssertEqual(restored.description, "A focused local topic.")
         XCTAssertEqual(restored.positionX, 184)
         XCTAssertEqual(restored.positionY, 96)
 
@@ -117,6 +118,19 @@ final class WorkspaceAssetsTests: XCTestCase {
 
         let origin = TagTreeNode(id: "origin", name: "Origin", positionX: 0, positionY: 0)
         XCTAssertEqual(origin.resolvedCanvasPosition(index: 8), .init(x: 0, y: 0))
+    }
+
+    func testTagTreeInferencePreservesOptionalTagDescriptions() throws {
+        let tree = TagTreeAsset(
+            id: "tree",
+            name: "Tree",
+            nodes: [.init(id: "games", name: "Games", description: "Video games and game culture.")]
+        )
+
+        XCTAssertEqual(
+            try tree.inferenceTaxonomy().nodes["games"]?.description,
+            "Video games and game culture."
+        )
     }
 
     func testTagTreeSubtreeIncludesOnlyTheSelectedBranch() {
@@ -434,6 +448,8 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(decoded.llmAssistConfiguration?.providerProfileID, "gemini")
         XCTAssertEqual(decoded.llmAssistConfiguration?.modelIdentifier, "gemini-3.1-flash-lite")
         XCTAssertEqual(decoded.llmAssistConfiguration?.dailyOutputTokenLimit, LLMAssistConfiguration.defaultDailyOutputTokenLimit)
+        XCTAssertEqual(decoded.llmAssistConfiguration?.maximumOutputTokensPerRequest, LLMAssistConfiguration.defaultMaximumOutputTokensPerRequest)
+        XCTAssertEqual(decoded.llmAssistConfiguration?.extraDirection, "")
         XCTAssertEqual(decoded.llmAssistConfiguration?.classificationRequestsPerMinute, LLMAssistConfiguration.defaultClassificationRequestsPerMinute)
         XCTAssertEqual(decoded.llmAssistConfiguration?.batchSize, LLMAssistConfiguration.defaultBatchSize)
         XCTAssertFalse(decoded.llmAssistConfiguration?.usePlatformAPIKeyFallback ?? true)
@@ -490,6 +506,8 @@ final class WorkspaceAssetsTests: XCTestCase {
                 providerProfileID: provider.id,
                 modelIdentifier: "llama3.2",
                 dailyOutputTokenLimit: 12_000,
+                maximumOutputTokensPerRequest: 4_096,
+                extraDirection: "Favor recurring themes.",
                 classificationRequestsPerMinute: 12,
                 batchSize: 3,
                 maximumTagCount: 6,
@@ -504,6 +522,8 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(configuration.providerProfileID, provider.id)
         XCTAssertEqual(configuration.modelIdentifier, "llama3.2")
         XCTAssertEqual(configuration.dailyOutputTokenLimit, 12_000)
+        XCTAssertEqual(configuration.maximumOutputTokensPerRequest, 4_096)
+        XCTAssertEqual(configuration.extraDirection, "Favor recurring themes.")
         XCTAssertEqual(configuration.classificationRequestsPerMinute, 12)
         XCTAssertEqual(configuration.batchSize, 3)
         XCTAssertEqual(configuration.maximumTagCount, 6)
@@ -523,6 +543,21 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertThrowsError(try configuration.validate())
 
         configuration.classificationRequestsPerMinute = LLMAssistConfiguration.maximumClassificationRequestsPerMinute + 1
+        XCTAssertThrowsError(try configuration.validate())
+    }
+
+    func testLLMPerRequestOutputTokensAreBounded() throws {
+        var configuration = LLMAssistConfiguration(
+            providerProfileID: "provider",
+            modelIdentifier: "model",
+            maximumOutputTokensPerRequest: 1
+        )
+        XCTAssertNoThrow(try configuration.validate())
+
+        configuration.maximumOutputTokensPerRequest = 0
+        XCTAssertThrowsError(try configuration.validate())
+
+        configuration.maximumOutputTokensPerRequest = LLMAssistConfiguration.maximumOutputTokensPerRequest + 1
         XCTAssertThrowsError(try configuration.validate())
     }
 

@@ -589,6 +589,20 @@ final class VaultClassifierViewModel: ObservableObject {
         return Set(taxonomy.nodes.values.filter(\.predictable).map(\.id))
     }
 
+    private func llmTagDescriptions(
+        taxonomy: Taxonomy,
+        allowedTagIDs: Set<String>
+    ) -> [String: String] {
+        Dictionary(uniqueKeysWithValues: allowedTagIDs.compactMap { identifier in
+            let description = taxonomy.nodes[identifier]?.description?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !description.isEmpty else {
+                return nil
+            }
+            return (identifier, description)
+        })
+    }
+
     private func outputTokensUsedToday(
         in catalog: WorkspaceCatalog,
         classifierTypeID: String,
@@ -618,7 +632,7 @@ final class VaultClassifierViewModel: ObservableObject {
         guard remaining > 0 else {
             throw WebBridgeInputError.invalidChoice("daily output token budget")
         }
-        return min(ProviderClassificationProtocol.maximumOutputTokens, remaining)
+        return min(configuration.maximumOutputTokensPerRequest, remaining)
     }
 
     /// Sleeps only until the next classification request may start. This is a
@@ -656,6 +670,7 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             let taxonomy = try tree.inferenceTaxonomy()
             let allowedTagIDs = llmAllowedTagIDs(taxonomy: taxonomy, configuration: llmAssist)
+            let tagDescriptions = llmTagDescriptions(taxonomy: taxonomy, allowedTagIDs: allowedTagIDs)
             let outputTokenLimit = try remainingLLMOutputTokens(
                 in: catalog,
                 classifierTypeID: classifierType.id,
@@ -667,6 +682,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 configuration: llmAssist,
                 entry: entry,
                 allowedTagIDs: allowedTagIDs,
+                tagDescriptions: tagDescriptions,
                 maximumOutputTokens: outputTokenLimit
             )
             providerClassificationRunning = true
@@ -682,6 +698,7 @@ final class VaultClassifierViewModel: ObservableObject {
                         configuration: llmAssist,
                         entry: entry,
                         allowedTagIDs: allowedTagIDs,
+                        tagDescriptions: tagDescriptions,
                         catalog: catalog,
                         maximumOutputTokens: outputTokenLimit
                     )
@@ -798,6 +815,7 @@ final class VaultClassifierViewModel: ObservableObject {
         configuration: LLMAssistConfiguration,
         entry: EntryEvidence,
         allowedTagIDs: Set<String>,
+        tagDescriptions: [String: String],
         catalog: WorkspaceCatalog,
         maximumOutputTokens: Int
     ) async throws -> ProviderClassificationRun {
@@ -829,6 +847,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 configuration: configuration,
                 entry: entry,
                 allowedTagIDs: allowedTagIDs,
+                tagDescriptions: tagDescriptions,
                 maximumOutputTokens: maximumOutputTokens
             )
             let response = try await performProviderRequest(plan: request.plan, body: request.body, credential: mainCredential, timeout: 30)
@@ -850,6 +869,7 @@ final class VaultClassifierViewModel: ObservableObject {
             configuration: configuration,
             entry: entry,
             allowedTagIDs: allowedTagIDs,
+            tagDescriptions: tagDescriptions,
             toolProfiles: readyTools,
             maximumOutputTokens: maximumOutputTokens
         )
@@ -1445,6 +1465,8 @@ final class VaultClassifierViewModel: ObservableObject {
         llmProviderProfileID: String?,
         llmModelIdentifier: String?,
         llmDailyOutputTokenLimit: String?,
+        llmMaximumOutputTokensPerRequest: String?,
+        llmExtraDirection: String?,
         llmClassificationRequestsPerMinute: String?,
         llmBatchSize: String?,
         llmMaximumTagCount: String?,
@@ -1488,6 +1510,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 selectedLLMProviderProfileID = profile.id
                 if let llmModelIdentifier,
                    let llmDailyOutputTokenLimit,
+                   let llmMaximumOutputTokensPerRequest,
                    let llmClassificationRequestsPerMinute,
                    let llmBatchSize,
                    let llmMaximumTagCount,
@@ -1506,6 +1529,12 @@ final class VaultClassifierViewModel: ObservableObject {
                             maximum: LLMAssistConfiguration.maximumDailyOutputTokenLimit,
                             label: "LLM daily output token limit"
                         ),
+                        maximumOutputTokensPerRequest: try providerPositiveInteger(
+                            llmMaximumOutputTokensPerRequest,
+                            maximum: LLMAssistConfiguration.maximumOutputTokensPerRequest,
+                            label: "LLM maximum output tokens per request"
+                        ),
+                        extraDirection: llmExtraDirection ?? "",
                         classificationRequestsPerMinute: try providerPositiveInteger(
                             llmClassificationRequestsPerMinute,
                             maximum: LLMAssistConfiguration.maximumClassificationRequestsPerMinute,
@@ -1891,7 +1920,22 @@ final class VaultClassifierViewModel: ObservableObject {
         } catch { issue = error.localizedDescription }
     }
 
-    func addTag(treeID: String, name: String, parentID: String?, positionX: Double, positionY: Double) {
+    private func normalizedTagDescription(_ rawDescription: String?) throws -> String? {
+        let cleaned = rawDescription?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard cleaned.count <= TagTreeNode.maximumDescriptionLength else {
+            throw WebBridgeInputError.invalidChoice("tag description")
+        }
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
+    func addTag(
+        treeID: String,
+        name: String,
+        description: String?,
+        parentID: String?,
+        positionX: Double,
+        positionY: Double
+    ) {
         do {
             guard var catalog = localState?.workspaceCatalog,
                   let treeIndex = catalog.trees.firstIndex(where: { $0.id == treeID }) else {
@@ -1899,12 +1943,19 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleaned.isEmpty else { throw WebBridgeInputError.invalidChoice("tag name") }
+            let cleanedDescription = try normalizedTagDescription(description)
             let normalizedParentID = parentID?.trimmingCharacters(in: .whitespacesAndNewlines)
             if let normalizedParentID, !normalizedParentID.isEmpty,
                !catalog.trees[treeIndex].nodes.contains(where: { $0.id == normalizedParentID }) {
                 throw WebBridgeInputError.invalidChoice("tag parent")
             }
-            catalog.trees[treeIndex].nodes.append(.init(name: cleaned, parentID: normalizedParentID?.isEmpty == false ? normalizedParentID : nil, positionX: positionX, positionY: positionY))
+            catalog.trees[treeIndex].nodes.append(.init(
+                name: cleaned,
+                description: cleanedDescription,
+                parentID: normalizedParentID?.isEmpty == false ? normalizedParentID : nil,
+                positionX: positionX,
+                positionY: positionY
+            ))
             advanceTreeRevision(in: &catalog, treeIndex: treeIndex)
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
@@ -1962,6 +2013,24 @@ final class VaultClassifierViewModel: ObservableObject {
             } else {
                 localState = coordinator?.snapshot()
             }
+        } catch { issue = error.localizedDescription }
+    }
+
+    func updateTag(treeID: String, nodeID: String, name: String, description: String?) {
+        do {
+            guard var catalog = localState?.workspaceCatalog,
+                  let treeIndex = catalog.trees.firstIndex(where: { $0.id == treeID }),
+                  let nodeIndex = catalog.trees[treeIndex].nodes.firstIndex(where: { $0.id == nodeID }) else {
+                throw WebBridgeInputError.invalidChoice("tag node")
+            }
+            let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanedName.isEmpty else { throw WebBridgeInputError.invalidChoice("tag name") }
+            let cleanedDescription = try normalizedTagDescription(description)
+            catalog.trees[treeIndex].nodes[nodeIndex].name = cleanedName
+            catalog.trees[treeIndex].nodes[nodeIndex].description = cleanedDescription
+            advanceTreeRevision(in: &catalog, treeIndex: treeIndex)
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
         } catch { issue = error.localizedDescription }
     }
 
@@ -2391,6 +2460,7 @@ final class VaultClassifierViewModel: ObservableObject {
             let entry = workItem.entry
             let taxonomy = try tree.inferenceTaxonomy()
             let allowedTagIDs = llmAllowedTagIDs(taxonomy: taxonomy, configuration: llmAssist)
+            let tagDescriptions = llmTagDescriptions(taxonomy: taxonomy, allowedTagIDs: allowedTagIDs)
             let outputTokenLimit = try remainingLLMOutputTokens(
                 in: catalog,
                 classifierTypeID: classifierType.id,
@@ -2401,6 +2471,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 configuration: llmAssist,
                 entry: entry,
                 allowedTagIDs: allowedTagIDs,
+                tagDescriptions: tagDescriptions,
                 maximumOutputTokens: outputTokenLimit
             )
             providerClassificationRunning = true
@@ -2416,6 +2487,7 @@ final class VaultClassifierViewModel: ObservableObject {
                         configuration: llmAssist,
                         entry: entry,
                         allowedTagIDs: allowedTagIDs,
+                        tagDescriptions: tagDescriptions,
                         catalog: catalog,
                         maximumOutputTokens: outputTokenLimit
                     )
@@ -2503,6 +2575,7 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             let taxonomy = try tree.inferenceTaxonomy()
             let allowedTagIDs = llmAllowedTagIDs(taxonomy: taxonomy, configuration: configuration)
+            let tagDescriptions = llmTagDescriptions(taxonomy: taxonomy, allowedTagIDs: allowedTagIDs)
             var remainingOutputTokens = configuration.dailyOutputTokenLimit - outputTokensUsedToday(
                 in: catalog,
                 classifierTypeID: classifierType.id
@@ -2526,7 +2599,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     self.recordLLMClassificationRequestStart()
                     let representative = workItem.representative
                     let entry = workItem.entry
-                    let outputTokenLimit = min(ProviderClassificationProtocol.maximumOutputTokens, remainingOutputTokens)
+                    let outputTokenLimit = min(configuration.maximumOutputTokensPerRequest, remainingOutputTokens)
                     let startedAt = Date()
                     var recordPlan: ProviderTestPreparedRequest?
                     do {
@@ -2535,6 +2608,7 @@ final class VaultClassifierViewModel: ObservableObject {
                             configuration: configuration,
                             entry: entry,
                             allowedTagIDs: allowedTagIDs,
+                            tagDescriptions: tagDescriptions,
                             maximumOutputTokens: outputTokenLimit
                         )
                         let run = try await self.runProviderClassification(
@@ -2542,6 +2616,7 @@ final class VaultClassifierViewModel: ObservableObject {
                             configuration: configuration,
                             entry: entry,
                             allowedTagIDs: allowedTagIDs,
+                            tagDescriptions: tagDescriptions,
                             catalog: catalog,
                             maximumOutputTokens: outputTokenLimit
                         )
@@ -2969,7 +3044,7 @@ final class VaultClassifierViewModel: ObservableObject {
         assets["trees"] = catalog.trees.map { tree in
                 ["id": tree.id, "name": tree.name, "revision": tree.revision, "nodes": tree.nodes.enumerated().map { index, node -> [String: Any] in
                     let position = node.resolvedCanvasPosition(index: index)
-                    return ["id": node.id, "name": node.name, "parentID": node.parentID ?? NSNull(), "retired": node.isRetired, "positionX": position.x, "positionY": position.y]
+                    return ["id": node.id, "name": node.name, "description": node.description ?? NSNull(), "parentID": node.parentID ?? NSNull(), "retired": node.isRetired, "positionX": position.x, "positionY": position.y]
                 }] as [String: Any]
             }
         assets["datasets"] = catalog.datasets.map { dataset in
@@ -3057,6 +3132,8 @@ final class VaultClassifierViewModel: ObservableObject {
                             "providerProfileID": configuration.providerProfileID,
                             "modelIdentifier": configuration.modelIdentifier,
                             "dailyOutputTokenLimit": configuration.dailyOutputTokenLimit,
+                            "maximumOutputTokensPerRequest": configuration.maximumOutputTokensPerRequest,
+                            "extraDirection": configuration.extraDirection,
                             "dailyOutputTokensUsed": outputTokensUsedToday(in: catalog, classifierTypeID: classifierType.id),
                             "classificationRequestsPerMinute": configuration.classificationRequestsPerMinute,
                             "queuedCreatorCount": classificationStatus.queuedCreatorCount,
@@ -3250,6 +3327,8 @@ final class VaultClassifierViewModel: ObservableObject {
                     llmProviderProfileID: try webOptionalString(data, key: "llmProviderProfileID", limit: 128),
                     llmModelIdentifier: try webOptionalString(data, key: "llmModelIdentifier", limit: LLMAssistConfiguration.maximumModelIdentifierLength),
                     llmDailyOutputTokenLimit: try webOptionalString(data, key: "llmDailyOutputTokenLimit", limit: 16),
+                    llmMaximumOutputTokensPerRequest: try webOptionalString(data, key: "llmMaximumOutputTokensPerRequest", limit: 16),
+                    llmExtraDirection: try webOptionalString(data, key: "llmExtraDirection", limit: LLMAssistConfiguration.maximumExtraDirectionLength),
                     llmClassificationRequestsPerMinute: try webOptionalString(data, key: "llmClassificationRequestsPerMinute", limit: 3),
                     llmBatchSize: try webOptionalString(data, key: "llmBatchSize", limit: 4),
                     llmMaximumTagCount: try webOptionalString(data, key: "llmMaximumTagCount", limit: 4),
@@ -3320,11 +3399,25 @@ final class VaultClassifierViewModel: ObservableObject {
             case "rearrangeTree":
                 rearrangeTree(treeID: try webString(data, key: "treeID", limit: 256))
             case "addTag":
-                addTag(treeID: try webString(data, key: "treeID", limit: 256), name: try webString(data, key: "name", limit: 128), parentID: try webOptionalString(data, key: "parentID", limit: 256), positionX: try webCanvasCoordinate(data, key: "positionX"), positionY: try webCanvasCoordinate(data, key: "positionY"))
+                addTag(
+                    treeID: try webString(data, key: "treeID", limit: 256),
+                    name: try webString(data, key: "name", limit: 128),
+                    description: try webOptionalString(data, key: "description", limit: TagTreeNode.maximumDescriptionLength),
+                    parentID: try webOptionalString(data, key: "parentID", limit: 256),
+                    positionX: try webCanvasCoordinate(data, key: "positionX"),
+                    positionY: try webCanvasCoordinate(data, key: "positionY")
+                )
             case "moveTag":
                 moveTag(treeID: try webString(data, key: "treeID", limit: 256), nodeID: try webString(data, key: "nodeID", limit: 256), positionX: try webCanvasCoordinate(data, key: "positionX"), positionY: try webCanvasCoordinate(data, key: "positionY"))
             case "renameTag":
                 renameTag(treeID: try webString(data, key: "treeID", limit: 256), nodeID: try webString(data, key: "nodeID", limit: 256), name: try webString(data, key: "name", limit: 128), refreshState: false)
+            case "updateTag":
+                updateTag(
+                    treeID: try webString(data, key: "treeID", limit: 256),
+                    nodeID: try webString(data, key: "nodeID", limit: 256),
+                    name: try webString(data, key: "name", limit: 128),
+                    description: try webOptionalString(data, key: "description", limit: TagTreeNode.maximumDescriptionLength)
+                )
             case "connectTag":
                 connectTag(treeID: try webString(data, key: "treeID", limit: 256), nodeID: try webString(data, key: "nodeID", limit: 256), parentID: try webString(data, key: "parentID", limit: 256))
             case "disconnectTag":

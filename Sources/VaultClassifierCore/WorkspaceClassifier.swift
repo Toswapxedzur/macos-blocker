@@ -28,6 +28,7 @@ public extension TagTreeAsset {
             .init(
                 id: node.id,
                 name: node.name,
+                description: node.description,
                 parentID: node.parentID,
                 predictable: !node.isRetired
             )

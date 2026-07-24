@@ -615,6 +615,8 @@ h3 { font-size: 13px; }
 .classifier-priority-grid { grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 10px; }
 .classifier-llm-section { background: rgba(255, 251, 235, .52); }
 .classifier-llm-config { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.classifier-llm-config .field.wide { grid-column: 1 / -1; }
+.classifier-llm-config textarea { min-height: 88px; }
 .llm-classification-status {
   display: grid;
   gap: 8px;
@@ -1105,7 +1107,9 @@ h3 { font-size: 13px; }
 .tree-form { display: flex; flex-direction: column; gap: 10px; }
 .tree-popover .field { flex: auto; }
 .tree-popover input,
-.tree-popover select { min-height: 32px; padding: 7px 8px; border-radius: 7px; font-size: 11px; }
+.tree-popover select,
+.tree-popover textarea { min-height: 32px; padding: 7px 8px; border-radius: 7px; font-size: 11px; }
+.tree-popover textarea { min-height: 70px; }
 .tree-popover .primary,
 .tree-popover .secondary { padding: 7px 8px; border-radius: 7px; font-size: 11px; }
 .tree-canvas-hint { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin: 0; padding: 8px 12px; border-top: 1px solid #e2e8f0; color: #64748b; background: #fff; font-size: 11px; }
