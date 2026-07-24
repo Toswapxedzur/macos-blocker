@@ -39,7 +39,10 @@ public enum ProviderClassificationProtocol {
             allowedTagIDs: allowedTagIDs,
             tagDescriptions: tagDescriptions,
             maximumTagCount: configuration.maximumTagCount,
-            extraDirection: configuration.extraDirection
+            extraDirection: configuration.extraDirection,
+            nativeWebSearchEnabled: configuration.webSearchEnabled &&
+                profile.type.supportsProviderNativeWebSearch &&
+                configuration.webResearchProviderProfileID == nil
         )
         return .init(
             plan: plan,
@@ -116,7 +119,8 @@ public enum ProviderClassificationProtocol {
         allowedTagIDs: Set<String>,
         tagDescriptions: [String: String],
         maximumTagCount: Int,
-        extraDirection: String
+        extraDirection: String,
+        nativeWebSearchEnabled: Bool
     ) -> String {
         let evidence = [entry.evidence.title, entry.evidence.summary, entry.evidence.text]
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -137,7 +141,10 @@ public enum ProviderClassificationProtocol {
         let extraDirectionClause = cleanedExtraDirection.isEmpty
             ? ""
             : "\nAdditional owner direction:\n\(cleanedExtraDirection)\n"
-        return "Classify the quoted local entry using only the listed tag IDs. Eligible tag definitions (return only each id): \(encodedTagDefinitions).\(extraDirectionClause)Return exactly one JSON object with one key, labelIDs, whose value is an array of at most \(maximumTagCount) listed IDs. Do not include markdown or explanation.\nEntry: \(evidence)"
+        let searchClause = nativeWebSearchEnabled
+            ? "\nUse web search only when the provided evidence is insufficient to identify the creator or classify their recurring content confidently.\n"
+            : ""
+        return "Classify the quoted local entry using only the listed tag IDs. Eligible tag definitions (return only each id): \(encodedTagDefinitions).\(extraDirectionClause)\(searchClause)Return exactly one JSON object with one key, labelIDs, whose value is an array of at most \(maximumTagCount) listed IDs. Do not include markdown or explanation.\nEntry: \(evidence)"
     }
 
     private static func requestBody(

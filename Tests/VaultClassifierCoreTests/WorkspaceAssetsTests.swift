@@ -28,18 +28,9 @@ final class WorkspaceAssetsTests: XCTestCase {
             XCTAssertTrue(platform.supportsLocalModel)
             XCTAssertTrue(platform.supportsLLMAssist)
         }
-        for platformID in ["tiktok", "instagram", "bilibili"] {
-            XCTAssertEqual(
-                CollectionPlatformRegistry.definition(for: platformID)?.llmCreatorEvidenceStrategy,
-                .providerWebSearch
-            )
-        }
-        for platformID in ["youtube", "facebook", "twitter"] {
-            XCTAssertEqual(
-                CollectionPlatformRegistry.definition(for: platformID)?.llmCreatorEvidenceStrategy,
-                .officialPlatformAPI
-            )
-        }
+        XCTAssertEqual(CollectionPlatformRegistry.definition(for: "youtube")?.apiProviderType, .youtubeData)
+        XCTAssertEqual(CollectionPlatformRegistry.definition(for: "instagram")?.apiProviderType, .instagramGraph)
+        XCTAssertNil(CollectionPlatformRegistry.definition(for: "bilibili")?.apiProviderType)
         XCTAssertFalse(CollectionPlatformRegistry.definition(for: "pinterest") != nil)
     }
 
