@@ -177,7 +177,6 @@ final class VaultClassifierViewModel: ObservableObject {
                 Task { @MainActor in self?.onWebStateChange?() }
             }
             sharedHubClient.connect()
-            loadFixedProviderModelCatalogsAtLaunch()
             startActiveLLMClassification()
         } catch {
             issue = error.localizedDescription
@@ -410,9 +409,6 @@ final class VaultClassifierViewModel: ObservableObject {
             catalog.providerProfiles.append(profile)
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
-            if type.supportsLLMConfiguration && ProviderModelCatalogProtocol.usesVaultCatalog(type) {
-                fetchProviderModelCatalog(profileID: profile.id, reportFailure: false)
-            }
             issue = nil
         } catch { issue = error.localizedDescription }
     }
@@ -504,11 +500,10 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
-    /// Fixed provider types are loaded once at launch. Custom endpoints keep
-    /// one explicit fetch because their operator controls the model service.
-    /// Results remain transient; a classifier type persists only its chosen
-    /// identifier.
-    private func fetchProviderModelCatalog(profileID: String, reportFailure: Bool) {
+    /// A Probe explicitly refreshes one transient provider model list. No
+    /// catalog is loaded at startup; a failed refresh deliberately preserves
+    /// the last successful list until a later successful Probe replaces it.
+    private func fetchProviderModelCatalog(profileID: String) {
         guard !loadingProviderModelProfileIDs.contains(profileID) else { return }
         do {
             guard let profile = localState?.workspaceCatalog.providerProfiles.first(where: { $0.id == profileID }) else {
@@ -528,35 +523,24 @@ final class VaultClassifierViewModel: ObservableObject {
                     self.providerModelCatalogs[profileID] = try ProviderModelCatalogProtocol.parse(response.data, providerType: profile.type)
                     self.issue = nil
                 } catch {
-                    self.providerModelCatalogs.removeValue(forKey: profileID)
                     self.providerModelCatalogErrors[profileID] = error.localizedDescription
-                    if reportFailure { self.issue = error.localizedDescription }
                 }
                 self.loadingProviderModelProfileIDs.remove(profileID)
                 self.onWebStateChange?()
             }
         } catch {
             providerModelCatalogErrors[profileID] = error.localizedDescription
-            if reportFailure { issue = error.localizedDescription }
             onWebStateChange?()
         }
     }
 
-    func fetchCustomProviderModelCatalog(profileID: String) {
+    func probeProviderModelCatalog(profileID: String) {
         guard let profile = localState?.workspaceCatalog.providerProfiles.first(where: { $0.id == profileID }),
-              !ProviderModelCatalogProtocol.usesVaultCatalog(profile.type) else {
-            issue = WebBridgeInputError.invalidChoice("custom or compatible provider profile").localizedDescription
+              profile.type.supportsLLMConfiguration else {
+            issue = WebBridgeInputError.invalidChoice("LLM provider profile").localizedDescription
             return
         }
-        fetchProviderModelCatalog(profileID: profileID, reportFailure: true)
-    }
-
-    private func loadFixedProviderModelCatalogsAtLaunch() {
-        guard let catalog = localState?.workspaceCatalog else { return }
-        for profile in catalog.providerProfiles where
-            profile.type.supportsLLMConfiguration && ProviderModelCatalogProtocol.usesVaultCatalog(profile.type) {
-            fetchProviderModelCatalog(profileID: profile.id, reportFailure: false)
-        }
+        fetchProviderModelCatalog(profileID: profileID)
     }
 
     private func llmAllowedTagIDs(
@@ -1097,7 +1081,6 @@ final class VaultClassifierViewModel: ObservableObject {
             throw WebBridgeInputError.invalidChoice("provider profile")
         }
         var profile = catalog.providerProfiles[index]
-        let originalProfile = profile
         if let customEndpoint {
             let cleaned = customEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
             profile.customEndpoint = cleaned.isEmpty ? nil : cleaned
@@ -1127,17 +1110,6 @@ final class VaultClassifierViewModel: ObservableObject {
             }
         }
         try profile.validate()
-        let credentialChanged = originalProfile.credential != profile.credential
-
-        let directModelConnectionChanged = !ProviderModelCatalogProtocol.usesVaultCatalog(profile.type) && (
-            credentialChanged ||
-            originalProfile.customEndpoint != profile.customEndpoint ||
-            originalProfile.protocolConfiguration != profile.protocolConfiguration
-        )
-        if directModelConnectionChanged {
-            providerModelCatalogs.removeValue(forKey: profileID)
-            providerModelCatalogErrors.removeValue(forKey: profileID)
-        }
         profile.updatedAtMilliseconds = WorkspaceCatalog.now()
         catalog.providerProfiles[index] = profile
         try coordinator?.updateWorkspaceCatalog(catalog)
@@ -3128,8 +3100,8 @@ final class VaultClassifierViewModel: ObservableObject {
                     testModelIdentifier: try webOptionalString(data, key: "testModelIdentifier", limit: APIKeyProviderProfile.maximumTestModelIdentifierLength),
                     protocolConfiguration: try webProviderConfiguration(data)
                 )
-            case "fetchCustomProviderModelCatalog":
-                fetchCustomProviderModelCatalog(profileID: try webString(data, key: "profileID", limit: 128))
+            case "probeProviderModelCatalog":
+                probeProviderModelCatalog(profileID: try webString(data, key: "profileID", limit: 128))
             case "setLLMAssistActive":
                 setLLMAssistActive(
                     typeID: try webString(data, key: "typeID", limit: 256),
