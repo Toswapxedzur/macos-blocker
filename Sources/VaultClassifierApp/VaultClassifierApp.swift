@@ -620,21 +620,6 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
-    private func remainingLLMOutputTokens(
-        in catalog: WorkspaceCatalog,
-        classifierTypeID: String,
-        configuration: LLMAssistConfiguration
-    ) throws -> Int {
-        let remaining = configuration.dailyOutputTokenLimit - outputTokensUsedToday(
-            in: catalog,
-            classifierTypeID: classifierTypeID
-        )
-        guard remaining > 0 else {
-            throw WebBridgeInputError.invalidChoice("daily output token budget")
-        }
-        return min(configuration.maximumOutputTokensPerRequest, remaining)
-    }
-
     /// Sleeps only until the next classification request may start. This is a
     /// request-start cap, not a promise about completed creators: provider
     /// latency and failures can always make the observed completion rate lower.
@@ -671,11 +656,14 @@ final class VaultClassifierViewModel: ObservableObject {
             let taxonomy = try tree.inferenceTaxonomy()
             let allowedTagIDs = llmAllowedTagIDs(taxonomy: taxonomy, configuration: llmAssist)
             let tagDescriptions = llmTagDescriptions(taxonomy: taxonomy, allowedTagIDs: allowedTagIDs)
-            let outputTokenLimit = try remainingLLMOutputTokens(
+            let dailyOutputTokensRemaining = llmAssist.dailyOutputTokenLimit - outputTokensUsedToday(
                 in: catalog,
-                classifierTypeID: classifierType.id,
-                configuration: llmAssist
+                classifierTypeID: classifierType.id
             )
+            guard dailyOutputTokensRemaining > 0 else {
+                throw WebBridgeInputError.invalidChoice("daily output token budget")
+            }
+            let outputTokenLimit = min(llmAssist.maximumOutputTokensPerRequest, dailyOutputTokensRemaining)
             let entry = currentManualEntry()
             let recordPlan = try ProviderClassificationProtocol.prepare(
                 profile: profile,
@@ -700,7 +688,9 @@ final class VaultClassifierViewModel: ObservableObject {
                         allowedTagIDs: allowedTagIDs,
                         tagDescriptions: tagDescriptions,
                         catalog: catalog,
-                        maximumOutputTokens: outputTokenLimit
+                        maximumOutputTokens: outputTokenLimit,
+                        dailyOutputTokensRemaining: dailyOutputTokensRemaining,
+                        classifierTypeID: classifierType.id
                     )
                     let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
                     let labelIDs = try ProviderClassificationProtocol.parseLabelIDs(
@@ -734,7 +724,7 @@ final class VaultClassifierViewModel: ObservableObject {
                         statusCode: run.statusCode,
                         durationMilliseconds: duration,
                         inputTokens: run.usage.inputTokens,
-                        outputTokens: run.usage.outputTokens ?? outputTokenLimit,
+                        outputTokens: run.usage.outputTokens ?? run.requestedOutputTokens,
                         classifierTypeID: classifierType.id,
                         outcome: "succeeded"
                     ))
@@ -742,21 +732,23 @@ final class VaultClassifierViewModel: ObservableObject {
                 } catch {
                     let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
                     let failure = self.providerFailureMetadata(for: error)
-                    try? self.appendProviderTestRecord(.init(
-                        profileID: profile.id,
-                        provider: profile.type.rawValue,
-                        model: llmAssist.modelIdentifier,
-                        operation: "classify",
-                        endpoint: ProviderTestProtocol.safeEndpoint(recordPlan.plan.url),
-                        method: recordPlan.plan.method,
-                        statusCode: failure.statusCode,
-                        responseShape: failure.responseShape,
-                        durationMilliseconds: duration,
-                        inputTokens: nil,
-                        outputTokens: nil,
-                        classifierTypeID: classifierType.id,
-                        outcome: "failed"
-                    ))
+                    if !(error is ProviderWebResearchFailure) {
+                        try? self.appendProviderTestRecord(.init(
+                            profileID: profile.id,
+                            provider: profile.type.rawValue,
+                            model: llmAssist.modelIdentifier,
+                            operation: "classify",
+                            endpoint: ProviderTestProtocol.safeEndpoint(recordPlan.plan.url),
+                            method: recordPlan.plan.method,
+                            statusCode: failure.statusCode,
+                            responseShape: failure.responseShape,
+                            durationMilliseconds: duration,
+                            inputTokens: nil,
+                            outputTokens: nil,
+                            classifierTypeID: classifierType.id,
+                            outcome: "failed"
+                        ))
+                    }
                     self.issue = error.localizedDescription
                 }
                 self.providerClassificationRunning = false
@@ -790,6 +782,16 @@ final class VaultClassifierViewModel: ObservableObject {
         var content: String
         var usage: ProviderTestUsage
         var statusCode: Int
+        var requestedOutputTokens: Int
+        var researchOutputTokens: Int
+    }
+
+    private struct ProviderWebResearchFailure: LocalizedError {
+        let underlyingError: Error
+
+        var errorDescription: String? {
+            underlyingError.localizedDescription
+        }
     }
 
     private struct ProviderResponseParseFailure: LocalizedError {
@@ -803,15 +805,19 @@ final class VaultClassifierViewModel: ObservableObject {
     }
 
     private func providerFailureMetadata(for error: Error) -> (statusCode: Int?, responseShape: String?) {
+        if let researchFailure = error as? ProviderWebResearchFailure {
+            return providerFailureMetadata(for: researchFailure.underlyingError)
+        }
         guard let failure = error as? ProviderResponseParseFailure else { return (nil, nil) }
         return (failure.statusCode, failure.responseShape)
     }
 
     /// Runs an explicit creator classification through the selected LLM. Most
     /// platforms first receive one app-owned official API result. TikTok,
-    /// Instagram, and Bilibili instead require the selected provider's native
-    /// web search, because their official APIs cannot read arbitrary collected
-    /// creators.
+    /// Instagram, and Bilibili instead need hosted web research because their
+    /// official APIs cannot read arbitrary collected creators. That research
+    /// can run on the classifier provider itself or on one explicit separate
+    /// provider connection.
     private func runProviderClassification(
         profile: APIKeyProviderProfile,
         configuration: LLMAssistConfiguration,
@@ -819,13 +825,16 @@ final class VaultClassifierViewModel: ObservableObject {
         allowedTagIDs: Set<String>,
         tagDescriptions: [String: String],
         catalog: WorkspaceCatalog,
-        maximumOutputTokens: Int
+        maximumOutputTokens: Int,
+        dailyOutputTokensRemaining: Int,
+        classifierTypeID: String
     ) async throws -> ProviderClassificationRun {
         let mainCredential = try providerCredential(for: profile.id)
         guard let platform = CollectionPlatformRegistry.definition(for: entry.platform) else {
             throw WebBridgeInputError.invalidChoice("creator platform")
         }
         let enrichedEntry: EntryEvidence
+        var researchOutputTokens = 0
         switch platform.llmCreatorEvidenceStrategy {
         case .officialPlatformAPI:
             guard let officialProfile = readyPlatformAPIProfile(in: catalog, platformID: entry.platform) else {
@@ -833,11 +842,41 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             enrichedEntry = try await addingOfficialPlatformEvidence(to: entry, profile: officialProfile)
         case .providerWebSearch:
-            guard configuration.webSearchEnabled,
-                  profile.type.supportsProviderNativeWebSearch else {
-                throw WebBridgeInputError.invalidChoice("a selected LLM provider with web search enabled for \(platform.name)")
+            guard configuration.webSearchEnabled else {
+                throw WebBridgeInputError.invalidChoice("provider web search enabled for \(platform.name)")
             }
-            enrichedEntry = entry
+            if profile.type.supportsProviderNativeWebSearch {
+                enrichedEntry = entry
+            } else {
+                let research = try webResearchProfile(in: catalog, configuration: configuration)
+                do {
+                    let result = try await addingProviderWebResearch(
+                        to: entry,
+                        profile: research.profile,
+                        modelIdentifier: research.modelIdentifier,
+                        classifierTypeID: classifierTypeID,
+                        maximumOutputTokens: min(
+                            ProviderWebResearchProtocol.maximumOutputTokens,
+                            max(1, dailyOutputTokensRemaining - 1)
+                        )
+                    )
+                    enrichedEntry = result.entry
+                    researchOutputTokens = result.outputTokens
+                } catch {
+                    throw ProviderWebResearchFailure(underlyingError: error)
+                }
+            }
+        }
+        let effectiveMaximumOutputTokens = min(
+            maximumOutputTokens,
+            dailyOutputTokensRemaining - researchOutputTokens
+        )
+        guard effectiveMaximumOutputTokens > 0 else {
+            throw WebBridgeInputError.invalidChoice("daily output token budget")
+        }
+        if researchOutputTokens > 0 {
+            await waitForLLMClassificationPace(configuration: configuration)
+            recordLLMClassificationRequestStart()
         }
         let request = try ProviderClassificationProtocol.prepare(
             profile: profile,
@@ -845,9 +884,15 @@ final class VaultClassifierViewModel: ObservableObject {
             entry: enrichedEntry,
             allowedTagIDs: allowedTagIDs,
             tagDescriptions: tagDescriptions,
-            maximumOutputTokens: maximumOutputTokens
+            maximumOutputTokens: effectiveMaximumOutputTokens
         )
-        let response = try await performProviderRequest(plan: request.plan, body: request.body, credential: mainCredential, timeout: 30)
+        let response = try await performProviderRequest(
+            plan: request.plan,
+            body: request.body,
+            credential: mainCredential,
+            timeout: 30,
+            followAnthropicSearchPause: profile.type == .anthropic && configuration.webSearchEnabled
+        )
         let parsed: ProviderTestParsedResponse
         do {
             parsed = try ProviderTestProtocol.parseResponse(response.data, format: request.plan.bodyFormat, operation: request.operation)
@@ -858,7 +903,117 @@ final class VaultClassifierViewModel: ObservableObject {
                 responseShape: ProviderTestProtocol.responseShape(for: response.data)
             )
         }
-        return .init(prompt: request.prompt, content: parsed.content, usage: parsed.usage, statusCode: response.response.statusCode)
+        return .init(
+            prompt: request.prompt,
+            content: parsed.content,
+            usage: parsed.usage,
+            statusCode: response.response.statusCode,
+            requestedOutputTokens: effectiveMaximumOutputTokens,
+            researchOutputTokens: researchOutputTokens
+        )
+    }
+
+    private func webResearchProfile(
+        in catalog: WorkspaceCatalog,
+        configuration: LLMAssistConfiguration
+    ) throws -> (profile: APIKeyProviderProfile, modelIdentifier: String) {
+        guard let profileID = configuration.webResearchProviderProfileID,
+              let modelIdentifier = configuration.webResearchModelIdentifier,
+              let profile = catalog.providerProfiles.first(where: { $0.id == profileID }),
+              profile.type.supportsProviderNativeWebSearch,
+              (try? profile.validateForDispatch()) != nil else {
+            throw WebBridgeInputError.invalidChoice("a ready web research provider and fetched model")
+        }
+        _ = try providerCredential(for: profile.id)
+        return (profile, modelIdentifier)
+    }
+
+    private func addingProviderWebResearch(
+        to entry: EntryEvidence,
+        profile: APIKeyProviderProfile,
+        modelIdentifier: String,
+        classifierTypeID: String,
+        maximumOutputTokens: Int
+    ) async throws -> (entry: EntryEvidence, outputTokens: Int) {
+        let startedAt = Date()
+        var prepared: ProviderTestPreparedRequest?
+        var recorded = false
+        do {
+            let request = try ProviderWebResearchProtocol.prepare(
+                profile: profile,
+                modelIdentifier: modelIdentifier,
+                entry: entry,
+                maximumOutputTokens: maximumOutputTokens
+            )
+            prepared = request
+            let credential = try providerCredential(for: profile.id)
+            let response = try await performProviderRequest(
+                plan: request.plan,
+                body: request.body,
+                credential: credential,
+                timeout: 45,
+                followAnthropicSearchPause: profile.type == .anthropic
+            )
+            let parsed: ProviderTestParsedResponse
+            do {
+                parsed = try ProviderTestProtocol.parseResponse(
+                    response.data,
+                    format: request.plan.bodyFormat,
+                    operation: request.operation
+                )
+            } catch {
+                throw ProviderResponseParseFailure(
+                    underlyingError: error,
+                    statusCode: response.response.statusCode,
+                    responseShape: ProviderTestProtocol.responseShape(for: response.data)
+                )
+            }
+            let outputTokens = parsed.usage.outputTokens ?? maximumOutputTokens
+            try appendProviderTestRecord(.init(
+                profileID: profile.id,
+                provider: profile.type.rawValue,
+                model: modelIdentifier,
+                operation: "research-creator-web",
+                endpoint: ProviderTestProtocol.safeEndpoint(request.plan.url),
+                method: request.plan.method,
+                statusCode: response.response.statusCode,
+                durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
+                inputTokens: parsed.usage.inputTokens,
+                outputTokens: outputTokens,
+                classifierTypeID: classifierTypeID,
+                outcome: "succeeded"
+            ))
+            recorded = true
+            var enriched = entry
+            let existingSummary = entry.evidence.summary?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let summary = [existingSummary, "Provider web research memo:\n\(parsed.content)"]
+                .compactMap { $0 }
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n\n")
+            enriched.evidence.summary = String(summary.prefix(EntryEvidenceValidator.summaryLimit))
+            try EntryEvidenceValidator().validate(enriched)
+            return (enriched, outputTokens)
+        } catch {
+            if let prepared, !recorded {
+                let failure = providerFailureMetadata(for: error)
+                try? appendProviderTestRecord(.init(
+                    profileID: profile.id,
+                    provider: profile.type.rawValue,
+                    model: modelIdentifier,
+                    operation: "research-creator-web",
+                    endpoint: ProviderTestProtocol.safeEndpoint(prepared.plan.url),
+                    method: prepared.plan.method,
+                    statusCode: failure.statusCode,
+                    responseShape: failure.responseShape,
+                    durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
+                    inputTokens: nil,
+                    outputTokens: nil,
+                    classifierTypeID: classifierTypeID,
+                    outcome: "failed"
+                ))
+            }
+            throw error
+        }
     }
 
     /// Chooses the one newest usable API connection for this platform. The
@@ -902,9 +1057,11 @@ final class VaultClassifierViewModel: ObservableObject {
                 throw WebBridgeInputError.invalidChoice("a ready official \(platformID) API connection")
             }
         case .providerWebSearch:
-            guard configuration.webSearchEnabled,
-                  profile.type.supportsProviderNativeWebSearch else {
-                throw WebBridgeInputError.invalidChoice("a selected LLM provider with web search enabled for \(platform.name)")
+            guard configuration.webSearchEnabled else {
+                throw WebBridgeInputError.invalidChoice("provider web search enabled for \(platform.name)")
+            }
+            if !profile.type.supportsProviderNativeWebSearch {
+                _ = try webResearchProfile(in: catalog, configuration: configuration)
             }
         }
     }
@@ -913,18 +1070,51 @@ final class VaultClassifierViewModel: ObservableObject {
         plan: ProviderRequestPlan,
         body: Data?,
         credential: ProviderCredentialRecord,
-        timeout: TimeInterval
+        timeout: TimeInterval,
+        followAnthropicSearchPause: Bool = false
     ) async throws -> (data: Data, response: HTTPURLResponse) {
-        var request = URLRequest(url: plan.url)
-        request.httpMethod = plan.method
-        request.httpBody = body
-        request.timeoutInterval = timeout
-        plan.headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
-        try apply(credential: credential, to: &request, plan: plan)
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw ProviderTestProtocolError.invalidResponse }
-        guard (200..<300).contains(http.statusCode) else { throw ProviderTestHTTPError.status(http.statusCode) }
-        return (data, http)
+        var nextBody = body
+        for continuationCount in 0...2 {
+            var request = URLRequest(url: plan.url)
+            request.httpMethod = plan.method
+            request.httpBody = nextBody
+            request.timeoutInterval = timeout
+            plan.headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
+            try apply(credential: credential, to: &request, plan: plan)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw ProviderTestProtocolError.invalidResponse }
+            guard (200..<300).contains(http.statusCode) else { throw ProviderTestHTTPError.status(http.statusCode) }
+            guard followAnthropicSearchPause,
+                  continuationCount < 2,
+                  let continuation = anthropicPausedSearchContinuationBody(
+                    requestBody: nextBody,
+                    responseData: data
+                  ) else {
+                return (data, http)
+            }
+            nextBody = continuation
+        }
+        throw ProviderTestProtocolError.invalidResponse
+    }
+
+    /// Anthropic's server-side search can pause a turn. Keep the returned
+    /// content only long enough to continue that same request; it never enters
+    /// the request ledger or workspace state.
+    private func anthropicPausedSearchContinuationBody(
+        requestBody: Data?,
+        responseData: Data
+    ) -> Data? {
+        guard let requestBody,
+              var request = (try? JSONSerialization.jsonObject(with: requestBody)) as? [String: Any],
+              let response = (try? JSONSerialization.jsonObject(with: responseData)) as? [String: Any],
+              response["stop_reason"] as? String == "pause_turn",
+              let content = response["content"] as? [Any],
+              var messages = request["messages"] as? [[String: Any]] else {
+            return nil
+        }
+        messages.append(["role": "assistant", "content": content])
+        request["messages"] = messages
+        return try? JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
     }
 
     private func addingOfficialPlatformEvidence(
@@ -1361,6 +1551,8 @@ final class VaultClassifierViewModel: ObservableObject {
         llmMaximumTagCount: String?,
         llmRestrictToLeafTags: Bool,
         llmWebSearchEnabled: Bool,
+        llmWebResearchProviderProfileID: String?,
+        llmWebResearchModelIdentifier: String?,
         priority: [ClassifierDecisionSource]
     ) {
         do {
@@ -1408,6 +1600,36 @@ final class VaultClassifierViewModel: ObservableObject {
                     guard providerModelCatalogs[profile.id]?.contains(cleanedLLMModelIdentifier) == true || retainsSavedModel else {
                         throw WebBridgeInputError.invalidChoice("a model fetched from this provider")
                     }
+                    let cleanedWebResearchProviderID = llmWebResearchProviderProfileID?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let cleanedWebResearchModelIdentifier = llmWebResearchModelIdentifier?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let webResearchConfiguration: (profileID: String?, modelIdentifier: String?)
+                    if llmWebSearchEnabled && !profile.type.supportsProviderNativeWebSearch {
+                        guard (cleanedWebResearchProviderID.isEmpty && cleanedWebResearchModelIdentifier.isEmpty) ||
+                                (!cleanedWebResearchProviderID.isEmpty && !cleanedWebResearchModelIdentifier.isEmpty) else {
+                            throw WebBridgeInputError.invalidChoice("a provider web research connection and fetched model")
+                        }
+                        if cleanedWebResearchProviderID.isEmpty {
+                            webResearchConfiguration = (nil, nil)
+                        } else {
+                            guard
+                              let researchProfile = catalog.providerProfiles.first(where: { $0.id == cleanedWebResearchProviderID }),
+                              researchProfile.type.supportsProviderNativeWebSearch else {
+                            throw WebBridgeInputError.invalidChoice("a provider web research connection and fetched model")
+                        }
+                        let retainsSavedResearchModel = existingLLMAssist?.webResearchProviderProfileID == researchProfile.id &&
+                            existingLLMAssist?.webResearchModelIdentifier == cleanedWebResearchModelIdentifier
+                        guard providerModelCatalogs[researchProfile.id]?.contains(cleanedWebResearchModelIdentifier) == true || retainsSavedResearchModel else {
+                            throw WebBridgeInputError.invalidChoice("a web research model fetched from this provider")
+                        }
+                        webResearchConfiguration = (researchProfile.id, cleanedWebResearchModelIdentifier)
+                        }
+                    } else {
+                        webResearchConfiguration = (nil, nil)
+                    }
+                    let retainsSavedWebResearch = existingLLMAssist?.webResearchProviderProfileID == webResearchConfiguration.profileID &&
+                        existingLLMAssist?.webResearchModelIdentifier == webResearchConfiguration.modelIdentifier
                     let configuration = LLMAssistConfiguration(
                         providerProfileID: cleanedLLMProviderID,
                         modelIdentifier: cleanedLLMModelIdentifier,
@@ -1438,8 +1660,10 @@ final class VaultClassifierViewModel: ObservableObject {
                             label: "LLM maximum tag count"
                         ),
                         restrictToLeafTags: llmRestrictToLeafTags,
-                        webSearchEnabled: profile.type.supportsProviderNativeWebSearch && llmWebSearchEnabled,
-                        isActive: retainsSavedModel ? existingLLMAssist?.isActive ?? false : false
+                        webSearchEnabled: llmWebSearchEnabled,
+                        webResearchProviderProfileID: webResearchConfiguration.profileID,
+                        webResearchModelIdentifier: webResearchConfiguration.modelIdentifier,
+                        isActive: retainsSavedModel && retainsSavedWebResearch ? existingLLMAssist?.isActive ?? false : false
                     )
                     try configuration.validate()
                     selectedLLMAssist = configuration
@@ -2295,11 +2519,14 @@ final class VaultClassifierViewModel: ObservableObject {
             let taxonomy = try tree.inferenceTaxonomy()
             let allowedTagIDs = llmAllowedTagIDs(taxonomy: taxonomy, configuration: llmAssist)
             let tagDescriptions = llmTagDescriptions(taxonomy: taxonomy, allowedTagIDs: allowedTagIDs)
-            let outputTokenLimit = try remainingLLMOutputTokens(
+            let dailyOutputTokensRemaining = llmAssist.dailyOutputTokenLimit - outputTokensUsedToday(
                 in: catalog,
-                classifierTypeID: classifierType.id,
-                configuration: llmAssist
+                classifierTypeID: classifierType.id
             )
+            guard dailyOutputTokensRemaining > 0 else {
+                throw WebBridgeInputError.invalidChoice("daily output token budget")
+            }
+            let outputTokenLimit = min(llmAssist.maximumOutputTokensPerRequest, dailyOutputTokensRemaining)
             let recordPlan = try ProviderClassificationProtocol.prepare(
                 profile: profile,
                 configuration: llmAssist,
@@ -2323,7 +2550,9 @@ final class VaultClassifierViewModel: ObservableObject {
                         allowedTagIDs: allowedTagIDs,
                         tagDescriptions: tagDescriptions,
                         catalog: catalog,
-                        maximumOutputTokens: outputTokenLimit
+                        maximumOutputTokens: outputTokenLimit,
+                        dailyOutputTokensRemaining: dailyOutputTokensRemaining,
+                        classifierTypeID: classifierType.id
                     )
                     let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
                     let labelIDs = try ProviderClassificationProtocol.parseLabelIDs(
@@ -2348,7 +2577,7 @@ final class VaultClassifierViewModel: ObservableObject {
                         statusCode: run.statusCode,
                         durationMilliseconds: duration,
                         inputTokens: run.usage.inputTokens,
-                        outputTokens: run.usage.outputTokens ?? outputTokenLimit,
+                        outputTokens: run.usage.outputTokens ?? run.requestedOutputTokens,
                         classifierTypeID: classifierType.id,
                         outcome: "succeeded"
                     ))
@@ -2356,21 +2585,23 @@ final class VaultClassifierViewModel: ObservableObject {
                 } catch {
                     let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
                     let failure = self.providerFailureMetadata(for: error)
-                    try? self.appendProviderTestRecord(.init(
-                        profileID: profile.id,
-                        provider: profile.type.rawValue,
-                        model: llmAssist.modelIdentifier,
-                        operation: "classify-creator",
-                        endpoint: ProviderTestProtocol.safeEndpoint(recordPlan.plan.url),
-                        method: recordPlan.plan.method,
-                        statusCode: failure.statusCode,
-                        responseShape: failure.responseShape,
-                        durationMilliseconds: duration,
-                        inputTokens: nil,
-                        outputTokens: nil,
-                        classifierTypeID: classifierType.id,
-                        outcome: "failed"
-                    ))
+                    if !(error is ProviderWebResearchFailure) {
+                        try? self.appendProviderTestRecord(.init(
+                            profileID: profile.id,
+                            provider: profile.type.rawValue,
+                            model: llmAssist.modelIdentifier,
+                            operation: "classify-creator",
+                            endpoint: ProviderTestProtocol.safeEndpoint(recordPlan.plan.url),
+                            method: recordPlan.plan.method,
+                            statusCode: failure.statusCode,
+                            responseShape: failure.responseShape,
+                            durationMilliseconds: duration,
+                            inputTokens: nil,
+                            outputTokens: nil,
+                            classifierTypeID: classifierType.id,
+                            outcome: "failed"
+                        ))
+                    }
                     self.issue = error.localizedDescription
                 }
                 self.providerClassificationRunning = false
@@ -2452,7 +2683,9 @@ final class VaultClassifierViewModel: ObservableObject {
                             allowedTagIDs: allowedTagIDs,
                             tagDescriptions: tagDescriptions,
                             catalog: catalog,
-                            maximumOutputTokens: outputTokenLimit
+                            maximumOutputTokens: outputTokenLimit,
+                            dailyOutputTokensRemaining: remainingOutputTokens,
+                            classifierTypeID: classifierType.id
                         )
                         let labelIDs = try ProviderClassificationProtocol.parseLabelIDs(
                             run.content,
@@ -2466,8 +2699,8 @@ final class VaultClassifierViewModel: ObservableObject {
                             creatorName: representative.creatorName,
                             labelIDs: labelIDs
                         )
-                        let recordedOutputTokens = run.usage.outputTokens ?? outputTokenLimit
-                        remainingOutputTokens -= max(0, recordedOutputTokens)
+                        let recordedOutputTokens = run.usage.outputTokens ?? run.requestedOutputTokens
+                        remainingOutputTokens -= max(0, run.researchOutputTokens) + max(0, recordedOutputTokens)
                         try self.appendProviderTestRecord(.init(
                             profileID: profile.id,
                             provider: profile.type.rawValue,
@@ -2485,7 +2718,7 @@ final class VaultClassifierViewModel: ObservableObject {
                         successCount += 1
                     } catch {
                         firstFailure = firstFailure ?? error
-                        if let recordPlan {
+                        if let recordPlan, !(error is ProviderWebResearchFailure) {
                             let failure = self.providerFailureMetadata(for: error)
                             try? self.appendProviderTestRecord(.init(
                                 profileID: profile.id,
@@ -2502,6 +2735,12 @@ final class VaultClassifierViewModel: ObservableObject {
                                 classifierTypeID: classifierType.id,
                                 outcome: "failed"
                             ))
+                        }
+                        if let currentCatalog = self.localState?.workspaceCatalog {
+                            remainingOutputTokens = configuration.dailyOutputTokenLimit - self.outputTokensUsedToday(
+                                in: currentCatalog,
+                                classifierTypeID: classifierType.id
+                            )
                         }
                         if activatedRun { break }
                     }
@@ -2973,6 +3212,8 @@ final class VaultClassifierViewModel: ObservableObject {
                             "maximumTagCount": configuration.maximumTagCount,
                             "restrictToLeafTags": configuration.restrictToLeafTags,
                             "webSearchEnabled": configuration.webSearchEnabled,
+                            "webResearchProviderProfileID": configuration.webResearchProviderProfileID ?? NSNull(),
+                            "webResearchModelIdentifier": configuration.webResearchModelIdentifier ?? NSNull(),
                             "isActive": configuration.isActive,
                         ] as [String: Any]
                     } ?? NSNull(),
@@ -3161,6 +3402,8 @@ final class VaultClassifierViewModel: ObservableObject {
                     llmMaximumTagCount: try webOptionalString(data, key: "llmMaximumTagCount", limit: 4),
                     llmRestrictToLeafTags: data["llmRestrictToLeafTags"] as? Bool ?? false,
                     llmWebSearchEnabled: data["llmWebSearchEnabled"] as? Bool ?? false,
+                    llmWebResearchProviderProfileID: try webOptionalString(data, key: "llmWebResearchProviderProfileID", limit: 128),
+                    llmWebResearchModelIdentifier: try webOptionalString(data, key: "llmWebResearchModelIdentifier", limit: LLMAssistConfiguration.maximumModelIdentifierLength),
                     priority: priority
                 )
             case "selectLLMProvider":

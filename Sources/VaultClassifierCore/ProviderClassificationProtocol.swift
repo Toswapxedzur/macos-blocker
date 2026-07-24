@@ -32,9 +32,6 @@ public enum ProviderClassificationProtocol {
         guard descriptor.requestFormats.contains(where: { $0.operation == .generateText }) else {
             throw ProviderClassificationProtocolError.unsupportedProvider
         }
-        guard !configuration.webSearchEnabled || profile.type.supportsProviderNativeWebSearch else {
-            throw ProviderClassificationProtocolError.unsupportedWebSearch
-        }
         let plan = try DescriptorBackedProviderProtocol(descriptor: descriptor)
             .requestPlan(for: profile, operation: .generateText, modelIdentifier: configuration.modelIdentifier)
         let prompt = prompt(
@@ -154,16 +151,24 @@ public enum ProviderClassificationProtocol {
         switch format {
         case .openAIResponses:
             var request: [String: Any] = ["model": configuration.modelIdentifier, "input": prompt, "max_output_tokens": output]
-            if configuration.webSearchEnabled {
+            if configuration.webSearchEnabled && profileSupportsNativeWebSearch(format: format, configuration: configuration) {
                 request["tools"] = [["type": "web_search"]]
             }
             object = request
         case .openAIChatCompletions:
             object = ["model": configuration.modelIdentifier, "messages": [["role": "user", "content": prompt]], "max_tokens": output]
         case .anthropicMessages:
-            object = ["model": configuration.modelIdentifier, "max_tokens": output, "messages": [["role": "user", "content": prompt]]]
+            var request: [String: Any] = ["model": configuration.modelIdentifier, "max_tokens": output, "messages": [["role": "user", "content": prompt]]]
+            if configuration.webSearchEnabled && profileSupportsNativeWebSearch(format: format, configuration: configuration) {
+                request["tools"] = [["type": "web_search_20250305", "name": "web_search", "max_uses": 3]]
+            }
+            object = request
         case .geminiGenerateContent, .vertexGenerateContent:
-            object = ["contents": [["parts": [["text": prompt]]]], "generationConfig": ["maxOutputTokens": output]]
+            var request: [String: Any] = ["contents": [["parts": [["text": prompt]]]], "generationConfig": ["maxOutputTokens": output]]
+            if configuration.webSearchEnabled && profileSupportsNativeWebSearch(format: format, configuration: configuration) {
+                request["tools"] = [["google_search": [:]]]
+            }
+            object = request
         case .cohereChat:
             object = ["model": configuration.modelIdentifier, "messages": [["role": "user", "content": prompt]], "max_tokens": output, "stream": false]
         case .ollamaChat:
@@ -173,11 +178,22 @@ public enum ProviderClassificationProtocol {
         }
         return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     }
+
+    private static func profileSupportsNativeWebSearch(
+        format: ProviderRequestBodyFormat,
+        configuration: LLMAssistConfiguration
+    ) -> Bool {
+        switch format {
+        case .openAIResponses, .anthropicMessages, .geminiGenerateContent:
+            return configuration.webResearchProviderProfileID == nil && configuration.webResearchModelIdentifier == nil
+        default:
+            return false
+        }
+    }
 }
 
 public enum ProviderClassificationProtocolError: Error, Equatable, LocalizedError, Sendable {
     case unsupportedProvider
-    case unsupportedWebSearch
     case invalidConfiguration
     case noAvailableTags
     case invalidResponse
@@ -185,7 +201,6 @@ public enum ProviderClassificationProtocolError: Error, Equatable, LocalizedErro
     public var errorDescription: String? {
         switch self {
         case .unsupportedProvider: return "This provider does not support explicit text classification."
-        case .unsupportedWebSearch: return "The selected provider does not support provider-native web search in Vault Classifier."
         case .invalidConfiguration: return "The selected LLM model does not belong to this provider connection."
         case .noAvailableTags: return "The selected tag tree has no active leaf tags to classify."
         case .invalidResponse: return "The provider response did not contain valid local tag IDs."

@@ -34,12 +34,15 @@ A **classifier type** owns one optional LLM Assist attachment. The attachment
 selects exactly one provider profile and one fetched model identifier, plus its
 daily output-token allowance, **per-request max-token** cap (default 4,096),
 optional **extra direction**, classification pace, batch size, returned-tag
-limit, leaf-only constraint, and optional provider-native web search. A ready
+limit, leaf-only constraint, and optional hosted web search. A ready
 matching official platform API connection is required for platforms with that
 evidence path. TikTok, Instagram, and Bilibili deliberately make no
-app-fetched platform-evidence request; they require the selected provider's
-native web-search mode instead. Changing the provider or model deactivates the
-attachment; it never causes background classification.
+app-fetched platform-evidence request. They require either the classifier
+provider's direct hosted-search grammar or a separately selected hosted-search
+provider plus one of its fetched models. The separate provider produces a
+transient research memo; the classifier model still returns the tags. Changing
+either selected provider/model deactivates the attachment; it never causes
+background classification.
 
 The type also retains its selected provider while no model has been attached
 yet. This is only an editor choice: it cannot activate a provider, dispatch a
@@ -87,17 +90,21 @@ when disabled or the daily allowance is exhausted.
 
 Each attachment persists a **classification pace** of 1–120 provider requests
 started per minute (default 6). It is enforced for both manual and activated
-classification paths. The app's one serial classification lane waits between
+classification paths, including a separate web-research request followed by a
+classifier request. The app's one serial classification lane waits between
 request starts, so a lower value deliberately slows provider traffic. This is
 not a completion-rate promise: provider latency, errors, and token limits can
 always make completed classifications slower.
 
 The per-request max-token cap is sent in the selected provider's native output
-limit field. The effective cap is the smaller of that value and the remaining
-daily allowance. If a provider response omits usage, the app conservatively
-charges that requested cap. The optional extra direction is included in the
-classification prompt before the fixed JSON-only response contract; it cannot
-change the response parser, which still accepts only bounded eligible tag IDs.
+limit field. The effective classifier cap is the smaller of that value and the
+remaining daily allowance. A separate web-research response also consumes the
+same daily output allowance; it is capped at 1,024 output tokens and a missing
+usage value consumes that cap conservatively. The request ledger records the
+two requests separately, but never their bodies. The optional extra direction
+is included in the classification prompt before the fixed JSON-only response
+contract; it cannot change the response parser, which still accepts only
+bounded eligible tag IDs.
 
 Each tag may have an optional local description. An explicit LLM request sends
 the eligible tag ID and its description together. Tags excluded by the
@@ -131,13 +138,17 @@ or the response is unreadable, the classification does not run.
 TikTok Display and Instagram Graph only expose data for their authorized
 creator. Bilibili has no arbitrary-creator public evidence adapter here. For
 those three collected platforms, Vault Classifier makes **no** app-owned
-platform-evidence request. Classification requires a selected language-model
-provider whose native search request grammar is implemented in the app and
-whose web-search setting is enabled. That provider retrieves public evidence;
-the app does not store its results. Without native search, classification is
-disabled rather than falling back to scraping. Currently, the implemented
-native search grammar is OpenAI Responses `web_search`; a provider is not
-advertised as searchable merely because a separate agent product can browse.
+platform-evidence request. Classification requires hosted web search. OpenAI
+Responses (`web_search`), Gemini GenerateContent (`google_search` grounding),
+and Anthropic Messages (`web_search_20250305`) can search directly when the
+selected model supports the provider feature. Every other built-in
+non-custom classifier model can instead use one separately selected profile
+and one fetched model from those three search-capable providers. Its memo is
+added only to the in-flight classifier prompt, then discarded; the ledger
+retains request metadata and token accounting only. Without either direct
+search or a ready separate research connection, classification is disabled
+rather than falling back to scraping. A provider is not advertised as
+searchable merely because a separate agent product can browse.
 
 The creator's local prompt evidence is a random sample of up to 25 observed
 titles, bounded before dispatch. It is creator evidence, never individual video

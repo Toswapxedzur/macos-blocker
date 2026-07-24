@@ -214,7 +214,7 @@ final class ProviderTestProtocolTests: XCTestCase {
         XCTAssertTrue(prompt.contains("Return exactly one JSON object"))
     }
 
-    func testProviderNativeWebSearchIsExplicitlySupportedOnlyByOpenAIResponses() throws {
+    func testProviderNativeWebSearchUsesEachDocumentedDirectRequestGrammar() throws {
         let openAI = APIKeyProviderProfile(id: "openai", type: .openAI)
         let openAIConfiguration = LLMAssistConfiguration(
             providerProfileID: openAI.id,
@@ -231,20 +231,75 @@ final class ProviderTestProtocolTests: XCTestCase {
         XCTAssertEqual((body["tools"] as? [[String: String]])?.first?["type"], "web_search")
 
         let gemini = APIKeyProviderProfile(id: "gemini", type: .gemini)
-        let unsupportedConfiguration = LLMAssistConfiguration(
+        let geminiConfiguration = LLMAssistConfiguration(
             providerProfileID: gemini.id,
             modelIdentifier: "gemini-3.1-flash-lite",
             webSearchEnabled: true
         )
-        XCTAssertThrowsError(
-            try ProviderClassificationProtocol.prepare(
-                profile: gemini,
-                configuration: unsupportedConfiguration,
-                entry: .init(platform: "bilibili", entryID: "entry", surface: .page, evidence: .init(title: "Creator: RetroTech")),
-                allowedTagIDs: ["technology"]
-            )
-        ) { error in
-            XCTAssertEqual(error as? ProviderClassificationProtocolError, .unsupportedWebSearch)
+        let geminiRequest = try ProviderClassificationProtocol.prepare(
+            profile: gemini,
+            configuration: geminiConfiguration,
+            entry: .init(platform: "bilibili", entryID: "entry", surface: .page, evidence: .init(title: "Creator: RetroTech")),
+            allowedTagIDs: ["technology"]
+        )
+        let geminiBody = try XCTUnwrap(JSONSerialization.jsonObject(with: geminiRequest.body) as? [String: Any])
+        XCTAssertEqual(((geminiBody["tools"] as? [[String: [String: Any]]])?.first?["google_search"] as? [String: Any])?.isEmpty, true)
+
+        let anthropic = APIKeyProviderProfile(id: "anthropic", type: .anthropic)
+        let anthropicRequest = try ProviderClassificationProtocol.prepare(
+            profile: anthropic,
+            configuration: .init(providerProfileID: anthropic.id, modelIdentifier: "claude-sonnet-4-5", webSearchEnabled: true),
+            entry: .init(platform: "bilibili", entryID: "entry", surface: .page, evidence: .init(title: "Creator: RetroTech")),
+            allowedTagIDs: ["technology"]
+        )
+        let anthropicBody = try XCTUnwrap(JSONSerialization.jsonObject(with: anthropicRequest.body) as? [String: Any])
+        XCTAssertEqual((anthropicBody["tools"] as? [[String: Any]])?.first?["type"] as? String, "web_search_20250305")
+        XCTAssertEqual((anthropicBody["tools"] as? [[String: Any]])?.first?["max_uses"] as? Int, 3)
+
+        let deepSeek = APIKeyProviderProfile(id: "deepseek", type: .deepSeek)
+        let deepSeekRequest = try ProviderClassificationProtocol.prepare(
+            profile: deepSeek,
+            configuration: .init(providerProfileID: deepSeek.id, modelIdentifier: "deepseek-chat", webSearchEnabled: true),
+            entry: .init(platform: "bilibili", entryID: "entry", surface: .page, evidence: .init(title: "Creator: RetroTech")),
+            allowedTagIDs: ["technology"]
+        )
+        let deepSeekBody = try XCTUnwrap(JSONSerialization.jsonObject(with: deepSeekRequest.body) as? [String: Any])
+        XCTAssertNil(deepSeekBody["tools"])
+    }
+
+    func testSeparateWebResearchUsesOnlyADeclaredHostedSearchProvider() throws {
+        let entry = EntryEvidence(
+            platform: "tiktok",
+            entryID: "entry",
+            sourceID: "creator",
+            surface: .page,
+            evidence: .init(title: "Creator: RetroTech", text: "Laptop restoration clips")
+        )
+        let openAI = APIKeyProviderProfile(type: .openAI)
+        let openAIRequest = try ProviderWebResearchProtocol.prepare(
+            profile: openAI,
+            modelIdentifier: "gpt-4.1-mini",
+            entry: entry
+        )
+        let openAIBody = try XCTUnwrap(JSONSerialization.jsonObject(with: openAIRequest.body) as? [String: Any])
+        XCTAssertEqual((openAIBody["tools"] as? [[String: String]])?.first?["type"], "web_search")
+        XCTAssertTrue(openAIRequest.prompt.contains("not individual videos"))
+
+        let gemini = APIKeyProviderProfile(type: .gemini)
+        let geminiRequest = try ProviderWebResearchProtocol.prepare(
+            profile: gemini,
+            modelIdentifier: "gemini-3.1-flash-lite",
+            entry: entry
+        )
+        let geminiBody = try XCTUnwrap(JSONSerialization.jsonObject(with: geminiRequest.body) as? [String: Any])
+        XCTAssertNotNil(geminiBody["tools"])
+
+        XCTAssertThrowsError(try ProviderWebResearchProtocol.prepare(
+            profile: .init(type: .ollama),
+            modelIdentifier: "llama3.3",
+            entry: entry
+        )) { error in
+            XCTAssertEqual(error as? ProviderWebResearchProtocolError, .unsupportedProvider)
         }
     }
 

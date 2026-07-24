@@ -576,6 +576,28 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertThrowsError(try configuration.validate())
     }
 
+    func testWebResearchSelectionRoundTripsAsOneBoundedProviderAndModelPair() throws {
+        let configuration = LLMAssistConfiguration(
+            providerProfileID: "ollama-profile",
+            modelIdentifier: "llama3.3",
+            webSearchEnabled: true,
+            webResearchProviderProfileID: "openai-profile",
+            webResearchModelIdentifier: "gpt-4.1-mini"
+        )
+
+        XCTAssertNoThrow(try configuration.validate())
+        let restored = try JSONDecoder().decode(
+            LLMAssistConfiguration.self,
+            from: JSONEncoder().encode(configuration)
+        )
+        XCTAssertEqual(restored.webResearchProviderProfileID, "openai-profile")
+        XCTAssertEqual(restored.webResearchModelIdentifier, "gpt-4.1-mini")
+
+        var incomplete = configuration
+        incomplete.webResearchModelIdentifier = nil
+        XCTAssertThrowsError(try incomplete.validate())
+    }
+
     func testRemovingPlatformBindingPurgesItsDataAndReconcilesDependents() throws {
         var catalog = WorkspaceCatalog.starter()
         let tree = try XCTUnwrap(catalog.trees.first)

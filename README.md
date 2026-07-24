@@ -18,11 +18,12 @@ description.
 - A reusable **LLM Assist** connection library. Provider profiles contain
   non-secret connection configuration plus a visible local credential field.
   A classifier type explicitly selects one provider/model and owns its budget,
-  request pace, tag constraints, and provider-native web-search setting. Each
+  request pace, tag constraints, and web-search setting. Each
   creator LLM classification uses a bounded matching official-platform API
   fetch where that API can read the collected creator. TikTok, Instagram, and
-  Bilibili instead require the selected provider's enabled native web search;
-  there is no static creator-page fallback.
+  Bilibili instead require enabled hosted web research: either the classifier
+  provider searches directly, or a separately selected search-capable provider
+  produces a transient memo. There is no static creator-page fallback.
 - An authenticated v4 local browser hub at `ws://127.0.0.1:8787`. Mac Vault
   or Vault Classifier hosts it; unavailable peers, invalid frames, and
   timeouts fail open.
