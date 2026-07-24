@@ -16,27 +16,8 @@ public enum CreatorAvatarURLPolicy {
         "bilibili": ["bilibili.com", "biliimg.com", "hdslb.com"],
     ]
 
-    /// Public creator pages may be revisited only after an explicit user
-    /// request to fill missing profile images. Keep this narrower than image
-    /// delivery hosts so a stored creator URL cannot become an arbitrary
-    /// network request.
-    private static let creatorPageHostsByPlatform: [String: [String]] = [
-        "youtube": ["youtube.com"],
-        "tiktok": ["tiktok.com"],
-        "facebook": ["facebook.com"],
-        "instagram": ["instagram.com"],
-        "twitch": ["twitch.tv"],
-        "reddit": ["reddit.com"],
-        "twitter": ["x.com", "twitter.com"],
-        "bilibili": ["bilibili.com"],
-    ]
-
     public static func isAccepted(platformID: String, value: String) -> Bool {
         isAccepted(value: value, platformID: platformID, hosts: hostsByPlatform)
-    }
-
-    public static func isAcceptedCreatorPageURL(platformID: String, value: String) -> Bool {
-        isAccepted(value: value, platformID: platformID, hosts: creatorPageHostsByPlatform)
     }
 
     private static func isAccepted(

@@ -478,12 +478,6 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
     /// OpenAI Responses supports a hosted web-search tool. Other providers
     /// ignore this setting and the UI does not expose it for them.
     public var webSearchEnabled: Bool
-    /// A matching platform-data connection is selected deterministically by
-    /// the native app when available; the user never chooses a tool profile.
-    public var externalToolEnabled: Bool
-    /// Uses the matching platform API only after an already-collected public
-    /// creator URL is unavailable or cannot provide a usable creator avatar.
-    public var usePlatformAPIKeyFallback: Bool
     /// Activation is an explicit per-classifier-type permission for the app to
     /// classify eligible collected creators sequentially.
     public var isActive: Bool
@@ -499,8 +493,6 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         maximumTagCount: Int = Self.defaultMaximumTagCount,
         restrictToLeafTags: Bool = true,
         webSearchEnabled: Bool = false,
-        externalToolEnabled: Bool = false,
-        usePlatformAPIKeyFallback: Bool = false,
         isActive: Bool = false
     ) {
         self.providerProfileID = providerProfileID
@@ -513,8 +505,6 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         self.maximumTagCount = maximumTagCount
         self.restrictToLeafTags = restrictToLeafTags
         self.webSearchEnabled = webSearchEnabled
-        self.externalToolEnabled = externalToolEnabled
-        self.usePlatformAPIKeyFallback = usePlatformAPIKeyFallback
         self.isActive = isActive
     }
 
@@ -536,8 +526,8 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case providerProfileID, modelIdentifier, dailyOutputTokenLimit, maximumOutputTokensPerRequest, extraDirection, classificationRequestsPerMinute, batchSize,
-             maximumTagCount, restrictToLeafTags, webSearchEnabled,
-             externalToolEnabled, usePlatformAPIKeyFallback, isActive,
+             maximumTagCount, restrictToLeafTags, webSearchEnabled, isActive,
+             externalToolEnabled, usePlatformAPIKeyFallback,
              maximumTokens, externalToolProfileID
     }
 
@@ -562,8 +552,11 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
             ?? Self.defaultMaximumTagCount
         restrictToLeafTags = try container.decodeIfPresent(Bool.self, forKey: .restrictToLeafTags) ?? true
         webSearchEnabled = try container.decodeIfPresent(Bool.self, forKey: .webSearchEnabled) ?? false
-        externalToolEnabled = try container.decodeIfPresent(Bool.self, forKey: .externalToolEnabled) ?? false
-        usePlatformAPIKeyFallback = try container.decodeIfPresent(Bool.self, forKey: .usePlatformAPIKeyFallback) ?? false
+        // These retired toggles are read only to let existing local state
+        // open safely. Official platform evidence is now required, and public
+        // creator-page scraping has no replacement path.
+        _ = try container.decodeIfPresent(Bool.self, forKey: .externalToolEnabled)
+        _ = try container.decodeIfPresent(Bool.self, forKey: .usePlatformAPIKeyFallback)
         isActive = try container.decodeIfPresent(Bool.self, forKey: .isActive) ?? false
     }
 
@@ -579,8 +572,6 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         try container.encode(maximumTagCount, forKey: .maximumTagCount)
         try container.encode(restrictToLeafTags, forKey: .restrictToLeafTags)
         try container.encode(webSearchEnabled, forKey: .webSearchEnabled)
-        try container.encode(externalToolEnabled, forKey: .externalToolEnabled)
-        try container.encode(usePlatformAPIKeyFallback, forKey: .usePlatformAPIKeyFallback)
         try container.encode(isActive, forKey: .isActive)
     }
 }
@@ -870,13 +861,6 @@ public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
         }
     }
 
-    /// The LLM Assist fallback control is shown only when the matching local
-    /// platform protocol can retrieve a creator-owned avatar field.
-    public var supportsCreatorAvatarAPIFallback: Bool {
-        guard let apiProviderType else { return false }
-        return ExternalPlatformToolProtocol.supportsCreatorAvatarLookup(providerType: apiProviderType)
-    }
-
     public init(
         id: String,
         name: String,
@@ -906,7 +890,7 @@ public enum CollectionPlatformRegistry {
         .init(id: "reddit", name: "Reddit", sourceKind: .subreddit, collectorAvailable: true, supportsLocalModel: false, supportsLLMAssist: false),
         .init(id: "discord", name: "Discord", sourceKind: .server, collectorAvailable: true, supportsLocalModel: false, supportsLLMAssist: false),
         .init(id: "twitter", name: "Twitter / X", sourceKind: .account, collectorAvailable: true),
-        .init(id: "bilibili", name: "Bilibili", collectorAvailable: true),
+        .init(id: "bilibili", name: "Bilibili", collectorAvailable: true, supportsLLMAssist: false),
     ]
 
     public static func definition(for id: String) -> CollectionPlatformDefinition? {

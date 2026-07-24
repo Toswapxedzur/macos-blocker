@@ -17,8 +17,10 @@ description.
   ledger.
 - A reusable **LLM Assist** connection library. Provider profiles contain
   non-secret connection configuration plus a visible local credential field.
-  A classifier type explicitly selects one provider/model and
-  owns its budget, request pace, tag constraints, and opt-in tool settings.
+  A classifier type explicitly selects one provider/model and owns its budget,
+  request pace, tag constraints, and provider-native web-search setting. Each
+  creator LLM classification also requires one bounded fetch from the matching
+  official platform API; there is no static creator-page fallback.
 - An authenticated v4 local browser hub at `ws://127.0.0.1:8787`. Mac Vault
   or Vault Classifier hosts it; unavailable peers, invalid frames, and
   timeouts fail open.

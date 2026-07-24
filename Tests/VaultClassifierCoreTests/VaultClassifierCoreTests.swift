@@ -351,21 +351,6 @@ final class VaultClassifierCoreTests: XCTestCase {
         XCTAssertFalse(CreatorAvatarURLPolicy.isAccepted(platformID: "youtube", value: "https://images.example.invalid/not-an-author.png"))
     }
 
-    func testCreatorAvatarBackfillAcceptsOnlyPlatformOwnedCreatorPages() {
-        XCTAssertTrue(CreatorAvatarURLPolicy.isAcceptedCreatorPageURL(
-            platformID: "youtube",
-            value: "https://www.youtube.com/channel/UCVtz3s3FUxVxBgPl2OWtIJQ"
-        ))
-        XCTAssertFalse(CreatorAvatarURLPolicy.isAcceptedCreatorPageURL(
-            platformID: "youtube",
-            value: "https://yt3.ggpht.com/channel-avatar=s88"
-        ))
-        XCTAssertFalse(CreatorAvatarURLPolicy.isAcceptedCreatorPageURL(
-            platformID: "youtube",
-            value: "https://example.invalid/channel/creator"
-        ))
-    }
-
     func testSignedModelPackageManifestBindsChecksumSignatureAndPayloadMetadata() throws {
         let privateKey = Curve25519.Signing.PrivateKey()
         let candidate = try signedCandidate(

@@ -203,11 +203,12 @@ final class ProviderTestProtocolTests: XCTestCase {
             configuration: configuration,
             entry: .init(platform: "youtube", entryID: "entry", surface: .feed, evidence: .init(title: "Deck gameplay")),
             allowedTagIDs: ["games"],
-            tagDescriptions: ["games": "Video games and game culture."]
+            tagDescriptions: ["games": "Tag name: Games\nDescription: Video games and game culture."]
         )
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: prepared.body) as? [String: Any])
         XCTAssertEqual(body["max_tokens"] as? Int, 4_096)
         let prompt = try XCTUnwrap((body["messages"] as? [[String: Any]])?.first?["content"] as? String)
+        XCTAssertTrue(prompt.contains("Tag name: Games"))
         XCTAssertTrue(prompt.contains("Video games and game culture."))
         XCTAssertTrue(prompt.contains("Prefer a creator's recurring topic."))
         XCTAssertTrue(prompt.contains("Return exactly one JSON object"))
@@ -272,76 +273,61 @@ final class ProviderTestProtocolTests: XCTestCase {
         }
     }
 
-    func testEveryLanguageModelBuildsAndContinuesABoundedToolExchange() throws {
-        let profiles: [APIKeyProviderProfile] = [
-            .init(type: .openAI),
-            .init(type: .openAICompatible, customEndpoint: "https://api.example.test/v1"),
-            .init(type: .deepSeek),
-            .init(type: .gemini),
-            .init(type: .anthropic),
-            .init(type: .mistral),
-            .init(type: .cohere),
-            .init(type: .groq),
-            .init(type: .openRouter),
-            .init(type: .ollama),
-            .init(type: .custom, customEndpoint: "https://api.example.test/v1"),
-        ]
-        let entry = EntryEvidence(platform: "youtube", entryID: "video-id", sourceID: "creator-id", surface: .feed, evidence: .init(title: "Deck gameplay"))
-        let platformProfile = APIKeyProviderProfile(id: "youtube-data", type: .youtubeData)
-
-        for profile in profiles {
-            let modelIdentifier = profile.type.defaultModelIdentifier.isEmpty ? "test-model" : profile.type.defaultModelIdentifier
-            let prepared = try ProviderToolCallingProtocol.prepare(
-                profile: profile,
-                configuration: .init(providerProfileID: profile.id, modelIdentifier: modelIdentifier),
-                entry: entry,
-                allowedTagIDs: ["games"],
-                toolProfiles: [platformProfile]
+    func testOfficialPlatformEvidenceAlwaysUsesTheLocalCreatorOrRepresentativeEntry() throws {
+        let youtube = platformProfile(.youtubeData)
+        let handle = try OfficialPlatformEvidenceProtocol.prepare(
+            profile: youtube,
+            entry: .init(
+                platform: "youtube",
+                entryID: "youtube:video:dQw4w9WgXcQ",
+                sourceID: "youtube:handle:@GoogleDevelopers",
+                surface: .page,
+                evidence: .init(title: "Creator")
             )
-            XCTAssertEqual(prepared.toolDefinitions.count, 1, profile.type.rawValue)
-            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: prepared.body) as? [String: Any])
-            XCTAssertNotNil(body["tools"], profile.type.rawValue)
-            if profile.type == .cohere {
-                XCTAssertEqual(body["stream"] as? Bool, false)
-            }
-            let response = toolCallResponse(format: prepared.plan.bodyFormat, name: prepared.toolDefinitions[0].name)
-            let turn = try ProviderToolCallingProtocol.parseResponse(response, format: prepared.plan.bodyFormat)
-            XCTAssertEqual(turn.toolCalls.count, 1, profile.type.rawValue)
-            let continued = try ProviderToolCallingProtocol.continueRequest(
-                prepared: prepared,
-                profile: profile,
-                configuration: .init(providerProfileID: profile.id, modelIdentifier: modelIdentifier),
-                turn: turn,
-                results: [.init(id: turn.toolCalls[0].id, name: turn.toolCalls[0].name, content: #"{"ok":true}"#)],
-                maximumOutputTokens: ProviderToolCallingProtocol.maximumOutputTokens
-            )
-            XCTAssertFalse(continued.body.isEmpty, profile.type.rawValue)
-        }
-    }
+        )
+        XCTAssertEqual(handle.target, .creator)
+        let handleQuery = URLComponents(url: handle.plan.url, resolvingAgainstBaseURL: false)?.queryItems
+        XCTAssertEqual(handleQuery?.first(where: { $0.name == "forHandle" })?.value, "@GoogleDevelopers")
+        XCTAssertNil(handleQuery?.first(where: { $0.name == "id" }))
 
-    func testEveryPlatformProfileHasABoundedToolDefinitionAndRoute() throws {
-        let types: [APIKeyProviderType] = [
-            .youtubeData, .twitch, .reddit, .xPlatform, .tikTok,
-            .instagramGraph, .facebookGraph,
-        ]
-        let entry = EntryEvidence(platform: "youtube", entryID: "at://did:plc:creator/app.bsky.feed.post/post", sourceID: "creator-id", surface: .feed, evidence: .init(title: "Public entry"))
-        let profiles = types.map(platformProfile)
-        XCTAssertEqual(try ExternalPlatformToolProtocol.definitions(profiles: profiles, entry: entry).count, types.count)
-
-        for profile in profiles {
-            let call = ExternalPlatformToolCall(
-                id: "call-\(profile.type.rawValue)",
-                name: ExternalPlatformToolProtocol.toolName(for: profile),
-                arguments: #"{"target":"entry"}"#
+        let channel = try OfficialPlatformEvidenceProtocol.prepare(
+            profile: youtube,
+            entry: .init(
+                platform: "youtube",
+                entryID: "youtube:video:dQw4w9WgXcQ",
+                sourceID: "youtube:channel:UC123",
+                surface: .page,
+                evidence: .init(title: "Creator")
             )
-            let request = try ExternalPlatformToolProtocol.prepare(profile: profile, entry: entry, call: call)
-            XCTAssertEqual(request.plan.method, profile.type == .tikTok ? "POST" : "GET", profile.type.rawValue)
-            if profile.type == .tikTok {
-                XCTAssertNotNil(request.body)
-                XCTAssertEqual(request.plan.bodyFormat, .customJSON)
-            }
-            XCTAssertNil(URLComponents(url: request.plan.url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "access_token" }), profile.type.rawValue)
-        }
+        )
+        XCTAssertEqual(URLComponents(url: channel.plan.url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "id" })?.value, "UC123")
+
+        let tikTok = try OfficialPlatformEvidenceProtocol.prepare(
+            profile: platformProfile(.tikTok),
+            entry: .init(
+                platform: "tiktok",
+                entryID: "tiktok:video:123",
+                sourceID: "tiktok:creator:456",
+                surface: .page,
+                evidence: .init(title: "Creator")
+            )
+        )
+        XCTAssertEqual(tikTok.target, .representativeEntry)
+        XCTAssertEqual(tikTok.plan.method, "POST")
+        let body = try XCTUnwrap(tikTok.body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] })
+        XCTAssertEqual(((body["filters"] as? [String: Any])?["video_ids"] as? [String])?.first, "123")
+
+        let x = try OfficialPlatformEvidenceProtocol.prepare(
+            profile: platformProfile(.xPlatform),
+            entry: .init(
+                platform: "twitter",
+                entryID: "twitter:status:123",
+                sourceID: "twitter:account:XDevelopers",
+                surface: .page,
+                evidence: .init(title: "Creator")
+            )
+        )
+        XCTAssertTrue(x.plan.url.path.hasSuffix("/users/by/username/XDevelopers"))
     }
 
     func testPlatformConnectionTestsUseProviderSpecificHealthRoutes() throws {
@@ -351,50 +337,27 @@ final class ProviderTestProtocolTests: XCTestCase {
             platformProfile(.facebookGraph),
         ]
         for profile in profiles {
-            let request = try ExternalPlatformToolProtocol.prepareConnectionTest(profile: profile)
+            let request = try OfficialPlatformEvidenceProtocol.prepareConnectionTest(profile: profile)
             XCTAssertFalse(request.plan.url.absoluteString.contains("contentID"), profile.type.rawValue)
             XCTAssertEqual(request.plan.method, profile.type == .tikTok ? "POST" : "GET", profile.type.rawValue)
             XCTAssertEqual(request.plan.bodyFormat, profile.type == .tikTok ? .customJSON : .queryOnly, profile.type.rawValue)
             XCTAssertNil(URLComponents(url: request.plan.url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "access_token" }), profile.type.rawValue)
         }
-        let twitch = try ExternalPlatformToolProtocol.prepareConnectionTest(profile: platformProfile(.twitch))
+        let twitch = try OfficialPlatformEvidenceProtocol.prepareConnectionTest(profile: platformProfile(.twitch))
         XCTAssertEqual(twitch.plan.headers["Client-Id"], "client-id")
-        let tikTok = try ExternalPlatformToolProtocol.prepareConnectionTest(profile: platformProfile(.tikTok))
+        let tikTok = try OfficialPlatformEvidenceProtocol.prepareConnectionTest(profile: platformProfile(.tikTok))
         let body = try XCTUnwrap(tikTok.body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] })
         XCTAssertEqual(body["max_count"] as? Int, 1)
     }
 
-    func testPlatformToolResultRedactsTokenLikeFieldsAndCapsPayload() throws {
+    func testOfficialPlatformEvidenceRedactsTokenLikeFieldsAndCapsPayload() throws {
         let payload = Data(#"{"token":"secret","title":"Kept","nested":{"access_token":"secret","description":"Kept"}}"#.utf8)
-        let result = ExternalPlatformToolProtocol.result(data: payload, statusCode: 200, providerType: .youtubeData, target: .entry)
+        let result = try OfficialPlatformEvidenceProtocol.boundedEvidence(data: payload, providerType: .youtubeData, target: .creator)
         XCTAssertTrue(result.contains("Kept"))
         XCTAssertFalse(result.contains("secret"))
     }
 
-    func testPlatformCreatorAvatarExtractionUsesOnlyKnownResponseFields() {
-        XCTAssertTrue(ExternalPlatformToolProtocol.supportsCreatorAvatarLookup(providerType: .youtubeData))
-        XCTAssertFalse(ExternalPlatformToolProtocol.supportsCreatorAvatarLookup(providerType: .tikTok))
-        XCTAssertEqual(
-            ExternalPlatformToolProtocol.creatorAvatarURL(
-                data: Data(#"{"items":[{"snippet":{"thumbnails":{"high":{"url":"https://yt3.googleusercontent.com/avatar"}}}}]}"#.utf8),
-                providerType: .youtubeData
-            ),
-            "https://yt3.googleusercontent.com/avatar"
-        )
-        XCTAssertEqual(
-            ExternalPlatformToolProtocol.creatorAvatarURL(
-                data: Data(#"{"data":[{"profile_image_url":"https://static-cdn.jtvnw.net/avatar.png"}]}"#.utf8),
-                providerType: .twitch
-            ),
-            "https://static-cdn.jtvnw.net/avatar.png"
-        )
-        XCTAssertNil(ExternalPlatformToolProtocol.creatorAvatarURL(
-            data: Data(#"{"unexpected":"https://example.invalid/avatar.png"}"#.utf8),
-            providerType: .youtubeData
-        ))
-    }
-
-    func testCatalogAllowsAutomaticMatchingPlatformToolForAClassifierLLM() throws {
+    func testCatalogAllowsAClassifierLLMWithAnOfficialPlatformAPIProfile() throws {
         let model = APIKeyProviderProfile(id: "llm-tool-model", type: .deepSeek)
         let youtube = APIKeyProviderProfile(id: "provider-tool-youtube", type: .youtubeData)
         var catalog = WorkspaceCatalog.starter()
@@ -411,8 +374,7 @@ final class ProviderTestProtocolTests: XCTestCase {
             applicablePlatformID: "youtube",
             llmAssistConfiguration: .init(
                 providerProfileID: model.id,
-                modelIdentifier: "deepseek-chat",
-                externalToolEnabled: true
+                modelIdentifier: "deepseek-chat"
             )
         )]
         XCTAssertNoThrow(try catalog.validate())
@@ -483,29 +445,6 @@ final class ProviderTestProtocolTests: XCTestCase {
             ? [ProviderConfigurationField.clientID.rawValue: "client-id"]
             : nil
         return .init(id: "platform-\(type.rawValue)", type: type, protocolConfiguration: configuration)
-    }
-
-    private func toolCallResponse(format: ProviderRequestBodyFormat, name: String) -> Data {
-        let arguments = #"{"target":"entry"}"#
-        let object: [String: Any]
-        switch format {
-        case .openAIResponses:
-            object = ["output": [["type": "function_call", "call_id": "call-1", "name": name, "arguments": arguments]]]
-        case .openAIChatCompletions:
-            object = ["choices": [["message": ["role": "assistant", "tool_calls": [["id": "call-1", "type": "function", "function": ["name": name, "arguments": arguments]]]]]]]
-        case .anthropicMessages:
-            object = ["content": [["type": "tool_use", "id": "call-1", "name": name, "input": ["target": "entry"]]]]
-        case .geminiGenerateContent, .vertexGenerateContent:
-            object = ["candidates": [["content": ["role": "model", "parts": [["functionCall": ["id": "call-1", "name": name, "args": ["target": "entry"]]]]]]]]
-        case .cohereChat:
-            object = ["message": ["role": "assistant", "tool_calls": [["id": "call-1", "type": "function", "function": ["name": name, "arguments": arguments]]]]]
-        case .ollamaChat:
-            object = ["message": ["role": "assistant", "tool_calls": [["function": ["name": name, "arguments": ["target": "entry"]]]]]]
-        default:
-            XCTFail("Unexpected provider format")
-            return Data()
-        }
-        return try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     }
 
     private func testResponse(format: ProviderRequestBodyFormat) -> Data {
