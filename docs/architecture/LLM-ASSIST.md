@@ -23,6 +23,13 @@ particular user.
   and bounded official evidence where their access scope can read the
   collected creator; they are never language models.
 
+Twitch, Reddit, and Discord classification is intentionally **manual-only**.
+Their collected sources and human tags remain available, but classifier types
+for those platforms cannot attach a Local Model or LLM Assist configuration.
+Twitch and Reddit API connections remain in the platform-data library; that
+does not make their classifier types model-eligible. Discord has no platform
+API connection here.
+
 ## Ownership boundary
 
 A **provider profile** is a reusable connection. It contains a provider type,
