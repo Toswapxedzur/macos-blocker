@@ -18,7 +18,7 @@ description.
 - A reusable **LLM Assist** connection library. Provider profiles contain
   non-secret connection configuration plus a visible local credential field.
   A classifier type explicitly selects one provider/model and
-  owns its budget, tag constraints, and opt-in tool settings.
+  owns its budget, request pace, tag constraints, and opt-in tool settings.
 - An authenticated v4 local browser hub at `ws://127.0.0.1:8787`. Mac Vault
   or Vault Classifier hosts it; unavailable peers, invalid frames, and
   timeouts fail open.

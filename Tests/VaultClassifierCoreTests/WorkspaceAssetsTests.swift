@@ -434,6 +434,7 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(decoded.llmAssistConfiguration?.providerProfileID, "gemini")
         XCTAssertEqual(decoded.llmAssistConfiguration?.modelIdentifier, "gemini-3.1-flash-lite")
         XCTAssertEqual(decoded.llmAssistConfiguration?.dailyOutputTokenLimit, LLMAssistConfiguration.defaultDailyOutputTokenLimit)
+        XCTAssertEqual(decoded.llmAssistConfiguration?.classificationRequestsPerMinute, LLMAssistConfiguration.defaultClassificationRequestsPerMinute)
         XCTAssertEqual(decoded.llmAssistConfiguration?.batchSize, LLMAssistConfiguration.defaultBatchSize)
         XCTAssertFalse(decoded.llmAssistConfiguration?.usePlatformAPIKeyFallback ?? true)
         XCTAssertFalse(decoded.llmAssistConfiguration?.isActive ?? true)
@@ -489,6 +490,7 @@ final class WorkspaceAssetsTests: XCTestCase {
                 providerProfileID: provider.id,
                 modelIdentifier: "llama3.2",
                 dailyOutputTokenLimit: 12_000,
+                classificationRequestsPerMinute: 12,
                 batchSize: 3,
                 maximumTagCount: 6,
                 restrictToLeafTags: false,
@@ -502,10 +504,26 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(configuration.providerProfileID, provider.id)
         XCTAssertEqual(configuration.modelIdentifier, "llama3.2")
         XCTAssertEqual(configuration.dailyOutputTokenLimit, 12_000)
+        XCTAssertEqual(configuration.classificationRequestsPerMinute, 12)
         XCTAssertEqual(configuration.batchSize, 3)
         XCTAssertEqual(configuration.maximumTagCount, 6)
         XCTAssertFalse(configuration.restrictToLeafTags)
         XCTAssertTrue(configuration.isActive)
+    }
+
+    func testLLMClassificationPaceIsBounded() throws {
+        var configuration = LLMAssistConfiguration(
+            providerProfileID: "provider",
+            modelIdentifier: "model",
+            classificationRequestsPerMinute: 1
+        )
+        XCTAssertNoThrow(try configuration.validate())
+
+        configuration.classificationRequestsPerMinute = 0
+        XCTAssertThrowsError(try configuration.validate())
+
+        configuration.classificationRequestsPerMinute = LLMAssistConfiguration.maximumClassificationRequestsPerMinute + 1
+        XCTAssertThrowsError(try configuration.validate())
     }
 
     func testRemovingPlatformBindingPurgesItsDataAndReconcilesDependents() throws {
