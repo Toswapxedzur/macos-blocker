@@ -476,8 +476,15 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
     /// When disabled, active parent tags are also available as generic labels.
     public var restrictToLeafTags: Bool
     /// This is enabled only for providers with a native hosted-web-search
-    /// request grammar implemented by Vault Classifier.
+    /// request grammar implemented by Vault Classifier, or when a separate
+    /// selected provider performs the transient web-research request.
     public var webSearchEnabled: Bool
+    /// A separately selected provider connection used only when the
+    /// classifier's own provider cannot run hosted web search.
+    public var webResearchProviderProfileID: String?
+    /// One probed model on `webResearchProviderProfileID` that produces the
+    /// transient creator research memo.
+    public var webResearchModelIdentifier: String?
     /// Activation is an explicit per-classifier-type permission for the app to
     /// classify eligible collected creators sequentially.
     public var isActive: Bool
@@ -493,6 +500,8 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         maximumTagCount: Int = Self.defaultMaximumTagCount,
         restrictToLeafTags: Bool = true,
         webSearchEnabled: Bool = false,
+        webResearchProviderProfileID: String? = nil,
+        webResearchModelIdentifier: String? = nil,
         isActive: Bool = false
     ) {
         self.providerProfileID = providerProfileID
@@ -505,12 +514,18 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         self.maximumTagCount = maximumTagCount
         self.restrictToLeafTags = restrictToLeafTags
         self.webSearchEnabled = webSearchEnabled
+        let cleanedResearchProfileID = webResearchProviderProfileID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let cleanedResearchModelIdentifier = webResearchModelIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.webResearchProviderProfileID = cleanedResearchProfileID.isEmpty ? nil : cleanedResearchProfileID
+        self.webResearchModelIdentifier = cleanedResearchModelIdentifier.isEmpty ? nil : String(cleanedResearchModelIdentifier.prefix(Self.maximumModelIdentifierLength))
         self.isActive = isActive
     }
 
     public func validate() throws {
         let cleanedProviderProfileID = providerProfileID.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanedModelIdentifier = modelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedResearchProfileID = webResearchProviderProfileID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let cleanedResearchModelIdentifier = webResearchModelIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !cleanedProviderProfileID.isEmpty, cleanedProviderProfileID.count <= 128,
               !cleanedModelIdentifier.isEmpty, cleanedModelIdentifier.count <= Self.maximumModelIdentifierLength,
               dailyOutputTokenLimit > 0, dailyOutputTokenLimit <= Self.maximumDailyOutputTokenLimit,
@@ -519,14 +534,17 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
               classificationRequestsPerMinute > 0,
               classificationRequestsPerMinute <= Self.maximumClassificationRequestsPerMinute,
               batchSize > 0, batchSize <= Self.maximumBatchSize,
-              maximumTagCount > 0, maximumTagCount <= EntryEvidenceValidator.tagLimit else {
+              maximumTagCount > 0, maximumTagCount <= EntryEvidenceValidator.tagLimit,
+              (cleanedResearchProfileID.isEmpty && cleanedResearchModelIdentifier.isEmpty) ||
+                (!cleanedResearchProfileID.isEmpty && cleanedResearchProfileID.count <= 128 &&
+                 !cleanedResearchModelIdentifier.isEmpty && cleanedResearchModelIdentifier.count <= Self.maximumModelIdentifierLength) else {
             throw LLMAssistConfigurationError.invalidConfiguration
         }
     }
 
     private enum CodingKeys: String, CodingKey {
         case providerProfileID, modelIdentifier, dailyOutputTokenLimit, maximumOutputTokensPerRequest, extraDirection, classificationRequestsPerMinute, batchSize,
-             maximumTagCount, restrictToLeafTags, webSearchEnabled, isActive,
+             maximumTagCount, restrictToLeafTags, webSearchEnabled, webResearchProviderProfileID, webResearchModelIdentifier, isActive,
              externalToolEnabled, usePlatformAPIKeyFallback,
              maximumTokens, externalToolProfileID
     }
@@ -552,6 +570,14 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
             ?? Self.defaultMaximumTagCount
         restrictToLeafTags = try container.decodeIfPresent(Bool.self, forKey: .restrictToLeafTags) ?? true
         webSearchEnabled = try container.decodeIfPresent(Bool.self, forKey: .webSearchEnabled) ?? false
+        let decodedResearchProfileID = (try container.decodeIfPresent(String.self, forKey: .webResearchProviderProfileID)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
+        let decodedResearchModelIdentifier = (try container.decodeIfPresent(String.self, forKey: .webResearchModelIdentifier)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
+        webResearchProviderProfileID = decodedResearchProfileID.isEmpty ? nil : decodedResearchProfileID
+        webResearchModelIdentifier = decodedResearchModelIdentifier.isEmpty
+            ? nil
+            : String(decodedResearchModelIdentifier.prefix(Self.maximumModelIdentifierLength))
         // These retired toggles are read only to let existing local state open
         // safely. Creator evidence now follows the platform's fixed strategy;
         // public creator-page scraping has no replacement path.
@@ -572,6 +598,8 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         try container.encode(maximumTagCount, forKey: .maximumTagCount)
         try container.encode(restrictToLeafTags, forKey: .restrictToLeafTags)
         try container.encode(webSearchEnabled, forKey: .webSearchEnabled)
+        try container.encodeIfPresent(webResearchProviderProfileID, forKey: .webResearchProviderProfileID)
+        try container.encodeIfPresent(webResearchModelIdentifier, forKey: .webResearchModelIdentifier)
         try container.encode(isActive, forKey: .isActive)
     }
 }
@@ -1112,7 +1140,12 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
     /// this app. Do not advertise search merely because a provider's separate
     /// consumer product or agent integration can browse the web.
     public var supportsProviderNativeWebSearch: Bool {
-        self == .openAI
+        switch self {
+        case .openAI, .gemini, .anthropic:
+            return true
+        default:
+            return false
+        }
     }
 
     public var defaultProfileName: String {
