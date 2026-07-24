@@ -5,22 +5,27 @@ import Foundation
 /// type. The response grammar is deliberately tiny so provider prose cannot
 /// become a tag, policy, or command.
 public enum ProviderClassificationProtocol {
-    public static let maximumOutputTokens = 128
+    public static let maximumOutputTokens = LLMAssistConfiguration.maximumOutputTokensPerRequest
 
     public static func prepare(
         profile: APIKeyProviderProfile,
         configuration: LLMAssistConfiguration,
         entry: EntryEvidence,
         allowedTagIDs: Set<String>,
-        maximumOutputTokens: Int = Self.maximumOutputTokens
+        tagDescriptions: [String: String] = [:],
+        maximumOutputTokens: Int? = nil
     ) throws -> ProviderTestPreparedRequest {
         try EntryEvidenceValidator().validate(entry)
         try configuration.validate()
         guard configuration.providerProfileID == profile.id else {
             throw ProviderClassificationProtocolError.invalidConfiguration
         }
+        let requestedOutputTokens = maximumOutputTokens ?? min(
+            configuration.maximumOutputTokensPerRequest,
+            configuration.dailyOutputTokenLimit
+        )
         guard !allowedTagIDs.isEmpty,
-              maximumOutputTokens > 0, maximumOutputTokens <= Self.maximumOutputTokens else {
+              requestedOutputTokens > 0, requestedOutputTokens <= Self.maximumOutputTokens else {
             throw ProviderClassificationProtocolError.noAvailableTags
         }
         let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
@@ -29,7 +34,13 @@ public enum ProviderClassificationProtocol {
         }
         let plan = try DescriptorBackedProviderProtocol(descriptor: descriptor)
             .requestPlan(for: profile, operation: .generateText, modelIdentifier: configuration.modelIdentifier)
-        let prompt = prompt(entry: entry, allowedTagIDs: allowedTagIDs, maximumTagCount: configuration.maximumTagCount)
+        let prompt = prompt(
+            entry: entry,
+            allowedTagIDs: allowedTagIDs,
+            tagDescriptions: tagDescriptions,
+            maximumTagCount: configuration.maximumTagCount,
+            extraDirection: configuration.extraDirection
+        )
         return .init(
             plan: plan,
             operation: .generateText,
@@ -38,7 +49,7 @@ public enum ProviderClassificationProtocol {
                 format: plan.bodyFormat,
                 configuration: configuration,
                 prompt: prompt,
-                maximumOutputTokens: maximumOutputTokens
+                maximumOutputTokens: requestedOutputTokens
             )
         )
     }
@@ -100,13 +111,33 @@ public enum ProviderClassificationProtocol {
         return result
     }
 
-    private static func prompt(entry: EntryEvidence, allowedTagIDs: Set<String>, maximumTagCount: Int) -> String {
+    private static func prompt(
+        entry: EntryEvidence,
+        allowedTagIDs: Set<String>,
+        tagDescriptions: [String: String],
+        maximumTagCount: Int,
+        extraDirection: String
+    ) -> String {
         let evidence = [entry.evidence.title, entry.evidence.summary, entry.evidence.text]
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
-        let labels = allowedTagIDs.sorted().prefix(EntryEvidenceValidator.tagLimit).joined(separator: ", ")
-        return "Classify the quoted local entry using only the listed tag IDs. Return exactly one JSON object with one key, labelIDs, whose value is an array of at most \(maximumTagCount) listed IDs. Do not include markdown or explanation.\nAllowed tag IDs: [\(labels)]\nEntry: \(evidence)"
+        let labels = allowedTagIDs.sorted().prefix(EntryEvidenceValidator.tagLimit)
+        let tagDefinitions = labels.map { identifier -> [String: String] in
+            var definition = ["id": identifier]
+            let description = tagDescriptions[identifier]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !description.isEmpty {
+                definition["description"] = description
+            }
+            return definition
+        }
+        let encodedTagDefinitions = (try? JSONSerialization.data(withJSONObject: tagDefinitions, options: [.sortedKeys]))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        let cleanedExtraDirection = extraDirection.trimmingCharacters(in: .whitespacesAndNewlines)
+        let extraDirectionClause = cleanedExtraDirection.isEmpty
+            ? ""
+            : "\nAdditional owner direction:\n\(cleanedExtraDirection)\n"
+        return "Classify the quoted local entry using only the listed tag IDs. Eligible tag definitions (return only each id): \(encodedTagDefinitions).\(extraDirectionClause)Return exactly one JSON object with one key, labelIDs, whose value is an array of at most \(maximumTagCount) listed IDs. Do not include markdown or explanation.\nEntry: \(evidence)"
     }
 
     private static func requestBody(

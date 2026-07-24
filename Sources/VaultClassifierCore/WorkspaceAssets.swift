@@ -3,8 +3,13 @@ import Foundation
 /// User-owned assets behind the five Vault Classifier workspaces. These remain
 /// local profile data; neither a browser nor a provider may mutate them.
 public struct TagTreeNode: Codable, Equatable, Sendable, Identifiable {
+    public static let maximumDescriptionLength = 1_024
+
     public var id: String
     public var name: String
+    /// Optional local context shown only in the tag editor and supplied with
+    /// this eligible tag to an explicit LLM classification request.
+    public var description: String?
     public var parentID: String?
     public var isRetired: Bool
     /// A node's local canvas coordinates are presentation data, separate from
@@ -12,9 +17,11 @@ public struct TagTreeNode: Codable, Equatable, Sendable, Identifiable {
     public var positionX: Double?
     public var positionY: Double?
 
-    public init(id: String = UUID().uuidString, name: String, parentID: String? = nil, isRetired: Bool = false, positionX: Double? = nil, positionY: Double? = nil) {
+    public init(id: String = UUID().uuidString, name: String, description: String? = nil, parentID: String? = nil, isRetired: Bool = false, positionX: Double? = nil, positionY: Double? = nil) {
         self.id = id
         self.name = name
+        let cleanedDescription = description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.description = cleanedDescription.isEmpty ? nil : String(cleanedDescription.prefix(Self.maximumDescriptionLength))
         self.parentID = parentID
         self.isRetired = isRetired
         self.positionX = positionX
@@ -437,6 +444,9 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
     public static let maximumModelIdentifierLength = 256
     public static let defaultDailyOutputTokenLimit = 10_000
     public static let maximumDailyOutputTokenLimit = 1_000_000
+    public static let defaultMaximumOutputTokensPerRequest = 4_096
+    public static let maximumOutputTokensPerRequest = 1_000_000
+    public static let maximumExtraDirectionLength = 4_096
     /// The conservative default leaves ten seconds between provider requests.
     public static let defaultClassificationRequestsPerMinute = 6
     public static let maximumClassificationRequestsPerMinute = 60
@@ -447,8 +457,14 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
     public var providerProfileID: String
     public var modelIdentifier: String
     /// A per-classifier-type daily ceiling. Individual provider requests are
-    /// capped by the remaining allowance and the protocol's fixed hard cap.
+    /// also capped by the remaining allowance and the user's per-request cap.
     public var dailyOutputTokenLimit: Int
+    /// The maximum output-token allowance sent for one model request. The
+    /// remaining daily allowance can lower the effective request cap.
+    public var maximumOutputTokensPerRequest: Int
+    /// Optional owner-authored classification context appended before the
+    /// fixed output contract. It cannot expand the accepted response schema.
+    public var extraDirection: String
     /// The maximum rate at which the app starts model-classification requests.
     /// Provider response time may make completed classifications slower.
     public var classificationRequestsPerMinute: Int
@@ -476,6 +492,8 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         providerProfileID: String,
         modelIdentifier: String,
         dailyOutputTokenLimit: Int = Self.defaultDailyOutputTokenLimit,
+        maximumOutputTokensPerRequest: Int = Self.defaultMaximumOutputTokensPerRequest,
+        extraDirection: String = "",
         classificationRequestsPerMinute: Int = Self.defaultClassificationRequestsPerMinute,
         batchSize: Int = Self.defaultBatchSize,
         maximumTagCount: Int = Self.defaultMaximumTagCount,
@@ -488,6 +506,8 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         self.providerProfileID = providerProfileID
         self.modelIdentifier = modelIdentifier
         self.dailyOutputTokenLimit = dailyOutputTokenLimit
+        self.maximumOutputTokensPerRequest = maximumOutputTokensPerRequest
+        self.extraDirection = String(extraDirection.trimmingCharacters(in: .whitespacesAndNewlines).prefix(Self.maximumExtraDirectionLength))
         self.classificationRequestsPerMinute = classificationRequestsPerMinute
         self.batchSize = batchSize
         self.maximumTagCount = maximumTagCount
@@ -504,6 +524,8 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         guard !cleanedProviderProfileID.isEmpty, cleanedProviderProfileID.count <= 128,
               !cleanedModelIdentifier.isEmpty, cleanedModelIdentifier.count <= Self.maximumModelIdentifierLength,
               dailyOutputTokenLimit > 0, dailyOutputTokenLimit <= Self.maximumDailyOutputTokenLimit,
+              maximumOutputTokensPerRequest > 0, maximumOutputTokensPerRequest <= Self.maximumOutputTokensPerRequest,
+              extraDirection.count <= Self.maximumExtraDirectionLength,
               classificationRequestsPerMinute > 0,
               classificationRequestsPerMinute <= Self.maximumClassificationRequestsPerMinute,
               batchSize > 0, batchSize <= Self.maximumBatchSize,
@@ -513,7 +535,7 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case providerProfileID, modelIdentifier, dailyOutputTokenLimit, classificationRequestsPerMinute, batchSize,
+        case providerProfileID, modelIdentifier, dailyOutputTokenLimit, maximumOutputTokensPerRequest, extraDirection, classificationRequestsPerMinute, batchSize,
              maximumTagCount, restrictToLeafTags, webSearchEnabled,
              externalToolEnabled, usePlatformAPIKeyFallback, isActive,
              maximumTokens, externalToolProfileID
@@ -528,6 +550,11 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         // opens safely; never restore their old behaviour.
         dailyOutputTokenLimit = try container.decodeIfPresent(Int.self, forKey: .dailyOutputTokenLimit)
             ?? Self.defaultDailyOutputTokenLimit
+        maximumOutputTokensPerRequest = try container.decodeIfPresent(Int.self, forKey: .maximumOutputTokensPerRequest)
+            ?? Self.defaultMaximumOutputTokensPerRequest
+        extraDirection = String((try container.decodeIfPresent(String.self, forKey: .extraDirection) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .prefix(Self.maximumExtraDirectionLength))
         classificationRequestsPerMinute = try container.decodeIfPresent(Int.self, forKey: .classificationRequestsPerMinute)
             ?? Self.defaultClassificationRequestsPerMinute
         batchSize = try container.decodeIfPresent(Int.self, forKey: .batchSize) ?? Self.defaultBatchSize
@@ -545,6 +572,8 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         try container.encode(providerProfileID, forKey: .providerProfileID)
         try container.encode(modelIdentifier, forKey: .modelIdentifier)
         try container.encode(dailyOutputTokenLimit, forKey: .dailyOutputTokenLimit)
+        try container.encode(maximumOutputTokensPerRequest, forKey: .maximumOutputTokensPerRequest)
+        try container.encode(extraDirection, forKey: .extraDirection)
         try container.encode(classificationRequestsPerMinute, forKey: .classificationRequestsPerMinute)
         try container.encode(batchSize, forKey: .batchSize)
         try container.encode(maximumTagCount, forKey: .maximumTagCount)

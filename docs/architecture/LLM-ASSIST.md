@@ -32,7 +32,8 @@ classification, decision weight, or tool priority.
 
 A **classifier type** owns one optional LLM Assist attachment. The attachment
 selects exactly one provider profile and one fetched model identifier, plus its
-daily output-token allowance, classification pace, batch size, returned-tag
+daily output-token allowance, **per-request max-token** cap (default 4,096),
+optional **extra direction**, classification pace, batch size, returned-tag
 limit, leaf-only constraint, and explicit tool/API-fallback choices. Changing
 the provider or model deactivates the attachment; it never causes background
 classification.
@@ -88,6 +89,19 @@ request starts, so a lower value deliberately slows provider traffic. This is
 not a completion-rate promise: provider latency, errors, and token limits can
 always make completed classifications slower.
 
+The per-request max-token cap is sent in the selected provider's native output
+limit field. The effective cap is the smaller of that value and the remaining
+daily allowance. If a provider response omits usage, the app conservatively
+charges that requested cap. The optional extra direction is included in the
+classification prompt before the fixed JSON-only response contract; it cannot
+change the response parser, which still accepts only bounded eligible tag IDs.
+
+Each tag may have an optional local description. An explicit LLM request sends
+the eligible tag ID and its description together. Tags excluded by the
+leaf-only setting are not sent, so neither are their descriptions. Descriptions
+remain local tree metadata and are not part of provider diagnostics or request
+history.
+
 A language-model test succeeds only after a 2xx response matches that
 provider's response grammar and contains generated text. An empty or unrelated
 JSON envelope is an error, not a green "provider is ready" result. Cohere test,
@@ -116,6 +130,7 @@ continues without one.
 - `WorkspaceAssetsTests`: catalog reconciliation, plain provider-credential
   persistence, profile validation, and legacy-state cleanup.
 - `ProviderTestProtocolTests`: provider test/classification request grammar,
-  bounded tools, and direct provider model-list routing.
+  configurable output limits, tag descriptions/extra direction, bounded tools,
+  and direct provider model-list routing.
 - `ProviderModelCatalogStoreTests`: restart persistence and profile-removal
   cleanup for the bounded model-identifier cache.

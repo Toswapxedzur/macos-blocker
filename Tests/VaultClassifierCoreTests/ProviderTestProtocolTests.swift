@@ -34,6 +34,8 @@ final class ProviderTestProtocolTests: XCTestCase {
             allowedTagIDs: ["games"]
         )
         XCTAssertEqual(prepared.plan.bodyFormat, .openAIChatCompletions)
+        let requestBody = try XCTUnwrap(JSONSerialization.jsonObject(with: prepared.body) as? [String: Any])
+        XCTAssertEqual(requestBody["max_tokens"] as? Int, LLMAssistConfiguration.defaultMaximumOutputTokensPerRequest)
         let response = Data(#"{"usage":{"prompt_tokens":1000,"completion_tokens":500},"choices":[{"message":{"content":"OK"}}]}"#.utf8)
         let parsed = try ProviderTestProtocol.parseResponse(response, format: .openAIChatCompletions, operation: .generateText)
         XCTAssertEqual(parsed.content, "OK")
@@ -186,6 +188,29 @@ final class ProviderTestProtocolTests: XCTestCase {
         XCTAssertThrowsError(
             try ProviderClassificationProtocol.parseLabelIDs(#"{"labelIDs":["unknown"]}"#, allowedTagIDs: ["games", "technology"])
         )
+    }
+
+    func testClassificationRequestIncludesTagDescriptionsAndExtraDirection() throws {
+        let profile = APIKeyProviderProfile(type: .deepSeek)
+        let configuration = LLMAssistConfiguration(
+            providerProfileID: profile.id,
+            modelIdentifier: "deepseek-chat",
+            maximumOutputTokensPerRequest: 4_096,
+            extraDirection: "Prefer a creator's recurring topic."
+        )
+        let prepared = try ProviderClassificationProtocol.prepare(
+            profile: profile,
+            configuration: configuration,
+            entry: .init(platform: "youtube", entryID: "entry", surface: .feed, evidence: .init(title: "Deck gameplay")),
+            allowedTagIDs: ["games"],
+            tagDescriptions: ["games": "Video games and game culture."]
+        )
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: prepared.body) as? [String: Any])
+        XCTAssertEqual(body["max_tokens"] as? Int, 4_096)
+        let prompt = try XCTUnwrap((body["messages"] as? [[String: Any]])?.first?["content"] as? String)
+        XCTAssertTrue(prompt.contains("Video games and game culture."))
+        XCTAssertTrue(prompt.contains("Prefer a creator's recurring topic."))
+        XCTAssertTrue(prompt.contains("Return exactly one JSON object"))
     }
 
     func testEveryExposedLanguageModelPreparesTestAndClassificationRequests() throws {

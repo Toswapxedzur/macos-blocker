@@ -124,6 +124,10 @@
     return `<label class="field"><span class="field-label">${tx(labelKey)}${hintKey ? ` · ${tx(hintKey)}` : ""}</span><input type="${type}" data-field="${esc(key)}" value="${type === "password" ? "" : esc(value)}" ${extra}></label>`;
   }
 
+  function textareaField(labelKey, hintKey, key, value, extra = "") {
+    return `<label class="field wide"><span class="field-label">${tx(labelKey)}${hintKey ? ` · ${tx(hintKey)}` : ""}</span><textarea data-field="${esc(key)}" ${extra}>${esc(value)}</textarea></label>`;
+  }
+
   function selectField(labelKey, hintKey, key, value, options) {
     return `<label class="field"><span class="field-label">${tx(labelKey)}${hintKey ? ` · ${tx(hintKey)}` : ""}</span><select class="select-control" data-field="${esc(key)}">${options.map(([id, labelKey]) => `<option value="${esc(id)}"${selected(value, id)}>${tx(labelKey)}</option>`).join("")}</select></label>`;
   }
@@ -335,7 +339,7 @@
       const nodeExtentX = Math.max(0, ...[...positions.values()].map((position) => position.x + 136));
       const nodeExtentY = Math.max(0, ...[...positions.values()].map((position) => position.y + 30));
       const panelExtentX = panelState ? panelState.x + 256 : 0;
-      const panelExtentY = panelState ? panelState.y + 214 : 0;
+      const panelExtentY = panelState ? panelState.y + 340 : 0;
       const mapWidth = Math.max(640, nodeExtentX + 28, panelExtentX + 20);
       const mapHeight = Math.max(320, nodeExtentY + 28, panelExtentY + 20);
       const selectedNodeID = selectedTagNode?.treeID === tree.id ? selectedTagNode.nodeID : "";
@@ -355,16 +359,25 @@
           "text",
           isEdit ? `data-live-tag-name data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}"` : ""
         );
+        const descriptionField = !isTreeDelete && !isTreeEdit
+          ? textareaField(
+            "tree.tagDescription",
+            "tree.tagDescriptionCopy",
+            "description",
+            isEdit ? popoverNode.description || "" : "",
+            "maxlength=\"1024\""
+          )
+          : "";
         const actions = isTreeDelete
           ? `<button class="secondary" data-action="cancelTagPanel">${tx("tree.cancel")}</button><button class="danger" data-action="confirmDeleteTree" data-tree-id="${esc(tree.id)}">${tx("tree.confirmDeleteAction")}</button>`
           : isTreeEdit
             ? `<button class="primary" data-action="saveTreeName" data-form="tag-popover-form" data-tree-id="${esc(tree.id)}">${tx("tree.saveTreeName")}</button>`
             : isEdit
-          ? `<button class="primary" data-action="saveTagName" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.saveNode")}</button><button class="secondary" data-action="beginConnection" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.connection")}</button><button class="secondary" data-action="disconnectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}"${disabled(!popoverNode.parentID)}>${tx("tree.disconnection")}</button><button class="danger" data-action="deleteTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.deleteNode")}</button>`
+          ? `<button class="primary" data-action="saveTagName" data-form="tag-popover-form" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.saveNode")}</button><button class="secondary" data-action="beginConnection" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.connection")}</button><button class="secondary" data-action="disconnectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}"${disabled(!popoverNode.parentID)}>${tx("tree.disconnection")}</button><button class="danger" data-action="deleteTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.deleteNode")}</button>`
           : `<button class="primary" data-action="addTag" data-form="tag-popover-form" data-tree-id="${esc(tree.id)}">${tx("tree.createNode")}</button>`;
         const content = isTreeDelete
           ? `<p class="small-copy">${tx("tree.confirmDeleteCopy")}</p><div class="action-row">${actions}</div>`
-          : `${nameField}${actions ? `<div class="action-row">${actions}</div>` : ""}`;
+          : `${nameField}${descriptionField}${actions ? `<div class="action-row">${actions}</div>` : ""}`;
         return `<section class="tree-popover" style="left:${panelState.x}px;top:${panelState.y}px" data-tree-popover data-form-id="tag-popover-form"><div class="tree-popover-head"><span class="eyebrow">${tx(titleKey)}</span><button class="tree-popover-close" data-action="cancelTagPanel" title="${tx("tree.cancel")}" aria-label="${tx("tree.cancel")}">×</button></div><div class="tree-form">${content}</div></section>`;
       })() : "";
       const map = `<div class="tree-map" data-tree-map data-tree-id="${esc(tree.id)}"><div class="tree-map-title">${esc(tree.name)}</div>${connectionState ? `<div class="tree-connection-mode">${tx("tree.connectionHint")}</div>` : ""}<div class="tree-map-content" style="width:max(${mapWidth}px, calc(100% + 480px)); height:max(${mapHeight}px, calc(100% + 280px))"><svg class="tree-links" aria-hidden="true"></svg><div class="tree-node-layer">${nodes.map((node) => {
@@ -723,7 +736,7 @@
       const llmClassificationStatus = llmAssist
         ? `<div class="llm-classification-status"><div><span class="eyebrow">${tx("bridge.llmClassificationStatus")}</span><p class="small-copy">${tx(llmAssist.isActive ? (llmRunning ? "bridge.llmActivationRunning" : "bridge.llmActive") : "bridge.llmInactive")}</p></div><div class="llm-classification-metrics"><span>${tx("bridge.llmQueuedCreators", { count: llmAssist.queuedCreatorCount || 0 })}</span><span>${tx("bridge.llmCompletedToday", { count: llmAssist.completedToday || 0 })}</span>${llmLastOutcome ? `<span>${tx("bridge.llmLastResult", { result: tx(llmLastOutcome === "succeeded" ? "bridge.llmOutcomeSucceeded" : "bridge.llmOutcomeFailed") })}</span>` : ""}</div></div>`
         : "";
-      const llmSettings = selectedLLMProfile ? `${llmClassificationStatus}<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}${llmModelControl}${field("bridge.llmDailyOutputBudget", "bridge.llmDailyOutputBudgetCopy", "llmDailyOutputTokenLimit", llmAssist?.dailyOutputTokenLimit || 10000, "text", "inputmode=\"numeric\"")}${llmAssist ? `<p class="small-copy">${tx("bridge.llmDailyOutputUsage", { used: llmAssist.dailyOutputTokensUsed || 0, limit: llmAssist.dailyOutputTokenLimit || 10000 })}</p>` : ""}${field("bridge.llmClassificationPace", "bridge.llmClassificationPaceCopy", "llmClassificationRequestsPerMinute", llmAssist?.classificationRequestsPerMinute || 6, "text", "inputmode=\"numeric\"")}${field("bridge.llmBatchSize", "bridge.llmBatchSizeCopy", "llmBatchSize", llmAssist?.batchSize || 5, "text", "inputmode=\"numeric\"")}${field("bridge.llmMaximumTagCount", "bridge.llmMaximumTagCountCopy", "llmMaximumTagCount", llmAssist?.maximumTagCount || 8, "text", "inputmode=\"numeric\"")}${toggle("bridge.llmLeafOnly", "llmRestrictToLeafTags", llmAssist?.restrictToLeafTags ?? true)}<p class="small-copy">${tx("bridge.llmLeafOnlyCopy")}</p>${selectedLLMProfile && protocols[selectedLLMProfile.type]?.supportsWebSearch ? `${toggle("bridge.llmWebSearch", "llmWebSearchEnabled", llmAssist?.webSearchEnabled ?? false)}<p class="small-copy">${tx("bridge.llmWebSearchCopy")}</p>` : ""}${applicablePlatform?.apiProviderType ? `${toggle("bridge.llmExternalTool", "llmExternalToolEnabled", llmAssist?.externalToolEnabled ?? false)}<p class="small-copy">${tx("bridge.llmExternalToolCopy", { platform: applicablePlatform.name })}</p>` : ""}${applicablePlatform?.supportsCreatorAvatarAPIFallback ? `${toggle("bridge.llmUsePlatformAPIKey", "llmUsePlatformAPIKeyFallback", llmAssist?.usePlatformAPIKeyFallback ?? false)}<p class="small-copy">${tx("bridge.llmUsePlatformAPIKeyCopy", { platform: applicablePlatform.name })}</p>` : ""}</div>` : `<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}</div>`;
+      const llmSettings = selectedLLMProfile ? `${llmClassificationStatus}<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}${llmModelControl}${field("bridge.llmDailyOutputBudget", "bridge.llmDailyOutputBudgetCopy", "llmDailyOutputTokenLimit", llmAssist?.dailyOutputTokenLimit || 10000, "text", "inputmode=\"numeric\"")}${llmAssist ? `<p class="small-copy">${tx("bridge.llmDailyOutputUsage", { used: llmAssist.dailyOutputTokensUsed || 0, limit: llmAssist.dailyOutputTokenLimit || 10000 })}</p>` : ""}${field("bridge.llmMaximumTokens", "bridge.llmMaximumTokensCopy", "llmMaximumOutputTokensPerRequest", llmAssist?.maximumOutputTokensPerRequest || 4096, "text", "inputmode=\"numeric\"")}${textareaField("bridge.llmExtraDirection", "bridge.llmExtraDirectionCopy", "llmExtraDirection", llmAssist?.extraDirection || "", "maxlength=\"4096\"")}${field("bridge.llmClassificationPace", "bridge.llmClassificationPaceCopy", "llmClassificationRequestsPerMinute", llmAssist?.classificationRequestsPerMinute || 6, "text", "inputmode=\"numeric\"")}${field("bridge.llmBatchSize", "bridge.llmBatchSizeCopy", "llmBatchSize", llmAssist?.batchSize || 5, "text", "inputmode=\"numeric\"")}${field("bridge.llmMaximumTagCount", "bridge.llmMaximumTagCountCopy", "llmMaximumTagCount", llmAssist?.maximumTagCount || 8, "text", "inputmode=\"numeric\"")}${toggle("bridge.llmLeafOnly", "llmRestrictToLeafTags", llmAssist?.restrictToLeafTags ?? true)}<p class="small-copy">${tx("bridge.llmLeafOnlyCopy")}</p>${selectedLLMProfile && protocols[selectedLLMProfile.type]?.supportsWebSearch ? `${toggle("bridge.llmWebSearch", "llmWebSearchEnabled", llmAssist?.webSearchEnabled ?? false)}<p class="small-copy">${tx("bridge.llmWebSearchCopy")}</p>` : ""}${applicablePlatform?.apiProviderType ? `${toggle("bridge.llmExternalTool", "llmExternalToolEnabled", llmAssist?.externalToolEnabled ?? false)}<p class="small-copy">${tx("bridge.llmExternalToolCopy", { platform: applicablePlatform.name })}</p>` : ""}${applicablePlatform?.supportsCreatorAvatarAPIFallback ? `${toggle("bridge.llmUsePlatformAPIKey", "llmUsePlatformAPIKeyFallback", llmAssist?.usePlatformAPIKeyFallback ?? false)}<p class="small-copy">${tx("bridge.llmUsePlatformAPIKeyCopy", { platform: applicablePlatform.name })}</p>` : ""}</div>` : `<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}</div>`;
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}">
         <div class="classifier-type-head"><div><span class="eyebrow">${tx("bridge.typePanel")}</span><h3>${esc(classifierType.name)}</h3><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div>${statusPill(typeStatus, applicablePlatformID ? "navy" : "muted")}</div>
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}<button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("bridge.saveType")}</button><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}">${tx("bridge.deleteType")}</button></div>
@@ -1122,9 +1135,16 @@
       return;
     }
     if (action === "saveTagName") {
-      flushTagNameInput(button.closest("[data-tree-popover]")?.querySelector("input[data-live-tag-name]"));
+      if (!data.name?.trim()) return;
+      pendingTagRenames.delete(tagRenameKey(button.dataset.treeId, button.dataset.nodeId));
       activeTagPanel = null;
       render();
+      send("updateTag", {
+        treeID: button.dataset.treeId,
+        nodeID: button.dataset.nodeId,
+        name: data.name,
+        description: data.description || "",
+      });
       return;
     }
     if (action === "openUtilityPanel") {

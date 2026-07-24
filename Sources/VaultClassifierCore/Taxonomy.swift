@@ -3,22 +3,25 @@ import Foundation
 public struct TagNode: Codable, Equatable, Sendable, Identifiable {
     public var id: String
     public var name: String
+    public var description: String?
     public var parentID: String?
     public var predictable: Bool
 
-    public init(id: String, name: String, parentID: String? = nil, predictable: Bool = true) {
+    public init(id: String, name: String, description: String? = nil, parentID: String? = nil, predictable: Bool = true) {
         self.id = id
         self.name = name
+        self.description = description
         self.parentID = parentID
         self.predictable = predictable
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, parentID, predictable }
+    private enum CodingKeys: String, CodingKey { case id, name, description, parentID, predictable }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
+        description = try container.decodeIfPresent(String.self, forKey: .description)
         parentID = try container.decodeIfPresent(String.self, forKey: .parentID)
         predictable = try container.decodeIfPresent(Bool.self, forKey: .predictable) ?? true
     }
