@@ -565,10 +565,13 @@
         : [];
       const boundPlatformAPIProfile = platformAPIProfiles.find((profile) => profile.hasCredential);
       const officialEvidenceReady = Boolean(applicablePlatform?.apiProviderType && boundPlatformAPIProfile);
+      const requiresProviderWebSearch = applicablePlatform?.llmCreatorEvidenceStrategy === "providerWebSearch";
       const platformDataStatus = !applicablePlatform
         ? t("bridge.platformDataChoose")
         : !applicableBinding
           ? t("bridge.platformDataWillCreate", { platform: applicablePlatform.name })
+        : requiresProviderWebSearch
+          ? t("bridge.platformDataProviderSearch", { platform: applicablePlatform.name })
         : !applicablePlatform.apiProviderType
           ? t("bridge.platformDataUnavailable", { platform: applicablePlatform.name })
           : boundPlatformAPIProfile
@@ -646,10 +649,15 @@
           };
         })
         .sort((lhs, rhs) => lhs.name.localeCompare(rhs.name));
+      const providerWebSearchReady = Boolean(
+        llmAssist?.providerProfileID === selectedLLMProfileID &&
+        llmAssist?.webSearchEnabled &&
+        protocols[selectedLLMProfile?.type]?.supportsWebSearch
+      );
       const creatorLLMReady = Boolean(selectedLLMProfile &&
         (!protocols[selectedLLMProfile.type]?.credentialRequired || selectedLLMProfile.hasCredential) &&
         (!["openAICompatible", "custom"].includes(selectedLLMProfile.type) || Boolean(selectedLLMProfile.customEndpoint)) &&
-        officialEvidenceReady
+        (requiresProviderWebSearch ? providerWebSearchReady : officialEvidenceReady)
       );
       const llmRunning = Boolean(state.inspect?.llmRunning);
       const creatorLLMClassification = selectedLLMProfile && !llmAssist?.isActive && llmAssist?.providerProfileID === selectedLLMProfileID

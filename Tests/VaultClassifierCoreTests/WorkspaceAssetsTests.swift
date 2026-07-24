@@ -22,11 +22,23 @@ final class WorkspaceAssetsTests: XCTestCase {
             XCTAssertFalse(platform.supportsLLMAssist)
         }
         XCTAssertTrue(CollectionPlatformRegistry.definition(for: "bilibili")?.supportsLocalModel == true)
-        XCTAssertFalse(CollectionPlatformRegistry.definition(for: "bilibili")?.supportsLLMAssist == true)
-        for platformID in ["youtube", "tiktok", "facebook", "instagram", "twitter"] {
+        XCTAssertTrue(CollectionPlatformRegistry.definition(for: "bilibili")?.supportsLLMAssist == true)
+        for platformID in ["youtube", "tiktok", "facebook", "instagram", "twitter", "bilibili"] {
             let platform = try! XCTUnwrap(CollectionPlatformRegistry.definition(for: platformID))
             XCTAssertTrue(platform.supportsLocalModel)
             XCTAssertTrue(platform.supportsLLMAssist)
+        }
+        for platformID in ["tiktok", "instagram", "bilibili"] {
+            XCTAssertEqual(
+                CollectionPlatformRegistry.definition(for: platformID)?.llmCreatorEvidenceStrategy,
+                .providerWebSearch
+            )
+        }
+        for platformID in ["youtube", "facebook", "twitter"] {
+            XCTAssertEqual(
+                CollectionPlatformRegistry.definition(for: platformID)?.llmCreatorEvidenceStrategy,
+                .officialPlatformAPI
+            )
         }
         XCTAssertFalse(CollectionPlatformRegistry.definition(for: "pinterest") != nil)
     }
