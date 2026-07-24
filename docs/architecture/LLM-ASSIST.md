@@ -58,9 +58,10 @@ Every classifier attachment must use a probed model identifier, never a free
 text model name.
 
 - Every LLM provider starts with an empty model list. Its explicit **Probe**
-  action loads the current list: fixed providers use the credential-free Vault
-  service, while Custom, OpenAI-compatible, and Ollama use their configured
-  endpoint.
+  sends the saved local credential to that selected provider's documented
+  model-list endpoint. There is no Vault-service model catalog. Provider-specific
+  paths, authentication, pagination limits, and response envelopes are handled
+  by the native request protocol.
 - The list is an in-memory cache. A successful later Probe replaces it; a
   failed Probe leaves the previous successful list in place. It is not written
   to workspace state.
@@ -94,6 +95,4 @@ continues without one.
 - `WorkspaceAssetsTests`: catalog reconciliation, plain provider-credential
   persistence, profile validation, and legacy-state cleanup.
 - `ProviderTestProtocolTests`: provider test/classification request grammar,
-  bounded tools, and fixed-versus-direct model-catalog routing.
-- `VaultServiceEndpointTests`: validated loopback development and HTTPS public
-  catalog endpoints.
+  bounded tools, and direct provider model-list routing.

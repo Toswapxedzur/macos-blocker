@@ -1,45 +1,26 @@
 import Foundation
 
-/// Prepares the model Probe for one LLM connection. Fixed providers use the
-/// Vault service's credential-free curated catalog; Custom and compatible
-/// providers make the same explicit request against their own endpoint because
-/// only their operator knows the account-specific model inventory.
+/// Prepares one explicit model-list request against the selected LLM provider.
+/// The request plan carries no credential value; the app applies the saved
+/// local credential immediately before sending it to that provider.
 public enum ProviderModelCatalogProtocol {
     public static let maximumModels = 256
-    public static let maximumResponseBytes = 512 * 1_024
+    public static let maximumResponseBytes = 2 * 1_024 * 1_024
 
-    public static func prepare(
-        profile: APIKeyProviderProfile,
-        vaultService: VaultServiceEndpoint? = nil
-    ) throws -> ProviderRequestPlan {
+    public static func prepare(profile: APIKeyProviderProfile) throws -> ProviderRequestPlan {
         let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
         guard descriptor.supportsLLMConfiguration else {
             throw ProviderModelCatalogProtocolError.unsupportedProvider
         }
-        if usesVaultCatalog(profile.type) {
-            try profile.validate()
-            guard let vaultService else { throw ProviderModelCatalogProtocolError.missingVaultService }
-            let path = "api/vault-classifier/llm-model-catalog/\(profile.type.rawValue)"
-            return .init(
-                url: try vaultService.url(path: path),
-                method: "GET",
-                bodyFormat: .queryOnly,
-                headers: ["Accept": "application/json"],
-                authentication: .none,
-                authenticationHeader: nil,
-                requiredCredentialFields: []
-            )
-        }
-
         try profile.validateForDispatch()
-        let path: String
-        switch profile.type {
-        case .ollama:
-            path = "/api/tags"
-        default:
-            path = "/models"
-        }
-        let url = try catalogURL(profile: profile, descriptor: descriptor, path: path)
+        let endpoint = catalogEndpoint(for: profile.type)
+        let url = try catalogURL(
+            profile: profile,
+            descriptor: descriptor,
+            path: endpoint.path,
+            replacesBasePath: endpoint.replacesBasePath,
+            queryItems: endpoint.queryItems
+        )
         var headers = descriptor.staticHeaders
         headers["Accept"] = "application/json"
         return .init(
@@ -53,27 +34,29 @@ public enum ProviderModelCatalogProtocol {
         )
     }
 
-    public static func usesVaultCatalog(_ providerType: APIKeyProviderType) -> Bool {
-        switch providerType {
-        case .openAI, .deepSeek, .gemini, .anthropic, .mistral, .cohere,
-             .groq, .openRouter:
-            return true
-        default:
-            return false
-        }
-    }
-
     public static func parse(_ data: Data, providerType: APIKeyProviderType) throws -> [String] {
-        guard data.count <= maximumResponseBytes,
-              let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        guard data.count <= maximumResponseBytes else {
+            throw ProviderModelCatalogProtocolError.invalidResponse
+        }
+        let root: Any
+        do {
+            root = try JSONSerialization.jsonObject(with: data)
+        } catch {
             throw ProviderModelCatalogProtocolError.invalidResponse
         }
         let candidates: [[String: Any]]
-        switch providerType {
-        case .gemini, .ollama, .cohere:
-            candidates = root["models"] as? [[String: Any]] ?? []
-        default:
-            candidates = (root["data"] as? [[String: Any]]) ?? (root["models"] as? [[String: Any]]) ?? []
+        if providerType == .mistral, let models = root as? [[String: Any]] {
+            // Mistral's documented list response is a top-level array.
+            candidates = models
+        } else if let object = root as? [String: Any] {
+            switch providerType {
+            case .gemini, .ollama, .cohere:
+                candidates = object["models"] as? [[String: Any]] ?? []
+            default:
+                candidates = (object["data"] as? [[String: Any]]) ?? (object["models"] as? [[String: Any]]) ?? []
+            }
+        } else {
+            throw ProviderModelCatalogProtocolError.invalidResponse
         }
         var seen = Set<String>()
         let models = candidates.compactMap { candidate -> String? in
@@ -100,10 +83,38 @@ public enum ProviderModelCatalogProtocol {
         return Array(models.prefix(maximumModels)).sorted()
     }
 
+    private static func catalogEndpoint(for providerType: APIKeyProviderType) -> CatalogEndpoint {
+        switch providerType {
+        case .ollama:
+            return .init(path: "/api/tags")
+        case .cohere:
+            // Cohere's Chat API is rooted at /v2, while its Models API is /v1.
+            return .init(
+                path: "/v1/models",
+                replacesBasePath: true,
+                queryItems: [.init(name: "page_size", value: String(maximumModels))]
+            )
+        case .gemini:
+            return .init(
+                path: "/models",
+                queryItems: [.init(name: "pageSize", value: String(maximumModels))]
+            )
+        case .anthropic:
+            return .init(
+                path: "/models",
+                queryItems: [.init(name: "limit", value: String(maximumModels))]
+            )
+        default:
+            return .init(path: "/models")
+        }
+    }
+
     private static func catalogURL(
         profile: APIKeyProviderProfile,
         descriptor: ProviderProtocolDescriptor,
-        path: String
+        path: String,
+        replacesBasePath: Bool,
+        queryItems: [URLQueryItem]
     ) throws -> URL {
         let override = profile.customEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let base = override.isEmpty ? descriptor.defaultBaseURL : override
@@ -113,17 +124,23 @@ public enum ProviderModelCatalogProtocol {
         }
         components.query = nil
         components.fragment = nil
-        let basePath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let basePath = replacesBasePath ? "" : components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         let tail = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         components.path = "/" + [basePath, tail].filter { !$0.isEmpty }.joined(separator: "/")
+        components.queryItems = queryItems.isEmpty ? nil : queryItems
         guard let url = components.url else { throw ProviderModelCatalogProtocolError.invalidConfiguration }
         return url
+    }
+
+    private struct CatalogEndpoint {
+        var path: String
+        var replacesBasePath = false
+        var queryItems: [URLQueryItem] = []
     }
 }
 
 public enum ProviderModelCatalogProtocolError: Error, Equatable, LocalizedError, Sendable {
     case unsupportedProvider
-    case missingVaultService
     case invalidConfiguration
     case invalidResponse
     case noModels
@@ -131,7 +148,6 @@ public enum ProviderModelCatalogProtocolError: Error, Equatable, LocalizedError,
     public var errorDescription: String? {
         switch self {
         case .unsupportedProvider: return "This connection cannot list models."
-        case .missingVaultService: return "The fixed provider model catalog needs a configured Vault service."
         case .invalidConfiguration: return "The provider connection cannot build a model-list request."
         case .invalidResponse: return "The provider returned an unreadable or oversized model list."
         case .noModels: return "The provider returned no usable text-generation models."

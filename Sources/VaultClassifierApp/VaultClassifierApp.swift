@@ -127,7 +127,6 @@ final class VaultClassifierViewModel: ObservableObject {
     private var latestLedgerID: UUID?
     private var testingProviderProfileIDs = Set<String>()
     private var successfulProviderTestProfileIDs = Set<String>()
-    private let vaultServiceEndpoint: VaultServiceEndpoint
     /// Model names are fetched from the selected provider on demand and remain
     /// in memory only. They are not part of a credential connection or the
     /// workspace catalog.
@@ -141,7 +140,6 @@ final class VaultClassifierViewModel: ObservableObject {
     init() {
         do {
             RetiredCredentialCleanup.removePersonalAuditCredential()
-            self.vaultServiceEndpoint = VaultServiceEndpoint.current()
             let package = try SeedPackageLoader.bundled()
             let appSupport = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             let vaultDirectory = appSupport.appendingPathComponent("VaultClassifier", isDirectory: true)
@@ -509,7 +507,7 @@ final class VaultClassifierViewModel: ObservableObject {
             guard let profile = localState?.workspaceCatalog.providerProfiles.first(where: { $0.id == profileID }) else {
                 throw WebBridgeInputError.invalidChoice("provider profile")
             }
-            let plan = try ProviderModelCatalogProtocol.prepare(profile: profile, vaultService: vaultServiceEndpoint)
+            let plan = try ProviderModelCatalogProtocol.prepare(profile: profile)
             loadingProviderModelProfileIDs.insert(profileID)
             providerModelCatalogErrors.removeValue(forKey: profileID)
             issue = nil
