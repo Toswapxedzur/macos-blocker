@@ -54,18 +54,19 @@ clears the saved value; deleting a profile removes the value with the profile.
 
 ## Models and network requests
 
-Every classifier attachment must use a fetched model identifier, never a free
+Every classifier attachment must use a probed model identifier, never a free
 text model name.
 
-- Fixed providers fetch their curated model list from the credential-free Vault
-  service at launch. The service receives no provider credential.
-- Custom, OpenAI-compatible, and Ollama profiles fetch their own list only on
-  the explicit user action because the operator controls that endpoint and
-  inventory.
-- A saved selected model remains editable if a transient catalog request fails.
-  Changing a direct provider credential or endpoint clears its transient
-  catalog, but retains affected classifier attachments and their selected
-  models.
+- Every LLM provider starts with an empty model list. Its explicit **Probe**
+  action loads the current list: fixed providers use the credential-free Vault
+  service, while Custom, OpenAI-compatible, and Ollama use their configured
+  endpoint.
+- The list is an in-memory cache. A successful later Probe replaces it; a
+  failed Probe leaves the previous successful list in place. It is not written
+  to workspace state.
+- A saved selected model remains visible if the process has no cached list.
+  Editing provider fields does not invalidate the cached list or detach an
+  affected classifier attachment.
 
 An explicit **Test request** uses a bounded provider-specific health/test
 request. It does not send collected browser content. Provider classification

@@ -1,9 +1,9 @@
 import Foundation
 
-/// Fetches models for one LLM connection. Fixed providers use the Vault
-/// service's credential-free curated catalog at launch. Custom and compatible
-/// providers keep their explicit direct request because only their operator
-/// knows the endpoint and account-specific model inventory.
+/// Prepares the model Probe for one LLM connection. Fixed providers use the
+/// Vault service's credential-free curated catalog; Custom and compatible
+/// providers make the same explicit request against their own endpoint because
+/// only their operator knows the account-specific model inventory.
 public enum ProviderModelCatalogProtocol {
     public static let maximumModels = 256
     public static let maximumResponseBytes = 512 * 1_024

@@ -576,9 +576,9 @@
       const loadingModelCatalogs = new Set(assets.loadingProviderModelProfileIDs || []);
       const fetchedModels = selectedLLMProfile ? (modelCatalogs[selectedLLMProfile.id] || []) : [];
       // The fetched list is deliberately session-only, but the classifier
-      // type's chosen model is durable. Keep that saved value visible while a
-      // fixed provider is loading (or temporarily unavailable) so a relaunch
-      // cannot make the form look as though its LLM settings were lost.
+      // type's chosen model is durable. Keep that saved value visible before a
+      // Probe (or after a failed Probe) so a relaunch cannot make the form
+      // look as though its LLM settings were lost.
       const visibleModels = llmModelIdentifier && !fetchedModels.includes(llmModelIdentifier)
         ? [llmModelIdentifier, ...fetchedModels]
         : fetchedModels;
@@ -707,14 +707,9 @@
         })
         .sort((lhs, rhs) => lhs.localeCompare(rhs));
       const creatorDecisionList = `<section class="classifier-type-section creator-classification-section"><div class="section-header"><div><h3>${tx("bridge.sourceDecisionList", { source: sourceTerms.singular })}</h3><p class="section-copy">${tx("bridge.sourceDecisionListCopy", { sources: sourceTerms.plural })}</p></div></div><div class="creator-tag-column-list">${creatorDecisionRows.length ? creatorDecisionRows.join("") : `<div class="empty compact-empty">${esc(t("bridge.noSources", { sources: sourceTerms.plural }))}</div>`}</div></section>`;
-      const selectedNeedsDirectCatalog = selectedLLMProfile?.type === "custom" || selectedLLMProfile?.type === "openAICompatible";
       const llmModelControl = !selectedLLMProfile
         ? `<p class="small-copy">${tx("bridge.llmChooseProviderFirst")}</p>`
-        : visibleModels.length
-            ? valueSelectField("bridge.llmModel", "bridge.llmModelCopy", "llmModelIdentifier", currentModel, [["", t("bridge.llmChooseModel")], ...visibleModels.map((model) => [model, model])])
-            : selectedNeedsDirectCatalog
-              ? `<div class="field"><span class="field-label">${tx("bridge.llmModel")} · ${tx("bridge.llmModelCopy")}</span><div class="action-row"><button class="secondary" data-action="fetchCustomProviderModelCatalog" data-profile-id="${esc(selectedLLMProfile.id)}"${disabled(loadingModelCatalogs.has(selectedLLMProfile.id))}>${tx(loadingModelCatalogs.has(selectedLLMProfile.id) ? "bridge.llmLoadingModels" : "bridge.llmFetchModels")}</button><span class="small-copy">${esc(modelCatalogErrors[selectedLLMProfile.id] || tx("bridge.llmFetchModelsCopy"))}</span></div></div>`
-              : `<div class="field"><span class="field-label">${tx("bridge.llmModel")} · ${tx("bridge.llmModelCopy")}</span><p class="small-copy">${esc(loadingModelCatalogs.has(selectedLLMProfile.id) ? tx("bridge.llmLoadingModels") : modelCatalogErrors[selectedLLMProfile.id] || tx("bridge.llmFixedModelsAtLaunch"))}</p></div>`;
+        : `<div class="field"><span class="field-label">${tx("bridge.llmModel")} · ${tx("bridge.llmModelCopy")}</span><select class="select-control" data-field="llmModelIdentifier"><option value="">${tx("bridge.llmChooseModel")}</option>${visibleModels.map((model) => `<option value="${esc(model)}"${selected(currentModel, model)}>${esc(model)}</option>`).join("")}</select><span class="action-row"><button type="button" class="secondary" data-action="probeProviderModelCatalog" data-profile-id="${esc(selectedLLMProfile.id)}"${disabled(loadingModelCatalogs.has(selectedLLMProfile.id))}>${tx(loadingModelCatalogs.has(selectedLLMProfile.id) ? "bridge.llmProbingModels" : "bridge.llmProbeModels")}</button><span class="small-copy">${esc(loadingModelCatalogs.has(selectedLLMProfile.id) ? tx("bridge.llmProbingModels") : modelCatalogErrors[selectedLLMProfile.id] || tx("bridge.llmProbeModelsCopy"))}</span></span></div>`;
       const llmActivation = llmAssist
         ? `<div class="action-row"><span class="small-copy">${tx(llmAssist.isActive ? (llmRunning ? "bridge.llmActivationRunning" : "bridge.llmActive") : "bridge.llmInactive")}</span><button class="${llmAssist.isActive ? "secondary" : "gold-action"}" data-action="setLLMAssistActive" data-type-id="${esc(classifierType.id)}" data-is-active="${llmAssist.isActive ? "false" : "true"}"${disabled(!llmAssist.isActive && (!creatorLLMReady || llmRunning))}>${tx(llmAssist.isActive ? "bridge.llmDeactivate" : "bridge.llmActivate")}</button></div>`
         : "";
