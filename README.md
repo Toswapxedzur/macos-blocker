@@ -24,6 +24,9 @@ description.
   optional hosted web research on every platform. Either the classifier
   provider searches directly or any separately selected search-capable
   provider produces a transient memo. There is no static creator-page fallback.
+- Twitch, Reddit, and Discord classification is intentionally manual-only.
+  Their collected sources and human tags remain available, but Local Model and
+  LLM Assist are not offered for those classifier types.
 - An authenticated v4 local browser hub at `ws://127.0.0.1:8787`. Mac Vault
   or Vault Classifier hosts it; unavailable peers, invalid frames, and
   timeouts fail open.
