@@ -118,6 +118,7 @@ final class ProviderTestProtocolTests: XCTestCase {
             endpoint: "https://example.test/v1",
             method: "POST",
             statusCode: 200,
+            responseShape: "JSON object; top-level fields: choices, usage",
             durationMilliseconds: 41,
             inputTokens: 3,
             outputTokens: 1,
@@ -144,6 +145,25 @@ final class ProviderTestProtocolTests: XCTestCase {
         )
         XCTAssertEqual(decodedLegacyRecord, record)
         XCTAssertFalse(String(decoding: try JSONEncoder().encode(decodedLegacyRecord), as: UTF8.self).contains("estimatedCostUSD"))
+    }
+
+    func testResponseShapeDescribesOnlySafeStructure() {
+        let response = Data(#"{"choices":[{"message":{"content":"private model response","reasoning_content":"private reasoning","role":"assistant"}}],"usage":{"completion_tokens":2}}"#.utf8)
+
+        let shape = ProviderTestProtocol.responseShape(for: response)
+
+        XCTAssertEqual(
+            shape,
+            "JSON object; top-level fields: choices, usage; choices: 1; first choice fields: message; message fields: content, reasoning_content, role; content: non-empty string"
+        )
+        XCTAssertFalse(shape.contains("private model response"))
+        XCTAssertFalse(shape.contains("private reasoning"))
+    }
+
+    func testResponseShapeRecognizesANonJSONResponseWithoutRetainingIt() {
+        let shape = ProviderTestProtocol.responseShape(for: Data("provider response body".utf8))
+        XCTAssertEqual(shape, "non-JSON response")
+        XCTAssertFalse(shape.contains("provider response body"))
     }
 
     func testExplicitProviderClassificationUsesOnlyKnownLeafIDs() throws {

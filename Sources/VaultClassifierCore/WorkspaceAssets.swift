@@ -953,8 +953,9 @@ public struct TokenUsageRecord: Codable, Equatable, Sendable, Identifiable {
 }
 
 /// A bounded local ledger for explicit provider requests. It tracks only the
-/// outcome and token accounting; credentials, headers, request text, and
-/// response text are never retained here.
+/// outcome and token accounting. A parser failure may retain a bounded
+/// response-shape summary made only from structural field names and counts;
+/// credentials, headers, request text, and response text are never retained.
 public struct ProviderRequestRecord: Codable, Equatable, Sendable, Identifiable {
     public var id: String
     public var profileID: String
@@ -964,6 +965,9 @@ public struct ProviderRequestRecord: Codable, Equatable, Sendable, Identifiable 
     public var endpoint: String
     public var method: String
     public var statusCode: Int?
+    /// A redacted JSON-envelope description for a 2xx response that could not
+    /// be parsed. It never contains response values or text.
+    public var responseShape: String?
     public var durationMilliseconds: Int
     public var inputTokens: Int?
     public var outputTokens: Int?
@@ -982,6 +986,7 @@ public struct ProviderRequestRecord: Codable, Equatable, Sendable, Identifiable 
         endpoint: String,
         method: String,
         statusCode: Int?,
+        responseShape: String? = nil,
         durationMilliseconds: Int,
         inputTokens: Int?,
         outputTokens: Int?,
@@ -997,6 +1002,8 @@ public struct ProviderRequestRecord: Codable, Equatable, Sendable, Identifiable 
         self.endpoint = endpoint
         self.method = method
         self.statusCode = statusCode
+        let cleanedResponseShape = responseShape?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.responseShape = cleanedResponseShape.isEmpty ? nil : String(cleanedResponseShape.prefix(ProviderTestProtocol.maximumResponseShapeCharacters))
         self.durationMilliseconds = durationMilliseconds
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens

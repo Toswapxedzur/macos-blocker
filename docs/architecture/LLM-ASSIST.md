@@ -94,6 +94,14 @@ JSON envelope is an error, not a green "provider is ready" result. Cohere test,
 classification, and tool requests explicitly set `stream: false` because the
 native transport accepts one bounded JSON response rather than an SSE stream.
 
+When a 2xx provider response cannot be parsed, its local request record retains
+the HTTP status and a bounded **response shape** only: JSON kind, safe field
+names, selected array counts, and whether the expected text field was empty.
+It never retains a response value, generated text, reasoning, credential,
+header, or request body. The provider panel exposes the latest such diagnostic
+so a later failure can be diagnosed without replaying or logging private model
+output.
+
 ## Tools and external platform data
 
 An LLM attachment may opt into a matching platform-data tool. Native code

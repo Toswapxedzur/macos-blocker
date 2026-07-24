@@ -8,6 +8,7 @@ public enum ProviderTestProtocol {
     public static let prompt = "Return exactly OK."
     public static let maximumOutputTokens = 32
     public static let maximumResponseCharacters = 12_000
+    public static let maximumResponseShapeCharacters = 256
 
     public static func prepare(profile: APIKeyProviderProfile) throws -> ProviderTestPreparedRequest {
         let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
@@ -94,6 +95,38 @@ public enum ProviderTestProtocol {
         return .init(content: String(content.prefix(maximumResponseCharacters)), usage: usage)
     }
 
+    /// Describes a response's JSON envelope without retaining any response
+    /// values. This is used only when a 2xx response cannot be parsed, so a
+    /// later diagnosis can distinguish an unexpected envelope from an empty
+    /// generated-text field without exposing provider output.
+    public static func responseShape(for data: Data) -> String {
+        guard let json = try? JSONSerialization.jsonObject(with: data) else {
+            return "non-JSON response"
+        }
+        guard let root = json as? [String: Any] else {
+            return "JSON \(jsonKind(json))"
+        }
+
+        var parts = ["JSON object"]
+        appendFields(of: root, named: "top-level", to: &parts)
+        if let choices = root["choices"] as? [Any] {
+            parts.append("choices: \(choices.count)")
+            if let firstChoice = choices.first as? [String: Any] {
+                appendFields(of: firstChoice, named: "first choice", to: &parts)
+                if let message = firstChoice["message"] as? [String: Any] {
+                    appendFields(of: message, named: "message", to: &parts)
+                    let content = (message["content"] as? String)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    parts.append(content?.isEmpty == false ? "content: non-empty string" : "content: missing-or-empty")
+                }
+            }
+        }
+        if let error = root["error"] as? [String: Any] {
+            appendFields(of: error, named: "error", to: &parts)
+        }
+        return String(parts.joined(separator: "; ").prefix(maximumResponseShapeCharacters))
+    }
+
     public static func safeEndpoint(_ url: URL) -> String {
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url.absoluteString }
         components.query = nil
@@ -165,6 +198,35 @@ public enum ProviderTestProtocol {
 
     private static func joinedText(_ values: [[String: Any]]) -> String? {
         values.compactMap { $0["text"] as? String }.joined(separator: "\n").nonEmpty
+    }
+
+    private static func appendFields(of object: [String: Any], named name: String, to parts: inout [String]) {
+        let fields = object.keys
+            .filter(isSafeDiagnosticFieldName)
+            .sorted()
+            .prefix(12)
+        guard !fields.isEmpty else { return }
+        parts.append("\(name) fields: \(fields.joined(separator: ", "))")
+    }
+
+    private static func isSafeDiagnosticFieldName(_ value: String) -> Bool {
+        guard !value.isEmpty, value.count <= 64 else { return false }
+        return value.unicodeScalars.allSatisfy { scalar in
+            switch scalar.value {
+            case 45, 46, 48...57, 65...90, 95, 97...122:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    private static func jsonKind(_ value: Any) -> String {
+        if value is [Any] { return "array" }
+        if value is String { return "string" }
+        if value is NSNumber { return "number" }
+        if value is NSNull { return "null" }
+        return "value"
     }
 }
 

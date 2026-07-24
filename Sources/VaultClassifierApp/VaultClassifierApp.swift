@@ -483,7 +483,16 @@ final class VaultClassifierViewModel: ObservableObject {
                 let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
                 guard let http = response as? HTTPURLResponse else { throw ProviderTestProtocolError.invalidResponse }
                 guard (200..<300).contains(http.statusCode) else { throw ProviderTestHTTPError.status(http.statusCode) }
-                let parsed = try ProviderTestProtocol.parseResponse(data, format: request.plan.bodyFormat, operation: request.operation)
+                let parsed: ProviderTestParsedResponse
+                do {
+                    parsed = try ProviderTestProtocol.parseResponse(data, format: request.plan.bodyFormat, operation: request.operation)
+                } catch {
+                    throw ProviderResponseParseFailure(
+                        underlyingError: error,
+                        statusCode: http.statusCode,
+                        responseShape: ProviderTestProtocol.responseShape(for: data)
+                    )
+                }
                 try self.appendProviderTestRecord(.init(
                     profileID: profile.id,
                     provider: profile.type.rawValue,
@@ -502,6 +511,7 @@ final class VaultClassifierViewModel: ObservableObject {
             } catch {
                 let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
                 if let prepared {
+                    let failure = self.providerFailureMetadata(for: error)
                     try? self.appendProviderTestRecord(.init(
                         profileID: profile.id,
                         provider: profile.type.rawValue,
@@ -509,7 +519,8 @@ final class VaultClassifierViewModel: ObservableObject {
                         operation: prepared.operation.rawValue,
                         endpoint: ProviderTestProtocol.safeEndpoint(prepared.plan.url),
                         method: prepared.plan.method,
-                        statusCode: nil,
+                        statusCode: failure.statusCode,
+                        responseShape: failure.responseShape,
                         durationMilliseconds: duration,
                         inputTokens: nil,
                         outputTokens: nil,
@@ -713,6 +724,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     self.issue = nil
                 } catch {
                     let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
+                    let failure = self.providerFailureMetadata(for: error)
                     try? self.appendProviderTestRecord(.init(
                         profileID: profile.id,
                         provider: profile.type.rawValue,
@@ -720,7 +732,8 @@ final class VaultClassifierViewModel: ObservableObject {
                         operation: "classify",
                         endpoint: ProviderTestProtocol.safeEndpoint(recordPlan.plan.url),
                         method: recordPlan.plan.method,
-                        statusCode: nil,
+                        statusCode: failure.statusCode,
+                        responseShape: failure.responseShape,
                         durationMilliseconds: duration,
                         inputTokens: nil,
                         outputTokens: nil,
@@ -760,6 +773,21 @@ final class VaultClassifierViewModel: ObservableObject {
         var content: String
         var usage: ProviderTestUsage
         var statusCode: Int
+    }
+
+    private struct ProviderResponseParseFailure: LocalizedError {
+        let underlyingError: Error
+        let statusCode: Int
+        let responseShape: String
+
+        var errorDescription: String? {
+            underlyingError.localizedDescription
+        }
+    }
+
+    private func providerFailureMetadata(for error: Error) -> (statusCode: Int?, responseShape: String?) {
+        guard let failure = error as? ProviderResponseParseFailure else { return (nil, nil) }
+        return (failure.statusCode, failure.responseShape)
     }
 
     /// Runs an explicit classification through the selected LLM. The one
@@ -804,7 +832,16 @@ final class VaultClassifierViewModel: ObservableObject {
                 maximumOutputTokens: maximumOutputTokens
             )
             let response = try await performProviderRequest(plan: request.plan, body: request.body, credential: mainCredential, timeout: 30)
-            let parsed = try ProviderTestProtocol.parseResponse(response.data, format: request.plan.bodyFormat, operation: request.operation)
+            let parsed: ProviderTestParsedResponse
+            do {
+                parsed = try ProviderTestProtocol.parseResponse(response.data, format: request.plan.bodyFormat, operation: request.operation)
+            } catch {
+                throw ProviderResponseParseFailure(
+                    underlyingError: error,
+                    statusCode: response.response.statusCode,
+                    responseShape: ProviderTestProtocol.responseShape(for: response.data)
+                )
+            }
             return .init(prompt: request.prompt, content: parsed.content, usage: parsed.usage, statusCode: response.response.statusCode)
         }
 
@@ -822,7 +859,16 @@ final class VaultClassifierViewModel: ObservableObject {
         var remainingOutputTokens = maximumOutputTokens
         for _ in 0..<3 {
             let response = try await performProviderRequest(plan: request.plan, body: request.body, credential: mainCredential, timeout: 30)
-            let turn = try ProviderToolCallingProtocol.parseResponse(response.data, format: request.plan.bodyFormat)
+            let turn: ProviderToolCallingTurn
+            do {
+                turn = try ProviderToolCallingProtocol.parseResponse(response.data, format: request.plan.bodyFormat)
+            } catch {
+                throw ProviderResponseParseFailure(
+                    underlyingError: error,
+                    statusCode: response.response.statusCode,
+                    responseShape: ProviderTestProtocol.responseShape(for: response.data)
+                )
+            }
             totalInputTokens = addingTokenUsage(totalInputTokens, turn.usage.inputTokens)
             totalOutputTokens = addingTokenUsage(totalOutputTokens, turn.usage.outputTokens)
             remainingOutputTokens -= turn.usage.outputTokens ?? request.maximumOutputTokens
@@ -2403,6 +2449,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     self.issue = nil
                 } catch {
                     let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
+                    let failure = self.providerFailureMetadata(for: error)
                     try? self.appendProviderTestRecord(.init(
                         profileID: profile.id,
                         provider: profile.type.rawValue,
@@ -2410,7 +2457,8 @@ final class VaultClassifierViewModel: ObservableObject {
                         operation: "classify-creator",
                         endpoint: ProviderTestProtocol.safeEndpoint(recordPlan.plan.url),
                         method: recordPlan.plan.method,
-                        statusCode: nil,
+                        statusCode: failure.statusCode,
+                        responseShape: failure.responseShape,
                         durationMilliseconds: duration,
                         inputTokens: nil,
                         outputTokens: nil,
@@ -2529,6 +2577,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     } catch {
                         firstFailure = firstFailure ?? error
                         if let recordPlan {
+                            let failure = self.providerFailureMetadata(for: error)
                             try? self.appendProviderTestRecord(.init(
                                 profileID: profile.id,
                                 provider: profile.type.rawValue,
@@ -2536,7 +2585,8 @@ final class VaultClassifierViewModel: ObservableObject {
                                 operation: activatedRun ? "classify-creator-active" : "classify-creator-batch",
                                 endpoint: ProviderTestProtocol.safeEndpoint(recordPlan.plan.url),
                                 method: recordPlan.plan.method,
-                                statusCode: nil,
+                                statusCode: failure.statusCode,
+                                responseShape: failure.responseShape,
                                 durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
                                 inputTokens: nil,
                                 outputTokens: nil,
@@ -3051,6 +3101,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     "endpoint": record.endpoint,
                     "method": record.method,
                     "statusCode": record.statusCode ?? NSNull(),
+                    "responseShape": record.responseShape ?? NSNull(),
                     "durationMilliseconds": record.durationMilliseconds,
                     "inputTokens": record.inputTokens ?? NSNull(),
                     "outputTokens": record.outputTokens ?? NSNull(),

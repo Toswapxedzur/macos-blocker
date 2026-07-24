@@ -905,6 +905,37 @@ h3 { font-size: 13px; }
 .provider-token-usage span { color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: 0.08em; }
 .provider-token-usage strong { color: var(--ink); font-size: 12px; font-weight: 650; }
 
+.provider-request-summary {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.provider-response-shape {
+  max-width: 360px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.provider-response-shape span {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.provider-response-shape strong {
+  color: var(--ink);
+  font: inherit;
+  font-weight: 650;
+}
+
 @media (max-width: 1040px) {
   .model-setup-fields,
   .classifier-llm-config { grid-template-columns: 1fr; }
@@ -915,6 +946,8 @@ h3 { font-size: 13px; }
   .provider-panel-body { grid-template-columns: 1fr; gap: 9px; }
   .provider-connection-fields { grid-template-columns: 1fr; }
   .provider-token-usage { align-items: flex-start; padding: 0; }
+  .provider-request-summary { justify-items: start; }
+  .provider-response-shape { text-align: left; }
 }
 
 .tree-create {
