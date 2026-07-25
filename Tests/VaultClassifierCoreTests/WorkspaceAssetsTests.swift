@@ -571,7 +571,7 @@ final class WorkspaceAssetsTests: XCTestCase {
         let configuration = LLMAssistConfiguration(
             providerProfileID: "ollama-profile",
             modelIdentifier: "llama3.3",
-            webSearchEnabled: true,
+            webSearchMode: .attached,
             webSearchProviderProfileID: "serper-profile"
         )
 
@@ -581,6 +581,7 @@ final class WorkspaceAssetsTests: XCTestCase {
             from: JSONEncoder().encode(configuration)
         )
         XCTAssertEqual(restored.webSearchProviderProfileID, "serper-profile")
+        XCTAssertEqual(restored.webSearchMode, .attached)
 
         let legacy = Data(#"""
         {
@@ -594,8 +595,11 @@ final class WorkspaceAssetsTests: XCTestCase {
         """#.utf8)
         let restoredLegacy = try JSONDecoder().decode(LLMAssistConfiguration.self, from: legacy)
         XCTAssertNil(restoredLegacy.webSearchProviderProfileID)
+        XCTAssertEqual(restoredLegacy.webSearchMode, .providerNative)
         let reencoded = String(decoding: try JSONEncoder().encode(restoredLegacy), as: UTF8.self)
         XCTAssertFalse(reencoded.contains("webResearch"))
+        XCTAssertFalse(reencoded.contains("webSearchEnabled"))
+        XCTAssertTrue(reencoded.contains("\"webSearchMode\":\"providerNative\""))
     }
 
     func testReconciliationDeactivatesANonNativeClassifierWhenItsRawSearchProfileIsMissing() throws {
@@ -616,7 +620,7 @@ final class WorkspaceAssetsTests: XCTestCase {
             llmAssistConfiguration: .init(
                 providerProfileID: classifierProfile.id,
                 modelIdentifier: "deepseek-chat",
-                webSearchEnabled: true,
+                webSearchMode: .attached,
                 webSearchProviderProfileID: searchProfile.id,
                 isActive: true
             )
@@ -628,6 +632,7 @@ final class WorkspaceAssetsTests: XCTestCase {
         catalog.providerProfiles.removeAll { $0.id == searchProfile.id }
         catalog.reconcileClassifierTypes()
         XCTAssertNil(catalog.classifierTypes[0].llmAssistConfiguration?.webSearchProviderProfileID)
+        XCTAssertEqual(catalog.classifierTypes[0].llmAssistConfiguration?.webSearchMode, .off)
         XCTAssertFalse(catalog.classifierTypes[0].llmAssistConfiguration?.isActive ?? true)
         XCTAssertNoThrow(try catalog.validate())
     }

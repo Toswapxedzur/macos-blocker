@@ -673,6 +673,15 @@
         : fetchedModels;
       const currentModel = llmModelIdentifier;
       const classifierSupportsNativeWebSearch = protocols[selectedLLMProfile?.type]?.supportsNativeWebSearch === true;
+      const classifierSupportsAttachedWebSearch = protocols[selectedLLMProfile?.type]?.supportsAttachedWebSearchTool === true;
+      const savedWebSearchMode = llmAssist?.providerProfileID === selectedLLMProfileID
+        ? llmAssist?.webSearchMode || "off"
+        : "off";
+      const webSearchModeOptions = [
+        ["off", t("bridge.llmWebSearchOff")],
+        ...(classifierSupportsNativeWebSearch ? [["providerNative", t("bridge.llmWebSearchNative")]] : []),
+        ...(classifierSupportsAttachedWebSearch ? [["attached", t("bridge.llmWebSearchAttached")]] : []),
+      ];
       const savedWebSearchProfileID = typeof llmAssist?.webSearchProviderProfileID === "string"
         ? llmAssist.webSearchProviderProfileID
         : "";
@@ -722,24 +731,25 @@
         .sort((lhs, rhs) => lhs.name.localeCompare(rhs.name));
       const nativeProviderWebSearchReady = Boolean(
         llmAssist?.providerProfileID === selectedLLMProfileID &&
-        llmAssist?.webSearchEnabled &&
+        savedWebSearchMode === "providerNative" &&
         classifierSupportsNativeWebSearch
       );
-      const rawProviderWebSearchReady = Boolean(
+      const attachedProviderWebSearchReady = Boolean(
         llmAssist?.providerProfileID === selectedLLMProfileID &&
-        llmAssist?.webSearchEnabled &&
+        savedWebSearchMode === "attached" &&
+        classifierSupportsAttachedWebSearch &&
         configuredWebSearchProfile &&
         configuredWebSearchProfile.hasCredential &&
         protocols[configuredWebSearchProfile.type]?.supportsRawWebSearch
       );
-      const providerWebSearchReady = nativeProviderWebSearchReady || rawProviderWebSearchReady;
+      const providerWebSearchReady = nativeProviderWebSearchReady || attachedProviderWebSearchReady;
       const providerEvidenceReady = platformEvidenceReady ||
-        Boolean(llmAssist?.webSearchEnabled && providerWebSearchReady);
+        providerWebSearchReady;
       const creatorLLMReady = Boolean(selectedLLMProfile &&
         (!protocols[selectedLLMProfile.type]?.credentialRequired || selectedLLMProfile.hasCredential) &&
         (!["openAICompatible", "custom"].includes(selectedLLMProfile.type) || Boolean(selectedLLMProfile.customEndpoint)) &&
         providerEvidenceReady &&
-        (!(llmAssist?.webSearchEnabled ?? false) || providerWebSearchReady)
+        (savedWebSearchMode === "off" || providerWebSearchReady)
       );
       const llmRunning = Boolean(state.inspect?.llmRunning);
       const creatorLLMClassification = selectedLLMProfile && !llmAssist?.isActive && llmAssist?.providerProfileID === selectedLLMProfileID
@@ -835,7 +845,7 @@
       const llmClassificationStatus = llmAssist
         ? `<div class="llm-classification-status"><div><span class="eyebrow">${tx("bridge.llmClassificationStatus")}</span><p class="small-copy">${tx(llmAssist.isActive ? (llmRunning ? "bridge.llmActivationRunning" : "bridge.llmActive") : "bridge.llmInactive")}</p></div><div class="llm-classification-metrics"><span>${tx("bridge.llmQueuedCreators", { count: llmAssist.queuedCreatorCount || 0 })}</span><span>${tx("bridge.llmCompletedToday", { count: llmAssist.completedToday || 0 })}</span>${llmLastOutcome ? `<span>${tx("bridge.llmLastResult", { result: tx(llmLastOutcome === "succeeded" ? "bridge.llmOutcomeSucceeded" : "bridge.llmOutcomeFailed") })}</span>` : ""}</div></div>`
         : "";
-      const webSearchControls = `${toggle("bridge.llmWebSearch", "llmWebSearchEnabled", llmAssist?.webSearchEnabled ?? false)}<p class="small-copy">${tx(classifierSupportsNativeWebSearch ? "bridge.llmNativeWebSearchCopy" : "bridge.llmRawWebSearchCopy")}</p>${(llmAssist?.webSearchEnabled ?? false) && !classifierSupportsNativeWebSearch ? valueSelectField("bridge.llmWebSearchProvider", "bridge.llmWebSearchProviderCopy", "llmWebSearchProviderProfileID", savedWebSearchProfileID, webSearchProviderOptions) : ""}`;
+      const webSearchControls = `${valueSelectField("bridge.llmWebSearchMode", "bridge.llmWebSearchModeCopy", "llmWebSearchMode", savedWebSearchMode, webSearchModeOptions)}<p class="small-copy" data-native-search-copy${savedWebSearchMode === "providerNative" ? "" : " hidden"}>${tx("bridge.llmNativeWebSearchCopy")}</p><div data-attached-search-controls${savedWebSearchMode === "attached" ? "" : " hidden"}>${valueSelectField("bridge.llmWebSearchProvider", "bridge.llmWebSearchProviderCopy", "llmWebSearchProviderProfileID", savedWebSearchProfileID, webSearchProviderOptions)}<p class="small-copy">${tx("bridge.llmAttachedWebSearchCopy")}</p></div>`;
       const llmSettings = selectedLLMProfile ? `${llmClassificationStatus}<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}${llmModelControl}${field("bridge.llmDailyOutputBudget", "bridge.llmDailyOutputBudgetCopy", "llmDailyOutputTokenLimit", llmAssist?.dailyOutputTokenLimit || 10000, "text", "inputmode=\"numeric\"")}${llmAssist ? `<p class="small-copy">${tx("bridge.llmDailyOutputUsage", { used: llmAssist.dailyOutputTokensUsed || 0, limit: llmAssist.dailyOutputTokenLimit || 10000 })}</p>` : ""}${field("bridge.llmMaximumTokens", "bridge.llmMaximumTokensCopy", "llmMaximumOutputTokensPerRequest", llmAssist?.maximumOutputTokensPerRequest || 4096, "text", "inputmode=\"numeric\"")}${textareaField("bridge.llmExtraDirection", "bridge.llmExtraDirectionCopy", "llmExtraDirection", llmAssist?.extraDirection || "", "maxlength=\"4096\"")}${field("bridge.llmClassificationPace", "bridge.llmClassificationPaceCopy", "llmClassificationRequestsPerMinute", llmAssist?.classificationRequestsPerMinute || 6, "text", "inputmode=\"numeric\"")}${field("bridge.llmBatchSize", "bridge.llmBatchSizeCopy", "llmBatchSize", llmAssist?.batchSize || 5, "text", "inputmode=\"numeric\"")}${field("bridge.llmMaximumTagCount", "bridge.llmMaximumTagCountCopy", "llmMaximumTagCount", llmAssist?.maximumTagCount || 8, "text", "inputmode=\"numeric\"")}${toggle("bridge.llmLeafOnly", "llmRestrictToLeafTags", llmAssist?.restrictToLeafTags ?? true)}<p class="small-copy">${tx("bridge.llmLeafOnlyCopy")}</p>${webSearchControls}</div>` : `<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}</div>`;
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}">
         <div class="classifier-type-head"><div><span class="eyebrow">${tx("bridge.typePanel")}</span><h3>${esc(classifierType.name)}</h3><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div>${statusPill(typeStatus, applicablePlatformID ? "navy" : "muted")}</div>
@@ -1420,7 +1430,18 @@
     }
     const llmField = event.target.closest('[data-field^="llm"]');
     if (llmField) {
-      saveLLMClassifierTypeFields(llmField.closest(".classifier-type-panel"));
+      const panel = llmField.closest(".classifier-type-panel");
+      if (llmField.dataset.field === "llmWebSearchMode") {
+        panel?.querySelectorAll("[data-native-search-copy]").forEach((copy) => {
+          copy.hidden = llmField.value !== "providerNative";
+        });
+        panel?.querySelectorAll("[data-attached-search-controls]").forEach((controls) => {
+          controls.hidden = llmField.value !== "attached";
+        });
+        if (llmField.value === "attached" &&
+            !panel?.querySelector('[data-field="llmWebSearchProviderProfileID"]')?.value) return;
+      }
+      saveLLMClassifierTypeFields(panel);
       return;
     }
     const control = event.target.closest("[data-local-model-setup]");

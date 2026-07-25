@@ -65,12 +65,38 @@ public enum ProviderModelCatalogProtocol {
                !methods.contains("generateContent") {
                 return nil
             }
+            if providerType == .openRouter {
+                guard let parameters = candidate["supported_parameters"] as? [String],
+                      parameters.contains("tools") else {
+                    return nil
+                }
+            }
+            if providerType == .mistral,
+               let capabilities = candidate["capabilities"] as? [String: Any],
+               capabilities["function_calling"] as? Bool != true {
+                return nil
+            }
+            if providerType == .cohere,
+               let endpoints = candidate["endpoints"] as? [String],
+               !endpoints.contains("chat") {
+                return nil
+            }
             let raw = (candidate["id"] as? String)
                 ?? (candidate["name"] as? String)
                 ?? (candidate["model"] as? String)
             var identifier = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if providerType == .gemini, identifier.hasPrefix("models/") {
                 identifier.removeFirst("models/".count)
+            }
+            if isKnownUnsupportedSearchModel(identifier, providerType: providerType) {
+                return nil
+            }
+            if providerType == .groq,
+               (identifier == "groq/compound" || identifier == "groq/compound-mini") {
+                // These systems use Groq-hosted tools but reject local
+                // function calls; this integration does not expose Groq's
+                // separate compound tool grammar.
+                return nil
             }
             guard !identifier.isEmpty,
                   identifier.count <= LLMAssistConfiguration.maximumModelIdentifierLength,
@@ -83,6 +109,69 @@ public enum ProviderModelCatalogProtocol {
         return Array(models.prefix(maximumModels)).sorted()
     }
 
+    private static func isKnownUnsupportedSearchModel(
+        _ identifier: String,
+        providerType: APIKeyProviderType
+    ) -> Bool {
+        let value = identifier.lowercased()
+        switch providerType {
+        case .openAI:
+            return [
+                "embedding", "moderation", "whisper", "tts", "dall-e",
+                "gpt-image", "sora", "transcribe", "realtime", "audio",
+            ].contains(where: value.contains)
+        case .gemini:
+            guard value.hasPrefix("gemini-") else { return true }
+            return [
+                "embedding", "imagen", "veo", "tts", "live",
+                "native-audio",
+            ].contains(where: value.contains)
+        default:
+            return false
+        }
+    }
+
+    public static func prepareOllamaToolCapabilityProbe(
+        profile: APIKeyProviderProfile,
+        modelIdentifier: String
+    ) throws -> ProviderTestPreparedRequest {
+        guard profile.type == .ollama,
+              !modelIdentifier.isEmpty,
+              modelIdentifier.count <= LLMAssistConfiguration.maximumModelIdentifierLength else {
+            throw ProviderModelCatalogProtocolError.invalidConfiguration
+        }
+        let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
+        let url = try catalogURL(
+            profile: profile,
+            descriptor: descriptor,
+            path: "/api/show",
+            replacesBasePath: false,
+            queryItems: []
+        )
+        let plan = ProviderRequestPlan(
+            url: url,
+            method: "POST",
+            bodyFormat: .queryOnly,
+            headers: descriptor.staticHeaders.merging(["Accept": "application/json"]) { _, new in new },
+            authentication: descriptor.authentication,
+            authenticationHeader: descriptor.authenticationHeader,
+            requiredCredentialFields: descriptor.credentialFields
+        )
+        let body = try JSONSerialization.data(
+            withJSONObject: ["model": modelIdentifier],
+            options: [.sortedKeys]
+        )
+        return .init(plan: plan, operation: .generateText, prompt: "", body: body)
+    }
+
+    public static func ollamaModelSupportsTools(_ data: Data) -> Bool {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let capabilities = root["capabilities"] as? [String] else {
+            return false
+        }
+        return capabilities.contains("tools")
+    }
+
     private static func catalogEndpoint(for providerType: APIKeyProviderType) -> CatalogEndpoint {
         switch providerType {
         case .ollama:
@@ -92,7 +181,10 @@ public enum ProviderModelCatalogProtocol {
             return .init(
                 path: "/v1/models",
                 replacesBasePath: true,
-                queryItems: [.init(name: "page_size", value: String(maximumModels))]
+                queryItems: [
+                    .init(name: "page_size", value: String(maximumModels)),
+                    .init(name: "endpoint", value: "chat"),
+                ]
             )
         case .gemini:
             return .init(
@@ -150,7 +242,7 @@ public enum ProviderModelCatalogProtocolError: Error, Equatable, LocalizedError,
         case .unsupportedProvider: return "This connection cannot list models."
         case .invalidConfiguration: return "The provider connection cannot build a model-list request."
         case .invalidResponse: return "The provider returned an unreadable or oversized model list."
-        case .noModels: return "The provider returned no usable text-generation models."
+        case .noModels: return "The provider returned no usable models with web search or external tool support."
         }
     }
 }

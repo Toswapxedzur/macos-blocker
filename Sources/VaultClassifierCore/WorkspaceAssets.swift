@@ -436,6 +436,15 @@ public enum ClassifierDecisionSource: String, Codable, Sendable, CaseIterable {
     case localModel
 }
 
+/// Web search is either executed by the model provider or exposed to the
+/// classifier model as one app-owned external function. The attached mode is
+/// deliberately not a prefetch: the model decides whether to call it.
+public enum LLMWebSearchMode: String, Codable, Sendable, CaseIterable {
+    case off
+    case providerNative
+    case attached
+}
+
 /// The one explicit LLM decision configuration a classifier type may use.
 /// It contains no credential material: `providerProfileID` refers to a
 /// separate local profile. The credential is not duplicated into this
@@ -475,12 +484,11 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
     /// When enabled, only active leaf tags are included in the model prompt.
     /// When disabled, active parent tags are also available as generic labels.
     public var restrictToLeafTags: Bool
-    /// Native-search classifier models receive their provider's hosted search
-    /// tool. Other classifiers may use one separately selected raw-results
-    /// search connection when official platform evidence is unavailable.
-    public var webSearchEnabled: Bool
-    /// A Serper or You.com Search connection. It contains no model and never
-    /// produces a synthesized research answer.
+    /// Selects either provider-hosted search or one app-owned external search
+    /// function. Off means no search capability is sent to the model.
+    public var webSearchMode: LLMWebSearchMode
+    /// The Serper or You.com Search connection executed only after the same
+    /// classifier model calls the attached `web_search` function.
     public var webSearchProviderProfileID: String?
     /// Activation is an explicit per-classifier-type permission for the app to
     /// classify eligible collected creators sequentially.
@@ -496,7 +504,7 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         batchSize: Int = Self.defaultBatchSize,
         maximumTagCount: Int = Self.defaultMaximumTagCount,
         restrictToLeafTags: Bool = true,
-        webSearchEnabled: Bool = false,
+        webSearchMode: LLMWebSearchMode = .off,
         webSearchProviderProfileID: String? = nil,
         isActive: Bool = false
     ) {
@@ -509,9 +517,11 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         self.batchSize = batchSize
         self.maximumTagCount = maximumTagCount
         self.restrictToLeafTags = restrictToLeafTags
-        self.webSearchEnabled = webSearchEnabled
+        self.webSearchMode = webSearchMode
         let cleanedSearchProfileID = webSearchProviderProfileID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        self.webSearchProviderProfileID = webSearchEnabled && !cleanedSearchProfileID.isEmpty ? cleanedSearchProfileID : nil
+        self.webSearchProviderProfileID = webSearchMode == .attached && !cleanedSearchProfileID.isEmpty
+            ? cleanedSearchProfileID
+            : nil
         self.isActive = isActive
     }
 
@@ -528,14 +538,15 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
               classificationRequestsPerMinute <= Self.maximumClassificationRequestsPerMinute,
               batchSize > 0, batchSize <= Self.maximumBatchSize,
               maximumTagCount > 0, maximumTagCount <= EntryEvidenceValidator.tagLimit,
-              cleanedSearchProfileID.count <= 128 else {
+              cleanedSearchProfileID.count <= 128,
+              (webSearchMode == .attached) == !cleanedSearchProfileID.isEmpty else {
             throw LLMAssistConfigurationError.invalidConfiguration
         }
     }
 
     private enum CodingKeys: String, CodingKey {
         case providerProfileID, modelIdentifier, dailyOutputTokenLimit, maximumOutputTokensPerRequest, extraDirection, classificationRequestsPerMinute, batchSize,
-             maximumTagCount, restrictToLeafTags, webSearchEnabled, webSearchProviderProfileID, isActive,
+             maximumTagCount, restrictToLeafTags, webSearchMode, webSearchEnabled, webSearchProviderProfileID, isActive,
              webResearchProviderProfileID, webResearchModelIdentifier,
              externalToolEnabled, usePlatformAPIKeyFallback,
              maximumTokens, externalToolProfileID
@@ -561,10 +572,18 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         maximumTagCount = try container.decodeIfPresent(Int.self, forKey: .maximumTagCount)
             ?? Self.defaultMaximumTagCount
         restrictToLeafTags = try container.decodeIfPresent(Bool.self, forKey: .restrictToLeafTags) ?? true
-        webSearchEnabled = try container.decodeIfPresent(Bool.self, forKey: .webSearchEnabled) ?? false
         let decodedSearchProfileID = (try container.decodeIfPresent(String.self, forKey: .webSearchProviderProfileID)?
             .trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
-        webSearchProviderProfileID = webSearchEnabled && !decodedSearchProfileID.isEmpty ? decodedSearchProfileID : nil
+        if let decodedMode = try container.decodeIfPresent(LLMWebSearchMode.self, forKey: .webSearchMode) {
+            webSearchMode = decodedMode
+        } else if try container.decodeIfPresent(Bool.self, forKey: .webSearchEnabled) == true {
+            webSearchMode = decodedSearchProfileID.isEmpty ? .providerNative : .attached
+        } else {
+            webSearchMode = .off
+        }
+        webSearchProviderProfileID = webSearchMode == .attached && !decodedSearchProfileID.isEmpty
+            ? decodedSearchProfileID
+            : nil
         // The retired two-model research selection is intentionally discarded.
         // It is decoded only so existing local state opens without a crash.
         _ = try container.decodeIfPresent(String.self, forKey: .webResearchProviderProfileID)
@@ -588,7 +607,7 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         try container.encode(batchSize, forKey: .batchSize)
         try container.encode(maximumTagCount, forKey: .maximumTagCount)
         try container.encode(restrictToLeafTags, forKey: .restrictToLeafTags)
-        try container.encode(webSearchEnabled, forKey: .webSearchEnabled)
+        try container.encode(webSearchMode, forKey: .webSearchMode)
         try container.encodeIfPresent(webSearchProviderProfileID, forKey: .webSearchProviderProfileID)
         try container.encode(isActive, forKey: .isActive)
     }
@@ -1130,6 +1149,23 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
         }
     }
 
+    /// Standard provider integrations whose documented generation grammar
+    /// supports client-executed function calls. Custom and generic compatible
+    /// endpoints are intentionally excluded because Probe cannot establish
+    /// that contract from an arbitrary `/models` response.
+    public var supportsAttachedWebSearchTool: Bool {
+        switch self {
+        case .openAI, .deepSeek, .gemini, .anthropic, .mistral, .cohere, .groq, .openRouter:
+            return true
+        case .ollama:
+            // Probe filters installed Ollama models through their declared
+            // capabilities before they can be selected.
+            return true
+        default:
+            return false
+        }
+    }
+
     public var defaultProfileName: String {
         switch self {
         case .openAI: return "OpenAI key"
@@ -1491,12 +1527,20 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                 } catch {
                     throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
                 }
-                guard providerProfiles.contains(where: {
+                guard let classifierProfile = providerProfiles.first(where: {
                     $0.id == llmAssist.providerProfileID && $0.type.supportsLLMConfiguration
                 }) else {
                     throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
                 }
-                if let searchProfileID = llmAssist.webSearchProviderProfileID {
+                if llmAssist.webSearchMode == .providerNative,
+                   !classifierProfile.type.supportsProviderNativeWebSearch {
+                    throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
+                }
+                if llmAssist.webSearchMode == .attached {
+                    guard classifierProfile.type.supportsAttachedWebSearchTool,
+                          let searchProfileID = llmAssist.webSearchProviderProfileID else {
+                        throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
+                    }
                     guard providerProfiles.contains(where: {
                         $0.id == searchProfileID && $0.type.supportsRawWebSearch
                     }) else {
@@ -1730,21 +1774,21 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                providerProfiles.contains(where: { $0.id == llmAssist.providerProfileID && $0.type.supportsLLMConfiguration }),
                (try? llmAssist.validate()) != nil {
                 var retainedLLMAssist = llmAssist
-                if let searchProfileID = retainedLLMAssist.webSearchProviderProfileID,
-                   !providerProfiles.contains(where: { $0.id == searchProfileID && $0.type.supportsRawWebSearch }) {
+                let classifierProfile = providerProfiles.first(where: {
+                    $0.id == retainedLLMAssist.providerProfileID && $0.type.supportsLLMConfiguration
+                })
+                let nativeModeInvalid = retainedLLMAssist.webSearchMode == .providerNative &&
+                    classifierProfile?.type.supportsProviderNativeWebSearch != true
+                let attachedModeInvalid = retainedLLMAssist.webSearchMode == .attached && (
+                    classifierProfile?.type.supportsAttachedWebSearchTool != true ||
+                    retainedLLMAssist.webSearchProviderProfileID == nil ||
+                    !providerProfiles.contains(where: {
+                        $0.id == retainedLLMAssist.webSearchProviderProfileID && $0.type.supportsRawWebSearch
+                    })
+                )
+                if nativeModeInvalid || attachedModeInvalid {
+                    retainedLLMAssist.webSearchMode = .off
                     retainedLLMAssist.webSearchProviderProfileID = nil
-                    retainedLLMAssist.isActive = false
-                }
-                if retainedLLMAssist.webSearchEnabled,
-                   let classifierProfile = providerProfiles.first(where: {
-                       $0.id == retainedLLMAssist.providerProfileID && $0.type.supportsLLMConfiguration
-                   }),
-                   !classifierProfile.type.supportsProviderNativeWebSearch,
-                   retainedLLMAssist.webSearchProviderProfileID == nil {
-                    // Legacy two-model research state is intentionally not
-                    // migrated. Keep the editable configuration, but do not
-                    // let it resume classification without an explicit raw
-                    // search connection.
                     retainedLLMAssist.isActive = false
                 }
                 reconciled.llmAssistConfiguration = retainedLLMAssist
