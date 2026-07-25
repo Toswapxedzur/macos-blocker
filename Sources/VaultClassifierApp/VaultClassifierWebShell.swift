@@ -6,6 +6,10 @@ import WebKit
 /// AppKit owns the native window; every visible control and layout is rendered
 /// by the local HTML/CSS/JS asset below.
 final class VaultClassifierWebShell {
+    /// The largest current WebView action is the classifier-type form. Its
+    /// fields are individually parsed and bounded by `performWebAction`.
+    static let maximumWebActionDataFields = 24
+
     private let model: VaultClassifierViewModel
     private let coordinator: Coordinator
     private let creatorAvatarSchemeHandler: CreatorAvatarSchemeHandler
@@ -73,13 +77,17 @@ final class VaultClassifierWebShell {
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            // A full classifier-type save carries the three decision-priority
+            // controls in addition to its model and LLM controls (17 fields
+            // today). Keep this small but sufficient action-specific bound;
+            // the view model still validates every individual value.
             guard message.name == Self.messageHandlerName,
                   let envelope = message.body as? [String: Any],
                   envelope.count <= 2,
                   let action = envelope["action"] as? String,
                   action.count <= 64,
                   let data = envelope["data"] as? [String: Any],
-                  data.count <= 16 else {
+                  data.count <= VaultClassifierWebShell.maximumWebActionDataFields else {
                 return
             }
             Task { @MainActor [weak self] in
