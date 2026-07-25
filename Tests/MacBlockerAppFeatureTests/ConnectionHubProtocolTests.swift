@@ -90,6 +90,14 @@ final class ConnectionHubProtocolTests: XCTestCase {
             "operation": "collect",
             "body": ["entry": ["platform": "youtube"]]
         ]))
+        XCTAssertNil(ConnectionHub.classifierRequestRejectionReason([
+            "requestID": "classifier-source-tags-1",
+            "operation": "source-tags",
+            "body": [
+                "platformID": "youtube",
+                "sourceID": "youtube:channel:UC123"
+            ]
+        ]))
         XCTAssertEqual(
             ConnectionHub.classifierRequestRejectionReason([
                 "requestID": "classifier-request-2",
