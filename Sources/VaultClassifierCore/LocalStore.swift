@@ -643,6 +643,25 @@ public final class LocalClassifierCoordinator {
             .sorted()
     }
 
+    /// Returns a display-only projection of approved tags for one verified
+    /// source. This does not classify an entry, create a ledger record, or
+    /// persist browser state.
+    public func sourceTags(platformID: String, sourceID: String) throws -> [TagNode] {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let binding = state.workspaceCatalog.bindings.first(where: { $0.id == platformID }),
+              binding.collectionEnabled else {
+            throw PlatformCollectionError.disabled(platformID)
+        }
+        guard let classifier = try state.workspaceCatalog.workspaceClassifier(
+            for: platformID,
+            policies: engine.policies
+        ) else {
+            return []
+        }
+        return classifier.sourceTags(platformID: platformID, sourceID: sourceID)
+    }
+
     /// Persists one bounded, already-rendered platform entry. This is separate
     /// from classification and labels: a collected entry is never eligible for
     /// model training until an explicit manual or approved LLM record exists.
