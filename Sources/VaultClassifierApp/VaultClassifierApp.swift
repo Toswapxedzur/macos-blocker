@@ -3325,9 +3325,10 @@ final class VaultClassifierViewModel: ObservableObject {
                 let selected = try webString(data, key: "workspace", limit: 32)
                 guard let value = Workspace(rawValue: selected) else { throw WebBridgeInputError.invalidChoice("workspace") }
                 workspace = value
-                if value == .localModel || value == .llmAssist || value == .browserBridge || value == .classificationData {
-                    refreshLocalState()
-                }
+                // The WebView already owns the current bounded snapshot and
+                // switches workspaces optimistically. Avoid echoing the same
+                // multi-megabyte state back across the bridge for navigation.
+                return false
             case "connectSharedHub":
                 connectSharedHub()
             case "disconnectSharedHub":
