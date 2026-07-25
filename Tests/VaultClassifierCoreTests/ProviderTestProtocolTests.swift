@@ -676,7 +676,7 @@ final class ProviderTestProtocolTests: XCTestCase {
                 let generationConfig = try XCTUnwrap(body["generationConfig"] as? [String: Any])
                 let responseFormat = try XCTUnwrap(generationConfig["responseFormat"] as? [String: Any])
                 let text = try XCTUnwrap(responseFormat["text"] as? [String: Any])
-                XCTAssertEqual(text["mimeType"] as? String, "application/json")
+                XCTAssertEqual(text["mimeType"] as? String, "APPLICATION_JSON")
                 assertLabelResponseSchema(text["schema"], provider: profile.type)
             case .anthropic:
                 let outputConfig = try XCTUnwrap(body["output_config"] as? [String: Any])
@@ -840,7 +840,7 @@ final class ProviderTestProtocolTests: XCTestCase {
                 let generationConfig = try XCTUnwrap(body["generationConfig"] as? [String: Any])
                 let responseFormat = try XCTUnwrap(generationConfig["responseFormat"] as? [String: Any])
                 let text = try XCTUnwrap(responseFormat["text"] as? [String: Any])
-                XCTAssertEqual(text["mimeType"] as? String, "application/json")
+                XCTAssertEqual(text["mimeType"] as? String, "APPLICATION_JSON")
                 assertLabelResponseSchema(text["schema"], provider: type)
             case .anthropic:
                 let outputConfig = try XCTUnwrap(body["output_config"] as? [String: Any])

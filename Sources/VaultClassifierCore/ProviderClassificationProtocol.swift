@@ -567,7 +567,7 @@ public enum ProviderClassificationProtocol {
         var generationConfig = body["generationConfig"] as? [String: Any] ?? [:]
         generationConfig["responseFormat"] = [
             "text": [
-                "mimeType": "application/json",
+                "mimeType": "APPLICATION_JSON",
                 "schema": labelResponseSchema(),
             ],
         ]
