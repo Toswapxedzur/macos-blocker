@@ -451,8 +451,8 @@ public enum LLMWebSearchMode: String, Codable, Sendable, CaseIterable {
 /// classifier configuration.
 public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
     public static let maximumModelIdentifierLength = 256
-    public static let defaultDailyOutputTokenLimit = 10_000
-    public static let maximumDailyOutputTokenLimit = 1_000_000
+    public static let defaultDailyTokenLimit = 10_000
+    public static let maximumDailyTokenLimit = 1_000_000
     public static let defaultMaximumOutputTokensPerRequest = 4_096
     public static let maximumOutputTokensPerRequest = 1_000_000
     public static let maximumExtraDirectionLength = 4_096
@@ -461,18 +461,18 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
     public static let maximumClassificationRequestsPerMinute = 120
     public static let defaultBatchSize = 5
     public static let maximumBatchSize = 32
-    /// YouTube returns at most 50 upload records in one list page. Keeping the
-    /// configured evidence count within that page makes one creator run
-    /// bounded and prevents a hidden pagination policy.
-    public static let defaultYouTubeVideoEvidenceCount = 25
-    public static let maximumYouTubeVideoEvidenceCount = 50
+    /// The maximum official recent-content records requested by any platform
+    /// adapter. An adapter may return fewer when its documented API has a lower
+    /// limit, but no platform receives a smaller app-owned evidence setting.
+    public static let defaultOfficialContentEvidenceCount = 25
+    public static let maximumOfficialContentEvidenceCount = 50
     public static let defaultMaximumTagCount = 8
 
     public var providerProfileID: String
     public var modelIdentifier: String
     /// A per-classifier-type daily ceiling. Individual provider requests are
     /// also capped by the remaining allowance and the user's per-request cap.
-    public var dailyOutputTokenLimit: Int
+    public var dailyTokenLimit: Int
     /// The maximum output-token allowance sent for one model request. The
     /// remaining daily allowance can lower the effective request cap.
     public var maximumOutputTokensPerRequest: Int
@@ -484,9 +484,9 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
     public var classificationRequestsPerMinute: Int
     /// The number of creators an explicit batch action may classify in order.
     public var batchSize: Int
-    /// The maximum number of recent official YouTube video records added to
-    /// one creator prompt. It is ignored by other platform adapters.
-    public var youtubeVideoEvidenceCount: Int
+    /// The maximum number of recent official content records requested by the
+    /// applicable platform adapter for one creator prompt.
+    public var officialContentEvidenceCount: Int
     /// A bounded response may contain no more than this many tag IDs.
     public var maximumTagCount: Int
     /// When enabled, only active leaf tags are included in the model prompt.
@@ -505,12 +505,12 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
     public init(
         providerProfileID: String,
         modelIdentifier: String,
-        dailyOutputTokenLimit: Int = Self.defaultDailyOutputTokenLimit,
+        dailyTokenLimit: Int = Self.defaultDailyTokenLimit,
         maximumOutputTokensPerRequest: Int = Self.defaultMaximumOutputTokensPerRequest,
         extraDirection: String = "",
         classificationRequestsPerMinute: Int = Self.defaultClassificationRequestsPerMinute,
         batchSize: Int = Self.defaultBatchSize,
-        youtubeVideoEvidenceCount: Int = Self.defaultYouTubeVideoEvidenceCount,
+        officialContentEvidenceCount: Int = Self.defaultOfficialContentEvidenceCount,
         maximumTagCount: Int = Self.defaultMaximumTagCount,
         restrictToLeafTags: Bool = true,
         webSearchMode: LLMWebSearchMode = .off,
@@ -519,12 +519,12 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
     ) {
         self.providerProfileID = providerProfileID
         self.modelIdentifier = modelIdentifier
-        self.dailyOutputTokenLimit = dailyOutputTokenLimit
+        self.dailyTokenLimit = dailyTokenLimit
         self.maximumOutputTokensPerRequest = maximumOutputTokensPerRequest
         self.extraDirection = String(extraDirection.trimmingCharacters(in: .whitespacesAndNewlines).prefix(Self.maximumExtraDirectionLength))
         self.classificationRequestsPerMinute = classificationRequestsPerMinute
         self.batchSize = batchSize
-        self.youtubeVideoEvidenceCount = youtubeVideoEvidenceCount
+        self.officialContentEvidenceCount = officialContentEvidenceCount
         self.maximumTagCount = maximumTagCount
         self.restrictToLeafTags = restrictToLeafTags
         self.webSearchMode = webSearchMode
@@ -541,14 +541,14 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         let cleanedSearchProfileID = webSearchProviderProfileID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !cleanedProviderProfileID.isEmpty, cleanedProviderProfileID.count <= 128,
               !cleanedModelIdentifier.isEmpty, cleanedModelIdentifier.count <= Self.maximumModelIdentifierLength,
-              dailyOutputTokenLimit > 0, dailyOutputTokenLimit <= Self.maximumDailyOutputTokenLimit,
+              dailyTokenLimit > 0, dailyTokenLimit <= Self.maximumDailyTokenLimit,
               maximumOutputTokensPerRequest > 0, maximumOutputTokensPerRequest <= Self.maximumOutputTokensPerRequest,
               extraDirection.count <= Self.maximumExtraDirectionLength,
               classificationRequestsPerMinute > 0,
               classificationRequestsPerMinute <= Self.maximumClassificationRequestsPerMinute,
               batchSize > 0, batchSize <= Self.maximumBatchSize,
-              youtubeVideoEvidenceCount > 0,
-              youtubeVideoEvidenceCount <= Self.maximumYouTubeVideoEvidenceCount,
+              officialContentEvidenceCount > 0,
+              officialContentEvidenceCount <= Self.maximumOfficialContentEvidenceCount,
               maximumTagCount > 0, maximumTagCount <= EntryEvidenceValidator.tagLimit,
               cleanedSearchProfileID.count <= 128,
               (webSearchMode == .attached) == !cleanedSearchProfileID.isEmpty else {
@@ -557,8 +557,9 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case providerProfileID, modelIdentifier, dailyOutputTokenLimit, maximumOutputTokensPerRequest, extraDirection, classificationRequestsPerMinute, batchSize,
-             youtubeVideoEvidenceCount, maximumTagCount, restrictToLeafTags, webSearchMode, webSearchEnabled, webSearchProviderProfileID, isActive,
+        case providerProfileID, modelIdentifier, dailyTokenLimit, maximumOutputTokensPerRequest, extraDirection, classificationRequestsPerMinute, batchSize,
+             officialContentEvidenceCount, maximumTagCount, restrictToLeafTags, webSearchMode, webSearchEnabled, webSearchProviderProfileID, isActive,
+             dailyOutputTokenLimit, youtubeVideoEvidenceCount,
              webResearchProviderProfileID, webResearchModelIdentifier,
              externalToolEnabled, usePlatformAPIKeyFallback,
              maximumTokens, externalToolProfileID
@@ -571,8 +572,9 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         // Previous per-request token caps and hand-picked tool profile IDs are
         // retired. Decode them only as ignored keys so existing local state
         // opens safely; never restore their old behaviour.
-        dailyOutputTokenLimit = try container.decodeIfPresent(Int.self, forKey: .dailyOutputTokenLimit)
-            ?? Self.defaultDailyOutputTokenLimit
+        dailyTokenLimit = try container.decodeIfPresent(Int.self, forKey: .dailyTokenLimit)
+            ?? container.decodeIfPresent(Int.self, forKey: .dailyOutputTokenLimit)
+            ?? Self.defaultDailyTokenLimit
         maximumOutputTokensPerRequest = try container.decodeIfPresent(Int.self, forKey: .maximumOutputTokensPerRequest)
             ?? Self.defaultMaximumOutputTokensPerRequest
         extraDirection = String((try container.decodeIfPresent(String.self, forKey: .extraDirection) ?? "")
@@ -581,8 +583,9 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         classificationRequestsPerMinute = try container.decodeIfPresent(Int.self, forKey: .classificationRequestsPerMinute)
             ?? Self.defaultClassificationRequestsPerMinute
         batchSize = try container.decodeIfPresent(Int.self, forKey: .batchSize) ?? Self.defaultBatchSize
-        youtubeVideoEvidenceCount = try container.decodeIfPresent(Int.self, forKey: .youtubeVideoEvidenceCount)
-            ?? Self.defaultYouTubeVideoEvidenceCount
+        officialContentEvidenceCount = try container.decodeIfPresent(Int.self, forKey: .officialContentEvidenceCount)
+            ?? container.decodeIfPresent(Int.self, forKey: .youtubeVideoEvidenceCount)
+            ?? Self.defaultOfficialContentEvidenceCount
         maximumTagCount = try container.decodeIfPresent(Int.self, forKey: .maximumTagCount)
             ?? Self.defaultMaximumTagCount
         restrictToLeafTags = try container.decodeIfPresent(Bool.self, forKey: .restrictToLeafTags) ?? true
@@ -614,12 +617,12 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(providerProfileID, forKey: .providerProfileID)
         try container.encode(modelIdentifier, forKey: .modelIdentifier)
-        try container.encode(dailyOutputTokenLimit, forKey: .dailyOutputTokenLimit)
+        try container.encode(dailyTokenLimit, forKey: .dailyTokenLimit)
         try container.encode(maximumOutputTokensPerRequest, forKey: .maximumOutputTokensPerRequest)
         try container.encode(extraDirection, forKey: .extraDirection)
         try container.encode(classificationRequestsPerMinute, forKey: .classificationRequestsPerMinute)
         try container.encode(batchSize, forKey: .batchSize)
-        try container.encode(youtubeVideoEvidenceCount, forKey: .youtubeVideoEvidenceCount)
+        try container.encode(officialContentEvidenceCount, forKey: .officialContentEvidenceCount)
         try container.encode(maximumTagCount, forKey: .maximumTagCount)
         try container.encode(restrictToLeafTags, forKey: .restrictToLeafTags)
         try container.encode(webSearchMode, forKey: .webSearchMode)
@@ -642,12 +645,12 @@ public enum LLMAssistConfigurationError: Error, Equatable, LocalizedError, Senda
 /// the last step of configuration.
 public struct LLMAssistDraftConfiguration: Codable, Equatable, Sendable {
     public var providerProfileID: String
-    public var dailyOutputTokenLimit: Int
+    public var dailyTokenLimit: Int
     public var maximumOutputTokensPerRequest: Int
     public var extraDirection: String
     public var classificationRequestsPerMinute: Int
     public var batchSize: Int
-    public var youtubeVideoEvidenceCount: Int
+    public var officialContentEvidenceCount: Int
     public var maximumTagCount: Int
     public var restrictToLeafTags: Bool
     public var webSearchMode: LLMWebSearchMode
@@ -655,24 +658,24 @@ public struct LLMAssistDraftConfiguration: Codable, Equatable, Sendable {
 
     public init(
         providerProfileID: String,
-        dailyOutputTokenLimit: Int = LLMAssistConfiguration.defaultDailyOutputTokenLimit,
+        dailyTokenLimit: Int = LLMAssistConfiguration.defaultDailyTokenLimit,
         maximumOutputTokensPerRequest: Int = LLMAssistConfiguration.defaultMaximumOutputTokensPerRequest,
         extraDirection: String = "",
         classificationRequestsPerMinute: Int = LLMAssistConfiguration.defaultClassificationRequestsPerMinute,
         batchSize: Int = LLMAssistConfiguration.defaultBatchSize,
-        youtubeVideoEvidenceCount: Int = LLMAssistConfiguration.defaultYouTubeVideoEvidenceCount,
+        officialContentEvidenceCount: Int = LLMAssistConfiguration.defaultOfficialContentEvidenceCount,
         maximumTagCount: Int = LLMAssistConfiguration.defaultMaximumTagCount,
         restrictToLeafTags: Bool = true,
         webSearchMode: LLMWebSearchMode = .off,
         webSearchProviderProfileID: String? = nil
     ) {
         self.providerProfileID = providerProfileID.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.dailyOutputTokenLimit = dailyOutputTokenLimit
+        self.dailyTokenLimit = dailyTokenLimit
         self.maximumOutputTokensPerRequest = maximumOutputTokensPerRequest
         self.extraDirection = String(extraDirection.trimmingCharacters(in: .whitespacesAndNewlines).prefix(LLMAssistConfiguration.maximumExtraDirectionLength))
         self.classificationRequestsPerMinute = classificationRequestsPerMinute
         self.batchSize = batchSize
-        self.youtubeVideoEvidenceCount = youtubeVideoEvidenceCount
+        self.officialContentEvidenceCount = officialContentEvidenceCount
         self.maximumTagCount = maximumTagCount
         self.restrictToLeafTags = restrictToLeafTags
         self.webSearchMode = webSearchMode
@@ -687,18 +690,20 @@ public struct LLMAssistDraftConfiguration: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case providerProfileID, dailyOutputTokenLimit, maximumOutputTokensPerRequest,
+        case providerProfileID, dailyTokenLimit, maximumOutputTokensPerRequest,
              extraDirection, classificationRequestsPerMinute, batchSize,
-             youtubeVideoEvidenceCount, maximumTagCount, restrictToLeafTags,
-             webSearchMode, webSearchProviderProfileID
+             officialContentEvidenceCount, maximumTagCount, restrictToLeafTags,
+             webSearchMode, webSearchProviderProfileID,
+             dailyOutputTokenLimit, youtubeVideoEvidenceCount
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             providerProfileID: try container.decode(String.self, forKey: .providerProfileID),
-            dailyOutputTokenLimit: try container.decodeIfPresent(Int.self, forKey: .dailyOutputTokenLimit)
-                ?? LLMAssistConfiguration.defaultDailyOutputTokenLimit,
+            dailyTokenLimit: try container.decodeIfPresent(Int.self, forKey: .dailyTokenLimit)
+                ?? container.decodeIfPresent(Int.self, forKey: .dailyOutputTokenLimit)
+                ?? LLMAssistConfiguration.defaultDailyTokenLimit,
             maximumOutputTokensPerRequest: try container.decodeIfPresent(Int.self, forKey: .maximumOutputTokensPerRequest)
                 ?? LLMAssistConfiguration.defaultMaximumOutputTokensPerRequest,
             extraDirection: try container.decodeIfPresent(String.self, forKey: .extraDirection) ?? "",
@@ -706,8 +711,9 @@ public struct LLMAssistDraftConfiguration: Codable, Equatable, Sendable {
                 ?? LLMAssistConfiguration.defaultClassificationRequestsPerMinute,
             batchSize: try container.decodeIfPresent(Int.self, forKey: .batchSize)
                 ?? LLMAssistConfiguration.defaultBatchSize,
-            youtubeVideoEvidenceCount: try container.decodeIfPresent(Int.self, forKey: .youtubeVideoEvidenceCount)
-                ?? LLMAssistConfiguration.defaultYouTubeVideoEvidenceCount,
+            officialContentEvidenceCount: try container.decodeIfPresent(Int.self, forKey: .officialContentEvidenceCount)
+                ?? container.decodeIfPresent(Int.self, forKey: .youtubeVideoEvidenceCount)
+                ?? LLMAssistConfiguration.defaultOfficialContentEvidenceCount,
             maximumTagCount: try container.decodeIfPresent(Int.self, forKey: .maximumTagCount)
                 ?? LLMAssistConfiguration.defaultMaximumTagCount,
             restrictToLeafTags: try container.decodeIfPresent(Bool.self, forKey: .restrictToLeafTags) ?? true,
@@ -719,12 +725,12 @@ public struct LLMAssistDraftConfiguration: Codable, Equatable, Sendable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(providerProfileID, forKey: .providerProfileID)
-        try container.encode(dailyOutputTokenLimit, forKey: .dailyOutputTokenLimit)
+        try container.encode(dailyTokenLimit, forKey: .dailyTokenLimit)
         try container.encode(maximumOutputTokensPerRequest, forKey: .maximumOutputTokensPerRequest)
         try container.encode(extraDirection, forKey: .extraDirection)
         try container.encode(classificationRequestsPerMinute, forKey: .classificationRequestsPerMinute)
         try container.encode(batchSize, forKey: .batchSize)
-        try container.encode(youtubeVideoEvidenceCount, forKey: .youtubeVideoEvidenceCount)
+        try container.encode(officialContentEvidenceCount, forKey: .officialContentEvidenceCount)
         try container.encode(maximumTagCount, forKey: .maximumTagCount)
         try container.encode(restrictToLeafTags, forKey: .restrictToLeafTags)
         try container.encode(webSearchMode, forKey: .webSearchMode)
@@ -735,12 +741,12 @@ public struct LLMAssistDraftConfiguration: Codable, Equatable, Sendable {
         .init(
             providerProfileID: providerProfileID,
             modelIdentifier: modelIdentifier,
-            dailyOutputTokenLimit: dailyOutputTokenLimit,
+            dailyTokenLimit: dailyTokenLimit,
             maximumOutputTokensPerRequest: maximumOutputTokensPerRequest,
             extraDirection: extraDirection,
             classificationRequestsPerMinute: classificationRequestsPerMinute,
             batchSize: batchSize,
-            youtubeVideoEvidenceCount: youtubeVideoEvidenceCount,
+            officialContentEvidenceCount: officialContentEvidenceCount,
             maximumTagCount: maximumTagCount,
             restrictToLeafTags: restrictToLeafTags,
             webSearchMode: webSearchMode,
@@ -1087,7 +1093,7 @@ public struct PlatformBinding: Codable, Equatable, Sendable, Identifiable {
     /// exists and its extension-side collection setting is also on.
     public var collectionEnabled: Bool
 
-    public init(id: String = "youtube", name: String = "YouTube", browser: String = "Chrome and Edge", treeID: String, datasetID: String, activeClassifierTypeID: String? = nil, activeModelID: String? = nil, policyID: String? = nil, collectionEnabled: Bool = true) {
+    public init(id: String, name: String, browser: String = "Chrome and Edge", treeID: String, datasetID: String, activeClassifierTypeID: String? = nil, activeModelID: String? = nil, policyID: String? = nil, collectionEnabled: Bool = true) {
         self.id = id
         self.name = name
         self.browser = browser
@@ -1117,23 +1123,58 @@ public struct PlatformBinding: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+private func nonnegativeSaturatingSum(_ lhs: Int, _ rhs: Int) -> Int {
+    let addition = max(0, lhs).addingReportingOverflow(max(0, rhs))
+    return addition.overflow ? Int.max : addition.partialValue
+}
+
 public struct TokenUsageRecord: Codable, Equatable, Sendable, Identifiable {
     public var id: String
     public var provider: String
     public var model: String
-    public var inputTokens: Int
-    public var outputTokens: Int
+    public var tokenCount: Int
     public var status: String
     public var createdAtMilliseconds: Int64
 
-    public init(id: String = UUID().uuidString, provider: String, model: String, inputTokens: Int, outputTokens: Int, status: String, createdAtMilliseconds: Int64 = WorkspaceCatalog.now()) {
+    public init(id: String = UUID().uuidString, provider: String, model: String, tokenCount: Int, status: String, createdAtMilliseconds: Int64 = WorkspaceCatalog.now()) {
         self.id = id
         self.provider = provider
         self.model = model
-        self.inputTokens = inputTokens
-        self.outputTokens = outputTokens
+        self.tokenCount = max(0, tokenCount)
         self.status = status
         self.createdAtMilliseconds = createdAtMilliseconds
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, provider, model, tokenCount, status, createdAtMilliseconds
+        case inputTokens, outputTokens
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        provider = try container.decode(String.self, forKey: .provider)
+        model = try container.decode(String.self, forKey: .model)
+        if let aggregate = try container.decodeIfPresent(Int.self, forKey: .tokenCount) {
+            tokenCount = max(0, aggregate)
+        } else {
+            tokenCount = nonnegativeSaturatingSum(
+                try container.decodeIfPresent(Int.self, forKey: .inputTokens) ?? 0,
+                try container.decodeIfPresent(Int.self, forKey: .outputTokens) ?? 0
+            )
+        }
+        status = try container.decode(String.self, forKey: .status)
+        createdAtMilliseconds = try container.decode(Int64.self, forKey: .createdAtMilliseconds)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(provider, forKey: .provider)
+        try container.encode(model, forKey: .model)
+        try container.encode(tokenCount, forKey: .tokenCount)
+        try container.encode(status, forKey: .status)
+        try container.encode(createdAtMilliseconds, forKey: .createdAtMilliseconds)
     }
 }
 
@@ -1154,10 +1195,9 @@ public struct ProviderRequestRecord: Codable, Equatable, Sendable, Identifiable 
     /// be parsed. It never contains response values or text.
     public var responseShape: String?
     public var durationMilliseconds: Int
-    public var inputTokens: Int?
-    public var outputTokens: Int?
+    public var tokenCount: Int?
     /// Nil for connection tests. LLM classification runs identify the one
-    /// classifier type whose daily output allowance they consume.
+    /// classifier type whose daily aggregate allowance they consume.
     public var classifierTypeID: String?
     public var outcome: String
     public var createdAtMilliseconds: Int64
@@ -1173,8 +1213,7 @@ public struct ProviderRequestRecord: Codable, Equatable, Sendable, Identifiable 
         statusCode: Int?,
         responseShape: String? = nil,
         durationMilliseconds: Int,
-        inputTokens: Int?,
-        outputTokens: Int?,
+        tokenCount: Int?,
         classifierTypeID: String? = nil,
         outcome: String,
         createdAtMilliseconds: Int64 = WorkspaceCatalog.now()
@@ -1190,12 +1229,62 @@ public struct ProviderRequestRecord: Codable, Equatable, Sendable, Identifiable 
         let cleanedResponseShape = responseShape?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.responseShape = cleanedResponseShape.isEmpty ? nil : String(cleanedResponseShape.prefix(ProviderTestProtocol.maximumResponseShapeCharacters))
         self.durationMilliseconds = durationMilliseconds
-        self.inputTokens = inputTokens
-        self.outputTokens = outputTokens
+        self.tokenCount = tokenCount.map { max(0, $0) }
         let cleanedClassifierTypeID = classifierTypeID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.classifierTypeID = cleanedClassifierTypeID.isEmpty ? nil : cleanedClassifierTypeID
         self.outcome = outcome
         self.createdAtMilliseconds = createdAtMilliseconds
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, profileID, provider, model, operation, endpoint, method,
+             statusCode, responseShape, durationMilliseconds, tokenCount,
+             classifierTypeID, outcome, createdAtMilliseconds
+        case inputTokens, outputTokens
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        profileID = try container.decode(String.self, forKey: .profileID)
+        provider = try container.decode(String.self, forKey: .provider)
+        model = try container.decode(String.self, forKey: .model)
+        operation = try container.decode(String.self, forKey: .operation)
+        endpoint = try container.decode(String.self, forKey: .endpoint)
+        method = try container.decode(String.self, forKey: .method)
+        statusCode = try container.decodeIfPresent(Int.self, forKey: .statusCode)
+        responseShape = try container.decodeIfPresent(String.self, forKey: .responseShape)
+        durationMilliseconds = try container.decode(Int.self, forKey: .durationMilliseconds)
+        if let aggregate = try container.decodeIfPresent(Int.self, forKey: .tokenCount) {
+            tokenCount = max(0, aggregate)
+        } else {
+            let input = try container.decodeIfPresent(Int.self, forKey: .inputTokens)
+            let output = try container.decodeIfPresent(Int.self, forKey: .outputTokens)
+            tokenCount = input == nil && output == nil
+                ? nil
+                : nonnegativeSaturatingSum(input ?? 0, output ?? 0)
+        }
+        classifierTypeID = try container.decodeIfPresent(String.self, forKey: .classifierTypeID)
+        outcome = try container.decode(String.self, forKey: .outcome)
+        createdAtMilliseconds = try container.decode(Int64.self, forKey: .createdAtMilliseconds)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(profileID, forKey: .profileID)
+        try container.encode(provider, forKey: .provider)
+        try container.encode(model, forKey: .model)
+        try container.encode(operation, forKey: .operation)
+        try container.encode(endpoint, forKey: .endpoint)
+        try container.encode(method, forKey: .method)
+        try container.encodeIfPresent(statusCode, forKey: .statusCode)
+        try container.encodeIfPresent(responseShape, forKey: .responseShape)
+        try container.encode(durationMilliseconds, forKey: .durationMilliseconds)
+        try container.encodeIfPresent(tokenCount, forKey: .tokenCount)
+        try container.encodeIfPresent(classifierTypeID, forKey: .classifierTypeID)
+        try container.encode(outcome, forKey: .outcome)
+        try container.encode(createdAtMilliseconds, forKey: .createdAtMilliseconds)
     }
 }
 
@@ -1294,8 +1383,8 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
         case .openAI, .deepSeek, .gemini, .anthropic, .mistral, .cohere, .groq, .openRouter:
             return true
         case .ollama:
-            // Probe filters installed Ollama models through their declared
-            // capabilities before they can be selected.
+            // Probe retains every installed model and annotates each model's
+            // declared tool capability.
             return true
         default:
             return false
@@ -1566,8 +1655,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         // an optional import rather than an imposed first node or hierarchy.
         let tree = TagTreeAsset(id: "vault-starter", name: "Vault starter tree", nodes: [])
         let dataset = ClassificationDataset(id: "local-dataset", name: "Local classification data")
-        let model = LocalModelAsset(id: "local-neural-model", name: "Local neural model", treeID: tree.id, treeRevision: tree.revision, datasetID: dataset.id, datasetRevision: dataset.revision, trainingPlatformID: "youtube", trainingPlatformIDs: ["youtube"])
-        return .init(trees: [tree], datasets: [dataset], models: [model], bindings: [.init(treeID: tree.id, datasetID: dataset.id)])
+        return .init(trees: [tree], datasets: [dataset])
     }
 
     public func validate() throws {

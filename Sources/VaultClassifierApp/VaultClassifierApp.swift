@@ -85,12 +85,12 @@ final class VaultClassifierViewModel: ObservableObject {
     }
 
     @Published var workspace: Workspace = .tagTree
-    @Published var title = "Clash Royale deck gameplay - ranked match"
-    @Published var sourceID = "youtube:channel:demo"
+    @Published var title = ""
+    @Published var sourceID = ""
     @Published var surface: EntrySurface = .feed
     /// Manual inspection uses a real platform binding so it exercises the
     /// same selected classifier type as the browser bridge.
-    @Published var manualPlatformID = "youtube"
+    @Published var manualPlatformID = "manual"
     @Published var result: ClassificationResult?
     @Published var issue: String?
     @Published var localState: LocalClassifierState?
@@ -128,9 +128,9 @@ final class VaultClassifierViewModel: ObservableObject {
     private var latestLedgerID: UUID?
     private var testingProviderProfileIDs = Set<String>()
     private var successfulProviderTestProfileIDs = Set<String>()
-    /// Model names come from explicit provider Probes. The bounded identifier
-    /// lists are retained locally without credentials or request data.
-    private var providerModelCatalogs = [String: [String]]()
+    /// Model identifiers and model-list capability signals come from explicit
+    /// provider Probes. They are retained without credentials or request data.
+    private var providerModelCatalogs = [String: [ProviderModelCatalogEntry]]()
     private var providerModelCatalogErrors = [String: String]()
     private var loadingProviderModelProfileIDs = Set<String>()
     @Published private(set) var providerClassificationRunning = false
@@ -481,6 +481,10 @@ final class VaultClassifierViewModel: ObservableObject {
                 let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
                 guard let http = response as? HTTPURLResponse else { throw ProviderTestProtocolError.invalidResponse }
                 guard (200..<300).contains(http.statusCode) else { throw ProviderTestHTTPError.status(http.statusCode) }
+                let responseUsage = (try? ProviderTestProtocol.usage(
+                    from: data,
+                    format: request.plan.bodyFormat
+                )) ?? .init(tokenCount: nil)
                 let parsed: ProviderTestParsedResponse
                 do {
                     parsed = try ProviderTestProtocol.parseResponse(data, format: request.plan.bodyFormat, operation: request.operation)
@@ -488,7 +492,8 @@ final class VaultClassifierViewModel: ObservableObject {
                     throw ProviderResponseParseFailure(
                         underlyingError: error,
                         statusCode: http.statusCode,
-                        responseShape: ProviderTestProtocol.responseShape(for: data)
+                        responseShape: ProviderTestProtocol.responseShape(for: data),
+                        usage: responseUsage
                     )
                 }
                 try self.appendProviderTestRecord(.init(
@@ -500,8 +505,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     method: request.plan.method,
                     statusCode: http.statusCode,
                     durationMilliseconds: duration,
-                    inputTokens: parsed.usage.inputTokens,
-                    outputTokens: parsed.usage.outputTokens,
+                    tokenCount: parsed.usage.tokenCount,
                     outcome: "succeeded"
                 ))
                 self.successfulProviderTestProfileIDs.insert(profileID)
@@ -520,8 +524,7 @@ final class VaultClassifierViewModel: ObservableObject {
                         statusCode: failure.statusCode,
                         responseShape: failure.responseShape,
                         durationMilliseconds: duration,
-                        inputTokens: nil,
-                        outputTokens: nil,
+                        tokenCount: failure.tokenCount,
                         outcome: "failed"
                     ))
                 }
@@ -533,9 +536,9 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
-    /// A Probe explicitly refreshes one transient provider model list. No
-    /// catalog is loaded at startup; a failed refresh deliberately preserves
-    /// the last successful list until a later successful Probe replaces it.
+    /// A Probe explicitly refreshes one locally cached provider model list. A
+    /// failed refresh deliberately preserves the last successful bounded list
+    /// until a later successful Probe replaces it.
     private func fetchProviderModelCatalog(profileID: String) {
         guard !loadingProviderModelProfileIDs.contains(profileID) else { return }
         do {
@@ -555,7 +558,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     let response = try await self.performProviderRequest(plan: plan, body: nil, credential: credential, timeout: 30)
                     var models = try ProviderModelCatalogProtocol.parse(response.data, providerType: profile.type)
                     if profile.type == .ollama {
-                        models = try await self.ollamaModelsSupportingTools(
+                        models = await self.ollamaModelsWithCapabilities(
                             models,
                             profile: profile,
                             credential: credential
@@ -576,31 +579,41 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
-    private func ollamaModelsSupportingTools(
-        _ models: [String],
+    private func ollamaModelsWithCapabilities(
+        _ models: [ProviderModelCatalogEntry],
         profile: APIKeyProviderProfile,
         credential: ProviderCredentialRecord
-    ) async throws -> [String] {
-        var supported = [String]()
+    ) async -> [ProviderModelCatalogEntry] {
+        var resolved = [ProviderModelCatalogEntry]()
         for model in models {
-            let request = try ProviderModelCatalogProtocol.prepareOllamaToolCapabilityProbe(
+            guard let request = try? ProviderModelCatalogProtocol.prepareOllamaToolCapabilityProbe(
                 profile: profile,
-                modelIdentifier: model
-            )
+                modelIdentifier: model.identifier
+            ) else {
+                resolved.append(model)
+                continue
+            }
             guard let response = try? await performProviderRequest(
                 plan: request.plan,
                 body: request.body,
                 credential: credential,
                 timeout: 5
-            ), ProviderModelCatalogProtocol.ollamaModelSupportsTools(response.data) else {
+            ) else {
+                resolved.append(model)
                 continue
             }
-            supported.append(model)
+            var updated = model
+            updated.supportsTools = ProviderModelCatalogProtocol.ollamaModelSupportsTools(response.data)
+            resolved.append(updated)
         }
-        guard !supported.isEmpty else {
-            throw ProviderModelCatalogProtocolError.noModels
-        }
-        return supported
+        return resolved
+    }
+
+    private func providerModelCatalogEntry(
+        profileID: String,
+        identifier: String
+    ) -> ProviderModelCatalogEntry? {
+        providerModelCatalogs[profileID]?.first { $0.identifier == identifier }
     }
 
     func probeProviderModelCatalog(profileID: String) {
@@ -641,7 +654,7 @@ final class VaultClassifierViewModel: ObservableObject {
         })
     }
 
-    private func outputTokensUsedToday(
+    private func tokensUsedToday(
         in catalog: WorkspaceCatalog,
         classifierTypeID: String,
         now: Date = Date()
@@ -650,11 +663,11 @@ final class VaultClassifierViewModel: ObservableObject {
         let startMilliseconds = Int64(start.timeIntervalSince1970 * 1_000)
         return catalog.providerRequestRecords.reduce(into: 0) { total, record in
             guard record.classifierTypeID == classifierTypeID,
-                  record.outcome == "succeeded",
                   record.createdAtMilliseconds >= startMilliseconds else {
                 return
             }
-            total += max(0, record.outputTokens ?? 0)
+            let addition = total.addingReportingOverflow(max(0, record.tokenCount ?? 0))
+            total = addition.overflow ? Int.max : addition.partialValue
         }
     }
 
@@ -694,14 +707,14 @@ final class VaultClassifierViewModel: ObservableObject {
             let taxonomy = try tree.inferenceTaxonomy()
             let allowedTagIDs = llmAllowedTagIDs(taxonomy: taxonomy, configuration: llmAssist)
             let tagDefinitions = llmTagDefinitions(taxonomy: taxonomy, allowedTagIDs: allowedTagIDs)
-            let dailyOutputTokensRemaining = llmAssist.dailyOutputTokenLimit - outputTokensUsedToday(
+            let dailyTokensRemaining = llmAssist.dailyTokenLimit - tokensUsedToday(
                 in: catalog,
                 classifierTypeID: classifierType.id
             )
-            guard dailyOutputTokensRemaining > 0 else {
-                throw WebBridgeInputError.invalidChoice("daily output token budget")
+            guard dailyTokensRemaining > 0 else {
+                throw WebBridgeInputError.invalidChoice("daily token budget")
             }
-            let outputTokenLimit = min(llmAssist.maximumOutputTokensPerRequest, dailyOutputTokensRemaining)
+            let outputTokenLimit = min(llmAssist.maximumOutputTokensPerRequest, dailyTokensRemaining)
             let entry = currentManualEntry()
             let recordPlan = try ProviderClassificationProtocol.prepare(
                 profile: profile,
@@ -727,12 +740,12 @@ final class VaultClassifierViewModel: ObservableObject {
                         tagDefinitions: tagDefinitions,
                         catalog: catalog,
                         maximumOutputTokens: outputTokenLimit,
-                        dailyOutputTokensRemaining: dailyOutputTokensRemaining,
+                        dailyTokensRemaining: dailyTokensRemaining,
                         classifierTypeID: classifierType.id
                     )
                     let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
-                    let labelIDs = try ProviderClassificationProtocol.parseLabelIDs(
-                        run.content,
+                    let labelIDs = try self.parseClassificationLabelIDs(
+                        from: run,
                         allowedTagIDs: allowedTagIDs,
                         maximumTagCount: llmAssist.maximumTagCount
                     )
@@ -761,8 +774,7 @@ final class VaultClassifierViewModel: ObservableObject {
                         method: recordPlan.plan.method,
                         statusCode: run.statusCode,
                         durationMilliseconds: duration,
-                        inputTokens: run.usage.inputTokens,
-                        outputTokens: run.usage.outputTokens ?? run.requestedOutputTokens,
+                        tokenCount: run.usage.tokenCount ?? run.fallbackTokenCount,
                         classifierTypeID: classifierType.id,
                         outcome: "succeeded"
                     ))
@@ -781,8 +793,7 @@ final class VaultClassifierViewModel: ObservableObject {
                             statusCode: failure.statusCode,
                             responseShape: failure.responseShape,
                             durationMilliseconds: duration,
-                            inputTokens: nil,
-                            outputTokens: nil,
+                            tokenCount: failure.tokenCount,
                             classifierTypeID: classifierType.id,
                             outcome: "failed"
                         ))
@@ -820,7 +831,38 @@ final class VaultClassifierViewModel: ObservableObject {
         var content: String
         var usage: ProviderTestUsage
         var statusCode: Int
-        var requestedOutputTokens: Int
+        var fallbackTokenCount: Int
+    }
+
+    private func conservativeAggregateTokenFallback(
+        body: Data,
+        requestedOutputTokens: Int
+    ) -> Int {
+        // Provider tokenizers differ. Three UTF-8 bytes per input token is a
+        // deliberately conservative local approximation for both Latin and
+        // CJK prompts, then the full allowed output is added.
+        max(1, (body.count + 2) / 3) + requestedOutputTokens
+    }
+
+    private func parseClassificationLabelIDs(
+        from run: ProviderClassificationRun,
+        allowedTagIDs: Set<String>,
+        maximumTagCount: Int
+    ) throws -> [String] {
+        do {
+            return try ProviderClassificationProtocol.parseLabelIDs(
+                run.content,
+                allowedTagIDs: allowedTagIDs,
+                maximumTagCount: maximumTagCount
+            )
+        } catch {
+            throw ProviderResponseParseFailure(
+                underlyingError: error,
+                statusCode: run.statusCode,
+                responseShape: "generated text did not match the labelIDs contract",
+                usage: .init(tokenCount: run.usage.tokenCount ?? run.fallbackTokenCount)
+            )
+        }
     }
 
     private struct RawWebSearchFailure: LocalizedError {
@@ -835,21 +877,36 @@ final class VaultClassifierViewModel: ObservableObject {
         let underlyingError: Error
         let statusCode: Int
         let responseShape: String
+        let usage: ProviderTestUsage
+
+        init(
+            underlyingError: Error,
+            statusCode: Int,
+            responseShape: String,
+            usage: ProviderTestUsage = .init(tokenCount: nil)
+        ) {
+            self.underlyingError = underlyingError
+            self.statusCode = statusCode
+            self.responseShape = responseShape
+            self.usage = usage
+        }
 
         var errorDescription: String? {
             underlyingError.localizedDescription
         }
     }
 
-    private func providerFailureMetadata(for error: Error) -> (statusCode: Int?, responseShape: String?) {
+    private func providerFailureMetadata(
+        for error: Error
+    ) -> (statusCode: Int?, responseShape: String?, tokenCount: Int?) {
         if let searchFailure = error as? RawWebSearchFailure {
             return providerFailureMetadata(for: searchFailure.underlyingError)
         }
         if case let ProviderTestHTTPError.status(statusCode) = error {
-            return (statusCode, nil)
+            return (statusCode, nil, nil)
         }
-        guard let failure = error as? ProviderResponseParseFailure else { return (nil, nil) }
-        return (failure.statusCode, failure.responseShape)
+        guard let failure = error as? ProviderResponseParseFailure else { return (nil, nil, nil) }
+        return (failure.statusCode, failure.responseShape, failure.usage.tokenCount)
     }
 
     /// Runs an explicit creator classification through the selected LLM.
@@ -864,7 +921,7 @@ final class VaultClassifierViewModel: ObservableObject {
         tagDefinitions: [String: ProviderClassificationTagDefinition],
         catalog: WorkspaceCatalog,
         maximumOutputTokens: Int,
-        dailyOutputTokensRemaining: Int,
+        dailyTokensRemaining: Int,
         classifierTypeID: String
     ) async throws -> ProviderClassificationRun {
         let mainCredential = try providerCredential(for: profile.id)
@@ -881,7 +938,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     enrichedEntry = try await addingOfficialPlatformEvidence(
                         to: entry,
                         profile: officialProfile,
-                        youtubeVideoEvidenceCount: configuration.youtubeVideoEvidenceCount
+                        officialContentEvidenceCount: configuration.officialContentEvidenceCount
                     )
                     officialEvidenceAvailable = true
                 } catch {
@@ -897,9 +954,9 @@ final class VaultClassifierViewModel: ObservableObject {
                 : "a ready official \(entry.platform) API connection or web search"
             throw WebBridgeInputError.invalidChoice(requirement)
         }
-        let effectiveMaximumOutputTokens = min(maximumOutputTokens, dailyOutputTokensRemaining)
+        let effectiveMaximumOutputTokens = min(maximumOutputTokens, dailyTokensRemaining)
         guard effectiveMaximumOutputTokens > 0 else {
-            throw WebBridgeInputError.invalidChoice("daily output token budget")
+            throw WebBridgeInputError.invalidChoice("daily token budget")
         }
         if preliminaryProviderRequestWasStarted {
             await waitForLLMClassificationPace(configuration: configuration)
@@ -922,6 +979,16 @@ final class VaultClassifierViewModel: ObservableObject {
             followAnthropicSearchPause: profile.type == .anthropic &&
                 configuration.webSearchMode == .providerNative
         )
+        let responseUsage = (try? ProviderTestProtocol.usage(
+            from: response.data,
+            format: request.plan.bodyFormat
+        )) ?? .init(tokenCount: nil)
+        let chargeableResponseUsage = ProviderTestUsage(
+            tokenCount: responseUsage.tokenCount ?? conservativeAggregateTokenFallback(
+                body: request.body,
+                requestedOutputTokens: effectiveMaximumOutputTokens
+            )
+        )
         let toolCall: ProviderAttachedWebSearchCall?
         do {
             toolCall = configuration.webSearchMode == .attached
@@ -934,7 +1001,8 @@ final class VaultClassifierViewModel: ObservableObject {
             throw ProviderResponseParseFailure(
                 underlyingError: error,
                 statusCode: response.response.statusCode,
-                responseShape: ProviderTestProtocol.responseShape(for: response.data)
+                responseShape: ProviderTestProtocol.responseShape(for: response.data),
+                usage: chargeableResponseUsage
             )
         }
         guard let toolCall else {
@@ -949,7 +1017,8 @@ final class VaultClassifierViewModel: ObservableObject {
                 throw ProviderResponseParseFailure(
                     underlyingError: error,
                     statusCode: response.response.statusCode,
-                    responseShape: ProviderTestProtocol.responseShape(for: response.data)
+                    responseShape: ProviderTestProtocol.responseShape(for: response.data),
+                    usage: chargeableResponseUsage
                 )
             }
             return .init(
@@ -957,7 +1026,10 @@ final class VaultClassifierViewModel: ObservableObject {
                 content: parsed.content,
                 usage: parsed.usage,
                 statusCode: response.response.statusCode,
-                requestedOutputTokens: effectiveMaximumOutputTokens
+                fallbackTokenCount: conservativeAggregateTokenFallback(
+                    body: request.body,
+                    requestedOutputTokens: effectiveMaximumOutputTokens
+                )
             )
         }
 
@@ -971,10 +1043,14 @@ final class VaultClassifierViewModel: ObservableObject {
             throw ProviderResponseParseFailure(
                 underlyingError: error,
                 statusCode: response.response.statusCode,
-                responseShape: ProviderTestProtocol.responseShape(for: response.data)
+                responseShape: ProviderTestProtocol.responseShape(for: response.data),
+                usage: chargeableResponseUsage
             )
         }
-        let firstOutputTokens = firstUsage.outputTokens ?? effectiveMaximumOutputTokens
+        let firstTokenCount = firstUsage.tokenCount ?? conservativeAggregateTokenFallback(
+            body: request.body,
+            requestedOutputTokens: effectiveMaximumOutputTokens
+        )
         // This first turn has already consumed provider output, even when the
         // subsequent search or continuation fails. Record it independently so
         // the daily budget remains conservative and the request history does
@@ -988,17 +1064,16 @@ final class VaultClassifierViewModel: ObservableObject {
             method: request.plan.method,
             statusCode: response.response.statusCode,
             durationMilliseconds: max(0, Int(Date().timeIntervalSince(initialRequestStartedAt) * 1_000)),
-            inputTokens: firstUsage.inputTokens,
-            outputTokens: firstOutputTokens,
+            tokenCount: firstTokenCount,
             classifierTypeID: classifierTypeID,
             outcome: "succeeded"
         ))
         let continuationMaximumOutputTokens = min(
             maximumOutputTokens,
-            dailyOutputTokensRemaining - firstOutputTokens
+            dailyTokensRemaining - firstTokenCount
         )
         guard continuationMaximumOutputTokens > 0 else {
-            throw WebBridgeInputError.invalidChoice("daily output token budget after the model's web-search call")
+            throw WebBridgeInputError.invalidChoice("daily token budget after the model's web-search call")
         }
 
         await waitForLLMClassificationPace(configuration: configuration)
@@ -1030,6 +1105,16 @@ final class VaultClassifierViewModel: ObservableObject {
             credential: mainCredential,
             timeout: 30
         )
+        let finalUsage = (try? ProviderTestProtocol.usage(
+            from: finalResponse.data,
+            format: continuation.plan.bodyFormat
+        )) ?? .init(tokenCount: nil)
+        let chargeableFinalUsage = ProviderTestUsage(
+            tokenCount: finalUsage.tokenCount ?? conservativeAggregateTokenFallback(
+                body: continuation.body,
+                requestedOutputTokens: continuationMaximumOutputTokens
+            )
+        )
         let parsed: ProviderTestParsedResponse
         do {
             if try ProviderClassificationProtocol.attachedWebSearchCall(
@@ -1047,7 +1132,8 @@ final class VaultClassifierViewModel: ObservableObject {
             throw ProviderResponseParseFailure(
                 underlyingError: error,
                 statusCode: finalResponse.response.statusCode,
-                responseShape: ProviderTestProtocol.responseShape(for: finalResponse.data)
+                responseShape: ProviderTestProtocol.responseShape(for: finalResponse.data),
+                usage: chargeableFinalUsage
             )
         }
         return .init(
@@ -1055,7 +1141,10 @@ final class VaultClassifierViewModel: ObservableObject {
             content: parsed.content,
             usage: parsed.usage,
             statusCode: finalResponse.response.statusCode,
-            requestedOutputTokens: continuationMaximumOutputTokens
+            fallbackTokenCount: conservativeAggregateTokenFallback(
+                body: continuation.body,
+                requestedOutputTokens: continuationMaximumOutputTokens
+            )
         )
     }
 
@@ -1110,8 +1199,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 method: request.plan.method,
                 statusCode: response.response.statusCode,
                 durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
-                inputTokens: nil,
-                outputTokens: nil,
+                tokenCount: nil,
                 classifierTypeID: classifierTypeID,
                 outcome: "succeeded"
             ))
@@ -1130,8 +1218,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     statusCode: failure.statusCode,
                     responseShape: failure.responseShape,
                     durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
-                    inputTokens: nil,
-                    outputTokens: nil,
+                    tokenCount: nil,
                     classifierTypeID: classifierTypeID,
                     outcome: "failed"
                 ))
@@ -1179,9 +1266,20 @@ final class VaultClassifierViewModel: ObservableObject {
            !profile.type.supportsProviderNativeWebSearch {
             throw WebBridgeInputError.invalidChoice("a model provider with hosted web search")
         }
+        let probedModel = providerModelCatalogEntry(
+            profileID: profile.id,
+            identifier: configuration.modelIdentifier
+        )
+        if configuration.webSearchMode == .providerNative,
+           probedModel?.supportsNativeWebSearch == false {
+            throw WebBridgeInputError.invalidChoice("a model with hosted web search")
+        }
         if configuration.webSearchMode == .attached {
             guard profile.type.supportsAttachedWebSearchTool else {
                 throw WebBridgeInputError.invalidChoice("a model provider with external tool support")
+            }
+            guard probedModel?.supportsTools != false else {
+                throw WebBridgeInputError.invalidChoice("a model with external tool support")
             }
             _ = try rawWebSearchProfile(in: catalog, configuration: configuration)
         }
@@ -1248,11 +1346,15 @@ final class VaultClassifierViewModel: ObservableObject {
     private func addingOfficialPlatformEvidence(
         to entry: EntryEvidence,
         profile: APIKeyProviderProfile,
-        youtubeVideoEvidenceCount: Int
+        officialContentEvidenceCount: Int
     ) async throws -> EntryEvidence {
+        let adapterContentLimit = profile.type == .tikTok
+            ? min(officialContentEvidenceCount, 20)
+            : officialContentEvidenceCount
         let initialRequest = try OfficialPlatformEvidenceProtocol.prepare(
             profile: profile,
-            entry: entry
+            entry: entry,
+            maximumResults: adapterContentLimit
         )
         let initialData = try await performOfficialPlatformEvidenceRequest(
             profile: profile,
@@ -1263,7 +1365,7 @@ final class VaultClassifierViewModel: ObservableObject {
             let uploadsRequest = try OfficialPlatformEvidenceProtocol.prepareYouTubeUploadsRequest(
                 profile: profile,
                 channelData: initialData,
-                maximumResults: youtubeVideoEvidenceCount
+                maximumResults: officialContentEvidenceCount
             )
             let playlistData = try await performOfficialPlatformEvidenceRequest(
                 profile: profile,
@@ -1272,7 +1374,7 @@ final class VaultClassifierViewModel: ObservableObject {
             let videosRequest = try OfficialPlatformEvidenceProtocol.prepareYouTubeVideoRecordsRequest(
                 profile: profile,
                 playlistData: playlistData,
-                maximumResults: youtubeVideoEvidenceCount
+                maximumResults: officialContentEvidenceCount
             )
             let videoData: Data?
             if let videosRequest {
@@ -1287,22 +1389,49 @@ final class VaultClassifierViewModel: ObservableObject {
                 channelData: initialData,
                 playlistData: playlistData,
                 videoData: videoData,
-                maximumVideoCount: youtubeVideoEvidenceCount
+                maximumVideoCount: officialContentEvidenceCount
+            )
+        } else if initialRequest.target == .creator {
+            let contentRequest = try OfficialPlatformEvidenceProtocol.prepareCreatorContentRequest(
+                profile: profile,
+                creatorData: initialData,
+                maximumResults: officialContentEvidenceCount
+            )
+            let contentData: Data?
+            if let contentRequest {
+                contentData = try await performOfficialPlatformEvidenceRequest(
+                    profile: profile,
+                    request: contentRequest
+                )
+            } else {
+                contentData = nil
+            }
+            officialEvidence = try OfficialPlatformEvidenceProtocol.boundedCreatorEvidence(
+                creatorData: initialData,
+                contentData: contentData,
+                providerType: initialRequest.providerType,
+                maximumContentCount: officialContentEvidenceCount
             )
         } else {
             officialEvidence = try OfficialPlatformEvidenceProtocol.boundedEvidence(
                 data: initialData,
                 providerType: initialRequest.providerType,
-                target: initialRequest.target
+                target: initialRequest.target,
+                maximumContentCount: adapterContentLimit
             )
         }
         var enriched = entry
         let priorSummary = entry.evidence.summary?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let summary = [priorSummary, "Official platform API evidence:\n\(officialEvidence)"]
+        let officialSummary = "Official platform API evidence:\n\(officialEvidence)"
+        let combinedSummary = [priorSummary, officialSummary]
             .compactMap { $0 }
             .filter { !$0.isEmpty }
             .joined(separator: "\n\n")
-        enriched.evidence.summary = String(summary.prefix(EntryEvidenceValidator.summaryLimit))
+        // Preserve the complete bounded JSON object. Truncating the combined
+        // string could turn structured official evidence into invalid JSON.
+        enriched.evidence.summary = combinedSummary.count <= EntryEvidenceValidator.summaryLimit
+            ? combinedSummary
+            : officialSummary
         try EntryEvidenceValidator().validate(enriched)
         return enriched
     }
@@ -1375,15 +1504,13 @@ final class VaultClassifierViewModel: ObservableObject {
     private func appendProviderTestRecord(_ record: ProviderRequestRecord) throws {
         guard var catalog = localState?.workspaceCatalog else { return }
         catalog.providerRequestRecords.insert(record, at: 0)
-        // The daily LLM allowance is calculated from successful records. Keep
-        // every current-day classified output while trimming unrelated history;
-        // otherwise a long day could discard its own accounting and bypass the
-        // configured budget.
+        // Keep every current-day classified request with known aggregate usage,
+        // including a malformed 2xx response, so pruning cannot bypass the
+        // configured daily budget.
         let todayStartMilliseconds = Int64(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970 * 1_000)
         let budgetRecords = catalog.providerRequestRecords.filter {
             $0.classifierTypeID != nil &&
-                $0.outputTokens != nil &&
-                $0.outcome == "succeeded" &&
+                $0.tokenCount != nil &&
                 $0.createdAtMilliseconds >= todayStartMilliseconds
         }
         let budgetRecordIDs = Set(budgetRecords.map(\.id))
@@ -1391,12 +1518,11 @@ final class VaultClassifierViewModel: ObservableObject {
         catalog.providerRequestRecords = budgetRecords + Array(otherRecords.prefix(100))
         let isLanguageModel = APIKeyProviderType(rawValue: record.provider)
             .map { ProviderProtocolRegistry.descriptor(for: $0).supportsLLMConfiguration } ?? false
-        if record.outcome == "succeeded", isLanguageModel {
+        if isLanguageModel, let tokenCount = record.tokenCount {
             catalog.tokenUsage.insert(.init(
                 provider: record.provider,
                 model: record.model,
-                inputTokens: record.inputTokens ?? 0,
-                outputTokens: record.outputTokens ?? 0,
+                tokenCount: tokenCount,
                 status: record.outcome
             ), at: 0)
             catalog.tokenUsage = Array(catalog.tokenUsage.prefix(200))
@@ -1424,8 +1550,7 @@ final class VaultClassifierViewModel: ObservableObject {
             method: plan.method,
             statusCode: statusCode,
             durationMilliseconds: durationMilliseconds,
-            inputTokens: nil,
-            outputTokens: nil,
+            tokenCount: nil,
             outcome: outcome
         ))
     }
@@ -1721,12 +1846,12 @@ final class VaultClassifierViewModel: ObservableObject {
         localModelID: String?,
         llmProviderProfileID: String?,
         llmModelIdentifier: String?,
-        llmDailyOutputTokenLimit: String?,
+        llmDailyTokenLimit: String?,
         llmMaximumOutputTokensPerRequest: String?,
         llmExtraDirection: String?,
         llmClassificationRequestsPerMinute: String?,
         llmBatchSize: String?,
-        llmYouTubeVideoEvidenceCount: String?,
+        llmOfficialContentEvidenceCount: String?,
         llmMaximumTagCount: String?,
         llmRestrictToLeafTags: Bool,
         llmWebSearchMode: String?,
@@ -1767,17 +1892,21 @@ final class VaultClassifierViewModel: ObservableObject {
                 }
                 selectedLLMProviderProfileID = profile.id
                 if let llmModelIdentifier,
-                   let llmDailyOutputTokenLimit,
+                   let llmDailyTokenLimit,
                    let llmMaximumOutputTokensPerRequest,
                    let llmClassificationRequestsPerMinute,
                    let llmBatchSize,
-                   let llmYouTubeVideoEvidenceCount,
+                   let llmOfficialContentEvidenceCount,
                    let llmMaximumTagCount,
                    !llmModelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     let cleanedLLMModelIdentifier = llmModelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
                     let retainsSavedModel = existingLLMAssist?.providerProfileID == cleanedLLMProviderID &&
                         existingLLMAssist?.modelIdentifier == cleanedLLMModelIdentifier
-                    guard providerModelCatalogs[profile.id]?.contains(cleanedLLMModelIdentifier) == true || retainsSavedModel else {
+                    let probedModel = providerModelCatalogEntry(
+                        profileID: profile.id,
+                        identifier: cleanedLLMModelIdentifier
+                    )
+                    guard probedModel != nil || retainsSavedModel else {
                         throw WebBridgeInputError.invalidChoice("a model fetched from this provider")
                     }
                     guard let selectedWebSearchMode = LLMWebSearchMode(
@@ -1789,12 +1918,20 @@ final class VaultClassifierViewModel: ObservableObject {
                        !profile.type.supportsProviderNativeWebSearch {
                         throw WebBridgeInputError.invalidChoice("provider-native web search")
                     }
+                    if selectedWebSearchMode == .providerNative,
+                       probedModel?.supportsNativeWebSearch == false {
+                        throw WebBridgeInputError.invalidChoice("a model with provider-native web search")
+                    }
                     if selectedWebSearchMode == .attached,
                        !profile.type.supportsAttachedWebSearchTool {
                         throw WebBridgeInputError.invalidChoice("external tool calling")
                     }
+                    if selectedWebSearchMode == .attached,
+                       probedModel?.supportsTools == false {
+                        throw WebBridgeInputError.invalidChoice("a model with external tool calling")
+                    }
                     if selectedWebSearchMode != .off,
-                       providerModelCatalogs[profile.id]?.contains(cleanedLLMModelIdentifier) != true,
+                       probedModel == nil,
                        existingLLMAssist?.webSearchMode != selectedWebSearchMode {
                         throw WebBridgeInputError.invalidChoice("Probe this model's web-search or tool support")
                     }
@@ -1820,10 +1957,10 @@ final class VaultClassifierViewModel: ObservableObject {
                     var configuration = LLMAssistConfiguration(
                         providerProfileID: cleanedLLMProviderID,
                         modelIdentifier: cleanedLLMModelIdentifier,
-                        dailyOutputTokenLimit: try providerPositiveInteger(
-                            llmDailyOutputTokenLimit,
-                            maximum: LLMAssistConfiguration.maximumDailyOutputTokenLimit,
-                            label: "LLM daily output token limit"
+                        dailyTokenLimit: try providerPositiveInteger(
+                            llmDailyTokenLimit,
+                            maximum: LLMAssistConfiguration.maximumDailyTokenLimit,
+                            label: "LLM daily token limit"
                         ),
                         maximumOutputTokensPerRequest: try providerPositiveInteger(
                             llmMaximumOutputTokensPerRequest,
@@ -1841,10 +1978,10 @@ final class VaultClassifierViewModel: ObservableObject {
                             maximum: LLMAssistConfiguration.maximumBatchSize,
                             label: "LLM batch size"
                         ),
-                        youtubeVideoEvidenceCount: try providerPositiveInteger(
-                            llmYouTubeVideoEvidenceCount,
-                            maximum: LLMAssistConfiguration.maximumYouTubeVideoEvidenceCount,
-                            label: "YouTube video evidence count"
+                        officialContentEvidenceCount: try providerPositiveInteger(
+                            llmOfficialContentEvidenceCount,
+                            maximum: LLMAssistConfiguration.maximumOfficialContentEvidenceCount,
+                            label: "official content evidence count"
                         ),
                         maximumTagCount: try providerPositiveInteger(
                             llmMaximumTagCount,
@@ -1875,12 +2012,12 @@ final class VaultClassifierViewModel: ObservableObject {
                     selectedLLMAssist = configuration
                     selectedLLMAssistDraft = .init(
                         providerProfileID: configuration.providerProfileID,
-                        dailyOutputTokenLimit: configuration.dailyOutputTokenLimit,
+                        dailyTokenLimit: configuration.dailyTokenLimit,
                         maximumOutputTokensPerRequest: configuration.maximumOutputTokensPerRequest,
                         extraDirection: configuration.extraDirection,
                         classificationRequestsPerMinute: configuration.classificationRequestsPerMinute,
                         batchSize: configuration.batchSize,
-                        youtubeVideoEvidenceCount: configuration.youtubeVideoEvidenceCount,
+                        officialContentEvidenceCount: configuration.officialContentEvidenceCount,
                         maximumTagCount: configuration.maximumTagCount,
                         restrictToLeafTags: configuration.restrictToLeafTags,
                         webSearchMode: configuration.webSearchMode,
@@ -1888,21 +2025,21 @@ final class VaultClassifierViewModel: ObservableObject {
                     )
                 } else {
                     selectedLLMAssist = existingLLMAssist
-                    if let llmDailyOutputTokenLimit,
+                    if let llmDailyTokenLimit,
                        let llmMaximumOutputTokensPerRequest,
                        let llmClassificationRequestsPerMinute,
                        let llmBatchSize,
-                       let llmYouTubeVideoEvidenceCount,
+                       let llmOfficialContentEvidenceCount,
                        let llmMaximumTagCount {
                         selectedLLMAssistDraft = try llmAssistDraftConfiguration(
                             provider: profile,
                             catalog: catalog,
-                            dailyOutputTokenLimit: llmDailyOutputTokenLimit,
+                            dailyTokenLimit: llmDailyTokenLimit,
                             maximumOutputTokensPerRequest: llmMaximumOutputTokensPerRequest,
                             extraDirection: llmExtraDirection,
                             classificationRequestsPerMinute: llmClassificationRequestsPerMinute,
                             batchSize: llmBatchSize,
-                            youtubeVideoEvidenceCount: llmYouTubeVideoEvidenceCount,
+                            officialContentEvidenceCount: llmOfficialContentEvidenceCount,
                             maximumTagCount: llmMaximumTagCount,
                             restrictToLeafTags: llmRestrictToLeafTags,
                             webSearchMode: llmWebSearchMode,
@@ -2559,9 +2696,9 @@ final class VaultClassifierViewModel: ObservableObject {
     }
 
     /// An active model never receives a partial creator record. Collected
-    /// titles establish the local creator evidence; the run then attempts
-    /// official platform evidence when ready and offers the configured search
-    /// capability when that official evidence is unavailable.
+    /// typed content records establish the local creator evidence; the run then
+    /// adds every bounded official field its platform can expose and keeps the
+    /// configured search capability available for remaining evidence gaps.
     private func llmCreatorWorkItem(
         platformID: String,
         creatorID: String,
@@ -2584,16 +2721,43 @@ final class VaultClassifierViewModel: ObservableObject {
               }) else {
             return nil
         }
-        // One classification samples a creator's observed work instead of
-        // repeatedly showing the same newest titles. The sample stays bounded
-        // before it enters the provider request.
+        // One classification carries the same typed public-content shape for
+        // every platform. Sampling does not privilege a platform or only the
+        // newest content, and whole records are removed from the tail to stay
+        // within the evidence contract instead of truncating JSON mid-record.
         let sampledEntries = creatorEntries
             .shuffled()
             .prefix(25)
-        let titles = sampledEntries
-            .map(\.title)
-            .joined(separator: "\n")
-        guard !titles.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        var observedItems = sampledEntries.map { item -> [String: Any] in
+            var value: [String: Any] = [
+                "entryID": item.entryID,
+                "entryType": item.entryType,
+                "title": item.title,
+                "firstObservedAtMilliseconds": item.firstObservedAtMilliseconds,
+                "lastObservedAtMilliseconds": item.lastObservedAtMilliseconds,
+                "observationCount": item.observationCount,
+            ]
+            if let canonicalURL = item.canonicalURL {
+                value["canonicalURL"] = canonicalURL
+            }
+            if !item.attributes.isEmpty {
+                value["attributes"] = item.attributes
+            }
+            return value
+        }
+        var observedData: Data?
+        while !observedItems.isEmpty {
+            if let candidate = try? JSONSerialization.data(withJSONObject: observedItems, options: [.sortedKeys]),
+               candidate.count <= EntryEvidenceValidator.textLimit {
+                observedData = candidate
+                break
+            }
+            observedItems.removeLast()
+        }
+        guard let observedData,
+              let observedText = String(data: observedData, encoding: .utf8) else {
+            return nil
+        }
         return .init(
             representative: representative,
             entry: .init(
@@ -2603,10 +2767,15 @@ final class VaultClassifierViewModel: ObservableObject {
                 surface: .page,
                 evidence: .init(
                     title: String(representative.creatorName.prefix(EntryEvidenceValidator.titleLimit)),
-                    text: String(titles.prefix(EntryEvidenceValidator.textLimit)),
+                    text: observedText,
                     metadata: [
                         "classificationTarget": .string("creator"),
                         "creatorName": .string(String(representative.creatorName.prefix(EntryEvidenceValidator.metadataValueLengthLimit))),
+                        "classificationSourceKind": .string(
+                            CollectionPlatformRegistry.definition(for: platformID)?.sourceKind.rawValue
+                                ?? CollectionSourceKind.creator.rawValue
+                        ),
+                        "browserObservedContentFormat": .string("typed-json-v1"),
                     ]
                 )
             )
@@ -2787,14 +2956,14 @@ final class VaultClassifierViewModel: ObservableObject {
             let taxonomy = try tree.inferenceTaxonomy()
             let allowedTagIDs = llmAllowedTagIDs(taxonomy: taxonomy, configuration: llmAssist)
             let tagDefinitions = llmTagDefinitions(taxonomy: taxonomy, allowedTagIDs: allowedTagIDs)
-            let dailyOutputTokensRemaining = llmAssist.dailyOutputTokenLimit - outputTokensUsedToday(
+            let dailyTokensRemaining = llmAssist.dailyTokenLimit - tokensUsedToday(
                 in: catalog,
                 classifierTypeID: classifierType.id
             )
-            guard dailyOutputTokensRemaining > 0 else {
-                throw WebBridgeInputError.invalidChoice("daily output token budget")
+            guard dailyTokensRemaining > 0 else {
+                throw WebBridgeInputError.invalidChoice("daily token budget")
             }
-            let outputTokenLimit = min(llmAssist.maximumOutputTokensPerRequest, dailyOutputTokensRemaining)
+            let outputTokenLimit = min(llmAssist.maximumOutputTokensPerRequest, dailyTokensRemaining)
             let recordPlan = try ProviderClassificationProtocol.prepare(
                 profile: profile,
                 configuration: llmAssist,
@@ -2819,12 +2988,12 @@ final class VaultClassifierViewModel: ObservableObject {
                         tagDefinitions: tagDefinitions,
                         catalog: catalog,
                         maximumOutputTokens: outputTokenLimit,
-                        dailyOutputTokensRemaining: dailyOutputTokensRemaining,
+                        dailyTokensRemaining: dailyTokensRemaining,
                         classifierTypeID: classifierType.id
                     )
                     let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
-                    let labelIDs = try ProviderClassificationProtocol.parseLabelIDs(
-                        run.content,
+                    let labelIDs = try self.parseClassificationLabelIDs(
+                        from: run,
                         allowedTagIDs: allowedTagIDs,
                         maximumTagCount: llmAssist.maximumTagCount
                     )
@@ -2844,8 +3013,7 @@ final class VaultClassifierViewModel: ObservableObject {
                         method: recordPlan.plan.method,
                         statusCode: run.statusCode,
                         durationMilliseconds: duration,
-                        inputTokens: run.usage.inputTokens,
-                        outputTokens: run.usage.outputTokens ?? run.requestedOutputTokens,
+                        tokenCount: run.usage.tokenCount ?? run.fallbackTokenCount,
                         classifierTypeID: classifierType.id,
                         outcome: "succeeded"
                     ))
@@ -2864,8 +3032,7 @@ final class VaultClassifierViewModel: ObservableObject {
                             statusCode: failure.statusCode,
                             responseShape: failure.responseShape,
                             durationMilliseconds: duration,
-                            inputTokens: nil,
-                            outputTokens: nil,
+                            tokenCount: failure.tokenCount,
                             classifierTypeID: classifierType.id,
                             outcome: "failed"
                         ))
@@ -2915,12 +3082,12 @@ final class VaultClassifierViewModel: ObservableObject {
             let taxonomy = try tree.inferenceTaxonomy()
             let allowedTagIDs = llmAllowedTagIDs(taxonomy: taxonomy, configuration: configuration)
             let tagDefinitions = llmTagDefinitions(taxonomy: taxonomy, allowedTagIDs: allowedTagIDs)
-            var remainingOutputTokens = configuration.dailyOutputTokenLimit - outputTokensUsedToday(
+            var remainingTokens = configuration.dailyTokenLimit - tokensUsedToday(
                 in: catalog,
                 classifierTypeID: classifierType.id
             )
-            guard remainingOutputTokens > 0 else {
-                throw WebBridgeInputError.invalidChoice("daily output token budget")
+            guard remainingTokens > 0 else {
+                throw WebBridgeInputError.invalidChoice("daily token budget")
             }
             providerClassificationRunning = true
             issue = nil
@@ -2930,7 +3097,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 var firstFailure: Error?
                 for workItem in queuedWorkItems {
                     if activatedRun && !self.isLLMAssistActive(typeID: typeID) { break }
-                    guard remainingOutputTokens > 0 else { break }
+                    guard remainingTokens > 0 else { break }
                     guard let liveCatalog = self.localState?.workspaceCatalog,
                           let liveClassifierType = liveCatalog.classifierTypes.first(where: { $0.id == typeID }),
                           liveClassifierType == classifierType,
@@ -2952,7 +3119,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     self.recordLLMClassificationRequestStart()
                     let representative = workItem.representative
                     let entry = workItem.entry
-                    let outputTokenLimit = min(configuration.maximumOutputTokensPerRequest, remainingOutputTokens)
+                    let outputTokenLimit = min(configuration.maximumOutputTokensPerRequest, remainingTokens)
                     let startedAt = Date()
                     var recordPlan: ProviderTestPreparedRequest?
                     do {
@@ -2972,11 +3139,11 @@ final class VaultClassifierViewModel: ObservableObject {
                             tagDefinitions: tagDefinitions,
                             catalog: catalog,
                             maximumOutputTokens: outputTokenLimit,
-                            dailyOutputTokensRemaining: remainingOutputTokens,
+                            dailyTokensRemaining: remainingTokens,
                             classifierTypeID: classifierType.id
                         )
-                        let labelIDs = try ProviderClassificationProtocol.parseLabelIDs(
-                            run.content,
+                        let labelIDs = try self.parseClassificationLabelIDs(
+                            from: run,
                             allowedTagIDs: allowedTagIDs,
                             maximumTagCount: configuration.maximumTagCount
                         )
@@ -2987,7 +3154,7 @@ final class VaultClassifierViewModel: ObservableObject {
                             creatorName: representative.creatorName,
                             labelIDs: labelIDs
                         )
-                        let recordedOutputTokens = run.usage.outputTokens ?? run.requestedOutputTokens
+                        let recordedTokenCount = run.usage.tokenCount ?? run.fallbackTokenCount
                         try self.appendProviderTestRecord(.init(
                             profileID: profile.id,
                             provider: profile.type.rawValue,
@@ -2997,13 +3164,12 @@ final class VaultClassifierViewModel: ObservableObject {
                             method: recordPlan!.plan.method,
                             statusCode: run.statusCode,
                             durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
-                            inputTokens: run.usage.inputTokens,
-                            outputTokens: recordedOutputTokens,
+                            tokenCount: recordedTokenCount,
                             classifierTypeID: classifierType.id,
                             outcome: "succeeded"
                         ))
                         if let currentCatalog = self.localState?.workspaceCatalog {
-                            remainingOutputTokens = configuration.dailyOutputTokenLimit - self.outputTokensUsedToday(
+                            remainingTokens = configuration.dailyTokenLimit - self.tokensUsedToday(
                                 in: currentCatalog,
                                 classifierTypeID: classifierType.id
                             )
@@ -3023,14 +3189,13 @@ final class VaultClassifierViewModel: ObservableObject {
                                 statusCode: failure.statusCode,
                                 responseShape: failure.responseShape,
                                 durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
-                                inputTokens: nil,
-                                outputTokens: nil,
+                                tokenCount: failure.tokenCount,
                                 classifierTypeID: classifierType.id,
                                 outcome: "failed"
                             ))
                         }
                         if let currentCatalog = self.localState?.workspaceCatalog {
-                            remainingOutputTokens = configuration.dailyOutputTokenLimit - self.outputTokensUsedToday(
+                            remainingTokens = configuration.dailyTokenLimit - self.tokensUsedToday(
                                 in: currentCatalog,
                                 classifierTypeID: classifierType.id
                             )
@@ -3041,7 +3206,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 self.providerClassificationRunning = false
                 self.issue = successCount == 0 ? firstFailure?.localizedDescription : nil
                 self.onWebStateChange?()
-                if activatedRun, firstFailure == nil, remainingOutputTokens > 0 {
+                if activatedRun, firstFailure == nil, remainingTokens > 0 {
                     self.startActiveLLMClassification()
                 }
             }
@@ -3302,12 +3467,12 @@ final class VaultClassifierViewModel: ObservableObject {
     private func llmAssistDraftConfiguration(
         provider: APIKeyProviderProfile,
         catalog: WorkspaceCatalog,
-        dailyOutputTokenLimit: String,
+        dailyTokenLimit: String,
         maximumOutputTokensPerRequest: String,
         extraDirection: String?,
         classificationRequestsPerMinute: String,
         batchSize: String,
-        youtubeVideoEvidenceCount: String,
+        officialContentEvidenceCount: String,
         maximumTagCount: String,
         restrictToLeafTags: Bool,
         webSearchMode: String?,
@@ -3341,10 +3506,10 @@ final class VaultClassifierViewModel: ObservableObject {
         }
         let draft = LLMAssistDraftConfiguration(
             providerProfileID: provider.id,
-            dailyOutputTokenLimit: try providerPositiveInteger(
-                dailyOutputTokenLimit,
-                maximum: LLMAssistConfiguration.maximumDailyOutputTokenLimit,
-                label: "LLM daily output token limit"
+            dailyTokenLimit: try providerPositiveInteger(
+                dailyTokenLimit,
+                maximum: LLMAssistConfiguration.maximumDailyTokenLimit,
+                label: "LLM daily token limit"
             ),
             maximumOutputTokensPerRequest: try providerPositiveInteger(
                 maximumOutputTokensPerRequest,
@@ -3362,10 +3527,10 @@ final class VaultClassifierViewModel: ObservableObject {
                 maximum: LLMAssistConfiguration.maximumBatchSize,
                 label: "LLM batch size"
             ),
-            youtubeVideoEvidenceCount: try providerPositiveInteger(
-                youtubeVideoEvidenceCount,
-                maximum: LLMAssistConfiguration.maximumYouTubeVideoEvidenceCount,
-                label: "YouTube video evidence count"
+            officialContentEvidenceCount: try providerPositiveInteger(
+                officialContentEvidenceCount,
+                maximum: LLMAssistConfiguration.maximumOfficialContentEvidenceCount,
+                label: "official content evidence count"
             ),
             maximumTagCount: try providerPositiveInteger(
                 maximumTagCount,
@@ -3573,12 +3738,12 @@ final class VaultClassifierViewModel: ObservableObject {
                     "llmAssistDraftConfiguration": classifierType.llmAssistDraftConfiguration.map { draft in
                         [
                             "providerProfileID": draft.providerProfileID,
-                            "dailyOutputTokenLimit": draft.dailyOutputTokenLimit,
+                            "dailyTokenLimit": draft.dailyTokenLimit,
                             "maximumOutputTokensPerRequest": draft.maximumOutputTokensPerRequest,
                             "extraDirection": draft.extraDirection,
                             "classificationRequestsPerMinute": draft.classificationRequestsPerMinute,
                             "batchSize": draft.batchSize,
-                            "youtubeVideoEvidenceCount": draft.youtubeVideoEvidenceCount,
+                            "officialContentEvidenceCount": draft.officialContentEvidenceCount,
                             "maximumTagCount": draft.maximumTagCount,
                             "restrictToLeafTags": draft.restrictToLeafTags,
                             "webSearchMode": draft.webSearchMode.rawValue,
@@ -3589,16 +3754,16 @@ final class VaultClassifierViewModel: ObservableObject {
                         [
                             "providerProfileID": configuration.providerProfileID,
                             "modelIdentifier": configuration.modelIdentifier,
-                            "dailyOutputTokenLimit": configuration.dailyOutputTokenLimit,
+                            "dailyTokenLimit": configuration.dailyTokenLimit,
                             "maximumOutputTokensPerRequest": configuration.maximumOutputTokensPerRequest,
                             "extraDirection": configuration.extraDirection,
-                            "dailyOutputTokensUsed": outputTokensUsedToday(in: catalog, classifierTypeID: classifierType.id),
+                            "dailyTokensUsed": tokensUsedToday(in: catalog, classifierTypeID: classifierType.id),
                             "classificationRequestsPerMinute": configuration.classificationRequestsPerMinute,
                             "queuedCreatorCount": classificationStatus.queuedCreatorCount,
                             "completedToday": classificationStatus.completedToday,
                             "lastClassificationOutcome": classificationStatus.lastOutcome ?? NSNull(),
                             "batchSize": configuration.batchSize,
-                            "youtubeVideoEvidenceCount": configuration.youtubeVideoEvidenceCount,
+                            "officialContentEvidenceCount": configuration.officialContentEvidenceCount,
                             "maximumTagCount": configuration.maximumTagCount,
                             "restrictToLeafTags": configuration.restrictToLeafTags,
                             "webSearchMode": configuration.webSearchMode.rawValue,
@@ -3638,8 +3803,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     "statusCode": record.statusCode ?? NSNull(),
                     "responseShape": record.responseShape ?? NSNull(),
                     "durationMilliseconds": record.durationMilliseconds,
-                    "inputTokens": record.inputTokens ?? NSNull(),
-                    "outputTokens": record.outputTokens ?? NSNull(),
+                    "tokenCount": record.tokenCount ?? NSNull(),
                     "classifierTypeID": record.classifierTypeID ?? NSNull(),
                     "outcome": record.outcome,
                     "createdAtMilliseconds": record.createdAtMilliseconds,
@@ -3676,7 +3840,18 @@ final class VaultClassifierViewModel: ObservableObject {
         assets["collectionPlatforms"] = CollectionPlatformRegistry.definitions.map { definition in
                 ["id": definition.id, "name": definition.name, "browser": definition.browser, "sourceKind": definition.sourceKind.rawValue, "collectorAvailable": definition.collectorAvailable, "supportsLocalModel": definition.supportsLocalModel, "supportsLLMAssist": definition.supportsLLMAssist, "apiProviderType": definition.apiProviderType?.rawValue ?? NSNull()] as [String: Any]
             }
-        assets["providerModelCatalogs"] = providerModelCatalogs
+        assets["providerModelCatalogs"] = providerModelCatalogs.mapValues { $0.map(\.identifier) }
+        assets["providerModelCapabilities"] = providerModelCatalogs.mapValues { entries in
+            Dictionary(uniqueKeysWithValues: entries.map { entry in
+                (
+                    entry.identifier,
+                    [
+                        "supportsTools": entry.supportsTools ?? NSNull(),
+                        "supportsNativeWebSearch": entry.supportsNativeWebSearch ?? NSNull(),
+                    ] as [String: Any]
+                )
+            })
+        }
         assets["providerModelCatalogErrors"] = providerModelCatalogErrors
         assets["loadingProviderModelProfileIDs"] = Array(loadingProviderModelProfileIDs).sorted()
         let localHub = LocalClassifierHub.shared
@@ -3786,12 +3961,12 @@ final class VaultClassifierViewModel: ObservableObject {
                     localModelID: try webOptionalString(data, key: "localModelID", limit: 256),
                     llmProviderProfileID: try webOptionalString(data, key: "llmProviderProfileID", limit: 128),
                     llmModelIdentifier: try webOptionalString(data, key: "llmModelIdentifier", limit: LLMAssistConfiguration.maximumModelIdentifierLength),
-                    llmDailyOutputTokenLimit: try webOptionalString(data, key: "llmDailyOutputTokenLimit", limit: 16),
+                    llmDailyTokenLimit: try webOptionalString(data, key: "llmDailyTokenLimit", limit: 16),
                     llmMaximumOutputTokensPerRequest: try webOptionalString(data, key: "llmMaximumOutputTokensPerRequest", limit: 16),
                     llmExtraDirection: try webOptionalString(data, key: "llmExtraDirection", limit: LLMAssistConfiguration.maximumExtraDirectionLength),
                     llmClassificationRequestsPerMinute: try webOptionalString(data, key: "llmClassificationRequestsPerMinute", limit: 3),
                     llmBatchSize: try webOptionalString(data, key: "llmBatchSize", limit: 4),
-                    llmYouTubeVideoEvidenceCount: try webOptionalString(data, key: "llmYouTubeVideoEvidenceCount", limit: 2),
+                    llmOfficialContentEvidenceCount: try webOptionalString(data, key: "llmOfficialContentEvidenceCount", limit: 2),
                     llmMaximumTagCount: try webOptionalString(data, key: "llmMaximumTagCount", limit: 4),
                     llmRestrictToLeafTags: data["llmRestrictToLeafTags"] as? Bool ?? false,
                     llmWebSearchMode: try webOptionalString(data, key: "llmWebSearchMode", limit: 32),

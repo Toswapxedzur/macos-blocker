@@ -1,7 +1,7 @@
 import Foundation
 
-/// The local app, rather than a model, chooses the one official platform API
-/// request that supplies fresh evidence for a creator classification.
+/// The local app, rather than a model, chooses the bounded official platform
+/// requests that supply fresh evidence for a creator classification.
 public enum OfficialPlatformEvidenceTarget: String, Codable, Equatable, Sendable {
     case creator
     /// Used only for platforms whose reviewed public API has no creator
@@ -42,17 +42,23 @@ public struct OfficialPlatformConnectionTestRequest: Equatable, Sendable {
 
 public enum OfficialPlatformEvidenceProtocol {
     public static let maximumEvidenceCharacters = 15_000
-    public static let maximumResponseBytes = 64 * 1_024
-    public static let maximumYouTubeVideoResponseBytes = 1_024 * 1_024
+    /// Every official adapter receives the same bounded transport allowance.
+    /// Prompt compaction below remains the tighter disclosure boundary.
+    public static let maximumResponseBytes = 1_024 * 1_024
 
-    /// Prepares the required, bounded API request for a creator
-    /// classification. The model never controls the target, identifier, URL,
-    /// query, headers, or request body.
+    /// Prepares the first bounded API request for a creator classification.
+    /// The model never controls the target, identifier, URL, query, headers,
+    /// request count, or request body.
     public static func prepare(
         profile: APIKeyProviderProfile,
-        entry: EntryEvidence
+        entry: EntryEvidence,
+        maximumResults: Int = LLMAssistConfiguration.defaultOfficialContentEvidenceCount
     ) throws -> OfficialPlatformEvidencePreparedRequest {
         try EntryEvidenceValidator().validate(entry)
+        guard maximumResults > 0,
+              maximumResults <= LLMAssistConfiguration.maximumOfficialContentEvidenceCount else {
+            throw OfficialPlatformEvidenceProtocolError.invalidConfiguration
+        }
         let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
         guard !descriptor.supportsLLMConfiguration,
               descriptor.requestFormats.contains(where: { $0.operation == .readPublicContent }) else {
@@ -61,8 +67,20 @@ public enum OfficialPlatformEvidenceProtocol {
         try profile.validateForDispatch()
         let target = try preferredTarget(for: profile.type, entry: entry)
         let identifier = try normalizedIdentifier(for: profile.type, target: target, entry: entry)
+        let identifiers = try normalizedContentIdentifiers(
+            for: profile.type,
+            target: target,
+            entry: entry,
+            fallback: identifier,
+            maximumResults: maximumResults
+        )
         let baseURL = try baseURL(profile: profile, descriptor: descriptor)
-        let route = try requestRoute(profile: profile, target: target, identifier: identifier)
+        let route = try requestRoute(
+            profile: profile,
+            target: target,
+            identifier: identifier,
+            contentIdentifiers: identifiers
+        )
         let requestURL = try url(baseURL: baseURL, path: route.path, queryItems: route.queryItems)
         let body = try route.body.map { try JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]) }
         return .init(
@@ -118,7 +136,7 @@ public enum OfficialPlatformEvidenceProtocol {
     ) throws -> OfficialPlatformEvidencePreparedRequest {
         guard profile.type == .youtubeData,
               maximumResults > 0,
-              maximumResults <= LLMAssistConfiguration.maximumYouTubeVideoEvidenceCount else {
+              maximumResults <= LLMAssistConfiguration.maximumOfficialContentEvidenceCount else {
             throw OfficialPlatformEvidenceProtocolError.invalidConfiguration
         }
         let playlistID = try youtubeUploadsPlaylistID(from: channelData)
@@ -147,7 +165,7 @@ public enum OfficialPlatformEvidenceProtocol {
     ) throws -> OfficialPlatformEvidencePreparedRequest? {
         guard profile.type == .youtubeData,
               maximumResults > 0,
-              maximumResults <= LLMAssistConfiguration.maximumYouTubeVideoEvidenceCount else {
+              maximumResults <= LLMAssistConfiguration.maximumOfficialContentEvidenceCount else {
             throw OfficialPlatformEvidenceProtocolError.invalidConfiguration
         }
         let identifiers = try youtubeVideoIdentifiers(
@@ -174,6 +192,93 @@ public enum OfficialPlatformEvidenceProtocol {
         )
     }
 
+    /// Requests the bounded recent public-content feed that a platform exposes
+    /// for the creator returned by the first request. YouTube retains its
+    /// richer playlist-plus-record flow; TikTok's reviewed API starts from
+    /// collected video identifiers and therefore has no creator follow-up.
+    public static func prepareCreatorContentRequest(
+        profile: APIKeyProviderProfile,
+        creatorData: Data,
+        maximumResults: Int
+    ) throws -> OfficialPlatformEvidencePreparedRequest? {
+        guard maximumResults > 0,
+              maximumResults <= LLMAssistConfiguration.maximumOfficialContentEvidenceCount else {
+            throw OfficialPlatformEvidenceProtocolError.invalidConfiguration
+        }
+        guard creatorData.count <= maximumResponseBytes else {
+            throw OfficialPlatformEvidenceProtocolError.invalidResponse
+        }
+        let object = try jsonObject(from: creatorData)
+        let route: Route
+        switch profile.type {
+        case .twitch:
+            let creatorID = try responseIdentifier(in: object, path: ["data", "0", "id"])
+            route = .init(
+                method: "GET",
+                path: ["videos"],
+                queryItems: [
+                    .init(name: "user_id", value: creatorID),
+                    .init(name: "first", value: String(min(maximumResults, 100))),
+                ],
+                body: nil
+            )
+        case .reddit:
+            let username = try responseIdentifier(in: object, path: ["data", "name"])
+            route = .init(
+                method: "GET",
+                path: ["user", username, "submitted"],
+                queryItems: [
+                    .init(name: "limit", value: String(min(maximumResults, 100))),
+                    .init(name: "raw_json", value: "1"),
+                ],
+                body: nil
+            )
+        case .xPlatform:
+            let creatorID = try responseIdentifier(in: object, path: ["data", "id"])
+            route = .init(
+                method: "GET",
+                path: ["users", creatorID, "tweets"],
+                queryItems: [
+                    .init(name: "max_results", value: String(max(5, min(maximumResults, 100)))),
+                    .init(name: "tweet.fields", value: "article,attachments,author_id,card_uri,community_id,context_annotations,conversation_id,created_at,display_text_range,edit_controls,edit_history_tweet_ids,entities,geo,in_reply_to_user_id,lang,note_tweet,possibly_sensitive,public_metrics,referenced_tweets,reply_settings,scopes,source,suggested_source_links,suggested_source_links_with_counts,text,withheld"),
+                    .init(name: "expansions", value: "article.cover_media,article.media_entities,attachments.media_keys,attachments.poll_ids,author_id,geo.place_id,in_reply_to_user_id,referenced_tweets.id,referenced_tweets.id.attachments.media_keys,referenced_tweets.id.author_id"),
+                    .init(name: "media.fields", value: "alt_text,duration_ms,height,media_key,preview_image_url,public_metrics,type,url,variants,width"),
+                    .init(name: "place.fields", value: "contained_within,country,country_code,full_name,geo,id,name,place_type"),
+                    .init(name: "poll.fields", value: "duration_minutes,end_datetime,id,options,voting_status"),
+                    .init(name: "user.fields", value: "affiliation,created_at,description,entities,id,is_identity_verified,location,most_recent_tweet_id,name,parody,pinned_tweet_id,profile_banner_url,profile_image_url,protected,public_metrics,subscription_type,url,username,verified,verified_followers_count,verified_type,withheld"),
+                ],
+                body: nil
+            )
+        case .instagramGraph:
+            let creatorID = try responseIdentifier(in: object, path: ["id"])
+            route = .init(
+                method: "GET",
+                path: [try metaAPIVersion(profile), creatorID, "media"],
+                queryItems: [
+                    .init(name: "limit", value: String(maximumResults)),
+                    .init(name: "fields", value: "id,caption,media_type,media_product_type,permalink,timestamp,username,like_count,comments_count"),
+                ],
+                body: nil
+            )
+        case .facebookGraph:
+            let creatorID = try responseIdentifier(in: object, path: ["id"])
+            route = .init(
+                method: "GET",
+                path: [try metaAPIVersion(profile), creatorID, "published_posts"],
+                queryItems: [
+                    .init(name: "limit", value: String(maximumResults)),
+                    .init(name: "fields", value: "id,message,story,created_time,permalink_url,attachments,shares,reactions.limit(0).summary(true),comments.limit(0).summary(true)"),
+                ],
+                body: nil
+            )
+        case .youtubeData, .tikTok:
+            return nil
+        default:
+            throw OfficialPlatformEvidenceProtocolError.invalidConfiguration
+        }
+        return try prepareFollowUpRequest(profile: profile, route: route)
+    }
+
     /// Builds one compact prompt object from the official channel record and
     /// the requested recent public video records. Every returned video keeps
     /// its ID, title, publication time, and public metrics; larger descriptive
@@ -186,10 +291,10 @@ public enum OfficialPlatformEvidenceProtocol {
         maximumVideoCount: Int
     ) throws -> String {
         guard maximumVideoCount > 0,
-              maximumVideoCount <= LLMAssistConfiguration.maximumYouTubeVideoEvidenceCount,
+              maximumVideoCount <= LLMAssistConfiguration.maximumOfficialContentEvidenceCount,
               channelData.count <= maximumResponseBytes,
               playlistData.count <= maximumResponseBytes,
-              (videoData?.count ?? 0) <= maximumYouTubeVideoResponseBytes else {
+              (videoData?.count ?? 0) <= maximumResponseBytes else {
             throw OfficialPlatformEvidenceProtocolError.invalidResponse
         }
         let channelObject = try jsonObject(from: channelData)
@@ -208,10 +313,10 @@ public enum OfficialPlatformEvidenceProtocol {
         var evidence: [String: Any] = [
             "officialPlatform": APIKeyProviderType.youtubeData.rawValue,
             "target": OfficialPlatformEvidenceTarget.creator.rawValue,
-            "requestedVideoCount": maximumVideoCount,
-            "returnedVideoCount": videos.count,
+            "requestedContentCount": maximumVideoCount,
+            "returnedContentCount": videos.count,
             "creator": channel,
-            "recentVideos": videos,
+            "recentContentItems": videos,
         ]
         if let text = encodedEvidence(evidence), text.count <= maximumEvidenceCharacters {
             return text
@@ -223,12 +328,12 @@ public enum OfficialPlatformEvidenceProtocol {
             includeDescriptions: false,
             tagLimit: 4
         )
-        evidence["recentVideos"] = videos
+        evidence["recentContentItems"] = videos
         if let text = encodedEvidence(evidence), text.count <= maximumEvidenceCharacters {
             return text
         }
 
-        evidence["recentVideos"] = compactYouTubeVideoCores(
+        evidence["recentContentItems"] = compactYouTubeVideoCores(
             from: videoObject,
             orderedIDs: orderedIDs
         )
@@ -245,22 +350,64 @@ public enum OfficialPlatformEvidenceProtocol {
     public static func boundedEvidence(
         data: Data,
         providerType: APIKeyProviderType,
-        target: OfficialPlatformEvidenceTarget
+        target: OfficialPlatformEvidenceTarget,
+        maximumContentCount: Int = LLMAssistConfiguration.defaultOfficialContentEvidenceCount
     ) throws -> String {
         guard data.count <= maximumResponseBytes,
+              maximumContentCount > 0,
+              maximumContentCount <= LLMAssistConfiguration.maximumOfficialContentEvidenceCount,
               let value = try? JSONSerialization.jsonObject(with: data) else {
             throw OfficialPlatformEvidenceProtocolError.invalidResponse
         }
-        let object: [String: Any] = [
+        let contentItems = extractedContentItems(from: value, maximumResults: maximumContentCount)
+        var object: [String: Any] = [
             "officialPlatform": providerType.rawValue,
             "target": target.rawValue,
-            "data": sanitized(value, depth: 0),
+            "requestedContentCount": maximumContentCount,
+            "returnedContentCount": contentItems.count,
+            "recentContentItems": contentItems,
         ]
-        guard let encoded = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
-              let text = String(data: encoded, encoding: .utf8) else {
+        if contentItems.isEmpty {
+            object["creator"] = sanitized(value, depth: 0)
+        }
+        if let context = extractedContentContext(from: value) {
+            object["contentContext"] = context
+        }
+        return try boundedEncodedEvidence(object)
+    }
+
+    /// Combines the public creator profile and recent official content into the
+    /// same platform-neutral prompt shape used by every adapter.
+    public static func boundedCreatorEvidence(
+        creatorData: Data,
+        contentData: Data?,
+        providerType: APIKeyProviderType,
+        maximumContentCount: Int
+    ) throws -> String {
+        guard creatorData.count <= maximumResponseBytes,
+              (contentData?.count ?? 0) <= maximumResponseBytes,
+              maximumContentCount > 0,
+              maximumContentCount <= LLMAssistConfiguration.maximumOfficialContentEvidenceCount,
+              let creatorValue = try? JSONSerialization.jsonObject(with: creatorData) else {
             throw OfficialPlatformEvidenceProtocolError.invalidResponse
         }
-        return String(text.prefix(maximumEvidenceCharacters))
+        let contentValue = contentData.flatMap { try? JSONSerialization.jsonObject(with: $0) }
+        let items = contentValue.map {
+            extractedContentItems(from: $0, maximumResults: maximumContentCount)
+        } ?? []
+        var object: [String: Any] = [
+            "officialPlatform": providerType.rawValue,
+            "target": OfficialPlatformEvidenceTarget.creator.rawValue,
+            "requestedContentCount": maximumContentCount,
+            "returnedContentCount": items.count,
+            "creator": sanitized(creatorValue, depth: 0),
+            "recentContentItems": items,
+        ]
+        if let contentValue,
+           let context = extractedContentContext(from: contentValue) {
+            object["contentContext"] = context
+        }
+        return try boundedEncodedEvidence(object)
     }
 
     private static func preferredTarget(
@@ -314,6 +461,42 @@ public enum OfficialPlatformEvidenceProtocol {
         return identifier
     }
 
+    private static func normalizedContentIdentifiers(
+        for providerType: APIKeyProviderType,
+        target: OfficialPlatformEvidenceTarget,
+        entry: EntryEvidence,
+        fallback: String,
+        maximumResults: Int
+    ) throws -> [String] {
+        guard providerType == .tikTok, target == .representativeEntry else {
+            return [fallback]
+        }
+        guard let text = entry.evidence.text,
+              let data = text.data(using: .utf8),
+              let items = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return [fallback]
+        }
+        var seen = Set<String>()
+        let identifiers = try items.compactMap { item -> String? in
+            guard let raw = item["entryID"] as? String else { return nil }
+            let candidate = EntryEvidence(
+                platform: entry.platform,
+                entryID: raw,
+                sourceID: entry.sourceID,
+                surface: entry.surface,
+                evidence: .init(title: entry.evidence.title)
+            )
+            let identifier = try normalizedIdentifier(
+                for: providerType,
+                target: target,
+                entry: candidate
+            )
+            return seen.insert(identifier).inserted ? identifier : nil
+        }
+        let bounded = Array(identifiers.prefix(min(maximumResults, 20)))
+        return bounded.isEmpty ? [fallback] : bounded
+    }
+
     private static func hasIdentifier(_ value: String?) -> Bool {
         !(value?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
     }
@@ -344,8 +527,7 @@ public enum OfficialPlatformEvidenceProtocol {
         route: Route
     ) throws -> OfficialPlatformEvidencePreparedRequest {
         let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
-        guard profile.type == .youtubeData,
-              !descriptor.supportsLLMConfiguration,
+        guard !descriptor.supportsLLMConfiguration,
               descriptor.requestFormats.contains(where: { $0.operation == .readPublicContent }) else {
             throw OfficialPlatformEvidenceProtocolError.invalidConfiguration
         }
@@ -359,14 +541,17 @@ public enum OfficialPlatformEvidenceProtocol {
             plan: .init(
                 url: requestURL,
                 method: route.method,
-                bodyFormat: .queryOnly,
-                headers: headers(profile: profile, descriptor: descriptor, hasBody: false),
+                bodyFormat: route.body == nil ? .queryOnly : .customJSON,
+                headers: headers(profile: profile, descriptor: descriptor, hasBody: route.body != nil),
                 authentication: descriptor.authentication,
                 authenticationHeader: descriptor.authenticationHeader,
                 requiredCredentialFields: descriptor.credentialFields
             ),
             target: .creator,
-            providerType: profile.type
+            providerType: profile.type,
+            body: try route.body.map {
+                try JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys])
+            }
         )
     }
 
@@ -375,6 +560,31 @@ public enum OfficialPlatformEvidenceProtocol {
             throw OfficialPlatformEvidenceProtocolError.invalidResponse
         }
         return object
+    }
+
+    private static func responseIdentifier(
+        in object: [String: Any],
+        path: [String]
+    ) throws -> String {
+        var current: Any = object
+        for component in path {
+            if let dictionary = current as? [String: Any],
+               let next = dictionary[component] {
+                current = next
+            } else if let array = current as? [Any],
+                      let index = Int(component),
+                      array.indices.contains(index) {
+                current = array[index]
+            } else {
+                throw OfficialPlatformEvidenceProtocolError.invalidResponse
+            }
+        }
+        guard let identifier = current as? String,
+              !identifier.isEmpty,
+              identifier.count <= EntryEvidenceValidator.entryIDLimit else {
+            throw OfficialPlatformEvidenceProtocolError.invalidResponse
+        }
+        return identifier
     }
 
     private static func youtubeUploadsPlaylistID(from channelData: Data) throws -> String {
@@ -435,8 +645,12 @@ public enum OfficialPlatformEvidenceProtocol {
             copyTrimmedString("description", maximum: 1_200, from: snippet, to: &compactSnippet)
             compact["snippet"] = compactSnippet
         }
-        copyDictionary("statistics", from: channel, to: &compact)
-        copyDictionary("topicDetails", from: channel, to: &compact)
+        for key in [
+            "brandingSettings", "contentDetails", "localizations",
+            "statistics", "status", "topicDetails",
+        ] {
+            copyDictionary(key, from: channel, to: &compact)
+        }
         return compact
     }
 
@@ -576,10 +790,146 @@ public enum OfficialPlatformEvidenceProtocol {
         return String(data: data, encoding: .utf8)
     }
 
+    private static func extractedContentItems(
+        from value: Any,
+        maximumResults: Int
+    ) -> [Any] {
+        let rawItems: [Any]
+        if let object = value as? [String: Any],
+           let data = object["data"] {
+            if let array = data as? [Any] {
+                rawItems = array
+            } else if let listing = data as? [String: Any],
+                      let nestedItems = (listing["videos"] as? [Any])
+                        ?? (listing["items"] as? [Any])
+                        ?? (listing["children"] as? [Any]) {
+                rawItems = nestedItems
+            } else {
+                rawItems = [data]
+            }
+        } else if let object = value as? [String: Any],
+                  let items = object["items"] as? [Any] {
+            rawItems = items
+        } else if let array = value as? [Any] {
+            rawItems = array
+        } else {
+            rawItems = [value]
+        }
+        return rawItems.prefix(maximumResults).map { sanitized($0, depth: 0) }
+    }
+
+    private static func extractedContentContext(from value: Any) -> Any? {
+        guard var object = value as? [String: Any] else { return nil }
+        object.removeValue(forKey: "data")
+        object.removeValue(forKey: "items")
+        guard !object.isEmpty else { return nil }
+        return sanitized(object, depth: 0)
+    }
+
+    private static func boundedEncodedEvidence(_ initialObject: [String: Any]) throws -> String {
+        var candidates = [(text: String, count: Int)]()
+        if let fitted = fittedEvidence(initialObject) {
+            candidates.append(fitted)
+        }
+
+        var compact = initialObject
+        if let creator = compact["creator"] {
+            compact["creator"] = sanitized(
+                creator,
+                depth: 0,
+                maximumStringLength: 320,
+                maximumArrayCount: 16,
+                maximumDictionaryCount: 24,
+                maximumDepth: 4
+            )
+        }
+        if let context = compact["contentContext"] {
+            compact["contentContext"] = sanitized(
+                context,
+                depth: 0,
+                maximumStringLength: 320,
+                maximumArrayCount: 16,
+                maximumDictionaryCount: 24,
+                maximumDepth: 4
+            )
+        }
+        if let items = compact["recentContentItems"] as? [Any] {
+            compact["recentContentItems"] = items.map {
+                sanitized(
+                    $0,
+                    depth: 0,
+                    maximumStringLength: 320,
+                    maximumArrayCount: 16,
+                    maximumDictionaryCount: 24,
+                    maximumDepth: 4
+                )
+            }
+        }
+        if let fitted = fittedEvidence(compact) {
+            candidates.append(fitted)
+        }
+
+        var core = compact
+        for key in ["creator", "contentContext"] {
+            if let value = core[key] {
+                core[key] = sanitized(
+                    value,
+                    depth: 0,
+                    maximumStringLength: 160,
+                    maximumArrayCount: 8,
+                    maximumDictionaryCount: 16,
+                    maximumDepth: 3
+                )
+            }
+        }
+        if let items = core["recentContentItems"] as? [Any] {
+            core["recentContentItems"] = items.map {
+                sanitized(
+                    $0,
+                    depth: 0,
+                    maximumStringLength: 160,
+                    maximumArrayCount: 8,
+                    maximumDictionaryCount: 16,
+                    maximumDepth: 3
+                )
+            }
+        }
+        if let fitted = fittedEvidence(core) {
+            candidates.append(fitted)
+        }
+        core.removeValue(forKey: "contentContext")
+        if let fitted = fittedEvidence(core) {
+            candidates.append(fitted)
+        }
+
+        guard var best = candidates.first else {
+            throw OfficialPlatformEvidenceProtocolError.invalidResponse
+        }
+        for candidate in candidates.dropFirst() where candidate.count > best.count {
+            best = candidate
+        }
+        return best.text
+    }
+
+    private static func fittedEvidence(_ initialObject: [String: Any]) -> (text: String, count: Int)? {
+        var object = initialObject
+        var items = object["recentContentItems"] as? [Any] ?? []
+        while true {
+            object["recentContentItems"] = items
+            object["returnedContentCount"] = items.count
+            if let text = encodedEvidence(object), text.count <= maximumEvidenceCharacters {
+                return (text, items.count)
+            }
+            guard !items.isEmpty else { return nil }
+            items.removeLast()
+        }
+    }
+
     private static func requestRoute(
         profile: APIKeyProviderProfile,
         target: OfficialPlatformEvidenceTarget,
-        identifier: String
+        identifier: String,
+        contentIdentifiers: [String]
     ) throws -> Route {
         func get(_ path: [String], _ queryItems: [URLQueryItem] = []) -> Route {
             .init(method: "GET", path: path, queryItems: queryItems, body: nil)
@@ -595,7 +945,13 @@ public enum OfficialPlatformEvidenceProtocol {
             let filter = identifier.hasPrefix("@")
                 ? URLQueryItem(name: "forHandle", value: identifier)
                 : URLQueryItem(name: "id", value: identifier)
-            return get(["channels"], [.init(name: "part", value: "snippet,contentDetails,statistics"), filter])
+            return get(
+                ["channels"],
+                [
+                    .init(name: "part", value: "brandingSettings,contentDetails,localizations,snippet,statistics,status,topicDetails"),
+                    filter,
+                ]
+            )
         case .twitch:
             return target == .representativeEntry
                 ? get(["videos"], [.init(name: "id", value: identifier)])
@@ -609,13 +965,18 @@ public enum OfficialPlatformEvidenceProtocol {
         case .xPlatform:
             return target == .representativeEntry
                 ? get(["tweets", identifier], [.init(name: "tweet.fields", value: "author_id,created_at,entities,public_metrics")])
-                : get(["users", "by", "username", identifier], [.init(name: "user.fields", value: "created_at,description,public_metrics")])
+                : get(
+                    ["users", "by", "username", identifier],
+                    [
+                        .init(name: "user.fields", value: "affiliation,created_at,description,entities,id,is_identity_verified,location,most_recent_tweet_id,name,parody,pinned_tweet_id,profile_banner_url,profile_image_url,protected,public_metrics,subscription_type,url,username,verified,verified_followers_count,verified_type,withheld"),
+                    ]
+                )
         case .tikTok:
             guard target == .representativeEntry else { throw OfficialPlatformEvidenceProtocolError.unsupportedTarget }
             return post(
                 ["video", "query"],
-                [.init(name: "fields", value: "id,title,video_description,create_time,like_count,comment_count,share_count,view_count")],
-                ["filters": ["video_ids": [identifier]]]
+                [.init(name: "fields", value: "id,title,video_description,create_time,cover_image_url,share_url,duration,height,width,embed_link,like_count,comment_count,share_count,view_count")],
+                ["filters": ["video_ids": contentIdentifiers]]
             )
         case .instagramGraph:
             let version = try metaAPIVersion(profile)
@@ -697,22 +1058,54 @@ public enum OfficialPlatformEvidenceProtocol {
         return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
     }
 
-    private static func sanitized(_ value: Any, depth: Int) -> Any {
-        guard depth < 5 else { return "[truncated]" }
+    private static func sanitized(
+        _ value: Any,
+        depth: Int,
+        maximumStringLength: Int = 1_024,
+        maximumArrayCount: Int = 64,
+        maximumDictionaryCount: Int = 32,
+        maximumDepth: Int = 5
+    ) -> Any {
+        guard depth < maximumDepth else { return "[truncated]" }
         if let dictionary = value as? [String: Any] {
-            let secretNames = Set(["access_token", "refresh_token", "token", "api_key", "client_secret", "secret", "password", "authorization", "cookie", "set-cookie"])
+            let secretNames = Set([
+                "accesstoken", "refreshtoken", "token", "apikey",
+                "clientsecret", "secret", "password", "authorization",
+                "cookie", "setcookie",
+            ])
             var sanitizedDictionary: [String: Any] = [:]
-            for key in dictionary.keys.sorted().prefix(32) where !secretNames.contains(key.lowercased()) {
-                sanitizedDictionary[String(key.prefix(96))] = sanitized(dictionary[key] as Any, depth: depth + 1)
+            for key in dictionary.keys.sorted().prefix(maximumDictionaryCount) {
+                let normalizedKey = key.lowercased().filter(\.isLetter)
+                guard !secretNames.contains(normalizedKey),
+                      let value = dictionary[key] else {
+                    continue
+                }
+                sanitizedDictionary[String(key.prefix(96))] = sanitized(
+                    value,
+                    depth: depth + 1,
+                    maximumStringLength: maximumStringLength,
+                    maximumArrayCount: maximumArrayCount,
+                    maximumDictionaryCount: maximumDictionaryCount,
+                    maximumDepth: maximumDepth
+                )
             }
             return sanitizedDictionary
         }
         if let array = value as? [Any] {
-            return array.prefix(16).map { sanitized($0, depth: depth + 1) }
+            return array.prefix(maximumArrayCount).map {
+                sanitized(
+                    $0,
+                    depth: depth + 1,
+                    maximumStringLength: maximumStringLength,
+                    maximumArrayCount: maximumArrayCount,
+                    maximumDictionaryCount: maximumDictionaryCount,
+                    maximumDepth: maximumDepth
+                )
+            }
         }
-        if let text = value as? String { return String(text.prefix(1_024)) }
+        if let text = value as? String { return String(text.prefix(maximumStringLength)) }
         if value is NSNull || value is NSNumber { return value }
-        return String(describing: value).prefix(1_024).description
+        return String(describing: value).prefix(maximumStringLength).description
     }
 }
 

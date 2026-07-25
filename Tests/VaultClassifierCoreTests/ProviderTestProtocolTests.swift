@@ -15,7 +15,42 @@ final class ProviderTestProtocolTests: XCTestCase {
         let response = Data(#"{"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":2},"candidates":[{"content":{"parts":[{"text":"OK"}]}}]}"#.utf8)
         let parsed = try ProviderTestProtocol.parseResponse(response, format: .geminiGenerateContent, operation: .generateText)
         XCTAssertEqual(parsed.content, "OK")
-        XCTAssertEqual(parsed.usage, .init(inputTokens: 7, outputTokens: 2))
+        XCTAssertEqual(parsed.usage, .init(tokenCount: 9))
+    }
+
+    func testAggregateUsageIncludesProviderReportedReasoningAndToolTokens() throws {
+        let gemini = Data(#"""
+        {
+          "usageMetadata": {
+            "promptTokenCount": 7,
+            "candidatesTokenCount": 2,
+            "thoughtsTokenCount": 3,
+            "toolUsePromptTokenCount": 4
+          }
+        }
+        """#.utf8)
+        XCTAssertEqual(
+            try ProviderTestProtocol.usage(from: gemini, format: .geminiGenerateContent),
+            .init(tokenCount: 16)
+        )
+
+        let openAI = Data(#"{"usage":{"prompt_tokens":100,"completion_tokens":30,"completion_tokens_details":{"reasoning_tokens":20}}}"#.utf8)
+        XCTAssertEqual(
+            try ProviderTestProtocol.usage(from: openAI, format: .openAIChatCompletions),
+            .init(tokenCount: 130)
+        )
+
+        let anthropic = Data(#"{"usage":{"input_tokens":10,"cache_creation_input_tokens":20,"cache_read_input_tokens":30,"output_tokens":5}}"#.utf8)
+        XCTAssertEqual(
+            try ProviderTestProtocol.usage(from: anthropic, format: .anthropicMessages),
+            .init(tokenCount: 65)
+        )
+
+        let incomplete = Data(#"{"usage":{"prompt_tokens":100}}"#.utf8)
+        XCTAssertEqual(
+            try ProviderTestProtocol.usage(from: incomplete, format: .openAIChatCompletions),
+            .init(tokenCount: nil)
+        )
     }
 
     func testOpenAIStyleClassificationParsesUsage() throws {
@@ -40,7 +75,7 @@ final class ProviderTestProtocolTests: XCTestCase {
         let response = Data(#"{"usage":{"prompt_tokens":1000,"completion_tokens":500},"choices":[{"message":{"content":"OK"}}]}"#.utf8)
         let parsed = try ProviderTestProtocol.parseResponse(response, format: .openAIChatCompletions, operation: .generateText)
         XCTAssertEqual(parsed.content, "OK")
-        XCTAssertEqual(parsed.usage, .init(inputTokens: 1_000, outputTokens: 500))
+        XCTAssertEqual(parsed.usage, .init(tokenCount: 1_500))
     }
 
     func testCompatibleProviderTestUsesItsSavedTestModel() throws {
@@ -123,8 +158,7 @@ final class ProviderTestProtocolTests: XCTestCase {
             statusCode: 200,
             responseShape: "JSON object; top-level fields: choices, usage",
             durationMilliseconds: 41,
-            inputTokens: 3,
-            outputTokens: 1,
+            tokenCount: 4,
             classifierTypeID: "youtube-type",
             outcome: "succeeded"
         )
@@ -139,6 +173,9 @@ final class ProviderTestProtocolTests: XCTestCase {
         XCTAssertFalse(encoded.contains("apiKey"))
         XCTAssertFalse(encoded.contains("requestContent"))
         XCTAssertFalse(encoded.contains("responseContent"))
+        XCTAssertTrue(encoded.contains("\"tokenCount\":4"))
+        XCTAssertFalse(encoded.contains("inputTokens"))
+        XCTAssertFalse(encoded.contains("outputTokens"))
 
         var legacyRecord = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as? [String: Any])
         legacyRecord["estimatedCostUSD"] = 0.0001
@@ -148,6 +185,24 @@ final class ProviderTestProtocolTests: XCTestCase {
         )
         XCTAssertEqual(decodedLegacyRecord, record)
         XCTAssertFalse(String(decoding: try JSONEncoder().encode(decodedLegacyRecord), as: UTF8.self).contains("estimatedCostUSD"))
+
+        legacyRecord.removeValue(forKey: "tokenCount")
+        legacyRecord["inputTokens"] = 3
+        legacyRecord["outputTokens"] = 1
+        let migratedTokenRecord = try JSONDecoder().decode(
+            ProviderRequestRecord.self,
+            from: JSONSerialization.data(withJSONObject: legacyRecord)
+        )
+        XCTAssertEqual(migratedTokenRecord.tokenCount, 4)
+        let migratedEncoding = String(decoding: try JSONEncoder().encode(migratedTokenRecord), as: UTF8.self)
+        XCTAssertTrue(migratedEncoding.contains("\"tokenCount\":4"))
+        XCTAssertFalse(migratedEncoding.contains("inputTokens"))
+        XCTAssertFalse(migratedEncoding.contains("outputTokens"))
+
+        let legacyUsage = Data(#"{"id":"usage","provider":"openAI","model":"gpt","inputTokens":10,"outputTokens":5,"status":"failed","createdAtMilliseconds":1}"#.utf8)
+        let migratedUsage = try JSONDecoder().decode(TokenUsageRecord.self, from: legacyUsage)
+        XCTAssertEqual(migratedUsage.tokenCount, 15)
+        XCTAssertEqual(migratedUsage.status, "failed")
     }
 
     func testResponseShapeDescribesOnlySafeStructure() {
@@ -171,7 +226,7 @@ final class ProviderTestProtocolTests: XCTestCase {
 
     func testExplicitProviderClassificationUsesOnlyKnownLeafIDs() throws {
         let profile = APIKeyProviderProfile(type: .gemini)
-        let configuration = LLMAssistConfiguration(providerProfileID: profile.id, modelIdentifier: "gemini-3.1-flash-lite", dailyOutputTokenLimit: 512)
+        let configuration = LLMAssistConfiguration(providerProfileID: profile.id, modelIdentifier: "gemini-3.1-flash-lite", dailyTokenLimit: 512)
         let entry = EntryEvidence(platform: "youtube", entryID: "entry", surface: .feed, evidence: .init(title: "Deck gameplay"))
         let prepared = try ProviderClassificationProtocol.prepare(
             profile: profile,
@@ -245,10 +300,12 @@ final class ProviderTestProtocolTests: XCTestCase {
                 surface: .page,
                 evidence: .init(
                     title: "442oons",
-                    text: "SPAIN WIN THE WORLD CUP🏆 (Espana 1-0 Argentina Final Highlights 26)",
+                    text: #"[{"entryID":"final","entryType":"video","title":"SPAIN WIN THE WORLD CUP🏆 (Espana 1-0 Argentina Final Highlights 26)"}]"#,
                     metadata: [
                         "classificationTarget": .string("creator"),
                         "creatorName": .string("442oons"),
+                        "classificationSourceKind": .string("creator"),
+                        "browserObservedContentFormat": .string("typed-json-v1"),
                     ]
                 )
             ),
@@ -264,8 +321,10 @@ final class ProviderTestProtocolTests: XCTestCase {
         XCTAssertTrue(prepared.prompt.contains(#""targetType" : "creator""#))
         XCTAssertTrue(prepared.prompt.contains(#""name" : "442oons""#))
         XCTAssertTrue(prepared.prompt.contains(#""identifier" : "youtube:handle:@442oons""#))
-        XCTAssertTrue(prepared.prompt.contains("browserObservedVideoTitles"))
-        XCTAssertTrue(prepared.prompt.contains("Every title in browserObservedVideoTitles, when present, is a YouTube video observed from the named creator."))
+        XCTAssertTrue(prepared.prompt.contains("browserObservedContentItems"))
+        XCTAssertTrue(prepared.prompt.contains(#""entryType" : "video""#))
+        XCTAssertTrue(prepared.prompt.contains(#""targetSourceKind" : "creator""#))
+        XCTAssertTrue(prepared.prompt.contains("typed public-content record observed from the named creator"))
         XCTAssertTrue(prepared.prompt.contains("SPAIN WIN THE WORLD CUP"))
         XCTAssertTrue(prepared.prompt.contains(#""name":"Football animation""#))
     }
@@ -408,8 +467,8 @@ final class ProviderTestProtocolTests: XCTestCase {
                 profile.type.rawValue
             )
             XCTAssertEqual(
-                try ProviderTestProtocol.usage(from: firstResponse, format: request.plan.bodyFormat).outputTokens,
-                3,
+                try ProviderTestProtocol.usage(from: firstResponse, format: request.plan.bodyFormat).tokenCount,
+                13,
                 profile.type.rawValue
             )
         }
@@ -582,7 +641,7 @@ final class ProviderTestProtocolTests: XCTestCase {
             XCTAssertFalse(prepared.plan.url.absoluteString.contains("entry"), type.rawValue)
             XCTAssertEqual(
                 try ProviderTestProtocol.parseResponse(Data("{}".utf8), format: prepared.plan.bodyFormat, operation: prepared.operation).usage,
-                .init(inputTokens: nil, outputTokens: nil),
+                .init(tokenCount: nil),
                 type.rawValue
             )
         }
@@ -624,13 +683,18 @@ final class ProviderTestProtocolTests: XCTestCase {
                 entryID: "tiktok:video:123",
                 sourceID: "tiktok:creator:456",
                 surface: .page,
-                evidence: .init(title: "Creator")
-            )
+                evidence: .init(
+                    title: "Creator",
+                    text: #"[{"entryID":"tiktok:video:123"},{"entryID":"tiktok:video:789"}]"#,
+                    metadata: ["browserObservedContentFormat": .string("typed-json-v1")]
+                )
+            ),
+            maximumResults: 2
         )
         XCTAssertEqual(tikTok.target, .representativeEntry)
         XCTAssertEqual(tikTok.plan.method, "POST")
         let body = try XCTUnwrap(tikTok.body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] })
-        XCTAssertEqual(((body["filters"] as? [String: Any])?["video_ids"] as? [String])?.first, "123")
+        XCTAssertEqual((body["filters"] as? [String: Any])?["video_ids"] as? [String], ["123", "789"])
 
         let x = try OfficialPlatformEvidenceProtocol.prepare(
             profile: platformProfile(.xPlatform),
@@ -643,6 +707,109 @@ final class ProviderTestProtocolTests: XCTestCase {
             )
         )
         XCTAssertTrue(x.plan.url.path.hasSuffix("/users/by/username/XDevelopers"))
+        let xQuery = URLComponents(url: x.plan.url, resolvingAgainstBaseURL: false)?.queryItems
+        XCTAssertTrue(xQuery?.first(where: { $0.name == "user.fields" })?.value?.contains("profile_banner_url") == true)
+    }
+
+    func testOfficialPlatformAdaptersRequestRecentCreatorContentWithoutYouTubeOnlyGates() throws {
+        let fixtures: [(APIKeyProviderType, Data, String)] = [
+            (.twitch, Data(#"{"data":[{"id":"42"}]}"#.utf8), "/videos"),
+            (.reddit, Data(#"{"data":{"name":"swift"}}"#.utf8), "/user/swift/submitted"),
+            (.xPlatform, Data(#"{"data":{"id":"2244994945"}}"#.utf8), "/users/2244994945/tweets"),
+            (.instagramGraph, Data(#"{"id":"17841400000000000"}"#.utf8), "/17841400000000000/media"),
+            (.facebookGraph, Data(#"{"id":"20531316728"}"#.utf8), "/20531316728/published_posts"),
+        ]
+
+        for (type, creatorData, suffix) in fixtures {
+            let request = try XCTUnwrap(
+                OfficialPlatformEvidenceProtocol.prepareCreatorContentRequest(
+                    profile: platformProfile(type),
+                    creatorData: creatorData,
+                    maximumResults: 25
+                )
+            )
+            XCTAssertTrue(request.plan.url.path.hasSuffix(suffix), type.rawValue)
+            XCTAssertEqual(request.target, .creator, type.rawValue)
+            XCTAssertEqual(request.providerType, type, type.rawValue)
+            if type == .xPlatform {
+                let query = URLComponents(url: request.plan.url, resolvingAgainstBaseURL: false)?.queryItems
+                XCTAssertTrue(query?.first(where: { $0.name == "tweet.fields" })?.value?.contains("note_tweet") == true)
+                XCTAssertTrue(query?.first(where: { $0.name == "media.fields" })?.value?.contains("variants") == true)
+            }
+        }
+    }
+
+    func testGenericOfficialEvidenceKeepsPublicContentAndResponseContextAsValidBoundedJSON() throws {
+        let creatorData = Data(#"{"data":{"id":"42","name":"Creator","description":"Public profile"}}"#.utf8)
+        let contentData = Data(#"""
+        {
+          "data": [
+            {"id":"one","text":"First post","public_metrics":{"like_count":10}},
+            {"id":"two","text":"Second post","public_metrics":{"like_count":20}}
+          ],
+          "includes": {"media":[{"media_key":"key","type":"photo","width":640}]}
+        }
+        """#.utf8)
+        let evidence = try OfficialPlatformEvidenceProtocol.boundedCreatorEvidence(
+            creatorData: creatorData,
+            contentData: contentData,
+            providerType: .xPlatform,
+            maximumContentCount: 2
+        )
+        XCTAssertLessThanOrEqual(evidence.count, OfficialPlatformEvidenceProtocol.maximumEvidenceCharacters)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(evidence.utf8)) as? [String: Any]
+        )
+        XCTAssertEqual(object["requestedContentCount"] as? Int, 2)
+        XCTAssertEqual(object["returnedContentCount"] as? Int, 2)
+        XCTAssertEqual((object["recentContentItems"] as? [[String: Any]])?.count, 2)
+        XCTAssertNotNil((object["contentContext"] as? [String: Any])?["includes"])
+
+        let tikTok = try OfficialPlatformEvidenceProtocol.boundedEvidence(
+            data: Data(#"{"data":{"videos":[{"id":"123","title":"One"},{"id":"789","title":"Two"}]},"error":{"code":"ok"}}"#.utf8),
+            providerType: .tikTok,
+            target: .representativeEntry,
+            maximumContentCount: 2
+        )
+        let tikTokObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(tikTok.utf8)) as? [String: Any]
+        )
+        XCTAssertEqual((tikTokObject["recentContentItems"] as? [[String: Any]])?.count, 2)
+    }
+
+    func testGenericOfficialEvidenceCompactsVerboseFieldsBeforeDroppingContentRecords() throws {
+        let creatorData = try JSONSerialization.data(withJSONObject: [
+            "data": [
+                "id": "42",
+                "name": "Creator",
+                "description": String(repeating: "profile ", count: 2_000),
+            ],
+        ])
+        let records: [[String: Any]] = (0..<25).map { index in
+            [
+                "id": "post-\(index)",
+                "text": String(repeating: "classification context ", count: 120),
+                "public_metrics": ["like_count": index, "view_count": index * 10],
+            ]
+        }
+        let contentData = try JSONSerialization.data(withJSONObject: [
+            "data": records,
+            "includes": ["description": String(repeating: "context ", count: 2_000)],
+        ])
+
+        let evidence = try OfficialPlatformEvidenceProtocol.boundedCreatorEvidence(
+            creatorData: creatorData,
+            contentData: contentData,
+            providerType: .xPlatform,
+            maximumContentCount: records.count
+        )
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(evidence.utf8)) as? [String: Any]
+        )
+
+        XCTAssertLessThanOrEqual(evidence.count, OfficialPlatformEvidenceProtocol.maximumEvidenceCharacters)
+        XCTAssertEqual(object["returnedContentCount"] as? Int, records.count)
+        XCTAssertEqual((object["recentContentItems"] as? [[String: Any]])?.count, records.count)
     }
 
     func testYouTubeOfficialEvidenceFetchesRecentFullVideoRecordsInUploadOrder() throws {
@@ -710,12 +877,12 @@ final class ProviderTestProtocolTests: XCTestCase {
         let object = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(evidence.utf8)) as? [String: Any]
         )
-        XCTAssertEqual(object["requestedVideoCount"] as? Int, 2)
-        XCTAssertEqual(object["returnedVideoCount"] as? Int, 2)
-        let recentVideos = try XCTUnwrap(object["recentVideos"] as? [[String: Any]])
-        XCTAssertEqual(recentVideos.map { $0["id"] as? String }, ["new-video", "old-video"])
-        XCTAssertEqual((recentVideos[0]["snippet"] as? [String: Any])?["title"] as? String, "SPAIN WIN THE WORLD CUP")
-        XCTAssertEqual((recentVideos[0]["statistics"] as? [String: Any])?["viewCount"] as? String, "1000")
+        XCTAssertEqual(object["requestedContentCount"] as? Int, 2)
+        XCTAssertEqual(object["returnedContentCount"] as? Int, 2)
+        let recentContentItems = try XCTUnwrap(object["recentContentItems"] as? [[String: Any]])
+        XCTAssertEqual(recentContentItems.map { $0["id"] as? String }, ["new-video", "old-video"])
+        XCTAssertEqual((recentContentItems[0]["snippet"] as? [String: Any])?["title"] as? String, "SPAIN WIN THE WORLD CUP")
+        XCTAssertEqual((recentContentItems[0]["statistics"] as? [String: Any])?["viewCount"] as? String, "1000")
     }
 
     func testYouTubeOfficialEvidenceKeepsAllFiftyConfiguredVideoCoresWithinThePromptBound() throws {
@@ -764,10 +931,10 @@ final class ProviderTestProtocolTests: XCTestCase {
         let object = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(evidence.utf8)) as? [String: Any]
         )
-        let recentVideos = try XCTUnwrap(object["recentVideos"] as? [[String: Any]])
-        XCTAssertEqual(recentVideos.count, 50)
-        XCTAssertEqual(recentVideos.first?["id"] as? String, "video_0")
-        XCTAssertEqual(recentVideos.last?["id"] as? String, "video_49")
+        let recentContentItems = try XCTUnwrap(object["recentContentItems"] as? [[String: Any]])
+        XCTAssertEqual(recentContentItems.count, 50)
+        XCTAssertEqual(recentContentItems.first?["id"] as? String, "video_0")
+        XCTAssertEqual(recentContentItems.last?["id"] as? String, "video_49")
     }
 
     func testPlatformConnectionTestsUseProviderSpecificHealthRoutes() throws {
@@ -791,7 +958,7 @@ final class ProviderTestProtocolTests: XCTestCase {
     }
 
     func testOfficialPlatformEvidenceRedactsTokenLikeFieldsAndCapsPayload() throws {
-        let payload = Data(#"{"token":"secret","title":"Kept","nested":{"access_token":"secret","description":"Kept"}}"#.utf8)
+        let payload = Data(#"{"token":"secret","apiKey":"secret","title":"Kept","nested":{"access_token":"secret","clientSecret":"secret","description":"Kept"}}"#.utf8)
         let result = try OfficialPlatformEvidenceProtocol.boundedEvidence(data: payload, providerType: .youtubeData, target: .creator)
         XCTAssertTrue(result.contains("Kept"))
         XCTAssertFalse(result.contains("secret"))
@@ -804,6 +971,9 @@ final class ProviderTestProtocolTests: XCTestCase {
         catalog.providerProfiles = [model, youtube]
         let tree = try XCTUnwrap(catalog.trees.first)
         let dataset = try XCTUnwrap(catalog.datasets.first)
+        catalog.bindings = [
+            .init(id: "youtube", name: "YouTube", treeID: tree.id, datasetID: dataset.id)
+        ]
         catalog.classifierTypes = [.init(
             id: "youtube-type",
             name: "YouTube LLM",
@@ -843,39 +1013,49 @@ final class ProviderTestProtocolTests: XCTestCase {
         XCTAssertEqual(try plan(.cohere).url.absoluteString, "https://api.cohere.com/v1/models?page_size=256&endpoint=chat")
         XCTAssertEqual(try plan(.groq).url.absoluteString, "https://api.groq.com/openai/v1/models")
         XCTAssertEqual(try plan(.openRouter).url.absoluteString, "https://openrouter.ai/api/v1/models")
-        XCTAssertEqual(
-            try ProviderModelCatalogProtocol.parse(Data(#"{"data":[{"id":"gpt-5"},{"id":"gpt-4.1"},{"id":"text-embedding-3-large"}]}"#.utf8), providerType: .openAI),
-            ["gpt-4.1", "gpt-5"]
+        let openAIModels = try ProviderModelCatalogProtocol.parse(
+            Data(#"{"data":[{"id":"gpt-5"},{"id":"gpt-4.1"},{"id":"text-embedding-3-large"}]}"#.utf8),
+            providerType: .openAI
         )
-        XCTAssertEqual(
-            try ProviderModelCatalogProtocol.parse(Data(#"{"models":[{"name":"models/gemini-usable","supportedGenerationMethods":["generateContent"]},{"name":"models/embedding-only","supportedGenerationMethods":["embedContent"]}]}"#.utf8), providerType: .gemini),
-            ["gemini-usable"]
+        XCTAssertEqual(openAIModels.map(\.identifier), ["gpt-4.1", "gpt-5", "text-embedding-3-large"])
+        XCTAssertTrue(openAIModels.allSatisfy { $0.supportsTools == nil })
+
+        let geminiModels = try ProviderModelCatalogProtocol.parse(
+            Data(#"{"models":[{"name":"models/gemini-usable","supportedGenerationMethods":["generateContent"]},{"name":"models/embedding-only","supportedGenerationMethods":["embedContent"]}]}"#.utf8),
+            providerType: .gemini
         )
-        XCTAssertEqual(
-            try ProviderModelCatalogProtocol.parse(Data(#"[{"id":"mistral-small"}]"#.utf8), providerType: .mistral),
-            ["mistral-small"]
+        XCTAssertEqual(geminiModels.map(\.identifier), ["gemini-usable"])
+
+        let mistralUnknown = try ProviderModelCatalogProtocol.parse(
+            Data(#"[{"id":"mistral-small"}]"#.utf8),
+            providerType: .mistral
         )
-        XCTAssertEqual(
-            try ProviderModelCatalogProtocol.parse(
-                Data(#"[{"id":"mistral-tools","capabilities":{"function_calling":true}},{"id":"mistral-plain","capabilities":{"function_calling":false}}]"#.utf8),
-                providerType: .mistral
-            ),
-            ["mistral-tools"]
+        XCTAssertEqual(mistralUnknown.map(\.identifier), ["mistral-small"])
+        XCTAssertNil(mistralUnknown.first?.supportsTools)
+        XCTAssertEqual(mistralUnknown.first?.supportsNativeWebSearch, false)
+
+        let mistralModels = try ProviderModelCatalogProtocol.parse(
+            Data(#"[{"id":"mistral-tools","capabilities":{"completion_chat":true,"function_calling":true}},{"id":"mistral-plain","capabilities":{"completion_chat":true,"function_calling":false}}]"#.utf8),
+            providerType: .mistral
         )
-        XCTAssertEqual(
-            try ProviderModelCatalogProtocol.parse(
-                Data(#"{"data":[{"id":"router-tools","supported_parameters":["tools","max_tokens"]},{"id":"router-plain","supported_parameters":["max_tokens"]}]}"#.utf8),
-                providerType: .openRouter
-            ),
-            ["router-tools"]
+        XCTAssertEqual(mistralModels.map(\.identifier), ["mistral-plain", "mistral-tools"])
+        XCTAssertEqual(mistralModels.first(where: { $0.identifier == "mistral-plain" })?.supportsTools, false)
+        XCTAssertEqual(mistralModels.first(where: { $0.identifier == "mistral-tools" })?.supportsTools, true)
+
+        let routerModels = try ProviderModelCatalogProtocol.parse(
+            Data(#"{"data":[{"id":"router-tools","supported_parameters":["tools","max_tokens"]},{"id":"router-plain","supported_parameters":["max_tokens"]}]}"#.utf8),
+            providerType: .openRouter
         )
-        XCTAssertEqual(
-            try ProviderModelCatalogProtocol.parse(
-                Data(#"{"data":[{"id":"llama-3.3-70b-versatile"},{"id":"groq/compound"}]}"#.utf8),
-                providerType: .groq
-            ),
-            ["llama-3.3-70b-versatile"]
+        XCTAssertEqual(routerModels.map(\.identifier), ["router-plain", "router-tools"])
+        XCTAssertEqual(routerModels.first(where: { $0.identifier == "router-plain" })?.supportsTools, false)
+        XCTAssertEqual(routerModels.first(where: { $0.identifier == "router-tools" })?.supportsTools, true)
+
+        let groqModels = try ProviderModelCatalogProtocol.parse(
+            Data(#"{"data":[{"id":"llama-3.3-70b-versatile"},{"id":"groq/compound"}]}"#.utf8),
+            providerType: .groq
         )
+        XCTAssertEqual(groqModels.map(\.identifier), ["groq/compound", "llama-3.3-70b-versatile"])
+        XCTAssertTrue(groqModels.allSatisfy { $0.supportsTools == nil })
         let custom = try plan(.custom, endpoint: "https://example.test")
         XCTAssertEqual(custom.url.absoluteString, "https://example.test/models")
         let compatible = try plan(.openAICompatible, endpoint: "https://example.test/v1")
@@ -888,11 +1068,20 @@ final class ProviderTestProtocolTests: XCTestCase {
             modelIdentifier: "qwen3"
         )
         XCTAssertEqual(ollamaCapability.plan.url.absoluteString, "http://127.0.0.1:11434/api/show")
-        XCTAssertTrue(ProviderModelCatalogProtocol.ollamaModelSupportsTools(
-            Data(#"{"capabilities":["completion","tools"]}"#.utf8)
-        ))
-        XCTAssertFalse(ProviderModelCatalogProtocol.ollamaModelSupportsTools(
-            Data(#"{"capabilities":["completion"]}"#.utf8)
+        XCTAssertEqual(
+            ProviderModelCatalogProtocol.ollamaModelSupportsTools(
+                Data(#"{"capabilities":["completion","tools"]}"#.utf8)
+            ),
+            true
+        )
+        XCTAssertEqual(
+            ProviderModelCatalogProtocol.ollamaModelSupportsTools(
+                Data(#"{"capabilities":["completion"]}"#.utf8)
+            ),
+            false
+        )
+        XCTAssertNil(ProviderModelCatalogProtocol.ollamaModelSupportsTools(
+            Data(#"{"details":{"family":"qwen3"}}"#.utf8)
         ))
     }
 

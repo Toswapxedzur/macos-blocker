@@ -6,6 +6,15 @@ import XCTest
 final class VaultClassifierCoreTests: XCTestCase {
     private func seed() throws -> VerifiedSeedPackage { try SeedPackageLoader.bundled() }
 
+    private func enableCollection(
+        _ platformID: String,
+        in coordinator: LocalClassifierCoordinator
+    ) throws {
+        var catalog = coordinator.snapshot().workspaceCatalog
+        _ = try catalog.ensurePlatformBinding(platformID)
+        try coordinator.updateWorkspaceCatalog(catalog)
+    }
+
     private func signedCandidate(
         releaseSequence: Int64,
         releaseVersion: PackageReleaseVersion,
@@ -305,6 +314,7 @@ final class VaultClassifierCoreTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let stateFile = LocalStateFile(url: root.appendingPathComponent("state.json"))
         let coordinator = try LocalClassifierCoordinator(verifiedPackage: seed(), stateFile: stateFile)
+        try enableCollection("youtube", in: coordinator)
         let collected = EntryEvidence(
             platform: "youtube",
             entryID: "youtube:video:collection-test",
@@ -334,6 +344,7 @@ final class VaultClassifierCoreTests: XCTestCase {
         let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let coordinator = try LocalClassifierCoordinator(verifiedPackage: seed(), stateFile: LocalStateFile(url: root.appendingPathComponent("state.json")))
+        try enableCollection("youtube", in: coordinator)
         let collected = EntryEvidence(
             platform: "youtube",
             entryID: "youtube:video:untrusted-avatar",

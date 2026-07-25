@@ -42,7 +42,7 @@ classification, or decision weight.
 
 A **classifier type** owns one optional LLM Assist attachment. The attachment
 selects exactly one provider profile and one fetched model identifier, plus its
-daily output-token allowance, **per-request max-token** cap (default 4,096),
+daily aggregate-token allowance, **per-request output-token** cap (default 4,096),
 optional **extra direction**, classification pace, batch size, returned-tag
 limit, leaf-only constraint, and one explicit web-search mode: **Off**,
 **Model provider search**, or **Attached search API**. Official platform
@@ -96,19 +96,19 @@ text model name.
   model-list endpoint. There is no Vault-service model catalog. Provider-specific
   paths, authentication, pagination limits, and response envelopes are handled
   by the native request protocol.
-- The list is a bounded local cache of model identifiers only. A successful
-  later Probe replaces it; a failed Probe leaves the previous successful list
-  in place. It survives an app relaunch but is not written into the workspace
-  catalog and never contains credentials, endpoints, or request/response data.
-- Probe omits models that a provider explicitly declares unsuitable for the
-  available search paths. OpenRouter requires `tools` in
-  `supported_parameters`; Mistral honors `capabilities.function_calling`;
-  Cohere requests chat models; Groq Compound systems are omitted because this
-  app does not implement their separate hosted-tool grammar; and Ollama checks
-  each installed model's `/api/show` capabilities for `tools`. Arbitrary
-  OpenAI-compatible and Custom endpoints remain usable without search but do
-  not advertise Attached search because their model list cannot prove the
-  external-tool contract.
+- The list is a bounded local cache of model identifiers plus nullable
+  model-specific search/tool capability signals. A successful later Probe
+  replaces it; a failed Probe leaves the previous successful list in place. It
+  survives an app relaunch but is not written into the workspace catalog and
+  never contains credentials, endpoints, or request/response data.
+- Probe keeps every returned model identifier unless provider metadata
+  explicitly marks it as non-generation/non-chat. It does not discard a plain
+  generation model merely because that model lacks tools. OpenRouter reads
+  `supported_parameters`,
+  Mistral reads `capabilities`, Cohere requests chat models, and Ollama checks
+  each installed model's `/api/show` capabilities. A missing model-specific
+  signal remains unknown; an explicit false disables only the unsupported
+  search mode for that model. No capability is inferred from a model's name.
 - A saved selected model remains visible if the process has no cached list.
   Editing provider fields does not invalidate the cached list or detach an
   affected classifier attachment.
@@ -132,16 +132,20 @@ slows provider traffic. This is not a completion-rate promise: provider
 latency, errors, and token limits can always make completed classifications
 slower.
 
-The per-request max-token cap is sent in the selected provider's native output
-limit field. The effective cap is the smaller of that value and the remaining
-daily allowance. In Attached mode, the successful tool-calling turn is written
-to the token ledger before raw search or the final continuation begins, so its
+The per-request cap is sent in the selected provider's native output-limit
+field. The effective cap is the smaller of that value and the remaining daily
+allowance. Daily accounting uses each provider's aggregate usage: prompt,
+generated output, reasoning, and tool-related tokens where the provider
+reports them. In Attached mode, the successful tool-calling turn is written to
+the token ledger before raw search or the final continuation begins, so its
 usage remains charged even if either later step fails. The final model turn is
-recorded separately; both records count toward the daily budget. A missing
-usage field consumes the requested cap conservatively. Raw-search results do
-not consume model output tokens. The request ledger never retains request or
-response bodies. The optional extra direction is included in the classification
-prompt before the fixed label response contract. The parser accepts either
+recorded separately; both records count toward the daily budget. A 2xx model
+response without usable accounting consumes a conservative estimate of its
+input body plus the full requested output allowance. Malformed generated label
+JSON is charged too. Raw-search requests do not consume model tokens. The
+request ledger never retains request or response bodies. The optional extra
+direction is included in the classification prompt before the fixed label
+response contract. The parser accepts either
 the exact label JSON object or one complete `json`/plain Markdown fence around
 that object, never JSON embedded in explanatory prose. An empty `labelIDs`
 array is a valid explicit LLM no-tag decision, distinct from a human decision
@@ -171,24 +175,31 @@ output.
 
 ## Creator evidence
 
+Every creator prompt begins with the same typed browser-observation contract:
+a random sample of up to 25 retained entries, with each entry's platform
+content kind, title, public identifiers/URL, bounded attributes, and
+observation metadata. The prompt also states the platform source kind
+(creator, account, subreddit, or server). Whole records are removed from the
+tail when necessary; JSON is never truncated mid-record.
+
 When a ready official adapter is available, native code deterministically
 selects the newest matching platform API profile and attempts the platform's
-bounded evidence route. Most adapters fetch one creator record, or the
-representative collected entry where the public API has no creator route.
+bounded evidence route. The shared **Official content records** setting
+persists a request count from 1–50 (default 25) for every adapter. YouTube keeps
+its validated richer channel → uploads playlist → full video-record flow.
+Twitch, Reddit, X, Instagram, and Facebook add a recent creator-content request
+after their public creator record. TikTok queries up to 20 identifiers from the
+typed browser-observed sample because its reviewed public API does not expose
+the same creator-history lookup.
 
-YouTube creator evidence is intentionally richer. One classifier-type setting,
-**YouTube video records**, persists a count from 1–50 (default 25). Native code
-resolves the creator with `channels.list`, reads
-`contentDetails.relatedPlaylists.uploads`, retrieves one matching recent page
-with `playlistItems.list`, and fetches those public records with `videos.list`.
-The prompt receives the channel record plus the returned videos in upload
-order, including their titles, descriptions when the evidence bound permits,
-content details, public statistics, topics, and other selected public
-classification context. If the compact evidence would exceed its prompt bound,
-descriptions and extended fields are reduced before core records; every
-returned video's ID, title, publication time, duration, and primary public
-metrics are retained. Each HTTP response is counted as a platform API call, but
-no request or response body is written to provider history.
+All adapters emit the same `recentContentItems` prompt field while retaining
+their platform-native public fields and metrics. YouTube still preserves its
+upload order and keeps every returned video's core ID, title, publication time,
+duration, and primary metrics before reducing descriptions or extended fields
+to satisfy the prompt bound. Other platforms retain their available public
+profile, content, metric, and response-context fields within the same bound.
+Each HTTP response is counted as a platform API call, but no request or
+response body is written to provider history.
 
 Successful official evidence is sanitized and exists only in the in-flight
 classification prompt. It never backfills the browser-collected dataset. The
@@ -212,13 +223,14 @@ in-flight continuation and are then discarded. The ledger retains request
 metadata but no query or result body. If the attached connection is not ready,
 classification stops rather than scraping or chaining into a second LLM.
 
-The creator's local prompt evidence remains a random sample of up to 25
-browser-observed titles, bounded before dispatch. The prompt represents the
-target as structured data with an explicit creator name and identifier, and
-labels both the observed-title array and official-video array as belonging to
-that same creator. It directs the model to classify recurring work rather than
-one isolated upload and to treat every evidence field as untrusted quoted data.
-These are creator-evidence records, never independent video classifications.
+An official API returning fewer fields or records is treated as missing
+evidence, not negative evidence. Configured provider-native or attached search
+remains available even after a successful official response, and the model is
+directed to use it when the typed collected and official records are
+insufficient. A platform without a reviewed adapter, such as Bilibili, uses
+typed collected evidence plus configured search rather than an undocumented
+endpoint. These are creator-evidence records, never independent content-item
+classifications.
 
 The prior static public-creator-page scraper and its avatar/API-fallback
 controls are obsolete and removed. Browser-collected, verified avatar URLs may
@@ -235,6 +247,7 @@ the model elects to request.
   output limits, the bounded YouTube channel/uploads/video chain (including
   all 50 configured video cores), extra direction, native-search and same-model
   external-tool continuation grammars, bounded Serper/You.com routing,
-  capability filtering, and direct provider model-list routing.
+  capability annotation without tool-only filtering, and direct provider
+  model-list routing.
 - `ProviderModelCatalogStoreTests`: restart persistence and profile-removal
   cleanup for the bounded model-identifier cache.

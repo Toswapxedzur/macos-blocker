@@ -66,11 +66,11 @@ public enum ProviderTestProtocol {
     public static func parseResponse(_ data: Data, format: ProviderRequestBodyFormat, operation: ProviderOperation) throws -> ProviderTestParsedResponse {
         let json = try JSONSerialization.jsonObject(with: data)
         if operation == .readPublicContent {
-            return .init(content: "Platform API test completed.", usage: .init(inputTokens: nil, outputTokens: nil))
+            return .init(content: "Platform API test completed.", usage: .init(tokenCount: nil))
         }
         if operation == .searchWeb {
             _ = try RawWebSearchProtocol.parseResults(data, format: format)
-            return .init(content: "Web search test completed.", usage: .init(inputTokens: nil, outputTokens: nil))
+            return .init(content: "Web search test completed.", usage: .init(tokenCount: nil))
         }
         let root = json as? [String: Any] ?? [:]
         let usage = usage(from: root, format: format)
@@ -108,15 +108,69 @@ public enum ProviderTestProtocol {
     ) -> ProviderTestUsage {
         switch format {
         case .geminiGenerateContent, .vertexGenerateContent:
-            return .init(inputTokens: int(root, path: ["usageMetadata", "promptTokenCount"]), outputTokens: int(root, path: ["usageMetadata", "candidatesTokenCount"]))
+            if let total = int(root, path: ["usageMetadata", "totalTokenCount"]) {
+                return .init(tokenCount: total)
+            }
+            guard let prompt = int(root, path: ["usageMetadata", "promptTokenCount"]),
+                  let candidates = int(root, path: ["usageMetadata", "candidatesTokenCount"]) else {
+                return .init(tokenCount: nil)
+            }
+            return .init(tokenCount: sum([
+                prompt,
+                candidates,
+                int(root, path: ["usageMetadata", "thoughtsTokenCount"]) ?? 0,
+                int(root, path: ["usageMetadata", "toolUsePromptTokenCount"]) ?? 0,
+            ]))
         case .anthropicMessages:
-            return .init(inputTokens: int(root, path: ["usage", "input_tokens"]), outputTokens: int(root, path: ["usage", "output_tokens"]))
+            guard let input = int(root, path: ["usage", "input_tokens"]),
+                  let output = int(root, path: ["usage", "output_tokens"]) else {
+                return .init(tokenCount: nil)
+            }
+            return .init(tokenCount: sum([
+                input,
+                int(root, path: ["usage", "cache_creation_input_tokens"]) ?? 0,
+                int(root, path: ["usage", "cache_read_input_tokens"]) ?? 0,
+                output,
+            ]))
         case .cohereChat:
-            return .init(inputTokens: int(root, path: ["usage", "tokens", "input_tokens"]), outputTokens: int(root, path: ["usage", "tokens", "output_tokens"]))
+            guard let input = int(root, path: ["usage", "tokens", "input_tokens"]),
+                  let output = int(root, path: ["usage", "tokens", "output_tokens"]) else {
+                return .init(tokenCount: nil)
+            }
+            return .init(tokenCount: sum([
+                input,
+                output,
+            ]))
         case .ollamaChat:
-            return .init(inputTokens: int(root, path: ["prompt_eval_count"]), outputTokens: int(root, path: ["eval_count"]))
+            guard let input = int(root, path: ["prompt_eval_count"]),
+                  let output = int(root, path: ["eval_count"]) else {
+                return .init(tokenCount: nil)
+            }
+            return .init(tokenCount: sum([
+                input,
+                output,
+            ]))
         default:
-            return .init(inputTokens: int(root, path: ["usage", "prompt_tokens"]) ?? int(root, path: ["usage", "input_tokens"]), outputTokens: int(root, path: ["usage", "completion_tokens"]) ?? int(root, path: ["usage", "output_tokens"]))
+            if let total = int(root, path: ["usage", "total_tokens"]) {
+                return .init(tokenCount: total)
+            }
+            guard let input = int(root, path: ["usage", "prompt_tokens"])
+                ?? int(root, path: ["usage", "input_tokens"]) else {
+                return .init(tokenCount: nil)
+            }
+            if let completion = int(root, path: ["usage", "completion_tokens"]) {
+                // OpenAI-compatible completion totals already include their
+                // reasoning-token detail, so do not double-count the subset.
+                return .init(tokenCount: sum([input, completion]))
+            }
+            guard let output = int(root, path: ["usage", "output_tokens"]) else {
+                return .init(tokenCount: nil)
+            }
+            return .init(tokenCount: sum([
+                input,
+                output,
+                int(root, path: ["usage", "reasoning_tokens"]) ?? 0,
+            ]))
         }
     }
 
@@ -195,9 +249,22 @@ public enum ProviderTestProtocol {
             guard let object = value as? [String: Any], let next = object[component] else { return nil }
             value = next
         }
-        if let integer = value as? Int { return integer }
-        if let number = value as? NSNumber { return number.intValue }
+        if let integer = value as? Int { return integer >= 0 ? integer : nil }
+        if let number = value as? NSNumber {
+            let integer = number.int64Value
+            return integer >= 0 && UInt64(integer) <= UInt64(Int.max) ? Int(integer) : nil
+        }
         return nil
+    }
+
+    private static func sum(_ values: [Int]) -> Int? {
+        var total = 0
+        for value in values {
+            let addition = total.addingReportingOverflow(value)
+            guard !addition.overflow else { return nil }
+            total = addition.partialValue
+        }
+        return total
     }
 
     private static func extractText(_ root: [String: Any], format: ProviderRequestBodyFormat) -> String? {
@@ -270,12 +337,10 @@ public struct ProviderTestPreparedRequest: Equatable, Sendable {
 }
 
 public struct ProviderTestUsage: Equatable, Sendable {
-    public var inputTokens: Int?
-    public var outputTokens: Int?
+    public var tokenCount: Int?
 
-    public init(inputTokens: Int?, outputTokens: Int?) {
-        self.inputTokens = inputTokens
-        self.outputTokens = outputTokens
+    public init(tokenCount: Int?) {
+        self.tokenCount = tokenCount.map { max(0, $0) }
     }
 }
 
