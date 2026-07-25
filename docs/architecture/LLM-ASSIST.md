@@ -57,6 +57,12 @@ Changing the selected classifier provider/model, search mode, or attached
 search connection deactivates the attachment; it never causes background
 classification.
 
+An attachment can classify a creator only when at least one evidence capability
+is ready: a matching official platform API connection, or its configured
+web-search mode. The UI disables activation and explicit classification and
+explains the missing requirement when neither is ready. This is an availability
+gate, not a rule that the model must search.
+
 The type also retains its selected provider while no model has been attached
 yet. This is only an editor choice: it cannot activate a provider, dispatch a
 request, or change an existing provider/model attachment.
@@ -152,10 +158,14 @@ output.
 
 ## Creator evidence
 
-Where an official adapter exists, native code deterministically selects the
-newest ready matching platform API profile and fetches one bounded record: the
-creator where the API supports it, otherwise the representative collected
-entry. The model cannot choose credentials, URLs, identifiers, or API profiles.
+When a ready official adapter is available, native code deterministically
+selects the newest matching platform API profile and attempts to fetch one
+bounded record: the creator where the API supports it, otherwise the
+representative collected entry. A successful response is sanitized and added
+to the prompt. The model cannot choose credentials, URLs, identifiers, or API
+profiles. Official evidence is preferred context, not an unconditional
+prerequisite: if that connection is absent or its request fails, classification
+may continue only when a ready web-search capability is configured.
 
 OpenAI Responses (`web_search`), Gemini GenerateContent (`google_search`
 grounding), and Anthropic Messages (`web_search_20250305`) receive their native
@@ -178,8 +188,9 @@ classification.
 
 The prior static public-creator-page scraper and its avatar/API-fallback
 controls are obsolete and removed. Browser-collected, verified avatar URLs may
-still be cached for display; classification evidence comes only from collected
-entries and the official API response.
+still be cached for display; classification evidence comes from collected
+entries, any successful official API response, and any bounded search result
+the model elects to request.
 
 ## Tests that define the boundary
 

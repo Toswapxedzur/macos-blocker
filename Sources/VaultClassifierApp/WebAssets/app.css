@@ -635,6 +635,7 @@ h3 { font-size: 13px; }
   background: rgba(255, 255, 255, .72);
 }
 .llm-classification-status .small-copy { margin-top: 4px; }
+.llm-evidence-warning { margin: 10px 0 0; color: var(--red-text); font-weight: 700; }
 .llm-classification-metrics { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 5px; }
 .llm-classification-metrics span {
   padding: 4px 7px;

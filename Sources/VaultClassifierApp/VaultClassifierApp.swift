@@ -883,10 +883,12 @@ final class VaultClassifierViewModel: ObservableObject {
                 }
             }
         }
-        if platform.apiProviderType != nil,
-           !officialEvidenceAvailable,
+        if !officialEvidenceAvailable,
            configuration.webSearchMode == .off {
-            throw WebBridgeInputError.invalidChoice("a ready official \(entry.platform) API connection")
+            let requirement = platform.apiProviderType == nil
+                ? "a ready web search capability"
+                : "a ready official \(entry.platform) API connection or web search"
+            throw WebBridgeInputError.invalidChoice(requirement)
         }
         let effectiveMaximumOutputTokens = min(maximumOutputTokens, dailyOutputTokensRemaining)
         guard effectiveMaximumOutputTokens > 0 else {
@@ -1172,10 +1174,12 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             _ = try rawWebSearchProfile(in: catalog, configuration: configuration)
         }
-        if platform.apiProviderType != nil,
-           readyPlatformAPIProfile(in: catalog, platformID: platformID) == nil,
+        if readyPlatformAPIProfile(in: catalog, platformID: platformID) == nil,
            configuration.webSearchMode == .off {
-            throw WebBridgeInputError.invalidChoice("a ready official \(platformID) API connection or web search")
+            let requirement = platform.apiProviderType == nil
+                ? "a ready web search capability"
+                : "a ready official \(platformID) API connection or web search"
+            throw WebBridgeInputError.invalidChoice(requirement)
         }
     }
 
@@ -1753,7 +1757,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     }
                     let retainsSavedWebSearch = existingLLMAssist?.webSearchMode == selectedWebSearchMode &&
                         existingLLMAssist?.webSearchProviderProfileID == selectedWebSearchProviderID
-                    let configuration = LLMAssistConfiguration(
+                    var configuration = LLMAssistConfiguration(
                         providerProfileID: cleanedLLMProviderID,
                         modelIdentifier: cleanedLLMModelIdentifier,
                         dailyOutputTokenLimit: try providerPositiveInteger(
@@ -1788,6 +1792,21 @@ final class VaultClassifierViewModel: ObservableObject {
                         isActive: retainsSavedModel && retainsSavedWebSearch ? existingLLMAssist?.isActive ?? false : false
                     )
                     try configuration.validate()
+                    if configuration.isActive {
+                        do {
+                            try validateLLMCreatorEvidenceConfiguration(
+                                in: catalog,
+                                platformID: selectedBinding.id,
+                                profile: profile,
+                                configuration: configuration
+                            )
+                        } catch {
+                            // Retain a user's edited attachment, but never
+                            // leave it active after its last usable evidence
+                            // capability has been removed.
+                            configuration.isActive = false
+                        }
+                    }
                     selectedLLMAssist = configuration
                 } else {
                     selectedLLMAssist = existingLLMAssist
@@ -2428,9 +2447,9 @@ final class VaultClassifierViewModel: ObservableObject {
     }
 
     /// An active model never receives a partial creator record. Collected
-    /// titles establish the local creator evidence; the run then adds official
-    /// platform evidence when available or follows the configured search
-    /// fallback before prompting the model.
+    /// titles establish the local creator evidence; the run then attempts
+    /// official platform evidence when ready and offers the configured search
+    /// capability when that official evidence is unavailable.
     private func llmCreatorWorkItem(
         platformID: String,
         creatorID: String,
@@ -2632,6 +2651,12 @@ final class VaultClassifierViewModel: ObservableObject {
             guard classifierType.applicablePlatformID == platformID else {
                 throw WebBridgeInputError.invalidChoice("creator data source")
             }
+            try validateLLMCreatorEvidenceConfiguration(
+                in: catalog,
+                platformID: platformID,
+                profile: profile,
+                configuration: llmAssist
+            )
             guard let workItem = llmCreatorWorkItem(
                 platformID: platformID,
                 creatorID: creatorID,
@@ -2753,6 +2778,12 @@ final class VaultClassifierViewModel: ObservableObject {
                   let platformID = classifierType.applicablePlatformID else {
                 throw WebBridgeInputError.invalidChoice("creator LLM classifier type")
             }
+            try validateLLMCreatorEvidenceConfiguration(
+                in: catalog,
+                platformID: platformID,
+                profile: profile,
+                configuration: configuration
+            )
             let workItems = unclassifiedLLMCreatorWorkItems(
                 dataset: dataset,
                 classifierType: classifierType,
