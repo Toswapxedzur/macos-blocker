@@ -40,7 +40,6 @@
   const pendingTagRenames = new Map();
   const selectedCreatorTagByType = new Map();
   const selectedLLMProfileByType = new Map();
-  const selectedLLMWebResearchProfileByType = new Map();
   let utilityPanel = null;
   let selectedLanguage = "en";
   let navigationPanelWidth = navigationWidthRange.fallback;
@@ -462,6 +461,8 @@
       tikTok: "llm.provider.tikTok",
       instagramGraph: "llm.provider.instagramGraph",
       facebookGraph: "llm.provider.facebookGraph",
+      serper: "llm.provider.serper",
+      youSearch: "llm.provider.youSearch",
       custom: "llm.provider.custom",
     };
     return keys[type] || "llm.provider.openAICompatible";
@@ -489,6 +490,7 @@
     const profileTypeGroups = [
       ["llm.providerGroup.models", ["openAI", "deepSeek", "gemini", "anthropic", "mistral", "cohere", "groq", "openRouter", "ollama"].map((type) => [type, t(providerTypeLabelKey(type))])],
       ["llm.providerGroup.platform", ["youtubeData", "twitch", "reddit", "xPlatform", "tikTok", "instagramGraph", "facebookGraph"].map((type) => [type, t(providerTypeLabelKey(type))])],
+      ["llm.providerGroup.search", ["serper", "youSearch"].map((type) => [type, t(providerTypeLabelKey(type))])],
       ["llm.providerGroup.custom", ["openAICompatible", "custom"].map((type) => [type, t(providerTypeLabelKey(type))])],
     ];
     const panel = (profile) => {
@@ -496,6 +498,7 @@
       const protocol = protocols[profile.type] || {};
       const supportsLLM = Boolean(protocol.supportsLLMConfiguration);
       const supportsPlatformData = Boolean(protocol.supportsPlatformData);
+      const supportsRawWebSearch = Boolean(protocol.supportsRawWebSearch);
       const profileRecords = requestRecords.filter((record) => record.profileID === profile.id);
       const latestResponseDiagnostic = profileRecords
         .filter((record) => typeof record.responseShape === "string" && record.responseShape.length > 0)
@@ -518,10 +521,10 @@
         "data-provider-connection"
       )).join("");
       const connectionFields = [credentialField, endpointField, testModelField, protocolFields].filter(Boolean).join("");
-      const testAvailable = supportsLLM || supportsPlatformData;
+      const testAvailable = supportsLLM || supportsPlatformData || supportsRawWebSearch;
       const testButton = testAvailable ? `<button class="gold-action" data-action="testProviderProfile" data-form="${esc(formID)}" data-profile-id="${esc(profile.id)}"${disabled(profile.testing)}>${tx(profile.testing ? "llm.testing" : "llm.test")}</button>` : "";
-      const usage = supportsPlatformData
-        ? `<p class="provider-token-usage"><span>${tx("llm.apiCalls")}</span><strong>${profileRecords.filter((record) => record.operation === "readPublicContent" && Number.isInteger(record.statusCode)).length}</strong></p>`
+      const usage = supportsPlatformData || supportsRawWebSearch
+        ? `<p class="provider-token-usage"><span>${tx("llm.apiCalls")}</span><strong>${profileRecords.filter((record) => ["readPublicContent", "searchWeb", "search-creator-web"].includes(record.operation) && Number.isInteger(record.statusCode)).length}</strong></p>`
         : `<p class="provider-token-usage"><span>${tx("llm.tokenUsage")}</span><strong>${tx("llm.tokenTotals", { input: tokenTotals.input, output: tokenTotals.output })}</strong></p>`;
       const responseDiagnostic = latestResponseDiagnostic
         ? `<p class="provider-response-shape"><span>${tx("llm.responseShape")}</span><strong>${esc(latestResponseDiagnostic.responseShape)}</strong></p>`
@@ -541,6 +544,7 @@
     const platformDefinitions = new Map((assets.collectionPlatforms || []).map((platform) => [platform.id, platform]));
     const protocols = assets.providerProtocols || {};
     const llmProfiles = profiles.filter((profile) => protocols[profile.type]?.supportsLLMConfiguration);
+    const rawWebSearchProfiles = profiles.filter((profile) => protocols[profile.type]?.supportsRawWebSearch);
     const sourceOptions = [
       ["human", t("bridge.source.human")],
       ["llmAssist", t("bridge.source.llmAssist")],
@@ -603,30 +607,15 @@
         ? [llmModelIdentifier, ...fetchedModels]
         : fetchedModels;
       const currentModel = llmModelIdentifier;
-      const researchProfiles = llmProfiles.filter((profile) => protocols[profile.type]?.supportsWebSearch);
-      const savedResearchProfileID = typeof llmAssist?.webResearchProviderProfileID === "string"
-        ? llmAssist.webResearchProviderProfileID
+      const classifierSupportsNativeWebSearch = protocols[selectedLLMProfile?.type]?.supportsNativeWebSearch === true;
+      const savedWebSearchProfileID = typeof llmAssist?.webSearchProviderProfileID === "string"
+        ? llmAssist.webSearchProviderProfileID
         : "";
-      const selectedResearchProfileID = selectedLLMWebResearchProfileByType.has(classifierType.id)
-        ? selectedLLMWebResearchProfileByType.get(classifierType.id)
-        : savedResearchProfileID;
-      const selectedResearchProfile = researchProfiles.find((profile) => profile.id === selectedResearchProfileID) || null;
-      const configuredResearchProfile = researchProfiles.find((profile) => profile.id === savedResearchProfileID) || null;
-      const classifierSupportsWebSearch = protocols[selectedLLMProfile?.type]?.supportsWebSearch === true;
-      const researchProviderOptions = [[
-        "",
-        t(classifierSupportsWebSearch ? "bridge.llmUseClassifierSearch" : "bridge.llmChooseResearchProvider"),
-      ], ...researchProfiles.map((profile) => [profile.id, `${profile.name} · ${tx(providerTypeLabelKey(profile.type))}`])];
-      const savedResearchModelIdentifier = typeof llmAssist?.webResearchModelIdentifier === "string"
-        ? llmAssist.webResearchModelIdentifier
-        : "";
-      const selectedResearchModelIdentifier = selectedResearchProfileID === savedResearchProfileID
-        ? savedResearchModelIdentifier
-        : "";
-      const fetchedResearchModels = selectedResearchProfile ? (modelCatalogs[selectedResearchProfile.id] || []) : [];
-      const visibleResearchModels = selectedResearchModelIdentifier && !fetchedResearchModels.includes(selectedResearchModelIdentifier)
-        ? [selectedResearchModelIdentifier, ...fetchedResearchModels]
-        : fetchedResearchModels;
+      const configuredWebSearchProfile = rawWebSearchProfiles.find((profile) => profile.id === savedWebSearchProfileID) || null;
+      const webSearchProviderOptions = [
+        ["", t("bridge.llmChooseSearchProvider")],
+        ...rawWebSearchProfiles.map((profile) => [profile.id, `${profile.name} · ${tx(providerTypeLabelKey(profile.type))}`]),
+      ];
       const priority = classifierType.decisionPriority || ["human", "llmAssist", "localModel"];
       const typeStatus = applicablePlatformID ? t("bridge.configured") : t("bridge.needsSource");
       const leafTagOptions = (selectedTree?.nodes || [])
@@ -674,22 +663,22 @@
       const nativeProviderWebSearchReady = Boolean(
         llmAssist?.providerProfileID === selectedLLMProfileID &&
         llmAssist?.webSearchEnabled &&
-        protocols[selectedLLMProfile?.type]?.supportsWebSearch &&
-        !llmAssist?.webResearchProviderProfileID
+        classifierSupportsNativeWebSearch
       );
-      const separateProviderWebSearchReady = Boolean(
+      const rawProviderWebSearchReady = Boolean(
         llmAssist?.providerProfileID === selectedLLMProfileID &&
         llmAssist?.webSearchEnabled &&
-        configuredResearchProfile &&
-        configuredResearchProfile.hasCredential &&
-        savedResearchModelIdentifier &&
-        protocols[configuredResearchProfile.type]?.supportsWebSearch
+        configuredWebSearchProfile &&
+        configuredWebSearchProfile.hasCredential &&
+        protocols[configuredWebSearchProfile.type]?.supportsRawWebSearch
       );
-      const providerWebSearchReady = nativeProviderWebSearchReady || separateProviderWebSearchReady;
+      const providerWebSearchReady = nativeProviderWebSearchReady || rawProviderWebSearchReady;
+      const providerEvidenceReady = platformEvidenceReady ||
+        Boolean(llmAssist?.webSearchEnabled && providerWebSearchReady);
       const creatorLLMReady = Boolean(selectedLLMProfile &&
         (!protocols[selectedLLMProfile.type]?.credentialRequired || selectedLLMProfile.hasCredential) &&
         (!["openAICompatible", "custom"].includes(selectedLLMProfile.type) || Boolean(selectedLLMProfile.customEndpoint)) &&
-        platformEvidenceReady &&
+        providerEvidenceReady &&
         (!(llmAssist?.webSearchEnabled ?? false) || providerWebSearchReady)
       );
       const llmRunning = Boolean(state.inspect?.llmRunning);
@@ -772,8 +761,8 @@
       const llmClassificationStatus = llmAssist
         ? `<div class="llm-classification-status"><div><span class="eyebrow">${tx("bridge.llmClassificationStatus")}</span><p class="small-copy">${tx(llmAssist.isActive ? (llmRunning ? "bridge.llmActivationRunning" : "bridge.llmActive") : "bridge.llmInactive")}</p></div><div class="llm-classification-metrics"><span>${tx("bridge.llmQueuedCreators", { count: llmAssist.queuedCreatorCount || 0 })}</span><span>${tx("bridge.llmCompletedToday", { count: llmAssist.completedToday || 0 })}</span>${llmLastOutcome ? `<span>${tx("bridge.llmLastResult", { result: tx(llmLastOutcome === "succeeded" ? "bridge.llmOutcomeSucceeded" : "bridge.llmOutcomeFailed") })}</span>` : ""}</div></div>`
         : "";
-      const webResearchControls = `${toggle("bridge.llmWebSearch", "llmWebSearchEnabled", llmAssist?.webSearchEnabled ?? false)}<p class="small-copy">${tx(selectedResearchProfileID ? "bridge.llmWebResearchCopy" : "bridge.llmWebSearchCopy")}</p>${(llmAssist?.webSearchEnabled ?? false) ? `${valueSelectField("bridge.llmWebResearchProvider", "bridge.llmWebResearchProviderCopy", "llmWebResearchProviderProfileID", selectedResearchProfileID, researchProviderOptions)}${selectedResearchProfile ? `${valueSelectField("bridge.llmWebResearchModel", "bridge.llmWebResearchModelCopy", "llmWebResearchModelIdentifier", selectedResearchModelIdentifier, [["", t("bridge.llmChooseResearchModel")], ...visibleResearchModels.map((model) => [model, model])])}<div class="llm-probe-row"><button class="secondary" data-action="probeProviderModelCatalog" data-profile-id="${esc(selectedResearchProfile.id)}"${disabled(loadingModelCatalogs.has(selectedResearchProfile.id))}>${tx(loadingModelCatalogs.has(selectedResearchProfile.id) ? "bridge.llmProbingModels" : "bridge.llmProbeModels")}</button>${modelCatalogErrors[selectedResearchProfile.id] ? `<span class="small-copy">${esc(modelCatalogErrors[selectedResearchProfile.id])}</span>` : ""}</div><p class="small-copy">${tx("bridge.llmWebResearchModelCopy")}</p>` : ""}` : ""}`;
-      const llmSettings = selectedLLMProfile ? `${llmClassificationStatus}<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}${llmModelControl}${field("bridge.llmDailyOutputBudget", "bridge.llmDailyOutputBudgetCopy", "llmDailyOutputTokenLimit", llmAssist?.dailyOutputTokenLimit || 10000, "text", "inputmode=\"numeric\"")}${llmAssist ? `<p class="small-copy">${tx("bridge.llmDailyOutputUsage", { used: llmAssist.dailyOutputTokensUsed || 0, limit: llmAssist.dailyOutputTokenLimit || 10000 })}</p>` : ""}${field("bridge.llmMaximumTokens", "bridge.llmMaximumTokensCopy", "llmMaximumOutputTokensPerRequest", llmAssist?.maximumOutputTokensPerRequest || 4096, "text", "inputmode=\"numeric\"")}${textareaField("bridge.llmExtraDirection", "bridge.llmExtraDirectionCopy", "llmExtraDirection", llmAssist?.extraDirection || "", "maxlength=\"4096\"")}${field("bridge.llmClassificationPace", "bridge.llmClassificationPaceCopy", "llmClassificationRequestsPerMinute", llmAssist?.classificationRequestsPerMinute || 6, "text", "inputmode=\"numeric\"")}${field("bridge.llmBatchSize", "bridge.llmBatchSizeCopy", "llmBatchSize", llmAssist?.batchSize || 5, "text", "inputmode=\"numeric\"")}${field("bridge.llmMaximumTagCount", "bridge.llmMaximumTagCountCopy", "llmMaximumTagCount", llmAssist?.maximumTagCount || 8, "text", "inputmode=\"numeric\"")}${toggle("bridge.llmLeafOnly", "llmRestrictToLeafTags", llmAssist?.restrictToLeafTags ?? true)}<p class="small-copy">${tx("bridge.llmLeafOnlyCopy")}</p>${webResearchControls}</div>` : `<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}</div>`;
+      const webSearchControls = `${toggle("bridge.llmWebSearch", "llmWebSearchEnabled", llmAssist?.webSearchEnabled ?? false)}<p class="small-copy">${tx(classifierSupportsNativeWebSearch ? "bridge.llmNativeWebSearchCopy" : "bridge.llmRawWebSearchCopy")}</p>${(llmAssist?.webSearchEnabled ?? false) && !classifierSupportsNativeWebSearch ? valueSelectField("bridge.llmWebSearchProvider", "bridge.llmWebSearchProviderCopy", "llmWebSearchProviderProfileID", savedWebSearchProfileID, webSearchProviderOptions) : ""}`;
+      const llmSettings = selectedLLMProfile ? `${llmClassificationStatus}<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}${llmModelControl}${field("bridge.llmDailyOutputBudget", "bridge.llmDailyOutputBudgetCopy", "llmDailyOutputTokenLimit", llmAssist?.dailyOutputTokenLimit || 10000, "text", "inputmode=\"numeric\"")}${llmAssist ? `<p class="small-copy">${tx("bridge.llmDailyOutputUsage", { used: llmAssist.dailyOutputTokensUsed || 0, limit: llmAssist.dailyOutputTokenLimit || 10000 })}</p>` : ""}${field("bridge.llmMaximumTokens", "bridge.llmMaximumTokensCopy", "llmMaximumOutputTokensPerRequest", llmAssist?.maximumOutputTokensPerRequest || 4096, "text", "inputmode=\"numeric\"")}${textareaField("bridge.llmExtraDirection", "bridge.llmExtraDirectionCopy", "llmExtraDirection", llmAssist?.extraDirection || "", "maxlength=\"4096\"")}${field("bridge.llmClassificationPace", "bridge.llmClassificationPaceCopy", "llmClassificationRequestsPerMinute", llmAssist?.classificationRequestsPerMinute || 6, "text", "inputmode=\"numeric\"")}${field("bridge.llmBatchSize", "bridge.llmBatchSizeCopy", "llmBatchSize", llmAssist?.batchSize || 5, "text", "inputmode=\"numeric\"")}${field("bridge.llmMaximumTagCount", "bridge.llmMaximumTagCountCopy", "llmMaximumTagCount", llmAssist?.maximumTagCount || 8, "text", "inputmode=\"numeric\"")}${toggle("bridge.llmLeafOnly", "llmRestrictToLeafTags", llmAssist?.restrictToLeafTags ?? true)}<p class="small-copy">${tx("bridge.llmLeafOnlyCopy")}</p>${webSearchControls}</div>` : `<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}</div>`;
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}">
         <div class="classifier-type-head"><div><span class="eyebrow">${tx("bridge.typePanel")}</span><h3>${esc(classifierType.name)}</h3><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div>${statusPill(typeStatus, applicablePlatformID ? "navy" : "muted")}</div>
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}<button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("bridge.saveType")}</button><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}">${tx("bridge.deleteType")}</button></div>
@@ -1325,14 +1314,6 @@
       const typeID = panel?.querySelector("[data-type-id]")?.dataset.typeId;
       if (typeID) selectedLLMProfileByType.set(typeID, llmProviderControl.value);
       if (typeID && llmProviderControl.value) send("selectLLMProvider", { typeID, profileID: llmProviderControl.value });
-      render();
-      return;
-    }
-    const webResearchProviderControl = event.target.closest('[data-field="llmWebResearchProviderProfileID"]');
-    if (webResearchProviderControl) {
-      const panel = webResearchProviderControl.closest(".classifier-type-panel");
-      const typeID = panel?.querySelector("[data-type-id]")?.dataset.typeId;
-      if (typeID) selectedLLMWebResearchProfileByType.set(typeID, webResearchProviderControl.value);
       render();
       return;
     }

@@ -21,9 +21,11 @@ description.
   request pace, tag constraints, and web-search setting. Each
   creator LLM classification composes independent evidence layers: bounded
   matching official-platform API evidence when an adapter exists, plus
-  optional hosted web research on every platform. Either the classifier
-  provider searches directly or any separately selected search-capable
-  provider produces a transient memo. There is no static creator-page fallback.
+  optional web search on every platform. OpenAI, Gemini, and Anthropic can use
+  their native hosted-search tool when unsure. Other model providers can use
+  transient bounded results from an independent Serper or You.com Search
+  profile only when official platform evidence is unavailable. There is no
+  static creator-page fallback or second research model.
 - Twitch, Reddit, and Discord classification is intentionally manual-only.
   Their collected sources and human tags remain available, but Local Model and
   LLM Assist are not offered for those classifier types.

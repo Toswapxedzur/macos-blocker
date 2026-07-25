@@ -10,9 +10,9 @@ declared, explicit operation once the user supplies a valid account credential
 and any shown connection fields. "Ready" here means the app has an ordinary
 saved credential field, a bounded connection test, a model/classification request
 grammar (for language models) or platform health/evidence route (for platform
-data), and regression coverage. It does not guarantee that a provider account,
-model, regional availability, quota, or OAuth grant is available to a
-particular user.
+data) or raw-results route (for search), and regression coverage. It does not
+guarantee that a provider account, model, regional availability, quota, or
+OAuth grant is available to a particular user.
 
 - **Language models:** OpenAI, DeepSeek, Gemini, Anthropic, Mistral, Cohere,
   Groq, OpenRouter, and local Ollama. **OpenAI-compatible** and **Custom** are
@@ -22,6 +22,9 @@ particular user.
   Instagram Graph, and Facebook Graph. They support explicit connection tests
   and bounded official evidence where their access scope can read the
   collected creator; they are never language models.
+- **Raw web search:** Serper and You.com Search. They return a bounded list of
+  titles, public URLs, and snippets; they are never language models and do not
+  use a provider's answer, research, summarization, or live-crawl product.
 
 Twitch, Reddit, and Discord classification is intentionally **manual-only**.
 Their collected sources and human tags remain available, but classifier types
@@ -41,15 +44,15 @@ A **classifier type** owns one optional LLM Assist attachment. The attachment
 selects exactly one provider profile and one fetched model identifier, plus its
 daily output-token allowance, **per-request max-token** cap (default 4,096),
 optional **extra direction**, classification pace, batch size, returned-tag
-limit, leaf-only constraint, and optional hosted web search. Official platform
-evidence and hosted research are independent layers: a ready matching official
-API connection is required where an adapter exists, and search may be enabled
-for every platform. Search can use the classifier provider's direct hosted
-grammar or any separately selected hosted-search provider plus one of its
-fetched models. The separate provider produces a transient research memo; the
-classifier model still returns the tags. Changing either selected
-provider/model deactivates the attachment; it never causes background
-classification.
+limit, leaf-only constraint, and optional web search. Official platform
+evidence and search are independent connection types. Search may be enabled
+for every model/platform combination. OpenAI, Gemini, and Anthropic use the
+classifier model's native hosted-search grammar. Other language models select
+one independent Serper or You.com Search profile, which is used only when
+official platform evidence is unavailable. Raw results are added to the
+in-flight classifier prompt; the classifier model still returns the tags.
+Changing the selected classifier provider/model or raw-search connection
+deactivates the attachment; it never causes background classification.
 
 The type also retains its selected provider while no model has been attached
 yet. This is only an editor choice: it cannot activate a provider, dispatch a
@@ -97,21 +100,19 @@ when disabled or the daily allowance is exhausted.
 
 Each attachment persists a **classification pace** of 1–120 provider requests
 started per minute (default 6). It is enforced for both manual and activated
-classification paths, including a separate web-research request followed by a
-classifier request. The app's one serial classification lane waits between
-request starts, so a lower value deliberately slows provider traffic. This is
-not a completion-rate promise: provider latency, errors, and token limits can
-always make completed classifications slower.
+classification paths, including a raw-search request followed by a classifier
+request. The app's one serial classification lane waits between request
+starts, so a lower value deliberately slows provider traffic. This is not a
+completion-rate promise: provider latency, errors, and token limits can always
+make completed classifications slower.
 
 The per-request max-token cap is sent in the selected provider's native output
 limit field. The effective classifier cap is the smaller of that value and the
-remaining daily allowance. A separate web-research response also consumes the
-same daily output allowance; it is capped at 1,024 output tokens and a missing
-usage value consumes that cap conservatively. The request ledger records the
-two requests separately, but never their bodies. The optional extra direction
-is included in the classification prompt before the fixed JSON-only response
-contract; it cannot change the response parser, which still accepts only
-bounded eligible tag IDs.
+remaining daily allowance. Raw-search results do not consume model output
+tokens. The request ledger records search and classification separately, but
+never their bodies. The optional extra direction is included in the
+classification prompt before the fixed JSON-only response contract; it cannot
+change the response parser, which still accepts only bounded eligible tag IDs.
 
 Each tag may have an optional local description. An explicit LLM request sends
 the eligible tag ID and its description together. Tags excluded by the
@@ -135,28 +136,24 @@ output.
 
 ## Creator evidence
 
-For YouTube, Facebook, and X, native code deterministically selects the newest
-ready matching official-platform API profile and fetches one bounded record:
-the creator where the API supports it, otherwise the representative collected
-entry. The model cannot choose credentials, URLs, identifiers, API profiles, or
-whether to perform the fetch. If the profile is missing, the API request fails,
-or the response is unreadable, the classification does not run.
+Where an official adapter exists, native code deterministically selects the
+newest ready matching platform API profile and fetches one bounded record: the
+creator where the API supports it, otherwise the representative collected
+entry. The model cannot choose credentials, URLs, identifiers, or API profiles.
 
-Official API evidence does not decide whether hosted search is available.
 OpenAI Responses (`web_search`), Gemini GenerateContent (`google_search`
-grounding), and Anthropic Messages (`web_search_20250305`) can search directly
-when the selected model supports the provider feature. Any classifier provider,
-including one of those three, may instead use one separately selected profile
-and one fetched model from a search-capable provider. This makes combinations
-such as DeepSeek classification + YouTube official evidence + Gemini search
-valid. The research model is instructed to use its hosted search tool only
-when the already provided collected and official evidence is insufficient.
-Its memo is added only to the in-flight classifier prompt, then discarded; the
-ledger retains request metadata and token accounting only. When search is
-enabled without either direct search or a ready separate research connection,
-classification is disabled rather than falling back to scraping. A provider is
-not advertised as searchable merely because a separate agent product can
-browse.
+grounding), and Anthropic Messages (`web_search_20250305`) receive their native
+search tool whenever search is enabled. The prompt tells the model to search
+only when the supplied collected and official evidence is insufficient.
+
+Every other language model uses the selected Serper or You.com Search profile
+only when official evidence is unavailable because there is no adapter, no
+ready matching connection, or the official request fails. One bounded query
+returns at most five titles, public URLs, and snippets. Those untrusted results
+are added only to the in-flight prompt and then discarded; the request ledger
+retains metadata but no query or result body. If this fallback is required and
+is not ready, classification stops rather than scraping or chaining into a
+second LLM.
 
 The creator's local prompt evidence is a random sample of up to 25 observed
 titles, bounded before dispatch. It is creator evidence, never individual video
@@ -173,6 +170,7 @@ entries and the official API response.
   persistence, profile validation, and legacy-state cleanup.
 - `ProviderTestProtocolTests`: provider test/classification request grammar,
   configurable output limits, tag descriptions/extra direction, native-search
-  capability guards, and direct provider model-list routing.
+  capability guards, raw Serper/You.com Search routing, and direct provider
+  model-list routing.
 - `ProviderModelCatalogStoreTests`: restart persistence and profile-removal
   cleanup for the bounded model-identifier cache.

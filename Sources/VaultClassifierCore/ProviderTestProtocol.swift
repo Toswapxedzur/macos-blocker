@@ -2,8 +2,8 @@ import Foundation
 
 /// A bounded, explicit test request for a configured provider profile. Model
 /// profiles use a constant harmless prompt; platform-data profiles use a
-/// provider-specific health route. Regular generation remains a separate,
-/// user-approved feature.
+/// provider-specific health route; raw-search profiles use a fixed public test
+/// query. Regular generation remains a separate, user-approved feature.
 public enum ProviderTestProtocol {
     public static let prompt = "Return exactly OK."
     public static let maximumOutputTokens = 32
@@ -20,6 +20,9 @@ public enum ProviderTestProtocol {
                 prompt: "",
                 body: request.body ?? Data()
             )
+        }
+        if descriptor.requestFormats.contains(where: { $0.operation == .searchWeb }) {
+            return try RawWebSearchProtocol.prepareConnectionTest(profile: profile)
         }
         let operation: ProviderOperation
         if descriptor.requestFormats.contains(where: { $0.operation == .generateText }) {
@@ -64,6 +67,10 @@ public enum ProviderTestProtocol {
         let json = try JSONSerialization.jsonObject(with: data)
         if operation == .readPublicContent {
             return .init(content: "Platform API test completed.", usage: .init(inputTokens: nil, outputTokens: nil))
+        }
+        if operation == .searchWeb {
+            _ = try RawWebSearchProtocol.parseResults(data, format: format)
+            return .init(content: "Web search test completed.", usage: .init(inputTokens: nil, outputTokens: nil))
         }
         let root = json as? [String: Any] ?? [:]
         let usage: ProviderTestUsage
