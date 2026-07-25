@@ -877,6 +877,124 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
+    /// Search/tool modes that cannot carry a native output schema get one
+    /// same-model, search-free repair turn only after the completed answer
+    /// violates the local contract. The malformed source turn is recorded
+    /// independently so its usage remains charged even when repair succeeds.
+    private func schemaNormalizedRunIfNeeded(
+        _ run: ProviderClassificationRun,
+        profile: APIKeyProviderProfile,
+        configuration: LLMAssistConfiguration,
+        allowedTagIDs: Set<String>,
+        remainingTokensBeforeRun: Int,
+        classifierTypeID: String,
+        sourceDurationMilliseconds: Int
+    ) async throws -> ProviderClassificationRun {
+        do {
+            _ = try ProviderClassificationProtocol.parseLabelIDs(
+                run.content,
+                allowedTagIDs: allowedTagIDs,
+                maximumTagCount: configuration.maximumTagCount
+            )
+            return run
+        } catch {
+            guard ProviderClassificationProtocol.needsSchemaNormalizationFallback(
+                providerType: profile.type,
+                webSearchMode: configuration.webSearchMode,
+                modelIdentifier: configuration.modelIdentifier
+            ) else {
+                return run
+            }
+        }
+
+        let sourceTokenCount = run.usage.tokenCount ?? run.fallbackTokenCount
+        let normalizationMaximumOutputTokens = min(
+            configuration.maximumOutputTokensPerRequest,
+            remainingTokensBeforeRun - sourceTokenCount
+        )
+        guard normalizationMaximumOutputTokens > 0 else {
+            return run
+        }
+        let normalization = try ProviderClassificationProtocol.prepareSchemaNormalization(
+            profile: profile,
+            configuration: configuration,
+            originalPrompt: run.prompt,
+            candidateContent: run.content,
+            maximumOutputTokens: normalizationMaximumOutputTokens
+        )
+        try? appendProviderTestRecord(.init(
+            profileID: profile.id,
+            provider: profile.type.rawValue,
+            model: configuration.modelIdentifier,
+            operation: "classify-output-normalization-source",
+            endpoint: ProviderTestProtocol.safeEndpoint(normalization.plan.url),
+            method: normalization.plan.method,
+            statusCode: run.statusCode,
+            responseShape: "generated text did not match the labelIDs contract",
+            durationMilliseconds: sourceDurationMilliseconds,
+            tokenCount: sourceTokenCount,
+            classifierTypeID: classifierTypeID,
+            outcome: "failed"
+        ))
+
+        await waitForLLMClassificationPace(configuration: configuration)
+        recordLLMClassificationRequestStart()
+        let response = try await performProviderRequest(
+            plan: normalization.plan,
+            body: normalization.body,
+            credential: providerCredential(for: profile.id),
+            timeout: 30
+        )
+        let responseUsage = (try? ProviderTestProtocol.usage(
+            from: response.data,
+            format: normalization.plan.bodyFormat
+        )) ?? .init(tokenCount: nil)
+        let fallbackTokenCount = conservativeAggregateTokenFallback(
+            body: normalization.body,
+            requestedOutputTokens: normalizationMaximumOutputTokens
+        )
+        let chargeableUsage = ProviderTestUsage(
+            tokenCount: responseUsage.tokenCount ?? fallbackTokenCount
+        )
+        let parsed: ProviderTestParsedResponse
+        do {
+            parsed = try ProviderTestProtocol.parseResponse(
+                response.data,
+                format: normalization.plan.bodyFormat,
+                operation: normalization.operation
+            )
+        } catch {
+            throw ProviderResponseParseFailure(
+                underlyingError: error,
+                statusCode: response.response.statusCode,
+                responseShape: ProviderTestProtocol.responseShape(for: response.data),
+                usage: chargeableUsage
+            )
+        }
+        let normalizedRun = ProviderClassificationRun(
+            prompt: normalization.prompt,
+            content: parsed.content,
+            usage: parsed.usage,
+            statusCode: response.response.statusCode,
+            fallbackTokenCount: fallbackTokenCount
+        )
+        do {
+            _ = try ProviderClassificationProtocol.parseLabelIDs(
+                normalizedRun.content,
+                allowedTagIDs: allowedTagIDs,
+                maximumTagCount: configuration.maximumTagCount
+            )
+        } catch {
+            throw ProviderResponseParseFailure(
+                underlyingError: error,
+                statusCode: normalizedRun.statusCode,
+                responseShape: "schema-normalized text did not match the labelIDs contract",
+                usage: chargeableUsage
+            )
+        }
+        return normalizedRun
+    }
+
     private struct RawWebSearchFailure: LocalizedError {
         let underlyingError: Error
 
@@ -1033,7 +1151,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     usage: chargeableResponseUsage
                 )
             }
-            return .init(
+            let run = ProviderClassificationRun(
                 prompt: request.prompt,
                 content: parsed.content,
                 usage: parsed.usage,
@@ -1041,6 +1159,18 @@ final class VaultClassifierViewModel: ObservableObject {
                 fallbackTokenCount: conservativeAggregateTokenFallback(
                     body: request.body,
                     requestedOutputTokens: effectiveMaximumOutputTokens
+                )
+            )
+            return try await schemaNormalizedRunIfNeeded(
+                run,
+                profile: profile,
+                configuration: configuration,
+                allowedTagIDs: allowedTagIDs,
+                remainingTokensBeforeRun: dailyTokensRemaining,
+                classifierTypeID: classifierTypeID,
+                sourceDurationMilliseconds: max(
+                    0,
+                    Int(Date().timeIntervalSince(initialRequestStartedAt) * 1_000)
                 )
             )
         }
@@ -1111,6 +1241,7 @@ final class VaultClassifierViewModel: ObservableObject {
             toolOutput: toolOutput,
             maximumOutputTokens: continuationMaximumOutputTokens
         )
+        let finalRequestStartedAt = Date()
         let finalResponse = try await performProviderRequest(
             plan: continuation.plan,
             body: continuation.body,
@@ -1148,7 +1279,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 usage: chargeableFinalUsage
             )
         }
-        return .init(
+        let run = ProviderClassificationRun(
             prompt: request.prompt,
             content: parsed.content,
             usage: parsed.usage,
@@ -1156,6 +1287,18 @@ final class VaultClassifierViewModel: ObservableObject {
             fallbackTokenCount: conservativeAggregateTokenFallback(
                 body: continuation.body,
                 requestedOutputTokens: continuationMaximumOutputTokens
+            )
+        )
+        return try await schemaNormalizedRunIfNeeded(
+            run,
+            profile: profile,
+            configuration: configuration,
+            allowedTagIDs: allowedTagIDs,
+            remainingTokensBeforeRun: dailyTokensRemaining - firstTokenCount,
+            classifierTypeID: classifierTypeID,
+            sourceDurationMilliseconds: max(
+                0,
+                Int(Date().timeIntervalSince(finalRequestStartedAt) * 1_000)
             )
         )
     }
@@ -3059,6 +3202,19 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
+    /// Persisting a creator decision advances the dataset revision and
+    /// reconciliation mirrors that revision onto the classifier type. That is
+    /// expected progress, not a mid-batch configuration edit. Every other
+    /// classifier-type field must remain identical for the queued snapshot.
+    static func llmBatchConfigurationIsUnchanged(
+        expected: ClassifierTypeAsset,
+        current: ClassifierTypeAsset
+    ) -> Bool {
+        var normalizedCurrent = current
+        normalizedCurrent.datasetRevision = expected.datasetRevision
+        return normalizedCurrent == expected
+    }
+
     /// Runs eligible creators one at a time. An activated model processes the
     /// full current queue, while the manual control keeps its configured batch
     /// limit. A provider response without usage metadata consumes its
@@ -3112,7 +3268,10 @@ final class VaultClassifierViewModel: ObservableObject {
                     guard remainingTokens > 0 else { break }
                     guard let liveCatalog = self.localState?.workspaceCatalog,
                           let liveClassifierType = liveCatalog.classifierTypes.first(where: { $0.id == typeID }),
-                          liveClassifierType == classifierType,
+                          Self.llmBatchConfigurationIsUnchanged(
+                              expected: classifierType,
+                              current: liveClassifierType
+                          ),
                           let liveProfile = liveCatalog.providerProfiles.first(where: { $0.id == profile.id }),
                           liveProfile == profile else {
                         firstFailure = firstFailure ?? WebBridgeInputError.invalidChoice("LLM configuration changed; start a new batch")
@@ -3122,7 +3281,10 @@ final class VaultClassifierViewModel: ObservableObject {
                     if activatedRun && !self.isLLMAssistActive(typeID: typeID) { break }
                     guard let currentCatalog = self.localState?.workspaceCatalog,
                           let currentClassifierType = currentCatalog.classifierTypes.first(where: { $0.id == typeID }),
-                          currentClassifierType == classifierType,
+                          Self.llmBatchConfigurationIsUnchanged(
+                              expected: classifierType,
+                              current: currentClassifierType
+                          ),
                           let currentProfile = currentCatalog.providerProfiles.first(where: { $0.id == profile.id }),
                           currentProfile == profile else {
                         firstFailure = firstFailure ?? WebBridgeInputError.invalidChoice("LLM configuration changed; start a new batch")
