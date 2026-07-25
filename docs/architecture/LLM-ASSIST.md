@@ -151,6 +151,29 @@ that object, never JSON embedded in explanatory prose. An empty `labelIDs`
 array is a valid explicit LLM no-tag decision, distinct from a human decision
 that has not selected a tag.
 
+Classification requests also use the strongest documented provider-native
+output constraint that does not remove the selected search/tool capability.
+The common schema requires exactly one `labelIDs` array of strings and rejects
+extra top-level properties; the local parser remains authoritative for the
+eligible-ID vocabulary, duplicates, and configured maximum count. OpenAI,
+Anthropic, Mistral, Gemini, Cohere, OpenRouter, and Ollama receive their native
+JSON-schema grammar where compatible. DeepSeek receives JSON Object Mode, and
+Groq receives its roster-wide JSON Object Mode unless attached tools are
+selected. OpenRouter additionally requires a route that accepts the requested
+parameters. Arbitrary OpenAI-compatible and Custom endpoints retain the prompt
+contract plus local validation because their model-list response cannot verify
+a structured-output request field.
+
+Provider incompatibilities never silently disable search. Gemini structured
+output is omitted when native or attached tools are selected because its
+model-specific combined capability is not exposed by Probe. Anthropic hosted
+search keeps its citation-bearing grammar rather than adding the incompatible
+JSON-output constraint, while Anthropic attached tools can retain JSON output.
+Cohere, Groq, and Ollama attached-tool requests likewise keep their documented
+tool grammar instead of sending an incompatible or unverified response-format
+field. These combinations still fail closed at the local parser if the final
+text violates the label contract.
+
 Each tag has a human-readable local name and may have an optional local
 description. An explicit LLM request sends the eligible tag ID, name, and
 description as separate fields; a request with an eligible ID but no readable

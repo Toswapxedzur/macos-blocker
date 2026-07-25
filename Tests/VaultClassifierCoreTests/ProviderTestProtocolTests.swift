@@ -624,6 +624,150 @@ final class ProviderTestProtocolTests: XCTestCase {
         }
     }
 
+    func testEveryKnownProviderUsesItsStrongestSafeNativeClassificationOutputConstraint() throws {
+        let profiles: [APIKeyProviderProfile] = [
+            .init(type: .openAI),
+            .init(type: .openAICompatible, customEndpoint: "https://api.example.com/v1"),
+            .init(type: .deepSeek),
+            .init(type: .gemini),
+            .init(type: .anthropic),
+            .init(type: .mistral),
+            .init(type: .cohere),
+            .init(type: .groq),
+            .init(type: .openRouter),
+            .init(type: .ollama),
+            .init(type: .custom, customEndpoint: "https://api.example.com/v1"),
+        ]
+        let entry = EntryEvidence(
+            platform: "youtube",
+            entryID: "entry",
+            surface: .feed,
+            evidence: .init(title: "Deck gameplay")
+        )
+
+        for profile in profiles {
+            let model = profile.type.defaultModelIdentifier.isEmpty
+                ? "test-model"
+                : profile.type.defaultModelIdentifier
+            let prepared = try ProviderClassificationProtocol.prepare(
+                profile: profile,
+                configuration: .init(providerProfileID: profile.id, modelIdentifier: model),
+                entry: entry,
+                allowedTagIDs: ["games"],
+                tagDefinitions: readableTagDefinitions(["games"])
+            )
+            let body = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: prepared.body) as? [String: Any],
+                profile.type.rawValue
+            )
+
+            switch profile.type {
+            case .openAI:
+                let text = try XCTUnwrap(body["text"] as? [String: Any])
+                let format = try XCTUnwrap(text["format"] as? [String: Any])
+                XCTAssertEqual(format["type"] as? String, "json_schema")
+                XCTAssertEqual(format["name"] as? String, "vault_classifier_labels")
+                XCTAssertEqual(format["strict"] as? Bool, true)
+                assertLabelResponseSchema(format["schema"], provider: profile.type)
+            case .deepSeek, .groq:
+                let format = try XCTUnwrap(body["response_format"] as? [String: Any])
+                XCTAssertEqual(format["type"] as? String, "json_object")
+            case .gemini:
+                let generationConfig = try XCTUnwrap(body["generationConfig"] as? [String: Any])
+                let responseFormat = try XCTUnwrap(generationConfig["responseFormat"] as? [String: Any])
+                let text = try XCTUnwrap(responseFormat["text"] as? [String: Any])
+                XCTAssertEqual(text["mimeType"] as? String, "application/json")
+                assertLabelResponseSchema(text["schema"], provider: profile.type)
+            case .anthropic:
+                let outputConfig = try XCTUnwrap(body["output_config"] as? [String: Any])
+                let format = try XCTUnwrap(outputConfig["format"] as? [String: Any])
+                XCTAssertEqual(format["type"] as? String, "json_schema")
+                assertLabelResponseSchema(format["schema"], provider: profile.type)
+            case .mistral, .openRouter:
+                let format = try XCTUnwrap(body["response_format"] as? [String: Any])
+                XCTAssertEqual(format["type"] as? String, "json_schema")
+                let jsonSchema = try XCTUnwrap(format["json_schema"] as? [String: Any])
+                XCTAssertEqual(jsonSchema["name"] as? String, "vault_classifier_labels")
+                XCTAssertEqual(jsonSchema["strict"] as? Bool, profile.type == .openRouter ? true : nil)
+                assertLabelResponseSchema(jsonSchema["schema"], provider: profile.type)
+                if profile.type == .openRouter {
+                    XCTAssertEqual((body["provider"] as? [String: Any])?["require_parameters"] as? Bool, true)
+                }
+            case .cohere:
+                let format = try XCTUnwrap(body["response_format"] as? [String: Any])
+                XCTAssertEqual(format["type"] as? String, "json_object")
+                assertLabelResponseSchema(format["schema"], provider: profile.type)
+            case .ollama:
+                assertLabelResponseSchema(body["format"], provider: profile.type)
+            case .openAICompatible, .custom:
+                XCTAssertNil(body["response_format"])
+                XCTAssertNil(body["format"])
+            default:
+                XCTFail("Unexpected non-LLM profile \(profile.type.rawValue)")
+            }
+        }
+    }
+
+    func testNativeOutputConstraintsNeverDisplaceSelectedSearchTools() throws {
+        let fixtures: [(APIKeyProviderType, LLMWebSearchMode)] = [
+            (.openAI, .providerNative),
+            (.gemini, .providerNative),
+            (.anthropic, .providerNative),
+            (.deepSeek, .attached),
+            (.gemini, .attached),
+            (.anthropic, .attached),
+            (.mistral, .attached),
+            (.cohere, .attached),
+            (.groq, .attached),
+            (.openRouter, .attached),
+            (.ollama, .attached),
+        ]
+
+        for (type, mode) in fixtures {
+            let profile = APIKeyProviderProfile(type: type)
+            let prepared = try ProviderClassificationProtocol.prepare(
+                profile: profile,
+                configuration: .init(
+                    providerProfileID: profile.id,
+                    modelIdentifier: type.defaultModelIdentifier,
+                    webSearchMode: mode,
+                    webSearchProviderProfileID: mode == .attached ? "search" : nil
+                ),
+                entry: .init(
+                    platform: "youtube",
+                    entryID: "entry",
+                    surface: .page,
+                    evidence: .init(title: "Creator")
+                ),
+                allowedTagIDs: ["games"],
+                tagDefinitions: readableTagDefinitions(["games"])
+            )
+            let body = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: prepared.body) as? [String: Any],
+                type.rawValue
+            )
+            XCTAssertNotNil(body["tools"], type.rawValue)
+
+            switch type {
+            case .openAI:
+                XCTAssertNotNil(body["text"], type.rawValue)
+            case .deepSeek, .mistral, .openRouter:
+                XCTAssertNotNil(body["response_format"], type.rawValue)
+            case .anthropic:
+                XCTAssertEqual(body["output_config"] == nil, mode == .providerNative, type.rawValue)
+            case .gemini:
+                let generationConfig = try XCTUnwrap(body["generationConfig"] as? [String: Any])
+                XCTAssertNil(generationConfig["responseFormat"], type.rawValue)
+            case .cohere, .groq:
+                XCTAssertNil(body["response_format"], type.rawValue)
+            case .ollama:
+                XCTAssertNil(body["format"], type.rawValue)
+            default:
+                XCTFail("Unexpected provider \(type.rawValue)")
+            }
+        }
+    }
+
     func testPlatformDataProfilesPrepareBoundedConnectionTestsWithoutLanguageModels() throws {
         let platformTypes: [APIKeyProviderType] = [
             .youtubeData, .twitch, .reddit, .xPlatform, .tikTok,
@@ -1120,6 +1264,31 @@ final class ProviderTestProtocolTests: XCTestCase {
             "Here is the result:\n```json\n{\"labelIDs\":[\"gaming\"]}\n```",
             allowedTagIDs: ["gaming"]
         ))
+    }
+
+    private func assertLabelResponseSchema(
+        _ value: Any?,
+        provider: APIKeyProviderType,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard let schema = value as? [String: Any] else {
+            XCTFail("Missing label schema for \(provider.rawValue)", file: file, line: line)
+            return
+        }
+        XCTAssertEqual(schema["type"] as? String, "object", provider.rawValue, file: file, line: line)
+        XCTAssertEqual(schema["required"] as? [String], ["labelIDs"], provider.rawValue, file: file, line: line)
+        XCTAssertEqual(schema["additionalProperties"] as? Bool, false, provider.rawValue, file: file, line: line)
+        let properties = schema["properties"] as? [String: Any]
+        let labels = properties?["labelIDs"] as? [String: Any]
+        XCTAssertEqual(labels?["type"] as? String, "array", provider.rawValue, file: file, line: line)
+        XCTAssertEqual(
+            (labels?["items"] as? [String: Any])?["type"] as? String,
+            "string",
+            provider.rawValue,
+            file: file,
+            line: line
+        )
     }
 
     private func readableTagDefinitions(
