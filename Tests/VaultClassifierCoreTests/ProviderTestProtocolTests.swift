@@ -214,12 +214,12 @@ final class ProviderTestProtocolTests: XCTestCase {
         XCTAssertTrue(prompt.contains("Return exactly one JSON object"))
     }
 
-    func testProviderNativeWebSearchUsesEachDocumentedDirectRequestGrammar() throws {
+    func testWebSearchModesUseNativeOrAttachedRequestGrammarsExplicitly() throws {
         let openAI = APIKeyProviderProfile(id: "openai", type: .openAI)
         let openAIConfiguration = LLMAssistConfiguration(
             providerProfileID: openAI.id,
             modelIdentifier: "gpt-4.1-mini",
-            webSearchEnabled: true
+            webSearchMode: .providerNative
         )
         let request = try ProviderClassificationProtocol.prepare(
             profile: openAI,
@@ -235,7 +235,7 @@ final class ProviderTestProtocolTests: XCTestCase {
         let geminiConfiguration = LLMAssistConfiguration(
             providerProfileID: gemini.id,
             modelIdentifier: "gemini-3.1-flash-lite",
-            webSearchEnabled: true
+            webSearchMode: .providerNative
         )
         let geminiRequest = try ProviderClassificationProtocol.prepare(
             profile: gemini,
@@ -249,7 +249,7 @@ final class ProviderTestProtocolTests: XCTestCase {
         let anthropic = APIKeyProviderProfile(id: "anthropic", type: .anthropic)
         let anthropicRequest = try ProviderClassificationProtocol.prepare(
             profile: anthropic,
-            configuration: .init(providerProfileID: anthropic.id, modelIdentifier: "claude-sonnet-4-5", webSearchEnabled: true),
+            configuration: .init(providerProfileID: anthropic.id, modelIdentifier: "claude-sonnet-4-5", webSearchMode: .providerNative),
             entry: .init(platform: "bilibili", entryID: "entry", surface: .page, evidence: .init(title: "Creator: RetroTech")),
             allowedTagIDs: ["technology"]
         )
@@ -260,12 +260,137 @@ final class ProviderTestProtocolTests: XCTestCase {
         let deepSeek = APIKeyProviderProfile(id: "deepseek", type: .deepSeek)
         let deepSeekRequest = try ProviderClassificationProtocol.prepare(
             profile: deepSeek,
-            configuration: .init(providerProfileID: deepSeek.id, modelIdentifier: "deepseek-chat", webSearchEnabled: true),
+            configuration: .init(
+                providerProfileID: deepSeek.id,
+                modelIdentifier: "deepseek-chat",
+                webSearchMode: .attached,
+                webSearchProviderProfileID: "search"
+            ),
             entry: .init(platform: "bilibili", entryID: "entry", surface: .page, evidence: .init(title: "Creator: RetroTech")),
             allowedTagIDs: ["technology"]
         )
         let deepSeekBody = try XCTUnwrap(JSONSerialization.jsonObject(with: deepSeekRequest.body) as? [String: Any])
-        XCTAssertNil(deepSeekBody["tools"])
+        XCTAssertEqual(
+            ((((deepSeekBody["tools"] as? [[String: Any]])?.first?["function"] as? [String: Any])?["name"] as? String)),
+            ProviderClassificationProtocol.attachedWebSearchToolName
+        )
+        XCTAssertTrue(deepSeekRequest.prompt.contains("Use web search only when the provided evidence is insufficient"))
+    }
+
+    func testAttachedSearchToolCallsContinueTheSameModelConversationAcrossEveryGrammar() throws {
+        let fixtures: [(APIKeyProviderProfile, String, Data)] = [
+            (
+                .init(id: "openai", type: .openAI),
+                "gpt-5",
+                Data(#"{"output":[{"type":"function_call","call_id":"call-1","name":"web_search","arguments":"{\"query\":\"RetroTech creator\"}"}],"usage":{"input_tokens":10,"output_tokens":3}}"#.utf8)
+            ),
+            (
+                .init(id: "deepseek", type: .deepSeek),
+                "deepseek-chat",
+                Data(#"{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"web_search","arguments":"{\"query\":\"RetroTech creator\"}"}}]}}],"usage":{"prompt_tokens":10,"completion_tokens":3}}"#.utf8)
+            ),
+            (
+                .init(id: "anthropic", type: .anthropic),
+                "claude-sonnet-4-5",
+                Data(#"{"content":[{"type":"tool_use","id":"call-1","name":"web_search","input":{"query":"RetroTech creator"}}],"usage":{"input_tokens":10,"output_tokens":3}}"#.utf8)
+            ),
+            (
+                .init(id: "gemini", type: .gemini),
+                "gemini-3.1-flash-lite",
+                Data(#"{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"web_search","args":{"query":"RetroTech creator"}}}]}}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":3}}"#.utf8)
+            ),
+            (
+                .init(id: "cohere", type: .cohere),
+                "command-a-03-2025",
+                Data(#"{"message":{"role":"assistant","tool_plan":"Search when unsure.","tool_calls":[{"id":"call-1","type":"function","function":{"name":"web_search","arguments":"{\"query\":\"RetroTech creator\"}"}}]},"usage":{"tokens":{"input_tokens":10,"output_tokens":3}}}"#.utf8)
+            ),
+            (
+                .init(id: "ollama", type: .ollama),
+                "qwen3",
+                Data(#"{"message":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"name":"web_search","arguments":{"query":"RetroTech creator"}}}]},"prompt_eval_count":10,"eval_count":3}"#.utf8)
+            ),
+        ]
+
+        for (profile, model, firstResponse) in fixtures {
+            let request = try ProviderClassificationProtocol.prepare(
+                profile: profile,
+                configuration: .init(
+                    providerProfileID: profile.id,
+                    modelIdentifier: model,
+                    webSearchMode: .attached,
+                    webSearchProviderProfileID: "search"
+                ),
+                entry: .init(
+                    platform: "youtube",
+                    entryID: "entry",
+                    surface: .page,
+                    evidence: .init(title: "Creator: RetroTech")
+                ),
+                allowedTagIDs: ["technology"]
+            )
+            let call = try XCTUnwrap(ProviderClassificationProtocol.attachedWebSearchCall(
+                from: firstResponse,
+                format: request.plan.bodyFormat
+            ), profile.type.rawValue)
+            XCTAssertEqual(call.query, "RetroTech creator", profile.type.rawValue)
+            let continuation = try ProviderClassificationProtocol.attachedWebSearchContinuation(
+                initialRequest: request,
+                firstResponse: firstResponse,
+                call: call,
+                toolOutput: "bounded public results",
+                maximumOutputTokens: 2_048
+            )
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: continuation.body) as? [String: Any])
+            XCTAssertNotNil(body["tools"], profile.type.rawValue)
+            XCTAssertTrue(
+                String(decoding: continuation.body, as: UTF8.self).contains("bounded public results"),
+                profile.type.rawValue
+            )
+            XCTAssertEqual(
+                try ProviderTestProtocol.usage(from: firstResponse, format: request.plan.bodyFormat).outputTokens,
+                3,
+                profile.type.rawValue
+            )
+        }
+    }
+
+    func testAttachedSearchRejectsMultipleOrUnknownToolCalls() throws {
+        let multiple = Data(#"{"choices":[{"message":{"tool_calls":[{"id":"one","function":{"name":"web_search","arguments":"{\"query\":\"one\"}"}},{"id":"two","function":{"name":"web_search","arguments":"{\"query\":\"two\"}"}}]}}]}"#.utf8)
+        XCTAssertThrowsError(
+            try ProviderClassificationProtocol.attachedWebSearchCall(
+                from: multiple,
+                format: .openAIChatCompletions
+            )
+        )
+
+        let unknown = Data(#"{"choices":[{"message":{"tool_calls":[{"id":"one","function":{"name":"read_url","arguments":"{\"query\":\"example\"}"}}]}}]}"#.utf8)
+        XCTAssertThrowsError(
+            try ProviderClassificationProtocol.attachedWebSearchCall(
+                from: unknown,
+                format: .openAIChatCompletions
+            )
+        )
+
+        let custom = APIKeyProviderProfile(
+            type: .custom,
+            customEndpoint: "https://example.test/v1"
+        )
+        XCTAssertThrowsError(try ProviderClassificationProtocol.prepare(
+            profile: custom,
+            configuration: .init(
+                providerProfileID: custom.id,
+                modelIdentifier: "unknown-model",
+                webSearchMode: .attached,
+                webSearchProviderProfileID: "search"
+            ),
+            entry: .init(
+                platform: "youtube",
+                entryID: "entry",
+                surface: .page,
+                evidence: .init(title: "Creator")
+            ),
+            allowedTagIDs: ["technology"]
+        ))
     }
 
     func testRawSearchProvidersPrepareAndParseBoundedResults() throws {
@@ -527,11 +652,11 @@ final class ProviderTestProtocolTests: XCTestCase {
         XCTAssertEqual(try plan(.gemini).url.absoluteString, "https://generativelanguage.googleapis.com/v1beta/models?pageSize=256")
         XCTAssertEqual(try plan(.anthropic).url.absoluteString, "https://api.anthropic.com/v1/models?limit=256")
         XCTAssertEqual(try plan(.mistral).url.absoluteString, "https://api.mistral.ai/v1/models")
-        XCTAssertEqual(try plan(.cohere).url.absoluteString, "https://api.cohere.com/v1/models?page_size=256")
+        XCTAssertEqual(try plan(.cohere).url.absoluteString, "https://api.cohere.com/v1/models?page_size=256&endpoint=chat")
         XCTAssertEqual(try plan(.groq).url.absoluteString, "https://api.groq.com/openai/v1/models")
         XCTAssertEqual(try plan(.openRouter).url.absoluteString, "https://openrouter.ai/api/v1/models")
         XCTAssertEqual(
-            try ProviderModelCatalogProtocol.parse(Data(#"{"data":[{"id":"gpt-5"},{"id":"gpt-4.1"}]}"#.utf8), providerType: .openAI),
+            try ProviderModelCatalogProtocol.parse(Data(#"{"data":[{"id":"gpt-5"},{"id":"gpt-4.1"},{"id":"text-embedding-3-large"}]}"#.utf8), providerType: .openAI),
             ["gpt-4.1", "gpt-5"]
         )
         XCTAssertEqual(
@@ -542,6 +667,27 @@ final class ProviderTestProtocolTests: XCTestCase {
             try ProviderModelCatalogProtocol.parse(Data(#"[{"id":"mistral-small"}]"#.utf8), providerType: .mistral),
             ["mistral-small"]
         )
+        XCTAssertEqual(
+            try ProviderModelCatalogProtocol.parse(
+                Data(#"[{"id":"mistral-tools","capabilities":{"function_calling":true}},{"id":"mistral-plain","capabilities":{"function_calling":false}}]"#.utf8),
+                providerType: .mistral
+            ),
+            ["mistral-tools"]
+        )
+        XCTAssertEqual(
+            try ProviderModelCatalogProtocol.parse(
+                Data(#"{"data":[{"id":"router-tools","supported_parameters":["tools","max_tokens"]},{"id":"router-plain","supported_parameters":["max_tokens"]}]}"#.utf8),
+                providerType: .openRouter
+            ),
+            ["router-tools"]
+        )
+        XCTAssertEqual(
+            try ProviderModelCatalogProtocol.parse(
+                Data(#"{"data":[{"id":"llama-3.3-70b-versatile"},{"id":"groq/compound"}]}"#.utf8),
+                providerType: .groq
+            ),
+            ["llama-3.3-70b-versatile"]
+        )
         let custom = try plan(.custom, endpoint: "https://example.test")
         XCTAssertEqual(custom.url.absoluteString, "https://example.test/models")
         let compatible = try plan(.openAICompatible, endpoint: "https://example.test/v1")
@@ -549,6 +695,17 @@ final class ProviderTestProtocolTests: XCTestCase {
         let ollama = try plan(.ollama)
         XCTAssertEqual(ollama.url.absoluteString, "http://127.0.0.1:11434/api/tags")
         XCTAssertEqual(ollama.authentication, .none)
+        let ollamaCapability = try ProviderModelCatalogProtocol.prepareOllamaToolCapabilityProbe(
+            profile: .init(type: .ollama),
+            modelIdentifier: "qwen3"
+        )
+        XCTAssertEqual(ollamaCapability.plan.url.absoluteString, "http://127.0.0.1:11434/api/show")
+        XCTAssertTrue(ProviderModelCatalogProtocol.ollamaModelSupportsTools(
+            Data(#"{"capabilities":["completion","tools"]}"#.utf8)
+        ))
+        XCTAssertFalse(ProviderModelCatalogProtocol.ollamaModelSupportsTools(
+            Data(#"{"capabilities":["completion"]}"#.utf8)
+        ))
     }
 
     func testClassificationAllowsConfiguredGenericTagsWhenTheyAreInThePromptVocabulary() throws {

@@ -44,15 +44,18 @@ A **classifier type** owns one optional LLM Assist attachment. The attachment
 selects exactly one provider profile and one fetched model identifier, plus its
 daily output-token allowance, **per-request max-token** cap (default 4,096),
 optional **extra direction**, classification pace, batch size, returned-tag
-limit, leaf-only constraint, and optional web search. Official platform
-evidence and search are independent connection types. Search may be enabled
-for every model/platform combination. OpenAI, Gemini, and Anthropic use the
-classifier model's native hosted-search grammar. Other language models select
-one independent Serper or You.com Search profile, which is used only when
-official platform evidence is unavailable. Raw results are added to the
-in-flight classifier prompt; the classifier model still returns the tags.
-Changing the selected classifier provider/model or raw-search connection
-deactivates the attachment; it never causes background classification.
+limit, leaf-only constraint, and one explicit web-search mode: **Off**,
+**Model provider search**, or **Attached search API**. Official platform
+evidence and search are independent connection types. OpenAI, Gemini, and
+Anthropic expose their implemented hosted-search grammar in the provider mode.
+Attached mode exposes one app-defined `web_search(query)` function to a
+tool-capable standard model and binds it to one independent Serper or You.com
+Search profile. The same classifier model decides whether it is unsure, emits
+the tool call, receives the bounded results in the same conversation, and then
+returns the tags. Search is neither unconditional prefetch nor a second model.
+Changing the selected classifier provider/model, search mode, or attached
+search connection deactivates the attachment; it never causes background
+classification.
 
 The type also retains its selected provider while no model has been attached
 yet. This is only an editor choice: it cannot activate a provider, dispatch a
@@ -88,6 +91,15 @@ text model name.
   later Probe replaces it; a failed Probe leaves the previous successful list
   in place. It survives an app relaunch but is not written into the workspace
   catalog and never contains credentials, endpoints, or request/response data.
+- Probe omits models that a provider explicitly declares unsuitable for the
+  available search paths. OpenRouter requires `tools` in
+  `supported_parameters`; Mistral honors `capabilities.function_calling`;
+  Cohere requests chat models; Groq Compound systems are omitted because this
+  app does not implement their separate hosted-tool grammar; and Ollama checks
+  each installed model's `/api/show` capabilities for `tools`. Arbitrary
+  OpenAI-compatible and Custom endpoints remain usable without search but do
+  not advertise Attached search because their model list cannot prove the
+  external-tool contract.
 - A saved selected model remains visible if the process has no cached list.
   Editing provider fields does not invalidate the cached list or detach an
   affected classifier attachment.
@@ -100,19 +112,23 @@ when disabled or the daily allowance is exhausted.
 
 Each attachment persists a **classification pace** of 1–120 provider requests
 started per minute (default 6). It is enforced for both manual and activated
-classification paths, including a raw-search request followed by a classifier
-request. The app's one serial classification lane waits between request
-starts, so a lower value deliberately slows provider traffic. This is not a
-completion-rate promise: provider latency, errors, and token limits can always
-make completed classifications slower.
+classification paths, including the initial classifier turn, an attached
+search request, and the final classifier turn. The app's one serial
+classification lane waits between request starts, so a lower value deliberately
+slows provider traffic. This is not a completion-rate promise: provider
+latency, errors, and token limits can always make completed classifications
+slower.
 
 The per-request max-token cap is sent in the selected provider's native output
-limit field. The effective classifier cap is the smaller of that value and the
-remaining daily allowance. Raw-search results do not consume model output
-tokens. The request ledger records search and classification separately, but
-never their bodies. The optional extra direction is included in the
-classification prompt before the fixed JSON-only response contract; it cannot
-change the response parser, which still accepts only bounded eligible tag IDs.
+limit field. The effective cap is the smaller of that value and the remaining
+daily allowance. In Attached mode, output usage from the tool-calling turn is
+deducted before the final turn and both model turns are aggregated into the
+classification record. A missing usage field consumes the requested cap
+conservatively. Raw-search results do not consume model output tokens. The
+request ledger records search and classification separately, but never their
+bodies. The optional extra direction is included in the classification prompt
+before the fixed JSON-only response contract; it cannot change the response
+parser, which still accepts only bounded eligible tag IDs.
 
 Each tag may have an optional local description. An explicit LLM request sends
 the eligible tag ID and its description together. Tags excluded by the
@@ -143,17 +159,18 @@ entry. The model cannot choose credentials, URLs, identifiers, or API profiles.
 
 OpenAI Responses (`web_search`), Gemini GenerateContent (`google_search`
 grounding), and Anthropic Messages (`web_search_20250305`) receive their native
-search tool whenever search is enabled. The prompt tells the model to search
-only when the supplied collected and official evidence is insufficient.
+search tool only in Model provider search mode. The prompt tells the model to
+search only when the supplied collected and official evidence is insufficient.
 
-Every other language model uses the selected Serper or You.com Search profile
-only when official evidence is unavailable because there is no adapter, no
-ready matching connection, or the official request fails. One bounded query
-returns at most five titles, public URLs, and snippets. Those untrusted results
-are added only to the in-flight prompt and then discarded; the request ledger
-retains metadata but no query or result body. If this fallback is required and
-is not ready, classification stops rather than scraping or chaining into a
-second LLM.
+In Attached search API mode, one function schema is included with the unchanged
+classification prompt. The model may answer directly when evidence is enough,
+or make exactly one `web_search` call. Multiple calls, unknown tools, malformed
+arguments, or a second tool call are rejected. The model-generated query is
+sent to the selected Serper or You.com connection, which returns at most five
+titles, public URLs, and snippets. Those untrusted results exist only in the
+in-flight continuation and are then discarded. The ledger retains request
+metadata but no query or result body. If the attached connection is not ready,
+classification stops rather than scraping or chaining into a second LLM.
 
 The creator's local prompt evidence is a random sample of up to 25 observed
 titles, bounded before dispatch. It is creator evidence, never individual video
@@ -170,7 +187,7 @@ entries and the official API response.
   persistence, profile validation, and legacy-state cleanup.
 - `ProviderTestProtocolTests`: provider test/classification request grammar,
   configurable output limits, tag descriptions/extra direction, native-search
-  capability guards, raw Serper/You.com Search routing, and direct provider
-  model-list routing.
+  and same-model external-tool continuation grammars, bounded Serper/You.com
+  routing, capability filtering, and direct provider model-list routing.
 - `ProviderModelCatalogStoreTests`: restart persistence and profile-removal
   cleanup for the bounded model-identifier cache.

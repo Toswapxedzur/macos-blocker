@@ -18,14 +18,16 @@ description.
 - A reusable **LLM Assist** connection library. Provider profiles contain
   non-secret connection configuration plus a visible local credential field.
   A classifier type explicitly selects one provider/model and owns its budget,
-  request pace, tag constraints, and web-search setting. Each
+  request pace, tag constraints, and explicit web-search mode. Each
   creator LLM classification composes independent evidence layers: bounded
   matching official-platform API evidence when an adapter exists, plus
   optional web search on every platform. OpenAI, Gemini, and Anthropic can use
-  their native hosted-search tool when unsure. Other model providers can use
-  transient bounded results from an independent Serper or You.com Search
-  profile only when official platform evidence is unavailable. There is no
-  static creator-page fallback or second research model.
+  their native hosted-search tool when unsure. Standard tool-capable models can
+  instead call one app-defined `web_search` function backed by an independent
+  Serper or You.com Search profile. The app returns bounded transient results
+  to that same model conversation before requiring final label JSON. There is
+  no unconditional search prefetch, static creator-page fallback, or second
+  research model.
 - Twitch, Reddit, and Discord classification is intentionally manual-only.
   Their collected sources and human tags remain available, but Local Model and
   LLM Assist are not offered for those classifier types.

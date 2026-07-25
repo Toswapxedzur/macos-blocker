@@ -73,17 +73,7 @@ public enum ProviderTestProtocol {
             return .init(content: "Web search test completed.", usage: .init(inputTokens: nil, outputTokens: nil))
         }
         let root = json as? [String: Any] ?? [:]
-        let usage: ProviderTestUsage
-        switch format {
-        case .geminiGenerateContent, .vertexGenerateContent:
-            usage = .init(inputTokens: int(root, path: ["usageMetadata", "promptTokenCount"]), outputTokens: int(root, path: ["usageMetadata", "candidatesTokenCount"]))
-        case .anthropicMessages:
-            usage = .init(inputTokens: int(root, path: ["usage", "input_tokens"]), outputTokens: int(root, path: ["usage", "output_tokens"]))
-        case .cohereChat:
-            usage = .init(inputTokens: int(root, path: ["usage", "tokens", "input_tokens"]), outputTokens: int(root, path: ["usage", "tokens", "output_tokens"]))
-        default:
-            usage = .init(inputTokens: int(root, path: ["usage", "prompt_tokens"]) ?? int(root, path: ["usage", "input_tokens"]), outputTokens: int(root, path: ["usage", "completion_tokens"]) ?? int(root, path: ["usage", "output_tokens"]))
-        }
+        let usage = usage(from: root, format: format)
 
         let content: String
         if operation == .embedText {
@@ -100,6 +90,34 @@ public enum ProviderTestProtocol {
             content = generated
         }
         return .init(content: String(content.prefix(maximumResponseCharacters)), usage: usage)
+    }
+
+    public static func usage(
+        from data: Data,
+        format: ProviderRequestBodyFormat
+    ) throws -> ProviderTestUsage {
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ProviderTestProtocolError.invalidResponse
+        }
+        return usage(from: root, format: format)
+    }
+
+    private static func usage(
+        from root: [String: Any],
+        format: ProviderRequestBodyFormat
+    ) -> ProviderTestUsage {
+        switch format {
+        case .geminiGenerateContent, .vertexGenerateContent:
+            return .init(inputTokens: int(root, path: ["usageMetadata", "promptTokenCount"]), outputTokens: int(root, path: ["usageMetadata", "candidatesTokenCount"]))
+        case .anthropicMessages:
+            return .init(inputTokens: int(root, path: ["usage", "input_tokens"]), outputTokens: int(root, path: ["usage", "output_tokens"]))
+        case .cohereChat:
+            return .init(inputTokens: int(root, path: ["usage", "tokens", "input_tokens"]), outputTokens: int(root, path: ["usage", "tokens", "output_tokens"]))
+        case .ollamaChat:
+            return .init(inputTokens: int(root, path: ["prompt_eval_count"]), outputTokens: int(root, path: ["eval_count"]))
+        default:
+            return .init(inputTokens: int(root, path: ["usage", "prompt_tokens"]) ?? int(root, path: ["usage", "input_tokens"]), outputTokens: int(root, path: ["usage", "completion_tokens"]) ?? int(root, path: ["usage", "output_tokens"]))
+        }
     }
 
     /// Describes a response's JSON envelope without retaining any response

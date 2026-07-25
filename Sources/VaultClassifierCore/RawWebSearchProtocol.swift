@@ -95,10 +95,10 @@ public enum RawWebSearchProtocol {
         return String(evidence.prefix(maximumEvidenceCharacters))
     }
 
-    private static func prepare(
+    public static func prepare(
         profile: APIKeyProviderProfile,
         query: String,
-        resultCount: Int
+        resultCount: Int = maximumResults
     ) throws -> ProviderTestPreparedRequest {
         let cleanedQuery = normalizedText(query)
         guard profile.type.supportsRawWebSearch,
