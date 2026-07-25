@@ -23,12 +23,8 @@ public enum ProviderProtocolFamily: String, Codable, Equatable, Sendable, CaseIt
     case metaGraphV1
     case soundCloudV2
     case steamWebV1
-    case braveSearchV1
-    case tavilySearchV1
-    case serpAPIV1
-    case firecrawlV2
-    case googleCustomSearchV1
-    case bingWebSearchV7
+    case serperSearchV1
+    case youSearchV1
     case customJSONV1
 }
 
@@ -51,6 +47,8 @@ public enum ProviderRequestBodyFormat: String, Codable, Equatable, Sendable {
     case cloudflareAIRun
     case embeddingInput
     case ollamaChat
+    case serperSearch
+    case youSearch
     case queryOnly
     case customJSON
 }
@@ -158,6 +156,10 @@ public struct ProviderProtocolDescriptor: Codable, Equatable, Sendable {
 
     public var supportsLLMConfiguration: Bool {
         requestFormats.contains { $0.operation == .generateText || $0.operation == .embedText }
+    }
+
+    public var supportsRawWebSearch: Bool {
+        requestFormats.contains { $0.operation == .searchWeb }
     }
 
     public func defaultConfiguration() -> [String: String] {
@@ -357,6 +359,30 @@ public enum ProviderProtocolRegistry {
             return external(type, .tikTokDisplayV2, "https://open.tiktokapis.com/v2", "/video/query/", .readPublicContent, method: "POST", body: .customJSON)
         case .instagramGraph, .facebookGraph:
             return external(type, .metaGraphV1, "https://graph.facebook.com", "/{apiVersion}/{contentID}", .readPublicContent, configuration: [.init(.apiVersion, defaultValue: "v24.0")])
+        case .serper:
+            return external(
+                type,
+                .serperSearchV1,
+                "https://google.serper.dev",
+                "/search",
+                .searchWeb,
+                authentication: .apiKeyHeader,
+                header: "X-API-KEY",
+                method: "POST",
+                body: .serperSearch
+            )
+        case .youSearch:
+            return external(
+                type,
+                .youSearchV1,
+                "https://api.you.com",
+                "/v1/search",
+                .searchWeb,
+                authentication: .apiKeyHeader,
+                header: "X-API-Key",
+                method: "POST",
+                body: .youSearch
+            )
         case .custom:
             return model(type, .openAIChatCompletionsV1, nil, "/chat/completions", .openAIChatCompletions, override: true)
         }

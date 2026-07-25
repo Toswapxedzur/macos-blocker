@@ -41,8 +41,7 @@ public enum ProviderClassificationProtocol {
             maximumTagCount: configuration.maximumTagCount,
             extraDirection: configuration.extraDirection,
             nativeWebSearchEnabled: configuration.webSearchEnabled &&
-                profile.type.supportsProviderNativeWebSearch &&
-                configuration.webResearchProviderProfileID == nil
+                profile.type.supportsProviderNativeWebSearch
         )
         return .init(
             plan: plan,
@@ -158,7 +157,7 @@ public enum ProviderClassificationProtocol {
         switch format {
         case .openAIResponses:
             var request: [String: Any] = ["model": configuration.modelIdentifier, "input": prompt, "max_output_tokens": output]
-            if configuration.webSearchEnabled && profileSupportsNativeWebSearch(format: format, configuration: configuration) {
+            if configuration.webSearchEnabled && profileSupportsNativeWebSearch(format: format) {
                 request["tools"] = [["type": "web_search"]]
             }
             object = request
@@ -166,13 +165,13 @@ public enum ProviderClassificationProtocol {
             object = ["model": configuration.modelIdentifier, "messages": [["role": "user", "content": prompt]], "max_tokens": output]
         case .anthropicMessages:
             var request: [String: Any] = ["model": configuration.modelIdentifier, "max_tokens": output, "messages": [["role": "user", "content": prompt]]]
-            if configuration.webSearchEnabled && profileSupportsNativeWebSearch(format: format, configuration: configuration) {
+            if configuration.webSearchEnabled && profileSupportsNativeWebSearch(format: format) {
                 request["tools"] = [["type": "web_search_20250305", "name": "web_search", "max_uses": 3]]
             }
             object = request
         case .geminiGenerateContent, .vertexGenerateContent:
             var request: [String: Any] = ["contents": [["parts": [["text": prompt]]]], "generationConfig": ["maxOutputTokens": output]]
-            if configuration.webSearchEnabled && profileSupportsNativeWebSearch(format: format, configuration: configuration) {
+            if configuration.webSearchEnabled && profileSupportsNativeWebSearch(format: format) {
                 request["tools"] = [["google_search": [:]]]
             }
             object = request
@@ -187,12 +186,11 @@ public enum ProviderClassificationProtocol {
     }
 
     private static func profileSupportsNativeWebSearch(
-        format: ProviderRequestBodyFormat,
-        configuration: LLMAssistConfiguration
+        format: ProviderRequestBodyFormat
     ) -> Bool {
         switch format {
         case .openAIResponses, .anthropicMessages, .geminiGenerateContent:
-            return configuration.webResearchProviderProfileID == nil && configuration.webResearchModelIdentifier == nil
+            return true
         default:
             return false
         }

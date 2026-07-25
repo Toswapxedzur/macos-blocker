@@ -567,13 +567,12 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertThrowsError(try configuration.validate())
     }
 
-    func testWebResearchSelectionRoundTripsAsOneBoundedProviderAndModelPair() throws {
+    func testRawWebSearchSelectionRoundTripsAndLegacyResearchIsDiscarded() throws {
         let configuration = LLMAssistConfiguration(
             providerProfileID: "ollama-profile",
             modelIdentifier: "llama3.3",
             webSearchEnabled: true,
-            webResearchProviderProfileID: "openai-profile",
-            webResearchModelIdentifier: "gpt-4.1-mini"
+            webSearchProviderProfileID: "serper-profile"
         )
 
         XCTAssertNoThrow(try configuration.validate())
@@ -581,12 +580,56 @@ final class WorkspaceAssetsTests: XCTestCase {
             LLMAssistConfiguration.self,
             from: JSONEncoder().encode(configuration)
         )
-        XCTAssertEqual(restored.webResearchProviderProfileID, "openai-profile")
-        XCTAssertEqual(restored.webResearchModelIdentifier, "gpt-4.1-mini")
+        XCTAssertEqual(restored.webSearchProviderProfileID, "serper-profile")
 
-        var incomplete = configuration
-        incomplete.webResearchModelIdentifier = nil
-        XCTAssertThrowsError(try incomplete.validate())
+        let legacy = Data(#"""
+        {
+          "providerProfileID": "ollama-profile",
+          "modelIdentifier": "llama3.3",
+          "webSearchEnabled": true,
+          "webResearchProviderProfileID": "openai-profile",
+          "webResearchModelIdentifier": "gpt-4.1-mini",
+          "isActive": true
+        }
+        """#.utf8)
+        let restoredLegacy = try JSONDecoder().decode(LLMAssistConfiguration.self, from: legacy)
+        XCTAssertNil(restoredLegacy.webSearchProviderProfileID)
+        let reencoded = String(decoding: try JSONEncoder().encode(restoredLegacy), as: UTF8.self)
+        XCTAssertFalse(reencoded.contains("webResearch"))
+    }
+
+    func testReconciliationDeactivatesANonNativeClassifierWhenItsRawSearchProfileIsMissing() throws {
+        var catalog = WorkspaceCatalog.starter()
+        let tree = try XCTUnwrap(catalog.trees.first)
+        let dataset = try XCTUnwrap(catalog.datasets.first)
+        let classifierProfile = APIKeyProviderProfile(id: "deepseek-profile", type: .deepSeek)
+        let searchProfile = APIKeyProviderProfile(id: "serper-profile", type: .serper)
+        catalog.providerProfiles = [classifierProfile, searchProfile]
+        catalog.classifierTypes = [.init(
+            id: "youtube-search",
+            name: "YouTube search",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            datasetID: dataset.id,
+            datasetRevision: dataset.revision,
+            applicablePlatformID: "youtube",
+            llmAssistConfiguration: .init(
+                providerProfileID: classifierProfile.id,
+                modelIdentifier: "deepseek-chat",
+                webSearchEnabled: true,
+                webSearchProviderProfileID: searchProfile.id,
+                isActive: true
+            )
+        )]
+
+        catalog.reconcileClassifierTypes()
+        XCTAssertTrue(catalog.classifierTypes[0].llmAssistConfiguration?.isActive == true)
+
+        catalog.providerProfiles.removeAll { $0.id == searchProfile.id }
+        catalog.reconcileClassifierTypes()
+        XCTAssertNil(catalog.classifierTypes[0].llmAssistConfiguration?.webSearchProviderProfileID)
+        XCTAssertFalse(catalog.classifierTypes[0].llmAssistConfiguration?.isActive ?? true)
+        XCTAssertNoThrow(try catalog.validate())
     }
 
     func testRemovingPlatformBindingPurgesItsDataAndReconcilesDependents() throws {
@@ -926,7 +969,7 @@ final class WorkspaceAssetsTests: XCTestCase {
                 .openAI, .openAICompatible, .deepSeek, .gemini, .anthropic,
                 .mistral, .cohere, .groq, .openRouter, .ollama,
                 .youtubeData, .twitch, .reddit, .xPlatform, .tikTok,
-                .instagramGraph, .facebookGraph, .custom,
+                .instagramGraph, .facebookGraph, .serper, .youSearch, .custom,
             ]
         )
         let encoded = try JSONEncoder().encode(catalog)

@@ -231,23 +231,6 @@ final class ProviderTestProtocolTests: XCTestCase {
         XCTAssertEqual((body["tools"] as? [[String: String]])?.first?["type"], "web_search")
         XCTAssertTrue(request.prompt.contains("Use web search only when the provided evidence is insufficient"))
 
-        let openAIWithSeparateGeminiResearch = try ProviderClassificationProtocol.prepare(
-            profile: openAI,
-            configuration: .init(
-                providerProfileID: openAI.id,
-                modelIdentifier: "gpt-4.1-mini",
-                webSearchEnabled: true,
-                webResearchProviderProfileID: "gemini-research",
-                webResearchModelIdentifier: "gemini-3.1-flash-lite"
-            ),
-            entry: .init(platform: "youtube", entryID: "entry", surface: .page, evidence: .init(title: "Creator: RetroTech")),
-            allowedTagIDs: ["technology"]
-        )
-        let openAIWithSeparateResearchBody = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: openAIWithSeparateGeminiResearch.body) as? [String: Any]
-        )
-        XCTAssertNil(openAIWithSeparateResearchBody["tools"])
-
         let gemini = APIKeyProviderProfile(id: "gemini", type: .gemini)
         let geminiConfiguration = LLMAssistConfiguration(
             providerProfileID: gemini.id,
@@ -285,7 +268,7 @@ final class ProviderTestProtocolTests: XCTestCase {
         XCTAssertNil(deepSeekBody["tools"])
     }
 
-    func testSeparateWebResearchUsesOnlyADeclaredHostedSearchProvider() throws {
+    func testRawSearchProvidersPrepareAndParseBoundedResults() throws {
         let entry = EntryEvidence(
             platform: "youtube",
             entryID: "entry",
@@ -293,32 +276,68 @@ final class ProviderTestProtocolTests: XCTestCase {
             surface: .page,
             evidence: .init(title: "Creator: RetroTech", text: "Laptop restoration clips")
         )
-        let openAI = APIKeyProviderProfile(type: .openAI)
-        let openAIRequest = try ProviderWebResearchProtocol.prepare(
-            profile: openAI,
-            modelIdentifier: "gpt-4.1-mini",
-            entry: entry
+        let serper = APIKeyProviderProfile(type: .serper, credential: "serper-key")
+        let serperRequest = try RawWebSearchProtocol.prepare(profile: serper, entry: entry)
+        XCTAssertEqual(serperRequest.operation, .searchWeb)
+        XCTAssertEqual(serperRequest.plan.url.absoluteString, "https://google.serper.dev/search")
+        XCTAssertEqual(serperRequest.plan.authenticationHeader, "X-API-KEY")
+        let serperBody = try XCTUnwrap(JSONSerialization.jsonObject(with: serperRequest.body) as? [String: Any])
+        XCTAssertEqual(serperBody["num"] as? Int, RawWebSearchProtocol.maximumResults)
+        XCTAssertTrue((serperBody["q"] as? String)?.contains("RetroTech") == true)
+        let serperResults = try RawWebSearchProtocol.parseResults(
+            Data(#"{"organic":[{"title":"RetroTech channel","link":"https://example.com/creator#about","snippet":"Repairs old computers."}]}"#.utf8),
+            format: .serperSearch
         )
-        let openAIBody = try XCTUnwrap(JSONSerialization.jsonObject(with: openAIRequest.body) as? [String: Any])
-        XCTAssertEqual((openAIBody["tools"] as? [[String: String]])?.first?["type"], "web_search")
-        XCTAssertTrue(openAIRequest.prompt.contains("not individual videos"))
-        XCTAssertTrue(openAIRequest.prompt.contains("Use hosted web search only when that evidence is insufficient"))
+        XCTAssertEqual(serperResults, [
+            .init(title: "RetroTech channel", url: "https://example.com/creator", snippet: "Repairs old computers."),
+        ])
 
-        let gemini = APIKeyProviderProfile(type: .gemini)
-        let geminiRequest = try ProviderWebResearchProtocol.prepare(
-            profile: gemini,
-            modelIdentifier: "gemini-3.1-flash-lite",
-            entry: entry
+        let you = APIKeyProviderProfile(type: .youSearch, credential: "you-key")
+        let youRequest = try RawWebSearchProtocol.prepare(profile: you, entry: entry)
+        XCTAssertEqual(youRequest.operation, .searchWeb)
+        XCTAssertEqual(youRequest.plan.url.absoluteString, "https://api.you.com/v1/search")
+        XCTAssertEqual(youRequest.plan.authenticationHeader, "X-API-Key")
+        let youBody = try XCTUnwrap(JSONSerialization.jsonObject(with: youRequest.body) as? [String: Any])
+        XCTAssertEqual(youBody["count"] as? Int, RawWebSearchProtocol.maximumResults)
+        XCTAssertEqual(youBody["safesearch"] as? String, "moderate")
+        let youResults = try RawWebSearchProtocol.parseResults(
+            Data(#"{"results":{"web":[{"title":"RetroTech profile","url":"https://example.org/retro","description":"Creator profile","snippets":["Retro repair","Vintage PCs"]}],"news":[]}}"#.utf8),
+            format: .youSearch
         )
-        let geminiBody = try XCTUnwrap(JSONSerialization.jsonObject(with: geminiRequest.body) as? [String: Any])
-        XCTAssertNotNil(geminiBody["tools"])
+        XCTAssertEqual(youResults, [
+            .init(title: "RetroTech profile", url: "https://example.org/retro", snippet: "Retro repair Vintage PCs"),
+        ])
+        let evidence = try RawWebSearchProtocol.boundedEvidence(from: serperResults + youResults)
+        XCTAssertTrue(evidence.contains("untrusted evidence"))
+        XCTAssertLessThanOrEqual(evidence.count, RawWebSearchProtocol.maximumEvidenceCharacters)
 
-        XCTAssertThrowsError(try ProviderWebResearchProtocol.prepare(
+        XCTAssertThrowsError(try RawWebSearchProtocol.prepare(
             profile: .init(type: .ollama),
-            modelIdentifier: "llama3.3",
             entry: entry
         )) { error in
-            XCTAssertEqual(error as? ProviderWebResearchProtocolError, .unsupportedProvider)
+            XCTAssertEqual(error as? RawWebSearchProtocolError, .unsupportedProvider)
+        }
+    }
+
+    func testRawSearchProfilesPrepareBoundedConnectionTestsWithoutModels() throws {
+        let fixtures: [(APIKeyProviderType, Data, ProviderRequestBodyFormat)] = [
+            (.serper, Data(#"{"organic":[{"title":"Example Domain","link":"https://example.com","snippet":"Example"}]}"#.utf8), .serperSearch),
+            (.youSearch, Data(#"{"results":{"web":[{"title":"Example Domain","url":"https://example.com","description":"Example"}]}}"#.utf8), .youSearch),
+        ]
+
+        for (type, response, format) in fixtures {
+            let profile = APIKeyProviderProfile(type: type, credential: "test-key")
+            let descriptor = ProviderProtocolRegistry.descriptor(for: type)
+            XCTAssertFalse(descriptor.supportsLLMConfiguration, type.rawValue)
+            XCTAssertTrue(descriptor.supportsRawWebSearch, type.rawValue)
+            let prepared = try ProviderTestProtocol.prepare(profile: profile)
+            XCTAssertEqual(prepared.operation, .searchWeb, type.rawValue)
+            XCTAssertEqual(prepared.plan.bodyFormat, format, type.rawValue)
+            XCTAssertEqual(
+                try ProviderTestProtocol.parseResponse(response, format: format, operation: .searchWeb).content,
+                "Web search test completed.",
+                type.rawValue
+            )
         }
     }
 
