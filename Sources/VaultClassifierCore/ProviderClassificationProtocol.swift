@@ -72,6 +72,7 @@ public enum ProviderClassificationProtocol {
             operation: .generateText,
             prompt: prompt,
             body: try requestBody(
+                providerType: profile.type,
                 format: plan.bodyFormat,
                 configuration: configuration,
                 prompt: prompt,
@@ -283,13 +284,14 @@ public enum ProviderClassificationProtocol {
     }
 
     private static func requestBody(
+        providerType: APIKeyProviderType,
         format: ProviderRequestBodyFormat,
         configuration: LLMAssistConfiguration,
         prompt: String,
         maximumOutputTokens: Int
     ) throws -> Data {
         let output = min(Self.maximumOutputTokens, maximumOutputTokens)
-        let object: [String: Any]
+        var object: [String: Any]
         switch format {
         case .openAIResponses:
             var request: [String: Any] = [
@@ -342,7 +344,135 @@ public enum ProviderClassificationProtocol {
         default:
             throw ProviderClassificationProtocolError.unsupportedProvider
         }
+        applyNativeOutputConstraint(
+            to: &object,
+            providerType: providerType,
+            format: format,
+            webSearchMode: configuration.webSearchMode
+        )
         return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    }
+
+    /// Uses the strongest documented output constraint that is safe for the
+    /// selected provider grammar. Tool/search combinations that a provider
+    /// explicitly does not support remain prompt-constrained and are still
+    /// rejected by `parseLabelIDs` if their final text violates the contract.
+    private static func applyNativeOutputConstraint(
+        to body: inout [String: Any],
+        providerType: APIKeyProviderType,
+        format: ProviderRequestBodyFormat,
+        webSearchMode: LLMWebSearchMode
+    ) {
+        switch providerType {
+        case .openAI where format == .openAIResponses:
+            body["text"] = ["format": openAIResponsesLabelFormat()]
+        case .deepSeek where format == .openAIChatCompletions:
+            body["response_format"] = jsonObjectFormat()
+        case .gemini where format == .geminiGenerateContent:
+            // Gemini only combines structured output and tools on a subset of
+            // models. Probe does not expose that capability, so do not infer it
+            // from the model name or disable the user's selected search mode.
+            if webSearchMode == .off {
+                applyGeminiLabelFormat(to: &body)
+            }
+        case .anthropic where format == .anthropicMessages:
+            // Hosted web search emits citations, while Anthropic documents JSON
+            // output as incompatible with citations. Client-executed function
+            // tools do not have that conflict.
+            if webSearchMode != .providerNative {
+                body["output_config"] = [
+                    "format": [
+                        "type": "json_schema",
+                        "schema": labelResponseSchema(),
+                    ],
+                ]
+            }
+        case .mistral where format == .openAIChatCompletions:
+            body["response_format"] = chatLabelSchemaFormat(strict: nil)
+        case .cohere where format == .cohereChat:
+            // Cohere rejects response_format whenever tools are present.
+            if webSearchMode == .off {
+                body["response_format"] = [
+                    "type": "json_object",
+                    "schema": labelResponseSchema(),
+                ]
+            }
+        case .groq where format == .openAIChatCompletions:
+            // Groq's default roster supports JSON Object Mode. Its strict JSON
+            // schema mode and tool coexistence are limited to select models.
+            if webSearchMode == .off {
+                body["response_format"] = jsonObjectFormat()
+            }
+        case .openRouter where format == .openAIChatCompletions:
+            body["response_format"] = chatLabelSchemaFormat(strict: true)
+            body["provider"] = ["require_parameters": true]
+        case .ollama where format == .ollamaChat:
+            // Ollama documents both features independently but not their
+            // combination. Preserve an attached search tool when selected.
+            if webSearchMode == .off {
+                body["format"] = labelResponseSchema()
+            }
+        case .openAICompatible, .custom:
+            // These endpoints promise only the configured base request grammar.
+            // Their model-list responses cannot verify a structured-output
+            // parameter, so an extra field could break an otherwise valid API.
+            break
+        default:
+            break
+        }
+    }
+
+    private static func labelResponseSchema() -> [String: Any] {
+        [
+            "type": "object",
+            "properties": [
+                "labelIDs": [
+                    "type": "array",
+                    "description": "Eligible label IDs selected for this creator. Return an empty array when no label applies.",
+                    "items": ["type": "string"],
+                ],
+            ],
+            "required": ["labelIDs"],
+            "additionalProperties": false,
+        ]
+    }
+
+    private static func openAIResponsesLabelFormat() -> [String: Any] {
+        [
+            "type": "json_schema",
+            "name": "vault_classifier_labels",
+            "strict": true,
+            "schema": labelResponseSchema(),
+        ]
+    }
+
+    private static func chatLabelSchemaFormat(strict: Bool?) -> [String: Any] {
+        var schema: [String: Any] = [
+            "name": "vault_classifier_labels",
+            "schema": labelResponseSchema(),
+        ]
+        if let strict {
+            schema["strict"] = strict
+        }
+        return [
+            "type": "json_schema",
+            "json_schema": schema,
+        ]
+    }
+
+    private static func jsonObjectFormat() -> [String: Any] {
+        ["type": "json_object"]
+    }
+
+    private static func applyGeminiLabelFormat(to body: inout [String: Any]) {
+        var generationConfig = body["generationConfig"] as? [String: Any] ?? [:]
+        generationConfig["responseFormat"] = [
+            "text": [
+                "mimeType": "application/json",
+                "schema": labelResponseSchema(),
+            ],
+        ]
+        body["generationConfig"] = generationConfig
     }
 
     /// Extracts the one bounded client-side search request emitted by a model.
