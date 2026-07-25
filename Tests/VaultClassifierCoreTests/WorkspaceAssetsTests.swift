@@ -488,6 +488,7 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(decoded.llmAssistConfiguration?.extraDirection, "")
         XCTAssertEqual(decoded.llmAssistConfiguration?.classificationRequestsPerMinute, LLMAssistConfiguration.defaultClassificationRequestsPerMinute)
         XCTAssertEqual(decoded.llmAssistConfiguration?.batchSize, LLMAssistConfiguration.defaultBatchSize)
+        XCTAssertEqual(decoded.llmAssistConfiguration?.youtubeVideoEvidenceCount, LLMAssistConfiguration.defaultYouTubeVideoEvidenceCount)
         XCTAssertFalse(decoded.llmAssistConfiguration?.isActive ?? true)
 
         let reencoded = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
@@ -547,6 +548,7 @@ final class WorkspaceAssetsTests: XCTestCase {
                 extraDirection: "Favor recurring themes.",
                 classificationRequestsPerMinute: 12,
                 batchSize: 7,
+                youtubeVideoEvidenceCount: 18,
                 maximumTagCount: 4
             )
         )]
@@ -560,7 +562,35 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(draft.extraDirection, "Favor recurring themes.")
         XCTAssertEqual(draft.classificationRequestsPerMinute, 12)
         XCTAssertEqual(draft.batchSize, 7)
+        XCTAssertEqual(draft.youtubeVideoEvidenceCount, 18)
         XCTAssertEqual(draft.maximumTagCount, 4)
+    }
+
+    func testLegacyLLMDraftWithoutYouTubeVideoCountUsesTheSafeDefault() throws {
+        let legacy = Data(#"""
+        {
+          "providerProfileID": "gemini",
+          "dailyOutputTokenLimit": 12000,
+          "maximumOutputTokensPerRequest": 4096,
+          "extraDirection": "",
+          "classificationRequestsPerMinute": 6,
+          "batchSize": 5,
+          "maximumTagCount": 8,
+          "restrictToLeafTags": true,
+          "webSearchMode": "off"
+        }
+        """#.utf8)
+
+        let restored = try JSONDecoder().decode(
+            LLMAssistDraftConfiguration.self,
+            from: legacy
+        )
+        XCTAssertEqual(
+            restored.youtubeVideoEvidenceCount,
+            LLMAssistConfiguration.defaultYouTubeVideoEvidenceCount
+        )
+        let reencoded = String(decoding: try JSONEncoder().encode(restored), as: UTF8.self)
+        XCTAssertTrue(reencoded.contains("\"youtubeVideoEvidenceCount\":25"))
     }
 
     func testSavedLLMAttachmentSurvivesReconciliationAndEncodingWithoutAModelCatalog() throws {
@@ -585,6 +615,7 @@ final class WorkspaceAssetsTests: XCTestCase {
                 extraDirection: "Favor recurring themes.",
                 classificationRequestsPerMinute: 12,
                 batchSize: 3,
+                youtubeVideoEvidenceCount: 30,
                 maximumTagCount: 6,
                 restrictToLeafTags: false,
                 isActive: true
@@ -601,6 +632,7 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(configuration.extraDirection, "Favor recurring themes.")
         XCTAssertEqual(configuration.classificationRequestsPerMinute, 12)
         XCTAssertEqual(configuration.batchSize, 3)
+        XCTAssertEqual(configuration.youtubeVideoEvidenceCount, 30)
         XCTAssertEqual(configuration.maximumTagCount, 6)
         XCTAssertFalse(configuration.restrictToLeafTags)
         XCTAssertTrue(configuration.isActive)
@@ -633,6 +665,26 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertThrowsError(try configuration.validate())
 
         configuration.maximumOutputTokensPerRequest = LLMAssistConfiguration.maximumOutputTokensPerRequest + 1
+        XCTAssertThrowsError(try configuration.validate())
+    }
+
+    func testYouTubeVideoEvidenceCountIsPersistedAndBounded() throws {
+        var configuration = LLMAssistConfiguration(
+            providerProfileID: "provider",
+            modelIdentifier: "model",
+            youtubeVideoEvidenceCount: 50
+        )
+        XCTAssertNoThrow(try configuration.validate())
+        let restored = try JSONDecoder().decode(
+            LLMAssistConfiguration.self,
+            from: JSONEncoder().encode(configuration)
+        )
+        XCTAssertEqual(restored.youtubeVideoEvidenceCount, 50)
+
+        configuration.youtubeVideoEvidenceCount = 0
+        XCTAssertThrowsError(try configuration.validate())
+
+        configuration.youtubeVideoEvidenceCount = LLMAssistConfiguration.maximumYouTubeVideoEvidenceCount + 1
         XCTAssertThrowsError(try configuration.validate())
     }
 

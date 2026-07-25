@@ -78,7 +78,7 @@ final class VaultClassifierWebShell {
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             // A full classifier-type save carries the three decision-priority
-            // controls in addition to its model and LLM controls (17 fields
+            // controls in addition to its model and LLM controls (18 fields
             // today). Keep this small but sufficient action-specific bound;
             // the view model still validates every individual value.
             guard message.name == Self.messageHandlerName,

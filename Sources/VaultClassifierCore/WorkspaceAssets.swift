@@ -461,6 +461,11 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
     public static let maximumClassificationRequestsPerMinute = 120
     public static let defaultBatchSize = 5
     public static let maximumBatchSize = 32
+    /// YouTube returns at most 50 upload records in one list page. Keeping the
+    /// configured evidence count within that page makes one creator run
+    /// bounded and prevents a hidden pagination policy.
+    public static let defaultYouTubeVideoEvidenceCount = 25
+    public static let maximumYouTubeVideoEvidenceCount = 50
     public static let defaultMaximumTagCount = 8
 
     public var providerProfileID: String
@@ -479,6 +484,9 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
     public var classificationRequestsPerMinute: Int
     /// The number of creators an explicit batch action may classify in order.
     public var batchSize: Int
+    /// The maximum number of recent official YouTube video records added to
+    /// one creator prompt. It is ignored by other platform adapters.
+    public var youtubeVideoEvidenceCount: Int
     /// A bounded response may contain no more than this many tag IDs.
     public var maximumTagCount: Int
     /// When enabled, only active leaf tags are included in the model prompt.
@@ -502,6 +510,7 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         extraDirection: String = "",
         classificationRequestsPerMinute: Int = Self.defaultClassificationRequestsPerMinute,
         batchSize: Int = Self.defaultBatchSize,
+        youtubeVideoEvidenceCount: Int = Self.defaultYouTubeVideoEvidenceCount,
         maximumTagCount: Int = Self.defaultMaximumTagCount,
         restrictToLeafTags: Bool = true,
         webSearchMode: LLMWebSearchMode = .off,
@@ -515,6 +524,7 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         self.extraDirection = String(extraDirection.trimmingCharacters(in: .whitespacesAndNewlines).prefix(Self.maximumExtraDirectionLength))
         self.classificationRequestsPerMinute = classificationRequestsPerMinute
         self.batchSize = batchSize
+        self.youtubeVideoEvidenceCount = youtubeVideoEvidenceCount
         self.maximumTagCount = maximumTagCount
         self.restrictToLeafTags = restrictToLeafTags
         self.webSearchMode = webSearchMode
@@ -537,6 +547,8 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
               classificationRequestsPerMinute > 0,
               classificationRequestsPerMinute <= Self.maximumClassificationRequestsPerMinute,
               batchSize > 0, batchSize <= Self.maximumBatchSize,
+              youtubeVideoEvidenceCount > 0,
+              youtubeVideoEvidenceCount <= Self.maximumYouTubeVideoEvidenceCount,
               maximumTagCount > 0, maximumTagCount <= EntryEvidenceValidator.tagLimit,
               cleanedSearchProfileID.count <= 128,
               (webSearchMode == .attached) == !cleanedSearchProfileID.isEmpty else {
@@ -546,7 +558,7 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case providerProfileID, modelIdentifier, dailyOutputTokenLimit, maximumOutputTokensPerRequest, extraDirection, classificationRequestsPerMinute, batchSize,
-             maximumTagCount, restrictToLeafTags, webSearchMode, webSearchEnabled, webSearchProviderProfileID, isActive,
+             youtubeVideoEvidenceCount, maximumTagCount, restrictToLeafTags, webSearchMode, webSearchEnabled, webSearchProviderProfileID, isActive,
              webResearchProviderProfileID, webResearchModelIdentifier,
              externalToolEnabled, usePlatformAPIKeyFallback,
              maximumTokens, externalToolProfileID
@@ -569,6 +581,8 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         classificationRequestsPerMinute = try container.decodeIfPresent(Int.self, forKey: .classificationRequestsPerMinute)
             ?? Self.defaultClassificationRequestsPerMinute
         batchSize = try container.decodeIfPresent(Int.self, forKey: .batchSize) ?? Self.defaultBatchSize
+        youtubeVideoEvidenceCount = try container.decodeIfPresent(Int.self, forKey: .youtubeVideoEvidenceCount)
+            ?? Self.defaultYouTubeVideoEvidenceCount
         maximumTagCount = try container.decodeIfPresent(Int.self, forKey: .maximumTagCount)
             ?? Self.defaultMaximumTagCount
         restrictToLeafTags = try container.decodeIfPresent(Bool.self, forKey: .restrictToLeafTags) ?? true
@@ -605,6 +619,7 @@ public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
         try container.encode(extraDirection, forKey: .extraDirection)
         try container.encode(classificationRequestsPerMinute, forKey: .classificationRequestsPerMinute)
         try container.encode(batchSize, forKey: .batchSize)
+        try container.encode(youtubeVideoEvidenceCount, forKey: .youtubeVideoEvidenceCount)
         try container.encode(maximumTagCount, forKey: .maximumTagCount)
         try container.encode(restrictToLeafTags, forKey: .restrictToLeafTags)
         try container.encode(webSearchMode, forKey: .webSearchMode)
@@ -632,6 +647,7 @@ public struct LLMAssistDraftConfiguration: Codable, Equatable, Sendable {
     public var extraDirection: String
     public var classificationRequestsPerMinute: Int
     public var batchSize: Int
+    public var youtubeVideoEvidenceCount: Int
     public var maximumTagCount: Int
     public var restrictToLeafTags: Bool
     public var webSearchMode: LLMWebSearchMode
@@ -644,6 +660,7 @@ public struct LLMAssistDraftConfiguration: Codable, Equatable, Sendable {
         extraDirection: String = "",
         classificationRequestsPerMinute: Int = LLMAssistConfiguration.defaultClassificationRequestsPerMinute,
         batchSize: Int = LLMAssistConfiguration.defaultBatchSize,
+        youtubeVideoEvidenceCount: Int = LLMAssistConfiguration.defaultYouTubeVideoEvidenceCount,
         maximumTagCount: Int = LLMAssistConfiguration.defaultMaximumTagCount,
         restrictToLeafTags: Bool = true,
         webSearchMode: LLMWebSearchMode = .off,
@@ -655,6 +672,7 @@ public struct LLMAssistDraftConfiguration: Codable, Equatable, Sendable {
         self.extraDirection = String(extraDirection.trimmingCharacters(in: .whitespacesAndNewlines).prefix(LLMAssistConfiguration.maximumExtraDirectionLength))
         self.classificationRequestsPerMinute = classificationRequestsPerMinute
         self.batchSize = batchSize
+        self.youtubeVideoEvidenceCount = youtubeVideoEvidenceCount
         self.maximumTagCount = maximumTagCount
         self.restrictToLeafTags = restrictToLeafTags
         self.webSearchMode = webSearchMode
@@ -668,6 +686,51 @@ public struct LLMAssistDraftConfiguration: Codable, Equatable, Sendable {
         try configuration(modelIdentifier: "draft-model").validate()
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case providerProfileID, dailyOutputTokenLimit, maximumOutputTokensPerRequest,
+             extraDirection, classificationRequestsPerMinute, batchSize,
+             youtubeVideoEvidenceCount, maximumTagCount, restrictToLeafTags,
+             webSearchMode, webSearchProviderProfileID
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            providerProfileID: try container.decode(String.self, forKey: .providerProfileID),
+            dailyOutputTokenLimit: try container.decodeIfPresent(Int.self, forKey: .dailyOutputTokenLimit)
+                ?? LLMAssistConfiguration.defaultDailyOutputTokenLimit,
+            maximumOutputTokensPerRequest: try container.decodeIfPresent(Int.self, forKey: .maximumOutputTokensPerRequest)
+                ?? LLMAssistConfiguration.defaultMaximumOutputTokensPerRequest,
+            extraDirection: try container.decodeIfPresent(String.self, forKey: .extraDirection) ?? "",
+            classificationRequestsPerMinute: try container.decodeIfPresent(Int.self, forKey: .classificationRequestsPerMinute)
+                ?? LLMAssistConfiguration.defaultClassificationRequestsPerMinute,
+            batchSize: try container.decodeIfPresent(Int.self, forKey: .batchSize)
+                ?? LLMAssistConfiguration.defaultBatchSize,
+            youtubeVideoEvidenceCount: try container.decodeIfPresent(Int.self, forKey: .youtubeVideoEvidenceCount)
+                ?? LLMAssistConfiguration.defaultYouTubeVideoEvidenceCount,
+            maximumTagCount: try container.decodeIfPresent(Int.self, forKey: .maximumTagCount)
+                ?? LLMAssistConfiguration.defaultMaximumTagCount,
+            restrictToLeafTags: try container.decodeIfPresent(Bool.self, forKey: .restrictToLeafTags) ?? true,
+            webSearchMode: try container.decodeIfPresent(LLMWebSearchMode.self, forKey: .webSearchMode) ?? .off,
+            webSearchProviderProfileID: try container.decodeIfPresent(String.self, forKey: .webSearchProviderProfileID)
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(providerProfileID, forKey: .providerProfileID)
+        try container.encode(dailyOutputTokenLimit, forKey: .dailyOutputTokenLimit)
+        try container.encode(maximumOutputTokensPerRequest, forKey: .maximumOutputTokensPerRequest)
+        try container.encode(extraDirection, forKey: .extraDirection)
+        try container.encode(classificationRequestsPerMinute, forKey: .classificationRequestsPerMinute)
+        try container.encode(batchSize, forKey: .batchSize)
+        try container.encode(youtubeVideoEvidenceCount, forKey: .youtubeVideoEvidenceCount)
+        try container.encode(maximumTagCount, forKey: .maximumTagCount)
+        try container.encode(restrictToLeafTags, forKey: .restrictToLeafTags)
+        try container.encode(webSearchMode, forKey: .webSearchMode)
+        try container.encodeIfPresent(webSearchProviderProfileID, forKey: .webSearchProviderProfileID)
+    }
+
     public func configuration(modelIdentifier: String, isActive: Bool = false) -> LLMAssistConfiguration {
         .init(
             providerProfileID: providerProfileID,
@@ -677,6 +740,7 @@ public struct LLMAssistDraftConfiguration: Codable, Equatable, Sendable {
             extraDirection: extraDirection,
             classificationRequestsPerMinute: classificationRequestsPerMinute,
             batchSize: batchSize,
+            youtubeVideoEvidenceCount: youtubeVideoEvidenceCount,
             maximumTagCount: maximumTagCount,
             restrictToLeafTags: restrictToLeafTags,
             webSearchMode: webSearchMode,
