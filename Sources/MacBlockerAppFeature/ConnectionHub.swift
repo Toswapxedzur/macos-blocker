@@ -75,7 +75,7 @@ final class ConnectionHub: ObservableObject {
         guard let requestID = obj["requestID"] as? String,
               isVisibleBridgeIdentifier(requestID, maximumLength: 128),
               let operation = obj["operation"] as? String,
-              ["bridge-info", "collection-info", "diagnostic", "collect", "classify", "correct"].contains(operation),
+              ["bridge-info", "collection-info", "diagnostic", "collect", "source-tags", "classify", "correct"].contains(operation),
               let body = obj["body"] as? [String: Any],
               JSONSerialization.isValidJSONObject(body),
               let bodyData = try? JSONSerialization.data(withJSONObject: body),
@@ -91,7 +91,7 @@ final class ConnectionHub: ObservableObject {
               let requestID = obj["requestID"] as? String,
               isVisibleBridgeIdentifier(requestID, maximumLength: 128),
               let operation = obj["operation"] as? String,
-              ["bridge-info", "collection-info", "diagnostic", "collect", "classify", "correct"].contains(operation) else {
+              ["bridge-info", "collection-info", "diagnostic", "collect", "source-tags", "classify", "correct"].contains(operation) else {
             return "invalid-classifier-response"
         }
         if let body = obj["body"] as? [String: Any],
