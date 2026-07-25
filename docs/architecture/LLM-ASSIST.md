@@ -64,8 +64,11 @@ explains the missing requirement when neither is ready. This is an availability
 gate, not a rule that the model must search.
 
 The type also retains its selected provider while no model has been attached
-yet. This is only an editor choice: it cannot activate a provider, dispatch a
-request, or change an existing provider/model attachment.
+yet. Its complete non-executable form is saved as a per-provider draft, so a
+rerender or relaunch cannot discard the token limit, pace, prompt direction,
+tag limit, or search choices made before the fetched model is selected. A
+draft cannot activate a provider, dispatch a request, or change an existing
+provider/model attachment.
 
 ## Credential and state boundary
 
@@ -114,7 +117,11 @@ An explicit **Test request** uses a bounded provider-specific health/test
 request. It does not send collected browser content. Provider classification
 is opt-in: an inactive attachment may be run manually, while activation
 processes only eligible creators sequentially and stops before the next request
-when disabled or the daily allowance is exhausted.
+when disabled or the daily allowance is exhausted. A running batch captures
+the attachment and provider profile it started with; if either is saved with a
+change, the batch stops before its next provider request and asks the user to
+start a new batch. It never quietly mixes an old request with newly saved
+settings.
 
 Each attachment persists a **classification pace** of 1–120 provider requests
 started per minute (default 6). It is enforced for both manual and activated
@@ -127,14 +134,18 @@ slower.
 
 The per-request max-token cap is sent in the selected provider's native output
 limit field. The effective cap is the smaller of that value and the remaining
-daily allowance. In Attached mode, output usage from the tool-calling turn is
-deducted before the final turn and both model turns are aggregated into the
-classification record. A missing usage field consumes the requested cap
-conservatively. Raw-search results do not consume model output tokens. The
-request ledger records search and classification separately, but never their
-bodies. The optional extra direction is included in the classification prompt
-before the fixed JSON-only response contract; it cannot change the response
-parser, which still accepts only bounded eligible tag IDs.
+daily allowance. In Attached mode, the successful tool-calling turn is written
+to the token ledger before raw search or the final continuation begins, so its
+usage remains charged even if either later step fails. The final model turn is
+recorded separately; both records count toward the daily budget. A missing
+usage field consumes the requested cap conservatively. Raw-search results do
+not consume model output tokens. The request ledger never retains request or
+response bodies. The optional extra direction is included in the classification
+prompt before the fixed label response contract. The parser accepts either
+the exact label JSON object or one complete `json`/plain Markdown fence around
+that object, never JSON embedded in explanatory prose. An empty `labelIDs`
+array is a valid explicit LLM no-tag decision, distinct from a human decision
+that has not selected a tag.
 
 Each tag may have an optional local description. An explicit LLM request sends
 the eligible tag ID and its description together. Tags excluded by the
