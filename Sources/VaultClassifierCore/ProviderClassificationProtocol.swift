@@ -69,7 +69,7 @@ public enum ProviderClassificationProtocol {
         allowedTagIDs: Set<String>,
         maximumTagCount: Int = EntryEvidenceValidator.tagLimit
     ) throws -> [String] {
-        guard let data = content.data(using: .utf8),
+        guard let data = responseJSONData(content),
               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               Set(object.keys) == Set(["labelIDs"]),
               let rawLabels = object["labelIDs"] as? [Any],
@@ -88,6 +88,27 @@ public enum ProviderClassificationProtocol {
             return labelID
         }
         return labelIDs.sorted()
+    }
+
+    /// Models commonly place an otherwise valid JSON answer in one Markdown
+    /// `json` fence. Accept only that complete wrapper; never search prose for
+    /// a JSON-looking substring that could turn an explanation into a label.
+    private static func responseJSONData(_ content: String) -> Data? {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized: String
+        if trimmed.hasPrefix("```") {
+            let lines = trimmed.components(separatedBy: .newlines)
+            guard lines.count >= 3,
+                  ["```", "```json"].contains(lines[0].trimmingCharacters(in: .whitespaces).lowercased()),
+                  lines.last?.trimmingCharacters(in: .whitespaces) == "```" else {
+                return nil
+            }
+            normalized = lines.dropFirst().dropLast().joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            normalized = trimmed
+        }
+        return normalized.data(using: .utf8)
     }
 
     public static func result(

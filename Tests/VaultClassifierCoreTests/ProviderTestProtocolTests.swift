@@ -724,6 +724,27 @@ final class ProviderTestProtocolTests: XCTestCase {
         XCTAssertEqual(labels, ["gaming"])
     }
 
+    func testClassificationAcceptsOneCompleteJSONFenceAndAnExplicitNoTagAnswer() throws {
+        XCTAssertEqual(
+            try ProviderClassificationProtocol.parseLabelIDs(
+                "```json\n{\"labelIDs\":[\"gaming\"]}\n```",
+                allowedTagIDs: ["gaming"]
+            ),
+            ["gaming"]
+        )
+        XCTAssertEqual(
+            try ProviderClassificationProtocol.parseLabelIDs(
+                "```\n{\"labelIDs\":[]}\n```",
+                allowedTagIDs: ["gaming"]
+            ),
+            []
+        )
+        XCTAssertThrowsError(try ProviderClassificationProtocol.parseLabelIDs(
+            "Here is the result:\n```json\n{\"labelIDs\":[\"gaming\"]}\n```",
+            allowedTagIDs: ["gaming"]
+        ))
+    }
+
     private func platformProfile(_ type: APIKeyProviderType) -> APIKeyProviderProfile {
         let configuration: [String: String]? = type == .twitch
             ? [ProviderConfigurationField.clientID.rawValue: "client-id"]

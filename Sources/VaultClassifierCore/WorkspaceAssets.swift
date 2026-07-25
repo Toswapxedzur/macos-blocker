@@ -621,6 +621,71 @@ public enum LLMAssistConfigurationError: Error, Equatable, LocalizedError, Senda
     }
 }
 
+/// Durable form state for a selected provider before it has one fetched model
+/// attached. Keeping this separate from `LLMAssistConfiguration` means a
+/// rerender or relaunch cannot discard edits simply because model selection is
+/// the last step of configuration.
+public struct LLMAssistDraftConfiguration: Codable, Equatable, Sendable {
+    public var providerProfileID: String
+    public var dailyOutputTokenLimit: Int
+    public var maximumOutputTokensPerRequest: Int
+    public var extraDirection: String
+    public var classificationRequestsPerMinute: Int
+    public var batchSize: Int
+    public var maximumTagCount: Int
+    public var restrictToLeafTags: Bool
+    public var webSearchMode: LLMWebSearchMode
+    public var webSearchProviderProfileID: String?
+
+    public init(
+        providerProfileID: String,
+        dailyOutputTokenLimit: Int = LLMAssistConfiguration.defaultDailyOutputTokenLimit,
+        maximumOutputTokensPerRequest: Int = LLMAssistConfiguration.defaultMaximumOutputTokensPerRequest,
+        extraDirection: String = "",
+        classificationRequestsPerMinute: Int = LLMAssistConfiguration.defaultClassificationRequestsPerMinute,
+        batchSize: Int = LLMAssistConfiguration.defaultBatchSize,
+        maximumTagCount: Int = LLMAssistConfiguration.defaultMaximumTagCount,
+        restrictToLeafTags: Bool = true,
+        webSearchMode: LLMWebSearchMode = .off,
+        webSearchProviderProfileID: String? = nil
+    ) {
+        self.providerProfileID = providerProfileID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.dailyOutputTokenLimit = dailyOutputTokenLimit
+        self.maximumOutputTokensPerRequest = maximumOutputTokensPerRequest
+        self.extraDirection = String(extraDirection.trimmingCharacters(in: .whitespacesAndNewlines).prefix(LLMAssistConfiguration.maximumExtraDirectionLength))
+        self.classificationRequestsPerMinute = classificationRequestsPerMinute
+        self.batchSize = batchSize
+        self.maximumTagCount = maximumTagCount
+        self.restrictToLeafTags = restrictToLeafTags
+        self.webSearchMode = webSearchMode
+        let cleanedSearchProfileID = webSearchProviderProfileID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.webSearchProviderProfileID = webSearchMode == .attached && !cleanedSearchProfileID.isEmpty
+            ? cleanedSearchProfileID
+            : nil
+    }
+
+    public func validate() throws {
+        try configuration(modelIdentifier: "draft-model").validate()
+    }
+
+    public func configuration(modelIdentifier: String, isActive: Bool = false) -> LLMAssistConfiguration {
+        .init(
+            providerProfileID: providerProfileID,
+            modelIdentifier: modelIdentifier,
+            dailyOutputTokenLimit: dailyOutputTokenLimit,
+            maximumOutputTokensPerRequest: maximumOutputTokensPerRequest,
+            extraDirection: extraDirection,
+            classificationRequestsPerMinute: classificationRequestsPerMinute,
+            batchSize: batchSize,
+            maximumTagCount: maximumTagCount,
+            restrictToLeafTags: restrictToLeafTags,
+            webSearchMode: webSearchMode,
+            webSearchProviderProfileID: webSearchProviderProfileID,
+            isActive: isActive
+        )
+    }
+}
+
 /// A reusable decision brain. It deliberately binds immutable revisions of a
 /// tree and data asset, so a model trained against an older revision cannot be
 /// selected silently after an edit.
@@ -643,6 +708,9 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     /// pre-attachment choice, so a user can Probe and choose a provider before
     /// selecting a model. It cannot authorize or activate provider work.
     public var selectedLLMProviderProfileID: String?
+    /// Edits made before a fetched model is chosen. This is not executable
+    /// configuration and cannot activate or dispatch LLM work.
+    public var llmAssistDraftConfiguration: LLMAssistDraftConfiguration?
     /// One configured model may be attached for explicit runs. Its credential
     /// connection stays separate from this classification policy.
     public var llmAssistConfiguration: LLMAssistConfiguration?
@@ -661,6 +729,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         applicablePlatformID: String? = nil,
         localModelID: String? = nil,
         selectedLLMProviderProfileID: String? = nil,
+        llmAssistDraftConfiguration: LLMAssistDraftConfiguration? = nil,
         llmAssistConfiguration: LLMAssistConfiguration? = nil,
         decisionPriority: [ClassifierDecisionSource] = [.human, .llmAssist, .localModel],
         updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
@@ -678,6 +747,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         self.selectedLLMProviderProfileID = cleanedLLMProviderID.isEmpty
             ? llmAssistConfiguration?.providerProfileID
             : cleanedLLMProviderID
+        self.llmAssistDraftConfiguration = llmAssistDraftConfiguration
         self.llmAssistConfiguration = llmAssistConfiguration
         self.decisionPriority = decisionPriority
         self.updatedAtMilliseconds = updatedAtMilliseconds
@@ -686,7 +756,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case id, name, treeID, treeRevision, datasetID, datasetRevision, applicablePlatformID, dataSourcePlatformIDs, localModelID,
              selectedLLMProviderProfileID,
-             llmAssistConfiguration, llmProfileIDs, decisionPriority, updatedAtMilliseconds
+             llmAssistDraftConfiguration, llmAssistConfiguration, llmProfileIDs, decisionPriority, updatedAtMilliseconds
     }
 
     public init(from decoder: Decoder) throws {
@@ -718,6 +788,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         selectedLLMProviderProfileID = decodedSelectedLLMProviderID.isEmpty
             ? llmAssistConfiguration?.providerProfileID
             : decodedSelectedLLMProviderID
+        llmAssistDraftConfiguration = try container.decodeIfPresent(LLMAssistDraftConfiguration.self, forKey: .llmAssistDraftConfiguration)
         decisionPriority = try container.decodeIfPresent([ClassifierDecisionSource].self, forKey: .decisionPriority)
             ?? [.human, .llmAssist, .localModel]
         updatedAtMilliseconds = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMilliseconds)
@@ -735,6 +806,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         try container.encodeIfPresent(applicablePlatformID, forKey: .applicablePlatformID)
         try container.encodeIfPresent(localModelID, forKey: .localModelID)
         try container.encodeIfPresent(selectedLLMProviderProfileID, forKey: .selectedLLMProviderProfileID)
+        try container.encodeIfPresent(llmAssistDraftConfiguration, forKey: .llmAssistDraftConfiguration)
         try container.encodeIfPresent(llmAssistConfiguration, forKey: .llmAssistConfiguration)
         try container.encode(decisionPriority, forKey: .decisionPriority)
         try container.encode(updatedAtMilliseconds, forKey: .updatedAtMilliseconds)
@@ -1496,7 +1568,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                       !classification.treeID.isEmpty,
                       classification.treeRevision > 0,
                       CollectionPlatformRegistry.definition(for: classification.platformID) != nil,
-                      !classification.tagIDs.isEmpty || !classification.negativeTagIDs.isEmpty,
+                      (!classification.tagIDs.isEmpty || !classification.negativeTagIDs.isEmpty || classification.origin == .llmAssist),
                       classification.tagIDs.count + classification.negativeTagIDs.count <= CreatorClassificationRecord.maximumTagIDs,
                       Set(classification.tagIDs).count == classification.tagIDs.count,
                       Set(classification.negativeTagIDs).count == classification.negativeTagIDs.count,
@@ -1544,6 +1616,31 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                     guard providerProfiles.contains(where: {
                         $0.id == searchProfileID && $0.type.supportsRawWebSearch
                     }) else {
+                        throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
+                    }
+                }
+            }
+            if let draft = classifierType.llmAssistDraftConfiguration {
+                do {
+                    try draft.validate()
+                } catch {
+                    throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
+                }
+                guard let classifierProfile = providerProfiles.first(where: {
+                    $0.id == draft.providerProfileID && $0.type.supportsLLMConfiguration
+                }) else {
+                    throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
+                }
+                if draft.webSearchMode == .providerNative,
+                   !classifierProfile.type.supportsProviderNativeWebSearch {
+                    throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
+                }
+                if draft.webSearchMode == .attached {
+                    guard classifierProfile.type.supportsAttachedWebSearchTool,
+                          let searchProfileID = draft.webSearchProviderProfileID,
+                          providerProfiles.contains(where: {
+                              $0.id == searchProfileID && $0.type.supportsRawWebSearch
+                          }) else {
                         throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
                     }
                 }
@@ -1794,6 +1891,31 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                 reconciled.llmAssistConfiguration = retainedLLMAssist
             } else {
                 reconciled.llmAssistConfiguration = nil
+            }
+            if let draft = reconciled.llmAssistDraftConfiguration,
+               supportsLLMAssist,
+               providerProfiles.contains(where: { $0.id == draft.providerProfileID && $0.type.supportsLLMConfiguration }),
+               (try? draft.validate()) != nil {
+                var retainedDraft = draft
+                let classifierProfile = providerProfiles.first(where: {
+                    $0.id == retainedDraft.providerProfileID && $0.type.supportsLLMConfiguration
+                })
+                let nativeModeInvalid = retainedDraft.webSearchMode == .providerNative &&
+                    classifierProfile?.type.supportsProviderNativeWebSearch != true
+                let attachedModeInvalid = retainedDraft.webSearchMode == .attached && (
+                    classifierProfile?.type.supportsAttachedWebSearchTool != true ||
+                    retainedDraft.webSearchProviderProfileID == nil ||
+                    !providerProfiles.contains(where: {
+                        $0.id == retainedDraft.webSearchProviderProfileID && $0.type.supportsRawWebSearch
+                    })
+                )
+                if nativeModeInvalid || attachedModeInvalid {
+                    retainedDraft.webSearchMode = .off
+                    retainedDraft.webSearchProviderProfileID = nil
+                }
+                reconciled.llmAssistDraftConfiguration = retainedDraft
+            } else {
+                reconciled.llmAssistDraftConfiguration = nil
             }
             if let selectedProviderID = reconciled.selectedLLMProviderProfileID,
                supportsLLMAssist,

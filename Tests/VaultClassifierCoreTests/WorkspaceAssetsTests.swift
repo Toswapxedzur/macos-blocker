@@ -169,6 +169,37 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(record.platformID, "youtube")
     }
 
+    func testExplicitLLMNoTagDecisionIsDurableButManualNoTagIsRejected() throws {
+        let llmDecision = CreatorClassificationRecord(
+            classifierTypeID: "type",
+            creatorID: "creator",
+            creatorName: "Creator",
+            platformID: "youtube",
+            treeID: "tree",
+            treeRevision: 1,
+            tagIDs: [],
+            origin: .llmAssist,
+            review: .approved
+        )
+        var catalog = WorkspaceCatalog.starter()
+        catalog.datasets[0].creatorClassifications = [llmDecision]
+        XCTAssertNoThrow(try catalog.validate())
+
+        let manualDecision = CreatorClassificationRecord(
+            classifierTypeID: "type",
+            creatorID: "creator",
+            creatorName: "Creator",
+            platformID: "youtube",
+            treeID: "tree",
+            treeRevision: 1,
+            tagIDs: [],
+            origin: .manual,
+            review: .approved
+        )
+        catalog.datasets[0].creatorClassifications = [manualDecision]
+        XCTAssertThrowsError(try catalog.validate())
+    }
+
     func testRemovingCreatorClassificationTargetsOnlyThatCreatorAndType() {
         let retained = CreatorClassificationRecord(
             classifierTypeID: "other-type",
@@ -492,6 +523,44 @@ final class WorkspaceAssetsTests: XCTestCase {
         catalog.providerProfiles = []
         catalog.reconcileClassifierTypes()
         XCTAssertNil(catalog.classifierTypes[0].selectedLLMProviderProfileID)
+    }
+
+    func testLLMDraftPersistsBeforeAModelIsAttached() throws {
+        var catalog = WorkspaceCatalog.starter()
+        let tree = try XCTUnwrap(catalog.trees.first)
+        let dataset = try XCTUnwrap(catalog.datasets.first)
+        let provider = APIKeyProviderProfile(id: "gemini", type: .gemini)
+        catalog.providerProfiles = [provider]
+        catalog.classifierTypes = [.init(
+            id: "draft-type",
+            name: "Draft type",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            datasetID: dataset.id,
+            datasetRevision: dataset.revision,
+            applicablePlatformID: "youtube",
+            selectedLLMProviderProfileID: provider.id,
+            llmAssistDraftConfiguration: .init(
+                providerProfileID: provider.id,
+                dailyOutputTokenLimit: 12_000,
+                maximumOutputTokensPerRequest: 8_192,
+                extraDirection: "Favor recurring themes.",
+                classificationRequestsPerMinute: 12,
+                batchSize: 7,
+                maximumTagCount: 4
+            )
+        )]
+
+        XCTAssertNoThrow(try catalog.validate())
+        let reloaded = try JSONDecoder().decode(WorkspaceCatalog.self, from: JSONEncoder().encode(catalog))
+        let draft = try XCTUnwrap(reloaded.classifierTypes.first?.llmAssistDraftConfiguration)
+        XCTAssertEqual(draft.providerProfileID, provider.id)
+        XCTAssertEqual(draft.dailyOutputTokenLimit, 12_000)
+        XCTAssertEqual(draft.maximumOutputTokensPerRequest, 8_192)
+        XCTAssertEqual(draft.extraDirection, "Favor recurring themes.")
+        XCTAssertEqual(draft.classificationRequestsPerMinute, 12)
+        XCTAssertEqual(draft.batchSize, 7)
+        XCTAssertEqual(draft.maximumTagCount, 4)
     }
 
     func testSavedLLMAttachmentSurvivesReconciliationAndEncodingWithoutAModelCatalog() throws {
