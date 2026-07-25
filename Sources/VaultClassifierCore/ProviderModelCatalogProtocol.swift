@@ -1,5 +1,25 @@
 import Foundation
 
+public struct ProviderModelCatalogEntry: Codable, Equatable, Sendable, Identifiable {
+    public var identifier: String
+    /// Nil means the provider's model-list response does not expose a
+    /// model-specific answer. False is an explicit incompatibility.
+    public var supportsTools: Bool?
+    public var supportsNativeWebSearch: Bool?
+
+    public var id: String { identifier }
+
+    public init(
+        identifier: String,
+        supportsTools: Bool? = nil,
+        supportsNativeWebSearch: Bool? = nil
+    ) {
+        self.identifier = identifier
+        self.supportsTools = supportsTools
+        self.supportsNativeWebSearch = supportsNativeWebSearch
+    }
+}
+
 /// Prepares one explicit model-list request against the selected LLM provider.
 /// The request plan carries no credential value; the app applies the saved
 /// local credential immediately before sending it to that provider.
@@ -34,7 +54,7 @@ public enum ProviderModelCatalogProtocol {
         )
     }
 
-    public static func parse(_ data: Data, providerType: APIKeyProviderType) throws -> [String] {
+    public static func parse(_ data: Data, providerType: APIKeyProviderType) throws -> [ProviderModelCatalogEntry] {
         guard data.count <= maximumResponseBytes else {
             throw ProviderModelCatalogProtocolError.invalidResponse
         }
@@ -59,21 +79,15 @@ public enum ProviderModelCatalogProtocol {
             throw ProviderModelCatalogProtocolError.invalidResponse
         }
         var seen = Set<String>()
-        let models = candidates.compactMap { candidate -> String? in
+        let models = candidates.compactMap { candidate -> ProviderModelCatalogEntry? in
             if providerType == .gemini,
                let methods = candidate["supportedGenerationMethods"] as? [String],
                !methods.contains("generateContent") {
                 return nil
             }
-            if providerType == .openRouter {
-                guard let parameters = candidate["supported_parameters"] as? [String],
-                      parameters.contains("tools") else {
-                    return nil
-                }
-            }
             if providerType == .mistral,
                let capabilities = candidate["capabilities"] as? [String: Any],
-               capabilities["function_calling"] as? Bool != true {
+               capabilities["completion_chat"] as? Bool == false {
                 return nil
             }
             if providerType == .cohere,
@@ -88,47 +102,29 @@ public enum ProviderModelCatalogProtocol {
             if providerType == .gemini, identifier.hasPrefix("models/") {
                 identifier.removeFirst("models/".count)
             }
-            if isKnownUnsupportedSearchModel(identifier, providerType: providerType) {
-                return nil
-            }
-            if providerType == .groq,
-               (identifier == "groq/compound" || identifier == "groq/compound-mini") {
-                // These systems use Groq-hosted tools but reject local
-                // function calls; this integration does not expose Groq's
-                // separate compound tool grammar.
-                return nil
-            }
             guard !identifier.isEmpty,
                   identifier.count <= LLMAssistConfiguration.maximumModelIdentifierLength,
                   seen.insert(identifier).inserted else {
                 return nil
             }
-            return identifier
+            let supportsTools: Bool?
+            switch providerType {
+            case .openRouter:
+                supportsTools = (candidate["supported_parameters"] as? [String])?.contains("tools")
+            case .mistral:
+                supportsTools = (candidate["capabilities"] as? [String: Any])?["function_calling"] as? Bool
+            default:
+                supportsTools = providerType.supportsAttachedWebSearchTool ? nil : false
+            }
+            let supportsNativeWebSearch = providerType.supportsProviderNativeWebSearch ? nil : false
+            return .init(
+                identifier: identifier,
+                supportsTools: supportsTools,
+                supportsNativeWebSearch: supportsNativeWebSearch
+            )
         }
         guard !models.isEmpty else { throw ProviderModelCatalogProtocolError.noModels }
-        return Array(models.prefix(maximumModels)).sorted()
-    }
-
-    private static func isKnownUnsupportedSearchModel(
-        _ identifier: String,
-        providerType: APIKeyProviderType
-    ) -> Bool {
-        let value = identifier.lowercased()
-        switch providerType {
-        case .openAI:
-            return [
-                "embedding", "moderation", "whisper", "tts", "dall-e",
-                "gpt-image", "sora", "transcribe", "realtime", "audio",
-            ].contains(where: value.contains)
-        case .gemini:
-            guard value.hasPrefix("gemini-") else { return true }
-            return [
-                "embedding", "imagen", "veo", "tts", "live",
-                "native-audio",
-            ].contains(where: value.contains)
-        default:
-            return false
-        }
+        return Array(models.prefix(maximumModels)).sorted { $0.identifier < $1.identifier }
     }
 
     public static func prepareOllamaToolCapabilityProbe(
@@ -164,10 +160,10 @@ public enum ProviderModelCatalogProtocol {
         return .init(plan: plan, operation: .generateText, prompt: "", body: body)
     }
 
-    public static func ollamaModelSupportsTools(_ data: Data) -> Bool {
+    public static func ollamaModelSupportsTools(_ data: Data) -> Bool? {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let capabilities = root["capabilities"] as? [String] else {
-            return false
+            return nil
         }
         return capabilities.contains("tools")
     }
@@ -242,7 +238,7 @@ public enum ProviderModelCatalogProtocolError: Error, Equatable, LocalizedError,
         case .unsupportedProvider: return "This connection cannot list models."
         case .invalidConfiguration: return "The provider connection cannot build a model-list request."
         case .invalidResponse: return "The provider returned an unreadable or oversized model list."
-        case .noModels: return "The provider returned no usable models with web search or external tool support."
+        case .noModels: return "The provider returned no usable model identifiers."
         }
     }
 }

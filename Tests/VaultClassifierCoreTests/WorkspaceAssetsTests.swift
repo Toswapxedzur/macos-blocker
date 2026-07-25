@@ -4,6 +4,28 @@ import XCTest
 final class WorkspaceAssetsTests: XCTestCase {
     private func seed() throws -> VerifiedSeedPackage { try SeedPackageLoader.bundled() }
 
+    private func catalogWithYouTubeAssets() -> WorkspaceCatalog {
+        var catalog = WorkspaceCatalog.starter()
+        let tree = catalog.trees[0]
+        let dataset = catalog.datasets[0]
+        catalog.bindings = [
+            .init(id: "youtube", name: "YouTube", treeID: tree.id, datasetID: dataset.id)
+        ]
+        catalog.models = [
+            .init(
+                id: "local-neural-model",
+                name: "Local neural model",
+                treeID: tree.id,
+                treeRevision: tree.revision,
+                datasetID: dataset.id,
+                datasetRevision: dataset.revision,
+                trainingPlatformID: "youtube",
+                trainingPlatformIDs: ["youtube"]
+            )
+        ]
+        return catalog
+    }
+
     func testCollectionRegistryProvidesDedicatedCollectionAndSourceKindsForEveryPlatform() {
         XCTAssertEqual(Set(CollectionPlatformRegistry.definitions.map(\.id)), Set([
             "youtube", "tiktok", "facebook", "instagram", "twitter", "bilibili",
@@ -35,7 +57,7 @@ final class WorkspaceAssetsTests: XCTestCase {
     }
 
     func testManualOnlyPlatformRejectsModelAndLLMAssistButKeepsHumanClassification() throws {
-        var catalog = WorkspaceCatalog.starter()
+        var catalog = catalogWithYouTubeAssets()
         let tree = try XCTUnwrap(catalog.trees.first)
         let dataset = try XCTUnwrap(catalog.datasets.first)
         catalog.bindings.append(.init(id: "twitch", name: "Twitch", treeID: tree.id, datasetID: dataset.id))
@@ -82,28 +104,29 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertNoThrow(try catalog.validate())
     }
 
-    func testStarterCatalogBindsOneTreeAndDatasetToYouTube() {
+    func testStarterCatalogIsPlatformAndModelNeutral() {
         let catalog = WorkspaceCatalog.starter()
-        let binding = try! XCTUnwrap(catalog.bindings.first)
-        XCTAssertEqual(binding.id, "youtube")
-        XCTAssertEqual(catalog.trees.filter { $0.id == binding.treeID }.count, 1)
-        XCTAssertEqual(catalog.datasets.filter { $0.id == binding.datasetID }.count, 1)
-        XCTAssertEqual(catalog.models.first?.treeRevision, catalog.trees.first?.revision)
-        XCTAssertEqual(catalog.models.first?.datasetRevision, catalog.datasets.first?.revision)
+        XCTAssertEqual(catalog.trees.count, 1)
+        XCTAssertEqual(catalog.datasets.count, 1)
+        XCTAssertTrue(catalog.bindings.isEmpty)
+        XCTAssertTrue(catalog.models.isEmpty)
+        XCTAssertTrue(catalog.classifierTypes.isEmpty)
+        XCTAssertTrue(catalog.providerProfiles.isEmpty)
         XCTAssertTrue(catalog.trees.first?.nodes.isEmpty == true)
     }
 
     func testEnsuringPlatformBindingAddsTheMissingPlatformToLocalClassificationData() throws {
         var catalog = WorkspaceCatalog.starter()
-        let defaultBinding = try XCTUnwrap(catalog.bindings.first)
+        let tree = try XCTUnwrap(catalog.trees.first)
+        let dataset = try XCTUnwrap(catalog.datasets.first)
 
         let created = try catalog.ensurePlatformBinding("discord")
         let repeated = try catalog.ensurePlatformBinding("discord")
 
         XCTAssertEqual(created.id, "discord")
         XCTAssertEqual(created.name, "Discord")
-        XCTAssertEqual(created.treeID, defaultBinding.treeID)
-        XCTAssertEqual(created.datasetID, defaultBinding.datasetID)
+        XCTAssertEqual(created.treeID, tree.id)
+        XCTAssertEqual(created.datasetID, dataset.id)
         XCTAssertEqual(repeated, created)
         XCTAssertEqual(catalog.bindings.filter { $0.id == "discord" }.count, 1)
         XCTAssertNoThrow(try catalog.validate())
@@ -458,7 +481,7 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertNil(type.applicablePlatformID)
 
         var catalog = WorkspaceCatalog.starter()
-        catalog.bindings.append(.init(id: "instagram", treeID: "vault-starter", datasetID: "local-dataset"))
+        catalog.bindings.append(.init(id: "instagram", name: "Instagram", treeID: "vault-starter", datasetID: "local-dataset"))
         catalog.classifierTypes = [type]
         catalog.reconcileClassifierTypes()
 
@@ -483,12 +506,12 @@ final class WorkspaceAssetsTests: XCTestCase {
         let decoded = try JSONDecoder().decode(ClassifierTypeAsset.self, from: legacy)
         XCTAssertEqual(decoded.llmAssistConfiguration?.providerProfileID, "gemini")
         XCTAssertEqual(decoded.llmAssistConfiguration?.modelIdentifier, "gemini-3.1-flash-lite")
-        XCTAssertEqual(decoded.llmAssistConfiguration?.dailyOutputTokenLimit, LLMAssistConfiguration.defaultDailyOutputTokenLimit)
+        XCTAssertEqual(decoded.llmAssistConfiguration?.dailyTokenLimit, LLMAssistConfiguration.defaultDailyTokenLimit)
         XCTAssertEqual(decoded.llmAssistConfiguration?.maximumOutputTokensPerRequest, LLMAssistConfiguration.defaultMaximumOutputTokensPerRequest)
         XCTAssertEqual(decoded.llmAssistConfiguration?.extraDirection, "")
         XCTAssertEqual(decoded.llmAssistConfiguration?.classificationRequestsPerMinute, LLMAssistConfiguration.defaultClassificationRequestsPerMinute)
         XCTAssertEqual(decoded.llmAssistConfiguration?.batchSize, LLMAssistConfiguration.defaultBatchSize)
-        XCTAssertEqual(decoded.llmAssistConfiguration?.youtubeVideoEvidenceCount, LLMAssistConfiguration.defaultYouTubeVideoEvidenceCount)
+        XCTAssertEqual(decoded.llmAssistConfiguration?.officialContentEvidenceCount, LLMAssistConfiguration.defaultOfficialContentEvidenceCount)
         XCTAssertFalse(decoded.llmAssistConfiguration?.isActive ?? true)
 
         let reencoded = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
@@ -500,7 +523,7 @@ final class WorkspaceAssetsTests: XCTestCase {
     }
 
     func testSelectedLLMProviderPersistsBeforeAModelIsAttached() throws {
-        var catalog = WorkspaceCatalog.starter()
+        var catalog = catalogWithYouTubeAssets()
         let profile = APIKeyProviderProfile(id: "openai-profile", type: .openAI)
         catalog.providerProfiles = [profile]
         let tree = try XCTUnwrap(catalog.trees.first)
@@ -527,7 +550,7 @@ final class WorkspaceAssetsTests: XCTestCase {
     }
 
     func testLLMDraftPersistsBeforeAModelIsAttached() throws {
-        var catalog = WorkspaceCatalog.starter()
+        var catalog = catalogWithYouTubeAssets()
         let tree = try XCTUnwrap(catalog.trees.first)
         let dataset = try XCTUnwrap(catalog.datasets.first)
         let provider = APIKeyProviderProfile(id: "gemini", type: .gemini)
@@ -543,12 +566,12 @@ final class WorkspaceAssetsTests: XCTestCase {
             selectedLLMProviderProfileID: provider.id,
             llmAssistDraftConfiguration: .init(
                 providerProfileID: provider.id,
-                dailyOutputTokenLimit: 12_000,
+                dailyTokenLimit: 12_000,
                 maximumOutputTokensPerRequest: 8_192,
                 extraDirection: "Favor recurring themes.",
                 classificationRequestsPerMinute: 12,
                 batchSize: 7,
-                youtubeVideoEvidenceCount: 18,
+                officialContentEvidenceCount: 18,
                 maximumTagCount: 4
             )
         )]
@@ -557,16 +580,16 @@ final class WorkspaceAssetsTests: XCTestCase {
         let reloaded = try JSONDecoder().decode(WorkspaceCatalog.self, from: JSONEncoder().encode(catalog))
         let draft = try XCTUnwrap(reloaded.classifierTypes.first?.llmAssistDraftConfiguration)
         XCTAssertEqual(draft.providerProfileID, provider.id)
-        XCTAssertEqual(draft.dailyOutputTokenLimit, 12_000)
+        XCTAssertEqual(draft.dailyTokenLimit, 12_000)
         XCTAssertEqual(draft.maximumOutputTokensPerRequest, 8_192)
         XCTAssertEqual(draft.extraDirection, "Favor recurring themes.")
         XCTAssertEqual(draft.classificationRequestsPerMinute, 12)
         XCTAssertEqual(draft.batchSize, 7)
-        XCTAssertEqual(draft.youtubeVideoEvidenceCount, 18)
+        XCTAssertEqual(draft.officialContentEvidenceCount, 18)
         XCTAssertEqual(draft.maximumTagCount, 4)
     }
 
-    func testLegacyLLMDraftWithoutYouTubeVideoCountUsesTheSafeDefault() throws {
+    func testLegacyLLMDraftMigratesTokenAndYouTubeSpecificEvidenceKeys() throws {
         let legacy = Data(#"""
         {
           "providerProfileID": "gemini",
@@ -575,6 +598,7 @@ final class WorkspaceAssetsTests: XCTestCase {
           "extraDirection": "",
           "classificationRequestsPerMinute": 6,
           "batchSize": 5,
+          "youtubeVideoEvidenceCount": 37,
           "maximumTagCount": 8,
           "restrictToLeafTags": true,
           "webSearchMode": "off"
@@ -586,15 +610,19 @@ final class WorkspaceAssetsTests: XCTestCase {
             from: legacy
         )
         XCTAssertEqual(
-            restored.youtubeVideoEvidenceCount,
-            LLMAssistConfiguration.defaultYouTubeVideoEvidenceCount
+            restored.officialContentEvidenceCount,
+            37
         )
+        XCTAssertEqual(restored.dailyTokenLimit, 12_000)
         let reencoded = String(decoding: try JSONEncoder().encode(restored), as: UTF8.self)
-        XCTAssertTrue(reencoded.contains("\"youtubeVideoEvidenceCount\":25"))
+        XCTAssertTrue(reencoded.contains("\"officialContentEvidenceCount\":37"))
+        XCTAssertTrue(reencoded.contains("\"dailyTokenLimit\":12000"))
+        XCTAssertFalse(reencoded.contains("\"dailyOutputTokenLimit\""))
+        XCTAssertFalse(reencoded.contains("\"youtubeVideoEvidenceCount\""))
     }
 
     func testSavedLLMAttachmentSurvivesReconciliationAndEncodingWithoutAModelCatalog() throws {
-        var catalog = WorkspaceCatalog.starter()
+        var catalog = catalogWithYouTubeAssets()
         let tree = try XCTUnwrap(catalog.trees.first)
         let dataset = try XCTUnwrap(catalog.datasets.first)
         let provider = APIKeyProviderProfile(id: "local-ollama", name: "Local Ollama", type: .ollama)
@@ -610,12 +638,12 @@ final class WorkspaceAssetsTests: XCTestCase {
             llmAssistConfiguration: .init(
                 providerProfileID: provider.id,
                 modelIdentifier: "llama3.2",
-                dailyOutputTokenLimit: 12_000,
+                dailyTokenLimit: 12_000,
                 maximumOutputTokensPerRequest: 4_096,
                 extraDirection: "Favor recurring themes.",
                 classificationRequestsPerMinute: 12,
                 batchSize: 3,
-                youtubeVideoEvidenceCount: 30,
+                officialContentEvidenceCount: 30,
                 maximumTagCount: 6,
                 restrictToLeafTags: false,
                 isActive: true
@@ -627,12 +655,12 @@ final class WorkspaceAssetsTests: XCTestCase {
         let configuration = try XCTUnwrap(reloaded.classifierTypes.first?.llmAssistConfiguration)
         XCTAssertEqual(configuration.providerProfileID, provider.id)
         XCTAssertEqual(configuration.modelIdentifier, "llama3.2")
-        XCTAssertEqual(configuration.dailyOutputTokenLimit, 12_000)
+        XCTAssertEqual(configuration.dailyTokenLimit, 12_000)
         XCTAssertEqual(configuration.maximumOutputTokensPerRequest, 4_096)
         XCTAssertEqual(configuration.extraDirection, "Favor recurring themes.")
         XCTAssertEqual(configuration.classificationRequestsPerMinute, 12)
         XCTAssertEqual(configuration.batchSize, 3)
-        XCTAssertEqual(configuration.youtubeVideoEvidenceCount, 30)
+        XCTAssertEqual(configuration.officialContentEvidenceCount, 30)
         XCTAssertEqual(configuration.maximumTagCount, 6)
         XCTAssertFalse(configuration.restrictToLeafTags)
         XCTAssertTrue(configuration.isActive)
@@ -668,23 +696,23 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertThrowsError(try configuration.validate())
     }
 
-    func testYouTubeVideoEvidenceCountIsPersistedAndBounded() throws {
+    func testOfficialContentEvidenceCountIsPersistedAndBounded() throws {
         var configuration = LLMAssistConfiguration(
             providerProfileID: "provider",
             modelIdentifier: "model",
-            youtubeVideoEvidenceCount: 50
+            officialContentEvidenceCount: 50
         )
         XCTAssertNoThrow(try configuration.validate())
         let restored = try JSONDecoder().decode(
             LLMAssistConfiguration.self,
             from: JSONEncoder().encode(configuration)
         )
-        XCTAssertEqual(restored.youtubeVideoEvidenceCount, 50)
+        XCTAssertEqual(restored.officialContentEvidenceCount, 50)
 
-        configuration.youtubeVideoEvidenceCount = 0
+        configuration.officialContentEvidenceCount = 0
         XCTAssertThrowsError(try configuration.validate())
 
-        configuration.youtubeVideoEvidenceCount = LLMAssistConfiguration.maximumYouTubeVideoEvidenceCount + 1
+        configuration.officialContentEvidenceCount = LLMAssistConfiguration.maximumOfficialContentEvidenceCount + 1
         XCTAssertThrowsError(try configuration.validate())
     }
 
@@ -724,7 +752,7 @@ final class WorkspaceAssetsTests: XCTestCase {
     }
 
     func testReconciliationDeactivatesANonNativeClassifierWhenItsRawSearchProfileIsMissing() throws {
-        var catalog = WorkspaceCatalog.starter()
+        var catalog = catalogWithYouTubeAssets()
         let tree = try XCTUnwrap(catalog.trees.first)
         let dataset = try XCTUnwrap(catalog.datasets.first)
         let classifierProfile = APIKeyProviderProfile(id: "deepseek-profile", type: .deepSeek)
@@ -759,7 +787,7 @@ final class WorkspaceAssetsTests: XCTestCase {
     }
 
     func testRemovingPlatformBindingPurgesItsDataAndReconcilesDependents() throws {
-        var catalog = WorkspaceCatalog.starter()
+        var catalog = catalogWithYouTubeAssets()
         let tree = try XCTUnwrap(catalog.trees.first)
         let dataset = try XCTUnwrap(catalog.datasets.first)
         catalog.bindings.append(.init(id: "instagram", name: "Instagram", treeID: tree.id, datasetID: dataset.id))
@@ -825,7 +853,7 @@ final class WorkspaceAssetsTests: XCTestCase {
     }
 
     func testPlatformRejectsAnIncompatibleActiveModel() {
-        var catalog = WorkspaceCatalog.starter()
+        var catalog = catalogWithYouTubeAssets()
         catalog.models[0].isReady = true
         catalog.models[0].datasetRevision = 99
         catalog.bindings[0].activeModelID = catalog.models[0].id
@@ -835,7 +863,7 @@ final class WorkspaceAssetsTests: XCTestCase {
     }
 
     func testClassifierTypeRequiresMatchingAssetsAndReconcilesStaleDependencies() throws {
-        var catalog = WorkspaceCatalog.starter()
+        var catalog = catalogWithYouTubeAssets()
         catalog.trees[0].nodes = [.init(id: "games", name: "Games")]
         catalog.datasets[0].creatorClassifications = [
             .init(
@@ -899,7 +927,7 @@ final class WorkspaceAssetsTests: XCTestCase {
             verifiedPackage: seed(),
             stateFile: .init(url: root.appendingPathComponent("state.json"))
         )
-        var catalog = coordinator.snapshot().workspaceCatalog
+        var catalog = catalogWithYouTubeAssets()
         catalog.trees[0].nodes = [.init(id: "games", name: "Games")]
         let example = EmbeddedNeuralTrainingExample(text: "ranked deck game", positiveLabelIDs: ["games"])
         var neural = try EmbeddedNeuralTextClassifier(

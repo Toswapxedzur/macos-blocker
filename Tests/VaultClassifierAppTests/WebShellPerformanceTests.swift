@@ -82,16 +82,16 @@ final class WebShellPerformanceTests: XCTestCase {
             "llmAssistConfiguration": [
                 "providerProfileID": "gemini",
                 "modelIdentifier": "gemini-model",
-                "dailyOutputTokenLimit": 10_000,
+                "dailyTokenLimit": 10_000,
                 "maximumOutputTokensPerRequest": 4_096,
                 "extraDirection": "",
-                "dailyOutputTokensUsed": 0,
+                "dailyTokensUsed": 0,
                 "classificationRequestsPerMinute": 6,
                 "queuedCreatorCount": creatorCount,
                 "completedToday": 0,
                 "lastClassificationOutcome": NSNull(),
                 "batchSize": 5,
-                "youtubeVideoEvidenceCount": 37,
+                "officialContentEvidenceCount": 37,
                 "maximumTagCount": 8,
                 "restrictToLeafTags": true,
                 "webSearchMode": "off",
@@ -146,6 +146,14 @@ final class WebShellPerformanceTests: XCTestCase {
                 ]
             ],
             "providerModelCatalogs": ["gemini": ["gemini-model"]],
+            "providerModelCapabilities": [
+                "gemini": [
+                    "gemini-model": [
+                        "supportsTools": NSNull(),
+                        "supportsNativeWebSearch": false,
+                    ]
+                ]
+            ],
             "providerModelCatalogErrors": [:],
             "loadingProviderModelProfileIDs": [],
             "baseEmbeddings": [],
@@ -180,6 +188,15 @@ final class WebShellPerformanceTests: XCTestCase {
         let update = try XCTUnwrap(VaultClassifierWebShell.stateUpdateJavaScript(payload: populatedPayload(creatorCount: 120)))
         _ = try await evaluate(update, in: webView)
 
+        let providerDefault = try await evaluate(
+            """
+            document.querySelector('[data-action="workspace"][data-workspace="llmAssist"]').click();
+            document.querySelector('[data-field="type"]')?.value ?? null;
+            """,
+            in: webView
+        )
+        XCTAssertEqual(providerDefault as? String, "")
+
         let classifierValue = try await evaluate(
             """
             document.querySelector('[data-action="workspace"][data-workspace="browserBridge"]').click();
@@ -187,8 +204,8 @@ final class WebShellPerformanceTests: XCTestCase {
               workspace: document.querySelector('[data-editor-panel]').dataset.workspace,
               cards: document.querySelectorAll('.creator-tag-card').length,
               hasDeferredRows: Boolean(document.querySelector('[data-incremental-list]')),
-              youtubeVideoEvidenceCount: document.querySelector('[data-field="llmYouTubeVideoEvidenceCount"]')?.value || null,
-              youtubeVideoEvidenceHidden: document.querySelector('[data-youtube-video-evidence]')?.hidden ?? null
+              officialContentEvidenceCount: document.querySelector('[data-field="llmOfficialContentEvidenceCount"]')?.value || null,
+              hasNativeSearchOption: Boolean(document.querySelector('[data-field="llmWebSearchMode"] option[value="providerNative"]'))
             });
             """,
             in: webView
@@ -201,8 +218,8 @@ final class WebShellPerformanceTests: XCTestCase {
         XCTAssertGreaterThan(classifierJSON["cards"] as? Int ?? 0, 0)
         XCTAssertLessThan(classifierJSON["cards"] as? Int ?? .max, 120)
         XCTAssertEqual(classifierJSON["hasDeferredRows"] as? Bool, true)
-        XCTAssertEqual(classifierJSON["youtubeVideoEvidenceCount"] as? String, "37")
-        XCTAssertEqual(classifierJSON["youtubeVideoEvidenceHidden"] as? Bool, false)
+        XCTAssertEqual(classifierJSON["officialContentEvidenceCount"] as? String, "37")
+        XCTAssertEqual(classifierJSON["hasNativeSearchOption"] as? Bool, false)
         let initialCardCount = classifierJSON["cards"] as? Int ?? 0
         _ = try await evaluate(
             "document.querySelector('[data-incremental-list]').scrollIntoView({ block: 'center' });",
