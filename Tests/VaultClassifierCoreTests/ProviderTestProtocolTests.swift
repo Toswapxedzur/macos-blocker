@@ -31,7 +31,8 @@ final class ProviderTestProtocolTests: XCTestCase {
             profile: profile,
             configuration: configuration,
             entry: .init(platform: "youtube", entryID: "entry", surface: .feed, evidence: .init(title: "A test entry")),
-            allowedTagIDs: ["games"]
+            allowedTagIDs: ["games"],
+            tagDefinitions: readableTagDefinitions(["games"])
         )
         XCTAssertEqual(prepared.plan.bodyFormat, .openAIChatCompletions)
         let requestBody = try XCTUnwrap(JSONSerialization.jsonObject(with: prepared.body) as? [String: Any])
@@ -176,7 +177,8 @@ final class ProviderTestProtocolTests: XCTestCase {
             profile: profile,
             configuration: configuration,
             entry: entry,
-            allowedTagIDs: ["games", "technology"]
+            allowedTagIDs: ["games", "technology"],
+            tagDefinitions: readableTagDefinitions(["games", "technology"])
         )
         XCTAssertEqual(prepared.operation, .generateText)
         XCTAssertTrue(prepared.prompt.contains("games"))
@@ -190,7 +192,7 @@ final class ProviderTestProtocolTests: XCTestCase {
         )
     }
 
-    func testClassificationRequestIncludesTagDescriptionsAndExtraDirection() throws {
+    func testClassificationRequestIncludesReadableTagDefinitionsAndExtraDirection() throws {
         let profile = APIKeyProviderProfile(type: .deepSeek)
         let configuration = LLMAssistConfiguration(
             providerProfileID: profile.id,
@@ -203,15 +205,69 @@ final class ProviderTestProtocolTests: XCTestCase {
             configuration: configuration,
             entry: .init(platform: "youtube", entryID: "entry", surface: .feed, evidence: .init(title: "Deck gameplay")),
             allowedTagIDs: ["games"],
-            tagDescriptions: ["games": "Tag name: Games\nDescription: Video games and game culture."]
+            tagDefinitions: [
+                "games": .init(name: "Games", description: "Video games and game culture.")
+            ]
         )
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: prepared.body) as? [String: Any])
         XCTAssertEqual(body["max_tokens"] as? Int, 4_096)
         let prompt = try XCTUnwrap((body["messages"] as? [[String: Any]])?.first?["content"] as? String)
-        XCTAssertTrue(prompt.contains("Tag name: Games"))
+        XCTAssertTrue(prompt.contains(#""name":"Games""#))
         XCTAssertTrue(prompt.contains("Video games and game culture."))
         XCTAssertTrue(prompt.contains("Prefer a creator's recurring topic."))
         XCTAssertTrue(prompt.contains("Return exactly one JSON object"))
+
+        XCTAssertThrowsError(try ProviderClassificationProtocol.prepare(
+            profile: profile,
+            configuration: configuration,
+            entry: .init(
+                platform: "youtube",
+                entryID: "entry",
+                surface: .feed,
+                evidence: .init(title: "Deck gameplay")
+            ),
+            allowedTagIDs: ["games"]
+        ))
+    }
+
+    func testCreatorPromptExplicitlyAssociatesObservedVideosWithTheNamedCreator() throws {
+        let profile = APIKeyProviderProfile(type: .deepSeek)
+        let prepared = try ProviderClassificationProtocol.prepare(
+            profile: profile,
+            configuration: .init(
+                providerProfileID: profile.id,
+                modelIdentifier: "deepseek-chat"
+            ),
+            entry: .init(
+                platform: "youtube",
+                entryID: "youtube:video:final",
+                sourceID: "youtube:handle:@442oons",
+                surface: .page,
+                evidence: .init(
+                    title: "442oons",
+                    text: "SPAIN WIN THE WORLD CUP🏆 (Espana 1-0 Argentina Final Highlights 26)",
+                    metadata: [
+                        "classificationTarget": .string("creator"),
+                        "creatorName": .string("442oons"),
+                    ]
+                )
+            ),
+            allowedTagIDs: ["football-animation"],
+            tagDefinitions: [
+                "football-animation": .init(
+                    name: "Football animation",
+                    description: "Animated recurring football content."
+                )
+            ]
+        )
+
+        XCTAssertTrue(prepared.prompt.contains(#""targetType" : "creator""#))
+        XCTAssertTrue(prepared.prompt.contains(#""name" : "442oons""#))
+        XCTAssertTrue(prepared.prompt.contains(#""identifier" : "youtube:handle:@442oons""#))
+        XCTAssertTrue(prepared.prompt.contains("browserObservedVideoTitles"))
+        XCTAssertTrue(prepared.prompt.contains("Every title in browserObservedVideoTitles, when present, is a YouTube video observed from the named creator."))
+        XCTAssertTrue(prepared.prompt.contains("SPAIN WIN THE WORLD CUP"))
+        XCTAssertTrue(prepared.prompt.contains(#""name":"Football animation""#))
     }
 
     func testWebSearchModesUseNativeOrAttachedRequestGrammarsExplicitly() throws {
@@ -225,11 +281,12 @@ final class ProviderTestProtocolTests: XCTestCase {
             profile: openAI,
             configuration: openAIConfiguration,
             entry: .init(platform: "bilibili", entryID: "entry", surface: .page, evidence: .init(title: "Creator: RetroTech")),
-            allowedTagIDs: ["technology"]
+            allowedTagIDs: ["technology"],
+            tagDefinitions: readableTagDefinitions(["technology"])
         )
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: request.body) as? [String: Any])
         XCTAssertEqual((body["tools"] as? [[String: String]])?.first?["type"], "web_search")
-        XCTAssertTrue(request.prompt.contains("Use web search only when the provided evidence is insufficient"))
+        XCTAssertTrue(request.prompt.contains("Use it only when the supplied evidence is insufficient"))
 
         let gemini = APIKeyProviderProfile(id: "gemini", type: .gemini)
         let geminiConfiguration = LLMAssistConfiguration(
@@ -241,7 +298,8 @@ final class ProviderTestProtocolTests: XCTestCase {
             profile: gemini,
             configuration: geminiConfiguration,
             entry: .init(platform: "bilibili", entryID: "entry", surface: .page, evidence: .init(title: "Creator: RetroTech")),
-            allowedTagIDs: ["technology"]
+            allowedTagIDs: ["technology"],
+            tagDefinitions: readableTagDefinitions(["technology"])
         )
         let geminiBody = try XCTUnwrap(JSONSerialization.jsonObject(with: geminiRequest.body) as? [String: Any])
         XCTAssertEqual(((geminiBody["tools"] as? [[String: [String: Any]]])?.first?["google_search"] as? [String: Any])?.isEmpty, true)
@@ -251,7 +309,8 @@ final class ProviderTestProtocolTests: XCTestCase {
             profile: anthropic,
             configuration: .init(providerProfileID: anthropic.id, modelIdentifier: "claude-sonnet-4-5", webSearchMode: .providerNative),
             entry: .init(platform: "bilibili", entryID: "entry", surface: .page, evidence: .init(title: "Creator: RetroTech")),
-            allowedTagIDs: ["technology"]
+            allowedTagIDs: ["technology"],
+            tagDefinitions: readableTagDefinitions(["technology"])
         )
         let anthropicBody = try XCTUnwrap(JSONSerialization.jsonObject(with: anthropicRequest.body) as? [String: Any])
         XCTAssertEqual((anthropicBody["tools"] as? [[String: Any]])?.first?["type"] as? String, "web_search_20250305")
@@ -267,14 +326,15 @@ final class ProviderTestProtocolTests: XCTestCase {
                 webSearchProviderProfileID: "search"
             ),
             entry: .init(platform: "bilibili", entryID: "entry", surface: .page, evidence: .init(title: "Creator: RetroTech")),
-            allowedTagIDs: ["technology"]
+            allowedTagIDs: ["technology"],
+            tagDefinitions: readableTagDefinitions(["technology"])
         )
         let deepSeekBody = try XCTUnwrap(JSONSerialization.jsonObject(with: deepSeekRequest.body) as? [String: Any])
         XCTAssertEqual(
             ((((deepSeekBody["tools"] as? [[String: Any]])?.first?["function"] as? [String: Any])?["name"] as? String)),
             ProviderClassificationProtocol.attachedWebSearchToolName
         )
-        XCTAssertTrue(deepSeekRequest.prompt.contains("Use web search only when the provided evidence is insufficient"))
+        XCTAssertTrue(deepSeekRequest.prompt.contains("Use it only when the supplied evidence is insufficient"))
     }
 
     func testAttachedSearchToolCallsContinueTheSameModelConversationAcrossEveryGrammar() throws {
@@ -326,7 +386,8 @@ final class ProviderTestProtocolTests: XCTestCase {
                     surface: .page,
                     evidence: .init(title: "Creator: RetroTech")
                 ),
-                allowedTagIDs: ["technology"]
+                allowedTagIDs: ["technology"],
+                tagDefinitions: readableTagDefinitions(["technology"])
             )
             let call = try XCTUnwrap(ProviderClassificationProtocol.attachedWebSearchCall(
                 from: firstResponse,
@@ -389,7 +450,8 @@ final class ProviderTestProtocolTests: XCTestCase {
                 surface: .page,
                 evidence: .init(title: "Creator")
             ),
-            allowedTagIDs: ["technology"]
+            allowedTagIDs: ["technology"],
+            tagDefinitions: readableTagDefinitions(["technology"])
         ))
     }
 
@@ -492,7 +554,8 @@ final class ProviderTestProtocolTests: XCTestCase {
                 profile: profile,
                 configuration: .init(providerProfileID: profile.id, modelIdentifier: modelIdentifier),
                 entry: entry,
-                allowedTagIDs: ["games"]
+                allowedTagIDs: ["games"],
+                tagDefinitions: readableTagDefinitions(["games"])
             )
             XCTAssertEqual(classification.operation, .generateText, profile.type.rawValue)
             if profile.type == .cohere {
@@ -580,6 +643,131 @@ final class ProviderTestProtocolTests: XCTestCase {
             )
         )
         XCTAssertTrue(x.plan.url.path.hasSuffix("/users/by/username/XDevelopers"))
+    }
+
+    func testYouTubeOfficialEvidenceFetchesRecentFullVideoRecordsInUploadOrder() throws {
+        let profile = platformProfile(.youtubeData)
+        let channelData = Data(#"""
+        {
+          "items": [{
+            "id": "UC442",
+            "snippet": {"title": "442oons", "description": "Animated football comedy"},
+            "contentDetails": {"relatedPlaylists": {"uploads": "UU442"}},
+            "statistics": {"subscriberCount": "5000000", "videoCount": "600"}
+          }]
+        }
+        """#.utf8)
+        let uploads = try OfficialPlatformEvidenceProtocol.prepareYouTubeUploadsRequest(
+            profile: profile,
+            channelData: channelData,
+            maximumResults: 2
+        )
+        XCTAssertTrue(uploads.plan.url.path.hasSuffix("/playlistItems"))
+        let uploadsQuery = URLComponents(url: uploads.plan.url, resolvingAgainstBaseURL: false)?.queryItems
+        XCTAssertEqual(uploadsQuery?.first(where: { $0.name == "playlistId" })?.value, "UU442")
+        XCTAssertEqual(uploadsQuery?.first(where: { $0.name == "maxResults" })?.value, "2")
+
+        let playlistData = Data(#"""
+        {"items":[
+          {"contentDetails":{"videoId":"new-video"}},
+          {"contentDetails":{"videoId":"old-video"}}
+        ]}
+        """#.utf8)
+        let videos = try XCTUnwrap(OfficialPlatformEvidenceProtocol.prepareYouTubeVideoRecordsRequest(
+            profile: profile,
+            playlistData: playlistData,
+            maximumResults: 2
+        ))
+        XCTAssertTrue(videos.plan.url.path.hasSuffix("/videos"))
+        let videosQuery = URLComponents(url: videos.plan.url, resolvingAgainstBaseURL: false)?.queryItems
+        XCTAssertEqual(videosQuery?.first(where: { $0.name == "id" })?.value, "new-video,old-video")
+        XCTAssertTrue(videosQuery?.first(where: { $0.name == "part" })?.value?.contains("statistics") == true)
+        XCTAssertTrue(videosQuery?.first(where: { $0.name == "part" })?.value?.contains("topicDetails") == true)
+        XCTAssertTrue(videosQuery?.first(where: { $0.name == "part" })?.value?.contains("brandPartner") == true)
+
+        let videoData = Data(#"""
+        {"items":[
+          {
+            "id":"old-video",
+            "snippet":{"title":"Older football animation","publishedAt":"2026-06-01T00:00:00Z"},
+            "contentDetails":{"duration":"PT1M"},
+            "statistics":{"viewCount":"200","likeCount":"20"}
+          },
+          {
+            "id":"new-video",
+            "snippet":{"title":"SPAIN WIN THE WORLD CUP","publishedAt":"2026-07-25T00:00:00Z"},
+            "contentDetails":{"duration":"PT2M"},
+            "statistics":{"viewCount":"1000","likeCount":"100","commentCount":"10"}
+          }
+        ]}
+        """#.utf8)
+        let evidence = try OfficialPlatformEvidenceProtocol.boundedYouTubeCreatorEvidence(
+            channelData: channelData,
+            playlistData: playlistData,
+            videoData: videoData,
+            maximumVideoCount: 2
+        )
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(evidence.utf8)) as? [String: Any]
+        )
+        XCTAssertEqual(object["requestedVideoCount"] as? Int, 2)
+        XCTAssertEqual(object["returnedVideoCount"] as? Int, 2)
+        let recentVideos = try XCTUnwrap(object["recentVideos"] as? [[String: Any]])
+        XCTAssertEqual(recentVideos.map { $0["id"] as? String }, ["new-video", "old-video"])
+        XCTAssertEqual((recentVideos[0]["snippet"] as? [String: Any])?["title"] as? String, "SPAIN WIN THE WORLD CUP")
+        XCTAssertEqual((recentVideos[0]["statistics"] as? [String: Any])?["viewCount"] as? String, "1000")
+    }
+
+    func testYouTubeOfficialEvidenceKeepsAllFiftyConfiguredVideoCoresWithinThePromptBound() throws {
+        let profile = platformProfile(.youtubeData)
+        let channelData = try JSONSerialization.data(withJSONObject: [
+            "items": [[
+                "id": "UCBOUND",
+                "snippet": ["title": "Bounded creator", "description": String(repeating: "c", count: 5_000)],
+                "contentDetails": ["relatedPlaylists": ["uploads": "UUBOUND"]],
+                "statistics": ["videoCount": "50"],
+            ]]
+        ])
+        let identifiers = (0..<50).map { "video_\($0)" }
+        let playlistData = try JSONSerialization.data(withJSONObject: [
+            "items": identifiers.map { ["contentDetails": ["videoId": $0]] }
+        ])
+        let videoData = try JSONSerialization.data(withJSONObject: [
+            "items": identifiers.reversed().map { identifier in
+                [
+                    "id": identifier,
+                    "snippet": [
+                        "title": "A bounded title for \(identifier)",
+                        "publishedAt": "2026-07-25T00:00:00Z",
+                        "description": String(repeating: "d", count: 5_000),
+                        "tags": (0..<20).map { "tag-\($0)" },
+                    ],
+                    "contentDetails": ["duration": "PT2M"],
+                    "statistics": ["viewCount": "1000", "likeCount": "100", "commentCount": "10"],
+                ] as [String: Any]
+            }
+        ])
+
+        _ = try OfficialPlatformEvidenceProtocol.prepareYouTubeUploadsRequest(
+            profile: profile,
+            channelData: channelData,
+            maximumResults: 50
+        )
+        let evidence = try OfficialPlatformEvidenceProtocol.boundedYouTubeCreatorEvidence(
+            channelData: channelData,
+            playlistData: playlistData,
+            videoData: videoData,
+            maximumVideoCount: 50
+        )
+
+        XCTAssertLessThanOrEqual(evidence.count, OfficialPlatformEvidenceProtocol.maximumEvidenceCharacters)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(evidence.utf8)) as? [String: Any]
+        )
+        let recentVideos = try XCTUnwrap(object["recentVideos"] as? [[String: Any]])
+        XCTAssertEqual(recentVideos.count, 50)
+        XCTAssertEqual(recentVideos.first?["id"] as? String, "video_0")
+        XCTAssertEqual(recentVideos.last?["id"] as? String, "video_49")
     }
 
     func testPlatformConnectionTestsUseProviderSpecificHealthRoutes() throws {
@@ -743,6 +931,14 @@ final class ProviderTestProtocolTests: XCTestCase {
             "Here is the result:\n```json\n{\"labelIDs\":[\"gaming\"]}\n```",
             allowedTagIDs: ["gaming"]
         ))
+    }
+
+    private func readableTagDefinitions(
+        _ identifiers: [String]
+    ) -> [String: ProviderClassificationTagDefinition] {
+        Dictionary(uniqueKeysWithValues: identifiers.map { identifier in
+            (identifier, .init(name: identifier.capitalized))
+        })
     }
 
     private func platformProfile(_ type: APIKeyProviderType) -> APIKeyProviderProfile {

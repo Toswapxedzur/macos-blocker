@@ -77,8 +77,27 @@ final class WebShellPerformanceTests: XCTestCase {
             "datasetRevision": 1,
             "applicablePlatformID": "youtube",
             "localModelID": NSNull(),
-            "selectedLLMProviderProfileID": NSNull(),
-            "llmAssistConfiguration": NSNull(),
+            "selectedLLMProviderProfileID": "gemini",
+            "llmAssistDraftConfiguration": NSNull(),
+            "llmAssistConfiguration": [
+                "providerProfileID": "gemini",
+                "modelIdentifier": "gemini-model",
+                "dailyOutputTokenLimit": 10_000,
+                "maximumOutputTokensPerRequest": 4_096,
+                "extraDirection": "",
+                "dailyOutputTokensUsed": 0,
+                "classificationRequestsPerMinute": 6,
+                "queuedCreatorCount": creatorCount,
+                "completedToday": 0,
+                "lastClassificationOutcome": NSNull(),
+                "batchSize": 5,
+                "youtubeVideoEvidenceCount": 37,
+                "maximumTagCount": 8,
+                "restrictToLeafTags": true,
+                "webSearchMode": "off",
+                "webSearchProviderProfileID": NSNull(),
+                "isActive": false,
+            ],
             "decisionPriority": ["human", "llmAssist", "localModel"],
         ]
         let binding: [String: Any] = [
@@ -112,9 +131,21 @@ final class WebShellPerformanceTests: XCTestCase {
             "classifierTypes": [classifierType],
             "bindings": [binding],
             "collectionPlatforms": [platform],
-            "providerProfiles": [],
-            "providerProtocols": [:],
-            "providerModelCatalogs": [:],
+            "providerProfiles": [[
+                "id": "gemini",
+                "name": "Gemini",
+                "type": "gemini",
+                "hasCredential": true,
+            ]],
+            "providerProtocols": [
+                "gemini": [
+                    "supportsLLMConfiguration": true,
+                    "credentialRequired": true,
+                    "supportsNativeWebSearch": true,
+                    "supportsAttachedWebSearchTool": false,
+                ]
+            ],
+            "providerModelCatalogs": ["gemini": ["gemini-model"]],
             "providerModelCatalogErrors": [:],
             "loadingProviderModelProfileIDs": [],
             "baseEmbeddings": [],
@@ -155,7 +186,9 @@ final class WebShellPerformanceTests: XCTestCase {
             JSON.stringify({
               workspace: document.querySelector('[data-editor-panel]').dataset.workspace,
               cards: document.querySelectorAll('.creator-tag-card').length,
-              hasDeferredRows: Boolean(document.querySelector('[data-incremental-list]'))
+              hasDeferredRows: Boolean(document.querySelector('[data-incremental-list]')),
+              youtubeVideoEvidenceCount: document.querySelector('[data-field="llmYouTubeVideoEvidenceCount"]')?.value || null,
+              youtubeVideoEvidenceHidden: document.querySelector('[data-youtube-video-evidence]')?.hidden ?? null
             });
             """,
             in: webView
@@ -168,6 +201,8 @@ final class WebShellPerformanceTests: XCTestCase {
         XCTAssertGreaterThan(classifierJSON["cards"] as? Int ?? 0, 0)
         XCTAssertLessThan(classifierJSON["cards"] as? Int ?? .max, 120)
         XCTAssertEqual(classifierJSON["hasDeferredRows"] as? Bool, true)
+        XCTAssertEqual(classifierJSON["youtubeVideoEvidenceCount"] as? String, "37")
+        XCTAssertEqual(classifierJSON["youtubeVideoEvidenceHidden"] as? Bool, false)
         let initialCardCount = classifierJSON["cards"] as? Int ?? 0
         _ = try await evaluate(
             "document.querySelector('[data-incremental-list]').scrollIntoView({ block: 'center' });",

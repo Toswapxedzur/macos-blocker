@@ -41,8 +41,9 @@ public struct OfficialPlatformConnectionTestRequest: Equatable, Sendable {
 }
 
 public enum OfficialPlatformEvidenceProtocol {
-    public static let maximumEvidenceCharacters = 12_000
+    public static let maximumEvidenceCharacters = 15_000
     public static let maximumResponseBytes = 64 * 1_024
+    public static let maximumYouTubeVideoResponseBytes = 1_024 * 1_024
 
     /// Prepares the required, bounded API request for a creator
     /// classification. The model never controls the target, identifier, URL,
@@ -105,6 +106,137 @@ public enum OfficialPlatformEvidenceProtocol {
             ),
             body: body
         )
+    }
+
+    /// Resolves the channel's official uploads playlist and requests one recent
+    /// page. Only video identifiers are needed here; full public records are
+    /// fetched in the following bounded `videos.list` request.
+    public static func prepareYouTubeUploadsRequest(
+        profile: APIKeyProviderProfile,
+        channelData: Data,
+        maximumResults: Int
+    ) throws -> OfficialPlatformEvidencePreparedRequest {
+        guard profile.type == .youtubeData,
+              maximumResults > 0,
+              maximumResults <= LLMAssistConfiguration.maximumYouTubeVideoEvidenceCount else {
+            throw OfficialPlatformEvidenceProtocolError.invalidConfiguration
+        }
+        let playlistID = try youtubeUploadsPlaylistID(from: channelData)
+        return try prepareFollowUpRequest(
+            profile: profile,
+            route: .init(
+                method: "GET",
+                path: ["playlistItems"],
+                queryItems: [
+                    .init(name: "part", value: "contentDetails"),
+                    .init(name: "playlistId", value: playlistID),
+                    .init(name: "maxResults", value: String(maximumResults)),
+                ],
+                body: nil
+            )
+        )
+    }
+
+    /// Requests the full public records for the recent upload identifiers in
+    /// playlist order. A channel with no visible uploads legitimately returns
+    /// no request and contributes its channel record only.
+    public static func prepareYouTubeVideoRecordsRequest(
+        profile: APIKeyProviderProfile,
+        playlistData: Data,
+        maximumResults: Int
+    ) throws -> OfficialPlatformEvidencePreparedRequest? {
+        guard profile.type == .youtubeData,
+              maximumResults > 0,
+              maximumResults <= LLMAssistConfiguration.maximumYouTubeVideoEvidenceCount else {
+            throw OfficialPlatformEvidenceProtocolError.invalidConfiguration
+        }
+        let identifiers = try youtubeVideoIdentifiers(
+            from: playlistData,
+            maximumResults: maximumResults
+        )
+        guard !identifiers.isEmpty else { return nil }
+        let parts = [
+            "id", "snippet", "contentDetails", "statistics", "topicDetails",
+            "recordingDetails", "liveStreamingDetails", "status",
+            "localizations", "paidProductPlacementDetails", "brandPartner",
+        ].joined(separator: ",")
+        return try prepareFollowUpRequest(
+            profile: profile,
+            route: .init(
+                method: "GET",
+                path: ["videos"],
+                queryItems: [
+                    .init(name: "part", value: parts),
+                    .init(name: "id", value: identifiers.joined(separator: ",")),
+                ],
+                body: nil
+            )
+        )
+    }
+
+    /// Builds one compact prompt object from the official channel record and
+    /// the requested recent public video records. Every returned video keeps
+    /// its ID, title, publication time, and public metrics; larger descriptive
+    /// fields are reduced first so a high configured count cannot erase later
+    /// records through a raw string prefix.
+    public static func boundedYouTubeCreatorEvidence(
+        channelData: Data,
+        playlistData: Data,
+        videoData: Data?,
+        maximumVideoCount: Int
+    ) throws -> String {
+        guard maximumVideoCount > 0,
+              maximumVideoCount <= LLMAssistConfiguration.maximumYouTubeVideoEvidenceCount,
+              channelData.count <= maximumResponseBytes,
+              playlistData.count <= maximumResponseBytes,
+              (videoData?.count ?? 0) <= maximumYouTubeVideoResponseBytes else {
+            throw OfficialPlatformEvidenceProtocolError.invalidResponse
+        }
+        let channelObject = try jsonObject(from: channelData)
+        let videoObject = try videoData.map(jsonObject(from:))
+        let orderedIDs = try youtubeVideoIdentifiers(
+            from: playlistData,
+            maximumResults: maximumVideoCount
+        )
+        let channel = compactYouTubeChannel(from: channelObject)
+        var videos = compactYouTubeVideos(
+            from: videoObject,
+            orderedIDs: orderedIDs,
+            includeDescriptions: true,
+            tagLimit: 12
+        )
+        var evidence: [String: Any] = [
+            "officialPlatform": APIKeyProviderType.youtubeData.rawValue,
+            "target": OfficialPlatformEvidenceTarget.creator.rawValue,
+            "requestedVideoCount": maximumVideoCount,
+            "returnedVideoCount": videos.count,
+            "creator": channel,
+            "recentVideos": videos,
+        ]
+        if let text = encodedEvidence(evidence), text.count <= maximumEvidenceCharacters {
+            return text
+        }
+
+        videos = compactYouTubeVideos(
+            from: videoObject,
+            orderedIDs: orderedIDs,
+            includeDescriptions: false,
+            tagLimit: 4
+        )
+        evidence["recentVideos"] = videos
+        if let text = encodedEvidence(evidence), text.count <= maximumEvidenceCharacters {
+            return text
+        }
+
+        evidence["recentVideos"] = compactYouTubeVideoCores(
+            from: videoObject,
+            orderedIDs: orderedIDs
+        )
+        guard let text = encodedEvidence(evidence),
+              text.count <= maximumEvidenceCharacters else {
+            throw OfficialPlatformEvidenceProtocolError.invalidResponse
+        }
+        return text
     }
 
     /// Converts a successful API response to bounded, credential-free JSON
@@ -205,6 +337,243 @@ public enum OfficialPlatformEvidenceProtocol {
         var path: [String]
         var queryItems: [URLQueryItem]
         var body: [String: Any]?
+    }
+
+    private static func prepareFollowUpRequest(
+        profile: APIKeyProviderProfile,
+        route: Route
+    ) throws -> OfficialPlatformEvidencePreparedRequest {
+        let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
+        guard profile.type == .youtubeData,
+              !descriptor.supportsLLMConfiguration,
+              descriptor.requestFormats.contains(where: { $0.operation == .readPublicContent }) else {
+            throw OfficialPlatformEvidenceProtocolError.invalidConfiguration
+        }
+        try profile.validateForDispatch()
+        let requestURL = try url(
+            baseURL: baseURL(profile: profile, descriptor: descriptor),
+            path: route.path,
+            queryItems: route.queryItems
+        )
+        return .init(
+            plan: .init(
+                url: requestURL,
+                method: route.method,
+                bodyFormat: .queryOnly,
+                headers: headers(profile: profile, descriptor: descriptor, hasBody: false),
+                authentication: descriptor.authentication,
+                authenticationHeader: descriptor.authenticationHeader,
+                requiredCredentialFields: descriptor.credentialFields
+            ),
+            target: .creator,
+            providerType: profile.type
+        )
+    }
+
+    private static func jsonObject(from data: Data) throws -> [String: Any] {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw OfficialPlatformEvidenceProtocolError.invalidResponse
+        }
+        return object
+    }
+
+    private static func youtubeUploadsPlaylistID(from channelData: Data) throws -> String {
+        guard channelData.count <= maximumResponseBytes else {
+            throw OfficialPlatformEvidenceProtocolError.invalidResponse
+        }
+        let object = try jsonObject(from: channelData)
+        guard let channel = (object["items"] as? [[String: Any]])?.first,
+              let contentDetails = channel["contentDetails"] as? [String: Any],
+              let relatedPlaylists = contentDetails["relatedPlaylists"] as? [String: Any],
+              let playlistID = relatedPlaylists["uploads"] as? String,
+              validYouTubeIdentifier(playlistID) else {
+            throw OfficialPlatformEvidenceProtocolError.invalidResponse
+        }
+        return playlistID
+    }
+
+    private static func youtubeVideoIdentifiers(
+        from playlistData: Data,
+        maximumResults: Int
+    ) throws -> [String] {
+        guard playlistData.count <= maximumResponseBytes else {
+            throw OfficialPlatformEvidenceProtocolError.invalidResponse
+        }
+        let object = try jsonObject(from: playlistData)
+        guard let items = object["items"] as? [[String: Any]] else {
+            throw OfficialPlatformEvidenceProtocolError.invalidResponse
+        }
+        var seen = Set<String>()
+        return items.prefix(maximumResults).compactMap { item in
+            guard let details = item["contentDetails"] as? [String: Any],
+                  let identifier = details["videoId"] as? String,
+                  validYouTubeIdentifier(identifier),
+                  seen.insert(identifier).inserted else {
+                return nil
+            }
+            return identifier
+        }
+    }
+
+    private static func validYouTubeIdentifier(_ value: String) -> Bool {
+        !value.isEmpty &&
+            value.count <= 128 &&
+            value.unicodeScalars.allSatisfy {
+                CharacterSet.alphanumerics.contains($0) || $0 == "-" || $0 == "_"
+            }
+    }
+
+    private static func compactYouTubeChannel(from object: [String: Any]) -> [String: Any] {
+        guard let channel = (object["items"] as? [[String: Any]])?.first else { return [:] }
+        var compact: [String: Any] = [:]
+        copyString("id", from: channel, to: &compact)
+        if let snippet = channel["snippet"] as? [String: Any] {
+            var compactSnippet: [String: Any] = [:]
+            for key in ["title", "customUrl", "publishedAt", "country"] {
+                copyString(key, from: snippet, to: &compactSnippet)
+            }
+            copyTrimmedString("description", maximum: 1_200, from: snippet, to: &compactSnippet)
+            compact["snippet"] = compactSnippet
+        }
+        copyDictionary("statistics", from: channel, to: &compact)
+        copyDictionary("topicDetails", from: channel, to: &compact)
+        return compact
+    }
+
+    private static func compactYouTubeVideos(
+        from object: [String: Any]?,
+        orderedIDs: [String],
+        includeDescriptions: Bool,
+        tagLimit: Int
+    ) -> [[String: Any]] {
+        let items = object?["items"] as? [[String: Any]] ?? []
+        var byID = [String: [String: Any]]()
+        for item in items {
+            guard let identifier = item["id"] as? String,
+                  validYouTubeIdentifier(identifier),
+                  byID[identifier] == nil else {
+                continue
+            }
+            byID[identifier] = item
+        }
+        return orderedIDs.compactMap { identifier -> [String: Any]? in
+            guard let item = byID[identifier] else { return nil }
+            var compact: [String: Any] = ["id": identifier]
+            if let snippet = item["snippet"] as? [String: Any] {
+                var compactSnippet: [String: Any] = [:]
+                for key in [
+                    "channelId", "channelTitle", "title", "publishedAt",
+                    "categoryId", "defaultLanguage", "defaultAudioLanguage",
+                    "liveBroadcastContent",
+                ] {
+                    copyString(key, from: snippet, to: &compactSnippet)
+                }
+                if includeDescriptions {
+                    copyTrimmedString("description", maximum: 480, from: snippet, to: &compactSnippet)
+                }
+                if let tags = snippet["tags"] as? [String] {
+                    compactSnippet["tags"] = tags.prefix(tagLimit).map { String($0.prefix(96)) }
+                }
+                compact["snippet"] = compactSnippet
+            }
+            for key in [
+                "contentDetails", "statistics", "topicDetails",
+                "recordingDetails", "liveStreamingDetails", "status",
+                "paidProductPlacementDetails", "brandPartner",
+            ] {
+                copyDictionary(key, from: item, to: &compact)
+            }
+            if includeDescriptions,
+               let localizations = item["localizations"] as? [String: Any] {
+                let compactLocalizations: [String: [String: Any]] = Dictionary(
+                    uniqueKeysWithValues: localizations.keys.sorted().prefix(4).compactMap { language -> (String, [String: Any])? in
+                        guard let localization = localizations[language] as? [String: Any] else { return nil }
+                        var value: [String: Any] = [:]
+                        copyString("title", from: localization, to: &value)
+                        copyTrimmedString("description", maximum: 240, from: localization, to: &value)
+                        return (String(language.prefix(32)), value)
+                    }
+                )
+                compact["localizations"] = compactLocalizations
+            }
+            return compact
+        }
+    }
+
+    private static func compactYouTubeVideoCores(
+        from object: [String: Any]?,
+        orderedIDs: [String]
+    ) -> [[String: Any]] {
+        let items = object?["items"] as? [[String: Any]] ?? []
+        var byID = [String: [String: Any]]()
+        for item in items {
+            guard let identifier = item["id"] as? String,
+                  validYouTubeIdentifier(identifier),
+                  byID[identifier] == nil else {
+                continue
+            }
+            byID[identifier] = item
+        }
+        return orderedIDs.compactMap { identifier -> [String: Any]? in
+            guard let item = byID[identifier] else { return nil }
+            var compact: [String: Any] = ["id": identifier]
+            if let snippet = item["snippet"] as? [String: Any] {
+                for key in ["title", "publishedAt"] {
+                    copyString(key, from: snippet, to: &compact)
+                }
+            }
+            if let contentDetails = item["contentDetails"] as? [String: Any] {
+                copyString("duration", from: contentDetails, to: &compact)
+            }
+            if let statistics = item["statistics"] as? [String: Any] {
+                var compactStatistics: [String: Any] = [:]
+                for key in ["viewCount", "likeCount", "commentCount"] {
+                    copyString(key, from: statistics, to: &compactStatistics)
+                }
+                if !compactStatistics.isEmpty {
+                    compact["statistics"] = compactStatistics
+                }
+            }
+            return compact
+        }
+    }
+
+    private static func copyString(
+        _ key: String,
+        from source: [String: Any],
+        to destination: inout [String: Any]
+    ) {
+        if let value = source[key] as? String {
+            destination[key] = String(value.prefix(1_024))
+        }
+    }
+
+    private static func copyTrimmedString(
+        _ key: String,
+        maximum: Int,
+        from source: [String: Any],
+        to destination: inout [String: Any]
+    ) {
+        if let value = source[key] as? String {
+            destination[key] = String(value.prefix(maximum))
+        }
+    }
+
+    private static func copyDictionary(
+        _ key: String,
+        from source: [String: Any],
+        to destination: inout [String: Any]
+    ) {
+        if let value = source[key] as? [String: Any] {
+            destination[key] = sanitized(value, depth: 0)
+        }
+    }
+
+    private static func encodedEvidence(_ object: [String: Any]) -> String? {
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
     }
 
     private static func requestRoute(

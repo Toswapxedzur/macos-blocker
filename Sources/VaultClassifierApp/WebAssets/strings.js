@@ -464,6 +464,8 @@ window.VaultClassifierStrings = Object.freeze({
   "bridge.llmClassificationPaceCopy": "Maximum classification-related provider requests started per minute (1–120). Lower values wait longer between requests; provider response time can make completed classifications slower.",
   "bridge.llmBatchSize": "CREATOR BATCH SIZE",
   "bridge.llmBatchSizeCopy": "How many eligible creators a manual batch processes. An activated model processes its current complete queue sequentially.",
+  "bridge.llmYouTubeVideoEvidenceCount": "YOUTUBE VIDEO RECORDS",
+  "bridge.llmYouTubeVideoEvidenceCountCopy": "Recent official video records fetched for each creator (1–50). They are used only for that prompt and are not added to browsing history.",
   "bridge.llmMaximumTagCount": "MAXIMUM TAG COUNT",
   "bridge.llmMaximumTagCountCopy": "Maximum tags the model may return for one creator.",
   "bridge.llmLeafOnly": "Require leaf tags only",

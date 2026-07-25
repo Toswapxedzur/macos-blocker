@@ -622,19 +622,22 @@ final class VaultClassifierViewModel: ObservableObject {
         return Set(taxonomy.nodes.values.filter(\.predictable).map(\.id))
     }
 
-    private func llmTagDescriptions(
+    private func llmTagDefinitions(
         taxonomy: Taxonomy,
         allowedTagIDs: Set<String>
-    ) -> [String: String] {
+    ) -> [String: ProviderClassificationTagDefinition] {
         Dictionary(uniqueKeysWithValues: allowedTagIDs.compactMap { identifier in
             guard let node = taxonomy.nodes[identifier] else { return nil }
             let name = node.name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !name.isEmpty else { return nil }
             let description = node.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let glossary = description.isEmpty
-                ? "Tag name: \(name)"
-                : "Tag name: \(name)\nDescription: \(description)"
-            return (identifier, glossary)
+            return (
+                identifier,
+                ProviderClassificationTagDefinition(
+                    name: name,
+                    description: description.isEmpty ? nil : description
+                )
+            )
         })
     }
 
@@ -690,7 +693,7 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             let taxonomy = try tree.inferenceTaxonomy()
             let allowedTagIDs = llmAllowedTagIDs(taxonomy: taxonomy, configuration: llmAssist)
-            let tagDescriptions = llmTagDescriptions(taxonomy: taxonomy, allowedTagIDs: allowedTagIDs)
+            let tagDefinitions = llmTagDefinitions(taxonomy: taxonomy, allowedTagIDs: allowedTagIDs)
             let dailyOutputTokensRemaining = llmAssist.dailyOutputTokenLimit - outputTokensUsedToday(
                 in: catalog,
                 classifierTypeID: classifierType.id
@@ -705,7 +708,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 configuration: llmAssist,
                 entry: entry,
                 allowedTagIDs: allowedTagIDs,
-                tagDescriptions: tagDescriptions,
+                tagDefinitions: tagDefinitions,
                 maximumOutputTokens: outputTokenLimit
             )
             providerClassificationRunning = true
@@ -721,7 +724,7 @@ final class VaultClassifierViewModel: ObservableObject {
                         configuration: llmAssist,
                         entry: entry,
                         allowedTagIDs: allowedTagIDs,
-                        tagDescriptions: tagDescriptions,
+                        tagDefinitions: tagDefinitions,
                         catalog: catalog,
                         maximumOutputTokens: outputTokenLimit,
                         dailyOutputTokensRemaining: dailyOutputTokensRemaining,
@@ -858,7 +861,7 @@ final class VaultClassifierViewModel: ObservableObject {
         configuration: LLMAssistConfiguration,
         entry: EntryEvidence,
         allowedTagIDs: Set<String>,
-        tagDescriptions: [String: String],
+        tagDefinitions: [String: ProviderClassificationTagDefinition],
         catalog: WorkspaceCatalog,
         maximumOutputTokens: Int,
         dailyOutputTokensRemaining: Int,
@@ -875,7 +878,11 @@ final class VaultClassifierViewModel: ObservableObject {
             if let officialProfile = readyPlatformAPIProfile(in: catalog, platformID: entry.platform) {
                 preliminaryProviderRequestWasStarted = true
                 do {
-                    enrichedEntry = try await addingOfficialPlatformEvidence(to: entry, profile: officialProfile)
+                    enrichedEntry = try await addingOfficialPlatformEvidence(
+                        to: entry,
+                        profile: officialProfile,
+                        youtubeVideoEvidenceCount: configuration.youtubeVideoEvidenceCount
+                    )
                     officialEvidenceAvailable = true
                 } catch {
                     let canSearchInstead = configuration.webSearchMode != .off
@@ -903,7 +910,7 @@ final class VaultClassifierViewModel: ObservableObject {
             configuration: configuration,
             entry: enrichedEntry,
             allowedTagIDs: allowedTagIDs,
-            tagDescriptions: tagDescriptions,
+            tagDefinitions: tagDefinitions,
             maximumOutputTokens: effectiveMaximumOutputTokens
         )
         let initialRequestStartedAt = Date()
@@ -1240,14 +1247,73 @@ final class VaultClassifierViewModel: ObservableObject {
 
     private func addingOfficialPlatformEvidence(
         to entry: EntryEvidence,
-        profile: APIKeyProviderProfile
+        profile: APIKeyProviderProfile,
+        youtubeVideoEvidenceCount: Int
     ) async throws -> EntryEvidence {
+        let initialRequest = try OfficialPlatformEvidenceProtocol.prepare(
+            profile: profile,
+            entry: entry
+        )
+        let initialData = try await performOfficialPlatformEvidenceRequest(
+            profile: profile,
+            request: initialRequest
+        )
+        let officialEvidence: String
+        if profile.type == .youtubeData, initialRequest.target == .creator {
+            let uploadsRequest = try OfficialPlatformEvidenceProtocol.prepareYouTubeUploadsRequest(
+                profile: profile,
+                channelData: initialData,
+                maximumResults: youtubeVideoEvidenceCount
+            )
+            let playlistData = try await performOfficialPlatformEvidenceRequest(
+                profile: profile,
+                request: uploadsRequest
+            )
+            let videosRequest = try OfficialPlatformEvidenceProtocol.prepareYouTubeVideoRecordsRequest(
+                profile: profile,
+                playlistData: playlistData,
+                maximumResults: youtubeVideoEvidenceCount
+            )
+            let videoData: Data?
+            if let videosRequest {
+                videoData = try await performOfficialPlatformEvidenceRequest(
+                    profile: profile,
+                    request: videosRequest
+                )
+            } else {
+                videoData = nil
+            }
+            officialEvidence = try OfficialPlatformEvidenceProtocol.boundedYouTubeCreatorEvidence(
+                channelData: initialData,
+                playlistData: playlistData,
+                videoData: videoData,
+                maximumVideoCount: youtubeVideoEvidenceCount
+            )
+        } else {
+            officialEvidence = try OfficialPlatformEvidenceProtocol.boundedEvidence(
+                data: initialData,
+                providerType: initialRequest.providerType,
+                target: initialRequest.target
+            )
+        }
+        var enriched = entry
+        let priorSummary = entry.evidence.summary?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let summary = [priorSummary, "Official platform API evidence:\n\(officialEvidence)"]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+        enriched.evidence.summary = String(summary.prefix(EntryEvidenceValidator.summaryLimit))
+        try EntryEvidenceValidator().validate(enriched)
+        return enriched
+    }
+
+    private func performOfficialPlatformEvidenceRequest(
+        profile: APIKeyProviderProfile,
+        request: OfficialPlatformEvidencePreparedRequest
+    ) async throws -> Data {
         let startedAt = Date()
-        var prepared: OfficialPlatformEvidencePreparedRequest?
         var recorded = false
         do {
-            let request = try OfficialPlatformEvidenceProtocol.prepare(profile: profile, entry: entry)
-            prepared = request
             let credential = try providerCredential(for: profile.id)
             var urlRequest = URLRequest(url: request.plan.url)
             urlRequest.httpMethod = request.plan.method
@@ -1268,25 +1334,12 @@ final class VaultClassifierViewModel: ObservableObject {
             guard (200..<300).contains(http.statusCode) else {
                 throw ProviderTestHTTPError.status(http.statusCode)
             }
-            let officialEvidence = try OfficialPlatformEvidenceProtocol.boundedEvidence(
-                data: data,
-                providerType: request.providerType,
-                target: request.target
-            )
-            var enriched = entry
-            let priorSummary = entry.evidence.summary?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let summary = [priorSummary, "Official platform API evidence:\n\(officialEvidence)"]
-                .compactMap { $0 }
-                .filter { !$0.isEmpty }
-                .joined(separator: "\n\n")
-            enriched.evidence.summary = String(summary.prefix(EntryEvidenceValidator.summaryLimit))
-            try EntryEvidenceValidator().validate(enriched)
-            return enriched
+            return data
         } catch {
-            if let prepared, !recorded {
+            if !recorded {
                 recordPlatformAPIRequest(
                     profile: profile,
-                    plan: prepared.plan,
+                    plan: request.plan,
                     statusCode: nil,
                     durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
                     outcome: "failed"
@@ -1673,6 +1726,7 @@ final class VaultClassifierViewModel: ObservableObject {
         llmExtraDirection: String?,
         llmClassificationRequestsPerMinute: String?,
         llmBatchSize: String?,
+        llmYouTubeVideoEvidenceCount: String?,
         llmMaximumTagCount: String?,
         llmRestrictToLeafTags: Bool,
         llmWebSearchMode: String?,
@@ -1717,6 +1771,7 @@ final class VaultClassifierViewModel: ObservableObject {
                    let llmMaximumOutputTokensPerRequest,
                    let llmClassificationRequestsPerMinute,
                    let llmBatchSize,
+                   let llmYouTubeVideoEvidenceCount,
                    let llmMaximumTagCount,
                    !llmModelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     let cleanedLLMModelIdentifier = llmModelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1786,6 +1841,11 @@ final class VaultClassifierViewModel: ObservableObject {
                             maximum: LLMAssistConfiguration.maximumBatchSize,
                             label: "LLM batch size"
                         ),
+                        youtubeVideoEvidenceCount: try providerPositiveInteger(
+                            llmYouTubeVideoEvidenceCount,
+                            maximum: LLMAssistConfiguration.maximumYouTubeVideoEvidenceCount,
+                            label: "YouTube video evidence count"
+                        ),
                         maximumTagCount: try providerPositiveInteger(
                             llmMaximumTagCount,
                             maximum: EntryEvidenceValidator.tagLimit,
@@ -1820,6 +1880,7 @@ final class VaultClassifierViewModel: ObservableObject {
                         extraDirection: configuration.extraDirection,
                         classificationRequestsPerMinute: configuration.classificationRequestsPerMinute,
                         batchSize: configuration.batchSize,
+                        youtubeVideoEvidenceCount: configuration.youtubeVideoEvidenceCount,
                         maximumTagCount: configuration.maximumTagCount,
                         restrictToLeafTags: configuration.restrictToLeafTags,
                         webSearchMode: configuration.webSearchMode,
@@ -1831,6 +1892,7 @@ final class VaultClassifierViewModel: ObservableObject {
                        let llmMaximumOutputTokensPerRequest,
                        let llmClassificationRequestsPerMinute,
                        let llmBatchSize,
+                       let llmYouTubeVideoEvidenceCount,
                        let llmMaximumTagCount {
                         selectedLLMAssistDraft = try llmAssistDraftConfiguration(
                             provider: profile,
@@ -1840,6 +1902,7 @@ final class VaultClassifierViewModel: ObservableObject {
                             extraDirection: llmExtraDirection,
                             classificationRequestsPerMinute: llmClassificationRequestsPerMinute,
                             batchSize: llmBatchSize,
+                            youtubeVideoEvidenceCount: llmYouTubeVideoEvidenceCount,
                             maximumTagCount: llmMaximumTagCount,
                             restrictToLeafTags: llmRestrictToLeafTags,
                             webSearchMode: llmWebSearchMode,
@@ -2524,9 +2587,10 @@ final class VaultClassifierViewModel: ObservableObject {
         // One classification samples a creator's observed work instead of
         // repeatedly showing the same newest titles. The sample stays bounded
         // before it enters the provider request.
-        let titles = creatorEntries
+        let sampledEntries = creatorEntries
             .shuffled()
             .prefix(25)
+        let titles = sampledEntries
             .map(\.title)
             .joined(separator: "\n")
         guard !titles.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
@@ -2538,8 +2602,12 @@ final class VaultClassifierViewModel: ObservableObject {
                 sourceID: creatorID,
                 surface: .page,
                 evidence: .init(
-                    title: String("Creator: \(representative.creatorName)".prefix(EntryEvidenceValidator.titleLimit)),
-                    text: String(titles.prefix(EntryEvidenceValidator.textLimit))
+                    title: String(representative.creatorName.prefix(EntryEvidenceValidator.titleLimit)),
+                    text: String(titles.prefix(EntryEvidenceValidator.textLimit)),
+                    metadata: [
+                        "classificationTarget": .string("creator"),
+                        "creatorName": .string(String(representative.creatorName.prefix(EntryEvidenceValidator.metadataValueLengthLimit))),
+                    ]
                 )
             )
         )
@@ -2718,7 +2786,7 @@ final class VaultClassifierViewModel: ObservableObject {
             let entry = workItem.entry
             let taxonomy = try tree.inferenceTaxonomy()
             let allowedTagIDs = llmAllowedTagIDs(taxonomy: taxonomy, configuration: llmAssist)
-            let tagDescriptions = llmTagDescriptions(taxonomy: taxonomy, allowedTagIDs: allowedTagIDs)
+            let tagDefinitions = llmTagDefinitions(taxonomy: taxonomy, allowedTagIDs: allowedTagIDs)
             let dailyOutputTokensRemaining = llmAssist.dailyOutputTokenLimit - outputTokensUsedToday(
                 in: catalog,
                 classifierTypeID: classifierType.id
@@ -2732,7 +2800,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 configuration: llmAssist,
                 entry: entry,
                 allowedTagIDs: allowedTagIDs,
-                tagDescriptions: tagDescriptions,
+                tagDefinitions: tagDefinitions,
                 maximumOutputTokens: outputTokenLimit
             )
             providerClassificationRunning = true
@@ -2748,7 +2816,7 @@ final class VaultClassifierViewModel: ObservableObject {
                         configuration: llmAssist,
                         entry: entry,
                         allowedTagIDs: allowedTagIDs,
-                        tagDescriptions: tagDescriptions,
+                        tagDefinitions: tagDefinitions,
                         catalog: catalog,
                         maximumOutputTokens: outputTokenLimit,
                         dailyOutputTokensRemaining: dailyOutputTokensRemaining,
@@ -2846,7 +2914,7 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             let taxonomy = try tree.inferenceTaxonomy()
             let allowedTagIDs = llmAllowedTagIDs(taxonomy: taxonomy, configuration: configuration)
-            let tagDescriptions = llmTagDescriptions(taxonomy: taxonomy, allowedTagIDs: allowedTagIDs)
+            let tagDefinitions = llmTagDefinitions(taxonomy: taxonomy, allowedTagIDs: allowedTagIDs)
             var remainingOutputTokens = configuration.dailyOutputTokenLimit - outputTokensUsedToday(
                 in: catalog,
                 classifierTypeID: classifierType.id
@@ -2893,7 +2961,7 @@ final class VaultClassifierViewModel: ObservableObject {
                             configuration: configuration,
                             entry: entry,
                             allowedTagIDs: allowedTagIDs,
-                            tagDescriptions: tagDescriptions,
+                            tagDefinitions: tagDefinitions,
                             maximumOutputTokens: outputTokenLimit
                         )
                         let run = try await self.runProviderClassification(
@@ -2901,7 +2969,7 @@ final class VaultClassifierViewModel: ObservableObject {
                             configuration: configuration,
                             entry: entry,
                             allowedTagIDs: allowedTagIDs,
-                            tagDescriptions: tagDescriptions,
+                            tagDefinitions: tagDefinitions,
                             catalog: catalog,
                             maximumOutputTokens: outputTokenLimit,
                             dailyOutputTokensRemaining: remainingOutputTokens,
@@ -3239,6 +3307,7 @@ final class VaultClassifierViewModel: ObservableObject {
         extraDirection: String?,
         classificationRequestsPerMinute: String,
         batchSize: String,
+        youtubeVideoEvidenceCount: String,
         maximumTagCount: String,
         restrictToLeafTags: Bool,
         webSearchMode: String?,
@@ -3292,6 +3361,11 @@ final class VaultClassifierViewModel: ObservableObject {
                 batchSize,
                 maximum: LLMAssistConfiguration.maximumBatchSize,
                 label: "LLM batch size"
+            ),
+            youtubeVideoEvidenceCount: try providerPositiveInteger(
+                youtubeVideoEvidenceCount,
+                maximum: LLMAssistConfiguration.maximumYouTubeVideoEvidenceCount,
+                label: "YouTube video evidence count"
             ),
             maximumTagCount: try providerPositiveInteger(
                 maximumTagCount,
@@ -3504,6 +3578,7 @@ final class VaultClassifierViewModel: ObservableObject {
                             "extraDirection": draft.extraDirection,
                             "classificationRequestsPerMinute": draft.classificationRequestsPerMinute,
                             "batchSize": draft.batchSize,
+                            "youtubeVideoEvidenceCount": draft.youtubeVideoEvidenceCount,
                             "maximumTagCount": draft.maximumTagCount,
                             "restrictToLeafTags": draft.restrictToLeafTags,
                             "webSearchMode": draft.webSearchMode.rawValue,
@@ -3523,6 +3598,7 @@ final class VaultClassifierViewModel: ObservableObject {
                             "completedToday": classificationStatus.completedToday,
                             "lastClassificationOutcome": classificationStatus.lastOutcome ?? NSNull(),
                             "batchSize": configuration.batchSize,
+                            "youtubeVideoEvidenceCount": configuration.youtubeVideoEvidenceCount,
                             "maximumTagCount": configuration.maximumTagCount,
                             "restrictToLeafTags": configuration.restrictToLeafTags,
                             "webSearchMode": configuration.webSearchMode.rawValue,
@@ -3715,6 +3791,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     llmExtraDirection: try webOptionalString(data, key: "llmExtraDirection", limit: LLMAssistConfiguration.maximumExtraDirectionLength),
                     llmClassificationRequestsPerMinute: try webOptionalString(data, key: "llmClassificationRequestsPerMinute", limit: 3),
                     llmBatchSize: try webOptionalString(data, key: "llmBatchSize", limit: 4),
+                    llmYouTubeVideoEvidenceCount: try webOptionalString(data, key: "llmYouTubeVideoEvidenceCount", limit: 2),
                     llmMaximumTagCount: try webOptionalString(data, key: "llmMaximumTagCount", limit: 4),
                     llmRestrictToLeafTags: data["llmRestrictToLeafTags"] as? Bool ?? false,
                     llmWebSearchMode: try webOptionalString(data, key: "llmWebSearchMode", limit: 32),

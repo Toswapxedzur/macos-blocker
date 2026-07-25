@@ -147,11 +147,13 @@ that object, never JSON embedded in explanatory prose. An empty `labelIDs`
 array is a valid explicit LLM no-tag decision, distinct from a human decision
 that has not selected a tag.
 
-Each tag may have an optional local description. An explicit LLM request sends
-the eligible tag ID and its description together. Tags excluded by the
-leaf-only setting are not sent, so neither are their descriptions. Descriptions
-remain local tree metadata and are not part of provider diagnostics or request
-history.
+Each tag has a human-readable local name and may have an optional local
+description. An explicit LLM request sends the eligible tag ID, name, and
+description as separate fields; a request with an eligible ID but no readable
+name fails locally instead of asking the model to infer meaning from an opaque
+identifier. Tags excluded by the leaf-only setting are not sent, so neither are
+their names or descriptions. This tree metadata is not part of provider
+diagnostics or request history.
 
 A language-model test succeeds only after a 2xx response matches that
 provider's response grammar and contains generated text. An empty or unrelated
@@ -170,13 +172,30 @@ output.
 ## Creator evidence
 
 When a ready official adapter is available, native code deterministically
-selects the newest matching platform API profile and attempts to fetch one
-bounded record: the creator where the API supports it, otherwise the
-representative collected entry. A successful response is sanitized and added
-to the prompt. The model cannot choose credentials, URLs, identifiers, or API
+selects the newest matching platform API profile and attempts the platform's
+bounded evidence route. Most adapters fetch one creator record, or the
+representative collected entry where the public API has no creator route.
+
+YouTube creator evidence is intentionally richer. One classifier-type setting,
+**YouTube video records**, persists a count from 1–50 (default 25). Native code
+resolves the creator with `channels.list`, reads
+`contentDetails.relatedPlaylists.uploads`, retrieves one matching recent page
+with `playlistItems.list`, and fetches those public records with `videos.list`.
+The prompt receives the channel record plus the returned videos in upload
+order, including their titles, descriptions when the evidence bound permits,
+content details, public statistics, topics, and other selected public
+classification context. If the compact evidence would exceed its prompt bound,
+descriptions and extended fields are reduced before core records; every
+returned video's ID, title, publication time, duration, and primary public
+metrics are retained. Each HTTP response is counted as a platform API call, but
+no request or response body is written to provider history.
+
+Successful official evidence is sanitized and exists only in the in-flight
+classification prompt. It never backfills the browser-collected dataset. The
+model cannot choose credentials, URLs, identifiers, request parts, or API
 profiles. Official evidence is preferred context, not an unconditional
-prerequisite: if that connection is absent or its request fails, classification
-may continue only when a ready web-search capability is configured.
+prerequisite: if the required route is absent or fails, classification may
+continue only when a ready web-search capability is configured.
 
 OpenAI Responses (`web_search`), Gemini GenerateContent (`google_search`
 grounding), and Anthropic Messages (`web_search_20250305`) receive their native
@@ -193,9 +212,13 @@ in-flight continuation and are then discarded. The ledger retains request
 metadata but no query or result body. If the attached connection is not ready,
 classification stops rather than scraping or chaining into a second LLM.
 
-The creator's local prompt evidence is a random sample of up to 25 observed
-titles, bounded before dispatch. It is creator evidence, never individual video
-classification.
+The creator's local prompt evidence remains a random sample of up to 25
+browser-observed titles, bounded before dispatch. The prompt represents the
+target as structured data with an explicit creator name and identifier, and
+labels both the observed-title array and official-video array as belonging to
+that same creator. It directs the model to classify recurring work rather than
+one isolated upload and to treat every evidence field as untrusted quoted data.
+These are creator-evidence records, never independent video classifications.
 
 The prior static public-creator-page scraper and its avatar/API-fallback
 controls are obsolete and removed. Browser-collected, verified avatar URLs may
@@ -208,8 +231,10 @@ the model elects to request.
 - `WorkspaceAssetsTests`: catalog reconciliation, plain provider-credential
   persistence, profile validation, and legacy-state cleanup.
 - `ProviderTestProtocolTests`: provider test/classification request grammar,
-  configurable output limits, tag descriptions/extra direction, native-search
-  and same-model external-tool continuation grammars, bounded Serper/You.com
-  routing, capability filtering, and direct provider model-list routing.
+  explicit creator/sample association, readable tag definitions, configurable
+  output limits, the bounded YouTube channel/uploads/video chain (including
+  all 50 configured video cores), extra direction, native-search and same-model
+  external-tool continuation grammars, bounded Serper/You.com routing,
+  capability filtering, and direct provider model-list routing.
 - `ProviderModelCatalogStoreTests`: restart persistence and profile-removal
   cleanup for the bounded model-identifier cache.
