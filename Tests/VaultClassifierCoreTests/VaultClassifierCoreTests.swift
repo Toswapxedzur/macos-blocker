@@ -225,6 +225,7 @@ final class VaultClassifierCoreTests: XCTestCase {
         XCTAssertEqual(SharedBrowserBridgeProtocol.version, 4)
         XCTAssertEqual(SharedBrowserBridgeProtocol.address, "ws://127.0.0.1:8787")
         XCTAssertEqual(SharedBrowserBridgeOperation.diagnostic.rawValue, "diagnostic")
+        XCTAssertEqual(SharedBrowserBridgeOperation.sourceTags.rawValue, "source-tags")
         XCTAssertTrue(SharedBrowserBridgeProtocol.isValidRequestID("request-001"))
         XCTAssertFalse(SharedBrowserBridgeProtocol.isValidRequestID("request\n001"))
         XCTAssertTrue(SharedBrowserBridgeProtocol.isValidBody(["entry": ["title": "Visible card"]]))
@@ -233,6 +234,27 @@ final class VaultClassifierCoreTests: XCTestCase {
         XCTAssertTrue(SharedBrowserBridgeProtocol.isAcceptedHubProgram("classifier"))
         XCTAssertFalse(SharedBrowserBridgeProtocol.isAcceptedHubProgram("vault-broker"))
         XCTAssertFalse(SharedBrowserBridgeProtocol.isAcceptedHubProgram("browser"))
+    }
+
+    func testNativeSourceTagMessagesValidatePlatformBoundIdentitiesAndBounds() throws {
+        XCTAssertNoThrow(try NativeSourceTagsRequest(
+            platformID: "youtube",
+            sourceID: "youtube:channel:UC123"
+        ).validate())
+        XCTAssertThrowsError(try NativeSourceTagsRequest(
+            platformID: "youtube",
+            sourceID: "reddit:subreddit:games"
+        ).validate())
+        XCTAssertThrowsError(try NativeSourceTagsRequest(
+            platformID: "YouTube",
+            sourceID: "YouTube:channel:UC123"
+        ).validate())
+        let response = NativeSourceTagsResponse(
+            platformID: "youtube",
+            sourceID: "youtube:channel:UC123",
+            tags: (0..<100).map { NativeSourceTag(id: "tag-\($0)", name: "Tag \($0)") }
+        )
+        XCTAssertEqual(response.tags.count, CreatorClassificationRecord.maximumTagIDs)
     }
 
     func testLocalHubProofBindsTheProgramAndChallenge() throws {

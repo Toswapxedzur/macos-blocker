@@ -76,29 +76,12 @@ public struct WorkspaceNeuralClassifier: Sendable {
         // to leaves. Local neural predictions remain leaf-only, but every
         // explicit creator decision still contributes to policy evaluation.
         let allowedTags = Set(taxonomy.nodes.values.filter(\.predictable).map(\.id))
-        var signals = [String: [ClassifierDecisionSource: Double]]()
         let creatorID = entry.sourceID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !creatorID.isEmpty {
-            for classification in creatorClassifications where
-                classification.classifierTypeID == classifierType.id &&
-                classification.platformID == entry.platform &&
-                classification.creatorID == creatorID &&
-                classification.review == .approved {
-                let source: ClassifierDecisionSource?
-                switch classification.origin {
-                case .manual: source = .human
-                case .llmAssist: source = .llmAssist
-                case .legacy: source = nil
-                }
-                guard let source else { continue }
-                for tagID in classification.tagIDs where allowedTags.contains(tagID) {
-                    signals[tagID, default: [:]][source] = 1
-                }
-                for tagID in classification.negativeTagIDs where allowedTags.contains(tagID) {
-                    signals[tagID, default: [:]][source] = 0
-                }
-            }
-        }
+        var signals = creatorSignals(
+            platformID: entry.platform,
+            creatorID: creatorID,
+            allowedTags: allowedTags
+        )
 
         var localScores = [String: Double]()
         if let neuralModel = model?.embeddedNeuralModel, !readableText.isEmpty {
@@ -158,6 +141,68 @@ public struct WorkspaceNeuralClassifier: Sendable {
             requestedPolicyIDs: entry.policyIDs
         )
         return result
+    }
+
+    /// Resolves only durable, approved creator decisions. Per-entry neural
+    /// predictions are deliberately excluded because browser annotations
+    /// describe the source, not a guess about one visible title.
+    public func sourceTags(platformID: String, sourceID: String) -> [TagNode] {
+        let allowedTags = Set(taxonomy.nodes.values.filter(\.predictable).map(\.id))
+        let signals = creatorSignals(
+            platformID: platformID,
+            creatorID: sourceID,
+            allowedTags: allowedTags
+        )
+        return signals.compactMap { tagID, sourceScores -> (TagNode, Double)? in
+            let weightedScores = sourceScores.compactMap { source, score -> (Double, Double)? in
+                let weight = classifierType.decisionWeight(for: source)
+                return weight > 0 ? (score, weight) : nil
+            }
+            let weightTotal = weightedScores.reduce(0) { $0 + $1.1 }
+            guard weightTotal > 0,
+                  let node = taxonomy.nodes[tagID] else {
+                return nil
+            }
+            let finalScore = weightedScores.reduce(0) { $0 + ($1.0 * $1.1) } / weightTotal
+            return finalScore >= Self.threshold ? (node, finalScore) : nil
+        }
+        .sorted { lhs, rhs in
+            if lhs.1 == rhs.1 { return lhs.0.id < rhs.0.id }
+            return lhs.1 > rhs.1
+        }
+        .prefix(Self.maximumSelectedTags)
+        .map(\.0)
+    }
+
+    private func creatorSignals(
+        platformID: String,
+        creatorID: String,
+        allowedTags: Set<String>
+    ) -> [String: [ClassifierDecisionSource: Double]] {
+        guard !creatorID.isEmpty else { return [:] }
+        var signals = [String: [ClassifierDecisionSource: Double]]()
+        for classification in creatorClassifications where
+            classification.classifierTypeID == classifierType.id &&
+            classification.platformID == platformID &&
+            classification.creatorID == creatorID &&
+            classification.treeID == classifierType.treeID &&
+            classification.treeRevision == classifierType.treeRevision &&
+            classification.review == .approved {
+            let source: ClassifierDecisionSource?
+            switch classification.origin {
+            case .manual: source = .human
+            case .llmAssist: source = .llmAssist
+            case .legacy: source = nil
+            }
+            guard let source else { continue }
+            for tagID in classification.tagIDs where allowedTags.contains(tagID) {
+                signals[tagID, default: [:]][source] = 1
+            }
+            for tagID in classification.negativeTagIDs where allowedTags.contains(tagID) {
+                signals[tagID, default: [:]][source] = 0
+            }
+        }
+        return signals
     }
 }
 

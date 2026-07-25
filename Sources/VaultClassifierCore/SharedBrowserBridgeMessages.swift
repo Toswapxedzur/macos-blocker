@@ -38,6 +38,61 @@ public struct NativeCollectionResponse: Codable, Equatable, Sendable {
     public init(accepted: Bool, inserted: Bool) { self.accepted = accepted; self.inserted = inserted }
 }
 
+public struct NativeSourceTagsRequest: Codable, Equatable, Sendable {
+    public var platformID: String
+    public var sourceID: String
+
+    public init(platformID: String, sourceID: String) {
+        self.platformID = platformID
+        self.sourceID = sourceID
+    }
+
+    public func validate() throws {
+        guard Self.isValidPlatformID(platformID) else {
+            throw NativeSourceTagsError.invalidPlatform
+        }
+        guard !sourceID.isEmpty,
+              sourceID.count <= 256,
+              sourceID.hasPrefix("\(platformID):"),
+              sourceID == sourceID.trimmingCharacters(in: .whitespacesAndNewlines),
+              sourceID.unicodeScalars.allSatisfy({
+                  $0.value >= 0x21 && $0.value != 0x7f
+              }) else {
+            throw NativeSourceTagsError.invalidSource
+        }
+    }
+
+    private static func isValidPlatformID(_ value: String) -> Bool {
+        !value.isEmpty && value.count <= 64 && value.unicodeScalars.allSatisfy {
+            ($0.value >= 0x61 && $0.value <= 0x7a) ||
+            ($0.value >= 0x30 && $0.value <= 0x39) ||
+            $0.value == 0x2d
+        }
+    }
+}
+
+public struct NativeSourceTag: Codable, Equatable, Sendable {
+    public var id: String
+    public var name: String
+
+    public init(id: String, name: String) {
+        self.id = id
+        self.name = name
+    }
+}
+
+public struct NativeSourceTagsResponse: Codable, Equatable, Sendable {
+    public var platformID: String
+    public var sourceID: String
+    public var tags: [NativeSourceTag]
+
+    public init(platformID: String, sourceID: String, tags: [NativeSourceTag]) {
+        self.platformID = platformID
+        self.sourceID = sourceID
+        self.tags = Array(tags.prefix(CreatorClassificationRecord.maximumTagIDs))
+    }
+}
+
 public enum NativeCollectionDiagnosticEvent: String, CaseIterable, Codable, Sendable {
     case collectorStarted = "collector-started"
     case collectionInfoRequested = "collection-info-requested"
@@ -118,6 +173,18 @@ public enum NativeCollectionDiagnosticError: Error, LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .invalidPlatform: return "The collection diagnostic platform is invalid."
+        }
+    }
+}
+
+public enum NativeSourceTagsError: Error, LocalizedError, Sendable {
+    case invalidPlatform
+    case invalidSource
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidPlatform: return "The source-tag platform is invalid."
+        case .invalidSource: return "The source-tag identity is invalid."
         }
     }
 }

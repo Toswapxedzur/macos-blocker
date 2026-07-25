@@ -334,6 +334,88 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertTrue(llmFirstResult.selectedLeafTagIDs.isEmpty)
     }
 
+    func testSourceTagProjectionUsesApprovedCreatorDecisionsWithoutEntryInference() throws {
+        let tree = TagTreeAsset(
+            id: "tree",
+            name: "Topics",
+            nodes: [
+                .init(id: "games", name: "Games"),
+                .init(id: "technology", name: "Technology"),
+                .init(id: "retired", name: "Retired", isRetired: true),
+            ]
+        )
+        let sourceID = "discord:server:123456"
+        let records = [
+            CreatorClassificationRecord(
+                classifierTypeID: "type",
+                creatorID: sourceID,
+                creatorName: "Server",
+                platformID: "discord",
+                treeID: tree.id,
+                treeRevision: tree.revision,
+                tagIDs: ["games", "retired"],
+                origin: .manual,
+                review: .approved
+            ),
+            CreatorClassificationRecord(
+                classifierTypeID: "type",
+                creatorID: sourceID,
+                creatorName: "Server",
+                platformID: "discord",
+                treeID: tree.id,
+                treeRevision: tree.revision,
+                tagIDs: ["technology"],
+                origin: .llmAssist,
+                review: .pending
+            ),
+            CreatorClassificationRecord(
+                classifierTypeID: "type",
+                creatorID: "discord:server:other",
+                creatorName: "Other server",
+                platformID: "discord",
+                treeID: tree.id,
+                treeRevision: tree.revision,
+                tagIDs: ["technology"],
+                origin: .manual,
+                review: .approved
+            ),
+            CreatorClassificationRecord(
+                classifierTypeID: "type",
+                creatorID: sourceID,
+                creatorName: "Server",
+                platformID: "discord",
+                treeID: tree.id,
+                treeRevision: tree.revision + 1,
+                tagIDs: ["technology"],
+                origin: .manual,
+                review: .approved
+            ),
+        ]
+        let classifierType = ClassifierTypeAsset(
+            id: "type",
+            name: "Manual-only source tags",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            datasetID: "dataset",
+            datasetRevision: 1,
+            applicablePlatformID: "discord"
+        )
+        let classifier = WorkspaceNeuralClassifier(
+            classifierType: classifierType,
+            model: nil,
+            taxonomy: try tree.inferenceTaxonomy(),
+            policies: [],
+            creatorClassifications: records
+        )
+
+        XCTAssertEqual(
+            classifier.sourceTags(platformID: "discord", sourceID: sourceID),
+            [TagNode(id: "games", name: "Games")]
+        )
+        XCTAssertTrue(classifier.sourceTags(platformID: "reddit", sourceID: sourceID).isEmpty)
+        XCTAssertTrue(classifier.sourceTags(platformID: "discord", sourceID: "discord:server:missing").isEmpty)
+    }
+
     func testCreatorClassificationsAreTheOnlyActiveTrainingLabels() throws {
         let tree = TagTreeAsset(
             id: "interests",

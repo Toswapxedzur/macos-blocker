@@ -253,6 +253,18 @@ final class VaultClassifierViewModel: ObservableObject {
                 onWebStateChange?()
                 startActiveLLMClassification(platformID: request.entry.platform)
                 return try sharedHubReply(NativeCollectionResponse(accepted: true, inserted: inserted))
+            case .sourceTags:
+                let sourceTags = try JSONDecoder().decode(NativeSourceTagsRequest.self, from: request.bodyData)
+                try sourceTags.validate()
+                let tags = try coordinator.sourceTags(
+                    platformID: sourceTags.platformID,
+                    sourceID: sourceTags.sourceID
+                )
+                return try sharedHubReply(NativeSourceTagsResponse(
+                    platformID: sourceTags.platformID,
+                    sourceID: sourceTags.sourceID,
+                    tags: tags.map { NativeSourceTag(id: $0.id, name: $0.name) }
+                ))
             case .classify:
                 let classification = try JSONDecoder().decode(NativeClassificationRequest.self, from: request.bodyData)
                 let output = try coordinator.classifyWithLedger(classification.entry)
