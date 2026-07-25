@@ -164,15 +164,23 @@ parameters. Arbitrary OpenAI-compatible and Custom endpoints retain the prompt
 contract plus local validation because their model-list response cannot verify
 a structured-output request field.
 
-Provider incompatibilities never silently disable search. Gemini structured
-output is omitted when native or attached tools are selected because its
-model-specific combined capability is not exposed by Probe. Anthropic hosted
-search keeps its citation-bearing grammar rather than adding the incompatible
-JSON-output constraint, while Anthropic attached tools can retain JSON output.
-Cohere, Groq, and Ollama attached-tool requests likewise keep their documented
-tool grammar instead of sending an incompatible or unverified response-format
-field. These combinations still fail closed at the local parser if the final
-text violates the label contract.
+Provider incompatibilities never silently disable search. Google currently
+documents combined structured output and tools for `gemini-3.1-pro-preview`
+and `gemini-3.6-flash`, so those exact models receive both the selected search
+grammar and native response schema. Other Gemini models retain search without
+the unverified response field.
+Anthropic hosted search keeps its citation-bearing grammar rather than adding
+the incompatible JSON-output constraint, while Anthropic attached tools can
+retain JSON output. Cohere, Groq, and Ollama attached-tool requests likewise
+keep their documented tool grammar instead of sending an incompatible or
+unverified response-format field. If one of these searched/tool-assisted
+answers violates the local label contract, Vault makes one charged
+same-provider, same-model repair request with search disabled and the native
+output constraint enabled. That repair receives the original classification
+prompt and malformed candidate as transient quoted context, never repeats
+research, and must still pass the eligible-ID and maximum-count validator. The
+malformed source turn is recorded independently so its usage cannot disappear
+when repair succeeds. A failed or unaffordable repair remains a closed failure.
 
 Each tag has a human-readable local name and may have an optional local
 description. An explicit LLM request sends the eligible tag ID, name, and

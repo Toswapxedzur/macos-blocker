@@ -725,11 +725,14 @@ final class ProviderTestProtocolTests: XCTestCase {
 
         for (type, mode) in fixtures {
             let profile = APIKeyProviderProfile(type: type)
+            let modelIdentifier = type == .gemini
+                ? "gemini-3.6-flash"
+                : type.defaultModelIdentifier
             let prepared = try ProviderClassificationProtocol.prepare(
                 profile: profile,
                 configuration: .init(
                     providerProfileID: profile.id,
-                    modelIdentifier: type.defaultModelIdentifier,
+                    modelIdentifier: modelIdentifier,
                     webSearchMode: mode,
                     webSearchProviderProfileID: mode == .attached ? "search" : nil
                 ),
@@ -757,7 +760,7 @@ final class ProviderTestProtocolTests: XCTestCase {
                 XCTAssertEqual(body["output_config"] == nil, mode == .providerNative, type.rawValue)
             case .gemini:
                 let generationConfig = try XCTUnwrap(body["generationConfig"] as? [String: Any])
-                XCTAssertNil(generationConfig["responseFormat"], type.rawValue)
+                XCTAssertNotNil(generationConfig["responseFormat"], type.rawValue)
             case .cohere, .groq:
                 XCTAssertNil(body["response_format"], type.rawValue)
             case .ollama:
@@ -766,6 +769,126 @@ final class ProviderTestProtocolTests: XCTestCase {
                 XCTFail("Unexpected provider \(type.rawValue)")
             }
         }
+
+        let gemini25 = APIKeyProviderProfile(type: .gemini)
+        let gemini25Request = try ProviderClassificationProtocol.prepare(
+            profile: gemini25,
+            configuration: .init(
+                providerProfileID: gemini25.id,
+                modelIdentifier: "gemini-2.5-flash",
+                webSearchMode: .providerNative
+            ),
+            entry: .init(
+                platform: "youtube",
+                entryID: "entry",
+                surface: .page,
+                evidence: .init(title: "Creator")
+            ),
+            allowedTagIDs: ["games"],
+            tagDefinitions: readableTagDefinitions(["games"])
+        )
+        let gemini25Body = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: gemini25Request.body) as? [String: Any]
+        )
+        XCTAssertNil(
+            (gemini25Body["generationConfig"] as? [String: Any])?["responseFormat"]
+        )
+    }
+
+    func testSchemaNormalizationFallbackUsesNativeConstraintWithoutRepeatingSearch() throws {
+        let fixtures: [(APIKeyProviderType, LLMWebSearchMode, String)] = [
+            (.gemini, .providerNative, "gemini-2.5-flash"),
+            (.gemini, .attached, "gemini-2.5-flash"),
+            (.anthropic, .providerNative, APIKeyProviderType.anthropic.defaultModelIdentifier),
+            (.cohere, .attached, APIKeyProviderType.cohere.defaultModelIdentifier),
+            (.groq, .attached, APIKeyProviderType.groq.defaultModelIdentifier),
+            (.ollama, .attached, APIKeyProviderType.ollama.defaultModelIdentifier),
+        ]
+
+        for (type, mode, modelIdentifier) in fixtures {
+            XCTAssertTrue(
+                ProviderClassificationProtocol.needsSchemaNormalizationFallback(
+                    providerType: type,
+                    webSearchMode: mode,
+                    modelIdentifier: modelIdentifier
+                ),
+                type.rawValue
+            )
+            let profile = APIKeyProviderProfile(type: type)
+            let prepared = try ProviderClassificationProtocol.prepareSchemaNormalization(
+                profile: profile,
+                configuration: .init(
+                    providerProfileID: profile.id,
+                    modelIdentifier: modelIdentifier,
+                    webSearchMode: mode,
+                    webSearchProviderProfileID: mode == .attached ? "search" : nil
+                ),
+                originalPrompt: "Original creator classification with eligible label games.",
+                candidateContent: "The intended label is games.",
+                maximumOutputTokens: 512
+            )
+            let body = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: prepared.body) as? [String: Any],
+                type.rawValue
+            )
+            XCTAssertNil(body["tools"], type.rawValue)
+            XCTAssertTrue(prepared.prompt.contains("Original creator classification"), type.rawValue)
+            XCTAssertTrue(prepared.prompt.contains("The intended label is games."), type.rawValue)
+
+            switch type {
+            case .gemini:
+                let generationConfig = try XCTUnwrap(body["generationConfig"] as? [String: Any])
+                let responseFormat = try XCTUnwrap(generationConfig["responseFormat"] as? [String: Any])
+                let text = try XCTUnwrap(responseFormat["text"] as? [String: Any])
+                XCTAssertEqual(text["mimeType"] as? String, "application/json")
+                assertLabelResponseSchema(text["schema"], provider: type)
+            case .anthropic:
+                let outputConfig = try XCTUnwrap(body["output_config"] as? [String: Any])
+                let format = try XCTUnwrap(outputConfig["format"] as? [String: Any])
+                XCTAssertEqual(format["type"] as? String, "json_schema")
+                assertLabelResponseSchema(format["schema"], provider: type)
+            case .cohere:
+                let format = try XCTUnwrap(body["response_format"] as? [String: Any])
+                XCTAssertEqual(format["type"] as? String, "json_object")
+                assertLabelResponseSchema(format["schema"], provider: type)
+            case .groq:
+                XCTAssertEqual(
+                    (body["response_format"] as? [String: Any])?["type"] as? String,
+                    "json_object"
+                )
+            case .ollama:
+                assertLabelResponseSchema(body["format"], provider: type)
+            default:
+                XCTFail("Unexpected provider \(type.rawValue)")
+            }
+        }
+
+        XCTAssertFalse(
+            ProviderClassificationProtocol.needsSchemaNormalizationFallback(
+                providerType: .openAI,
+                webSearchMode: .providerNative
+            )
+        )
+        XCTAssertFalse(
+            ProviderClassificationProtocol.needsSchemaNormalizationFallback(
+                providerType: .openAICompatible,
+                webSearchMode: .attached
+            )
+        )
+        XCTAssertTrue(
+            ProviderClassificationProtocol.needsSchemaNormalizationFallback(
+                providerType: .gemini,
+                webSearchMode: .providerNative,
+                modelIdentifier: "gemini-3.5-flash"
+            )
+        )
+        XCTAssertFalse(
+            ProviderClassificationProtocol.needsSchemaNormalizationFallback(
+                providerType: .gemini,
+                webSearchMode: .providerNative,
+                modelIdentifier: "gemini-3.6-flash"
+            )
+        )
     }
 
     func testPlatformDataProfilesPrepareBoundedConnectionTestsWithoutLanguageModels() throws {
