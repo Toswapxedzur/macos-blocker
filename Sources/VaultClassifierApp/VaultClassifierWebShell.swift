@@ -33,7 +33,7 @@ final class VaultClassifierWebShell {
         view.allowsBackForwardNavigationGestures = false
         coordinator.webView = view
 
-        guard let index = Bundle.module.url(forResource: "index", withExtension: "html", subdirectory: "WebAssets") else {
+        guard let index = Self.bundledWebAssetURL(named: "index", extension: "html") else {
             preconditionFailure("Vault Classifier web shell is missing its bundled index.html resource.")
         }
         view.loadFileURL(index, allowingReadAccessTo: index.deletingLastPathComponent())
@@ -55,6 +55,10 @@ final class VaultClassifierWebShell {
         }
         let encoded = data.base64EncodedString()
         return "window.VaultClassifier && window.VaultClassifier.receive(JSON.parse(new TextDecoder().decode(Uint8Array.from(atob('\(encoded)'), value => value.charCodeAt(0)))));"
+    }
+
+    static func bundledWebAssetURL(named name: String, extension fileExtension: String) -> URL? {
+        Bundle.module.url(forResource: name, withExtension: fileExtension, subdirectory: "WebAssets")
     }
 
     private final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
