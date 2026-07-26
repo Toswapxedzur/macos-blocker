@@ -115,6 +115,59 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertTrue(catalog.trees.first?.nodes.isEmpty == true)
     }
 
+    func testCollectedEntryMigratesRetiredCreatorFieldsToSourceNeutralEvidence() throws {
+        let legacy = Data(#"""
+        {
+          "id": "collected-legacy",
+          "platformID": "youtube",
+          "entryID": "youtube:video:legacy",
+          "creatorID": "youtube:channel:legacy",
+          "creatorName": "Legacy source",
+          "entryType": "video",
+          "title": "Legacy title",
+          "canonicalURL": "https://www.youtube.com/watch?v=legacy00000",
+          "attributes": {
+            "creatorAvatarURL": "https://yt3.ggpht.com/legacy-source-icon=s88",
+            "creatorURL": "https://www.youtube.com/@legacy",
+            "subscriberCount": "12K"
+          },
+          "firstObservedAtMilliseconds": 100,
+          "lastObservedAtMilliseconds": 200,
+          "observationCount": 2
+        }
+        """#.utf8)
+
+        let migrated = try JSONDecoder().decode(CollectedPlatformEntry.self, from: legacy)
+        XCTAssertEqual(migrated.surface, .feed)
+        XCTAssertNil(migrated.text)
+        XCTAssertNil(migrated.summary)
+        XCTAssertTrue(migrated.suppliedTags.isEmpty)
+        XCTAssertEqual(migrated.sourceIconURL, "https://yt3.ggpht.com/legacy-source-icon=s88")
+        XCTAssertEqual(migrated.attributes["sourceURL"], "https://www.youtube.com/@legacy")
+        XCTAssertNil(migrated.attributes["creatorAvatarURL"])
+        XCTAssertNil(migrated.attributes["creatorURL"])
+
+        let encoded = try XCTUnwrap(String(data: JSONEncoder().encode(migrated), encoding: .utf8))
+        XCTAssertTrue(encoded.contains(#""sourceIconURL":"https:\/\/yt3.ggpht.com\/legacy-source-icon=s88""#))
+        XCTAssertFalse(encoded.contains("creatorAvatarURL"))
+        XCTAssertFalse(encoded.contains("creatorURL"))
+    }
+
+    func testSourceIconPolicyCoversSubredditsAndServersWithoutAcceptingPostMedia() {
+        XCTAssertTrue(SourceIconURLPolicy.isAccepted(
+            platformID: "reddit",
+            value: "https://styles.redditmedia.com/t5_example/styles/communityIcon_example.png"
+        ))
+        XCTAssertTrue(SourceIconURLPolicy.isAccepted(
+            platformID: "discord",
+            value: "https://cdn.discordapp.com/icons/123456/icon.png"
+        ))
+        XCTAssertFalse(SourceIconURLPolicy.isAccepted(
+            platformID: "reddit",
+            value: "https://images.example.invalid/post-media.png"
+        ))
+    }
+
     func testEnsuringPlatformBindingAddsTheMissingPlatformToLocalClassificationData() throws {
         var catalog = WorkspaceCatalog.starter()
         let tree = try XCTUnwrap(catalog.trees.first)

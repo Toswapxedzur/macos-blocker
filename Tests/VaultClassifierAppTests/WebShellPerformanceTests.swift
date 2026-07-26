@@ -39,9 +39,13 @@ final class WebShellPerformanceTests: XCTestCase {
                 "creatorName": "Creator \(index)",
                 "entryType": "video",
                 "title": "Video \(index)",
+                "surface": "feed",
+                "text": "Full rendered public description",
+                "summary": "Rendered public summary",
+                "suppliedTags": ["guide", "video"],
                 "canonicalURL": NSNull(),
                 "attributes": [:],
-                "cachedCreatorAvatarURL": NSNull(),
+                "cachedSourceIconURL": NSNull(),
                 "firstObservedAtMilliseconds": index,
                 "lastObservedAtMilliseconds": index,
                 "observationCount": 1,
@@ -191,6 +195,9 @@ final class WebShellPerformanceTests: XCTestCase {
         webView.navigationDelegate = waiter
 
         let index = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "index", extension: "html"))
+        let indexHTML = try String(contentsOf: index, encoding: .utf8)
+        XCTAssertTrue(indexHTML.contains("img-src 'self' data: vaultclassifiersourceicon:"))
+        XCTAssertFalse(indexHTML.contains("vaultclassifieravatar:"))
         webView.loadFileURL(index, allowingReadAccessTo: index.deletingLastPathComponent())
         await fulfillment(of: [loaded], timeout: 5)
 
@@ -331,5 +338,24 @@ final class WebShellPerformanceTests: XCTestCase {
         )
         let expandedEntryCount = try XCTUnwrap(expandedEntryValue as? Int)
         XCTAssertEqual(expandedEntryCount, 1)
+
+        let evidenceValue = try await evaluate(
+            """
+            const entry = document.querySelector('.collection-entry');
+            entry.open = true;
+            JSON.stringify({
+              text: entry.textContent,
+              tags: [...entry.querySelectorAll('.collection-entry-tags span')].map((tag) => tag.textContent)
+            });
+            """,
+            in: webView
+        )
+        let evidenceJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: Data(try XCTUnwrap(evidenceValue as? String).utf8)
+            ) as? [String: Any]
+        )
+        XCTAssertTrue((evidenceJSON["text"] as? String)?.contains("Full rendered public description") == true)
+        XCTAssertEqual(evidenceJSON["tags"] as? [String], ["guide", "video"])
     }
 }

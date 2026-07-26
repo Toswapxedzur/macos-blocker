@@ -29,7 +29,21 @@ public struct NativeCollectionInfoResponse: Codable, Equatable, Sendable {
 
 public struct NativeCollectionRequest: Codable, Equatable, Sendable {
     public var entry: EntryEvidence
-    public init(entry: EntryEvidence) { self.entry = entry }
+    public var firstObservedAtMilliseconds: Int64?
+    public var lastObservedAtMilliseconds: Int64?
+    public var observationCount: Int?
+
+    public init(
+        entry: EntryEvidence,
+        firstObservedAtMilliseconds: Int64? = nil,
+        lastObservedAtMilliseconds: Int64? = nil,
+        observationCount: Int? = nil
+    ) {
+        self.entry = entry
+        self.firstObservedAtMilliseconds = firstObservedAtMilliseconds
+        self.lastObservedAtMilliseconds = lastObservedAtMilliseconds
+        self.observationCount = observationCount
+    }
 }
 
 public struct NativeCollectionResponse: Codable, Equatable, Sendable {

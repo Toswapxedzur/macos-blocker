@@ -666,7 +666,13 @@ public final class LocalClassifierCoordinator {
     /// from classification and labels: a collected entry is never eligible for
     /// model training until an explicit manual or approved LLM record exists.
     @discardableResult
-    public func collectPlatformEntry(_ entry: EntryEvidence, at milliseconds: Int64 = WorkspaceCatalog.now()) throws -> Bool {
+    public func collectPlatformEntry(
+        _ entry: EntryEvidence,
+        firstObservedAtMilliseconds requestedFirstObservedAtMilliseconds: Int64? = nil,
+        lastObservedAtMilliseconds requestedLastObservedAtMilliseconds: Int64? = nil,
+        observationCount requestedObservationCount: Int? = nil,
+        at milliseconds: Int64 = WorkspaceCatalog.now()
+    ) throws -> Bool {
         lock.lock()
         defer { lock.unlock() }
 
@@ -695,6 +701,20 @@ public final class LocalClassifierCoordinator {
         }
         let creatorName = metadata["sourceName"]?.trimmingCharacters(in: .whitespacesAndNewlines)
         let canonicalURL = metadata["canonicalURL"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceIconURL = metadata["sourceIconURL"].flatMap {
+            SourceIconURLPolicy.isAccepted(platformID: entry.platform, value: $0) ? $0 : nil
+        }
+        let maximumFutureTimestamp = milliseconds + (5 * 60 * 1_000)
+        let firstObservedAtMilliseconds = requestedFirstObservedAtMilliseconds.flatMap {
+            $0 > 0 && $0 <= maximumFutureTimestamp ? $0 : nil
+        } ?? milliseconds
+        let lastObservedAtMilliseconds = max(
+            firstObservedAtMilliseconds,
+            requestedLastObservedAtMilliseconds.flatMap {
+                $0 > 0 && $0 <= maximumFutureTimestamp ? $0 : nil
+            } ?? firstObservedAtMilliseconds
+        )
+        let observationCount = min(512, max(1, requestedObservationCount ?? 1))
         let stableMaterial = "\(entry.platform)\u{1F}\(entryID)"
         let stableID = SHA256.hash(data: Data(stableMaterial.utf8)).map { String(format: "%02x", $0) }.joined()
         let collected = CollectedPlatformEntry(
@@ -705,10 +725,23 @@ public final class LocalClassifierCoordinator {
             creatorName: creatorName?.isEmpty == false ? creatorName! : creatorID,
             entryType: entryType,
             title: title,
+            surface: entry.surface,
+            text: entry.evidence.text,
+            summary: entry.evidence.summary,
+            suppliedTags: entry.evidence.suppliedTags,
             canonicalURL: canonicalURL?.isEmpty == false ? canonicalURL : nil,
-            attributes: metadata.filter { key, _ in key != "sourceName" && key != "canonicalURL" && key != "entryType" && key != "isAdvertisement" },
-            firstObservedAtMilliseconds: milliseconds,
-            lastObservedAtMilliseconds: milliseconds
+            sourceIconURL: sourceIconURL,
+            attributes: metadata.filter {
+                key, _ in
+                key != "sourceName" &&
+                key != "canonicalURL" &&
+                key != "entryType" &&
+                key != "isAdvertisement" &&
+                key != "sourceIconURL"
+            },
+            firstObservedAtMilliseconds: firstObservedAtMilliseconds,
+            lastObservedAtMilliseconds: lastObservedAtMilliseconds,
+            observationCount: observationCount
         )
         guard let datasetIndex = state.workspaceCatalog.datasets.firstIndex(where: { $0.id == binding.datasetID }) else {
             throw WorkspaceCatalogError.missingDataset(binding.datasetID)
@@ -722,6 +755,7 @@ public final class LocalClassifierCoordinator {
     private func collectionMetadata(from metadata: [String: JSONValue], platformID: String) -> [String: String] {
         var output: [String: String] = [:]
         for key in metadata.keys.sorted() {
+            guard key != "creatorAvatarURL", key != "creatorURL" else { continue }
             guard output.count < CollectedPlatformEntry.maximumAttributes + 4,
                   key.count <= CollectedPlatformEntry.maximumAttributeKeyLength,
                   let value = metadata[key] else { continue }
@@ -732,7 +766,7 @@ public final class LocalClassifierCoordinator {
             case .bool(let bool): rendered = bool ? "true" : "false"
             }
             guard !rendered.isEmpty, rendered.count <= CollectedPlatformEntry.maximumAttributeValueLength else { continue }
-            if key == "creatorAvatarURL", !CreatorAvatarURLPolicy.isAccepted(platformID: platformID, value: rendered) {
+            if key == "sourceIconURL", !SourceIconURLPolicy.isAccepted(platformID: platformID, value: rendered) {
                 continue
             }
             output[key] = rendered

@@ -2,13 +2,12 @@ import CryptoKit
 import Foundation
 import WebKit
 
-/// A bounded on-device cache for already-author-scoped creator avatars. The
-/// collection record retains the public URL; this cache holds only a fetched
-/// image response keyed by a one-way hash, never a thumbnail or arbitrary page
-/// image. WebKit reads it through a private scheme so no image bytes need to be
-/// embedded in the native-to-web state payload.
-final class CreatorAvatarCache {
-    static let scheme = "vaultclassifieravatar"
+/// A bounded on-device cache for already-verified source icons. The collection
+/// record retains the public URL; this cache holds only a fetched image
+/// response keyed by a one-way hash, never post media, a thumbnail, or an
+/// arbitrary page image. WebKit reads it through a private scheme.
+final class SourceIconCache {
+    static let scheme = "vaultclassifiersourceicon"
     private static let maximumBytes = 512 * 1_024
     private static let allowedContentTypes: Set<String> = [
         "image/jpeg", "image/png", "image/gif", "image/webp", "image/avif", "image/heic",
@@ -17,10 +16,18 @@ final class CreatorAvatarCache {
     private let directory: URL
     private var pendingKeys = Set<String>()
 
-    init?(directory: URL?) {
+    init?(directory: URL?, retiredDirectory: URL? = nil) {
         guard let directory else { return nil }
         self.directory = directory
         do {
+            if let retiredDirectory,
+               FileManager.default.fileExists(atPath: retiredDirectory.path) {
+                if FileManager.default.fileExists(atPath: directory.path) {
+                    try FileManager.default.removeItem(at: retiredDirectory)
+                } else {
+                    try FileManager.default.moveItem(at: retiredDirectory, to: directory)
+                }
+            }
             try FileManager.default.createDirectory(
                 at: directory,
                 withIntermediateDirectories: true,
@@ -54,7 +61,7 @@ final class CreatorAvatarCache {
                 try downloaded.contentType.data(using: .utf8)?.write(to: self.typeURL(for: key), options: .atomic)
                 onCompletion()
             } catch {
-                // Collection remains useful without an avatar. Network and
+                // Collection remains useful without an icon. Network and
                 // decode failures are intentionally silent and non-blocking.
             }
         }
@@ -131,10 +138,10 @@ final class CreatorAvatarCache {
     }
 }
 
-final class CreatorAvatarSchemeHandler: NSObject, WKURLSchemeHandler {
-    private let cache: CreatorAvatarCache?
+final class SourceIconSchemeHandler: NSObject, WKURLSchemeHandler {
+    private let cache: SourceIconCache?
 
-    init(cache: CreatorAvatarCache?) {
+    init(cache: SourceIconCache?) {
         self.cache = cache
     }
 

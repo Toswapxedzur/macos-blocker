@@ -761,7 +761,7 @@
             platformName: platformDefinitions.get(entry.platformID)?.name || entry.platformID,
             name: entry.creatorName,
             subscriberCount: entry.attributes?.subscriberCount || "",
-            avatarURL: typeof entry.cachedCreatorAvatarURL === "string" ? entry.cachedCreatorAvatarURL : "",
+            avatarURL: typeof entry.cachedSourceIconURL === "string" ? entry.cachedSourceIconURL : "",
             tagIDs: classification?.tags || [],
             negativeTagIDs: classification?.negativeTags || [],
           };
@@ -877,7 +877,7 @@
           ].filter(Boolean);
           return tags.length ? `<span class="tag-pill-rail">${tags.join("")}</span>` : `<span class="small-copy">${tx("bridge.noTags")}</span>`;
         };
-        const avatarURL = typeof entry.cachedCreatorAvatarURL === "string" ? entry.cachedCreatorAvatarURL : "";
+        const avatarURL = typeof entry.cachedSourceIconURL === "string" ? entry.cachedSourceIconURL : "";
         const avatar = avatarURL ? `<img class="creator-tag-card-avatar" src="${esc(avatarURL)}" alt="" aria-hidden="true" loading="lazy" decoding="async">` : `<span class="creator-tag-card-avatar creator-tag-card-avatar-fallback" aria-hidden="true">${esc(entry.creatorName.slice(0, 1).toUpperCase())}</span>`;
         return `<article class="creator-tag-card"><div class="creator-tag-card-profile">${avatar}<div><strong dir="auto">${esc(entry.creatorName)}</strong><span>${esc(platformDefinitions.get(entry.platformID)?.name || entry.platformID)}</span></div></div><div class="creator-tag-card-actions"><span class="creator-decision-tags"><span class="small-copy">${tx("bridge.humanTags")}:</span>${labelMarkup(human)}</span><span class="creator-decision-tags"><span class="small-copy">${tx("bridge.llmTags")}:</span>${labelMarkup(llm)}</span></div></article>`;
       };
@@ -958,18 +958,33 @@
         .sort((lhs, rhs) => rhs.latestObservedAtMilliseconds - lhs.latestObservedAtMilliseconds);
       const creatorRow = (creator) => {
         const creatorEntries = [...creator.entries].sort((lhs, rhs) => (Number(rhs.lastObservedAtMilliseconds) || 0) - (Number(lhs.lastObservedAtMilliseconds) || 0));
-        const avatarURL = creatorEntries.find((entry) => typeof entry.cachedCreatorAvatarURL === "string")?.cachedCreatorAvatarURL || "";
+        const avatarURL = creatorEntries.find((entry) => typeof entry.cachedSourceIconURL === "string")?.cachedSourceIconURL || "";
         const avatar = avatarURL ? `<img class="collection-creator-avatar" src="${esc(avatarURL)}" alt="" aria-hidden="true" loading="lazy" decoding="async">` : "";
         const entryListID = `deferred-creator-entries-${deferredCreatorEntrySequence += 1}`;
         deferredCreatorEntries.set(entryListID, {
           entries: creatorEntries,
           renderEntry: (entry) => {
             const attributes = Object.entries(entry.attributes || {})
-              .filter(([key]) => key !== "creatorAvatarURL")
-              .slice(0, 5)
               .map(([key, value]) => `${esc(collectionAttributeLabel(key))}: ${esc(value)}`)
               .join(" · ");
-            return `<div class="collection-entry"><span class="collection-entry-title" dir="auto">${esc(entry.title)}</span><span class="collection-entry-meta">${esc(entry.entryType)} · ${observedAt(entry.lastObservedAtMilliseconds)}${attributes ? ` · ${attributes}` : ""}</span></div>`;
+            const tags = Array.isArray(entry.suppliedTags) && entry.suppliedTags.length
+              ? `<span class="collection-entry-tags">${entry.suppliedTags.map((tag) => `<span>${esc(tag)}</span>`).join("")}</span>`
+              : "";
+            const summary = typeof entry.summary === "string" && entry.summary
+              ? `<p class="collection-entry-evidence" dir="auto">${esc(entry.summary)}</p>`
+              : "";
+            const text = typeof entry.text === "string" && entry.text && entry.text !== entry.summary
+              ? `<p class="collection-entry-evidence" dir="auto">${esc(entry.text)}</p>`
+              : "";
+            const canonicalURL = typeof entry.canonicalURL === "string" && entry.canonicalURL
+              ? `<span class="collection-entry-url">${esc(entry.canonicalURL)}</span>`
+              : "";
+            const entryMeta = `${esc(entry.surface || "feed")} · ${esc(entry.entryType)} · ${observedAt(entry.lastObservedAtMilliseconds)}`;
+            const detail = [summary, text, tags, attributes ? `<span class="collection-entry-attributes">${attributes}</span>` : "", canonicalURL].filter(Boolean).join("");
+            if (!detail) {
+              return `<div class="collection-entry"><span class="collection-entry-title" dir="auto">${esc(entry.title)}</span><span class="collection-entry-meta">${entryMeta}</span></div>`;
+            }
+            return `<details class="collection-entry"><summary><span class="collection-entry-title" dir="auto">${esc(entry.title)}</span><span class="collection-entry-meta">${entryMeta}</span></summary><div class="collection-entry-detail">${detail}</div></details>`;
           },
         });
         return `<details class="collection-creator" data-deferred-creator-entries="${entryListID}"><summary>${avatar}<span class="collection-creator-name" dir="auto">${esc(creator.name)}</span><span class="collection-creator-count">${tx("data.entryCount", { count: creatorEntries.length })}</span></summary><div class="collection-entry-list"></div></details>`;
