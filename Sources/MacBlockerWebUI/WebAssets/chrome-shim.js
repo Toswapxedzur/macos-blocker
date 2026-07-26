@@ -357,10 +357,6 @@
         return bridgeOrResolve("refresh-blocking-rules", message, { ok: true });
       case "unload-custom-group":
         return bridgeOrResolve("unload-custom-group", message, { ok: true });
-      case "connection-connect":
-        return bridgeOrResolve("connection-connect", message, { ok: true });
-      case "connection-disconnect":
-        return bridgeOrResolve("connection-disconnect", message, { ok: true });
       case "connection-status":
         return bridgeOrResolve("connection-status", message, { ok: true });
       case "group-connect":

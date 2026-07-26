@@ -20,8 +20,6 @@ public struct BlockerWebPanel: View {
     private let onRequestAppBlockingPermission: (() -> Void)?
     private let onOpenPermissionSettings: (() -> Void)?
     private let connectionStatusJSON: (() -> String?)?
-    private let onConnectionConnect: (() -> Void)?
-    private let onConnectionDisconnect: (() -> Void)?
     private let clustersJSON: (() -> String?)?
     private let groupRejectionJSON: (() -> String?)?
     private let onGroupsAnnounce: ((String) -> Void)?
@@ -44,8 +42,6 @@ public struct BlockerWebPanel: View {
         onRequestAppBlockingPermission: (() -> Void)? = nil,
         onOpenPermissionSettings: (() -> Void)? = nil,
         connectionStatusJSON: (() -> String?)? = nil,
-        onConnectionConnect: (() -> Void)? = nil,
-        onConnectionDisconnect: (() -> Void)? = nil,
         clustersJSON: (() -> String?)? = nil,
         groupRejectionJSON: (() -> String?)? = nil,
         onGroupsAnnounce: ((String) -> Void)? = nil,
@@ -67,8 +63,6 @@ public struct BlockerWebPanel: View {
         self.onRequestAppBlockingPermission = onRequestAppBlockingPermission
         self.onOpenPermissionSettings = onOpenPermissionSettings
         self.connectionStatusJSON = connectionStatusJSON
-        self.onConnectionConnect = onConnectionConnect
-        self.onConnectionDisconnect = onConnectionDisconnect
         self.clustersJSON = clustersJSON
         self.groupRejectionJSON = groupRejectionJSON
         self.onGroupsAnnounce = onGroupsAnnounce
@@ -93,8 +87,6 @@ public struct BlockerWebPanel: View {
             onRequestAppBlockingPermission: onRequestAppBlockingPermission,
             onOpenPermissionSettings: onOpenPermissionSettings,
             connectionStatusJSON: connectionStatusJSON,
-            onConnectionConnect: onConnectionConnect,
-            onConnectionDisconnect: onConnectionDisconnect,
             clustersJSON: clustersJSON,
             groupRejectionJSON: groupRejectionJSON,
             onGroupsAnnounce: onGroupsAnnounce,

@@ -181,22 +181,13 @@ const cbDialog = (function () {
 
 // Extension-wide preferences. Keep these defaults in sync with the
 // placeholder text in popup.html's Settings modal.
-// The first open native Vault app owns the fixed local hub; later apps join it.
-const CONNECTION_PROTOCOL_VERSION = window.CBBridgeProtocol.PROTOCOL_VERSION;
-const CONNECTION_DEFAULT_ADDRESS = "ws://127.0.0.1:8787";
-const DEFAULT_CONNECTION_SETTINGS = {
-  serverEnabled: false,
-  clientEnabled: false
-};
-
 const DEFAULT_GLOBAL_SETTINGS = {
   autosaveDebounceMs: 400,
   // Debug mode is off by default. When on it emits the
   // [CustomBlocker:trace] / [CustomBlocker] dispatch console lines.
   // The user-facing helpers.log() output continues to flow regardless.
   debugMode: false,
-  defaultSnoozeMinutes: 30,
-  connection: { ...DEFAULT_CONNECTION_SETTINGS }
+  defaultSnoozeMinutes: 30
 };
 const AUTOSAVE_DEBOUNCE_MAX_MS = 5_000;
 
@@ -391,15 +382,6 @@ const localFolderRevokeButton = document.getElementById("localFolderRevokeButton
 const localFolderStatus = document.getElementById("localFolderStatus");
 const settingsResetButton = document.getElementById("settingsResetButton");
 const settingsStatus = document.getElementById("settingsStatus");
-const connectionSection = document.getElementById("connectionSection");
-const connectionServerControls = document.getElementById("connectionServerControls");
-const connectionClientControls = document.getElementById("connectionClientControls");
-const connectionConnectButton = document.getElementById("connectionConnectButton");
-const connectionDisconnectButton = document.getElementById("connectionDisconnectButton");
-const connectionStatusDot = document.getElementById("connectionStatusDot");
-const connectionStatusText = document.getElementById("connectionStatusText");
-const connectionAddressReadout = document.getElementById("connectionAddressReadout");
-const connectionPeerList = document.getElementById("connectionPeerList");
 const connectionGroupSection = document.getElementById("connectionGroupSection");
 const connectionGroupHint = document.getElementById("connectionGroupHint");
 const connectionGroupDisconnected = document.getElementById("connectionGroupDisconnected");
@@ -809,98 +791,6 @@ async function revokeLocalFolder() {
   await renderLocalFolderStatus();
 }
 
-function getConnectionSettings() {
-  const s = state.globalSettings || DEFAULT_GLOBAL_SETTINGS;
-  return sanitizeConnectionSettings(s.connection);
-}
-
-// Persist a partial change to the connection block of globalSettings, then ask
-// the transport layer to apply it. Used by the server toggle / connect buttons.
-async function updateConnectionSettings(patch) {
-  const current = getConnectionSettings();
-  const next = sanitizeConnectionSettings({ ...current, ...patch });
-  state.globalSettings = sanitizeGlobalSettings({
-    ...(state.globalSettings || DEFAULT_GLOBAL_SETTINGS),
-    connection: next
-  });
-  try {
-    await chrome.storage.local.set({ [GLOBAL_SETTINGS_KEY]: state.globalSettings });
-  } catch (_) {}
-  return next;
-}
-
-function connectionStatusLabel(status) {
-  switch (status && status.state) {
-    case "server-running-not-connected":
-      return t("connection.statusRunning") + ", " + t("connection.statusDisconnected");
-    case "running":
-    case "hosting":
-      return t("connection.statusRunning");
-    case "connected":
-    case "joined":
-      return t("connection.statusConnected");
-    case "connecting":
-      return t("connection.statusConnecting");
-    case "error":
-      if (!status.error) return t("connection.statusError");
-      return t("connection.statusError") + ": " + ({
-        "protocol-mismatch": t("connection.errorProtocolMismatch"),
-        "handshake-timeout": t("connection.errorSecureConnection"),
-        "socket-error": t("connection.errorSecureConnection")
-      }[status.error] || status.error);
-    case "disconnected":
-      return t("connection.statusDisconnected");
-    default:
-      return t("connection.statusOff");
-  }
-}
-
-function renderConnectionSettings() {
-  if (!connectionSection) return;
-  const conn = getConnectionSettings();
-  const status = state.connectionStatus || {};
-
-  if (connectionServerControls) connectionServerControls.classList.add("hidden");
-  if (connectionClientControls) connectionClientControls.classList.remove("hidden");
-  const connected = status.state === "connected" || status.state === "connecting" || status.state === "running" || status.state === "hosting" || status.state === "joined";
-  if (connectionConnectButton) connectionConnectButton.classList.toggle("hidden", connected);
-  if (connectionDisconnectButton) connectionDisconnectButton.classList.toggle("hidden", !connected);
-
-  const activeState = status.state || "off";
-  if (connectionStatusDot) {
-    connectionStatusDot.className = "connection-dot " + activeState;
-  }
-  if (connectionStatusText) {
-    connectionStatusText.textContent = connectionStatusLabel(status);
-  }
-  if (connectionAddressReadout) {
-    connectionAddressReadout.textContent = status.address || CONNECTION_DEFAULT_ADDRESS;
-  }
-
-  if (connectionPeerList) {
-    connectionPeerList.textContent = "";
-    const peers = Array.isArray(status.peers) ? status.peers : [];
-    if (peers.length === 0) {
-      const empty = document.createElement("p");
-      empty.className = "field-help";
-      empty.textContent = t("connection.noPeers");
-      connectionPeerList.appendChild(empty);
-    } else {
-      for (const peer of peers) {
-        const row = document.createElement("div");
-        row.className = "connection-peer";
-        const dot = document.createElement("span");
-        dot.className = "connection-dot " + (peer.connected ? "connected" : "off");
-        const label = document.createElement("span");
-        label.textContent = peer.program || peer.id || "?";
-        row.appendChild(dot);
-        row.appendChild(label);
-        connectionPeerList.appendChild(row);
-      }
-    }
-  }
-}
-
 // The transport layer pushes the live connection status here (native server on
 // macOS via window.__cbConnectionState).
 function applyConnectionStatus(raw) {
@@ -914,7 +804,6 @@ function applyConnectionStatus(raw) {
     error: typeof incoming.error === "string" ? incoming.error : "",
     hubProgram: window.CBBridgeProtocol.hubProgramFromStatus(incoming)
   };
-  if (state.isSettingsOpen) renderConnectionSettings();
   // The per-group panel lives in the editor (always visible), so keep it fresh.
   refreshConnectionGroupPanel();
   if (!wasOnline && bridgeIsOnline()) {
@@ -1537,7 +1426,6 @@ function syncAllClusters() {
 
 function syncSettingsFormFromState() {
   const s = state.globalSettings || DEFAULT_GLOBAL_SETTINGS;
-  renderConnectionSettings();
   if (settingsAutosaveDebounceField) settingsAutosaveDebounceField.value = String(s.autosaveDebounceMs);
   if (settingsDebugModeField) settingsDebugModeField.checked = Boolean(s.debugMode);
   if (settingsDefaultSnoozeMinutesField) settingsDefaultSnoozeMinutesField.value = String(s.defaultSnoozeMinutes);
@@ -2241,16 +2129,7 @@ function sanitizeGlobalSettings(raw) {
   return {
     autosaveDebounceMs,
     debugMode,
-    defaultSnoozeMinutes,
-    connection: sanitizeConnectionSettings(src.connection)
-  };
-}
-
-function sanitizeConnectionSettings(raw) {
-  const src = raw && typeof raw === "object" ? raw : {};
-  return {
-    serverEnabled: false,
-    clientEnabled: src.clientEnabled === true
+    defaultSnoozeMinutes
   };
 }
 
@@ -7315,29 +7194,6 @@ if (settingsModal) {
     if (!field) continue;
     field.addEventListener("change", autoSaveSettings);
   }
-}
-
-if (connectionConnectButton) {
-  connectionConnectButton.addEventListener("click", async () => {
-    try {
-      await updateConnectionSettings({ clientEnabled: true });
-      chrome.runtime.sendMessage({ type: "connection-connect" });
-      applyConnectionStatus({ ...state.connectionStatus, state: "connecting", error: "" });
-    } catch (_) {}
-  });
-}
-
-if (connectionDisconnectButton) {
-  connectionDisconnectButton.addEventListener("click", () => {
-    updateConnectionSettings({ clientEnabled: false })
-      .then(() => {
-        try {
-          chrome.runtime.sendMessage({ type: "connection-disconnect" });
-        } catch (_) {}
-        applyConnectionStatus({ state: "off" });
-      })
-      .catch(() => {});
-  });
 }
 
 if (connectionGroupConnectButton) {

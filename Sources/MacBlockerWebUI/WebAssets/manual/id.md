@@ -240,16 +240,15 @@ Cabut folder tersebut ketika aturan tidak lagi membutuhkannya. Aturan harus mena
 
 ## 9. Jembatan aplikasi web
 
-Jembatan ini merupakan sinkronisasi lokal opsional antara program Vault yang kompatibel. Aplikasi desktop asli dapat menghosting hub lokal; klien terhubung pada alamat lokal yang didukung.
+Transport Vault lokal berjalan otomatis di antara program yang kompatibel. Saat aplikasi desktop asli dibuka, aplikasi tersebut menghosting atau bergabung dengan hub lokal tanpa sakelar koneksi pengguna.
 
-Status koneksi adalah Mati, Tersambung, Terputus, Tersambung/Berjalan, dan Error. Menghubungkan suatu program tidak menggabungkan semua grup. Pengguna harus secara eksplisit menautkan grup pencocokan yang memenuhi syarat.
+Transport otomatis tidak menggabungkan setiap grup. Pengguna tetap harus menautkan dan melepas grup yang cocok secara eksplisit.
 
 Untuk tautan grup:
 
-1. Mulai hub asli di Pengaturan.
-2. Hubungkan titik akhir Vault lain yang kompatibel.
-3. Buat grup yang cocok dan tidak dibekukan dengan nama dan tipe yang sama.
-4. Di bagian jembatan grup, pilih program dan sambungkan grup.
+1. Buka endpoint Vault yang kompatibel; transport dimulai otomatis.
+2. Buat grup cocok yang tidak dibekukan dengan nama dan jenis yang sama.
+3. Di bagian jembatan grup, pilih program dan tautkan grup.
 
 Grup yang tertaut membentuk sebuah cluster. Nilai kebijakan umum yang didukung, penggunaan, dan status tunda dapat disinkronkan saat anggota terhubung. Memutuskan sambungan akan menjeda sinkronisasi dan mempertahankan grup lokal. Target khusus browser, Tindakan kustom yang tidak didukung, dan kolom khusus platform tidak dijamin dapat ditransfer.
 

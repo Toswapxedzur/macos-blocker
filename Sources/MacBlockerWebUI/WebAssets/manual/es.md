@@ -240,16 +240,15 @@ Revocar la carpeta cuando una regla ya no la necesite. Una regla debe controlar 
 
 ## 9. Puente de aplicación web
 
-El puente es una sincronización local opcional entre programas de Vault compatibles. Una aplicación de escritorio nativa puede alojar el centro local; los clientes se conectan en la dirección local admitida.
+El transporte local de Vault se ejecuta automáticamente entre programas compatibles. Al abrirse una aplicación de escritorio nativa, aloja el centro local o se une a él sin un interruptor de conexión para el usuario.
 
-Los estados de conexión son Apagado, Conectando, Desconectado, Conectado/En ejecución y Error. Al conectar un programa no se fusionan todos los grupos. El usuario debe vincular explícitamente grupos coincidentes elegibles.
+El transporte automático no fusiona todos los grupos. El usuario aún debe vincular y desvincular explícitamente los grupos coincidentes elegibles.
 
 Para un enlace de grupo:
 
-1. Inicie el centro nativo en Configuración.
-2. Conecte el otro punto final de Vault compatible.
-3. Cree grupos coincidentes y no congelados con el mismo nombre y tipo.
-4. En la sección puente de grupo, elija el programa y conecte el grupo.
+1. Abra los puntos finales de Vault compatibles; el transporte se inicia automáticamente.
+2. Cree grupos coincidentes y no congelados con el mismo nombre y tipo.
+3. En la sección del puente de grupo, elija el programa y vincule el grupo.
 
 Un grupo vinculado forma un cluster. Los valores de política común admitidos, el uso y el estado de repetición se pueden sincronizar mientras los miembros están conectados. La desconexión detiene la sincronización y preserva los grupos locales. No se garantiza la transferencia de objetivos exclusivos del navegador, acciones personalizadas no admitidas y campos específicos de la plataforma.
 
