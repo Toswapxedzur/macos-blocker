@@ -1,6 +1,7 @@
 #if os(macOS)
 import CryptoKit
 import Foundation
+import MacBlockerCore
 import Security
 
 /// Mirrors the Vault Classifier protocol-v4 proof format. The two desktop apps
@@ -11,7 +12,7 @@ enum LocalHubAuthentication {
     static let browserPrograms: Set<String> = ["chrome", "edge"]
     static let desktopPrograms: Set<String> = ["classifier", "macapp"]
 
-    private static let service = "com.adamancia.vault.local-hub"
+    private static let productionService = "com.adamancia.vault.local-hub"
     private static let account = "protocol-v4-challenge-secret"
     private static let secretLength = 32
     private static let challengeLength = 43
@@ -31,7 +32,9 @@ enum LocalHubAuthentication {
         try makeProof(program: program, challenge: challenge, secret: sharedSecret())
     }
 
-    static func sharedSecret() throws -> Data { try ensureSecret() }
+    static func sharedSecret() throws -> Data {
+        try ensureSecret(environment: .current)
+    }
 
     static func makeProof(program: String, challenge: String, secret: Data) throws -> String {
         guard (isBrowserProgram(program) || isDesktopProgram(program)),
@@ -47,7 +50,7 @@ enum LocalHubAuthentication {
     }
 
     static func verifyProof(program: String, challenge: String, proof: String) -> Bool {
-        guard let secret = try? ensureSecret() else { return false }
+        guard let secret = try? ensureSecret(environment: .current) else { return false }
         return verifyProof(program: program, challenge: challenge, proof: proof, secret: secret)
     }
 
@@ -60,32 +63,66 @@ enum LocalHubAuthentication {
         return constantTimeEquals(expectedData, suppliedData)
     }
 
-    private static func ensureSecret() throws -> Data {
-        if let existing = loadSecret(), existing.count == secretLength { return existing }
-        if loadSecret() != nil { SecItemDelete(identity as CFDictionary) }
+    static func moveProductionSecretToDevelopmentOnce() throws {
+        let source = loadSecret(environment: .production)
+        let destination = loadSecret(environment: .development)
+        if let source, let destination, source != destination {
+            throw LocalHubAuthenticationError.environmentConflict
+        }
+        if let source, destination == nil {
+            try storeSecret(source, environment: .development)
+        }
+        if source != nil {
+            guard loadSecret(environment: .development) == source else {
+                throw LocalHubAuthenticationError.environmentMigration
+            }
+            SecItemDelete(identity(environment: .production) as CFDictionary)
+        }
+    }
+
+    private static func ensureSecret(environment: VaultRuntimeEnvironment) throws -> Data {
+        if let existing = loadSecret(environment: environment), existing.count == secretLength { return existing }
+        if loadSecret(environment: environment) != nil {
+            SecItemDelete(identity(environment: environment) as CFDictionary)
+        }
         var bytes = [UInt8](repeating: 0, count: secretLength)
         guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
             throw LocalHubAuthenticationError.randomness
         }
         let secret = Data(bytes)
-        var item = identity
+        do {
+            try storeSecret(secret, environment: environment)
+            return secret
+        } catch LocalHubAuthenticationError.keychain(let status) where status == errSecDuplicateItem {
+            if let concurrentSecret = loadSecret(environment: environment),
+               concurrentSecret.count == secretLength {
+                return concurrentSecret
+            }
+            throw LocalHubAuthenticationError.keychain(status)
+        }
+    }
+
+    private static func storeSecret(_ secret: Data, environment: VaultRuntimeEnvironment) throws {
+        var item = identity(environment: environment)
         item[kSecValueData] = secret
         item[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         let status = SecItemAdd(item as CFDictionary, nil)
-        if status == errSecSuccess { return secret }
+        if status == errSecSuccess { return }
         if status == errSecDuplicateItem,
-           let concurrentSecret = loadSecret(), concurrentSecret.count == secretLength {
-            return concurrentSecret
-        }
+           loadSecret(environment: environment) == secret { return }
         throw LocalHubAuthenticationError.keychain(status)
     }
 
-    private static var identity: [CFString: Any] {
-        [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: account]
+    private static func identity(environment: VaultRuntimeEnvironment) -> [CFString: Any] {
+        [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: environment.keychainService(productionService),
+            kSecAttrAccount: account,
+        ]
     }
 
-    private static func loadSecret() -> Data? {
-        var query = identity
+    private static func loadSecret(environment: VaultRuntimeEnvironment) -> Data? {
+        var query = identity(environment: environment)
         query[kSecReturnData] = true
         query[kSecMatchLimit] = kSecMatchLimitOne
         var result: CFTypeRef?
@@ -133,5 +170,7 @@ enum LocalHubAuthenticationError: Error {
     case randomness
     case invalidInput
     case keychain(OSStatus)
+    case environmentConflict
+    case environmentMigration
 }
 #endif

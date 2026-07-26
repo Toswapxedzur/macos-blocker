@@ -1,4 +1,5 @@
 import Foundation
+import MacBlockerCore
 
 public struct BlockerStateStore: Sendable {
     public var fileURL: URL
@@ -35,7 +36,10 @@ public struct BlockerStateStore: Sendable {
             in: .userDomainMask
         ).first ?? URL(fileURLWithPath: NSTemporaryDirectory())
         return base
-            .appendingPathComponent("macosBlocker", isDirectory: true)
+            .appendingPathComponent(
+                VaultRuntimeEnvironment.current.sharedStoreDirectoryName,
+                isDirectory: true
+            )
             .appendingPathComponent("state.json")
     }
 }

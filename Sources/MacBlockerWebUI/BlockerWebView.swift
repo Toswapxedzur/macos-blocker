@@ -536,7 +536,12 @@ public struct BlockerWebView: _CBViewRepresentable {
         private func revealLocalFolder() {
             #if os(macOS)
             guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
-            let folder = appSupport.appendingPathComponent("MacBlocker/LocalFiles", isDirectory: true)
+            let folder = appSupport
+                .appendingPathComponent(
+                    VaultRuntimeEnvironment.current.localFilesDirectoryName,
+                    isDirectory: true
+                )
+                .appendingPathComponent("LocalFiles", isDirectory: true)
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             NSWorkspace.shared.activateFileViewerSelecting([folder])
             #endif

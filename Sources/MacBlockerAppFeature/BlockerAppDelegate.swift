@@ -1,6 +1,7 @@
 #if os(macOS)
 import AppKit
 import ServiceManagement
+import MacBlockerCore
 import MacBlockerWebUI
 
 /// Process-level lifecycle owner for the macOS app.
@@ -20,7 +21,18 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // Every app instance participates in the single authenticated local
+        if VaultRuntimeEnvironment.current == .development {
+            do {
+                try LocalHubAuthentication.moveProductionSecretToDevelopmentOnce()
+            } catch {
+                NSLog("[ConnectionHub] development Keychain migration failed: \(error)")
+                NSApp.presentError(error)
+                NSApp.terminate(nil)
+                return
+            }
+        }
+
+        // Every app instance participates in its environment's authenticated local
         // hub, which may listen on loopback when it wins host election.
         ConnectionHub.shared.start()
         syncLoginItem(enabled: false)
@@ -54,6 +66,7 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
     /// Registers (or removes) the app as a login item so the bridge is available
     /// across reboots without the user re-opening the app.
     private func syncLoginItem(enabled: Bool) {
+        guard VaultRuntimeEnvironment.current == .production else { return }
         guard #available(macOS 13.0, *) else { return }
         do {
             if enabled {

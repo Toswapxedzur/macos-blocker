@@ -1,5 +1,6 @@
 #if os(macOS)
 import Foundation
+import MacBlockerCore
 import Network
 
 /// The fixed local Vault WebSocket hub.
@@ -45,7 +46,9 @@ final class ConnectionHub: ObservableObject {
     private var peers: [ObjectIdentifier: Peer] = [:]
     private var classifierRequests: [String: ClassifierRequest] = [:]
     private var running = false
-    private static let brokerAddress = "ws://127.0.0.1:8787"
+    private static var brokerAddress: String {
+        VaultRuntimeEnvironment.current.hubAddress
+    }
     private var lastError = ""
     private var brokerPeers: [[String: Any]] = []
     private var joinedHubProgram = ""
@@ -221,7 +224,10 @@ final class ConnectionHub: ObservableObject {
         do {
             let parameters = NWParameters.tcp
             parameters.defaultProtocolStack.applicationProtocols.insert(NWProtocolWebSocket.Options(), at: 0)
-            let listener = try NWListener(using: parameters, on: 8787)
+            guard let port = NWEndpoint.Port(rawValue: VaultRuntimeEnvironment.current.hubPort) else {
+                return
+            }
+            let listener = try NWListener(using: parameters, on: port)
             self.listener = listener
             listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
             listener.stateUpdateHandler = { [weak self, weak listener] state in
