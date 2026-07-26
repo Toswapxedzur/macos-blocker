@@ -9,6 +9,7 @@ final class LocalClassifierHub {
     static let shared = LocalClassifierHub()
     static var address: String { VaultRuntimeEnvironment.current.hubAddress }
     static let protocolVersion = LocalHubAuthentication.protocolVersion
+    static let classifierRelayTimeoutSeconds = 30
 
     private struct Peer {
         let id = UUID().uuidString
@@ -142,8 +143,13 @@ final class LocalClassifierHub {
     }
 
     private func receive(_ connection: NWConnection, key: ObjectIdentifier) {
-        connection.receiveMessage { [weak self] data, _, _, error in
+        connection.receiveMessage { [weak self] data, context, _, error in
             guard let self else { return }
+            if Self.isWebSocketClose(context) {
+                self.removePeer(key)
+                connection.cancel()
+                return
+            }
             if let data, !data.isEmpty, data.count <= 1_048_576 {
                 self.handle(data, from: connection, key: key)
             } else if data?.count ?? 0 > 1_048_576 {
@@ -229,7 +235,9 @@ final class LocalClassifierHub {
         pending[requestID] = .init(browserID: source.id, classifierID: classifier.id, operation: operation)
         lock.unlock()
         send(classifier.connection, ["kind": "classifier-request", "sourcePeerID": source.id, "requestID": requestID, "operation": operation, "body": body])
-        queue.asyncAfter(deadline: .now() + 6) { [weak self] in self?.expire(requestID) }
+        queue.asyncAfter(deadline: .now() + .seconds(Self.classifierRelayTimeoutSeconds)) { [weak self] in
+            self?.expire(requestID)
+        }
     }
 
     private func routeResponse(_ frame: [String: Any], from key: ObjectIdentifier) {
@@ -238,9 +246,15 @@ final class LocalClassifierHub {
               let operation = frame["operation"] as? String else { return }
         lock.lock()
         guard let classifier = peers[key], classifier.program == "classifier",
-              let pending = self.pending.removeValue(forKey: requestID),
-              pending.classifierID == classifier.id, pending.browserID == sourcePeerID, pending.operation == operation,
-              let browser = peers.values.first(where: { $0.ready && $0.id == sourcePeerID }) else { lock.unlock(); return }
+              let pending = self.pending[requestID],
+              pending.classifierID == classifier.id,
+              pending.browserID == sourcePeerID,
+              pending.operation == operation,
+              let browser = peers.values.first(where: { $0.ready && $0.id == sourcePeerID }) else {
+            lock.unlock()
+            return
+        }
+        self.pending.removeValue(forKey: requestID)
         lock.unlock()
         var response: [String: Any] = ["kind": "classifier-response", "requestID": requestID, "operation": operation]
         if let body = frame["body"] { response["body"] = body }
@@ -260,10 +274,15 @@ final class LocalClassifierHub {
         lock.lock()
         let removed = peers.removeValue(forKey: key)
         let id = removed?.id
-        let failures = pending.filter { $0.value.classifierID == id }
+        let failures = pending.filter {
+            $0.value.browserID == id || $0.value.classifierID == id
+        }
         for requestID in failures.keys { pending.removeValue(forKey: requestID) }
         let targets = failures.compactMap { requestID, request -> (NWConnection, String, String)? in
-            guard let browser = peers.values.first(where: { $0.ready && $0.id == request.browserID }) else { return nil }
+            guard request.classifierID == id,
+                  let browser = peers.values.first(where: { $0.ready && $0.id == request.browserID }) else {
+                return nil
+            }
             return (browser.connection, requestID, request.operation)
         }
         lock.unlock()
@@ -284,6 +303,12 @@ final class LocalClassifierHub {
     private func reject(_ connection: NWConnection, reason: String) {
         send(connection, ["kind": "rejected", "reason": reason])
         queue.asyncAfter(deadline: .now() + .milliseconds(100)) { connection.cancel() }
+    }
+
+    private static func isWebSocketClose(_ context: NWConnection.ContentContext?) -> Bool {
+        let metadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition)
+            as? NWProtocolWebSocket.Metadata
+        return metadata?.opcode == .close
     }
 
     private func send(_ connection: NWConnection, _ frame: [String: Any]) {
