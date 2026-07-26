@@ -164,11 +164,18 @@ final class WebShellPerformanceTests: XCTestCase {
             "notices": [:],
             "inspect": ["llmRunning": false],
             "policies": ["items": [], "editor": [:]],
-            "activity": [:],
+            "activity": [
+                "settings": [
+                    "profile": "balanced",
+                    "cacheCapacity": 2_000,
+                    "packageUpdateMode": "automatic",
+                    "allowIdleWork": false,
+                    "allowBackgroundSync": false,
+                ]
+            ],
             "training": [:],
             "backup": [:],
             "assets": assets,
-            "bridge": [:],
             "collectionDiagnostics": [],
         ]
     }
@@ -187,6 +194,30 @@ final class WebShellPerformanceTests: XCTestCase {
 
         let update = try XCTUnwrap(VaultClassifierWebShell.stateUpdateJavaScript(payload: populatedPayload(creatorCount: 120)))
         _ = try await evaluate(update, in: webView)
+
+        let settingsControls = try await evaluate(
+            """
+            document.querySelector('[data-action="openUtilityPanel"][data-utility-panel="settings"]').click();
+            JSON.stringify({
+              bridgeCard: Boolean(document.querySelector('.utility-bridge-card')),
+              connectAction: Boolean(document.querySelector('[data-action="connectSharedHub"]')),
+              disconnectAction: Boolean(document.querySelector('[data-action="disconnectSharedHub"]'))
+            });
+            """,
+            in: webView
+        )
+        let settingsJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: Data(try XCTUnwrap(settingsControls as? String).utf8)
+            ) as? [String: Any]
+        )
+        XCTAssertEqual(settingsJSON["bridgeCard"] as? Bool, false)
+        XCTAssertEqual(settingsJSON["connectAction"] as? Bool, false)
+        XCTAssertEqual(settingsJSON["disconnectAction"] as? Bool, false)
+        _ = try await evaluate(
+            "document.querySelector('[data-action=\"closeUtilityPanel\"]').click();",
+            in: webView
+        )
 
         let providerDefault = try await evaluate(
             """

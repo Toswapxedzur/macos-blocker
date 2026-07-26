@@ -3,6 +3,8 @@
 Vault Classifier, Mac Vault, and the Chromium Vault extension share one local
 WebSocket hub at `ws://127.0.0.1:8787` using protocol version 4. The hub is a
 loopback coordination channel, not a public network service.
+Each participant starts, hosts, or joins this transport automatically while it
+runs. There is no user-facing connection switch.
 
 ## Authentication and connection
 
@@ -53,8 +55,8 @@ data over the bridge.
 
 Collection is separately enabled per supported platform. The extension sends
 bounded rendered public evidence only when collection is enabled; ads are not
-retained. The extension remains inert until its own Classifier target is
-enabled.
+retained. Classifier routes are available automatically whenever a compatible
+Vault Classifier peer is present.
 
 Feed decisions use `dim` by default, with local reveal/why affordances. Hard
 feed blocking requires the explicit hard-block setting. A disconnected peer,
