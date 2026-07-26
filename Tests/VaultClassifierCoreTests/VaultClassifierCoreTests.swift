@@ -223,7 +223,22 @@ final class VaultClassifierCoreTests: XCTestCase {
 
     func testSharedBrowserBridgeFramesAreStrictlyBounded() {
         XCTAssertEqual(SharedBrowserBridgeProtocol.version, 4)
-        XCTAssertEqual(SharedBrowserBridgeProtocol.address, "ws://127.0.0.1:8787")
+        XCTAssertEqual(
+            SharedBrowserBridgeProtocol.address(for: .production),
+            "ws://127.0.0.1:8787"
+        )
+        XCTAssertEqual(
+            SharedBrowserBridgeProtocol.address(for: .development),
+            "ws://127.0.0.1:18787"
+        )
+        XCTAssertEqual(
+            VaultRuntimeEnvironment.resolve("development"),
+            .development
+        )
+        XCTAssertEqual(
+            VaultRuntimeEnvironment.resolve(nil),
+            .production
+        )
         XCTAssertEqual(SharedBrowserBridgeOperation.diagnostic.rawValue, "diagnostic")
         XCTAssertEqual(SharedBrowserBridgeOperation.sourceTags.rawValue, "source-tags")
         XCTAssertTrue(SharedBrowserBridgeProtocol.isValidRequestID("request-001"))

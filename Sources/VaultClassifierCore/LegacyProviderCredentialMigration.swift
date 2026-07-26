@@ -5,7 +5,7 @@ import Security
 /// the old local value during startup, copies a valid value into the ordinary
 /// workspace field, and deletes the old Keychain item in every case.
 public enum LegacyProviderCredentialMigration {
-    private static let services = [
+    private static let productionServices = [
         "com.adamancia.vault-classifier.provider-credential-v2",
         "com.adamancia.vault-classifier.provider-credential",
     ]
@@ -13,7 +13,7 @@ public enum LegacyProviderCredentialMigration {
     public static func consume(profileID: String) -> ProviderCredentialRecord? {
         guard isValidProfileID(profileID) else { return nil }
         var firstRecord: ProviderCredentialRecord?
-        for service in services {
+        for service in services(environment: .current) {
             let query: [CFString: Any] = [
                 kSecClass: kSecClassGenericPassword,
                 kSecAttrService: service,
@@ -38,13 +38,17 @@ public enum LegacyProviderCredentialMigration {
     /// this migration ran. These two services belonged only to the retired
     /// provider-credential feature.
     public static func purgeRemaining() {
-        for service in services {
+        for service in services(environment: .current) {
             let query: [CFString: Any] = [
                 kSecClass: kSecClassGenericPassword,
                 kSecAttrService: service,
             ]
             _ = SecItemDelete(query as CFDictionary)
         }
+    }
+
+    private static func services(environment: VaultRuntimeEnvironment) -> [String] {
+        productionServices.map(environment.keychainService)
     }
 
     private static func isValidProfileID(_ profileID: String) -> Bool {

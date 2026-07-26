@@ -1,0 +1,9 @@
+{
+  "name": "com.adamancia.vault.local_hub.development",
+  "description": "Adamancia Vault development local-hub authentication",
+  "path": "__ABSOLUTE_PATH_TO_VAULT_LOCAL_HUB_NATIVE_HOST__",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://opjogfpcmllpgplgofionfejkjeanhkc/"
+  ]
+}

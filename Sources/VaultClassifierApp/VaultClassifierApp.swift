@@ -141,10 +141,9 @@ final class VaultClassifierViewModel: ObservableObject {
 
     init() {
         do {
+            let vaultDirectory = try VaultDevelopmentEnvironmentMigration.prepareClassifierDirectory()
             RetiredCredentialCleanup.removePersonalAuditCredential()
             let package = try SeedPackageLoader.bundled()
-            let appSupport = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            let vaultDirectory = appSupport.appendingPathComponent("VaultClassifier", isDirectory: true)
             let collectionDiagnostics = CollectionDiagnosticsStore(fileURL: vaultDirectory.appendingPathComponent("collection-diagnostics.json"))
             self.collectionDiagnostics = collectionDiagnostics
             self.creatorAvatarCache = CreatorAvatarCache(directory: vaultDirectory.appendingPathComponent("creator-avatars", isDirectory: true))

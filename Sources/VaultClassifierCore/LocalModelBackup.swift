@@ -166,17 +166,17 @@ public struct LocalModelBackup: Sendable {
 /// A Keychain-held verifier for the optional local backup-mode lock. The code
 /// itself never enters classifier state, backups, diagnostics, or IPC.
 public enum LocalBackupOwnerCodeStore {
-    private static let service = "com.adamancia.vault-classifier.local-backup"
+    private static let productionService = "com.adamancia.vault-classifier.local-backup"
     private static let account = "owner-code-sha256"
 
-    public static var hasOwnerCode: Bool { loadVerifier() != nil }
+    public static var hasOwnerCode: Bool { loadVerifier(environment: .current) != nil }
 
     public static func setOwnerCode(_ code: String) throws {
         guard code.count >= 8 else { throw LocalBackupError.invalidOwnerCode }
         let verifier = Data(SHA256.hash(data: Data(code.utf8)))
         let identity: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
+            kSecAttrService: service(environment: .current),
             kSecAttrAccount: account,
         ]
         SecItemDelete(identity as CFDictionary)
@@ -188,14 +188,47 @@ public enum LocalBackupOwnerCodeStore {
     }
 
     public static func verifyOwnerCode(_ code: String) -> Bool {
-        guard let expected = loadVerifier() else { return false }
+        guard let expected = loadVerifier(environment: .current) else { return false }
         return Data(SHA256.hash(data: Data(code.utf8))).elementsEqual(expected)
     }
 
-    private static func loadVerifier() -> Data? {
+    public static func moveProductionVerifierToDevelopmentOnce() throws {
+        let source = loadVerifier(environment: .production)
+        let destination = loadVerifier(environment: .development)
+        if let source, let destination, source != destination {
+            throw LocalBackupError.keychain(errSecDuplicateItem)
+        }
+        if let source, destination == nil {
+            var insert = identity(environment: .development)
+            insert[kSecValueData] = source
+            insert[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            let status = SecItemAdd(insert as CFDictionary, nil)
+            guard status == errSecSuccess else { throw LocalBackupError.keychain(status) }
+        }
+        if source != nil {
+            guard loadVerifier(environment: .development) == source else {
+                throw LocalBackupError.keychain(errSecInternalError)
+            }
+            SecItemDelete(identity(environment: .production) as CFDictionary)
+        }
+    }
+
+    private static func service(environment: VaultRuntimeEnvironment) -> String {
+        environment.keychainService(productionService)
+    }
+
+    private static func identity(environment: VaultRuntimeEnvironment) -> [CFString: Any] {
+        [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service(environment: environment),
+            kSecAttrAccount: account,
+        ]
+    }
+
+    private static func loadVerifier(environment: VaultRuntimeEnvironment) -> Data? {
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
+            kSecAttrService: service(environment: environment),
             kSecAttrAccount: account,
             kSecReturnData: true,
             kSecMatchLimit: kSecMatchLimitOne,

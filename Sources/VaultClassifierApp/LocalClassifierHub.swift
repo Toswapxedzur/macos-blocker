@@ -7,7 +7,7 @@ import VaultClassifierCore
 /// authoritative host for the richer group-sync protocol.
 final class LocalClassifierHub {
     static let shared = LocalClassifierHub()
-    static let address = "ws://127.0.0.1:8787"
+    static var address: String { VaultRuntimeEnvironment.current.hubAddress }
     static let protocolVersion = LocalHubAuthentication.protocolVersion
 
     private struct Peer {
@@ -42,7 +42,10 @@ final class LocalClassifierHub {
         do {
             let parameters = NWParameters.tcp
             parameters.defaultProtocolStack.applicationProtocols.insert(NWProtocolWebSocket.Options(), at: 0)
-            let listener = try NWListener(using: parameters, on: 8787)
+            guard let port = NWEndpoint.Port(rawValue: VaultRuntimeEnvironment.current.hubPort) else {
+                return
+            }
+            let listener = try NWListener(using: parameters, on: port)
             lock.lock()
             self.listener = listener
             lock.unlock()
