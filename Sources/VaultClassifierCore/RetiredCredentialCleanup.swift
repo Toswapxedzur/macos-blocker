@@ -6,7 +6,9 @@ public enum RetiredCredentialCleanup {
     public static func removePersonalAuditCredential() {
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
-            kSecAttrService: "com.adamancia.vault-classifier.personal-audit",
+            kSecAttrService: VaultRuntimeEnvironment.current.keychainService(
+                "com.adamancia.vault-classifier.personal-audit"
+            ),
             kSecAttrAccount: "google-gemini-api-key-v1",
         ]
         _ = SecItemDelete(query as CFDictionary)

@@ -4,7 +4,12 @@ import Security
 import VaultClassifierCore
 
 private let maximumFrameLength = 64 * 1_024
-private let nativeHostOrigin = "chrome-extension://mcbmcmephdaapjepopobikobjmfdeamm/"
+#if VAULT_DEVELOPMENT_NATIVE_HOST
+private let nativeHostEnvironment = VaultRuntimeEnvironment.development
+#else
+private let nativeHostEnvironment = VaultRuntimeEnvironment.production
+#endif
+private let nativeHostOrigin = nativeHostEnvironment.chromeExtensionOrigin
 private let allowedParentIdentifiers: Set<String> = [
     "com.google.Chrome", "com.google.Chrome.helper",
     "com.microsoft.edgemac", "com.microsoft.edgemac.helper",
@@ -36,7 +41,11 @@ struct VaultLocalHubNativeHost {
               let program = request["program"] as? String,
               LocalHubAuthentication.isBrowserProgram(program),
               let challenge = request["challenge"] as? String,
-              let proof = try? LocalHubAuthentication.makeProof(program: program, challenge: challenge) else {
+              let proof = try? LocalHubAuthentication.makeProof(
+                program: program,
+                challenge: challenge,
+                environment: nativeHostEnvironment
+              ) else {
             return ["ok": false, "error": "authentication-unavailable"]
         }
         return ["ok": true, "proof": proof]

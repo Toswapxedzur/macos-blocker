@@ -10,7 +10,7 @@ public enum LocalHubAuthentication {
     public static let browserPrograms: Set<String> = ["chrome", "edge"]
     public static let desktopPrograms: Set<String> = ["classifier", "macapp"]
 
-    private static let service = "com.adamancia.vault.local-hub"
+    private static let productionService = "com.adamancia.vault.local-hub"
     private static let account = "protocol-v4-challenge-secret"
     private static let secretLength = 32
     private static let challengeLength = 43
@@ -31,8 +31,12 @@ public enum LocalHubAuthentication {
         return base64URL(Data(bytes))
     }
 
-    public static func makeProof(program: String, challenge: String) throws -> String {
-        try makeProof(program: program, challenge: challenge, secret: ensureSecret())
+    public static func makeProof(
+        program: String,
+        challenge: String,
+        environment: VaultRuntimeEnvironment = .current
+    ) throws -> String {
+        try makeProof(program: program, challenge: challenge, secret: ensureSecret(environment: environment))
     }
 
     public static func makeProof(program: String, challenge: String, secret: Data) throws -> String {
@@ -48,8 +52,13 @@ public enum LocalHubAuthentication {
         return base64URL(Data(code))
     }
 
-    public static func verifyProof(program: String, challenge: String, proof: String) -> Bool {
-        guard let secret = try? ensureSecret() else { return false }
+    public static func verifyProof(
+        program: String,
+        challenge: String,
+        proof: String,
+        environment: VaultRuntimeEnvironment = .current
+    ) -> Bool {
+        guard let secret = try? ensureSecret(environment: environment) else { return false }
         return verifyProof(program: program, challenge: challenge, proof: proof, secret: secret)
     }
 
@@ -62,37 +71,64 @@ public enum LocalHubAuthentication {
         return constantTimeEquals(expectedData, suppliedData)
     }
 
-    private static func ensureSecret() throws -> Data {
-        if let existing = loadSecret(), existing.count == secretLength { return existing }
+    public static func moveProductionSecretToDevelopmentOnce() throws {
+        let source = loadSecret(environment: .production)
+        let destination = loadSecret(environment: .development)
+        if let source, let destination, source != destination {
+            throw LocalHubAuthenticationError.environmentConflict
+        }
+        if let source, destination == nil {
+            try storeSecret(source, environment: .development)
+        }
+        if source != nil {
+            guard loadSecret(environment: .development) == source else {
+                throw LocalHubAuthenticationError.environmentMigration
+            }
+            deleteSecret(environment: .production)
+        }
+    }
 
-        if loadSecret() != nil { deleteSecret() }
+    private static func ensureSecret(environment: VaultRuntimeEnvironment) throws -> Data {
+        if let existing = loadSecret(environment: environment), existing.count == secretLength { return existing }
+
+        if loadSecret(environment: environment) != nil { deleteSecret(environment: environment) }
         var bytes = [UInt8](repeating: 0, count: secretLength)
         guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
             throw LocalHubAuthenticationError.randomness
         }
         let secret = Data(bytes)
-        var item: [CFString: Any] = identity
+        do {
+            try storeSecret(secret, environment: environment)
+            return secret
+        } catch LocalHubAuthenticationError.keychain(let status) where status == errSecDuplicateItem {
+            if let concurrentSecret = loadSecret(environment: environment), concurrentSecret.count == secretLength {
+                return concurrentSecret
+            }
+            throw LocalHubAuthenticationError.keychain(status)
+        }
+    }
+
+    private static func storeSecret(_ secret: Data, environment: VaultRuntimeEnvironment) throws {
+        var item: [CFString: Any] = identity(environment: environment)
         item[kSecValueData] = secret
         item[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         let status = SecItemAdd(item as CFDictionary, nil)
-        if status == errSecSuccess { return secret }
+        if status == errSecSuccess { return }
         if status == errSecDuplicateItem,
-           let concurrentSecret = loadSecret(), concurrentSecret.count == secretLength {
-            return concurrentSecret
-        }
+           loadSecret(environment: environment) == secret { return }
         throw LocalHubAuthenticationError.keychain(status)
     }
 
-    private static var identity: [CFString: Any] {
+    private static func identity(environment: VaultRuntimeEnvironment) -> [CFString: Any] {
         [
             kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
+            kSecAttrService: environment.keychainService(productionService),
             kSecAttrAccount: account,
         ]
     }
 
-    private static func loadSecret() -> Data? {
-        var query = identity
+    private static func loadSecret(environment: VaultRuntimeEnvironment) -> Data? {
+        var query = identity(environment: environment)
         query[kSecReturnData] = true
         query[kSecMatchLimit] = kSecMatchLimitOne
         var result: CFTypeRef?
@@ -100,8 +136,8 @@ public enum LocalHubAuthentication {
         return result as? Data
     }
 
-    private static func deleteSecret() {
-        SecItemDelete(identity as CFDictionary)
+    private static func deleteSecret(environment: VaultRuntimeEnvironment) {
+        SecItemDelete(identity(environment: environment) as CFDictionary)
     }
 
     private static func canonicalString(program: String, challenge: String) -> String {
@@ -151,12 +187,16 @@ public enum LocalHubAuthenticationError: Error, LocalizedError, Sendable {
     case randomness
     case invalidInput
     case keychain(OSStatus)
+    case environmentConflict
+    case environmentMigration
 
     public var errorDescription: String? {
         switch self {
         case .randomness: return "Could not create local hub authentication material."
         case .invalidInput: return "The local hub authentication request is invalid."
         case .keychain: return "Could not store local hub authentication material."
+        case .environmentConflict: return "Development and production local-hub authentication material conflict."
+        case .environmentMigration: return "Could not move local-hub authentication material into development."
         }
     }
 }

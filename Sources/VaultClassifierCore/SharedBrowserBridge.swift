@@ -13,11 +13,15 @@ public enum SharedBrowserBridgeOperation: String, CaseIterable, Codable, Sendabl
 }
 
 public enum SharedBrowserBridgeProtocol {
-    public static let address = "ws://127.0.0.1:8787"
+    public static var address: String { address(for: .current) }
     public static let version = 4
     public static let maximumBodyBytes = 88_000
     public static let maximumRequestIDLength = 128
     public static let maximumPeerIDLength = 128
+
+    public static func address(for environment: VaultRuntimeEnvironment) -> String {
+        environment.hubAddress
+    }
 
     public static func isValidRequestID(_ value: String) -> Bool {
         isVisibleIdentifier(value, maximumLength: maximumRequestIDLength)

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import VaultClassifierCore
 import WebKit
 
 /// The development shell is deliberately a bundled local WebKit document.
@@ -140,7 +141,12 @@ private final class TagTreeLayoutLogger {
     init() {
         let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library", isDirectory: true)
-        let directory = library.appendingPathComponent("Logs/VaultClassifier", isDirectory: true)
+        let directory = library
+            .appendingPathComponent("Logs", isDirectory: true)
+            .appendingPathComponent(
+                VaultRuntimeEnvironment.current.classifierLogDirectoryName,
+                isDirectory: true
+            )
         self.url = directory.appendingPathComponent("tag-tree-layout.log")
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         if !FileManager.default.fileExists(atPath: url.path) {
