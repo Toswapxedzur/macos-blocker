@@ -241,6 +241,15 @@ final class VaultClassifierCoreTests: XCTestCase {
         )
         XCTAssertEqual(SharedBrowserBridgeOperation.diagnostic.rawValue, "diagnostic")
         XCTAssertEqual(SharedBrowserBridgeOperation.sourceTags.rawValue, "source-tags")
+        XCTAssertEqual(
+            Set(NativeCollectionDiagnosticDetail.allCases.map(\.rawValue)),
+            Set([
+                "missing-video-id", "missing-watch-root",
+                "missing-content-id", "missing-content-root",
+                "missing-title", "missing-creator", "missing-source",
+                "runtime-last-error", "bridge-unavailable", "rejected", "timeout",
+            ])
+        )
         XCTAssertTrue(SharedBrowserBridgeProtocol.isValidRequestID("request-001"))
         XCTAssertFalse(SharedBrowserBridgeProtocol.isValidRequestID("request\n001"))
         XCTAssertTrue(SharedBrowserBridgeProtocol.isValidBody(["entry": ["title": "Visible card"]]))
@@ -249,6 +258,22 @@ final class VaultClassifierCoreTests: XCTestCase {
         XCTAssertTrue(SharedBrowserBridgeProtocol.isAcceptedHubProgram("classifier"))
         XCTAssertFalse(SharedBrowserBridgeProtocol.isAcceptedHubProgram("vault-broker"))
         XCTAssertFalse(SharedBrowserBridgeProtocol.isAcceptedHubProgram("browser"))
+        XCTAssertEqual(
+            SharedBrowserBridgeProtocol.safeError("classifier-unavailable"),
+            "classifier-unavailable"
+        )
+        XCTAssertEqual(
+            SharedBrowserBridgeProtocol.safeError("The data couldn’t be read."),
+            "classifier-request-rejected"
+        )
+        XCTAssertEqual(
+            SharedBrowserBridgeProtocol.safeError("bad\nframe"),
+            "classifier-request-rejected"
+        )
+        XCTAssertEqual(
+            SharedBrowserBridgeProtocol.safeError(String(repeating: "x", count: 300)).count,
+            SharedBrowserBridgeProtocol.maximumErrorLength
+        )
     }
 
     func testNativeSourceTagMessagesValidatePlatformBoundIdentitiesAndBounds() throws {

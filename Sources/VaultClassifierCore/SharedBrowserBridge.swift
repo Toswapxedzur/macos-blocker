@@ -18,6 +18,7 @@ public enum SharedBrowserBridgeProtocol {
     public static let maximumBodyBytes = 88_000
     public static let maximumRequestIDLength = 128
     public static let maximumPeerIDLength = 128
+    public static let maximumErrorLength = 256
 
     public static func address(for environment: VaultRuntimeEnvironment) -> String {
         environment.hubAddress
@@ -46,6 +47,19 @@ public enum SharedBrowserBridgeProtocol {
 
     public static func isAcceptedHubProgram(_ value: String) -> Bool {
         value == "macapp" || value == "classifier"
+    }
+
+    public static func safeError(_ value: String?) -> String {
+        let fallback = "classifier-request-rejected"
+        guard let value else { return fallback }
+        let bounded = String(value.prefix(maximumErrorLength))
+        guard !bounded.isEmpty,
+              bounded.unicodeScalars.allSatisfy({
+                  $0.value >= 0x20 && $0.value <= 0x7e
+              }) else {
+            return fallback
+        }
+        return bounded
     }
 
     private static func isVisibleIdentifier(_ value: String, maximumLength: Int) -> Bool {

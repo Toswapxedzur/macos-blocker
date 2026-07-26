@@ -172,7 +172,7 @@ final class SharedHubClient {
         if let body = reply.body, SharedBrowserBridgeProtocol.isValidBody(body) {
             payload["body"] = body
         } else {
-            payload["error"] = String(reply.error ?? "classifier-response-invalid").prefix(256)
+            payload["error"] = SharedBrowserBridgeProtocol.safeError(reply.error)
         }
         send(payload, on: task, completion: nil)
     }
