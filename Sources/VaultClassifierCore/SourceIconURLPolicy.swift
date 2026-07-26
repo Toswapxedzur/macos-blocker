@@ -1,10 +1,10 @@
 import Foundation
 
-/// Accepts only public avatar URLs issued by a collection platform or that
-/// platform's reviewed image delivery hosts. Collection may contain a URL but
-/// never raw image bytes; the app cache is therefore unable to fetch an
-/// arbitrary page-provided address.
-public enum CreatorAvatarURLPolicy {
+/// Accepts only public source-icon URLs issued by a collection platform or
+/// that platform's reviewed image delivery hosts. The source may be a creator,
+/// account, subreddit, or server. Collection may contain a URL but never raw
+/// image bytes, post media, thumbnails, or comment-author images.
+public enum SourceIconURLPolicy {
     private static let hostsByPlatform: [String: [String]] = [
         "youtube": ["youtube.com", "yt3.ggpht.com", "yt3.googleusercontent.com", "googleusercontent.com"],
         "tiktok": ["tiktok.com", "tiktokcdn.com", "tiktokcdn-us.com", "muscdn.com", "ibytedtos.com"],
@@ -12,6 +12,7 @@ public enum CreatorAvatarURLPolicy {
         "instagram": ["instagram.com", "cdninstagram.com", "fbcdn.net"],
         "twitch": ["twitch.tv", "jtvnw.net"],
         "reddit": ["reddit.com", "redd.it", "redditstatic.com", "redditmedia.com"],
+        "discord": ["discord.com", "discordapp.com", "discordapp.net", "discordappcdn.com"],
         "twitter": ["x.com", "twitter.com", "twimg.com"],
         "bilibili": ["bilibili.com", "biliimg.com", "hdslb.com"],
     ]

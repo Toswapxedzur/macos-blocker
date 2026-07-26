@@ -365,6 +365,27 @@ final class VaultClassifierCoreTests: XCTestCase {
         }
     }
 
+    func testNativeCollectionRequestCarriesQueuedObservationWindow() throws {
+        let entry = EntryEvidence(
+            platform: "reddit",
+            entryID: "reddit:post:abc123",
+            sourceID: "reddit:subreddit:openai",
+            surface: .page,
+            evidence: .init(title: "Rendered post")
+        )
+        let request = NativeCollectionRequest(
+            entry: entry,
+            firstObservedAtMilliseconds: 100,
+            lastObservedAtMilliseconds: 200,
+            observationCount: 4
+        )
+        let restored = try JSONDecoder().decode(
+            NativeCollectionRequest.self,
+            from: JSONEncoder().encode(request)
+        )
+        XCTAssertEqual(restored, request)
+    }
+
     func testCollectedEntriesDeduplicateWithoutChangingDatasetRevision() {
         var dataset = ClassificationDataset(id: "dataset", name: "Local data")
         let originalRevision = dataset.revision
@@ -376,6 +397,11 @@ final class VaultClassifierCoreTests: XCTestCase {
             creatorName: "Creator one",
             entryType: "video",
             title: "First visible title",
+            surface: .page,
+            text: "Full rendered description",
+            summary: "Rendered summary",
+            suppliedTags: ["guide"],
+            sourceIconURL: "https://yt3.ggpht.com/source-icon=s88",
             attributes: ["subscriberCount": "12K"],
             firstObservedAtMilliseconds: 100,
             lastObservedAtMilliseconds: 100
@@ -383,13 +409,25 @@ final class VaultClassifierCoreTests: XCTestCase {
         XCTAssertTrue(dataset.upsertCollectedEntry(initial))
         var refreshed = initial
         refreshed.title = "Updated visible title"
+        refreshed.surface = .feed
+        refreshed.text = nil
+        refreshed.summary = nil
+        refreshed.suppliedTags = ["news"]
+        refreshed.sourceIconURL = nil
         refreshed.lastObservedAtMilliseconds = 200
+        refreshed.observationCount = 3
         XCTAssertFalse(dataset.upsertCollectedEntry(refreshed))
         XCTAssertEqual(dataset.revision, originalRevision)
         XCTAssertEqual(dataset.collectedEntries.count, 1)
         XCTAssertEqual(dataset.collectedEntries[0].title, "Updated visible title")
         XCTAssertEqual(dataset.collectedEntries[0].firstObservedAtMilliseconds, 100)
-        XCTAssertEqual(dataset.collectedEntries[0].observationCount, 2)
+        XCTAssertEqual(dataset.collectedEntries[0].lastObservedAtMilliseconds, 200)
+        XCTAssertEqual(dataset.collectedEntries[0].observationCount, 4)
+        XCTAssertEqual(dataset.collectedEntries[0].surface, .page)
+        XCTAssertEqual(dataset.collectedEntries[0].text, "Full rendered description")
+        XCTAssertEqual(dataset.collectedEntries[0].summary, "Rendered summary")
+        XCTAssertEqual(dataset.collectedEntries[0].suppliedTags, ["guide", "news"])
+        XCTAssertEqual(dataset.collectedEntries[0].sourceIconURL, "https://yt3.ggpht.com/source-icon=s88")
     }
 
     func testCollectionDefaultsOnForKnownBindingsAndKeepsLabelsSeparate() throws {
@@ -403,16 +441,27 @@ final class VaultClassifierCoreTests: XCTestCase {
             entryID: "youtube:video:collection-test",
             sourceID: "youtube:channel:collection-test",
             surface: .feed,
-            evidence: .init(title: "Visible platform entry", metadata: [
+            evidence: .init(
+                title: "Visible platform entry",
+                text: "Rendered public description",
+                summary: "Rendered summary",
+                suppliedTags: ["guide", "video"],
+                metadata: [
                 "sourceName": .string("Creator test"),
                 "entryType": .string("video"),
                 "subscriberCount": .string("4K"),
                 "published": .string("2 days ago"),
-                "creatorAvatarURL": .string("https://yt3.ggpht.com/creator-avatar=s88"),
+                "sourceIconURL": .string("https://yt3.ggpht.com/creator-avatar=s88"),
             ])
         )
         XCTAssertEqual(coordinator.enabledCollectionPlatformIDs(), ["youtube"])
-        XCTAssertTrue(try coordinator.collectPlatformEntry(collected, at: 123))
+        XCTAssertTrue(try coordinator.collectPlatformEntry(
+            collected,
+            firstObservedAtMilliseconds: 100,
+            lastObservedAtMilliseconds: 120,
+            observationCount: 3,
+            at: 123
+        ))
 
         let dataset = try XCTUnwrap(coordinator.snapshot().workspaceCatalog.datasets.first)
         XCTAssertEqual(dataset.records.count, 0)
@@ -420,10 +469,17 @@ final class VaultClassifierCoreTests: XCTestCase {
         XCTAssertEqual(dataset.collectedEntries[0].creatorName, "Creator test")
         XCTAssertEqual(dataset.collectedEntries[0].attributes["subscriberCount"], "4K")
         XCTAssertEqual(dataset.collectedEntries[0].attributes["published"], "2 days ago")
-        XCTAssertEqual(dataset.collectedEntries[0].attributes["creatorAvatarURL"], "https://yt3.ggpht.com/creator-avatar=s88")
+        XCTAssertEqual(dataset.collectedEntries[0].sourceIconURL, "https://yt3.ggpht.com/creator-avatar=s88")
+        XCTAssertEqual(dataset.collectedEntries[0].text, "Rendered public description")
+        XCTAssertEqual(dataset.collectedEntries[0].summary, "Rendered summary")
+        XCTAssertEqual(dataset.collectedEntries[0].suppliedTags, ["guide", "video"])
+        XCTAssertEqual(dataset.collectedEntries[0].surface, .feed)
+        XCTAssertEqual(dataset.collectedEntries[0].firstObservedAtMilliseconds, 100)
+        XCTAssertEqual(dataset.collectedEntries[0].lastObservedAtMilliseconds, 120)
+        XCTAssertEqual(dataset.collectedEntries[0].observationCount, 3)
     }
 
-    func testCollectionDropsUntrustedCreatorAvatarURLsWithoutDroppingTheEntry() throws {
+    func testCollectionDropsUntrustedSourceIconURLsWithoutDroppingTheEntry() throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let coordinator = try LocalClassifierCoordinator(verifiedPackage: seed(), stateFile: LocalStateFile(url: root.appendingPathComponent("state.json")))
@@ -436,13 +492,13 @@ final class VaultClassifierCoreTests: XCTestCase {
             evidence: .init(title: "Visible platform entry", metadata: [
                 "sourceName": .string("Creator test"),
                 "entryType": .string("video"),
-                "creatorAvatarURL": .string("https://images.example.invalid/not-an-author.png"),
+                "sourceIconURL": .string("https://images.example.invalid/not-a-source.png"),
             ])
         )
         XCTAssertTrue(try coordinator.collectPlatformEntry(collected, at: 123))
         let dataset = try XCTUnwrap(coordinator.snapshot().workspaceCatalog.datasets.first)
-        XCTAssertNil(dataset.collectedEntries[0].attributes["creatorAvatarURL"])
-        XCTAssertFalse(CreatorAvatarURLPolicy.isAccepted(platformID: "youtube", value: "https://images.example.invalid/not-an-author.png"))
+        XCTAssertNil(dataset.collectedEntries[0].sourceIconURL)
+        XCTAssertFalse(SourceIconURLPolicy.isAccepted(platformID: "youtube", value: "https://images.example.invalid/not-a-source.png"))
     }
 
     func testSignedModelPackageManifestBindsChecksumSignatureAndPayloadMetadata() throws {

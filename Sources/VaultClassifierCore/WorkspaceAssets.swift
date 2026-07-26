@@ -238,6 +238,7 @@ public struct CollectedPlatformEntry: Codable, Equatable, Sendable, Identifiable
     public static let maximumAttributes = 16
     public static let maximumAttributeKeyLength = 64
     public static let maximumAttributeValueLength = 512
+    public static let maximumSuppliedTags = EntryEvidenceValidator.tagLimit
 
     /// The platform's durable public-content identifier. It is scoped by
     /// `platformID`, so the same raw identifier on different platforms is
@@ -252,7 +253,12 @@ public struct CollectedPlatformEntry: Codable, Equatable, Sendable, Identifiable
     /// persistence.
     public var entryType: String
     public var title: String
+    public var surface: EntrySurface
+    public var text: String?
+    public var summary: String?
+    public var suppliedTags: [String]
     public var canonicalURL: String?
+    public var sourceIconURL: String?
     public var attributes: [String: String]
     public var firstObservedAtMilliseconds: Int64
     public var lastObservedAtMilliseconds: Int64
@@ -266,7 +272,12 @@ public struct CollectedPlatformEntry: Codable, Equatable, Sendable, Identifiable
         creatorName: String,
         entryType: String,
         title: String,
+        surface: EntrySurface = .feed,
+        text: String? = nil,
+        summary: String? = nil,
+        suppliedTags: [String] = [],
         canonicalURL: String? = nil,
+        sourceIconURL: String? = nil,
         attributes: [String: String] = [:],
         firstObservedAtMilliseconds: Int64 = WorkspaceCatalog.now(),
         lastObservedAtMilliseconds: Int64 = WorkspaceCatalog.now(),
@@ -279,14 +290,70 @@ public struct CollectedPlatformEntry: Codable, Equatable, Sendable, Identifiable
         self.creatorName = creatorName
         self.entryType = entryType
         self.title = title
+        self.surface = surface
+        self.text = text
+        self.summary = summary
+        self.suppliedTags = Array(NSOrderedSet(array: suppliedTags)).compactMap { $0 as? String }.prefix(Self.maximumSuppliedTags).map(\.self)
         self.canonicalURL = canonicalURL
-        self.attributes = attributes
+        self.sourceIconURL = sourceIconURL
+        self.attributes = Self.reconciledAttributes(attributes)
         self.firstObservedAtMilliseconds = firstObservedAtMilliseconds
         self.lastObservedAtMilliseconds = lastObservedAtMilliseconds
         self.observationCount = max(1, observationCount)
     }
 
     public var deduplicationKey: String { "\(platformID)\u{1F}\(entryID)" }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, platformID, entryID, creatorID, creatorName, entryType, title
+        case surface, text, summary, suppliedTags, canonicalURL, sourceIconURL
+        case attributes, firstObservedAtMilliseconds, lastObservedAtMilliseconds, observationCount
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        let decodedPlatformID = try container.decode(String.self, forKey: .platformID)
+        platformID = decodedPlatformID
+        entryID = try container.decode(String.self, forKey: .entryID)
+        creatorID = try container.decode(String.self, forKey: .creatorID)
+        creatorName = try container.decode(String.self, forKey: .creatorName)
+        entryType = try container.decode(String.self, forKey: .entryType)
+        title = try container.decode(String.self, forKey: .title)
+        surface = try container.decodeIfPresent(EntrySurface.self, forKey: .surface) ?? .feed
+        text = try container.decodeIfPresent(String.self, forKey: .text)
+        summary = try container.decodeIfPresent(String.self, forKey: .summary)
+        suppliedTags = Array(NSOrderedSet(array: try container.decodeIfPresent([String].self, forKey: .suppliedTags) ?? []))
+            .compactMap { $0 as? String }
+            .prefix(Self.maximumSuppliedTags)
+            .map(\.self)
+        canonicalURL = try container.decodeIfPresent(String.self, forKey: .canonicalURL)
+        var decodedAttributes = try container.decodeIfPresent([String: String].self, forKey: .attributes) ?? [:]
+        let retiredCreatorAvatarURL = decodedAttributes.removeValue(forKey: "creatorAvatarURL")
+        let embeddedSourceIconURL = decodedAttributes.removeValue(forKey: "sourceIconURL")
+        let iconCandidate = try container.decodeIfPresent(String.self, forKey: .sourceIconURL)
+            ?? embeddedSourceIconURL
+            ?? retiredCreatorAvatarURL
+        sourceIconURL = iconCandidate.flatMap {
+            SourceIconURLPolicy.isAccepted(platformID: decodedPlatformID, value: $0) ? $0 : nil
+        }
+        attributes = Self.reconciledAttributes(decodedAttributes)
+        firstObservedAtMilliseconds = try container.decode(Int64.self, forKey: .firstObservedAtMilliseconds)
+        lastObservedAtMilliseconds = try container.decode(Int64.self, forKey: .lastObservedAtMilliseconds)
+        observationCount = max(1, try container.decodeIfPresent(Int.self, forKey: .observationCount) ?? 1)
+    }
+
+    private static func reconciledAttributes(_ input: [String: String]) -> [String: String] {
+        var output = input
+        if output["sourceURL"] == nil, let retiredCreatorURL = output.removeValue(forKey: "creatorURL") {
+            output["sourceURL"] = retiredCreatorURL
+        } else {
+            output.removeValue(forKey: "creatorURL")
+        }
+        output.removeValue(forKey: "creatorAvatarURL")
+        output.removeValue(forKey: "sourceIconURL")
+        return output
+    }
 }
 
 public struct ClassificationDataset: Codable, Equatable, Sendable, Identifiable {
@@ -356,11 +423,23 @@ public struct ClassificationDataset: Codable, Equatable, Sendable, Identifiable 
     @discardableResult
     public mutating func upsertCollectedEntry(_ entry: CollectedPlatformEntry) -> Bool {
         if let index = collectedEntries.firstIndex(where: { $0.deduplicationKey == entry.deduplicationKey }) {
-            let firstSeen = collectedEntries[index].firstObservedAtMilliseconds
-            let sightings = collectedEntries[index].observationCount
+            let existing = collectedEntries[index]
             var refreshed = entry
-            refreshed.firstObservedAtMilliseconds = firstSeen
-            refreshed.observationCount = min(Int.max, sightings + 1)
+            refreshed.firstObservedAtMilliseconds = min(existing.firstObservedAtMilliseconds, entry.firstObservedAtMilliseconds)
+            refreshed.lastObservedAtMilliseconds = max(existing.lastObservedAtMilliseconds, entry.lastObservedAtMilliseconds)
+            refreshed.observationCount = existing.observationCount > Int.max - entry.observationCount
+                ? Int.max
+                : existing.observationCount + entry.observationCount
+            refreshed.surface = existing.surface == .page || entry.surface == .page ? .page : .feed
+            refreshed.text = Self.richerCollectedText(existing.text, entry.text)
+            refreshed.summary = Self.richerCollectedText(existing.summary, entry.summary)
+            refreshed.suppliedTags = Array(NSOrderedSet(array: existing.suppliedTags + entry.suppliedTags))
+                .compactMap { $0 as? String }
+                .prefix(CollectedPlatformEntry.maximumSuppliedTags)
+                .map(\.self)
+            refreshed.canonicalURL = entry.canonicalURL ?? existing.canonicalURL
+            refreshed.sourceIconURL = entry.sourceIconURL ?? existing.sourceIconURL
+            refreshed.attributes = existing.attributes.merging(entry.attributes) { _, incoming in incoming }
             collectedEntries[index] = refreshed
             return false
         }
@@ -373,6 +452,12 @@ public struct ClassificationDataset: Codable, Equatable, Sendable, Identifiable 
             collectedEntries = Array(collectedEntries.prefix(CollectedPlatformEntry.maximumRetainedEntries))
         }
         return true
+    }
+
+    private static func richerCollectedText(_ existing: String?, _ incoming: String?) -> String? {
+        guard let incoming, !incoming.isEmpty else { return existing }
+        guard let existing, !existing.isEmpty else { return incoming }
+        return incoming.count >= existing.count ? incoming : existing
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -1723,6 +1808,18 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                       !entry.creatorName.isEmpty,
                       !entry.entryType.isEmpty,
                       !entry.title.isEmpty,
+                      entry.title.count <= EntryEvidenceValidator.titleLimit,
+                      entry.text.map({ !$0.isEmpty && $0.count <= EntryEvidenceValidator.textLimit }) ?? true,
+                      entry.summary.map({ !$0.isEmpty && $0.count <= EntryEvidenceValidator.summaryLimit }) ?? true,
+                      entry.suppliedTags.count <= CollectedPlatformEntry.maximumSuppliedTags,
+                      entry.suppliedTags.allSatisfy({
+                          !$0.isEmpty &&
+                          $0.count <= EntryEvidenceValidator.tagLengthLimit &&
+                          $0.unicodeScalars.allSatisfy({ $0.value >= 0x20 && $0.value != 0x7f })
+                      }),
+                      entry.sourceIconURL.map({
+                          SourceIconURLPolicy.isAccepted(platformID: entry.platformID, value: $0)
+                      }) ?? true,
                       entry.attributes.count <= CollectedPlatformEntry.maximumAttributes,
                       entry.attributes.allSatisfy({ key, value in
                           !key.isEmpty && key.count <= CollectedPlatformEntry.maximumAttributeKeyLength &&

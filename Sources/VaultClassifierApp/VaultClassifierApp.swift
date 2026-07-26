@@ -124,7 +124,7 @@ final class VaultClassifierViewModel: ObservableObject {
     private var sharedHubClient: SharedHubClient?
     private var collectionDiagnostics: CollectionDiagnosticsStore?
     private var providerModelCatalogStore: ProviderModelCatalogStore?
-    private(set) var creatorAvatarCache: CreatorAvatarCache?
+    private(set) var sourceIconCache: SourceIconCache?
     private var latestLedgerID: UUID?
     private var testingProviderProfileIDs = Set<String>()
     private var successfulProviderTestProfileIDs = Set<String>()
@@ -146,7 +146,10 @@ final class VaultClassifierViewModel: ObservableObject {
             let package = try SeedPackageLoader.bundled()
             let collectionDiagnostics = CollectionDiagnosticsStore(fileURL: vaultDirectory.appendingPathComponent("collection-diagnostics.json"))
             self.collectionDiagnostics = collectionDiagnostics
-            self.creatorAvatarCache = CreatorAvatarCache(directory: vaultDirectory.appendingPathComponent("creator-avatars", isDirectory: true))
+            self.sourceIconCache = SourceIconCache(
+                directory: vaultDirectory.appendingPathComponent("source-icons", isDirectory: true),
+                retiredDirectory: vaultDirectory.appendingPathComponent("creator-avatars", isDirectory: true)
+            )
             collectionDiagnostics.record(event: "app-started", outcome: "ready")
             let coordinator = try LocalClassifierCoordinator(verifiedPackage: package, stateFile: LocalStateFile(url: vaultDirectory.appendingPathComponent("state.json")), defaultPolicies: [StarterPolicies.clashRoyale])
             self.coordinator = coordinator
@@ -240,8 +243,13 @@ final class VaultClassifierViewModel: ObservableObject {
             case .collect:
                 let request = try JSONDecoder().decode(NativeCollectionRequest.self, from: request.bodyData)
                 collectionDiagnostics?.record(platformID: request.entry.platform, event: "collection-received", outcome: "received")
-                let inserted = try coordinator.collectPlatformEntry(request.entry)
-                cacheCreatorAvatar(from: request.entry)
+                let inserted = try coordinator.collectPlatformEntry(
+                    request.entry,
+                    firstObservedAtMilliseconds: request.firstObservedAtMilliseconds,
+                    lastObservedAtMilliseconds: request.lastObservedAtMilliseconds,
+                    observationCount: request.observationCount
+                )
+                cacheSourceIcon(from: request.entry)
                 collectionDiagnostics?.record(platformID: request.entry.platform, event: "collection-stored", outcome: inserted ? "inserted" : "duplicate")
                 // Browser collection bypasses WebKit actions, so publish the
                 // freshly persisted catalog to the already-open app now.
@@ -288,16 +296,16 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
-    private func cacheCreatorAvatar(from entry: EntryEvidence) {
-        guard case .string(let avatarURL)? = entry.evidence.metadata["creatorAvatarURL"],
-              CreatorAvatarURLPolicy.isAccepted(platformID: entry.platform, value: avatarURL) else {
+    private func cacheSourceIcon(from entry: EntryEvidence) {
+        guard case .string(let iconURL)? = entry.evidence.metadata["sourceIconURL"],
+              SourceIconURLPolicy.isAccepted(platformID: entry.platform, value: iconURL) else {
             return
         }
-        cacheCreatorAvatar(remoteURL: avatarURL)
+        cacheSourceIcon(remoteURL: iconURL)
     }
 
-    private func cacheCreatorAvatar(remoteURL: String) {
-        creatorAvatarCache?.cache(remoteURL: remoteURL) { [weak self] in
+    private func cacheSourceIcon(remoteURL: String) {
+        sourceIconCache?.cache(remoteURL: remoteURL) { [weak self] in
             Task { @MainActor in self?.onWebStateChange?() }
         }
     }
@@ -2829,36 +2837,6 @@ final class VaultClassifierViewModel: ObservableObject {
         } catch { issue = error.localizedDescription }
     }
 
-    private func storeCreatorAvatarURL(
-        _ avatarURL: String,
-        datasetID: String,
-        platformID: String,
-        creatorID: String
-    ) throws {
-        guard CreatorAvatarURLPolicy.isAccepted(platformID: platformID, value: avatarURL),
-              var catalog = localState?.workspaceCatalog,
-              let datasetIndex = catalog.datasets.firstIndex(where: { $0.id == datasetID }) else {
-            throw WebBridgeInputError.invalidChoice("creator avatar")
-        }
-        var changed = false
-        for entryIndex in catalog.datasets[datasetIndex].collectedEntries.indices {
-            guard catalog.datasets[datasetIndex].collectedEntries[entryIndex].platformID == platformID,
-                  catalog.datasets[datasetIndex].collectedEntries[entryIndex].creatorID == creatorID else {
-                continue
-            }
-            let existing = catalog.datasets[datasetIndex].collectedEntries[entryIndex].attributes["creatorAvatarURL"]
-            guard existing != avatarURL,
-                  existing != nil || catalog.datasets[datasetIndex].collectedEntries[entryIndex].attributes.count < CollectedPlatformEntry.maximumAttributes else {
-                continue
-            }
-            catalog.datasets[datasetIndex].collectedEntries[entryIndex].attributes["creatorAvatarURL"] = avatarURL
-            changed = true
-        }
-        guard changed else { return }
-        try coordinator?.updateWorkspaceCatalog(catalog)
-        refreshLocalState()
-    }
-
     private struct LLMCreatorWorkItem {
         let representative: CollectedPlatformEntry
         let entry: EntryEvidence
@@ -2902,10 +2880,20 @@ final class VaultClassifierViewModel: ObservableObject {
                 "entryID": item.entryID,
                 "entryType": item.entryType,
                 "title": item.title,
+                "surface": item.surface.rawValue,
                 "firstObservedAtMilliseconds": item.firstObservedAtMilliseconds,
                 "lastObservedAtMilliseconds": item.lastObservedAtMilliseconds,
                 "observationCount": item.observationCount,
             ]
+            if let text = item.text {
+                value["text"] = text
+            }
+            if let summary = item.summary {
+                value["summary"] = summary
+            }
+            if !item.suppliedTags.isEmpty {
+                value["suppliedTags"] = item.suppliedTags
+            }
             if let canonicalURL = item.canonicalURL {
                 value["canonicalURL"] = canonicalURL
             }
@@ -3873,10 +3861,14 @@ final class VaultClassifierViewModel: ObservableObject {
                             "creatorName": entry.creatorName,
                             "entryType": entry.entryType,
                             "title": entry.title,
+                            "surface": entry.surface.rawValue,
+                            "text": entry.text ?? NSNull(),
+                            "summary": entry.summary ?? NSNull(),
+                            "suppliedTags": entry.suppliedTags,
                             "canonicalURL": entry.canonicalURL ?? NSNull(),
                             "attributes": entry.attributes,
-                            "cachedCreatorAvatarURL": entry.attributes["creatorAvatarURL"].flatMap {
-                                creatorAvatarCache?.cachedURL(for: $0)?.absoluteString
+                            "cachedSourceIconURL": entry.sourceIconURL.flatMap {
+                                sourceIconCache?.cachedURL(for: $0)?.absoluteString
                             } ?? NSNull(),
                             "firstObservedAtMilliseconds": entry.firstObservedAtMilliseconds,
                             "lastObservedAtMilliseconds": entry.lastObservedAtMilliseconds,
