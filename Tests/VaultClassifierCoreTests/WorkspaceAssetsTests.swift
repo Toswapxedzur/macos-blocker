@@ -204,10 +204,22 @@ final class WorkspaceAssetsTests: XCTestCase {
         let firstDarkAssignment = Dictionary(uniqueKeysWithValues: tree.nodes.map {
             ($0.id, try! XCTUnwrap($0.darkColorHex))
         })
-        XCTAssertEqual(Set(firstLightAssignment.values).count, tree.nodes.count)
-        XCTAssertEqual(Set(firstDarkAssignment.values).count, tree.nodes.count)
-        XCTAssertTrue(firstLightAssignment.values.allSatisfy { blackContrast(hex: $0) >= 4.5 })
-        XCTAssertTrue(firstDarkAssignment.values.allSatisfy { whiteContrast(hex: $0) >= 4.5 })
+        XCTAssertEqual(
+            Set(firstLightAssignment.values).count,
+            tree.nodes.count,
+            "\(firstLightAssignment)"
+        )
+        XCTAssertEqual(
+            Set(firstDarkAssignment.values).count,
+            tree.nodes.count,
+            "\(firstDarkAssignment)"
+        )
+        XCTAssertTrue(firstLightAssignment.values.allSatisfy {
+            blackContrast(hex: $0) >= TagColorAssignment.minimumTextContrast
+        })
+        XCTAssertTrue(firstDarkAssignment.values.allSatisfy {
+            whiteContrast(hex: $0) >= TagColorAssignment.minimumTextContrast
+        })
         XCTAssertEqual(firstLightAssignment["root"], TagColorAssignment.neutralRootLightHex)
         XCTAssertEqual(firstDarkAssignment["root"], TagColorAssignment.neutralRootDarkHex)
         for rootColor in [
@@ -225,6 +237,22 @@ final class WorkspaceAssetsTests: XCTestCase {
         let firstLevelLightProperties = try firstLevelIDs.map { tagID in
             try XCTUnwrap(TagColorAssignment.perceptualProperties(firstLightAssignment[tagID]))
         }
+        XCTAssertTrue(firstLevelDarkProperties.allSatisfy {
+            $0.lightness >= TagColorAssignment.darkLightnessMinimum - 0.012
+                && $0.lightness <= TagColorAssignment.darkLightnessMaximum + 0.012
+        })
+        XCTAssertTrue(firstLevelLightProperties.allSatisfy {
+            $0.lightness >= (
+                TagColorAssignment.lightnessInversionSum
+                    - TagColorAssignment.darkLightnessMaximum
+                    - 0.012
+            )
+                && $0.lightness <= (
+                    TagColorAssignment.lightnessInversionSum
+                        - TagColorAssignment.darkLightnessMinimum
+                        + 0.012
+                )
+        })
         let firstLevelDensities = try firstLevelIDs.map { tagID in
             try XCTUnwrap(TagColorAssignment.preferenceDensity(
                 lightHex: firstLightAssignment[tagID],
@@ -367,12 +395,11 @@ final class WorkspaceAssetsTests: XCTestCase {
     }
 
     func testPriorTagColorAlgorithmMigratesOnceWithoutChangingSemanticRevision() throws {
-        let legacyData = Data(##"{"id":"legacy-tree","name":"Legacy","revision":7,"nodes":[{"id":"root","name":"All","parentID":null,"isRetired":false,"colorHex":"#123456"},{"id":"child","name":"Child","parentID":"root","isRetired":false,"colorHex":"#ABCDEF"}],"colorAlgorithmVersion":3,"updatedAtMilliseconds":123}"##.utf8)
+        let legacyData = Data(##"{"id":"legacy-tree","name":"Legacy","revision":7,"nodes":[{"id":"root","name":"All","parentID":null,"isRetired":false,"lightColorHex":"#9EC5E8","darkColorHex":"#1A4775"},{"id":"child","name":"Child","parentID":"root","isRetired":false,"lightColorHex":"#E3B4E7","darkColorHex":"#6B246F"}],"colorAlgorithmVersion":4,"updatedAtMilliseconds":123}"##.utf8)
         let legacyTree = try JSONDecoder().decode(TagTreeAsset.self, from: legacyData)
-        XCTAssertEqual(legacyTree.colorAlgorithmVersion, 3)
-        XCTAssertTrue(legacyTree.nodes.allSatisfy {
-            $0.lightColorHex == nil && $0.darkColorHex == nil
-        })
+        XCTAssertEqual(legacyTree.colorAlgorithmVersion, 4)
+        XCTAssertEqual(legacyTree.nodes.map(\.lightColorHex), ["#9EC5E8", "#E3B4E7"])
+        XCTAssertEqual(legacyTree.nodes.map(\.darkColorHex), ["#1A4775", "#6B246F"])
 
         var catalog = WorkspaceCatalog(trees: [legacyTree], datasets: [])
         catalog.reconcileClassifierTypes()

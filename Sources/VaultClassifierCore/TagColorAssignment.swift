@@ -8,23 +8,23 @@ import Foundation
 /// black text. Deeper descendants remain inside geometrically contracting
 /// OKLab neighborhoods in both themes.
 public enum TagColorAssignment {
-    public static let currentAlgorithmVersion = 4
-    public static let minimumTextContrast = 4.5
+    public static let currentAlgorithmVersion = 5
+    public static let minimumTextContrast = 7.0
 
     static let firstInheritedMaximumOffset = 0.080
     static let generationContraction = 0.45
-    static let darkLightnessMinimum = 0.46
-    static let darkLightnessMaximum = 0.58
-    static let lightnessInversionSum = 1.30
-    static let rootDarkLightness = 0.52
+    static let darkLightnessMinimum = 0.36
+    static let darkLightnessMaximum = 0.46
+    static let lightnessInversionSum = 1.28
+    static let rootDarkLightness = 0.41
 
     private static let goldenRatioConjugate = 0.618_033_988_749_894_9
     private static let silverRatioConjugate = 0.414_213_562_373_095_0
     private static let rootThreeConjugate = 0.732_050_807_568_877_2
     private static let seedRelativeChromaMinimum = 0.50
     private static let seedRelativeChromaMaximum = 0.92
-    private static let preferredDarkLightness = 0.52
-    private static let preferredDarkLightnessWidth = 0.045
+    private static let preferredDarkLightness = 0.41
+    private static let preferredDarkLightnessWidth = 0.035
     private static let preferredRelativeChroma = 0.72
     private static let preferredRelativeChromaWidth = 0.17
     private static let densityFloor = 0.15
@@ -358,7 +358,10 @@ public enum TagColorAssignment {
         for candidateIndex in 0..<candidateCount {
             let sequenceIndex = Double(candidateIndex + 1 + ordinal * candidateCount)
             let angle = fractional(sequenceIndex * goldenRatioConjugate) * 2 * Double.pi
-            let radialFraction = 0.72 + fractional(sequenceIndex * silverRatioConjugate) * 0.18
+            // Probe both the edge and interior of the allowed neighborhood.
+            // High-contrast pairs can reach a theme's gamut boundary where an
+            // outer-only shell has no representable two-theme candidate.
+            let radialFraction = 0.30 + fractional(sequenceIndex * silverRatioConjugate) * 0.60
             let vertical = (fractional(sequenceIndex * rootThreeConjugate) * 2) - 1
             let plane = sqrt(max(0, 1 - (vertical * vertical)))
             let offset = radius * radialFraction
