@@ -28,7 +28,7 @@
     ["zh", "language.name.zh"],
   ];
   let state = null;
-  let renderedPayloadSignature = "";
+  let renderedPresentationRevision = 0;
   let activeTagPanel = null;
   let tagDrag = null;
   let suppressTagClick = false;
@@ -1697,9 +1697,11 @@
 
   window.VaultClassifier = {
     receive(payload) {
-      const signature = JSON.stringify(payload);
-      if (signature === renderedPayloadSignature) return;
-      renderedPayloadSignature = signature;
+      const revision = Number(payload?.presentationRevision);
+      if (Number.isSafeInteger(revision) && revision > 0) {
+        if (revision <= renderedPresentationRevision) return;
+        renderedPresentationRevision = revision;
+      }
       state = payload;
       render();
     },

@@ -357,5 +357,30 @@ final class WebShellPerformanceTests: XCTestCase {
         )
         XCTAssertTrue((evidenceJSON["text"] as? String)?.contains("Full rendered public description") == true)
         XCTAssertEqual(evidenceJSON["tags"] as? [String], ["guide", "video"])
+
+        var newestPayload = populatedPayload(creatorCount: 4)
+        newestPayload["workspace"] = "classificationData"
+        newestPayload["issue"] = "newest presentation"
+        let newestUpdate = try XCTUnwrap(
+            VaultClassifierWebShell.stateUpdateJavaScript(
+                payload: newestPayload,
+                presentationRevision: 12
+            )
+        )
+        _ = try await evaluate(newestUpdate, in: webView)
+
+        var stalePayload = newestPayload
+        stalePayload["issue"] = "stale presentation"
+        let staleUpdate = try XCTUnwrap(
+            VaultClassifierWebShell.stateUpdateJavaScript(
+                payload: stalePayload,
+                presentationRevision: 11
+            )
+        )
+        _ = try await evaluate(staleUpdate, in: webView)
+        let renderedTextValue = try await evaluate("document.body.textContent;", in: webView)
+        let renderedText = try XCTUnwrap(renderedTextValue as? String)
+        XCTAssertTrue(renderedText.contains("newest presentation"))
+        XCTAssertFalse(renderedText.contains("stale presentation"))
     }
 }
