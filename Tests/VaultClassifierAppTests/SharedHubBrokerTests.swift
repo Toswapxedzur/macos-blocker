@@ -68,4 +68,82 @@ final class SharedHubBrokerTests: XCTestCase {
         let restored = try decodedStatePayload(from: script)
         XCTAssertEqual(restored["metadata"] as? [String], metadata)
     }
+
+    func testWebStateScriptCarriesMonotonicPresentationRevision() throws {
+        let script = try XCTUnwrap(
+            VaultClassifierWebShell.stateUpdateJavaScript(
+                payload: ["workspace": "classificationData"],
+                presentationRevision: 42
+            )
+        )
+        let restored = try decodedStatePayload(from: script)
+        XCTAssertEqual((restored["presentationRevision"] as? NSNumber)?.uint64Value, 42)
+    }
+
+    func testWebStateDeliveryCoalescesWhileOneRenderIsInFlight() {
+        var scheduled = [() -> Void]()
+        var evaluations = [(script: String, completion: () -> Void)]()
+        var builtRevisions = [UInt64]()
+        let delivery = LatestWebStateDelivery(
+            schedule: { scheduled.append($0) },
+            makeScript: { revision in
+                builtRevisions.append(revision)
+                return "render-\(revision)"
+            },
+            evaluate: { script, completion in
+                evaluations.append((script, completion))
+            }
+        )
+
+        delivery.request()
+        delivery.request()
+        delivery.request()
+        XCTAssertEqual(scheduled.count, 1)
+        XCTAssertTrue(evaluations.isEmpty)
+
+        scheduled.removeFirst()()
+        XCTAssertEqual(builtRevisions, [3])
+        XCTAssertEqual(evaluations.map(\.script), ["render-3"])
+
+        for _ in 0..<50 {
+            delivery.request()
+        }
+        XCTAssertTrue(scheduled.isEmpty)
+        XCTAssertEqual(evaluations.count, 1)
+
+        evaluations.removeFirst().completion()
+        XCTAssertEqual(scheduled.count, 1)
+        scheduled.removeFirst()()
+        XCTAssertEqual(builtRevisions, [3, 53])
+        XCTAssertEqual(evaluations.map(\.script), ["render-53"])
+    }
+
+    func testWebStateDeliveryRecoversFromAStuckWebContentProcess() {
+        var scheduled = [() -> Void]()
+        var completions = [() -> Void]()
+        var builtRevisions = [UInt64]()
+        let delivery = LatestWebStateDelivery(
+            schedule: { scheduled.append($0) },
+            makeScript: { revision in
+                builtRevisions.append(revision)
+                return "render-\(revision)"
+            },
+            evaluate: { _, completion in
+                completions.append(completion)
+            }
+        )
+
+        delivery.request()
+        scheduled.removeFirst()()
+        delivery.request()
+        delivery.recoverAfterWebContentProcessTermination()
+        XCTAssertEqual(scheduled.count, 1)
+
+        completions.removeFirst()()
+        XCTAssertEqual(scheduled.count, 1, "A stale WebKit callback must not finish the replacement delivery.")
+
+        scheduled.removeFirst()()
+        XCTAssertEqual(builtRevisions, [1, 3])
+        XCTAssertEqual(completions.count, 1)
+    }
 }

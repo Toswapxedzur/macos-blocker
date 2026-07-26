@@ -53,9 +53,16 @@ final class VaultClassifierWebShell {
     /// Builds a data-only native-to-WebKit update. `atob` returns a binary
     /// string, so decode its bytes as UTF-8 before parsing JSON; otherwise
     /// curly quotes and other non-ASCII collected metadata render garbled.
-    static func stateUpdateJavaScript(payload: [String: Any]) -> String? {
-        guard JSONSerialization.isValidJSONObject(payload),
-              let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else {
+    static func stateUpdateJavaScript(
+        payload: [String: Any],
+        presentationRevision: UInt64? = nil
+    ) -> String? {
+        var deliveredPayload = payload
+        if let presentationRevision {
+            deliveredPayload["presentationRevision"] = presentationRevision
+        }
+        guard JSONSerialization.isValidJSONObject(deliveredPayload),
+              let data = try? JSONSerialization.data(withJSONObject: deliveredPayload, options: [.sortedKeys]) else {
             return nil
         }
         let encoded = data.base64EncodedString()
@@ -72,6 +79,30 @@ final class VaultClassifierWebShell {
 
         let model: VaultClassifierViewModel
         weak var webView: WKWebView?
+        private lazy var stateDelivery = LatestWebStateDelivery(
+            schedule: { action in
+                // Visual state is intentionally slower than authoritative
+                // model mutation. A short batching window coalesces collector
+                // bursts while keeping direct controls perceptually current.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: action)
+            },
+            makeScript: { [weak self] revision in
+                guard let self else { return nil }
+                let payload = self.model.webSnapshot()
+                Self.layoutLogger.recordNativeSnapshot(payload)
+                return VaultClassifierWebShell.stateUpdateJavaScript(
+                    payload: payload,
+                    presentationRevision: revision
+                )
+            },
+            evaluate: { [weak self] script, completion in
+                guard let webView = self?.webView else {
+                    completion()
+                    return
+                }
+                webView.evaluateJavaScript(script) { _, _ in completion() }
+            }
+        )
 
         init(model: VaultClassifierViewModel) {
             self.model = model
@@ -116,17 +147,90 @@ final class VaultClassifierWebShell {
         }
 
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            stateDelivery.recoverAfterWebContentProcessTermination()
             webView.reload()
         }
 
         func sendState() {
-            let payload = model.webSnapshot()
-            Self.layoutLogger.recordNativeSnapshot(payload)
-            guard let webView,
-                  let script = VaultClassifierWebShell.stateUpdateJavaScript(payload: payload) else {
+            stateDelivery.request()
+        }
+    }
+}
+
+/// Keeps WebKit presentation strictly downstream from authoritative state.
+/// At most one script may render at a time; requests received before that
+/// render completes collapse into one newest-state delivery.
+final class LatestWebStateDelivery {
+    typealias Scheduler = (@escaping () -> Void) -> Void
+    typealias ScriptBuilder = (_ presentationRevision: UInt64) -> String?
+    typealias Evaluator = (_ script: String, _ completion: @escaping () -> Void) -> Void
+
+    private let schedule: Scheduler
+    private let makeScript: ScriptBuilder
+    private let evaluate: Evaluator
+    private var requestedRevision: UInt64 = 0
+    private var deliveredRevision: UInt64 = 0
+    private var deliveryScheduled = false
+    private var deliveryInFlight = false
+    private var activeDeliveryRevision: UInt64?
+
+    init(
+        schedule: @escaping Scheduler,
+        makeScript: @escaping ScriptBuilder,
+        evaluate: @escaping Evaluator
+    ) {
+        self.schedule = schedule
+        self.makeScript = makeScript
+        self.evaluate = evaluate
+    }
+
+    func request() {
+        requestedRevision &+= 1
+        scheduleIfNeeded()
+    }
+
+    func recoverAfterWebContentProcessTermination() {
+        activeDeliveryRevision = nil
+        deliveryInFlight = false
+        requestedRevision &+= 1
+        scheduleIfNeeded()
+    }
+
+    private func scheduleIfNeeded() {
+        guard !deliveryScheduled,
+              !deliveryInFlight,
+              deliveredRevision < requestedRevision else {
+            return
+        }
+        deliveryScheduled = true
+        schedule { [weak self] in
+            self?.beginLatestDelivery()
+        }
+    }
+
+    private func beginLatestDelivery() {
+        deliveryScheduled = false
+        guard !deliveryInFlight,
+              deliveredRevision < requestedRevision else {
+            return
+        }
+        let revision = requestedRevision
+        guard let script = makeScript(revision) else {
+            deliveredRevision = revision
+            scheduleIfNeeded()
+            return
+        }
+        deliveryInFlight = true
+        activeDeliveryRevision = revision
+        evaluate(script) { [weak self] in
+            guard let self,
+                  self.activeDeliveryRevision == revision else {
                 return
             }
-            webView.evaluateJavaScript(script)
+            self.activeDeliveryRevision = nil
+            self.deliveryInFlight = false
+            self.deliveredRevision = max(self.deliveredRevision, revision)
+            self.scheduleIfNeeded()
         }
     }
 }
