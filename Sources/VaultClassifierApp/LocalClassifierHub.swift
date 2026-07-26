@@ -155,8 +155,12 @@ final class LocalClassifierHub {
             } else if data?.count ?? 0 > 1_048_576 {
                 connection.cancel()
             }
-            if error == nil { self.receive(connection, key: key) }
-            else { self.removePeer(key) }
+            if error == nil {
+                self.receive(connection, key: key)
+            } else {
+                self.removePeer(key)
+                connection.cancel()
+            }
         }
     }
 

@@ -122,8 +122,11 @@ public enum NativeCollectionDiagnosticEvent: String, CaseIterable, Codable, Send
 public enum NativeCollectionDiagnosticDetail: String, CaseIterable, Codable, Sendable {
     case missingVideoID = "missing-video-id"
     case missingWatchRoot = "missing-watch-root"
+    case missingContentID = "missing-content-id"
+    case missingContentRoot = "missing-content-root"
     case missingTitle = "missing-title"
     case missingCreator = "missing-creator"
+    case missingSource = "missing-source"
     case runtimeLastError = "runtime-last-error"
     case bridgeUnavailable = "bridge-unavailable"
     case rejected
