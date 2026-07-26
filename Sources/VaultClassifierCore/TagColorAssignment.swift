@@ -2,23 +2,31 @@ import Foundation
 
 /// Assigns persistent, presentation-only colors from tag-tree structure.
 ///
-/// There is no hash or preset palette. Root colors come from continuous
-/// low-discrepancy HSL candidates. Every descendant is selected inside a
-/// bounded OKLab neighborhood around its parent, and that neighborhood
-/// contracts geometrically at each generation. Siblings are spread as far
-/// apart as their shared neighborhood allows, while hierarchy similarity is
-/// always the stronger constraint.
+/// There is no hash or preset palette. Roots are neutral grey anchors.
+/// First-level children seed the full readable OKLCH space through a
+/// non-uniform density function over lightness, relative chroma, and hue.
+/// Deeper descendants are selected inside a bounded OKLab neighborhood around
+/// their parent, and that neighborhood contracts geometrically at each
+/// generation. Siblings disperse across all three perceptual properties while
+/// hierarchy similarity remains the stronger constraint.
 public enum TagColorAssignment {
-    public static let currentAlgorithmVersion = 2
+    public static let currentAlgorithmVersion = 3
     public static let minimumWhiteTextContrast = 4.5
 
-    static let firstGenerationMaximumOffset = 0.080
+    static let firstInheritedMaximumOffset = 0.080
     static let generationContraction = 0.45
+    static let rootNeutralLightness = 0.55
 
     private static let goldenRatioConjugate = 0.618_033_988_749_894_9
     private static let silverRatioConjugate = 0.414_213_562_373_095_0
     private static let rootThreeConjugate = 0.732_050_807_568_877_2
-    private static let candidateCount = 192
+    private static let seedLightnessMinimum = 0.40
+    private static let seedLightnessMaximum = 0.58
+    private static let seedRelativeChromaMinimum = 0.32
+    private static let seedRelativeChromaMaximum = 0.94
+    private static let densityFloor = 0.16
+    private static let localDensityProbeRadius = 0.032
+    private static let candidateCount = 384
     private static let renderedColorTolerance = 0.003
 
     public static func normalizedHex(_ value: String?) -> String? {
@@ -63,6 +71,11 @@ public enum TagColorAssignment {
     /// stable when a sibling is added, a tag is renamed, or its canvas moves.
     public static func assignMissingColors(in tree: inout TagTreeAsset) {
         guard !tree.nodes.isEmpty else { return }
+
+        let rootHex = neutralRootColor.hex
+        for index in tree.nodes.indices where tree.nodes[index].parentID == nil {
+            tree.nodes[index].colorHex = rootHex
+        }
 
         let invalidColorRootIDs = tree.nodes.compactMap { node in
             isValidHex(node.colorHex) ? nil : node.id
@@ -132,7 +145,7 @@ public enum TagColorAssignment {
             if !assignedAny, let index = unresolved.min() {
                 // Invalid cyclic legacy trees still get a readable color;
                 // semantic tree validation remains authoritative elsewhere.
-                let rgb = generatedRootColor(ordinal: index, usedColors: usedColors)
+                let rgb = neutralRootColor
                 tree.nodes[index].colorHex = rgb.hex
                 usedColors.append(rgb)
                 unresolved.remove(index)
@@ -141,14 +154,32 @@ public enum TagColorAssignment {
     }
 
     static func maximumOffset(edgeDepth: Int) -> Double {
-        guard edgeDepth > 0 else { return .greatestFiniteMagnitude }
-        return firstGenerationMaximumOffset
-            * pow(generationContraction, Double(edgeDepth - 1))
+        guard edgeDepth > 1 else { return .greatestFiniteMagnitude }
+        return firstInheritedMaximumOffset
+            * pow(generationContraction, Double(edgeDepth - 2))
     }
 
     static func perceptualDistance(_ lhs: String?, _ rhs: String?) -> Double? {
         guard let lhsRGB = RGB(hex: lhs), let rhsRGB = RGB(hex: rhs) else { return nil }
         return OKLab(rgb: lhsRGB).distance(to: OKLab(rgb: rhsRGB))
+    }
+
+    static var neutralRootHex: String {
+        neutralRootColor.hex
+    }
+
+    static func perceptualProperties(
+        _ value: String?
+    ) -> (lightness: Double, relativeChroma: Double, hueRadians: Double)? {
+        guard let rgb = RGB(hex: value) else { return nil }
+        let tuple = colorTuple(for: OKLab(rgb: rgb))
+        return (tuple.lightness, tuple.relativeChroma, tuple.hueRadians)
+    }
+
+    static func preferenceDensity(_ value: String?) -> Double? {
+        guard let rgb = RGB(hex: value) else { return nil }
+        let lab = OKLab(rgb: rgb)
+        return preferenceDensity(at: colorTuple(for: lab), lab: lab, rgb: rgb)
     }
 
     private static func generatedColor(
@@ -158,40 +189,109 @@ public enum TagColorAssignment {
         siblingColors: [RGB],
         usedColors: [RGB]
     ) -> RGB {
-        guard let parent else {
-            return generatedRootColor(ordinal: ordinal, usedColors: usedColors)
+        guard let parent, edgeDepth > 0 else {
+            return neutralRootColor
+        }
+        if edgeDepth == 1 {
+            return generatedSeedColor(
+                ordinal: ordinal,
+                siblingColors: siblingColors,
+                usedColors: usedColors
+            )
         }
         return generatedDescendantColor(
             parent: parent,
-            edgeDepth: max(1, edgeDepth),
+            edgeDepth: edgeDepth,
             ordinal: ordinal,
             siblingColors: siblingColors,
             usedColors: usedColors
         )
     }
 
-    private static func generatedRootColor(ordinal: Int, usedColors: [RGB]) -> RGB {
-        var best: (rgb: RGB, distance: Double)?
+    private static var neutralRootColor: RGB {
+        let lab = OKLab(lightness: rootNeutralLightness, a: 0, b: 0)
+        guard let rawRGB = RGB(oklab: lab), let displayedRGB = RGB(hex: rawRGB.hex) else {
+            preconditionFailure("The neutral root color must be representable in sRGB.")
+        }
+        return displayedRGB
+    }
+
+    private static func generatedSeedColor(
+        ordinal: Int,
+        siblingColors: [RGB],
+        usedColors: [RGB]
+    ) -> RGB {
+        let chromaticUsedColors = usedColors.filter {
+            colorTuple(for: OKLab(rgb: $0)).chroma > 0.02
+        }
+        let referenceColors = siblingColors.isEmpty ? chromaticUsedColors : siblingColors
+        let referenceLabs = referenceColors.map(OKLab.init)
+        let referenceTuples = referenceLabs.map(colorTuple)
+        let usedLabs = usedColors.map(OKLab.init)
+        let usedHexes = Set(usedColors.map(\.hex))
+        var best: (rgb: RGB, score: Double)?
+        var readableFallback: (rgb: RGB, score: Double)?
+
         for candidateIndex in 0..<candidateCount {
             let sequenceIndex = Double(candidateIndex + 1 + ordinal * candidateCount)
-            let hue = fractional(sequenceIndex * goldenRatioConjugate) * 360
-            let saturation = 58 + fractional(sequenceIndex * silverRatioConjugate) * 24
-            var lightness = 27 + fractional(sequenceIndex * rootThreeConjugate) * 15
-            var rgb = RGB(hsl: .init(hue: hue, saturation: saturation, lightness: lightness))
-            while rgb.contrastAgainstWhite < minimumWhiteTextContrast, lightness > 18 {
-                lightness -= 0.5
-                rgb = RGB(hsl: .init(hue: hue, saturation: saturation, lightness: lightness))
+            let hue = fractional(sequenceIndex * goldenRatioConjugate) * 2 * Double.pi
+            let lightness = seedLightnessMinimum
+                + fractional(sequenceIndex * silverRatioConjugate)
+                * (seedLightnessMaximum - seedLightnessMinimum)
+            let relativeChroma = seedRelativeChromaMinimum
+                + fractional(sequenceIndex * rootThreeConjugate)
+                * (seedRelativeChromaMaximum - seedRelativeChromaMinimum)
+            let maximumChroma = maximumDisplayableChroma(lightness: lightness, hueRadians: hue)
+            let candidateLab = OKLab(
+                lightness: lightness,
+                a: cos(hue) * maximumChroma * relativeChroma,
+                b: sin(hue) * maximumChroma * relativeChroma
+            )
+            guard let rawRGB = RGB(oklab: candidateLab),
+                  rawRGB.contrastAgainstWhite >= minimumWhiteTextContrast,
+                  let displayedRGB = RGB(hex: rawRGB.hex) else {
+                continue
             }
 
-            let candidate = OKLab(rgb: rgb)
-            let minimumDistance = usedColors
-                .map { candidate.distance(to: OKLab(rgb: $0)) }
-                .min() ?? .greatestFiniteMagnitude
-            if best == nil || minimumDistance > best!.distance {
-                best = (rgb, minimumDistance)
+            let displayedLab = OKLab(rgb: displayedRGB)
+            let displayedTuple = colorTuple(for: displayedLab)
+            let density = preferenceDensity(
+                at: displayedTuple,
+                lab: displayedLab,
+                rgb: displayedRGB
+            )
+            let jointSeparation = referenceTuples
+                .map { jointTupleDistance(displayedTuple, $0) }
+                .min() ?? 1
+            let perceptualSeparation = referenceLabs
+                .map { displayedLab.distance(to: $0) }
+                .min() ?? 0.25
+            let globalSeparation = usedLabs
+                .map { displayedLab.distance(to: $0) }
+                .min() ?? 0
+            // Variable-radius farthest-point sampling in three dimensions:
+            // local spacing is proportional to density^(-1/3), so dense
+            // tuples admit more colors without erasing sparse regions.
+            let score = (jointSeparation * pow(density, 1.0 / 3.0) * 1_000)
+                + (perceptualSeparation * 100)
+                + (globalSeparation * 10)
+
+            if readableFallback == nil || score > readableFallback!.score {
+                readableFallback = (displayedRGB, score)
+            }
+            guard !usedHexes.contains(displayedRGB.hex) else { continue }
+            if best == nil || score > best!.score {
+                best = (displayedRGB, score)
             }
         }
-        return best!.rgb
+
+        if let best {
+            return best.rgb
+        }
+        if let readableFallback {
+            return readableFallback.rgb
+        }
+        preconditionFailure("The readable OKLCH seed domain must contain a displayable color.")
     }
 
     private static func generatedDescendantColor(
@@ -203,6 +303,8 @@ public enum TagColorAssignment {
     ) -> RGB {
         let parentLab = OKLab(rgb: parent)
         let siblingLabs = siblingColors.map(OKLab.init)
+        let parentTuple = colorTuple(for: parentLab)
+        let siblingTuples = siblingLabs.map(colorTuple)
         let usedLabs = usedColors.map(OKLab.init)
         let usedHexes = Set(usedColors.map(\.hex))
         let radius = maximumOffset(edgeDepth: edgeDepth)
@@ -213,15 +315,13 @@ public enum TagColorAssignment {
             let sequenceIndex = Double(candidateIndex + 1 + ordinal * candidateCount)
             let angle = fractional(sequenceIndex * goldenRatioConjugate) * 2 * Double.pi
             let radialFraction = 0.72 + fractional(sequenceIndex * silverRatioConjugate) * 0.18
-            let deltaLightness = (
-                (fractional(sequenceIndex * rootThreeConjugate) * 2) - 1
-            ) * radius * 0.18
-            let maximumPlaneRadius = sqrt(max(0, (radius * radius) - (deltaLightness * deltaLightness)))
-            let planeRadius = maximumPlaneRadius * radialFraction
+            let vertical = (fractional(sequenceIndex * rootThreeConjugate) * 2) - 1
+            let plane = sqrt(max(0, 1 - (vertical * vertical)))
+            let offset = radius * radialFraction
             let candidateLab = OKLab(
-                lightness: parentLab.lightness + deltaLightness,
-                a: parentLab.a + cos(angle) * planeRadius,
-                b: parentLab.b + sin(angle) * planeRadius
+                lightness: parentLab.lightness + (vertical * offset),
+                a: parentLab.a + (cos(angle) * plane * offset),
+                b: parentLab.b + (sin(angle) * plane * offset)
             )
             guard let rawRGB = RGB(oklab: candidateLab),
                   rawRGB.contrastAgainstWhite >= minimumWhiteTextContrast,
@@ -230,17 +330,28 @@ public enum TagColorAssignment {
             }
 
             let displayedLab = OKLab(rgb: displayedRGB)
+            let displayedTuple = colorTuple(for: displayedLab)
             let parentDistance = displayedLab.distance(to: parentLab)
             guard parentDistance <= radius + renderedColorTolerance else { continue }
             let siblingSeparation = siblingLabs
                 .map { displayedLab.distance(to: $0) }
                 .min() ?? parentDistance
+            let propertySeparation = siblingTuples
+                .map { jointTupleDistance(displayedTuple, $0) }
+                .min() ?? jointTupleDistance(displayedTuple, parentTuple)
             let globalSeparation = usedLabs
                 .map { displayedLab.distance(to: $0) }
                 .min() ?? parentDistance
+            let density = preferenceDensity(
+                at: displayedTuple,
+                lab: displayedLab,
+                rgb: displayedRGB
+            )
             // The hard radius enforces hierarchy. Within it, sibling distance
-            // dominates; global separation only breaks otherwise close ties.
-            let score = (siblingSeparation * 1_000)
+            // dominates across lightness, chroma, and hue. Tuple density and
+            // global separation only influence choices inside that radius.
+            let score = (siblingSeparation * pow(density, 1.0 / 3.0) * 1_000)
+                + (propertySeparation * 100)
                 + (globalSeparation * 10)
                 + parentDistance
 
@@ -259,8 +370,117 @@ public enum TagColorAssignment {
         return best?.rgb ?? readableFallback?.rgb ?? parent
     }
 
+    private static func preferenceDensity(
+        at tuple: ColorTuple,
+        lab: OKLab,
+        rgb: RGB
+    ) -> Double {
+        let usableVolume = localUsableVolume(around: lab)
+        let contrastHeadroom = clamped(
+            (rgb.contrastAgainstWhite - minimumWhiteTextContrast) / 4,
+            minimum: 0.04,
+            maximum: 1
+        )
+        let chromaOffset = (tuple.relativeChroma - 0.66) / 0.25
+        let chromaQuality = exp(-0.5 * chromaOffset * chromaOffset)
+        let jointQuality = pow(
+            max(0.000_001, usableVolume * contrastHeadroom * chromaQuality),
+            1.0 / 3.0
+        )
+        return densityFloor + ((1 - densityFloor) * jointQuality)
+    }
+
+    private static func localUsableVolume(around lab: OKLab) -> Double {
+        let diagonal = 1 / sqrt(3.0)
+        let directions: [(Double, Double, Double)] = [
+            (1, 0, 0), (-1, 0, 0),
+            (0, 1, 0), (0, -1, 0),
+            (0, 0, 1), (0, 0, -1),
+            (diagonal, diagonal, diagonal),
+            (diagonal, diagonal, -diagonal),
+            (diagonal, -diagonal, diagonal),
+            (diagonal, -diagonal, -diagonal),
+            (-diagonal, diagonal, diagonal),
+            (-diagonal, diagonal, -diagonal),
+            (-diagonal, -diagonal, diagonal),
+            (-diagonal, -diagonal, -diagonal),
+        ]
+        let validCount = directions.reduce(into: 0) { count, direction in
+            let probe = OKLab(
+                lightness: lab.lightness + (direction.0 * localDensityProbeRadius),
+                a: lab.a + (direction.1 * localDensityProbeRadius),
+                b: lab.b + (direction.2 * localDensityProbeRadius)
+            )
+            if let rgb = RGB(oklab: probe),
+               rgb.contrastAgainstWhite >= minimumWhiteTextContrast {
+                count += 1
+            }
+        }
+        return Double(validCount) / Double(directions.count)
+    }
+
+    private static func colorTuple(for lab: OKLab) -> ColorTuple {
+        let chroma = sqrt((lab.a * lab.a) + (lab.b * lab.b))
+        var hue = atan2(lab.b, lab.a)
+        if hue < 0 {
+            hue += 2 * Double.pi
+        }
+        let maximumChroma = maximumDisplayableChroma(
+            lightness: lab.lightness,
+            hueRadians: hue
+        )
+        return ColorTuple(
+            lightness: lab.lightness,
+            chroma: chroma,
+            relativeChroma: maximumChroma > 0 ? min(1, chroma / maximumChroma) : 0,
+            hueRadians: hue
+        )
+    }
+
+    private static func jointTupleDistance(_ lhs: ColorTuple, _ rhs: ColorTuple) -> Double {
+        let lightnessRange = seedLightnessMaximum - seedLightnessMinimum
+        let chromaRange = seedRelativeChromaMaximum - seedRelativeChromaMinimum
+        let lightnessDistance = (lhs.lightness - rhs.lightness) / lightnessRange
+        let chromaDistance = (lhs.relativeChroma - rhs.relativeChroma) / chromaRange
+        let rawHueDistance = abs(lhs.hueRadians - rhs.hueRadians)
+        let hueDistance = min(rawHueDistance, (2 * Double.pi) - rawHueDistance) / Double.pi
+        return sqrt(
+            (
+                (lightnessDistance * lightnessDistance)
+                + (chromaDistance * chromaDistance)
+                + (hueDistance * hueDistance)
+            ) / 3
+        )
+    }
+
+    private static func maximumDisplayableChroma(
+        lightness: Double,
+        hueRadians: Double
+    ) -> Double {
+        var lowerBound = 0.0
+        var upperBound = 0.5
+        for _ in 0..<18 {
+            let midpoint = (lowerBound + upperBound) / 2
+            let lab = OKLab(
+                lightness: lightness,
+                a: cos(hueRadians) * midpoint,
+                b: sin(hueRadians) * midpoint
+            )
+            if RGB(oklab: lab) == nil {
+                upperBound = midpoint
+            } else {
+                lowerBound = midpoint
+            }
+        }
+        return lowerBound
+    }
+
     private static func fractional(_ value: Double) -> Double {
         value - floor(value)
+    }
+
+    private static func clamped(_ value: Double, minimum: Double, maximum: Double) -> Double {
+        min(maximum, max(minimum, value))
     }
 }
 
@@ -279,10 +499,11 @@ private extension TagTreeAsset {
     }
 }
 
-private struct HSL {
-    var hue: Double
-    var saturation: Double
+private struct ColorTuple {
     var lightness: Double
+    var chroma: Double
+    var relativeChroma: Double
+    var hueRadians: Double
 }
 
 private struct RGB {
@@ -298,27 +519,6 @@ private struct RGB {
         red = Double((value >> 16) & 0xff) / 255
         green = Double((value >> 8) & 0xff) / 255
         blue = Double(value & 0xff) / 255
-    }
-
-    init(hsl: HSL) {
-        let saturation = hsl.saturation / 100
-        let lightness = hsl.lightness / 100
-        let chroma = (1 - abs((2 * lightness) - 1)) * saturation
-        let hueSection = hsl.hue / 60
-        let intermediate = chroma * (1 - abs(hueSection.truncatingRemainder(dividingBy: 2) - 1))
-        let base: (Double, Double, Double)
-        switch hueSection {
-        case 0..<1: base = (chroma, intermediate, 0)
-        case 1..<2: base = (intermediate, chroma, 0)
-        case 2..<3: base = (0, chroma, intermediate)
-        case 3..<4: base = (0, intermediate, chroma)
-        case 4..<5: base = (intermediate, 0, chroma)
-        default: base = (chroma, 0, intermediate)
-        }
-        let match = lightness - chroma / 2
-        red = base.0 + match
-        green = base.1 + match
-        blue = base.2 + match
     }
 
     init?(oklab: OKLab) {
