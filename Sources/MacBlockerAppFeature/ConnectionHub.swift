@@ -500,6 +500,7 @@ final class ConnectionHub: ObservableObject {
                 self.receive(conn, key: key)
             } else {
                 self.removePeer(key)
+                conn.cancel()
             }
         }
     }
