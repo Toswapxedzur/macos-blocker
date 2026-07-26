@@ -1,4 +1,5 @@
 #if os(macOS)
+import Network
 import XCTest
 @testable import MacBlockerAppFeature
 
@@ -114,6 +115,62 @@ final class ConnectionHubProtocolTests: XCTestCase {
             ]),
             "invalid-classifier-request"
         )
+    }
+
+    func testExpiredClassifierResponseIsDiscardedWithoutBecomingAMismatch() {
+        XCTAssertEqual(ConnectionHub.classifierRelayTimeoutSeconds, 30)
+        XCTAssertEqual(
+            ConnectionHub.classifierResponseCorrelation(
+                pending: nil,
+                classifierPeerID: "classifier-peer",
+                sourcePeerID: "browser-peer",
+                operation: "collection-info"
+            ),
+            .expired
+        )
+    }
+
+    func testClassifierResponseCorrelationMustMatchEveryRoutedField() {
+        let pending = ConnectionHub.ClassifierRequest(
+            sourcePeerID: "browser-peer",
+            classifierPeerID: "classifier-peer",
+            operation: "collection-info"
+        )
+        XCTAssertEqual(
+            ConnectionHub.classifierResponseCorrelation(
+                pending: pending,
+                classifierPeerID: "classifier-peer",
+                sourcePeerID: "browser-peer",
+                operation: "collection-info"
+            ),
+            .matched
+        )
+        XCTAssertEqual(
+            ConnectionHub.classifierResponseCorrelation(
+                pending: pending,
+                classifierPeerID: "classifier-peer",
+                sourcePeerID: "other-browser-peer",
+                operation: "collection-info"
+            ),
+            .mismatched
+        )
+    }
+
+    func testWebSocketCloseMetadataIsRecognized() {
+        let closeMetadata = NWProtocolWebSocket.Metadata(opcode: .close)
+        let closeContext = NWConnection.ContentContext(
+            identifier: "close",
+            metadata: [closeMetadata]
+        )
+        let textMetadata = NWProtocolWebSocket.Metadata(opcode: .text)
+        let textContext = NWConnection.ContentContext(
+            identifier: "text",
+            metadata: [textMetadata]
+        )
+
+        XCTAssertTrue(ConnectionHub.isWebSocketClose(closeContext))
+        XCTAssertFalse(ConnectionHub.isWebSocketClose(textContext))
+        XCTAssertFalse(ConnectionHub.isWebSocketClose(nil))
     }
 }
 #endif
