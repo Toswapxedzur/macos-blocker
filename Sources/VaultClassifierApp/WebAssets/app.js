@@ -76,6 +76,27 @@
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 
+  const normalizedTagColor = (value) => (
+    typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value)
+      ? value.toUpperCase()
+      : ""
+  );
+
+  function tagPill(node, className = "") {
+    if (!node) return "";
+    const color = normalizedTagColor(node.colorHex);
+    if (!color) return "";
+    return `<span class="tag-pill${className ? ` ${esc(className)}` : ""}" style="--tag-color:${color}">${esc(node.name)}</span>`;
+  }
+
+  function tagPhrase(key, node) {
+    const marker = "__VAULT_TAG__";
+    const phrase = t(key, { tag: marker });
+    const markerIndex = phrase.indexOf(marker);
+    if (markerIndex < 0) return `${esc(phrase)} ${tagPill(node, "compact")}`;
+    return `${esc(phrase.slice(0, markerIndex))}${tagPill(node, "compact")}${esc(phrase.slice(markerIndex + marker.length))}`;
+  }
+
   function t(key, values = {}) {
     const template = strings[key];
     if (typeof template !== "string") return key;
@@ -284,13 +305,20 @@
   function inspectWorkspace() {
     const inspect = state.inspect;
     const platformOptions = (state.assets.bindings || []).map((binding) => [binding.id, binding.name]);
+    const inspectBinding = (state.assets.bindings || []).find((binding) => binding.id === inspect.platformID);
+    const inspectTree = (state.assets.trees || []).find((tree) => tree.id === inspectBinding?.treeID);
+    const inspectTagByID = new Map((inspectTree?.nodes || []).map((node) => [node.id, node]));
+    const inspectTagPill = (tagID, className = "") => {
+      const node = inspectTagByID.get(tagID);
+      return node ? tagPill(node, className) : "";
+    };
     const result = inspect.result;
     let renderedResult = "";
     if (result) {
       const action = result.strongestAction;
       const symbol = action === "allow" ? "✓" : action === "dim" ? "◒" : "!";
       const scores = result.scores.length
-        ? `<div class="score-list">${result.scores.map((score) => `<div class="score"><span class="score-name">${esc(score.tag.replace("content.", ""))}</span><span class="bar"><span style="width:${Math.max(0, Math.min(100, Number(score.score) * 100))}%"></span></span><span class="score-value">${percent(score.score)}</span></div>`).join("")}</div>`
+        ? `<div class="score-list">${result.scores.map((score) => `<div class="score"><span class="score-name">${inspectTagPill(score.tag, "compact")}</span><span class="bar"><span style="width:${Math.max(0, Math.min(100, Number(score.score) * 100))}%"></span></span><span class="score-value">${percent(score.score)}</span></div>`).join("")}</div>`
         : `<p class="small-copy">${tx("inspect.noLeaf")}</p>`;
       const decisions = result.decisions.length
         ? `<div class="list">${result.decisions.map((decision) => `<div class="list-row"><span class="list-symbol">•</span><span class="list-copy"><span class="list-title">${esc(decision.policyID)} · ${esc(enumText("action", decision.action))}</span><span class="list-meta">${esc(decision.explanation)}</span></span></div>`).join("")}</div>`
@@ -298,7 +326,9 @@
       const correction = action === "allow"
         ? `<button class="secondary" data-action="markCorrection" data-correction="falseAllow">${tx("inspect.markFalseAllow")}</button>`
         : `<button class="gold-action" data-action="markCorrection" data-correction="falseDim">${tx("inspect.markFalseDim")}</button><button class="danger" data-action="markCorrection" data-correction="falseBlock">${tx("inspect.markFalseBlock")}</button>`;
-      renderedResult = `<section class="result-card ${esc(action)}"><div class="result-head"><span class="result-symbol">${symbol}</span><div><span class="eyebrow">${tx("inspect.policyDecision")}</span><div class="result-action">${esc(enumText("action", action))}</div></div><span class="spacer"></span><span class="small-copy">${tx("inspect.threshold", { value: percent(result.threshold) })}</span></div><div><span class="field-label">${tx("inspect.predictedLeaves")} · ${tx("inspect.ancestorsComputed")}</span><div class="chips">${result.leafTags.length ? result.leafTags.map((tag) => `<span class="chip">${esc(tag.replace("content.", "").replaceAll(".", " · "))}</span>`).join("") : `<span class="small-copy">${tx("inspect.noLeaf")}</span>`}</div></div><div><span class="field-label">${tx("inspect.localScores")} · ${tx("inspect.sourcePrior")}</span>${scores}</div><div><span class="field-label">${tx("inspect.policyMatches")}</span>${decisions}</div>${result.ancestorTags.length ? `<p class="small-copy">${tx("inspect.computedPath", { path: result.ancestorTags.join(" › ") })}</p>` : ""}<div class="action-row">${correction}</div></section>`;
+      const predictedTags = result.leafTags.map((tagID) => inspectTagPill(tagID)).filter(Boolean);
+      const ancestorTags = result.ancestorTags.map((tagID) => inspectTagPill(tagID, "compact")).filter(Boolean);
+      renderedResult = `<section class="result-card ${esc(action)}"><div class="result-head"><span class="result-symbol">${symbol}</span><div><span class="eyebrow">${tx("inspect.policyDecision")}</span><div class="result-action">${esc(enumText("action", action))}</div></div><span class="spacer"></span><span class="small-copy">${tx("inspect.threshold", { value: percent(result.threshold) })}</span></div><div><span class="field-label">${tx("inspect.predictedLeaves")} · ${tx("inspect.ancestorsComputed")}</span><div class="tag-pill-rail">${predictedTags.length ? predictedTags.join("") : `<span class="small-copy">${tx("inspect.noLeaf")}</span>`}</div></div><div><span class="field-label">${tx("inspect.localScores")} · ${tx("inspect.sourcePrior")}</span>${scores}</div><div><span class="field-label">${tx("inspect.policyMatches")}</span>${decisions}</div>${ancestorTags.length ? `<div class="computed-tag-path"><span class="small-copy">${tx("inspect.computedPath", { path: "" })}</span><div class="tag-pill-rail">${ancestorTags.join("")}</div></div>` : ""}<div class="action-row">${correction}</div></section>`;
     }
     return `<div class="workspace">${header("inspect.title", "inspect.copy", t(inspect.surface === "feed" ? "inspect.feedDecision" : "inspect.pageDecision"), "cyan")}
       <section class="section-card cyan" data-form-id="inspect-form"><div class="form-stack">
@@ -434,7 +464,8 @@
         const position = positions.get(node.id);
         const depth = depthFor(node);
         const tier = depth === 0 ? "primary" : depth === 1 ? "secondary" : depth === 2 ? "tertiary" : "quaternary";
-        return `<button class="tree-map-node ${tier}${panelState?.nodeID === node.id || selectedNodeID === node.id ? " active" : ""}${connectionState?.nodeID === node.id ? " connection-source" : ""}${node.retired ? " retired" : ""}" style="left:${position.x}px;top:${position.y}px" data-action="selectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(node.id)}" data-parent-id="${esc(node.parentID || "")}" data-position-x="${position.x}" data-position-y="${position.y}" title="${tx("tree.contextHint")}"><span aria-hidden="true"></span><strong>${esc(node.name)}</strong></button>`;
+        const color = normalizedTagColor(node.colorHex);
+        return `<button class="tree-map-node ${tier}${panelState?.nodeID === node.id || selectedNodeID === node.id ? " active" : ""}${connectionState?.nodeID === node.id ? " connection-source" : ""}${node.retired ? " retired" : ""}" style="left:${position.x}px;top:${position.y}px;--tag-color:${color}" data-action="selectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(node.id)}" data-parent-id="${esc(node.parentID || "")}" data-position-x="${position.x}" data-position-y="${position.y}" title="${tx("tree.contextHint")}"><span aria-hidden="true"></span><strong>${esc(node.name)}</strong></button>`;
       }).join("")}</div>${nodes.length ? "" : `<div class="tree-map-empty">${tx("tree.empty")}</div>`}${popover}</div></div>`;
       const treeActions = `<div class="tree-canvas-actions"><button class="secondary" data-action="renameTree" data-tree-id="${esc(tree.id)}">${tx("tree.rename")}</button><button class="danger" data-action="deleteTree" data-tree-id="${esc(tree.id)}">${tx("tree.delete")}</button><button class="secondary" data-action="rearrangeTree" data-tree-id="${esc(tree.id)}">${tx("tree.rearrange")}</button></div>`;
       return `<section class="tree-panel">${map}<div class="tree-canvas-hint"><span>${tx("tree.canvasHint")}</span>${treeActions}</div></section>`;
@@ -693,8 +724,7 @@
       const typeStatus = applicablePlatformID ? t("bridge.configured") : t("bridge.needsSource");
       const leafTagOptions = (selectedTree?.nodes || [])
         .filter((node) => !node.retired && !(selectedTree?.nodes || []).some((candidate) => candidate.parentID === node.id))
-        .sort((lhs, rhs) => lhs.name.localeCompare(rhs.name))
-        .map((node) => [node.id, `${node.name} · ${node.id}`]);
+        .sort((lhs, rhs) => lhs.name.localeCompare(rhs.name));
       const currentDecisionByCreator = new Map((selectedDataset?.creatorClassifications || [])
         .filter((classification) => classification.classifierTypeID === classifierType.id && classification.origin === "manual")
         .map((classification) => [`${classification.platformID}|${classification.creatorID}`, classification]));
@@ -708,12 +738,12 @@
       const sortedCreatorCandidates = [...creatorCandidates.entries()]
         .sort(([, lhs], [, rhs]) => lhs.creatorName.localeCompare(rhs.creatorName));
       let selectedCreatorTagID = selectedCreatorTagByType.get(classifierType.id);
-      if (!leafTagOptions.some(([tagID]) => tagID === selectedCreatorTagID)) {
-        selectedCreatorTagID = leafTagOptions[0]?.[0] || "";
+      if (!leafTagOptions.some((node) => node.id === selectedCreatorTagID)) {
+        selectedCreatorTagID = leafTagOptions[0]?.id || "";
         if (selectedCreatorTagID) selectedCreatorTagByType.set(classifierType.id, selectedCreatorTagID);
         else selectedCreatorTagByType.delete(classifierType.id);
       }
-      const selectedCreatorTagName = leafTagOptions.find(([tagID]) => tagID === selectedCreatorTagID)?.[1]?.split(" · ")[0] || "";
+      const selectedCreatorTagNode = leafTagOptions.find((node) => node.id === selectedCreatorTagID) || null;
       const creatorRecords = sortedCreatorCandidates
         .map(([key, entry]) => {
           const classification = currentDecisionByCreator.get(key);
@@ -774,7 +804,7 @@
             ["tagged", "bridge.creatorTagTagged", creatorRecords.filter((creator) => creator.tagIDs.includes(selectedCreatorTagID))],
             ["notTagged", "bridge.creatorTagNotTagged", creatorRecords.filter((creator) => creator.negativeTagIDs.includes(selectedCreatorTagID))],
           ];
-          const creatorCardAction = (creator, labelKey, nextTagIDs, nextNegativeTagIDs, style) => `<button class="${style} creator-tag-card-action" data-action="recordCreatorClassification" data-type-id="${esc(classifierType.id)}" data-creator-key="${esc(creator.key)}" data-tag-ids="${esc(JSON.stringify(nextTagIDs))}" data-negative-tag-ids="${esc(JSON.stringify(nextNegativeTagIDs))}">${esc(t(labelKey, { tag: selectedCreatorTagName }))}</button>`;
+          const creatorCardAction = (creator, labelKey, nextTagIDs, nextNegativeTagIDs, style) => `<button class="${style} creator-tag-card-action" data-action="recordCreatorClassification" data-type-id="${esc(classifierType.id)}" data-creator-key="${esc(creator.key)}" data-tag-ids="${esc(JSON.stringify(nextTagIDs))}" data-negative-tag-ids="${esc(JSON.stringify(nextNegativeTagIDs))}">${tagPhrase(labelKey, selectedCreatorTagNode)}</button>`;
           const creatorCard = (creator, decision) => {
             const positiveWithoutActive = creator.tagIDs.filter((tagID) => tagID !== selectedCreatorTagID);
             const negativeWithoutActive = creator.negativeTagIDs.filter((tagID) => tagID !== selectedCreatorTagID);
@@ -809,11 +839,11 @@
               : `<span class="creator-tag-card-avatar creator-tag-card-avatar-fallback" aria-hidden="true">${esc(creator.name.slice(0, 1).toUpperCase())}</span>`;
             return `<article class="creator-tag-card"><div class="creator-tag-card-profile">${avatar}<div><strong dir="auto">${esc(creator.name)}</strong><span>${esc(creator.platformName)}${creator.subscriberCount ? ` · ${tx("bridge.creatorSubscribers", { count: creator.subscriberCount })}` : ""}</span></div></div><div class="creator-tag-card-actions">${actions}</div></article>`;
           };
-          const columns = columnData.map(([kind, titleKey, creators]) => `<section class="creator-tag-column"><div class="creator-tag-column-head"><h4>${tx(titleKey, { tag: selectedCreatorTagName })}</h4><span>${creators.length}</span></div><div class="creator-tag-column-list">${incrementalList(creators, (creator) => creatorCard(creator, kind), `<p class="creator-tag-empty">${esc(t("bridge.sourceTagEmpty", { sources: sourceTerms.plural }))}</p>`)}</div></section>`).join("");
-          return `<div class="creator-tag-browser"><nav class="creator-tag-navigation" aria-label="${tx("bridge.creatorTagNavigation")}" role="tablist">${leafTagOptions.map(([tagID, label]) => `<button class="creator-tag-tab${selectedCreatorTagID === tagID ? " active" : ""}" type="button" data-action="selectCreatorTag" data-type-id="${esc(classifierType.id)}" data-tag-id="${esc(tagID)}" role="tab" aria-selected="${selectedCreatorTagID === tagID}">${esc(label.split(" · ")[0])}</button>`).join("")}</nav><div class="creator-tag-columns">${columns}</div></div>`;
+          const columns = columnData.map(([kind, titleKey, creators]) => `<section class="creator-tag-column"><div class="creator-tag-column-head"><h4>${kind === "needsDecision" ? tx(titleKey) : tagPhrase(titleKey, selectedCreatorTagNode)}</h4><span>${creators.length}</span></div><div class="creator-tag-column-list">${incrementalList(creators, (creator) => creatorCard(creator, kind), `<p class="creator-tag-empty">${esc(t("bridge.sourceTagEmpty", { sources: sourceTerms.plural }))}</p>`)}</div></section>`).join("");
+          return `<div class="creator-tag-browser"><nav class="creator-tag-navigation" aria-label="${tx("bridge.creatorTagNavigation")}" role="tablist">${leafTagOptions.map((node) => `<button class="creator-tag-tab tag-pill${selectedCreatorTagID === node.id ? " active" : ""}" style="--tag-color:${normalizedTagColor(node.colorHex)}" type="button" data-action="selectCreatorTag" data-type-id="${esc(classifierType.id)}" data-tag-id="${esc(node.id)}" role="tab" aria-selected="${selectedCreatorTagID === node.id}">${esc(node.name)}</button>`).join("")}</nav><div class="creator-tag-columns">${columns}</div></div>`;
         })()
         : `<div class="empty compact-empty">${!creatorRecords.length ? esc(t("bridge.noSources", { sources: sourceTerms.plural })) : tx("bridge.noCreatorTags")}</div>`;
-      const tagNameByID = new Map((selectedTree?.nodes || []).map((node) => [node.id, node.name]));
+      const tagNodeByID = new Map((selectedTree?.nodes || []).map((node) => [node.id, node]));
       const decisionsByCreator = new Map();
       (selectedDataset?.creatorClassifications || []).forEach((record) => {
         if (record.classifierTypeID !== classifierType.id) return;
@@ -827,17 +857,20 @@
         const decisions = decisionsByCreator.get(key) || [];
         const human = decisions.find((record) => record.origin === "manual");
         const llm = decisions.find((record) => record.origin === "llmAssist");
-        const labelText = (record) => {
-          if (!record) return tx("bridge.noDecision");
+        const labelMarkup = (record) => {
+          if (!record) return `<span class="small-copy">${tx("bridge.noDecision")}</span>`;
           const tags = [
-            ...record.tags.map((tagID) => tagNameByID.get(tagID) || tagID),
-            ...record.negativeTags.map((tagID) => `${tx("bridge.notTag")} ${tagNameByID.get(tagID) || tagID}`),
-          ];
-          return tags.join(", ") || tx("bridge.noTags");
+            ...record.tags.map((tagID) => tagPill(tagNodeByID.get(tagID))),
+            ...record.negativeTags.map((tagID) => {
+              const pill = tagPill(tagNodeByID.get(tagID), "compact");
+              return pill ? `<span class="tag-negative">${tx("bridge.notTag")} ${pill}</span>` : "";
+            }),
+          ].filter(Boolean);
+          return tags.length ? `<span class="tag-pill-rail">${tags.join("")}</span>` : `<span class="small-copy">${tx("bridge.noTags")}</span>`;
         };
         const avatarURL = typeof entry.cachedCreatorAvatarURL === "string" ? entry.cachedCreatorAvatarURL : "";
         const avatar = avatarURL ? `<img class="creator-tag-card-avatar" src="${esc(avatarURL)}" alt="" aria-hidden="true" loading="lazy" decoding="async">` : `<span class="creator-tag-card-avatar creator-tag-card-avatar-fallback" aria-hidden="true">${esc(entry.creatorName.slice(0, 1).toUpperCase())}</span>`;
-        return `<article class="creator-tag-card"><div class="creator-tag-card-profile">${avatar}<div><strong dir="auto">${esc(entry.creatorName)}</strong><span>${esc(platformDefinitions.get(entry.platformID)?.name || entry.platformID)}</span></div></div><div class="creator-tag-card-actions"><span class="small-copy">${tx("bridge.humanTags")}: ${esc(labelText(human))}</span><span class="small-copy">${tx("bridge.llmTags")}: ${esc(labelText(llm))}</span></div></article>`;
+        return `<article class="creator-tag-card"><div class="creator-tag-card-profile">${avatar}<div><strong dir="auto">${esc(entry.creatorName)}</strong><span>${esc(platformDefinitions.get(entry.platformID)?.name || entry.platformID)}</span></div></div><div class="creator-tag-card-actions"><span class="creator-decision-tags"><span class="small-copy">${tx("bridge.humanTags")}:</span>${labelMarkup(human)}</span><span class="creator-decision-tags"><span class="small-copy">${tx("bridge.llmTags")}:</span>${labelMarkup(llm)}</span></div></article>`;
       };
       const creatorDecisionList = `<section class="classifier-type-section creator-classification-section"><div class="section-header"><div><h3>${tx("bridge.sourceDecisionList", { source: sourceTerms.singular })}</h3><p class="section-copy">${tx("bridge.sourceDecisionListCopy", { sources: sourceTerms.plural })}</p></div></div><div class="creator-tag-column-list">${incrementalList(creatorDecisionRows, creatorDecisionRow, `<div class="empty compact-empty">${esc(t("bridge.noSources", { sources: sourceTerms.plural }))}</div>`)}</div></section>`;
       const llmModelControl = !selectedLLMProfile

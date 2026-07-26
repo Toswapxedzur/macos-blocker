@@ -260,7 +260,12 @@ final class VaultClassifierViewModel: ObservableObject {
                 return try sharedHubReply(NativeSourceTagsResponse(
                     platformID: sourceTags.platformID,
                     sourceID: sourceTags.sourceID,
-                    tags: tags.map { NativeSourceTag(id: $0.id, name: $0.name) }
+                    tags: tags.compactMap { tag in
+                        guard let colorHex = TagColorAssignment.normalizedHex(tag.colorHex) else {
+                            return nil
+                        }
+                        return NativeSourceTag(id: tag.id, name: tag.name, colorHex: colorHex)
+                    }
                 ))
             case .classify:
                 let classification = try JSONDecoder().decode(NativeClassificationRequest.self, from: request.bodyData)
@@ -3813,7 +3818,7 @@ final class VaultClassifierViewModel: ObservableObject {
         assets["trees"] = catalog.trees.map { tree in
                 ["id": tree.id, "name": tree.name, "revision": tree.revision, "nodes": tree.nodes.enumerated().map { index, node -> [String: Any] in
                     let position = node.resolvedCanvasPosition(index: index)
-                    return ["id": node.id, "name": node.name, "description": node.description ?? NSNull(), "parentID": node.parentID ?? NSNull(), "retired": node.isRetired, "positionX": position.x, "positionY": position.y]
+                    return ["id": node.id, "name": node.name, "description": node.description ?? NSNull(), "parentID": node.parentID ?? NSNull(), "retired": node.isRetired, "colorHex": node.colorHex ?? NSNull(), "positionX": position.x, "positionY": position.y]
                 }] as [String: Any]
             }
         assets["datasets"] = catalog.datasets.map { dataset in

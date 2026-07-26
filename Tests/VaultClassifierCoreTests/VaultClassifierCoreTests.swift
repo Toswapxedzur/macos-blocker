@@ -252,9 +252,17 @@ final class VaultClassifierCoreTests: XCTestCase {
         let response = NativeSourceTagsResponse(
             platformID: "youtube",
             sourceID: "youtube:channel:UC123",
-            tags: (0..<100).map { NativeSourceTag(id: "tag-\($0)", name: "Tag \($0)") }
+            tags: (0..<100).map {
+                NativeSourceTag(id: "tag-\($0)", name: "Tag \($0)", colorHex: "#123456")
+            }
         )
         XCTAssertEqual(response.tags.count, CreatorClassificationRecord.maximumTagIDs)
+        XCTAssertTrue(response.tags.allSatisfy { $0.colorHex == "#123456" })
+        XCTAssertTrue(NativeSourceTagsResponse(
+            platformID: "youtube",
+            sourceID: "youtube:channel:UC123",
+            tags: [NativeSourceTag(id: "invalid", name: "Invalid", colorHex: "navy")]
+        ).tags.isEmpty)
     }
 
     func testLocalHubProofBindsTheProgramAndChallenge() throws {

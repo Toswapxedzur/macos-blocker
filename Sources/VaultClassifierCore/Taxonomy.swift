@@ -6,16 +6,18 @@ public struct TagNode: Codable, Equatable, Sendable, Identifiable {
     public var description: String?
     public var parentID: String?
     public var predictable: Bool
+    public var colorHex: String?
 
-    public init(id: String, name: String, description: String? = nil, parentID: String? = nil, predictable: Bool = true) {
+    public init(id: String, name: String, description: String? = nil, parentID: String? = nil, predictable: Bool = true, colorHex: String? = nil) {
         self.id = id
         self.name = name
         self.description = description
         self.parentID = parentID
         self.predictable = predictable
+        self.colorHex = TagColorAssignment.normalizedHex(colorHex)
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, description, parentID, predictable }
+    private enum CodingKeys: String, CodingKey { case id, name, description, parentID, predictable, colorHex }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -24,6 +26,7 @@ public struct TagNode: Codable, Equatable, Sendable, Identifiable {
         description = try container.decodeIfPresent(String.self, forKey: .description)
         parentID = try container.decodeIfPresent(String.self, forKey: .parentID)
         predictable = try container.decodeIfPresent(Bool.self, forKey: .predictable) ?? true
+        colorHex = TagColorAssignment.normalizedHex(try container.decodeIfPresent(String.self, forKey: .colorHex))
     }
 }
 
