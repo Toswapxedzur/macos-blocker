@@ -1543,8 +1543,8 @@ textarea:focus {
   overflow: hidden;
   border: 0;
   border-radius: 999px;
-  color: #fff;
-  background: var(--tag-color);
+  color: #000;
+  background: var(--tag-color-light);
   box-shadow: 0 1px 2px rgba(15, 23, 42, .18);
   font-size: 10.5px;
   font-weight: 750;
@@ -1603,14 +1603,14 @@ textarea:focus {
   padding: 4px 10px;
   border: 0;
   border-radius: 999px;
-  color: #fff;
-  background: var(--tag-color);
+  color: #000;
+  background: var(--tag-color-light);
   box-shadow: 0 1px 2px rgba(15, 23, 42, .2);
 }
 
 .creator-tag-tab.tag-pill.active {
-  color: #fff;
-  background: var(--tag-color);
+  color: #000;
+  background: var(--tag-color-light);
   box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--navy-700);
 }
 
@@ -1624,8 +1624,8 @@ textarea:focus {
   padding: 0 8px;
   border: 0;
   border-radius: 999px;
-  color: #fff;
-  background: var(--tag-color);
+  color: #000;
+  background: var(--tag-color-light);
   box-shadow: 0 2px 5px rgba(15, 23, 42, .2);
 }
 
@@ -1637,7 +1637,7 @@ textarea:focus {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, .88);
+  background: rgba(0, 0, 0, .72);
 }
 
 .tree-map-node strong,
@@ -1645,7 +1645,7 @@ textarea:focus {
 .tree-map-node.secondary strong,
 .tree-map-node.tertiary strong,
 .tree-map-node.quaternary strong {
-  color: #fff;
+  color: #000;
   font-size: 10.5px;
   font-weight: 700;
 }
@@ -1663,7 +1663,7 @@ textarea:focus {
 }
 
 .tree-map-node.retired {
-  color: #fff;
-  background: var(--tag-color);
+  color: #000;
+  background: var(--tag-color-light);
   opacity: .55;
 }

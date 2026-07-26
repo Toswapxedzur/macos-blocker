@@ -133,15 +133,28 @@ final class WorkspaceAssetsTests: XCTestCase {
     }
 
     func testTagNodeCanvasPositionRoundTripsAndLegacyNodeDefaultsToUnplaced() throws {
-        let positioned = TagTreeNode(id: "topic", name: "Topic", description: "A focused local topic.", colorHex: "#1a2b3c", positionX: 184, positionY: 96)
+        let positioned = TagTreeNode(
+            id: "topic",
+            name: "Topic",
+            description: "A focused local topic.",
+            lightColorHex: "#a9cbed",
+            darkColorHex: "#1a2b3c",
+            positionX: 184,
+            positionY: 96
+        )
         let restored = try JSONDecoder().decode(TagTreeNode.self, from: JSONEncoder().encode(positioned))
         XCTAssertEqual(restored.description, "A focused local topic.")
-        XCTAssertEqual(restored.colorHex, "#1A2B3C")
+        XCTAssertEqual(restored.lightColorHex, "#A9CBED")
+        XCTAssertEqual(restored.darkColorHex, "#1A2B3C")
         XCTAssertEqual(restored.positionX, 184)
         XCTAssertEqual(restored.positionY, 96)
 
-        let legacy = try JSONDecoder().decode(TagTreeNode.self, from: Data(#"{"id":"legacy","name":"Legacy","parentID":null,"isRetired":false}"#.utf8))
-        XCTAssertNil(legacy.colorHex)
+        let legacy = try JSONDecoder().decode(
+            TagTreeNode.self,
+            from: Data(##"{"id":"legacy","name":"Legacy","parentID":null,"isRetired":false,"colorHex":"#123456"}"##.utf8)
+        )
+        XCTAssertNil(legacy.lightColorHex)
+        XCTAssertNil(legacy.darkColorHex)
         XCTAssertNil(legacy.positionX)
         XCTAssertNil(legacy.positionY)
         XCTAssertEqual(legacy.resolvedCanvasPosition(index: 1), .init(x: 178, y: 24))
@@ -150,7 +163,7 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(origin.resolvedCanvasPosition(index: 8), .init(x: 0, y: 0))
     }
 
-    func testTagColorsUseJointDensityAndRemainStableAcrossTreeEdits() throws {
+    func testTagColorsAreDistinctiveHueNeutralAndThemePaired() throws {
         let firstLevelIDs = [
             "games", "news", "art", "science", "sports", "travel",
             "music", "food", "technology", "culture", "nature", "history",
@@ -185,64 +198,111 @@ final class WorkspaceAssetsTests: XCTestCase {
         )
 
         TagColorAssignment.assignMissingColors(in: &tree)
-        let firstAssignment = Dictionary(uniqueKeysWithValues: tree.nodes.map {
-            ($0.id, try! XCTUnwrap($0.colorHex))
+        let firstLightAssignment = Dictionary(uniqueKeysWithValues: tree.nodes.map {
+            ($0.id, try! XCTUnwrap($0.lightColorHex))
         })
-        XCTAssertEqual(Set(firstAssignment.values).count, tree.nodes.count)
-        XCTAssertTrue(firstAssignment.values.allSatisfy { TagColorAssignment.isValidHex($0) })
-        XCTAssertTrue(firstAssignment.values.allSatisfy { whiteContrast(hex: $0) >= 4.5 })
-        XCTAssertEqual(firstAssignment["root"], TagColorAssignment.neutralRootHex)
-        let rootRGB = rgbComponents(try XCTUnwrap(firstAssignment["root"]))
-        XCTAssertEqual(rootRGB.red, rootRGB.green, accuracy: 1.0 / 255)
-        XCTAssertEqual(rootRGB.green, rootRGB.blue, accuracy: 1.0 / 255)
+        let firstDarkAssignment = Dictionary(uniqueKeysWithValues: tree.nodes.map {
+            ($0.id, try! XCTUnwrap($0.darkColorHex))
+        })
+        XCTAssertEqual(Set(firstLightAssignment.values).count, tree.nodes.count)
+        XCTAssertEqual(Set(firstDarkAssignment.values).count, tree.nodes.count)
+        XCTAssertTrue(firstLightAssignment.values.allSatisfy { blackContrast(hex: $0) >= 4.5 })
+        XCTAssertTrue(firstDarkAssignment.values.allSatisfy { whiteContrast(hex: $0) >= 4.5 })
+        XCTAssertEqual(firstLightAssignment["root"], TagColorAssignment.neutralRootLightHex)
+        XCTAssertEqual(firstDarkAssignment["root"], TagColorAssignment.neutralRootDarkHex)
+        for rootColor in [
+            try XCTUnwrap(firstLightAssignment["root"]),
+            try XCTUnwrap(firstDarkAssignment["root"]),
+        ] {
+            let rootRGB = rgbComponents(rootColor)
+            XCTAssertEqual(rootRGB.red, rootRGB.green, accuracy: 1.0 / 255)
+            XCTAssertEqual(rootRGB.green, rootRGB.blue, accuracy: 1.0 / 255)
+        }
 
-        let firstLevelProperties = try firstLevelIDs.map { tagID in
-            try XCTUnwrap(TagColorAssignment.perceptualProperties(firstAssignment[tagID]))
+        let firstLevelDarkProperties = try firstLevelIDs.map { tagID in
+            try XCTUnwrap(TagColorAssignment.perceptualProperties(firstDarkAssignment[tagID]))
+        }
+        let firstLevelLightProperties = try firstLevelIDs.map { tagID in
+            try XCTUnwrap(TagColorAssignment.perceptualProperties(firstLightAssignment[tagID]))
         }
         let firstLevelDensities = try firstLevelIDs.map { tagID in
-            try XCTUnwrap(TagColorAssignment.preferenceDensity(firstAssignment[tagID]))
+            try XCTUnwrap(TagColorAssignment.preferenceDensity(
+                lightHex: firstLightAssignment[tagID],
+                darkHex: firstDarkAssignment[tagID]
+            ))
         }
         XCTAssertGreaterThan(
-            (firstLevelProperties.map(\.lightness).max() ?? 0)
-                - (firstLevelProperties.map(\.lightness).min() ?? 0),
+            (firstLevelDarkProperties.map(\.lightness).max() ?? 0)
+                - (firstLevelDarkProperties.map(\.lightness).min() ?? 0),
             0.08
         )
         XCTAssertGreaterThan(
-            (firstLevelProperties.map(\.relativeChroma).max() ?? 0)
-                - (firstLevelProperties.map(\.relativeChroma).min() ?? 0),
-            0.25
+            (firstLevelDarkProperties.map(\.relativeChroma).max() ?? 0)
+                - (firstLevelDarkProperties.map(\.relativeChroma).min() ?? 0),
+            0.20
         )
-        XCTAssertGreaterThan(firstLevelProperties.map(\.relativeChroma).min() ?? 0, 0.20)
+        XCTAssertGreaterThan(firstLevelDarkProperties.map(\.relativeChroma).min() ?? 0, 0.40)
         XCTAssertGreaterThan(
-            Set(firstLevelProperties.map { Int(($0.hueRadians / (2 * Double.pi)) * 8) }).count,
-            5
+            Set(firstLevelDarkProperties.map {
+                Int(($0.hueRadians / (2 * Double.pi)) * 8)
+            }).count,
+            6
         )
         XCTAssertGreaterThan(
             (firstLevelDensities.max() ?? 0) - (firstLevelDensities.min() ?? 0),
-            0.10
+            0.08
         )
+        for (dark, light) in zip(firstLevelDarkProperties, firstLevelLightProperties) {
+            XCTAssertEqual(
+                dark.lightness + light.lightness,
+                TagColorAssignment.lightnessInversionSum,
+                accuracy: 0.012
+            )
+            XCTAssertLessThan(circularRadians(dark.hueRadians, light.hueRadians), 0.055)
+        }
 
-        let childToGrandchild = try XCTUnwrap(TagColorAssignment.perceptualDistance(
-            firstAssignment["games"],
-            firstAssignment["minecraft"]
-        ))
-        let grandchildToNext = try XCTUnwrap(TagColorAssignment.perceptualDistance(
-            firstAssignment["minecraft"],
-            firstAssignment["redstone"]
-        ))
-        let nextToDeepest = try XCTUnwrap(TagColorAssignment.perceptualDistance(
-            firstAssignment["redstone"],
-            firstAssignment["contraptions"]
-        ))
-        XCTAssertLessThanOrEqual(childToGrandchild, TagColorAssignment.maximumOffset(edgeDepth: 2) + 0.003)
-        XCTAssertLessThanOrEqual(grandchildToNext, TagColorAssignment.maximumOffset(edgeDepth: 3) + 0.003)
-        XCTAssertLessThanOrEqual(nextToDeepest, TagColorAssignment.maximumOffset(edgeDepth: 4) + 0.003)
-        XCTAssertLessThan(grandchildToNext, childToGrandchild)
-        XCTAssertLessThan(nextToDeepest, grandchildToNext)
+        var firstLevelDistances: [Double] = []
+        for leftIndex in firstLevelIDs.indices {
+            for rightIndex in firstLevelIDs.indices where rightIndex > leftIndex {
+                let leftID = firstLevelIDs[leftIndex]
+                let rightID = firstLevelIDs[rightIndex]
+                firstLevelDistances.append(min(
+                    try XCTUnwrap(TagColorAssignment.perceptualDistance(
+                        firstLightAssignment[leftID],
+                        firstLightAssignment[rightID]
+                    )),
+                    try XCTUnwrap(TagColorAssignment.perceptualDistance(
+                        firstDarkAssignment[leftID],
+                        firstDarkAssignment[rightID]
+                    ))
+                ))
+            }
+        }
+        XCTAssertGreaterThan(firstLevelDistances.min() ?? 0, 0.045)
+
+        for assignment in [firstLightAssignment, firstDarkAssignment] {
+            let childToGrandchild = try XCTUnwrap(TagColorAssignment.perceptualDistance(
+                assignment["games"],
+                assignment["minecraft"]
+            ))
+            let grandchildToNext = try XCTUnwrap(TagColorAssignment.perceptualDistance(
+                assignment["minecraft"],
+                assignment["redstone"]
+            ))
+            let nextToDeepest = try XCTUnwrap(TagColorAssignment.perceptualDistance(
+                assignment["redstone"],
+                assignment["contraptions"]
+            ))
+            XCTAssertLessThanOrEqual(childToGrandchild, TagColorAssignment.maximumOffset(edgeDepth: 2) + 0.003)
+            XCTAssertLessThanOrEqual(grandchildToNext, TagColorAssignment.maximumOffset(edgeDepth: 3) + 0.003)
+            XCTAssertLessThanOrEqual(nextToDeepest, TagColorAssignment.maximumOffset(edgeDepth: 4) + 0.003)
+            XCTAssertLessThan(grandchildToNext, childToGrandchild)
+            XCTAssertLessThan(nextToDeepest, grandchildToNext)
+        }
 
         let gameChildIDs = ["minecraft", "strategy", "building", "survival", "speedrun", "modding"]
         let gameChildProperties = try gameChildIDs.map { tagID in
-            try XCTUnwrap(TagColorAssignment.perceptualProperties(firstAssignment[tagID]))
+            try XCTUnwrap(TagColorAssignment.perceptualProperties(firstDarkAssignment[tagID]))
         }
         XCTAssertGreaterThan(
             (gameChildProperties.map(\.lightness).max() ?? 0)
@@ -257,16 +317,20 @@ final class WorkspaceAssetsTests: XCTestCase {
 
         tree.nodes.append(.init(id: "modded", name: "Modded", parentID: "games"))
         TagColorAssignment.assignMissingColors(in: &tree)
-        for (tagID, colorHex) in firstAssignment {
-            XCTAssertEqual(tree.nodes.first(where: { $0.id == tagID })?.colorHex, colorHex)
+        for tagID in firstLightAssignment.keys {
+            let node = tree.nodes.first(where: { $0.id == tagID })
+            XCTAssertEqual(node?.lightColorHex, firstLightAssignment[tagID])
+            XCTAssertEqual(node?.darkColorHex, firstDarkAssignment[tagID])
         }
-        XCTAssertNotNil(tree.nodes.first(where: { $0.id == "modded" })?.colorHex)
+        XCTAssertNotNil(tree.nodes.first(where: { $0.id == "modded" })?.lightColorHex)
+        XCTAssertNotNil(tree.nodes.first(where: { $0.id == "modded" })?.darkColorHex)
 
         let restored = try JSONDecoder().decode(
             TagTreeAsset.self,
             from: JSONEncoder().encode(tree)
         )
-        XCTAssertEqual(restored.nodes.map(\.colorHex), tree.nodes.map(\.colorHex))
+        XCTAssertEqual(restored.nodes.map(\.lightColorHex), tree.nodes.map(\.lightColorHex))
+        XCTAssertEqual(restored.nodes.map(\.darkColorHex), tree.nodes.map(\.darkColorHex))
     }
 
     func testOnlyRootsUseTheNeutralGreyAnchor() throws {
@@ -274,10 +338,10 @@ final class WorkspaceAssetsTests: XCTestCase {
             id: "forest",
             name: "Forest",
             nodes: [
-                .init(id: "root-a", name: "All A", colorHex: "#123456"),
+                .init(id: "root-a", name: "All A", lightColorHex: "#ABCDEF", darkColorHex: "#123456"),
                 .init(id: "child-a", name: "Child A", parentID: "root-a"),
                 .init(id: "grandchild-a", name: "Grandchild A", parentID: "child-a"),
-                .init(id: "root-b", name: "All B", colorHex: "#ABCDEF"),
+                .init(id: "root-b", name: "All B", lightColorHex: "#ABCDEF", darkColorHex: "#123456"),
                 .init(id: "child-b", name: "Child B", parentID: "root-b"),
             ]
         )
@@ -285,35 +349,43 @@ final class WorkspaceAssetsTests: XCTestCase {
         TagColorAssignment.assignMissingColors(in: &tree)
 
         for rootID in ["root-a", "root-b"] {
-            XCTAssertEqual(
-                tree.nodes.first(where: { $0.id == rootID })?.colorHex,
-                TagColorAssignment.neutralRootHex
-            )
+            let root = tree.nodes.first(where: { $0.id == rootID })
+            XCTAssertEqual(root?.lightColorHex, TagColorAssignment.neutralRootLightHex)
+            XCTAssertEqual(root?.darkColorHex, TagColorAssignment.neutralRootDarkHex)
         }
         for coloredID in ["child-a", "grandchild-a", "child-b"] {
-            let color = try XCTUnwrap(tree.nodes.first(where: { $0.id == coloredID })?.colorHex)
-            XCTAssertNotEqual(color, TagColorAssignment.neutralRootHex)
+            let node = try XCTUnwrap(tree.nodes.first(where: { $0.id == coloredID }))
+            let lightColor = try XCTUnwrap(node.lightColorHex)
+            let darkColor = try XCTUnwrap(node.darkColorHex)
+            XCTAssertNotEqual(lightColor, TagColorAssignment.neutralRootLightHex)
+            XCTAssertNotEqual(darkColor, TagColorAssignment.neutralRootDarkHex)
             XCTAssertGreaterThan(
-                try XCTUnwrap(TagColorAssignment.perceptualProperties(color)).relativeChroma,
+                try XCTUnwrap(TagColorAssignment.perceptualProperties(darkColor)).relativeChroma,
                 0.05
             )
         }
     }
 
     func testPriorTagColorAlgorithmMigratesOnceWithoutChangingSemanticRevision() throws {
-        let legacyData = Data(##"{"id":"legacy-tree","name":"Legacy","revision":7,"nodes":[{"id":"root","name":"All","parentID":null,"isRetired":false,"colorHex":"#123456"},{"id":"child","name":"Child","parentID":"root","isRetired":false,"colorHex":"#ABCDEF"}],"colorAlgorithmVersion":2,"updatedAtMilliseconds":123}"##.utf8)
+        let legacyData = Data(##"{"id":"legacy-tree","name":"Legacy","revision":7,"nodes":[{"id":"root","name":"All","parentID":null,"isRetired":false,"colorHex":"#123456"},{"id":"child","name":"Child","parentID":"root","isRetired":false,"colorHex":"#ABCDEF"}],"colorAlgorithmVersion":3,"updatedAtMilliseconds":123}"##.utf8)
         let legacyTree = try JSONDecoder().decode(TagTreeAsset.self, from: legacyData)
-        XCTAssertEqual(legacyTree.colorAlgorithmVersion, 2)
+        XCTAssertEqual(legacyTree.colorAlgorithmVersion, 3)
+        XCTAssertTrue(legacyTree.nodes.allSatisfy {
+            $0.lightColorHex == nil && $0.darkColorHex == nil
+        })
 
         var catalog = WorkspaceCatalog(trees: [legacyTree], datasets: [])
         catalog.reconcileClassifierTypes()
         let migratedTree = try XCTUnwrap(catalog.trees.first)
-        let firstMigratedColors = migratedTree.nodes.map(\.colorHex)
+        let firstMigratedLightColors = migratedTree.nodes.map(\.lightColorHex)
+        let firstMigratedDarkColors = migratedTree.nodes.map(\.darkColorHex)
         XCTAssertEqual(migratedTree.colorAlgorithmVersion, TagColorAssignment.currentAlgorithmVersion)
         XCTAssertEqual(migratedTree.revision, 7)
         XCTAssertEqual(migratedTree.updatedAtMilliseconds, 123)
-        XCTAssertNotEqual(firstMigratedColors, ["#123456", "#ABCDEF"])
-        XCTAssertEqual(migratedTree.nodes.first?.colorHex, TagColorAssignment.neutralRootHex)
+        XCTAssertTrue(firstMigratedLightColors.allSatisfy { $0 != nil })
+        XCTAssertTrue(firstMigratedDarkColors.allSatisfy { $0 != nil })
+        XCTAssertEqual(migratedTree.nodes.first?.lightColorHex, TagColorAssignment.neutralRootLightHex)
+        XCTAssertEqual(migratedTree.nodes.first?.darkColorHex, TagColorAssignment.neutralRootDarkHex)
 
         let persistedCatalog = try JSONDecoder().decode(
             WorkspaceCatalog.self,
@@ -325,7 +397,14 @@ final class WorkspaceAssetsTests: XCTestCase {
         )
         var relaunchedCatalog = persistedCatalog
         relaunchedCatalog.reconcileClassifierTypes()
-        XCTAssertEqual(relaunchedCatalog.trees.first?.nodes.map(\.colorHex), firstMigratedColors)
+        XCTAssertEqual(
+            relaunchedCatalog.trees.first?.nodes.map(\.lightColorHex),
+            firstMigratedLightColors
+        )
+        XCTAssertEqual(
+            relaunchedCatalog.trees.first?.nodes.map(\.darkColorHex),
+            firstMigratedDarkColors
+        )
     }
 
     func testReparentedSubtreeInheritsItsNewShrinkingColorNeighborhood() throws {
@@ -340,43 +419,64 @@ final class WorkspaceAssetsTests: XCTestCase {
             ]
         )
         TagColorAssignment.assignMissingColors(in: &tree)
-        let rootColor = try XCTUnwrap(tree.nodes.first(where: { $0.id == "root" })?.colorHex)
-        let newsColor = try XCTUnwrap(tree.nodes.first(where: { $0.id == "news" })?.colorHex)
-        let oldGamesColor = try XCTUnwrap(tree.nodes.first(where: { $0.id == "games" })?.colorHex)
-        let oldMinecraftColor = try XCTUnwrap(tree.nodes.first(where: { $0.id == "minecraft" })?.colorHex)
+        let originalPairs = Dictionary(uniqueKeysWithValues: tree.nodes.map {
+            ($0.id, (try! XCTUnwrap($0.lightColorHex), try! XCTUnwrap($0.darkColorHex)))
+        })
 
         let gamesIndex = try XCTUnwrap(tree.nodes.firstIndex(where: { $0.id == "games" }))
         tree.nodes[gamesIndex].parentID = "news"
         TagColorAssignment.invalidateSubtree(rootID: "games", in: &tree)
         TagColorAssignment.assignMissingColors(in: &tree)
 
-        let newGamesColor = try XCTUnwrap(tree.nodes.first(where: { $0.id == "games" })?.colorHex)
-        let newMinecraftColor = try XCTUnwrap(tree.nodes.first(where: { $0.id == "minecraft" })?.colorHex)
-        XCTAssertEqual(tree.nodes.first(where: { $0.id == "root" })?.colorHex, rootColor)
-        XCTAssertEqual(tree.nodes.first(where: { $0.id == "news" })?.colorHex, newsColor)
-        XCTAssertNotEqual(newGamesColor, oldGamesColor)
-        XCTAssertNotEqual(newMinecraftColor, oldMinecraftColor)
-        XCTAssertLessThanOrEqual(
-            try XCTUnwrap(TagColorAssignment.perceptualDistance(newsColor, newGamesColor)),
-            TagColorAssignment.maximumOffset(edgeDepth: 2) + 0.003
-        )
-        XCTAssertLessThanOrEqual(
-            try XCTUnwrap(TagColorAssignment.perceptualDistance(newGamesColor, newMinecraftColor)),
-            TagColorAssignment.maximumOffset(edgeDepth: 3) + 0.003
-        )
+        let movedGames = try XCTUnwrap(tree.nodes.first(where: { $0.id == "games" }))
+        let movedMinecraft = try XCTUnwrap(tree.nodes.first(where: { $0.id == "minecraft" }))
+        XCTAssertEqual(tree.nodes.first(where: { $0.id == "root" })?.lightColorHex, originalPairs["root"]?.0)
+        XCTAssertEqual(tree.nodes.first(where: { $0.id == "root" })?.darkColorHex, originalPairs["root"]?.1)
+        XCTAssertEqual(tree.nodes.first(where: { $0.id == "news" })?.lightColorHex, originalPairs["news"]?.0)
+        XCTAssertEqual(tree.nodes.first(where: { $0.id == "news" })?.darkColorHex, originalPairs["news"]?.1)
+        XCTAssertNotEqual(movedGames.lightColorHex, originalPairs["games"]?.0)
+        XCTAssertNotEqual(movedGames.darkColorHex, originalPairs["games"]?.1)
+        XCTAssertNotEqual(movedMinecraft.lightColorHex, originalPairs["minecraft"]?.0)
+        XCTAssertNotEqual(movedMinecraft.darkColorHex, originalPairs["minecraft"]?.1)
+        for (newsColor, gamesColor, minecraftColor) in [
+            (originalPairs["news"]?.0, movedGames.lightColorHex, movedMinecraft.lightColorHex),
+            (originalPairs["news"]?.1, movedGames.darkColorHex, movedMinecraft.darkColorHex),
+        ] {
+            XCTAssertLessThanOrEqual(
+                try XCTUnwrap(TagColorAssignment.perceptualDistance(newsColor, gamesColor)),
+                TagColorAssignment.maximumOffset(edgeDepth: 2) + 0.003
+            )
+            XCTAssertLessThanOrEqual(
+                try XCTUnwrap(TagColorAssignment.perceptualDistance(gamesColor, minecraftColor)),
+                TagColorAssignment.maximumOffset(edgeDepth: 3) + 0.003
+            )
+        }
     }
 
     private func whiteContrast(hex: String) -> Double {
+        let luminance = relativeLuminance(hex: hex)
+        return 1.05 / (luminance + 0.05)
+    }
+
+    private func blackContrast(hex: String) -> Double {
+        (relativeLuminance(hex: hex) + 0.05) / 0.05
+    }
+
+    private func relativeLuminance(hex: String) -> Double {
         let rgb = rgbComponents(hex)
         func linear(_ component: Double) -> Double {
             component <= 0.04045
                 ? component / 12.92
                 : pow((component + 0.055) / 1.055, 2.4)
         }
-        let luminance = (0.2126 * linear(rgb.red))
+        return (0.2126 * linear(rgb.red))
             + (0.7152 * linear(rgb.green))
             + (0.0722 * linear(rgb.blue))
-        return 1.05 / (luminance + 0.05)
+    }
+
+    private func circularRadians(_ lhs: Double, _ rhs: Double) -> Double {
+        let distance = abs(lhs - rhs)
+        return min(distance, (2 * Double.pi) - distance)
     }
 
     private func rgbComponents(_ hex: String) -> (red: Double, green: Double, blue: Double) {

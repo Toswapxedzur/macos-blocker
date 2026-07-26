@@ -253,15 +253,28 @@ final class VaultClassifierCoreTests: XCTestCase {
             platformID: "youtube",
             sourceID: "youtube:channel:UC123",
             tags: (0..<100).map {
-                NativeSourceTag(id: "tag-\($0)", name: "Tag \($0)", colorHex: "#123456")
+                NativeSourceTag(
+                    id: "tag-\($0)",
+                    name: "Tag \($0)",
+                    lightColorHex: TagColorAssignment.neutralRootLightHex,
+                    darkColorHex: TagColorAssignment.neutralRootDarkHex
+                )
             }
         )
         XCTAssertEqual(response.tags.count, CreatorClassificationRecord.maximumTagIDs)
-        XCTAssertTrue(response.tags.allSatisfy { $0.colorHex == "#123456" })
+        XCTAssertTrue(response.tags.allSatisfy {
+            $0.lightColorHex == TagColorAssignment.neutralRootLightHex
+                && $0.darkColorHex == TagColorAssignment.neutralRootDarkHex
+        })
         XCTAssertTrue(NativeSourceTagsResponse(
             platformID: "youtube",
             sourceID: "youtube:channel:UC123",
-            tags: [NativeSourceTag(id: "invalid", name: "Invalid", colorHex: "navy")]
+            tags: [NativeSourceTag(
+                id: "invalid",
+                name: "Invalid",
+                lightColorHex: TagColorAssignment.neutralRootLightHex,
+                darkColorHex: "navy"
+            )]
         ).tags.isEmpty)
     }
 

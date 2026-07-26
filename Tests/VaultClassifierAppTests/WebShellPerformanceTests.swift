@@ -57,7 +57,8 @@ final class WebShellPerformanceTests: XCTestCase {
                 "description": NSNull(),
                 "parentID": NSNull(),
                 "retired": false,
-                "colorHex": "#1A4775",
+                "lightColorHex": "#9EC5E8",
+                "darkColorHex": "#1A4775",
                 "positionX": 100,
                 "positionY": 100,
             ]],
@@ -207,7 +208,7 @@ final class WebShellPerformanceTests: XCTestCase {
             in: webView
         )
         let treeTagStyle = try XCTUnwrap(treeTagStyleValue as? String)
-        XCTAssertEqual(treeTagStyle, "rgb(26, 71, 117)|999px|rgb(255, 255, 255)")
+        XCTAssertEqual(treeTagStyle, "rgb(158, 197, 232)|999px|rgb(0, 0, 0)")
 
         let settingsControls = try await evaluate(
             """
@@ -252,6 +253,7 @@ final class WebShellPerformanceTests: XCTestCase {
               officialContentEvidenceCount: document.querySelector('[data-field="llmOfficialContentEvidenceCount"]')?.value || null,
               hasNativeSearchOption: Boolean(document.querySelector('[data-field="llmWebSearchMode"] option[value="providerNative"]')),
               tagPillColor: getComputedStyle(document.querySelector('.creator-tag-tab.tag-pill')).backgroundColor,
+              tagPillTextColor: getComputedStyle(document.querySelector('.creator-tag-tab.tag-pill')).color,
               tagPillRadius: getComputedStyle(document.querySelector('.creator-tag-tab.tag-pill')).borderRadius
             });
             """,
@@ -267,7 +269,8 @@ final class WebShellPerformanceTests: XCTestCase {
         XCTAssertEqual(classifierJSON["hasDeferredRows"] as? Bool, true)
         XCTAssertEqual(classifierJSON["officialContentEvidenceCount"] as? String, "37")
         XCTAssertEqual(classifierJSON["hasNativeSearchOption"] as? Bool, false)
-        XCTAssertEqual(classifierJSON["tagPillColor"] as? String, "rgb(26, 71, 117)")
+        XCTAssertEqual(classifierJSON["tagPillColor"] as? String, "rgb(158, 197, 232)")
+        XCTAssertEqual(classifierJSON["tagPillTextColor"] as? String, "rgb(0, 0, 0)")
         XCTAssertEqual(classifierJSON["tagPillRadius"] as? String, "999px")
         let initialCardCount = classifierJSON["cards"] as? Int ?? 0
         _ = try await evaluate(

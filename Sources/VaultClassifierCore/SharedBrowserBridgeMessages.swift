@@ -74,12 +74,14 @@ public struct NativeSourceTagsRequest: Codable, Equatable, Sendable {
 public struct NativeSourceTag: Codable, Equatable, Sendable {
     public var id: String
     public var name: String
-    public var colorHex: String
+    public var lightColorHex: String
+    public var darkColorHex: String
 
-    public init(id: String, name: String, colorHex: String) {
+    public init(id: String, name: String, lightColorHex: String, darkColorHex: String) {
         self.id = id
         self.name = name
-        self.colorHex = TagColorAssignment.normalizedHex(colorHex) ?? ""
+        self.lightColorHex = TagColorAssignment.normalizedHex(lightColorHex) ?? ""
+        self.darkColorHex = TagColorAssignment.normalizedHex(darkColorHex) ?? ""
     }
 }
 
@@ -93,7 +95,12 @@ public struct NativeSourceTagsResponse: Codable, Equatable, Sendable {
         self.sourceID = sourceID
         self.tags = Array(
             tags
-                .filter { TagColorAssignment.isValidHex($0.colorHex) }
+                .filter {
+                    TagColorAssignment.isValidThemePair(
+                        lightHex: $0.lightColorHex,
+                        darkHex: $0.darkColorHex
+                    )
+                }
                 .prefix(CreatorClassificationRecord.maximumTagIDs)
         )
     }

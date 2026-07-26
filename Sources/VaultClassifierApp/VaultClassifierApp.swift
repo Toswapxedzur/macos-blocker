@@ -261,10 +261,16 @@ final class VaultClassifierViewModel: ObservableObject {
                     platformID: sourceTags.platformID,
                     sourceID: sourceTags.sourceID,
                     tags: tags.compactMap { tag in
-                        guard let colorHex = TagColorAssignment.normalizedHex(tag.colorHex) else {
+                        guard let lightColorHex = TagColorAssignment.normalizedHex(tag.lightColorHex),
+                              let darkColorHex = TagColorAssignment.normalizedHex(tag.darkColorHex) else {
                             return nil
                         }
-                        return NativeSourceTag(id: tag.id, name: tag.name, colorHex: colorHex)
+                        return NativeSourceTag(
+                            id: tag.id,
+                            name: tag.name,
+                            lightColorHex: lightColorHex,
+                            darkColorHex: darkColorHex
+                        )
                     }
                 ))
             case .classify:
@@ -3835,7 +3841,7 @@ final class VaultClassifierViewModel: ObservableObject {
         assets["trees"] = catalog.trees.map { tree in
                 ["id": tree.id, "name": tree.name, "revision": tree.revision, "nodes": tree.nodes.enumerated().map { index, node -> [String: Any] in
                     let position = node.resolvedCanvasPosition(index: index)
-                    return ["id": node.id, "name": node.name, "description": node.description ?? NSNull(), "parentID": node.parentID ?? NSNull(), "retired": node.isRetired, "colorHex": node.colorHex ?? NSNull(), "positionX": position.x, "positionY": position.y]
+                    return ["id": node.id, "name": node.name, "description": node.description ?? NSNull(), "parentID": node.parentID ?? NSNull(), "retired": node.isRetired, "lightColorHex": node.lightColorHex ?? NSNull(), "darkColorHex": node.darkColorHex ?? NSNull(), "positionX": position.x, "positionY": position.y]
                 }] as [String: Any]
             }
         assets["datasets"] = catalog.datasets.map { dataset in

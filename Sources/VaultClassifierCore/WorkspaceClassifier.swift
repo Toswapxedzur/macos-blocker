@@ -31,7 +31,8 @@ public extension TagTreeAsset {
                 description: node.description,
                 parentID: node.parentID,
                 predictable: !node.isRetired,
-                colorHex: node.colorHex
+                lightColorHex: node.lightColorHex,
+                darkColorHex: node.darkColorHex
             )
         })
     }

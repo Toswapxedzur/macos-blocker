@@ -1,32 +1,35 @@
 import Foundation
 
-/// Assigns persistent, presentation-only colors from tag-tree structure.
+/// Assigns persistent, presentation-only color pairs from tag-tree structure.
 ///
 /// There is no hash or preset palette. Roots are neutral grey anchors.
-/// First-level children seed the full readable OKLCH space through a
-/// non-uniform density function over lightness, relative chroma, and hue.
-/// Deeper descendants are selected inside a bounded OKLab neighborhood around
-/// their parent, and that neighborhood contracts geometrically at each
-/// generation. Siblings disperse across all three perceptual properties while
-/// hierarchy similarity remains the stronger constraint.
+/// First-level children seed a hue-neutral, readable OKLCH domain. Every tag
+/// owns a dark fill for white text and a brightness-inverted light fill for
+/// black text. Deeper descendants remain inside geometrically contracting
+/// OKLab neighborhoods in both themes.
 public enum TagColorAssignment {
-    public static let currentAlgorithmVersion = 3
-    public static let minimumWhiteTextContrast = 4.5
+    public static let currentAlgorithmVersion = 4
+    public static let minimumTextContrast = 4.5
 
     static let firstInheritedMaximumOffset = 0.080
     static let generationContraction = 0.45
-    static let rootNeutralLightness = 0.55
+    static let darkLightnessMinimum = 0.46
+    static let darkLightnessMaximum = 0.58
+    static let lightnessInversionSum = 1.30
+    static let rootDarkLightness = 0.52
 
     private static let goldenRatioConjugate = 0.618_033_988_749_894_9
     private static let silverRatioConjugate = 0.414_213_562_373_095_0
     private static let rootThreeConjugate = 0.732_050_807_568_877_2
-    private static let seedLightnessMinimum = 0.40
-    private static let seedLightnessMaximum = 0.58
-    private static let seedRelativeChromaMinimum = 0.32
-    private static let seedRelativeChromaMaximum = 0.94
-    private static let densityFloor = 0.16
-    private static let localDensityProbeRadius = 0.032
-    private static let candidateCount = 384
+    private static let seedRelativeChromaMinimum = 0.50
+    private static let seedRelativeChromaMaximum = 0.92
+    private static let preferredDarkLightness = 0.52
+    private static let preferredDarkLightnessWidth = 0.045
+    private static let preferredRelativeChroma = 0.72
+    private static let preferredRelativeChromaWidth = 0.17
+    private static let densityFloor = 0.15
+    private static let localDensityProbeRadius = 0.020
+    private static let candidateCount = 256
     private static let renderedColorTolerance = 0.003
 
     public static func normalizedHex(_ value: String?) -> String? {
@@ -46,39 +49,49 @@ public enum TagColorAssignment {
         normalizedHex(value) != nil
     }
 
+    public static func isValidThemePair(lightHex: String?, darkHex: String?) -> Bool {
+        guard let pair = ColorPair(lightHex: lightHex, darkHex: darkHex) else { return false }
+        return isAcceptablePersistedPair(pair)
+    }
+
     /// Reconciles legacy or prior-algorithm trees exactly once, then preserves
-    /// their assigned colors during ordinary saves.
+    /// both assigned variants during ordinary saves.
     public static func reconcileColors(in tree: inout TagTreeAsset) {
         if tree.colorAlgorithmVersion < currentAlgorithmVersion {
             for index in tree.nodes.indices {
-                tree.nodes[index].colorHex = nil
+                tree.nodes[index].lightColorHex = nil
+                tree.nodes[index].darkColorHex = nil
             }
             tree.colorAlgorithmVersion = currentAlgorithmVersion
         }
         assignMissingColors(in: &tree)
     }
 
-    /// Clears one moved branch so its root and descendants can inherit the new
-    /// parent's progressively smaller color neighborhood.
+    /// Clears one moved branch so its variants can inherit the new parent's
+    /// progressively smaller neighborhoods.
     public static func invalidateSubtree(rootID: String, in tree: inout TagTreeAsset) {
         let nodeIDs = tree.subtreeNodeIDs(rootID: rootID)
         for index in tree.nodes.indices where nodeIDs.contains(tree.nodes[index].id) {
-            tree.nodes[index].colorHex = nil
+            tree.nodes[index].lightColorHex = nil
+            tree.nodes[index].darkColorHex = nil
         }
     }
 
-    /// Assigns only missing or invalid colors. Existing valid colors are
-    /// stable when a sibling is added, a tag is renamed, or its canvas moves.
+    /// Assigns only missing or invalid pairs. Existing valid pairs are stable
+    /// when a sibling is added, a tag is renamed, or its canvas moves.
     public static func assignMissingColors(in tree: inout TagTreeAsset) {
         guard !tree.nodes.isEmpty else { return }
 
-        let rootHex = neutralRootColor.hex
+        let rootPair = neutralRootPair
         for index in tree.nodes.indices where tree.nodes[index].parentID == nil {
-            tree.nodes[index].colorHex = rootHex
+            tree.nodes[index].lightColorHex = rootPair.light.hex
+            tree.nodes[index].darkColorHex = rootPair.dark.hex
         }
 
         let invalidColorRootIDs = tree.nodes.compactMap { node in
-            isValidHex(node.colorHex) ? nil : node.id
+            !isValidThemePair(lightHex: node.lightColorHex, darkHex: node.darkColorHex)
+                ? node.id
+                : nil
         }
         var childIDsByParentID: [String: [String]] = [:]
         for node in tree.nodes {
@@ -92,62 +105,85 @@ public enum TagColorAssignment {
             pendingInvalidIDs.append(contentsOf: childIDsByParentID[nodeID] ?? [])
         }
         for index in tree.nodes.indices where invalidColorNodeIDs.contains(tree.nodes[index].id) {
-            tree.nodes[index].colorHex = nil
+            tree.nodes[index].lightColorHex = nil
+            tree.nodes[index].darkColorHex = nil
         }
 
-        var usedColors: [RGB] = []
+        var usedPairs: [ColorPair] = []
         for index in tree.nodes.indices {
-            guard let normalized = normalizedHex(tree.nodes[index].colorHex),
-                  let rgb = RGB(hex: normalized) else {
-                tree.nodes[index].colorHex = nil
+            guard let pair = ColorPair(
+                lightHex: tree.nodes[index].lightColorHex,
+                darkHex: tree.nodes[index].darkColorHex
+            ), isAcceptablePersistedPair(pair) else {
+                tree.nodes[index].lightColorHex = nil
+                tree.nodes[index].darkColorHex = nil
                 continue
             }
-            tree.nodes[index].colorHex = normalized
-            usedColors.append(rgb)
+            tree.nodes[index].lightColorHex = pair.light.hex
+            tree.nodes[index].darkColorHex = pair.dark.hex
+            usedPairs.append(pair)
         }
 
-        var unresolved = Set(tree.nodes.indices.filter { tree.nodes[$0].colorHex == nil })
+        var unresolved = Set(tree.nodes.indices.filter {
+            ColorPair(
+                lightHex: tree.nodes[$0].lightColorHex,
+                darkHex: tree.nodes[$0].darkColorHex
+            ) == nil
+        })
         while !unresolved.isEmpty {
             var assignedAny = false
             for index in unresolved.sorted() {
                 let parentIndex = tree.nodes[index].parentID.flatMap { parentID in
                     tree.nodes.firstIndex(where: { $0.id == parentID })
                 }
-                if let parentIndex, tree.nodes[parentIndex].colorHex == nil {
+                if let parentIndex,
+                   ColorPair(
+                    lightHex: tree.nodes[parentIndex].lightColorHex,
+                    darkHex: tree.nodes[parentIndex].darkColorHex
+                   ) == nil {
                     continue
                 }
 
-                let parentRGB = parentIndex.flatMap { RGB(hex: tree.nodes[$0].colorHex) }
-                let siblingColors = tree.nodes.indices.compactMap { siblingIndex -> RGB? in
+                let parentPair = parentIndex.flatMap {
+                    ColorPair(
+                        lightHex: tree.nodes[$0].lightColorHex,
+                        darkHex: tree.nodes[$0].darkColorHex
+                    )
+                }
+                let siblingPairs = tree.nodes.indices.compactMap { siblingIndex -> ColorPair? in
                     guard siblingIndex != index,
                           tree.nodes[siblingIndex].parentID == tree.nodes[index].parentID else {
                         return nil
                     }
-                    return RGB(hex: tree.nodes[siblingIndex].colorHex)
+                    return ColorPair(
+                        lightHex: tree.nodes[siblingIndex].lightColorHex,
+                        darkHex: tree.nodes[siblingIndex].darkColorHex
+                    )
                 }
                 let edgeDepth = tree.depth(ofNodeAt: index)
                 let siblingOrdinal = tree.nodes[..<index].filter {
                     $0.parentID == tree.nodes[index].parentID
                 }.count
-                let rgb = generatedColor(
-                    parent: parentRGB,
+                let pair = generatedPair(
+                    parent: parentPair,
                     edgeDepth: edgeDepth,
                     ordinal: siblingOrdinal,
-                    siblingColors: siblingColors,
-                    usedColors: usedColors
+                    siblingPairs: siblingPairs,
+                    usedPairs: usedPairs
                 )
-                tree.nodes[index].colorHex = rgb.hex
-                usedColors.append(rgb)
+                tree.nodes[index].lightColorHex = pair.light.hex
+                tree.nodes[index].darkColorHex = pair.dark.hex
+                usedPairs.append(pair)
                 unresolved.remove(index)
                 assignedAny = true
             }
 
             if !assignedAny, let index = unresolved.min() {
-                // Invalid cyclic legacy trees still get a readable color;
-                // semantic tree validation remains authoritative elsewhere.
-                let rgb = neutralRootColor
-                tree.nodes[index].colorHex = rgb.hex
-                usedColors.append(rgb)
+                // Invalid cyclic legacy trees still get readable neutral
+                // variants; semantic tree validation remains authoritative.
+                tree.nodes[index].lightColorHex = rootPair.light.hex
+                tree.nodes[index].darkColorHex = rootPair.dark.hex
+                usedPairs.append(rootPair)
                 unresolved.remove(index)
             }
         }
@@ -164,8 +200,12 @@ public enum TagColorAssignment {
         return OKLab(rgb: lhsRGB).distance(to: OKLab(rgb: rhsRGB))
     }
 
-    static var neutralRootHex: String {
-        neutralRootColor.hex
+    static var neutralRootLightHex: String {
+        neutralRootPair.light.hex
+    }
+
+    static var neutralRootDarkHex: String {
+        neutralRootPair.dark.hex
     }
 
     static func perceptualProperties(
@@ -176,140 +216,144 @@ public enum TagColorAssignment {
         return (tuple.lightness, tuple.relativeChroma, tuple.hueRadians)
     }
 
-    static func preferenceDensity(_ value: String?) -> Double? {
-        guard let rgb = RGB(hex: value) else { return nil }
-        let lab = OKLab(rgb: rgb)
-        return preferenceDensity(at: colorTuple(for: lab), lab: lab, rgb: rgb)
+    static func preferenceDensity(lightHex: String?, darkHex: String?) -> Double? {
+        guard let pair = ColorPair(lightHex: lightHex, darkHex: darkHex) else { return nil }
+        return preferenceDensity(for: pair)
     }
 
-    private static func generatedColor(
-        parent: RGB?,
+    private static func generatedPair(
+        parent: ColorPair?,
         edgeDepth: Int,
         ordinal: Int,
-        siblingColors: [RGB],
-        usedColors: [RGB]
-    ) -> RGB {
+        siblingPairs: [ColorPair],
+        usedPairs: [ColorPair]
+    ) -> ColorPair {
         guard let parent, edgeDepth > 0 else {
-            return neutralRootColor
+            return neutralRootPair
         }
         if edgeDepth == 1 {
-            return generatedSeedColor(
+            return generatedSeedPair(
                 ordinal: ordinal,
-                siblingColors: siblingColors,
-                usedColors: usedColors
+                siblingPairs: siblingPairs,
+                usedPairs: usedPairs
             )
         }
-        return generatedDescendantColor(
+        return generatedDescendantPair(
             parent: parent,
             edgeDepth: edgeDepth,
             ordinal: ordinal,
-            siblingColors: siblingColors,
-            usedColors: usedColors
+            siblingPairs: siblingPairs,
+            usedPairs: usedPairs
         )
     }
 
-    private static var neutralRootColor: RGB {
-        let lab = OKLab(lightness: rootNeutralLightness, a: 0, b: 0)
-        guard let rawRGB = RGB(oklab: lab), let displayedRGB = RGB(hex: rawRGB.hex) else {
-            preconditionFailure("The neutral root color must be representable in sRGB.")
+    private static var neutralRootPair: ColorPair {
+        let darkLab = OKLab(lightness: rootDarkLightness, a: 0, b: 0)
+        guard let pair = renderedPair(forDarkLab: darkLab) else {
+            preconditionFailure("The neutral root pair must be representable and readable.")
         }
-        return displayedRGB
+        return pair
     }
 
-    private static func generatedSeedColor(
+    private static func generatedSeedPair(
         ordinal: Int,
-        siblingColors: [RGB],
-        usedColors: [RGB]
-    ) -> RGB {
-        let chromaticUsedColors = usedColors.filter {
-            colorTuple(for: OKLab(rgb: $0)).chroma > 0.02
+        siblingPairs: [ColorPair],
+        usedPairs: [ColorPair]
+    ) -> ColorPair {
+        let chromaticUsedPairs = usedPairs.filter {
+            colorTuple(for: OKLab(rgb: $0.dark)).chroma > 0.02
         }
-        let referenceColors = siblingColors.isEmpty ? chromaticUsedColors : siblingColors
-        let referenceLabs = referenceColors.map(OKLab.init)
-        let referenceTuples = referenceLabs.map(colorTuple)
-        let usedLabs = usedColors.map(OKLab.init)
-        let usedHexes = Set(usedColors.map(\.hex))
-        var best: (rgb: RGB, score: Double)?
-        var readableFallback: (rgb: RGB, score: Double)?
+        let referencePairs = siblingPairs.isEmpty ? chromaticUsedPairs : siblingPairs
+        let referenceTuples = referencePairs.map { colorTuple(for: OKLab(rgb: $0.dark)) }
+        let usedLightLabs = usedPairs.map { OKLab(rgb: $0.light) }
+        let usedDarkLabs = usedPairs.map { OKLab(rgb: $0.dark) }
+        let usedLightHexes = Set(usedPairs.map(\.light.hex))
+        let usedDarkHexes = Set(usedPairs.map(\.dark.hex))
+        var best: (pair: ColorPair, score: Double)?
+        var readableFallback: (pair: ColorPair, score: Double)?
 
         for candidateIndex in 0..<candidateCount {
             let sequenceIndex = Double(candidateIndex + 1 + ordinal * candidateCount)
             let hue = fractional(sequenceIndex * goldenRatioConjugate) * 2 * Double.pi
-            let lightness = seedLightnessMinimum
+            let darkLightness = darkLightnessMinimum
                 + fractional(sequenceIndex * silverRatioConjugate)
-                * (seedLightnessMaximum - seedLightnessMinimum)
+                * (darkLightnessMaximum - darkLightnessMinimum)
             let relativeChroma = seedRelativeChromaMinimum
                 + fractional(sequenceIndex * rootThreeConjugate)
                 * (seedRelativeChromaMaximum - seedRelativeChromaMinimum)
-            let maximumChroma = maximumDisplayableChroma(lightness: lightness, hueRadians: hue)
-            let candidateLab = OKLab(
-                lightness: lightness,
-                a: cos(hue) * maximumChroma * relativeChroma,
-                b: sin(hue) * maximumChroma * relativeChroma
+            let maximumDarkChroma = maximumDisplayableChroma(
+                lightness: darkLightness,
+                hueRadians: hue
             )
-            guard let rawRGB = RGB(oklab: candidateLab),
-                  rawRGB.contrastAgainstWhite >= minimumWhiteTextContrast,
-                  let displayedRGB = RGB(hex: rawRGB.hex) else {
-                continue
-            }
+            let candidateDarkLab = OKLab(
+                lightness: darkLightness,
+                a: cos(hue) * maximumDarkChroma * relativeChroma,
+                b: sin(hue) * maximumDarkChroma * relativeChroma
+            )
+            guard let pair = renderedPair(forDarkLab: candidateDarkLab) else { continue }
 
-            let displayedLab = OKLab(rgb: displayedRGB)
-            let displayedTuple = colorTuple(for: displayedLab)
-            let density = preferenceDensity(
-                at: displayedTuple,
-                lab: displayedLab,
-                rgb: displayedRGB
-            )
-            let jointSeparation = referenceTuples
+            let displayedTuple = colorTuple(for: OKLab(rgb: pair.dark))
+            let density = preferenceDensity(for: pair)
+            let propertySeparation = referenceTuples
                 .map { jointTupleDistance(displayedTuple, $0) }
                 .min() ?? 1
-            let perceptualSeparation = referenceLabs
-                .map { displayedLab.distance(to: $0) }
-                .min() ?? 0.25
-            let globalSeparation = usedLabs
-                .map { displayedLab.distance(to: $0) }
+            let perceptualSeparation = referencePairs
+                .map { minimumThemeDistance(pair, $0) }
+                .min() ?? 1
+            let globalSeparation = zip(usedLightLabs, usedDarkLabs)
+                .map { lightLab, darkLab in
+                    min(
+                        OKLab(rgb: pair.light).distance(to: lightLab),
+                        OKLab(rgb: pair.dark).distance(to: darkLab)
+                    )
+                }
                 .min() ?? 0
-            // Variable-radius farthest-point sampling in three dimensions:
-            // local spacing is proportional to density^(-1/3), so dense
-            // tuples admit more colors without erasing sparse regions.
-            let score = (jointSeparation * pow(density, 1.0 / 3.0) * 1_000)
-                + (perceptualSeparation * 100)
+            // Distinctiveness dominates. Density is a gentle, hue-neutral
+            // preference for the middle of the accepted brightness/chroma
+            // bands and cannot overwhelm minimum two-theme separation.
+            let score = (perceptualSeparation * (0.90 + (0.10 * density)) * 1_000)
+                + (propertySeparation * 100)
                 + (globalSeparation * 10)
 
             if readableFallback == nil || score > readableFallback!.score {
-                readableFallback = (displayedRGB, score)
+                readableFallback = (pair, score)
             }
-            guard !usedHexes.contains(displayedRGB.hex) else { continue }
+            guard !usedLightHexes.contains(pair.light.hex),
+                  !usedDarkHexes.contains(pair.dark.hex) else {
+                continue
+            }
             if best == nil || score > best!.score {
-                best = (displayedRGB, score)
+                best = (pair, score)
             }
         }
 
         if let best {
-            return best.rgb
+            return best.pair
         }
         if let readableFallback {
-            return readableFallback.rgb
+            return readableFallback.pair
         }
-        preconditionFailure("The readable OKLCH seed domain must contain a displayable color.")
+        preconditionFailure("The dual-theme OKLCH seed domain must contain a readable pair.")
     }
 
-    private static func generatedDescendantColor(
-        parent: RGB,
+    private static func generatedDescendantPair(
+        parent: ColorPair,
         edgeDepth: Int,
         ordinal: Int,
-        siblingColors: [RGB],
-        usedColors: [RGB]
-    ) -> RGB {
-        let parentLab = OKLab(rgb: parent)
-        let siblingLabs = siblingColors.map(OKLab.init)
-        let parentTuple = colorTuple(for: parentLab)
-        let siblingTuples = siblingLabs.map(colorTuple)
-        let usedLabs = usedColors.map(OKLab.init)
-        let usedHexes = Set(usedColors.map(\.hex))
+        siblingPairs: [ColorPair],
+        usedPairs: [ColorPair]
+    ) -> ColorPair {
+        let parentDarkLab = OKLab(rgb: parent.dark)
+        let parentLightLab = OKLab(rgb: parent.light)
+        let siblingTuples = siblingPairs.map { colorTuple(for: OKLab(rgb: $0.dark)) }
+        let parentTuple = colorTuple(for: parentDarkLab)
+        let usedLightLabs = usedPairs.map { OKLab(rgb: $0.light) }
+        let usedDarkLabs = usedPairs.map { OKLab(rgb: $0.dark) }
+        let usedLightHexes = Set(usedPairs.map(\.light.hex))
+        let usedDarkHexes = Set(usedPairs.map(\.dark.hex))
         let radius = maximumOffset(edgeDepth: edgeDepth)
-        var best: (rgb: RGB, score: Double)?
-        var readableFallback: (rgb: RGB, score: Double)?
+        var best: (pair: ColorPair, score: Double)?
+        var readableFallback: (pair: ColorPair, score: Double)?
 
         for candidateIndex in 0..<candidateCount {
             let sequenceIndex = Double(candidateIndex + 1 + ordinal * candidateCount)
@@ -318,101 +362,144 @@ public enum TagColorAssignment {
             let vertical = (fractional(sequenceIndex * rootThreeConjugate) * 2) - 1
             let plane = sqrt(max(0, 1 - (vertical * vertical)))
             let offset = radius * radialFraction
-            let candidateLab = OKLab(
-                lightness: parentLab.lightness + (vertical * offset),
-                a: parentLab.a + (cos(angle) * plane * offset),
-                b: parentLab.b + (sin(angle) * plane * offset)
+            let candidateDarkLab = OKLab(
+                lightness: parentDarkLab.lightness + (vertical * offset),
+                a: parentDarkLab.a + (cos(angle) * plane * offset),
+                b: parentDarkLab.b + (sin(angle) * plane * offset)
             )
-            guard let rawRGB = RGB(oklab: candidateLab),
-                  rawRGB.contrastAgainstWhite >= minimumWhiteTextContrast,
-                  let displayedRGB = RGB(hex: rawRGB.hex) else {
+            guard let pair = renderedPair(forDarkLab: candidateDarkLab) else { continue }
+
+            let displayedDarkLab = OKLab(rgb: pair.dark)
+            let displayedLightLab = OKLab(rgb: pair.light)
+            let darkParentDistance = displayedDarkLab.distance(to: parentDarkLab)
+            let lightParentDistance = displayedLightLab.distance(to: parentLightLab)
+            guard darkParentDistance <= radius + renderedColorTolerance,
+                  lightParentDistance <= radius + renderedColorTolerance else {
                 continue
             }
 
-            let displayedLab = OKLab(rgb: displayedRGB)
-            let displayedTuple = colorTuple(for: displayedLab)
-            let parentDistance = displayedLab.distance(to: parentLab)
-            guard parentDistance <= radius + renderedColorTolerance else { continue }
-            let siblingSeparation = siblingLabs
-                .map { displayedLab.distance(to: $0) }
-                .min() ?? parentDistance
+            let displayedTuple = colorTuple(for: displayedDarkLab)
+            let siblingSeparation = siblingPairs
+                .map { minimumThemeDistance(pair, $0) }
+                .min() ?? min(darkParentDistance, lightParentDistance)
             let propertySeparation = siblingTuples
                 .map { jointTupleDistance(displayedTuple, $0) }
                 .min() ?? jointTupleDistance(displayedTuple, parentTuple)
-            let globalSeparation = usedLabs
-                .map { displayedLab.distance(to: $0) }
-                .min() ?? parentDistance
-            let density = preferenceDensity(
-                at: displayedTuple,
-                lab: displayedLab,
-                rgb: displayedRGB
-            )
-            // The hard radius enforces hierarchy. Within it, sibling distance
-            // dominates across lightness, chroma, and hue. Tuple density and
-            // global separation only influence choices inside that radius.
-            let score = (siblingSeparation * pow(density, 1.0 / 3.0) * 1_000)
+            let globalSeparation = zip(usedLightLabs, usedDarkLabs)
+                .map { lightLab, darkLab in
+                    min(
+                        displayedLightLab.distance(to: lightLab),
+                        displayedDarkLab.distance(to: darkLab)
+                    )
+                }
+                .min() ?? min(darkParentDistance, lightParentDistance)
+            let density = preferenceDensity(for: pair)
+            let score = (siblingSeparation * (0.90 + (0.10 * density)) * 1_000)
                 + (propertySeparation * 100)
                 + (globalSeparation * 10)
-                + parentDistance
+                + min(darkParentDistance, lightParentDistance)
 
             if readableFallback == nil || score > readableFallback!.score {
-                readableFallback = (displayedRGB, score)
+                readableFallback = (pair, score)
             }
-            guard !usedHexes.contains(displayedRGB.hex) else { continue }
+            guard !usedLightHexes.contains(pair.light.hex),
+                  !usedDarkHexes.contains(pair.dark.hex) else {
+                continue
+            }
             if best == nil || score > best!.score {
-                best = (displayedRGB, score)
+                best = (pair, score)
             }
         }
 
-        // At extreme depths, 8-bit sRGB can no longer represent a unique color
-        // inside the shrinking neighborhood. Reusing the closest readable
-        // rendered candidate preserves hierarchy and never drops the tag.
-        return best?.rgb ?? readableFallback?.rgb ?? parent
+        // At extreme depths, 8-bit sRGB can no longer represent a unique pair
+        // inside both shrinking neighborhoods. Reusing the closest readable
+        // pair preserves hierarchy and never drops the tag.
+        return best?.pair ?? readableFallback?.pair ?? parent
     }
 
-    private static func preferenceDensity(
-        at tuple: ColorTuple,
-        lab: OKLab,
-        rgb: RGB
-    ) -> Double {
-        let usableVolume = localUsableVolume(around: lab)
-        let contrastHeadroom = clamped(
-            (rgb.contrastAgainstWhite - minimumWhiteTextContrast) / 4,
-            minimum: 0.04,
-            maximum: 1
+    private static func renderedPair(forDarkLab darkLab: OKLab) -> ColorPair? {
+        guard (darkLightnessMinimum...darkLightnessMaximum).contains(darkLab.lightness) else {
+            return nil
+        }
+        let darkTuple = colorTuple(for: darkLab)
+        let lightLightness = lightnessInversionSum - darkLab.lightness
+        let maximumLightChroma = maximumDisplayableChroma(
+            lightness: lightLightness,
+            hueRadians: darkTuple.hueRadians
         )
-        let chromaOffset = (tuple.relativeChroma - 0.66) / 0.25
-        let chromaQuality = exp(-0.5 * chromaOffset * chromaOffset)
-        let jointQuality = pow(
-            max(0.000_001, usableVolume * contrastHeadroom * chromaQuality),
-            1.0 / 3.0
+        let lightLab = OKLab(
+            lightness: lightLightness,
+            a: cos(darkTuple.hueRadians) * maximumLightChroma * darkTuple.relativeChroma,
+            b: sin(darkTuple.hueRadians) * maximumLightChroma * darkTuple.relativeChroma
         )
-        return densityFloor + ((1 - densityFloor) * jointQuality)
+        guard let rawDark = RGB(oklab: darkLab),
+              let rawLight = RGB(oklab: lightLab),
+              rawDark.contrastAgainstWhite >= minimumTextContrast,
+              rawLight.contrastAgainstBlack >= minimumTextContrast,
+              let displayedDark = RGB(hex: rawDark.hex),
+              let displayedLight = RGB(hex: rawLight.hex),
+              displayedDark.contrastAgainstWhite >= minimumTextContrast,
+              displayedLight.contrastAgainstBlack >= minimumTextContrast else {
+            return nil
+        }
+        return ColorPair(light: displayedLight, dark: displayedDark)
     }
 
-    private static func localUsableVolume(around lab: OKLab) -> Double {
-        let diagonal = 1 / sqrt(3.0)
+    private static func preferenceDensity(for pair: ColorPair) -> Double {
+        let darkLab = OKLab(rgb: pair.dark)
+        let tuple = colorTuple(for: darkLab)
+        let gamutRobustness = dualThemeUsableVolume(around: darkLab)
+        let lightnessOffset = (
+            tuple.lightness - preferredDarkLightness
+        ) / preferredDarkLightnessWidth
+        let lightnessPreference = exp(-0.5 * lightnessOffset * lightnessOffset)
+        let chromaOffset = (
+            tuple.relativeChroma - preferredRelativeChroma
+        ) / preferredRelativeChromaWidth
+        let chromaPreference = exp(-0.5 * chromaOffset * chromaOffset)
+        let quality = pow(max(0.000_001, gamutRobustness), 0.25)
+            * pow(max(0.000_001, lightnessPreference), 0.45)
+            * pow(max(0.000_001, chromaPreference), 0.30)
+        return densityFloor + ((1 - densityFloor) * quality)
+    }
+
+    private static func isAcceptablePersistedPair(_ pair: ColorPair) -> Bool {
+        guard pair.dark.contrastAgainstWhite >= minimumTextContrast,
+              pair.light.contrastAgainstBlack >= minimumTextContrast else {
+            return false
+        }
+        let darkLab = OKLab(rgb: pair.dark)
+        let lightLab = OKLab(rgb: pair.light)
+        let tolerance = 0.012
+        guard darkLab.lightness >= darkLightnessMinimum - tolerance,
+              darkLab.lightness <= darkLightnessMaximum + tolerance,
+              lightLab.lightness >= (lightnessInversionSum - darkLightnessMaximum) - tolerance,
+              lightLab.lightness <= (lightnessInversionSum - darkLightnessMinimum) + tolerance,
+              abs((darkLab.lightness + lightLab.lightness) - lightnessInversionSum) <= 0.020 else {
+            return false
+        }
+        let darkTuple = colorTuple(for: darkLab)
+        let lightTuple = colorTuple(for: lightLab)
+        guard darkTuple.chroma > 0.02 || lightTuple.chroma > 0.02 else {
+            return true
+        }
+        let rawHueDistance = abs(darkTuple.hueRadians - lightTuple.hueRadians)
+        return min(rawHueDistance, (2 * Double.pi) - rawHueDistance) <= 0.080
+    }
+
+    private static func dualThemeUsableVolume(around darkLab: OKLab) -> Double {
         let directions: [(Double, Double, Double)] = [
             (1, 0, 0), (-1, 0, 0),
             (0, 1, 0), (0, -1, 0),
             (0, 0, 1), (0, 0, -1),
-            (diagonal, diagonal, diagonal),
-            (diagonal, diagonal, -diagonal),
-            (diagonal, -diagonal, diagonal),
-            (diagonal, -diagonal, -diagonal),
-            (-diagonal, diagonal, diagonal),
-            (-diagonal, diagonal, -diagonal),
-            (-diagonal, -diagonal, diagonal),
-            (-diagonal, -diagonal, -diagonal),
         ]
         let validCount = directions.reduce(into: 0) { count, direction in
             let probe = OKLab(
-                lightness: lab.lightness + (direction.0 * localDensityProbeRadius),
-                a: lab.a + (direction.1 * localDensityProbeRadius),
-                b: lab.b + (direction.2 * localDensityProbeRadius)
+                lightness: darkLab.lightness + (direction.0 * localDensityProbeRadius),
+                a: darkLab.a + (direction.1 * localDensityProbeRadius),
+                b: darkLab.b + (direction.2 * localDensityProbeRadius)
             )
-            if let rgb = RGB(oklab: probe),
-               rgb.contrastAgainstWhite >= minimumWhiteTextContrast {
+            if renderedPair(forDarkLab: probe) != nil {
                 count += 1
             }
         }
@@ -438,7 +525,7 @@ public enum TagColorAssignment {
     }
 
     private static func jointTupleDistance(_ lhs: ColorTuple, _ rhs: ColorTuple) -> Double {
-        let lightnessRange = seedLightnessMaximum - seedLightnessMinimum
+        let lightnessRange = darkLightnessMaximum - darkLightnessMinimum
         let chromaRange = seedRelativeChromaMaximum - seedRelativeChromaMinimum
         let lightnessDistance = (lhs.lightness - rhs.lightness) / lightnessRange
         let chromaDistance = (lhs.relativeChroma - rhs.relativeChroma) / chromaRange
@@ -450,6 +537,13 @@ public enum TagColorAssignment {
                 + (chromaDistance * chromaDistance)
                 + (hueDistance * hueDistance)
             ) / 3
+        )
+    }
+
+    private static func minimumThemeDistance(_ lhs: ColorPair, _ rhs: ColorPair) -> Double {
+        min(
+            OKLab(rgb: lhs.light).distance(to: OKLab(rgb: rhs.light)),
+            OKLab(rgb: lhs.dark).distance(to: OKLab(rgb: rhs.dark))
         )
     }
 
@@ -478,10 +572,6 @@ public enum TagColorAssignment {
     private static func fractional(_ value: Double) -> Double {
         value - floor(value)
     }
-
-    private static func clamped(_ value: Double, minimum: Double, maximum: Double) -> Double {
-        min(maximum, max(minimum, value))
-    }
 }
 
 private extension TagTreeAsset {
@@ -496,6 +586,24 @@ private extension TagTreeAsset {
             currentParentID = parent.parentID
         }
         return depth
+    }
+}
+
+private struct ColorPair {
+    var light: RGB
+    var dark: RGB
+
+    init(light: RGB, dark: RGB) {
+        self.light = light
+        self.dark = dark
+    }
+
+    init?(lightHex: String?, darkHex: String?) {
+        guard let light = RGB(hex: lightHex), let dark = RGB(hex: darkHex) else {
+            return nil
+        }
+        self.light = light
+        self.dark = dark
     }
 }
 
@@ -561,6 +669,10 @@ private struct RGB {
 
     var contrastAgainstWhite: Double {
         1.05 / (relativeLuminance + 0.05)
+    }
+
+    var contrastAgainstBlack: Double {
+        (relativeLuminance + 0.05) / 0.05
     }
 
     private var relativeLuminance: Double {
