@@ -280,11 +280,39 @@ h3 { font-size: 13px; }
 .collection-local-only { margin: 2px 14px 0; color: var(--muted); max-width: 840px; }
 
 .collection-creators {
-  display: grid;
-  gap: 7px;
   padding-right: 14px;
   padding-top: 12px;
   padding-bottom: 14px;
+}
+
+.collection-creators-summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 32px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  list-style: none;
+}
+
+.collection-creators-summary::-webkit-details-marker { display: none; }
+.collection-creators-summary::before {
+  color: var(--cyan-700);
+  content: "›";
+  font-size: 16px;
+  line-height: 1;
+  transition: transform 120ms ease;
+}
+.collection-creators[open] > .collection-creators-summary::before { transform: rotate(90deg); }
+.collection-creators-summary span:last-child { margin-left: auto; }
+
+.collection-creators-list {
+  display: grid;
+  gap: 7px;
+  padding-top: 8px;
 }
 
 .incremental-list-sentinel {
