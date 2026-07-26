@@ -1,20 +1,25 @@
 import Foundation
 
-/// Assigns persistent, presentation-only tag colors from tree structure.
+/// Assigns persistent, presentation-only colors from tag-tree structure.
 ///
-/// This deliberately uses no named or preset palette. Candidate colors are
-/// generated across continuous HSL space with irrational low-discrepancy
-/// sequences. A bounded search chooses the candidate furthest from existing
-/// tag colors in OKLab while constraining descendants to their parent's hue
-/// family. Once assigned, the resulting hex color is persisted on the tag and
-/// is never recalculated merely because the tree later changes.
+/// There is no hash or preset palette. Root colors come from continuous
+/// low-discrepancy HSL candidates. Every descendant is selected inside a
+/// bounded OKLab neighborhood around its parent, and that neighborhood
+/// contracts geometrically at each generation. Siblings are spread as far
+/// apart as their shared neighborhood allows, while hierarchy similarity is
+/// always the stronger constraint.
 public enum TagColorAssignment {
+    public static let currentAlgorithmVersion = 2
     public static let minimumWhiteTextContrast = 4.5
+
+    static let firstGenerationMaximumOffset = 0.080
+    static let generationContraction = 0.45
 
     private static let goldenRatioConjugate = 0.618_033_988_749_894_9
     private static let silverRatioConjugate = 0.414_213_562_373_095_0
     private static let rootThreeConjugate = 0.732_050_807_568_877_2
-    private static let candidateCount = 144
+    private static let candidateCount = 192
+    private static let renderedColorTolerance = 0.003
 
     public static func normalizedHex(_ value: String?) -> String? {
         guard let value, value.count == 7, value.first == "#" else { return nil }
@@ -33,8 +38,49 @@ public enum TagColorAssignment {
         normalizedHex(value) != nil
     }
 
+    /// Reconciles legacy or prior-algorithm trees exactly once, then preserves
+    /// their assigned colors during ordinary saves.
+    public static func reconcileColors(in tree: inout TagTreeAsset) {
+        if tree.colorAlgorithmVersion < currentAlgorithmVersion {
+            for index in tree.nodes.indices {
+                tree.nodes[index].colorHex = nil
+            }
+            tree.colorAlgorithmVersion = currentAlgorithmVersion
+        }
+        assignMissingColors(in: &tree)
+    }
+
+    /// Clears one moved branch so its root and descendants can inherit the new
+    /// parent's progressively smaller color neighborhood.
+    public static func invalidateSubtree(rootID: String, in tree: inout TagTreeAsset) {
+        let nodeIDs = tree.subtreeNodeIDs(rootID: rootID)
+        for index in tree.nodes.indices where nodeIDs.contains(tree.nodes[index].id) {
+            tree.nodes[index].colorHex = nil
+        }
+    }
+
+    /// Assigns only missing or invalid colors. Existing valid colors are
+    /// stable when a sibling is added, a tag is renamed, or its canvas moves.
     public static func assignMissingColors(in tree: inout TagTreeAsset) {
         guard !tree.nodes.isEmpty else { return }
+
+        let invalidColorRootIDs = tree.nodes.compactMap { node in
+            isValidHex(node.colorHex) ? nil : node.id
+        }
+        var childIDsByParentID: [String: [String]] = [:]
+        for node in tree.nodes {
+            if let parentID = node.parentID {
+                childIDsByParentID[parentID, default: []].append(node.id)
+            }
+        }
+        var invalidColorNodeIDs = Set<String>()
+        var pendingInvalidIDs = invalidColorRootIDs
+        while let nodeID = pendingInvalidIDs.popLast(), invalidColorNodeIDs.insert(nodeID).inserted {
+            pendingInvalidIDs.append(contentsOf: childIDsByParentID[nodeID] ?? [])
+        }
+        for index in tree.nodes.indices where invalidColorNodeIDs.contains(tree.nodes[index].id) {
+            tree.nodes[index].colorHex = nil
+        }
 
         var usedColors: [RGB] = []
         for index in tree.nodes.indices {
@@ -59,14 +105,22 @@ public enum TagColorAssignment {
                 }
 
                 let parentRGB = parentIndex.flatMap { RGB(hex: tree.nodes[$0].colorHex) }
-                let depth = tree.depth(ofNodeAt: index)
+                let siblingColors = tree.nodes.indices.compactMap { siblingIndex -> RGB? in
+                    guard siblingIndex != index,
+                          tree.nodes[siblingIndex].parentID == tree.nodes[index].parentID else {
+                        return nil
+                    }
+                    return RGB(hex: tree.nodes[siblingIndex].colorHex)
+                }
+                let edgeDepth = tree.depth(ofNodeAt: index)
                 let siblingOrdinal = tree.nodes[..<index].filter {
                     $0.parentID == tree.nodes[index].parentID
                 }.count
                 let rgb = generatedColor(
                     parent: parentRGB,
-                    depth: depth,
+                    edgeDepth: edgeDepth,
                     ordinal: siblingOrdinal,
+                    siblingColors: siblingColors,
                     usedColors: usedColors
                 )
                 tree.nodes[index].colorHex = rgb.hex
@@ -76,14 +130,9 @@ public enum TagColorAssignment {
             }
 
             if !assignedAny, let index = unresolved.min() {
-                // Invalid cyclic legacy trees are still made presentation-safe;
-                // semantic validation remains authoritative elsewhere.
-                let rgb = generatedColor(
-                    parent: nil,
-                    depth: 0,
-                    ordinal: index,
-                    usedColors: usedColors
-                )
+                // Invalid cyclic legacy trees still get a readable color;
+                // semantic tree validation remains authoritative elsewhere.
+                let rgb = generatedRootColor(ordinal: index, usedColors: usedColors)
                 tree.nodes[index].colorHex = rgb.hex
                 usedColors.append(rgb)
                 unresolved.remove(index)
@@ -91,75 +140,127 @@ public enum TagColorAssignment {
         }
     }
 
+    static func maximumOffset(edgeDepth: Int) -> Double {
+        guard edgeDepth > 0 else { return .greatestFiniteMagnitude }
+        return firstGenerationMaximumOffset
+            * pow(generationContraction, Double(edgeDepth - 1))
+    }
+
+    static func perceptualDistance(_ lhs: String?, _ rhs: String?) -> Double? {
+        guard let lhsRGB = RGB(hex: lhs), let rhsRGB = RGB(hex: rhs) else { return nil }
+        return OKLab(rgb: lhsRGB).distance(to: OKLab(rgb: rhsRGB))
+    }
+
     private static func generatedColor(
         parent: RGB?,
-        depth: Int,
+        edgeDepth: Int,
         ordinal: Int,
+        siblingColors: [RGB],
         usedColors: [RGB]
     ) -> RGB {
-        let parentHSL = parent.map(HSL.init)
-        let constrainedSpread = max(16.0, 58.0 / sqrt(Double(max(1, depth))))
-        var best: (rgb: RGB, distance: Double)?
+        guard let parent else {
+            return generatedRootColor(ordinal: ordinal, usedColors: usedColors)
+        }
+        return generatedDescendantColor(
+            parent: parent,
+            edgeDepth: max(1, edgeDepth),
+            ordinal: ordinal,
+            siblingColors: siblingColors,
+            usedColors: usedColors
+        )
+    }
 
+    private static func generatedRootColor(ordinal: Int, usedColors: [RGB]) -> RGB {
+        var best: (rgb: RGB, distance: Double)?
         for candidateIndex in 0..<candidateCount {
             let sequenceIndex = Double(candidateIndex + 1 + ordinal * candidateCount)
-            let hueFraction = fractional(sequenceIndex * goldenRatioConjugate)
-            let saturationFraction = fractional(sequenceIndex * silverRatioConjugate)
-            let lightnessFraction = fractional(sequenceIndex * rootThreeConjugate)
-
-            let hue: Double
-            let saturation: Double
-            let initialLightness: Double
-            if let parentHSL {
-                hue = normalizedHue(
-                    parentHSL.hue + ((hueFraction * 2) - 1) * constrainedSpread
-                )
-                saturation = clamped(
-                    parentHSL.saturation + (saturationFraction - 0.5) * 22,
-                    minimum: 52,
-                    maximum: 82
-                )
-                initialLightness = clamped(
-                    parentHSL.lightness + (lightnessFraction - 0.5) * 15,
-                    minimum: 24,
-                    maximum: 43
-                )
-            } else {
-                hue = hueFraction * 360
-                saturation = 58 + saturationFraction * 24
-                initialLightness = 27 + lightnessFraction * 15
-            }
-
-            var lightness = initialLightness
+            let hue = fractional(sequenceIndex * goldenRatioConjugate) * 360
+            let saturation = 58 + fractional(sequenceIndex * silverRatioConjugate) * 24
+            var lightness = 27 + fractional(sequenceIndex * rootThreeConjugate) * 15
             var rgb = RGB(hsl: .init(hue: hue, saturation: saturation, lightness: lightness))
             while rgb.contrastAgainstWhite < minimumWhiteTextContrast, lightness > 18 {
                 lightness -= 0.5
                 rgb = RGB(hsl: .init(hue: hue, saturation: saturation, lightness: lightness))
             }
 
-            let lab = OKLab(rgb: rgb)
+            let candidate = OKLab(rgb: rgb)
             let minimumDistance = usedColors
-                .map { lab.distance(to: OKLab(rgb: $0)) }
+                .map { candidate.distance(to: OKLab(rgb: $0)) }
                 .min() ?? .greatestFiniteMagnitude
             if best == nil || minimumDistance > best!.distance {
                 best = (rgb, minimumDistance)
             }
         }
-
         return best!.rgb
+    }
+
+    private static func generatedDescendantColor(
+        parent: RGB,
+        edgeDepth: Int,
+        ordinal: Int,
+        siblingColors: [RGB],
+        usedColors: [RGB]
+    ) -> RGB {
+        let parentLab = OKLab(rgb: parent)
+        let siblingLabs = siblingColors.map(OKLab.init)
+        let usedLabs = usedColors.map(OKLab.init)
+        let usedHexes = Set(usedColors.map(\.hex))
+        let radius = maximumOffset(edgeDepth: edgeDepth)
+        var best: (rgb: RGB, score: Double)?
+        var readableFallback: (rgb: RGB, score: Double)?
+
+        for candidateIndex in 0..<candidateCount {
+            let sequenceIndex = Double(candidateIndex + 1 + ordinal * candidateCount)
+            let angle = fractional(sequenceIndex * goldenRatioConjugate) * 2 * Double.pi
+            let radialFraction = 0.72 + fractional(sequenceIndex * silverRatioConjugate) * 0.18
+            let deltaLightness = (
+                (fractional(sequenceIndex * rootThreeConjugate) * 2) - 1
+            ) * radius * 0.18
+            let maximumPlaneRadius = sqrt(max(0, (radius * radius) - (deltaLightness * deltaLightness)))
+            let planeRadius = maximumPlaneRadius * radialFraction
+            let candidateLab = OKLab(
+                lightness: parentLab.lightness + deltaLightness,
+                a: parentLab.a + cos(angle) * planeRadius,
+                b: parentLab.b + sin(angle) * planeRadius
+            )
+            guard let rawRGB = RGB(oklab: candidateLab),
+                  rawRGB.contrastAgainstWhite >= minimumWhiteTextContrast,
+                  let displayedRGB = RGB(hex: rawRGB.hex) else {
+                continue
+            }
+
+            let displayedLab = OKLab(rgb: displayedRGB)
+            let parentDistance = displayedLab.distance(to: parentLab)
+            guard parentDistance <= radius + renderedColorTolerance else { continue }
+            let siblingSeparation = siblingLabs
+                .map { displayedLab.distance(to: $0) }
+                .min() ?? parentDistance
+            let globalSeparation = usedLabs
+                .map { displayedLab.distance(to: $0) }
+                .min() ?? parentDistance
+            // The hard radius enforces hierarchy. Within it, sibling distance
+            // dominates; global separation only breaks otherwise close ties.
+            let score = (siblingSeparation * 1_000)
+                + (globalSeparation * 10)
+                + parentDistance
+
+            if readableFallback == nil || score > readableFallback!.score {
+                readableFallback = (displayedRGB, score)
+            }
+            guard !usedHexes.contains(displayedRGB.hex) else { continue }
+            if best == nil || score > best!.score {
+                best = (displayedRGB, score)
+            }
+        }
+
+        // At extreme depths, 8-bit sRGB can no longer represent a unique color
+        // inside the shrinking neighborhood. Reusing the closest readable
+        // rendered candidate preserves hierarchy and never drops the tag.
+        return best?.rgb ?? readableFallback?.rgb ?? parent
     }
 
     private static func fractional(_ value: Double) -> Double {
         value - floor(value)
-    }
-
-    private static func normalizedHue(_ value: Double) -> Double {
-        let remainder = value.truncatingRemainder(dividingBy: 360)
-        return remainder < 0 ? remainder + 360 : remainder
-    }
-
-    private static func clamped(_ value: Double, minimum: Double, maximum: Double) -> Double {
-        min(maximum, max(minimum, value))
     }
 }
 
@@ -182,50 +283,12 @@ private struct HSL {
     var hue: Double
     var saturation: Double
     var lightness: Double
-
-    init(hue: Double, saturation: Double, lightness: Double) {
-        self.hue = hue
-        self.saturation = saturation
-        self.lightness = lightness
-    }
-
-    init(rgb: RGB) {
-        let red = rgb.red
-        let green = rgb.green
-        let blue = rgb.blue
-        let maximum = max(red, green, blue)
-        let minimum = min(red, green, blue)
-        let delta = maximum - minimum
-        let lightness = (maximum + minimum) / 2
-
-        var hue = 0.0
-        var saturation = 0.0
-        if delta > 0 {
-            saturation = delta / (1 - abs((2 * lightness) - 1))
-            if maximum == red {
-                hue = 60 * (((green - blue) / delta).truncatingRemainder(dividingBy: 6))
-            } else if maximum == green {
-                hue = 60 * (((blue - red) / delta) + 2)
-            } else {
-                hue = 60 * (((red - green) / delta) + 4)
-            }
-        }
-        self.hue = hue < 0 ? hue + 360 : hue
-        self.saturation = saturation * 100
-        self.lightness = lightness * 100
-    }
 }
 
 private struct RGB {
     var red: Double
     var green: Double
     var blue: Double
-
-    init(red: Double, green: Double, blue: Double) {
-        self.red = red
-        self.green = green
-        self.blue = blue
-    }
 
     init?(hex: String?) {
         guard let normalized = TagColorAssignment.normalizedHex(hex),
@@ -258,6 +321,37 @@ private struct RGB {
         blue = base.2 + match
     }
 
+    init?(oklab: OKLab) {
+        let lRoot = oklab.lightness + (0.3963377774 * oklab.a) + (0.2158037573 * oklab.b)
+        let mRoot = oklab.lightness - (0.1055613458 * oklab.a) - (0.0638541728 * oklab.b)
+        let sRoot = oklab.lightness - (0.0894841775 * oklab.a) - (1.2914855480 * oklab.b)
+        let l = lRoot * lRoot * lRoot
+        let m = mRoot * mRoot * mRoot
+        let s = sRoot * sRoot * sRoot
+        let linearRed = (4.0767416621 * l) - (3.3077115913 * m) + (0.2309699292 * s)
+        let linearGreen = (-1.2684380046 * l) + (2.6097574011 * m) - (0.3413193965 * s)
+        let linearBlue = (-0.0041960863 * l) - (0.7034186147 * m) + (1.7076147010 * s)
+
+        func encoded(_ component: Double) -> Double {
+            component <= 0.0031308
+                ? 12.92 * component
+                : (1.055 * pow(component, 1 / 2.4)) - 0.055
+        }
+        let red = encoded(linearRed)
+        let green = encoded(linearGreen)
+        let blue = encoded(linearBlue)
+        let tolerance = 0.000_001
+        guard red.isFinite, green.isFinite, blue.isFinite,
+              (-tolerance...1 + tolerance).contains(red),
+              (-tolerance...1 + tolerance).contains(green),
+              (-tolerance...1 + tolerance).contains(blue) else {
+            return nil
+        }
+        self.red = min(1, max(0, red))
+        self.green = min(1, max(0, green))
+        self.blue = min(1, max(0, blue))
+    }
+
     var hex: String {
         let components = [red, green, blue].map { component in
             Int((min(1, max(0, component)) * 255).rounded())
@@ -283,6 +377,12 @@ private struct OKLab {
     var lightness: Double
     var a: Double
     var b: Double
+
+    init(lightness: Double, a: Double, b: Double) {
+        self.lightness = lightness
+        self.a = a
+        self.b = b
+    }
 
     init(rgb: RGB) {
         func linear(_ component: Double) -> Double {

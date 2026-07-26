@@ -60,14 +60,32 @@ public struct TagTreeAsset: Codable, Equatable, Sendable, Identifiable {
     public var name: String
     public var revision: Int
     public var nodes: [TagTreeNode]
+    /// Persisted separately from semantic tree revision so a presentation-only
+    /// color migration runs exactly once without invalidating trained models.
+    public var colorAlgorithmVersion: Int
     public var updatedAtMilliseconds: Int64
 
-    public init(id: String = UUID().uuidString, name: String, revision: Int = 1, nodes: [TagTreeNode], updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()) {
+    public init(id: String = UUID().uuidString, name: String, revision: Int = 1, nodes: [TagTreeNode], colorAlgorithmVersion: Int = TagColorAssignment.currentAlgorithmVersion, updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()) {
         self.id = id
         self.name = name
         self.revision = revision
         self.nodes = nodes
+        self.colorAlgorithmVersion = colorAlgorithmVersion
         self.updatedAtMilliseconds = updatedAtMilliseconds
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, revision, nodes, colorAlgorithmVersion, updatedAtMilliseconds
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        revision = try container.decode(Int.self, forKey: .revision)
+        nodes = try container.decode([TagTreeNode].self, forKey: .nodes)
+        colorAlgorithmVersion = try container.decodeIfPresent(Int.self, forKey: .colorAlgorithmVersion) ?? 0
+        updatedAtMilliseconds = try container.decode(Int64.self, forKey: .updatedAtMilliseconds)
     }
 
     /// Returns the selected node and every reachable descendant. The visited
@@ -1989,7 +2007,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     /// a changed tree or dataset.
     public mutating func reconcileClassifierTypes() {
         for index in trees.indices {
-            TagColorAssignment.assignMissingColors(in: &trees[index])
+            TagColorAssignment.reconcileColors(in: &trees[index])
         }
         providerProfiles = providerProfiles.filter { (try? $0.validate()) != nil }
         models = models.compactMap { model in
