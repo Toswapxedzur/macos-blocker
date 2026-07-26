@@ -6,11 +6,11 @@ import Foundation
 /// value) before any store access. Replace the placeholder with your real
 /// App Group when you create the Xcode targets.
 public enum AppGroup {
-    public static let placeholderIdentifier = "group.com.adamancia.vault"
+    public static let placeholderIdentifier = VaultRuntimeEnvironment.production.appGroupIdentifier
 
     /// Mutable so the app can override it at launch. Defaults to the
     /// placeholder used throughout the scaffold entitlements.
-    public static var identifier: String = placeholderIdentifier
+    public static var identifier: String = VaultRuntimeEnvironment.current.appGroupIdentifier
 
     /// The App Group shared container, when the entitlement is present.
     public static func containerURL(identifier: String = AppGroup.identifier) -> URL? {
@@ -30,6 +30,9 @@ public enum AppGroup {
                 .urls(for: .applicationSupportDirectory, in: .userDomainMask)
                 .first ?? URL(fileURLWithPath: NSTemporaryDirectory())
         }
-        return root.appendingPathComponent("macosBlocker", isDirectory: true)
+        return root.appendingPathComponent(
+            VaultRuntimeEnvironment.current.sharedStoreDirectoryName,
+            isDirectory: true
+        )
     }
 }

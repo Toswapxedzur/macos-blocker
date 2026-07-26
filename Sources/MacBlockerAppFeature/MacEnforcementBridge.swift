@@ -841,7 +841,12 @@ public final class MacEnforcementBridge: ObservableObject {
 
     private lazy var localFileBroker: LocalFileBroker = {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let folder = appSupport.appendingPathComponent("MacBlocker/LocalFiles", isDirectory: true)
+        let folder = appSupport
+            .appendingPathComponent(
+                VaultRuntimeEnvironment.current.localFilesDirectoryName,
+                isDirectory: true
+            )
+            .appendingPathComponent("LocalFiles", isDirectory: true)
         return LocalFileBroker(baseURL: folder)
     }()
 

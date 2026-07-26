@@ -1,4 +1,5 @@
 import Foundation
+import MacBlockerCore
 
 #if os(macOS)
 import Darwin
@@ -28,7 +29,9 @@ public struct GuardPolicyStore: Sendable {
         self.url = Self.defaultURL()
     }
 
-    public static let directoryName = "Blocker"
+    public static var directoryName: String {
+        VaultRuntimeEnvironment.current.policyDirectoryName
+    }
     public static let fileName = "policy.json"
 
     /// Root → system-wide root-owned path; otherwise the per-user path.
