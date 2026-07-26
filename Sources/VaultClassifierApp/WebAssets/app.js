@@ -247,25 +247,10 @@
     let content = "";
     if (utilityPanel === "settings") {
       const settings = state.activity.settings;
-      content = `<section class="utility-panel utility-settings-modal" data-form-id="utility-settings-form"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${browserBridgeSettingsCard()}<section class="utility-settings-section utility-resource-section"><h3 class="utility-settings-section-title">${tx("activity.resources")}</h3><div class="utility-settings-fields">${selectField("activity.profile", "activity.profileHint", "profile", settings.profile, [["light", "enum.profile.light"], ["balanced", "enum.profile.balanced"], ["aggressive", "enum.profile.aggressive"]])}${field("activity.cacheCapacity", "activity.uniqueEntries", "cacheCapacity", settings.cacheCapacity)}${selectField("activity.packageUpdates", "activity.preference", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div><div class="utility-toggles">${toggle("activity.idleWork", "allowIdleWork", settings.allowIdleWork)}${toggle("activity.backgroundSync", "allowBackgroundSync", settings.allowBackgroundSync)}</div></section></div><div class="utility-modal-actions"><button class="primary" data-action="saveResourceSettings" data-form="utility-settings-form">${tx("activity.save")}</button></div></section>`;
+      content = `<section class="utility-panel utility-settings-modal" data-form-id="utility-settings-form"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body"><section class="utility-settings-section utility-resource-section"><h3 class="utility-settings-section-title">${tx("activity.resources")}</h3><div class="utility-settings-fields">${selectField("activity.profile", "activity.profileHint", "profile", settings.profile, [["light", "enum.profile.light"], ["balanced", "enum.profile.balanced"], ["aggressive", "enum.profile.aggressive"]])}${field("activity.cacheCapacity", "activity.uniqueEntries", "cacheCapacity", settings.cacheCapacity)}${selectField("activity.packageUpdates", "activity.preference", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div><div class="utility-toggles">${toggle("activity.idleWork", "allowIdleWork", settings.allowIdleWork)}${toggle("activity.backgroundSync", "allowBackgroundSync", settings.allowBackgroundSync)}</div></section></div><div class="utility-modal-actions"><button class="primary" data-action="saveResourceSettings" data-form="utility-settings-form">${tx("activity.save")}</button></div></section>`;
     }
     if (!content) return "";
     return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}"></button><div class="utility-popover" role="dialog" aria-modal="true" aria-label="${esc(tx("utility.settings.title"))}">${content}</div></div>`;
-  }
-
-  function browserBridgeSettingsCard() {
-    const hub = state.bridge || {};
-    const knownStates = new Set(["off", "connecting", "hosting", "joined-macapp", "joined-classifier", "disconnected", "error"]);
-    const bridgeState = knownStates.has(hub.state) ? hub.state : "off";
-    const online = bridgeState === "hosting" || bridgeState.startsWith("joined-");
-    const active = bridgeState !== "off" && bridgeState !== "error";
-    const stateKey = `bridge.status.${bridgeState}`;
-    const peers = Array.isArray(hub.peers) ? hub.peers : [];
-    const peerLabels = peers.filter((peer) => peer && peer.program).map((peer) => esc(peer.program)).join(", ") || tx("bridge.noPeers");
-    const action = active
-      ? `<button class="secondary danger" data-action="disconnectSharedHub">${tx("bridge.disconnect")}</button>`
-      : `<button class="secondary" data-action="connectSharedHub">${tx("bridge.connect")}</button>`;
-    return `<section class="utility-bridge-card"><div class="utility-bridge-card-head"><h2>${tx("bridge.settingsTitle")}</h2><p class="section-copy">${tx("bridge.settingsCopy")}</p></div><div class="bridge-local-status"><span class="status-dot ${bridgeState}${online ? " connected" : ""}"></span><strong>${tx(stateKey)}</strong></div><p class="bridge-address"><strong>${tx("bridge.hubAddress")}:</strong> <code>${esc(hub.address || "ws://127.0.0.1:8787")}</code></p><p class="small-copy">${tx("bridge.hostCopy")}</p><p class="bridge-peer-copy">${tx("bridge.peers")}: ${peerLabels}</p><div class="bridge-settings-actions">${action}</div>${hub.error ? notice(hub.error, "red") : ""}</section>`;
   }
 
   function navButton(workspace, symbol, titleKey, metaKey) {

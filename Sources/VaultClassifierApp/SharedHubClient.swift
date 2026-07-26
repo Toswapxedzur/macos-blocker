@@ -25,8 +25,6 @@ final class SharedHubClient {
 
     private(set) var state: State = .off { didSet { onStateChange?() } }
     private(set) var error = "" { didSet { onStateChange?() } }
-    private(set) var peers: [[String: Any]] = [] { didSet { onStateChange?() } }
-    private(set) var hubProgram = "" { didSet { onStateChange?() } }
     private var task: URLSessionWebSocketTask?
     private var session: URLSession?
     private var reconnectTimer: Timer?
@@ -74,19 +72,6 @@ final class SharedHubClient {
                 self.connectionFailed("handshake-timeout", retry: true)
             }
         }
-    }
-
-    func disconnect() {
-        desired = false
-        reconnectTimer?.invalidate()
-        reconnectTimer = nil
-        handshakeTimer?.invalidate()
-        handshakeTimer = nil
-        closeSocket()
-        LocalClassifierHub.shared.stop()
-        peers = []
-        hubProgram = ""
-        transition(to: .off, error: "")
     }
 
     private func receive(on task: URLSessionWebSocketTask) {
@@ -149,11 +134,7 @@ final class SharedHubClient {
             }
             handshakeTimer?.invalidate()
             handshakeTimer = nil
-            peers = object["peers"] as? [[String: Any]] ?? []
-            self.hubProgram = hubProgram
             transition(to: .connected, error: "")
-        case "peers":
-            peers = object["peers"] as? [[String: Any]] ?? []
         case "rejected":
             connectionFailed((object["reason"] as? String) ?? "rejected", retry: false)
         case "classifier-request":
@@ -215,8 +196,6 @@ final class SharedHubClient {
         handshakeTimer?.invalidate()
         handshakeTimer = nil
         closeSocket()
-        peers = []
-        hubProgram = ""
         let canRetry = retry && desired
         transition(to: canRetry ? .disconnected : .error, error: reason)
         guard canRetry else { return }

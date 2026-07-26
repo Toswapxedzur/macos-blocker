@@ -30,13 +30,7 @@ final class LocalClassifierHub {
     private var peers: [ObjectIdentifier: Peer] = [:]
     private var pending: [String: PendingRequest] = [:]
 
-    private(set) var isHosting = false {
-        didSet { onStateChange?() }
-    }
-    private(set) var lastError = "" {
-        didSet { onStateChange?() }
-    }
-    var onStateChange: (() -> Void)?
+    private(set) var isHosting = false
 
     private init() {}
 
@@ -58,18 +52,14 @@ final class LocalClassifierHub {
                 switch state {
                 case .ready:
                     self.isHosting = true
-                    self.lastError = ""
                 case .failed:
                     self.stopListenerOnly()
-                    self.lastError = "server-running-not-connected"
                 default:
                     break
                 }
             }
             listener.start(queue: queue)
-        } catch {
-            lastError = "server-running-not-connected"
-        }
+        } catch {}
     }
 
     func stop() {
@@ -80,7 +70,6 @@ final class LocalClassifierHub {
         pending.removeAll()
         lock.unlock()
         for connection in connections { connection.cancel() }
-        lastError = ""
     }
 
     func peerSnapshot() -> [[String: Any]] {

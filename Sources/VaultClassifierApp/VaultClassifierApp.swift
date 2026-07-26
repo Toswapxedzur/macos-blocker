@@ -176,9 +176,6 @@ final class VaultClassifierViewModel: ObservableObject {
                 )
                 self.onWebStateChange?()
             }
-            LocalClassifierHub.shared.onStateChange = { [weak self] in
-                Task { @MainActor in self?.onWebStateChange?() }
-            }
             sharedHubClient.connect()
             startActiveLLMClassification()
         } catch {
@@ -302,16 +299,6 @@ final class VaultClassifierViewModel: ObservableObject {
             return .failure("classifier-response-invalid")
         }
         return .success(object)
-    }
-
-    func connectSharedHub() {
-        sharedHubClient?.connect()
-        issue = nil
-    }
-
-    func disconnectSharedHub() {
-        sharedHubClient?.disconnect()
-        issue = nil
     }
 
     func classify() {
@@ -4028,26 +4015,6 @@ final class VaultClassifierViewModel: ObservableObject {
         }
         assets["providerModelCatalogErrors"] = providerModelCatalogErrors
         assets["loadingProviderModelProfileIDs"] = Array(loadingProviderModelProfileIDs).sorted()
-        let localHub = LocalClassifierHub.shared
-        let hubClient = sharedHubClient
-        let hostProgram = hubClient?.hubProgram ?? ""
-        let bridgeState: String
-        if localHub.isHosting {
-            bridgeState = "hosting"
-        } else if hubClient?.state == .connected, hostProgram == "macapp" {
-            bridgeState = "joined-macapp"
-        } else if hubClient?.state == .connected, hostProgram == "classifier" {
-            bridgeState = "joined-classifier"
-        } else {
-            bridgeState = hubClient?.state.rawValue ?? "off"
-        }
-        let sharedHub: [String: Any] = [
-            "address": SharedBrowserBridgeProtocol.address,
-            "state": bridgeState,
-            "error": hubClient?.error ?? localHub.lastError,
-            "peers": localHub.isHosting ? localHub.peerSnapshot() : (hubClient?.peers ?? []),
-            "hostProgram": localHub.isHosting ? "classifier" : hostProgram,
-        ]
         let collectionDiagnosticsPayload: [[String: Any]] = (collectionDiagnostics?.records ?? []).suffix(80).reversed().map { record in
             [
                 "id": record.id.uuidString,
@@ -4068,7 +4035,6 @@ final class VaultClassifierViewModel: ObservableObject {
             "training": trainingPayload,
             "backup": backupPayload,
             "assets": assets,
-            "bridge": sharedHub,
             "collectionDiagnostics": collectionDiagnosticsPayload,
         ]
     }
@@ -4090,10 +4056,6 @@ final class VaultClassifierViewModel: ObservableObject {
                 // switches workspaces optimistically. Avoid echoing the same
                 // multi-megabyte state back across the bridge for navigation.
                 return false
-            case "connectSharedHub":
-                connectSharedHub()
-            case "disconnectSharedHub":
-                disconnectSharedHub()
             case "createTree":
                 createTree(name: try webString(data, key: "name", limit: 128))
             case "addCollectionPlatform":

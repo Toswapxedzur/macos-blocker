@@ -457,53 +457,11 @@ h3 { font-size: 13px; }
 .utility-toggles .toggle-row + .toggle-row { border-top: 1px solid #e2e8f0; }
 .utility-modal-actions { display: flex; justify-content: flex-end; padding-top: 2px; }
 
-.utility-bridge-card {
-  position: relative;
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding: 14px 14px 14px 18px;
-  border: 0;
-  border-radius: 12px;
-  background: var(--gold-50);
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
-  font-family: var(--font-ui);
-  overflow: hidden;
-}
-.utility-bridge-card::before {
-  content: "";
-  position: absolute;
-  top: 12px;
-  bottom: 12px;
-  left: 0;
-  width: 4px;
-  border-radius: 0 999px 999px 0;
-  background: linear-gradient(180deg, #fbbf24 0%, var(--gold-700) 100%);
-}
-.utility-bridge-card-head h2 { color: color-mix(in srgb, var(--gold-text) 36%, #334155); font-size: 14px; letter-spacing: normal; }
-.utility-bridge-card .section-copy { max-width: none; margin: 4px 0 0; color: color-mix(in srgb, var(--gold-text) 36%, #334155); font-size: 12px; line-height: 1.4; }
-.bridge-settings-status { display: grid; gap: 8px; }
-.bridge-settings-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.bridge-local-status { display: flex; align-items: center; gap: 8px; color: #1f2937; font-size: 13px; }
-.bridge-local-status .status-dot { width: 10px; height: 10px; background: #94a3b8; }
-.bridge-local-status .status-dot.hosting { background: var(--gold-700); }
-.bridge-local-status .status-dot.joined-macapp,
-.bridge-local-status .status-dot.joined-classifier { background: var(--cyan-700); }
-.bridge-local-status .status-dot.connecting,
-.bridge-local-status .status-dot.disconnected { background: var(--navy-600); }
-.bridge-address { margin: 0; color: color-mix(in srgb, var(--gold-text) 36%, #334155); font-size: 12px; }
-.bridge-address code { color: inherit; font-size: 12px; }
-.bridge-peer-copy { margin: 0; color: color-mix(in srgb, var(--gold-text) 36%, #334155); font-size: 12px; }
-.utility-bridge-card .small-copy { color: color-mix(in srgb, var(--gold-text) 36%, #334155); font-size: 12px; }
-.utility-bridge-card .bridge-settings-actions { margin-top: 0; }
-.utility-bridge-card .bridge-settings-actions button { min-width: 0; }
-
 @media (max-width: 620px) {
   .utility-popover-layer { padding: 12px; }
   .utility-panel { padding: 16px; }
   .utility-settings-fields { grid-template-columns: 1fr; }
   .utility-settings-fields .field:last-child { grid-column: auto; }
-  .utility-bridge-card { padding: 14px 14px 14px 18px; }
 }
 
 .classifier-type-workspace { gap: 14px; }
