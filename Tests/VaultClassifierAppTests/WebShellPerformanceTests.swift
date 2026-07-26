@@ -57,6 +57,7 @@ final class WebShellPerformanceTests: XCTestCase {
                 "description": NSNull(),
                 "parentID": NSNull(),
                 "retired": false,
+                "colorHex": "#1A4775",
                 "positionX": 100,
                 "positionY": 100,
             ]],
@@ -195,6 +196,19 @@ final class WebShellPerformanceTests: XCTestCase {
         let update = try XCTUnwrap(VaultClassifierWebShell.stateUpdateJavaScript(payload: populatedPayload(creatorCount: 120)))
         _ = try await evaluate(update, in: webView)
 
+        let treeTagStyleValue = try await evaluate(
+            """
+            (() => {
+              const node = document.querySelector('.tree-map-node');
+              const style = getComputedStyle(node);
+              return `${style.backgroundColor}|${style.borderRadius}|${style.color}`;
+            })();
+            """,
+            in: webView
+        )
+        let treeTagStyle = try XCTUnwrap(treeTagStyleValue as? String)
+        XCTAssertEqual(treeTagStyle, "rgb(26, 71, 117)|999px|rgb(255, 255, 255)")
+
         let settingsControls = try await evaluate(
             """
             document.querySelector('[data-action="openUtilityPanel"][data-utility-panel="settings"]').click();
@@ -236,7 +250,9 @@ final class WebShellPerformanceTests: XCTestCase {
               cards: document.querySelectorAll('.creator-tag-card').length,
               hasDeferredRows: Boolean(document.querySelector('[data-incremental-list]')),
               officialContentEvidenceCount: document.querySelector('[data-field="llmOfficialContentEvidenceCount"]')?.value || null,
-              hasNativeSearchOption: Boolean(document.querySelector('[data-field="llmWebSearchMode"] option[value="providerNative"]'))
+              hasNativeSearchOption: Boolean(document.querySelector('[data-field="llmWebSearchMode"] option[value="providerNative"]')),
+              tagPillColor: getComputedStyle(document.querySelector('.creator-tag-tab.tag-pill')).backgroundColor,
+              tagPillRadius: getComputedStyle(document.querySelector('.creator-tag-tab.tag-pill')).borderRadius
             });
             """,
             in: webView
@@ -251,6 +267,8 @@ final class WebShellPerformanceTests: XCTestCase {
         XCTAssertEqual(classifierJSON["hasDeferredRows"] as? Bool, true)
         XCTAssertEqual(classifierJSON["officialContentEvidenceCount"] as? String, "37")
         XCTAssertEqual(classifierJSON["hasNativeSearchOption"] as? Bool, false)
+        XCTAssertEqual(classifierJSON["tagPillColor"] as? String, "rgb(26, 71, 117)")
+        XCTAssertEqual(classifierJSON["tagPillRadius"] as? String, "999px")
         let initialCardCount = classifierJSON["cards"] as? Int ?? 0
         _ = try await evaluate(
             "document.querySelector('[data-incremental-list]').scrollIntoView({ block: 'center' });",

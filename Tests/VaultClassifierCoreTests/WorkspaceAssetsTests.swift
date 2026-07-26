@@ -133,19 +133,109 @@ final class WorkspaceAssetsTests: XCTestCase {
     }
 
     func testTagNodeCanvasPositionRoundTripsAndLegacyNodeDefaultsToUnplaced() throws {
-        let positioned = TagTreeNode(id: "topic", name: "Topic", description: "A focused local topic.", positionX: 184, positionY: 96)
+        let positioned = TagTreeNode(id: "topic", name: "Topic", description: "A focused local topic.", colorHex: "#1a2b3c", positionX: 184, positionY: 96)
         let restored = try JSONDecoder().decode(TagTreeNode.self, from: JSONEncoder().encode(positioned))
         XCTAssertEqual(restored.description, "A focused local topic.")
+        XCTAssertEqual(restored.colorHex, "#1A2B3C")
         XCTAssertEqual(restored.positionX, 184)
         XCTAssertEqual(restored.positionY, 96)
 
         let legacy = try JSONDecoder().decode(TagTreeNode.self, from: Data(#"{"id":"legacy","name":"Legacy","parentID":null,"isRetired":false}"#.utf8))
+        XCTAssertNil(legacy.colorHex)
         XCTAssertNil(legacy.positionX)
         XCTAssertNil(legacy.positionY)
         XCTAssertEqual(legacy.resolvedCanvasPosition(index: 1), .init(x: 178, y: 24))
 
         let origin = TagTreeNode(id: "origin", name: "Origin", positionX: 0, positionY: 0)
         XCTAssertEqual(origin.resolvedCanvasPosition(index: 8), .init(x: 0, y: 0))
+    }
+
+    func testTagColorsAreGeneratedWithoutAPresetAndRemainStableAcrossTreeEdits() throws {
+        var tree = TagTreeAsset(
+            id: "tree",
+            name: "Topics",
+            nodes: [
+                .init(id: "root", name: "All"),
+                .init(id: "games", name: "Games", parentID: "root"),
+                .init(id: "news", name: "News", parentID: "root"),
+                .init(id: "minecraft", name: "Minecraft", parentID: "games"),
+                .init(id: "strategy", name: "Strategy", parentID: "games"),
+                .init(id: "politics", name: "Politics", parentID: "news"),
+            ]
+        )
+
+        TagColorAssignment.assignMissingColors(in: &tree)
+        let firstAssignment = Dictionary(uniqueKeysWithValues: tree.nodes.map {
+            ($0.id, try! XCTUnwrap($0.colorHex))
+        })
+        XCTAssertEqual(Set(firstAssignment.values).count, tree.nodes.count)
+        XCTAssertTrue(firstAssignment.values.allSatisfy { TagColorAssignment.isValidHex($0) })
+        XCTAssertTrue(firstAssignment.values.allSatisfy { whiteContrast(hex: $0) >= 4.5 })
+        XCTAssertLessThanOrEqual(
+            circularHueDistance(firstAssignment["root"]!, firstAssignment["games"]!),
+            59
+        )
+        XCTAssertLessThanOrEqual(
+            circularHueDistance(firstAssignment["games"]!, firstAssignment["minecraft"]!),
+            43
+        )
+
+        tree.nodes.append(.init(id: "modded", name: "Modded", parentID: "games"))
+        TagColorAssignment.assignMissingColors(in: &tree)
+        for (tagID, colorHex) in firstAssignment {
+            XCTAssertEqual(tree.nodes.first(where: { $0.id == tagID })?.colorHex, colorHex)
+        }
+        XCTAssertNotNil(tree.nodes.first(where: { $0.id == "modded" })?.colorHex)
+
+        let restored = try JSONDecoder().decode(
+            TagTreeAsset.self,
+            from: JSONEncoder().encode(tree)
+        )
+        XCTAssertEqual(restored.nodes.map(\.colorHex), tree.nodes.map(\.colorHex))
+    }
+
+    private func whiteContrast(hex: String) -> Double {
+        let rgb = rgbComponents(hex)
+        func linear(_ component: Double) -> Double {
+            component <= 0.04045
+                ? component / 12.92
+                : pow((component + 0.055) / 1.055, 2.4)
+        }
+        let luminance = (0.2126 * linear(rgb.red))
+            + (0.7152 * linear(rgb.green))
+            + (0.0722 * linear(rgb.blue))
+        return 1.05 / (luminance + 0.05)
+    }
+
+    private func circularHueDistance(_ lhs: String, _ rhs: String) -> Double {
+        let distance = abs(hue(hex: lhs) - hue(hex: rhs))
+        return min(distance, 360 - distance)
+    }
+
+    private func hue(hex: String) -> Double {
+        let rgb = rgbComponents(hex)
+        let maximum = max(rgb.red, rgb.green, rgb.blue)
+        let minimum = min(rgb.red, rgb.green, rgb.blue)
+        let delta = maximum - minimum
+        guard delta > 0 else { return 0 }
+        let value: Double
+        if maximum == rgb.red {
+            value = 60 * (((rgb.green - rgb.blue) / delta).truncatingRemainder(dividingBy: 6))
+        } else if maximum == rgb.green {
+            value = 60 * (((rgb.blue - rgb.red) / delta) + 2)
+        } else {
+            value = 60 * (((rgb.red - rgb.green) / delta) + 4)
+        }
+        return value < 0 ? value + 360 : value
+    }
+
+    private func rgbComponents(_ hex: String) -> (red: Double, green: Double, blue: Double) {
+        let value = Int(hex.dropFirst(), radix: 16)!
+        return (
+            Double((value >> 16) & 0xff) / 255,
+            Double((value >> 8) & 0xff) / 255,
+            Double(value & 0xff) / 255
+        )
     }
 
     func testTagTreeInferencePreservesOptionalTagDescriptions() throws {

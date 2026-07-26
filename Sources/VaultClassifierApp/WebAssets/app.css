@@ -1530,3 +1530,140 @@ textarea:focus {
   background: #fff;
   box-shadow: none;
 }
+
+/* Persisted hierarchy colors are the single visual identity for every tag. */
+.tag-pill {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 240px;
+  min-height: 22px;
+  padding: 3px 9px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--tag-color);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .18);
+  font-size: 10.5px;
+  font-weight: 750;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.tag-pill.compact {
+  min-height: 18px;
+  padding: 1px 7px;
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.tag-pill-rail {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.computed-tag-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
+.tag-negative,
+.creator-decision-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.creator-tag-column-head h4 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.creator-tag-card-action .tag-pill {
+  margin-inline: 2px;
+  box-shadow: 0 1px 1px rgba(15, 23, 42, .16);
+}
+
+.creator-tag-tab.tag-pill,
+.creator-tag-tab.tag-pill:hover {
+  min-height: 27px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--tag-color);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .2);
+}
+
+.creator-tag-tab.tag-pill.active {
+  color: #fff;
+  background: var(--tag-color);
+  box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--navy-700);
+}
+
+.tree-map-node,
+.tree-map-node.primary,
+.tree-map-node.secondary,
+.tree-map-node.tertiary,
+.tree-map-node.quaternary {
+  width: 126px;
+  height: 22px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--tag-color);
+  box-shadow: 0 2px 5px rgba(15, 23, 42, .2);
+}
+
+.tree-map-node > span,
+.tree-map-node.primary > span,
+.tree-map-node.secondary > span,
+.tree-map-node.tertiary > span,
+.tree-map-node.quaternary > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .88);
+}
+
+.tree-map-node strong,
+.tree-map-node.primary strong,
+.tree-map-node.secondary strong,
+.tree-map-node.tertiary strong,
+.tree-map-node.quaternary strong {
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.tree-map-node:hover {
+  box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--navy-700);
+}
+
+.tree-map-node.active {
+  box-shadow: 0 0 0 2px #fff, 0 0 0 5px #b45309;
+}
+
+.tree-map-node.connection-source {
+  box-shadow: 0 0 0 2px #fff, 0 0 0 5px var(--cyan-700);
+}
+
+.tree-map-node.retired {
+  color: #fff;
+  background: var(--tag-color);
+  opacity: .55;
+}

@@ -12,18 +12,22 @@ public struct TagTreeNode: Codable, Equatable, Sendable, Identifiable {
     public var description: String?
     public var parentID: String?
     public var isRetired: Bool
+    /// Algorithmically assigned display color. It is persisted after its first
+    /// assignment so later tree edits never recolor an existing tag.
+    public var colorHex: String?
     /// A node's local canvas coordinates are presentation data, separate from
     /// its semantic parent relation and tree revision.
     public var positionX: Double?
     public var positionY: Double?
 
-    public init(id: String = UUID().uuidString, name: String, description: String? = nil, parentID: String? = nil, isRetired: Bool = false, positionX: Double? = nil, positionY: Double? = nil) {
+    public init(id: String = UUID().uuidString, name: String, description: String? = nil, parentID: String? = nil, isRetired: Bool = false, colorHex: String? = nil, positionX: Double? = nil, positionY: Double? = nil) {
         self.id = id
         self.name = name
         let cleanedDescription = description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.description = cleanedDescription.isEmpty ? nil : String(cleanedDescription.prefix(Self.maximumDescriptionLength))
         self.parentID = parentID
         self.isRetired = isRetired
+        self.colorHex = TagColorAssignment.normalizedHex(colorHex)
         self.positionX = positionX
         self.positionY = positionY
     }
@@ -1984,6 +1988,9 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     /// user-visible brain editable while never letting an old model decide for
     /// a changed tree or dataset.
     public mutating func reconcileClassifierTypes() {
+        for index in trees.indices {
+            TagColorAssignment.assignMissingColors(in: &trees[index])
+        }
         providerProfiles = providerProfiles.filter { (try? $0.validate()) != nil }
         models = models.compactMap { model in
             var reconciled = model
