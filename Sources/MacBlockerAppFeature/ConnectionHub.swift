@@ -14,6 +14,7 @@ final class ConnectionHub: ObservableObject {
     private static let maxMessageBytes = 1_048_576
     private static let maxClassifierBodyBytes = 88_000
     private static let maxClassifierRequests = 32
+    static let classifierRelayTimeoutSeconds = 30
     private static let remotePrograms = LocalHubAuthentication.browserPrograms.union(["classifier"])
     private static let browserPrograms = LocalHubAuthentication.browserPrograms
 
@@ -28,10 +29,16 @@ final class ConnectionHub: ObservableObject {
     /// A short-lived routed classifier call. The hub owns this correlation so a
     /// connected browser cannot select a response destination or impersonate a
     /// different peer on the shared localhost socket.
-    private struct ClassifierRequest {
+    struct ClassifierRequest {
         let sourcePeerID: String
         let classifierPeerID: String
         let operation: String
+    }
+
+    enum ClassifierResponseCorrelation: Equatable {
+        case matched
+        case expired
+        case mismatched
     }
 
     /// Process-wide hub. Owned at the app-delegate level (not by any SwiftUI
@@ -109,6 +116,27 @@ final class ConnectionHub: ObservableObject {
             return nil
         }
         return "invalid-classifier-response"
+    }
+
+    static func classifierResponseCorrelation(
+        pending: ClassifierRequest?,
+        classifierPeerID: String,
+        sourcePeerID: String,
+        operation: String
+    ) -> ClassifierResponseCorrelation {
+        guard let pending else { return .expired }
+        guard pending.classifierPeerID == classifierPeerID,
+              pending.sourcePeerID == sourcePeerID,
+              pending.operation == operation else {
+            return .mismatched
+        }
+        return .matched
+    }
+
+    static func isWebSocketClose(_ context: NWConnection.ContentContext?) -> Bool {
+        let metadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition)
+            as? NWProtocolWebSocket.Metadata
+        return metadata?.opcode == .close
     }
 
     private static func isVisibleBridgeIdentifier(_ value: String, maximumLength: Int) -> Bool {
@@ -454,8 +482,13 @@ final class ConnectionHub: ObservableObject {
     }
 
     private func receive(_ conn: NWConnection, key: ObjectIdentifier) {
-        conn.receiveMessage { [weak self] data, _, _, error in
+        conn.receiveMessage { [weak self] data, context, _, error in
             guard let self else { return }
+            if Self.isWebSocketClose(context) {
+                self.removePeer(key)
+                conn.cancel()
+                return
+            }
             if let data, !data.isEmpty {
                 if data.count > Self.maxMessageBytes {
                     conn.cancel()
@@ -633,7 +666,7 @@ final class ConnectionHub: ObservableObject {
             "operation": operation,
             "body": body,
         ])
-        queue.asyncAfter(deadline: .now() + 6) { [weak self] in
+        queue.asyncAfter(deadline: .now() + .seconds(Self.classifierRelayTimeoutSeconds)) { [weak self] in
             self?.expireClassifierRequest(requestID)
         }
     }
@@ -648,14 +681,32 @@ final class ConnectionHub: ObservableObject {
             return
         }
         lock.lock()
-        let classifier = peers[key]
-        guard let classifier,
-              let pending = classifierRequests[requestID],
-              pending.classifierPeerID == classifier.id,
-              pending.sourcePeerID == sourcePeerID,
-              pending.operation == operation else {
+        guard let classifier = peers[key] else {
             lock.unlock()
-            if let classifier { rejectAndClose(classifier.connection, reason: "unmatched-classifier-response") }
+            return
+        }
+        let pending = classifierRequests[requestID]
+        switch Self.classifierResponseCorrelation(
+            pending: pending,
+            classifierPeerID: classifier.id,
+            sourcePeerID: sourcePeerID,
+            operation: operation
+        ) {
+        case .expired:
+            // A structurally valid response may arrive after the bounded relay
+            // timeout. It no longer has a destination, but it is not a protocol
+            // violation and must not disconnect the authenticated classifier.
+            lock.unlock()
+            return
+        case .mismatched:
+            lock.unlock()
+            rejectAndClose(classifier.connection, reason: "unmatched-classifier-response")
+            return
+        case .matched:
+            break
+        }
+        guard let pending else {
+            lock.unlock()
             return
         }
         classifierRequests.removeValue(forKey: requestID)
@@ -695,14 +746,13 @@ final class ConnectionHub: ObservableObject {
         let removed = peers.removeValue(forKey: key)
         let program = removed?.program
         let removedPeerID = removed?.id
-        // If a browser disconnects, retain its in-flight route until the
-        // classifier replies or the six-second expiry fires. Otherwise that
-        // valid later reply would look unmatched and unnecessarily disconnect
-        // the classifier peer. A classifier disconnect, by contrast, fails
-        // every route it owns immediately.
+        // A closed browser no longer has a response destination, so release its
+        // routes immediately. A closed classifier also fails every route it
+        // owns and reports that failure to each browser that is still present.
         let affectedRequests = classifierRequests.filter { _, pending in
             guard let removedPeerID else { return false }
-            return pending.classifierPeerID == removedPeerID
+            return pending.sourcePeerID == removedPeerID
+                || pending.classifierPeerID == removedPeerID
         }
         for (requestID, _) in affectedRequests {
             classifierRequests.removeValue(forKey: requestID)
