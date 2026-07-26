@@ -82,11 +82,19 @@
       : ""
   );
 
+  function tagColorStyle(node) {
+    const lightColor = normalizedTagColor(node?.lightColorHex);
+    const darkColor = normalizedTagColor(node?.darkColorHex);
+    return lightColor && darkColor
+      ? `--tag-color-light:${lightColor};--tag-color-dark:${darkColor}`
+      : "";
+  }
+
   function tagPill(node, className = "") {
     if (!node) return "";
-    const color = normalizedTagColor(node.colorHex);
-    if (!color) return "";
-    return `<span class="tag-pill${className ? ` ${esc(className)}` : ""}" style="--tag-color:${color}">${esc(node.name)}</span>`;
+    const colorStyle = tagColorStyle(node);
+    if (!colorStyle) return "";
+    return `<span class="tag-pill${className ? ` ${esc(className)}` : ""}" style="${colorStyle}">${esc(node.name)}</span>`;
   }
 
   function tagPhrase(key, node) {
@@ -464,8 +472,8 @@
         const position = positions.get(node.id);
         const depth = depthFor(node);
         const tier = depth === 0 ? "primary" : depth === 1 ? "secondary" : depth === 2 ? "tertiary" : "quaternary";
-        const color = normalizedTagColor(node.colorHex);
-        return `<button class="tree-map-node ${tier}${panelState?.nodeID === node.id || selectedNodeID === node.id ? " active" : ""}${connectionState?.nodeID === node.id ? " connection-source" : ""}${node.retired ? " retired" : ""}" style="left:${position.x}px;top:${position.y}px;--tag-color:${color}" data-action="selectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(node.id)}" data-parent-id="${esc(node.parentID || "")}" data-position-x="${position.x}" data-position-y="${position.y}" title="${tx("tree.contextHint")}"><span aria-hidden="true"></span><strong>${esc(node.name)}</strong></button>`;
+        const colorStyle = tagColorStyle(node);
+        return `<button class="tree-map-node ${tier}${panelState?.nodeID === node.id || selectedNodeID === node.id ? " active" : ""}${connectionState?.nodeID === node.id ? " connection-source" : ""}${node.retired ? " retired" : ""}" style="left:${position.x}px;top:${position.y}px;${colorStyle}" data-action="selectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(node.id)}" data-parent-id="${esc(node.parentID || "")}" data-position-x="${position.x}" data-position-y="${position.y}" title="${tx("tree.contextHint")}"><span aria-hidden="true"></span><strong>${esc(node.name)}</strong></button>`;
       }).join("")}</div>${nodes.length ? "" : `<div class="tree-map-empty">${tx("tree.empty")}</div>`}${popover}</div></div>`;
       const treeActions = `<div class="tree-canvas-actions"><button class="secondary" data-action="renameTree" data-tree-id="${esc(tree.id)}">${tx("tree.rename")}</button><button class="danger" data-action="deleteTree" data-tree-id="${esc(tree.id)}">${tx("tree.delete")}</button><button class="secondary" data-action="rearrangeTree" data-tree-id="${esc(tree.id)}">${tx("tree.rearrange")}</button></div>`;
       return `<section class="tree-panel">${map}<div class="tree-canvas-hint"><span>${tx("tree.canvasHint")}</span>${treeActions}</div></section>`;
@@ -840,7 +848,7 @@
             return `<article class="creator-tag-card"><div class="creator-tag-card-profile">${avatar}<div><strong dir="auto">${esc(creator.name)}</strong><span>${esc(creator.platformName)}${creator.subscriberCount ? ` · ${tx("bridge.creatorSubscribers", { count: creator.subscriberCount })}` : ""}</span></div></div><div class="creator-tag-card-actions">${actions}</div></article>`;
           };
           const columns = columnData.map(([kind, titleKey, creators]) => `<section class="creator-tag-column"><div class="creator-tag-column-head"><h4>${kind === "needsDecision" ? tx(titleKey) : tagPhrase(titleKey, selectedCreatorTagNode)}</h4><span>${creators.length}</span></div><div class="creator-tag-column-list">${incrementalList(creators, (creator) => creatorCard(creator, kind), `<p class="creator-tag-empty">${esc(t("bridge.sourceTagEmpty", { sources: sourceTerms.plural }))}</p>`)}</div></section>`).join("");
-          return `<div class="creator-tag-browser"><nav class="creator-tag-navigation" aria-label="${tx("bridge.creatorTagNavigation")}" role="tablist">${leafTagOptions.map((node) => `<button class="creator-tag-tab tag-pill${selectedCreatorTagID === node.id ? " active" : ""}" style="--tag-color:${normalizedTagColor(node.colorHex)}" type="button" data-action="selectCreatorTag" data-type-id="${esc(classifierType.id)}" data-tag-id="${esc(node.id)}" role="tab" aria-selected="${selectedCreatorTagID === node.id}">${esc(node.name)}</button>`).join("")}</nav><div class="creator-tag-columns">${columns}</div></div>`;
+          return `<div class="creator-tag-browser"><nav class="creator-tag-navigation" aria-label="${tx("bridge.creatorTagNavigation")}" role="tablist">${leafTagOptions.map((node) => `<button class="creator-tag-tab tag-pill${selectedCreatorTagID === node.id ? " active" : ""}" style="${tagColorStyle(node)}" type="button" data-action="selectCreatorTag" data-type-id="${esc(classifierType.id)}" data-tag-id="${esc(node.id)}" role="tab" aria-selected="${selectedCreatorTagID === node.id}">${esc(node.name)}</button>`).join("")}</nav><div class="creator-tag-columns">${columns}</div></div>`;
         })()
         : `<div class="empty compact-empty">${!creatorRecords.length ? esc(t("bridge.noSources", { sources: sourceTerms.plural })) : tx("bridge.noCreatorTags")}</div>`;
       const tagNodeByID = new Map((selectedTree?.nodes || []).map((node) => [node.id, node]));

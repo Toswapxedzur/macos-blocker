@@ -12,22 +12,24 @@ public struct TagTreeNode: Codable, Equatable, Sendable, Identifiable {
     public var description: String?
     public var parentID: String?
     public var isRetired: Bool
-    /// Algorithmically assigned display color. It is persisted after its first
-    /// assignment so later tree edits never recolor an existing tag.
-    public var colorHex: String?
+    /// Algorithmically paired display colors. Both are persisted after their
+    /// first assignment so later tree edits never recolor an existing tag.
+    public var lightColorHex: String?
+    public var darkColorHex: String?
     /// A node's local canvas coordinates are presentation data, separate from
     /// its semantic parent relation and tree revision.
     public var positionX: Double?
     public var positionY: Double?
 
-    public init(id: String = UUID().uuidString, name: String, description: String? = nil, parentID: String? = nil, isRetired: Bool = false, colorHex: String? = nil, positionX: Double? = nil, positionY: Double? = nil) {
+    public init(id: String = UUID().uuidString, name: String, description: String? = nil, parentID: String? = nil, isRetired: Bool = false, lightColorHex: String? = nil, darkColorHex: String? = nil, positionX: Double? = nil, positionY: Double? = nil) {
         self.id = id
         self.name = name
         let cleanedDescription = description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.description = cleanedDescription.isEmpty ? nil : String(cleanedDescription.prefix(Self.maximumDescriptionLength))
         self.parentID = parentID
         self.isRetired = isRetired
-        self.colorHex = TagColorAssignment.normalizedHex(colorHex)
+        self.lightColorHex = TagColorAssignment.normalizedHex(lightColorHex)
+        self.darkColorHex = TagColorAssignment.normalizedHex(darkColorHex)
         self.positionX = positionX
         self.positionY = positionY
     }
