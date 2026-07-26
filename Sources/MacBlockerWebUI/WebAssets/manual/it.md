@@ -240,16 +240,15 @@ Revocare la cartella quando una regola non ne ha più bisogno. Una regola deve g
 
 ## 9. Ponte tra app Web
 
-Il bridge è una sincronizzazione locale opzionale tra programmi Vault compatibili. Un'app desktop nativa può ospitare l'hub locale; i client si connettono all'indirizzo locale supportato.
+Il trasporto Vault locale funziona automaticamente tra programmi compatibili. Quando si apre un’app desktop nativa, ospita o raggiunge l’hub locale senza un interruttore di connessione per l’utente.
 
-Gli stati di connessione sono Disattivato, Connessione in corso, Disconnesso, Connesso/In esecuzione ed Errore. Il collegamento di un programma non unisce tutti i gruppi. L'utente deve collegare in modo esplicito i gruppi corrispondenti idonei.
+Il trasporto automatico non unisce tutti i gruppi. L’utente deve comunque collegare e scollegare esplicitamente i gruppi compatibili idonei.
 
 Per un collegamento di gruppo:
 
-1. Avvia l'hub nativo in Impostazioni.
-2. Connetti l'altro endpoint Vault compatibile.
-3. Crea gruppi corrispondenti e sbloccati con lo stesso nome e tipo.
-4. Nella sezione Bridge di gruppo, scegli il programma e collega il gruppo.
+1. Aprire gli endpoint Vault compatibili; il trasporto si avvia automaticamente.
+2. Creare gruppi corrispondenti non congelati con lo stesso nome e tipo.
+3. Nella sezione del bridge di gruppo, scegliere il programma e collegare il gruppo.
 
 Un gruppo collegato forma un cluster. I valori dei criteri comuni supportati, l'utilizzo e lo stato di posticipazione possono essere sincronizzati mentre i membri sono connessi. La disconnessione sospende la sincronizzazione e preserva i gruppi locali. Non è garantito il trasferimento di target solo browser, azioni personalizzate non supportate e campi specifici della piattaforma.
 

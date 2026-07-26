@@ -240,16 +240,15 @@ Trek de map in wanneer een regel deze niet langer nodig heeft. Een regel moet ni
 
 ## 9. Web-app-bridge
 
-De bridge is optionele lokale synchronisatie tussen compatibele Vault-programma's. Een native desktop-app kan de lokale hub hosten; clients maken verbinding op het ondersteunde lokale adres.
+Lokaal Vault-transport werkt automatisch tussen compatibele programma’s. Wanneer een native desktop-app wordt geopend, host deze de lokale hub of neemt eraan deel zonder verbindingsschakelaar voor de gebruiker.
 
-Verbindingsstatussen zijn Uit, Bezig met verbinden, Verbinding verbroken, Verbonden/actief en Fout. Door een programma te koppelen worden niet alle groepen samengevoegd. De gebruiker moet in aanmerking komende overeenkomende groepen expliciet koppelen.
+Automatisch transport voegt niet elke groep samen. De gebruiker moet geschikte overeenkomende groepen nog steeds expliciet koppelen en ontkoppelen.
 
 Voor een groepslink:
 
-1. Start de native hub in Instellingen.
-2. Verbind het andere compatibele Vault-eindpunt.
-3. Maak bijpassende, niet-bevroren groepen met dezelfde naam en hetzelfde type.
-4. Kies in het gedeelte Groepsbrug het programma en verbind de groep.
+1. Open de compatibele Vault-eindpunten; het transport start automatisch.
+2. Maak overeenkomende, niet-bevroren groepen met dezelfde naam en hetzelfde type.
+3. Kies in het groepsbruggedeelte het programma en koppel de groep.
 
 Een gekoppelde groep vormt een cluster. Ondersteunde algemene beleidswaarden, gebruik en snooze-status kunnen worden gesynchroniseerd terwijl leden verbonden zijn. Als u de verbinding verbreekt, wordt de synchronisatie onderbroken en blijven lokale groepen behouden. Het is niet gegarandeerd dat browserdoelen, niet-ondersteunde aangepaste acties en platformspecifieke velden worden overgedragen.
 

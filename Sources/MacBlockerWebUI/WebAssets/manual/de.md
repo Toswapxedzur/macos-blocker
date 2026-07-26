@@ -240,16 +240,15 @@ Sperren Sie den Ordner, wenn eine Regel ihn nicht mehr benötigt. Eine Regel mus
 
 ## 9. Web-App-Brücke
 
-Die Brücke ist eine optionale lokale Synchronisierung zwischen kompatiblen Vault-Programmen. Eine native Desktop-App kann den lokalen Hub hosten; Clients stellen eine Verbindung über die unterstützte lokale Adresse her.
+Der lokale Vault-Transport läuft automatisch zwischen kompatiblen Programmen. Eine geöffnete native Desktop-App hostet den lokalen Hub oder tritt ihm ohne Verbindungsschalter bei.
 
-Die Verbindungsstatus sind „Aus“, „Verbindung wird hergestellt“, „Getrennt“, „Verbunden/Wird ausgeführt“ und „Fehler“. Durch das Verbinden eines Programms werden nicht alle Gruppen zusammengeführt. Der Benutzer muss berechtigte Matching-Gruppen explizit verknüpfen.
+Der automatische Transport führt nicht alle Gruppen zusammen. Berechtigte, passende Gruppen müssen weiterhin ausdrücklich verknüpft und getrennt werden.
 
 Für einen Gruppenlink:
 
-1. Starten Sie den nativen Hub in den Einstellungen.
-2. Verbinden Sie den anderen kompatiblen Vault-Endpunkt.
-3. Erstellen Sie passende, nicht eingefrorene Gruppen mit demselben Namen und Typ.
-4. Wählen Sie im Abschnitt „Gruppenbrücke“ das Programm aus und verbinden Sie die Gruppe.
+1. Öffnen Sie die kompatiblen Vault-Endpunkte; der Transport startet automatisch.
+2. Erstellen Sie passende, nicht eingefrorene Gruppen mit demselben Namen und Typ.
+3. Wählen Sie im Gruppenbrücken-Abschnitt das Programm und verknüpfen Sie die Gruppe.
 
 Eine verknüpfte Gruppe bildet einen Cluster. Unterstützte allgemeine Richtlinienwerte, Nutzung und Schlummerstatus können synchronisiert werden, während Mitglieder verbunden sind. Durch das Trennen der Verbindung wird die Synchronisierung angehalten und lokale Gruppen bleiben erhalten. Bei Nur-Browser-Zielen, nicht unterstützten benutzerdefinierten Aktionen und plattformspezifischen Feldern kann die Übertragung nicht garantiert werden.
 

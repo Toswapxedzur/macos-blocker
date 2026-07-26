@@ -240,16 +240,15 @@ Revogue a pasta quando uma regra não precisar mais dela. Uma regra deve lidar c
 
 ## 9. Ponte de aplicativo da Web
 
-A ponte é uma sincronização local opcional entre programas Vault compatíveis. Um aplicativo de desktop nativo pode hospedar o hub local; os clientes se conectam no endereço local suportado.
+O transporte local do Vault funciona automaticamente entre programas compatíveis. Quando um aplicativo de desktop nativo é aberto, ele hospeda ou entra no hub local sem um controle de conexão para o usuário.
 
-Os estados de conexão são Desligado, Conectando, Desconectado, Conectado/Em execução e Erro. Conectar um programa não mescla todos os grupos. O usuário deve vincular explicitamente os grupos correspondentes qualificados.
+O transporte automático não mescla todos os grupos. O usuário ainda deve vincular e desvincular explicitamente grupos correspondentes qualificados.
 
 Para um link de grupo:
 
-1. Inicie o hub nativo em Configurações.
-2. Conecte o outro endpoint compatível do Vault.
-3. Crie grupos descongelados correspondentes com o mesmo nome e tipo.
-4. Na seção de ponte de grupo, escolha o programa e conecte o grupo.
+1. Abra os endpoints Vault compatíveis; o transporte inicia automaticamente.
+2. Crie grupos correspondentes e não congelados com o mesmo nome e tipo.
+3. Na seção de ponte de grupo, escolha o programa e vincule o grupo.
 
 Um grupo vinculado forma um cluster. Os valores de política comum suportados, o uso e o estado de suspensão podem ser sincronizados enquanto os membros estão conectados. A desconexão pausa a sincronização e preserva os grupos locais. Não há garantia de transferência de destinos somente de navegador, ações personalizadas não suportadas e campos específicos da plataforma.
 

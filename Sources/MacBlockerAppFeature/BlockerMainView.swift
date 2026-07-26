@@ -13,8 +13,8 @@ public struct BlockerMainView: View {
     #if os(macOS)
     @StateObject private var permission = AppBlockingPermissionModel()
     // The hub is owned at the app-delegate (process) level, not by this view, so
-    // it outlives any single editor window. The view only reads its status and
-    // drives the user-initiated start/stop toggle.
+    // it outlives any single editor window. The view only reads its status for
+    // contextual per-group availability.
     private let connection = ConnectionHub.shared
     #endif
 
@@ -48,8 +48,6 @@ public struct BlockerMainView: View {
             onRequestAppBlockingPermission: { [weak permission] in permission?.requestGrant() },
             onOpenPermissionSettings: { [weak permission] in permission?.openSettings() },
             connectionStatusJSON: { [weak connection] in connection?.currentStatusJSON() },
-            onConnectionConnect: { [weak connection] in connection?.start() },
-            onConnectionDisconnect: { [weak connection] in connection?.stop() },
             clustersJSON: { [weak connection] in connection?.clustersJSON() },
             groupRejectionJSON: { [weak connection] in connection?.takeLocalRejectionJSON() },
             onGroupsAnnounce: { [weak connection] json in connection?.announceFromBridge(json: json) },

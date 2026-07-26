@@ -240,16 +240,15 @@ Odwołaj folder, gdy reguła już go nie potrzebuje. Reguła musi obsługiwać n
 
 ## 9. Mostek z aplikacją internetową
 
-Mostek umożliwia opcjonalną lokalną synchronizację pomiędzy kompatybilnymi programami Vault. Natywna aplikacja komputerowa może hostować centrum lokalne; klienci łączą się pod obsługiwanym adresem lokalnym.
+Lokalny transport Vault działa automatycznie między zgodnymi programami. Po otwarciu natywna aplikacja komputerowa hostuje lokalny koncentrator lub do niego dołącza bez przełącznika połączenia użytkownika.
 
-Stany połączenia to: Wyłączone, Łączenie, Rozłączone, Połączono/Uruchomione i Błąd. Podłączenie programu nie powoduje połączenia wszystkich grup. Użytkownik musi jawnie połączyć kwalifikujące się grupy pasujące.
+Automatyczny transport nie scala wszystkich grup. Użytkownik nadal musi jawnie łączyć i rozłączać kwalifikujące się grupy pasujące.
 
 Aby uzyskać link do grupy:
 
-1. Uruchom natywny koncentrator w Ustawieniach.
-2. Podłącz inny zgodny punkt końcowy Vault.
-3. Utwórz pasujące, niezamrożone grupy o tej samej nazwie i typie.
-4. W sekcji pomostu grupowego wybierz program i połącz grupę.
+1. Otwórz zgodne punkty końcowe Vault; transport uruchomi się automatycznie.
+2. Utwórz pasujące, niezamrożone grupy o tej samej nazwie i typie.
+3. W sekcji mostka grupowego wybierz program i połącz grupę.
 
 Połączona grupa tworzy klaster. Obsługiwane wspólne wartości zasad, użycie i stan drzemki mogą być synchronizowane, gdy członkowie są połączeni. Odłączenie wstrzymuje synchronizację i zachowuje grupy lokalne. Nie gwarantujemy przeniesienia elementów docelowych dostępnych tylko w przeglądarce, nieobsługiwanych działań niestandardowych i pól specyficznych dla platformy.
 

@@ -240,16 +240,15 @@ Révoquez le dossier lorsqu'une règle n'en a plus besoin. Une règle doit gére
 
 ## 9. Pont d'application Web
 
-Le pont est une synchronisation locale facultative entre les programmes Vault compatibles. Une application de bureau native peut héberger le hub local ; les clients se connectent à l'adresse locale prise en charge.
+Le transport Vault local fonctionne automatiquement entre les programmes compatibles. À son ouverture, une application de bureau native héberge ou rejoint le hub local sans interrupteur de connexion utilisateur.
 
-Les états de connexion sont Désactivé, En cours de connexion, Déconnecté, Connecté/En cours d'exécution et Erreur. La connexion d'un programme ne fusionne pas tous les groupes. L'utilisateur doit lier explicitement les groupes correspondants éligibles.
+Le transport automatique ne fusionne pas tous les groupes. L’utilisateur doit toujours lier et séparer explicitement les groupes correspondants éligibles.
 
 Pour un lien de groupe :
 
-1. Démarrez le hub natif dans Paramètres.
-2. Connectez l'autre point de terminaison Vault compatible.
-3. Créez des groupes correspondants et non gelés avec le même nom et le même type.
-4. Dans la section Pont de groupe, choisissez le programme et connectez le groupe.
+1. Ouvrez les points de terminaison Vault compatibles ; le transport démarre automatiquement.
+2. Créez des groupes correspondants non gelés portant le même nom et le même type.
+3. Dans la section du pont de groupe, choisissez le programme et liez le groupe.
 
 Un groupe lié forme un cluster. Les valeurs de stratégie communes prises en charge, l'utilisation et l'état de répétition peuvent être synchronisés lorsque les membres sont connectés. La déconnexion interrompt la synchronisation et préserve les groupes locaux. Le transfert des cibles réservées au navigateur, des actions personnalisées non prises en charge et des champs spécifiques à la plate-forme n'est pas garanti.
 

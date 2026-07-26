@@ -240,16 +240,15 @@ Bir kuralın artık ona ihtiyacı kalmadığında klasörü iptal edin. Bir kura
 
 ## 9. Web uygulaması köprüsü
 
-Köprü, uyumlu Vault programları arasında isteğe bağlı yerel senkronizasyondur. Yerel bir masaüstü uygulaması yerel merkezi barındırabilir; istemciler desteklenen yerel adrese bağlanır.
+Yerel Vault aktarımı uyumlu programlar arasında otomatik çalışır. Yerel masaüstü uygulaması açıldığında kullanıcı bağlantı anahtarı olmadan yerel hub’ı barındırır veya ona katılır.
 
-Bağlantı durumları Kapalı, Bağlanıyor, Bağlantı Kesildi, Bağlandı/Çalışıyor ve Hata'dır. Bir programın bağlanması tüm grupları birleştirmez. Kullanıcının uygun eşleşen grupları açıkça bağlaması gerekir.
+Otomatik aktarım her grubu birleştirmez. Kullanıcının uygun eşleşen grupları yine açıkça bağlaması ve ayırması gerekir.
 
 Grup bağlantısı için:
 
-1. Ayarlar'da yerel hub'ı başlatın.
-2. Diğer uyumlu Vault uç noktasını bağlayın.
-3. Aynı ad ve türde eşleşen, dondurulmamış gruplar oluşturun.
-4. Grup köprüsü bölümünde programı seçin ve grubu bağlayın.
+1. Uyumlu Vault uç noktalarını açın; aktarım otomatik başlar.
+2. Aynı ad ve türde eşleşen, dondurulmamış gruplar oluşturun.
+3. Grup köprüsü bölümünde programı seçin ve grubu bağlayın.
 
 Bağlantılı bir grup bir küme oluşturur. Desteklenen ortak politika değerleri, kullanım ve erteleme durumu, üyeler bağlıyken senkronize edilebilir. Bağlantının kesilmesi senkronizasyonu duraklatır ve yerel grupları korur. Yalnızca tarayıcıya özgü hedeflerin, desteklenmeyen Özel eylemlerin ve platforma özgü alanların aktarılacağı garanti edilmez.
 

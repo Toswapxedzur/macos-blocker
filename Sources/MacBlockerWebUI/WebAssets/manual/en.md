@@ -240,16 +240,15 @@ Revoke the folder when a rule no longer needs it. A rule must handle unavailable
 
 ## 9. Web-app bridge
 
-The bridge is optional local synchronization between compatible Vault programs. A native desktop app can host the local hub; clients connect on the supported local address.
+Local Vault transport runs automatically between compatible programs. When a native desktop app opens, it hosts or joins the local hub without a user connection switch.
 
-Connection states are Off, Connecting, Disconnected, Connected/Running, and Error. Connecting a program does not merge all groups. The user must explicitly link eligible matching groups.
+Automatic transport does not merge every group. The user must still explicitly link and unlink eligible matching groups.
 
 For a group link:
 
-1. Start the native hub in Settings.
-2. Connect the other compatible Vault endpoint.
-3. Create matching, unfrozen groups with the same name and type.
-4. In the group bridge section, choose the program and connect the group.
+1. Open the compatible Vault endpoints; transport starts automatically.
+2. Create matching, unfrozen groups with the same name and type.
+3. In the group bridge section, choose the program and link the group.
 
 A linked group forms a cluster. Supported common policy values, usage, and snooze state can synchronize while members are connected. Disconnecting pauses synchronization and preserves local groups. Browser-only targets, unsupported Custom actions, and platform-specific fields are not guaranteed to transfer.
 
