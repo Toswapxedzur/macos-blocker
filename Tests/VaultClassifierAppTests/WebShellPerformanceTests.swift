@@ -287,6 +287,7 @@ final class WebShellPerformanceTests: XCTestCase {
             document.querySelector('[data-action="workspace"][data-workspace="classificationData"]').click();
             JSON.stringify({
               workspace: document.querySelector('[data-editor-panel]').dataset.workspace,
+              creatorListOpen: document.querySelector('.collection-creators').open,
               creators: document.querySelectorAll('.collection-creator').length,
               entries: document.querySelectorAll('.collection-entry').length,
               hasDeferredRows: Boolean(document.querySelector('[data-incremental-list]'))
@@ -299,13 +300,28 @@ final class WebShellPerformanceTests: XCTestCase {
             JSONSerialization.jsonObject(with: Data(dataResult.utf8)) as? [String: Any]
         )
         XCTAssertEqual(dataJSON["workspace"] as? String, "classificationData")
+        XCTAssertEqual(dataJSON["creatorListOpen"] as? Bool, true)
         XCTAssertGreaterThan(dataJSON["creators"] as? Int ?? 0, 0)
         XCTAssertLessThan(dataJSON["creators"] as? Int ?? .max, 120)
         XCTAssertEqual(dataJSON["entries"] as? Int, 0)
         XCTAssertEqual(dataJSON["hasDeferredRows"] as? Bool, true)
 
+        let collapsedCreatorListValue = try await evaluate(
+            """
+            const creatorList = document.querySelector('.collection-creators');
+            creatorList.open = false;
+            creatorList.dispatchEvent(new Event('toggle'));
+            document.querySelector('[data-action="workspace"][data-workspace="browserBridge"]').click();
+            document.querySelector('[data-action="workspace"][data-workspace="classificationData"]').click();
+            document.querySelector('.collection-creators').open;
+            """,
+            in: webView
+        )
+        XCTAssertEqual(collapsedCreatorListValue as? Bool, false)
+
         let expandedEntryValue = try await evaluate(
             """
+            document.querySelector('.collection-creators').open = true;
             const creator = document.querySelector('.collection-creator');
             creator.open = true;
             creator.dispatchEvent(new Event('toggle'));
