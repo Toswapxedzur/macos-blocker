@@ -1237,12 +1237,21 @@
     root.innerHTML = state ? shell(workspace()) : `<div class="popup"><div class="empty">${tx("app.loading")}</div></div>`;
     applyApplicablePlatformCapabilities();
     observeIncrementalLists();
+    bindTreeMapWheel();
     window.requestAnimationFrame(() => {
       applyNavigationPanelWidth();
       restoreEditorViewportPosition();
       restoreTreeViewportPositions();
       drawTreeConnections();
       traceTreeLayout();
+    });
+  }
+
+  // Attach the non-passive tree-map wheel handler only to the tree canvases in
+  // the freshly rendered DOM, leaving every other scroll container passive.
+  function bindTreeMapWheel() {
+    root.querySelectorAll("[data-tree-map]").forEach((map) => {
+      map.addEventListener("wheel", handleTreeMapWheel, { passive: false });
     });
   }
 
@@ -1571,11 +1580,14 @@
     try { window.localStorage.setItem(navigationWidthStorageKey, String(navigationPanelWidth)); } catch (_) {}
   });
 
-  // Mirror the Tags canvas: keep a two-axis trackpad gesture inside the
-  // tree viewport instead of letting the surrounding editor consume it.
-  document.addEventListener("wheel", (event) => {
-    const map = event.target.closest("[data-tree-map]");
-    if (!map || event.ctrlKey || event.metaKey) return;
+  // Mirror the Tags canvas: keep a two-axis trackpad gesture inside the tree
+  // viewport instead of letting the surrounding editor consume it. Bound per
+  // tree map (see bindTreeMapWheel) rather than on document — a non-passive
+  // wheel listener on document forces every scroll on the page onto the main
+  // thread, so unrelated re-renders showed up as scroll stutter in long lists.
+  function handleTreeMapWheel(event) {
+    if (event.ctrlKey || event.metaKey) return;
+    const map = event.currentTarget;
     const horizontal = event.shiftKey && event.deltaX === 0 ? event.deltaY : event.deltaX;
     const vertical = event.shiftKey && event.deltaX === 0 ? 0 : event.deltaY;
     const startX = map.scrollLeft;
@@ -1584,7 +1596,7 @@
     map.scrollTop += vertical;
     if (map.scrollLeft !== startX || map.scrollTop !== startY) event.preventDefault();
     event.stopPropagation();
-  }, { passive: false });
+  }
 
   document.addEventListener("contextmenu", (event) => {
     const map = event.target.closest("[data-tree-map]");
