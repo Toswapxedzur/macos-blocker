@@ -313,7 +313,7 @@ h3 { font-size: 13px; }
 .collection-master-detail {
   display: flex;
   gap: 12px;
-  align-items: stretch;
+  align-items: flex-start;
   padding-top: 8px;
 }
 
@@ -347,7 +347,27 @@ h3 { font-size: 13px; }
 
 .collection-detail-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .collection-detail-count { margin-left: auto; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .04em; }
-.collection-detail-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.collection-detail .virtual-list { flex: 1; min-height: 0; max-height: none; border: 0; border-radius: 0; background: transparent; }
+
+.collection-detail-entry {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  height: 96px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(148, 163, 184, .17);
+  overflow: hidden;
+}
+.collection-detail-evidence {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
 
 .virtual-list {
   position: relative;
