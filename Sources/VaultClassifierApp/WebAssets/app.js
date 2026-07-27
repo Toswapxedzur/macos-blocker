@@ -949,13 +949,18 @@
       const creators = new Map();
       entries.forEach((entry) => {
         const creatorID = entry.creatorID || "unknown";
-        const group = creators.get(creatorID) || { id: creatorID, name: entry.creatorName || creatorID, entries: [], latestObservedAtMilliseconds: 0 };
+        const group = creators.get(creatorID) || { id: creatorID, name: entry.creatorName || creatorID, entries: [], firstObservedAtMilliseconds: Number.POSITIVE_INFINITY, latestObservedAtMilliseconds: 0 };
         group.entries.push(entry);
+        const firstObserved = Number(entry.firstObservedAtMilliseconds) || Number(entry.lastObservedAtMilliseconds) || 0;
+        group.firstObservedAtMilliseconds = Math.min(group.firstObservedAtMilliseconds, firstObserved);
         group.latestObservedAtMilliseconds = Math.max(group.latestObservedAtMilliseconds, Number(entry.lastObservedAtMilliseconds) || 0);
         creators.set(creatorID, group);
       });
+      // Stable order: a creator keeps its slot by when it was first seen, so a
+      // newly collected creator appends at the end and re-observing an existing
+      // one never reshuffles the rows above it.
       const creatorRows = [...creators.values()]
-        .sort((lhs, rhs) => rhs.latestObservedAtMilliseconds - lhs.latestObservedAtMilliseconds);
+        .sort((lhs, rhs) => (lhs.firstObservedAtMilliseconds - rhs.firstObservedAtMilliseconds) || String(lhs.id).localeCompare(String(rhs.id)));
       const creatorRow = (creator) => {
         const creatorEntries = [...creator.entries].sort((lhs, rhs) => (Number(rhs.lastObservedAtMilliseconds) || 0) - (Number(lhs.lastObservedAtMilliseconds) || 0));
         const avatarURL = creatorEntries.find((entry) => typeof entry.cachedSourceIconURL === "string")?.cachedSourceIconURL || "";
