@@ -41,17 +41,21 @@
   const selectedCreatorTagByType = new Map();
   const selectedLLMProfileByType = new Map();
   const collapsedCollectionCreatorLists = new Set();
+  const selectedCollectionCreatorByPlatform = new Map();
   let utilityPanel = null;
   let selectedLanguage = "en";
   let navigationPanelWidth = navigationWidthRange.fallback;
   let navigationResize = null;
   const incrementalPageSize = 40;
+  const collectionRowHeight = 48;
   const workspaceNames = new Set(["tagTree", "localModel", "llmAssist", "browserBridge", "classificationData"]);
   const incrementalLists = new Map();
-  const deferredCreatorEntries = new Map();
+  const virtualLists = new Map();
+  const virtualListScrollByKey = new Map();
   let incrementalListSequence = 0;
-  let deferredCreatorEntrySequence = 0;
+  let virtualListSequence = 0;
   let incrementalListObserver = null;
+  let virtualListResizeObserver = null;
 
   try {
     const storedLanguage = window.localStorage.getItem("vaultClassifier.language");
@@ -159,10 +163,11 @@
 
   function resetDeferredRendering() {
     incrementalListObserver?.disconnect();
+    virtualListResizeObserver?.disconnect();
     incrementalLists.clear();
-    deferredCreatorEntries.clear();
+    virtualLists.clear();
     incrementalListSequence = 0;
-    deferredCreatorEntrySequence = 0;
+    virtualListSequence = 0;
   }
 
   function incrementalList(items, renderItem, emptyMarkup = "") {
@@ -216,6 +221,60 @@
       });
     }, { rootMargin: "1200px 0px" });
     sentinels.forEach((sentinel) => incrementalListObserver.observe(sentinel));
+  }
+
+  // Windowed list: renders only the rows in (or near) the visible box, so DOM
+  // and paint cost stay constant regardless of total row count. Rows must be a
+  // single fixed height (rowHeight). A stable `key` preserves scroll position
+  // across full re-renders.
+  function virtualList(items, rowHeight, renderRow, { key = "", emptyMarkup = "" } = {}) {
+    if (!items.length) return emptyMarkup;
+    const id = `virtual-list-${virtualListSequence += 1}`;
+    virtualLists.set(id, { items, rowHeight, renderRow, key });
+    const totalHeight = items.length * rowHeight;
+    return `<div class="virtual-list" data-virtual-list="${id}"${key ? ` data-virtual-key="${esc(key)}"` : ""}><div class="virtual-list-sizer" style="height:${totalHeight}px"><div class="virtual-list-window" data-virtual-window></div></div></div>`;
+  }
+
+  function paintVirtualList(container) {
+    const state = virtualLists.get(container.dataset.virtualList);
+    const win = container.querySelector("[data-virtual-window]");
+    if (!state || !win) return;
+    const { items, rowHeight, renderRow, key } = state;
+    const scrollTop = container.scrollTop;
+    const clientHeight = container.clientHeight || rowHeight * 8;
+    const buffer = 4;
+    const start = Math.max(0, Math.floor(scrollTop / rowHeight) - buffer);
+    const visibleCount = Math.ceil(clientHeight / rowHeight) + buffer * 2;
+    const end = Math.min(items.length, start + visibleCount);
+    win.style.transform = `translateY(${start * rowHeight}px)`;
+    win.innerHTML = items.slice(start, end).map(renderRow).join("");
+    if (key) virtualListScrollByKey.set(key, scrollTop);
+  }
+
+  function scheduleVirtualPaint(container) {
+    if (container.dataset.vlScheduled === "true") return;
+    container.dataset.vlScheduled = "true";
+    window.requestAnimationFrame(() => {
+      container.dataset.vlScheduled = "false";
+      paintVirtualList(container);
+    });
+  }
+
+  function setupVirtualLists() {
+    const containers = root.querySelectorAll("[data-virtual-list]");
+    if (!containers.length) return;
+    if (!virtualListResizeObserver && "ResizeObserver" in window) {
+      virtualListResizeObserver = new ResizeObserver((entries) => {
+        entries.forEach((entry) => scheduleVirtualPaint(entry.target));
+      });
+    }
+    containers.forEach((container) => {
+      container.addEventListener("scroll", () => scheduleVirtualPaint(container), { passive: true });
+      const key = container.dataset.virtualKey;
+      if (key && virtualListScrollByKey.has(key)) container.scrollTop = virtualListScrollByKey.get(key);
+      paintVirtualList(container);
+      virtualListResizeObserver?.observe(container);
+    });
   }
 
   function field(labelKey, hintKey, key, value, type = "text", extra = "") {
@@ -964,40 +1023,53 @@
       // one never reshuffles the rows above it.
       const creatorRows = [...creators.values()]
         .sort((lhs, rhs) => (lhs.firstObservedAtMilliseconds - rhs.firstObservedAtMilliseconds) || String(lhs.id).localeCompare(String(rhs.id)));
-      const creatorRow = (creator) => {
-        const creatorEntries = [...creator.entries].sort((lhs, rhs) => (Number(rhs.lastObservedAtMilliseconds) || 0) - (Number(lhs.lastObservedAtMilliseconds) || 0));
-        const avatarURL = creatorEntries.find((entry) => typeof entry.cachedSourceIconURL === "string")?.cachedSourceIconURL || "";
-        const avatar = avatarURL ? `<img class="collection-creator-avatar" src="${esc(avatarURL)}" alt="" aria-hidden="true" loading="lazy" decoding="async">` : "";
-        const entryListID = `deferred-creator-entries-${deferredCreatorEntrySequence += 1}`;
-        deferredCreatorEntries.set(entryListID, {
-          entries: creatorEntries,
-          renderEntry: (entry) => {
-            const attributes = Object.entries(entry.attributes || {})
-              .map(([key, value]) => `${esc(collectionAttributeLabel(key))}: ${esc(value)}`)
-              .join(" · ");
-            const tags = Array.isArray(entry.suppliedTags) && entry.suppliedTags.length
-              ? `<span class="collection-entry-tags">${entry.suppliedTags.map((tag) => `<span>${esc(tag)}</span>`).join("")}</span>`
-              : "";
-            const summary = typeof entry.summary === "string" && entry.summary
-              ? `<p class="collection-entry-evidence" dir="auto">${esc(entry.summary)}</p>`
-              : "";
-            const text = typeof entry.text === "string" && entry.text && entry.text !== entry.summary
-              ? `<p class="collection-entry-evidence" dir="auto">${esc(entry.text)}</p>`
-              : "";
-            const canonicalURL = typeof entry.canonicalURL === "string" && entry.canonicalURL
-              ? `<span class="collection-entry-url">${esc(entry.canonicalURL)}</span>`
-              : "";
-            const entryMeta = `${esc(entry.surface || "feed")} · ${esc(entry.entryType)} · ${observedAt(entry.lastObservedAtMilliseconds)}`;
-            const detail = [summary, text, tags, attributes ? `<span class="collection-entry-attributes">${attributes}</span>` : "", canonicalURL].filter(Boolean).join("");
-            if (!detail) {
-              return `<div class="collection-entry"><span class="collection-entry-title" dir="auto">${esc(entry.title)}</span><span class="collection-entry-meta">${entryMeta}</span></div>`;
-            }
-            return `<details class="collection-entry"><summary><span class="collection-entry-title" dir="auto">${esc(entry.title)}</span><span class="collection-entry-meta">${entryMeta}</span></summary><div class="collection-entry-detail">${detail}</div></details>`;
-          },
-        });
-        return `<details class="collection-creator" data-deferred-creator-entries="${entryListID}"><summary>${avatar}<span class="collection-creator-name" dir="auto">${esc(creator.name)}</span><span class="collection-creator-count">${tx("data.entryCount", { count: creatorEntries.length })}</span></summary><div class="collection-entry-list"></div></details>`;
+      const renderEntry = (entry) => {
+        const attributes = Object.entries(entry.attributes || {})
+          .map(([key, value]) => `${esc(collectionAttributeLabel(key))}: ${esc(value)}`)
+          .join(" · ");
+        const tags = Array.isArray(entry.suppliedTags) && entry.suppliedTags.length
+          ? `<span class="collection-entry-tags">${entry.suppliedTags.map((tag) => `<span>${esc(tag)}</span>`).join("")}</span>`
+          : "";
+        const summary = typeof entry.summary === "string" && entry.summary
+          ? `<p class="collection-entry-evidence" dir="auto">${esc(entry.summary)}</p>`
+          : "";
+        const text = typeof entry.text === "string" && entry.text && entry.text !== entry.summary
+          ? `<p class="collection-entry-evidence" dir="auto">${esc(entry.text)}</p>`
+          : "";
+        const canonicalURL = typeof entry.canonicalURL === "string" && entry.canonicalURL
+          ? `<span class="collection-entry-url">${esc(entry.canonicalURL)}</span>`
+          : "";
+        const entryMeta = `${esc(entry.surface || "feed")} · ${esc(entry.entryType)} · ${observedAt(entry.lastObservedAtMilliseconds)}`;
+        const detail = [summary, text, tags, attributes ? `<span class="collection-entry-attributes">${attributes}</span>` : "", canonicalURL].filter(Boolean).join("");
+        if (!detail) {
+          return `<div class="collection-entry"><span class="collection-entry-title" dir="auto">${esc(entry.title)}</span><span class="collection-entry-meta">${entryMeta}</span></div>`;
+        }
+        return `<details class="collection-entry"><summary><span class="collection-entry-title" dir="auto">${esc(entry.title)}</span><span class="collection-entry-meta">${entryMeta}</span></summary><div class="collection-entry-detail">${detail}</div></details>`;
       };
-      const creatorList = incrementalList(creatorRows, creatorRow);
+      // Keep the selected source stable across re-renders; fall back to the
+      // first source so the detail pane is never empty when sources exist.
+      let selectedCreatorID = selectedCollectionCreatorByPlatform.get(binding.id);
+      if (!creators.has(selectedCreatorID)) {
+        selectedCreatorID = creatorRows[0]?.id || "";
+        if (selectedCreatorID) selectedCollectionCreatorByPlatform.set(binding.id, selectedCreatorID);
+        else selectedCollectionCreatorByPlatform.delete(binding.id);
+      }
+      const creatorRow = (creator) => {
+        const avatarURL = creator.entries.find((entry) => typeof entry.cachedSourceIconURL === "string")?.cachedSourceIconURL || "";
+        const avatar = avatarURL
+          ? `<img class="collection-creator-avatar" src="${esc(avatarURL)}" alt="" aria-hidden="true" loading="lazy" decoding="async">`
+          : `<span class="collection-creator-avatar collection-creator-avatar-empty" aria-hidden="true"></span>`;
+        const selectedClass = creator.id === selectedCreatorID ? " selected" : "";
+        return `<button type="button" class="collection-creator-row${selectedClass}" data-action="selectCollectionCreator" data-platform-id="${esc(binding.id)}" data-creator-id="${esc(creator.id)}">${avatar}<span class="collection-creator-name" dir="auto">${esc(creator.name)}</span><span class="collection-creator-count">${tx("data.entryCount", { count: creator.entries.length })}</span></button>`;
+      };
+      const creatorList = virtualList(creatorRows, collectionRowHeight, creatorRow, { key: `collection-master-${binding.id}` });
+      const selectedCreator = selectedCreatorID ? creators.get(selectedCreatorID) : null;
+      const detailEntries = selectedCreator
+        ? [...selectedCreator.entries].sort((lhs, rhs) => (Number(rhs.lastObservedAtMilliseconds) || 0) - (Number(lhs.lastObservedAtMilliseconds) || 0))
+        : [];
+      const detailMarkup = selectedCreator
+        ? `<div class="collection-detail-head"><span class="collection-detail-name" dir="auto">${esc(selectedCreator.name)}</span><span class="collection-detail-count">${tx("data.entryCount", { count: detailEntries.length })}</span></div><div class="collection-detail-list">${detailEntries.map(renderEntry).join("")}</div>`
+        : "";
       const formID = `collection-platform-${binding.id}`;
       const availability = definition?.collectorAvailable ? "data.collectorAvailable" : "data.collectorPlanned";
       const tree = treeByID.get(binding.treeID);
@@ -1011,7 +1083,7 @@
       const typeStatus = binding.activeClassifierTypeID ? "data.classifierTypeActive" : "data.classifierTypeNone";
       const localOnlyNotice = binding.id === "discord" ? `<p class="small-copy collection-local-only">${tx("data.discordLocalOnly")}</p>` : "";
       const creatorListOpen = !collapsedCollectionCreatorLists.has(binding.id);
-      return `<section class="collection-platform-panel" data-form-id="${esc(formID)}"><div class="collection-platform-head"><div><span class="eyebrow">${tx("data.platformPanel")}</span><h3>${esc(binding.name)}</h3><p class="section-copy">${esc(binding.browser)} · ${tx(availability)}</p></div><div class="collection-platform-actions">${statusPill(t(binding.collectionEnabled ? "data.collecting" : "data.collectionOff"), binding.collectionEnabled ? "cyan" : "muted")}<button class="danger" data-action="confirmDeleteCollectionPlatform" data-platform-id="${esc(binding.id)}">${tx("data.deletePlatform")}</button></div></div><div class="collection-platform-controls">${toggle("data.collectToggle", "enabled", Boolean(binding.collectionEnabled))}<button class="primary" data-action="setCollectionEnabled" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyCollection")}</button></div>${localOnlyNotice}<div class="collection-platform-controls">${valueSelectField("data.classifierType", "data.classifierTypeCopy", "classifierTypeID", binding.activeClassifierTypeID || "", typeOptions)}<button class="secondary" data-action="setActiveClassifierType" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyClassifierType")}</button>${statusPill(t(typeStatus), binding.activeClassifierTypeID ? "navy" : "muted")}</div>${entries.length ? `<details class="collection-creators" data-collection-creators-platform="${esc(binding.id)}"${creatorListOpen ? " open" : ""}><summary class="collection-creators-summary"><span>${tx("data.sourceCount", { count: creators.size, sources: sourceTerms.plural })}</span><span>${tx("data.entryCount", { count: entries.length })}</span></summary><div class="collection-creators-list">${creatorList}</div></details>` : `<div class="empty collection-empty">${tx(binding.collectionEnabled ? "data.waitingForEntries" : "data.collectionDisabledCopy")}</div>`}</section>`;
+      return `<section class="collection-platform-panel" data-form-id="${esc(formID)}"><div class="collection-platform-head"><div><span class="eyebrow">${tx("data.platformPanel")}</span><h3>${esc(binding.name)}</h3><p class="section-copy">${esc(binding.browser)} · ${tx(availability)}</p></div><div class="collection-platform-actions">${statusPill(t(binding.collectionEnabled ? "data.collecting" : "data.collectionOff"), binding.collectionEnabled ? "cyan" : "muted")}<button class="danger" data-action="confirmDeleteCollectionPlatform" data-platform-id="${esc(binding.id)}">${tx("data.deletePlatform")}</button></div></div><div class="collection-platform-controls">${toggle("data.collectToggle", "enabled", Boolean(binding.collectionEnabled))}<button class="primary" data-action="setCollectionEnabled" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyCollection")}</button></div>${localOnlyNotice}<div class="collection-platform-controls">${valueSelectField("data.classifierType", "data.classifierTypeCopy", "classifierTypeID", binding.activeClassifierTypeID || "", typeOptions)}<button class="secondary" data-action="setActiveClassifierType" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyClassifierType")}</button>${statusPill(t(typeStatus), binding.activeClassifierTypeID ? "navy" : "muted")}</div>${entries.length ? `<details class="collection-creators" data-collection-creators-platform="${esc(binding.id)}"${creatorListOpen ? " open" : ""}><summary class="collection-creators-summary"><span>${tx("data.sourceCount", { count: creators.size, sources: sourceTerms.plural })}</span><span>${tx("data.entryCount", { count: entries.length })}</span></summary><div class="collection-master-detail"><div class="collection-master">${creatorList}</div><div class="collection-detail">${detailMarkup}</div></div></details>` : `<div class="empty collection-empty">${tx(binding.collectionEnabled ? "data.waitingForEntries" : "data.collectionDisabledCopy")}</div>`}</section>`;
     };
     return `<div class="workspace collection-workspace">${header("data.title", "data.copy", t("data.entries", { count: allCollected.length }), "cyan")}
       <section class="collection-platform-create" data-form-id="collection-platform-create-form"><div><span class="eyebrow">${tx("data.addPlatform")}</span><p class="section-copy">${tx("data.addPlatformCopy")}</p></div>${availablePlatforms.length ? `${valueSelectField("data.platform", "", "platformID", availablePlatforms[0].id, availablePlatforms.map((platform) => [platform.id, platform.name]))}<button class="primary" data-action="addCollectionPlatform" data-form="collection-platform-create-form">${tx("data.addPlatformAction")}</button>` : `<span class="small-copy">${tx("data.allPlatformsAdded")}</span>`}</section>
@@ -1240,6 +1312,7 @@
     root.innerHTML = state ? shell(workspace()) : `<div class="popup"><div class="empty">${tx("app.loading")}</div></div>`;
     applyApplicablePlatformCapabilities();
     observeIncrementalLists();
+    setupVirtualLists();
     bindTreeMapWheel();
     window.requestAnimationFrame(() => {
       applyNavigationPanelWidth();
@@ -1332,6 +1405,14 @@
       const tagID = button.dataset.tagId;
       if (!typeID || !tagID) return;
       selectedCreatorTagByType.set(typeID, tagID);
+      render();
+      return;
+    }
+    if (action === "selectCollectionCreator") {
+      const platformID = button.dataset.platformId;
+      const creatorID = button.dataset.creatorId;
+      if (!platformID || !creatorID) return;
+      selectedCollectionCreatorByPlatform.set(platformID, creatorID);
       render();
       return;
     }
@@ -1472,14 +1553,7 @@
     if (details.matches("details[data-collection-creators-platform]")) {
       if (details.open) collapsedCollectionCreatorLists.delete(details.dataset.collectionCreatorsPlatform);
       else collapsedCollectionCreatorLists.add(details.dataset.collectionCreatorsPlatform);
-      return;
     }
-    if (!details.matches("details[data-deferred-creator-entries]") || !details.open || details.dataset.entriesLoaded === "true") return;
-    const deferred = deferredCreatorEntries.get(details.dataset.deferredCreatorEntries);
-    const list = details.querySelector(".collection-entry-list");
-    if (!deferred || !list) return;
-    list.innerHTML = deferred.entries.map(deferred.renderEntry).join("");
-    details.dataset.entriesLoaded = "true";
   }, true);
 
   document.addEventListener("change", (event) => {
