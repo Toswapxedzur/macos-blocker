@@ -295,9 +295,9 @@ final class WebShellPerformanceTests: XCTestCase {
             JSON.stringify({
               workspace: document.querySelector('[data-editor-panel]').dataset.workspace,
               creatorListOpen: document.querySelector('.collection-creators').open,
-              creators: document.querySelectorAll('.collection-creator').length,
-              entries: document.querySelectorAll('.collection-entry').length,
-              hasDeferredRows: Boolean(document.querySelector('[data-incremental-list]'))
+              creators: document.querySelectorAll('.collection-creator-row').length,
+              detailEntries: document.querySelectorAll('.collection-detail-list .collection-entry').length,
+              hasVirtualList: Boolean(document.querySelector('.collection-master [data-virtual-list]'))
             });
             """,
             in: webView
@@ -308,10 +308,13 @@ final class WebShellPerformanceTests: XCTestCase {
         )
         XCTAssertEqual(dataJSON["workspace"] as? String, "classificationData")
         XCTAssertEqual(dataJSON["creatorListOpen"] as? Bool, true)
+        // Master list is windowed: only a bounded slice of the 120 sources is
+        // in the DOM, and the first source is auto-selected so its entries show
+        // in the detail pane.
         XCTAssertGreaterThan(dataJSON["creators"] as? Int ?? 0, 0)
         XCTAssertLessThan(dataJSON["creators"] as? Int ?? .max, 120)
-        XCTAssertEqual(dataJSON["entries"] as? Int, 0)
-        XCTAssertEqual(dataJSON["hasDeferredRows"] as? Bool, true)
+        XCTAssertGreaterThan(dataJSON["detailEntries"] as? Int ?? 0, 0)
+        XCTAssertEqual(dataJSON["hasVirtualList"] as? Bool, true)
 
         let collapsedCreatorListValue = try await evaluate(
             """
@@ -326,22 +329,21 @@ final class WebShellPerformanceTests: XCTestCase {
         )
         XCTAssertEqual(collapsedCreatorListValue as? Bool, false)
 
-        let expandedEntryValue = try await evaluate(
+        let selectedEntryValue = try await evaluate(
             """
             document.querySelector('.collection-creators').open = true;
-            const creator = document.querySelector('.collection-creator');
-            creator.open = true;
-            creator.dispatchEvent(new Event('toggle'));
-            document.querySelectorAll('.collection-entry').length;
+            document.querySelector('.collection-creators').dispatchEvent(new Event('toggle'));
+            document.querySelector('.collection-creator-row').click();
+            document.querySelectorAll('.collection-detail-list .collection-entry').length;
             """,
             in: webView
         )
-        let expandedEntryCount = try XCTUnwrap(expandedEntryValue as? Int)
-        XCTAssertEqual(expandedEntryCount, 1)
+        let selectedEntryCount = try XCTUnwrap(selectedEntryValue as? Int)
+        XCTAssertEqual(selectedEntryCount, 1)
 
         let evidenceValue = try await evaluate(
             """
-            const entry = document.querySelector('.collection-entry');
+            const entry = document.querySelector('.collection-detail-list .collection-entry');
             entry.open = true;
             JSON.stringify({
               text: entry.textContent,
