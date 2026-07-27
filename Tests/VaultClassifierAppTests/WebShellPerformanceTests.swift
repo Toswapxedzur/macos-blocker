@@ -384,4 +384,57 @@ final class WebShellPerformanceTests: XCTestCase {
         XCTAssertTrue(renderedText.contains("newest presentation"))
         XCTAssertFalse(renderedText.contains("stale presentation"))
     }
+
+    func testApplicablePlatformLocksAfterApprovedDecision() async throws {
+        let loaded = expectation(description: "web shell loaded")
+        let waiter = NavigationWaiter(expectation: loaded)
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(frame: .init(x: 0, y: 0, width: 1_200, height: 800), configuration: configuration)
+        webView.navigationDelegate = waiter
+        let index = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "index", extension: "html"))
+        webView.loadFileURL(index, allowingReadAccessTo: index.deletingLastPathComponent())
+        await fulfillment(of: [loaded], timeout: 5)
+
+        // A type on the browser-bridge workspace with one approved decision must
+        // lock its applicable-platform control.
+        var payload = populatedPayload(creatorCount: 3)
+        payload["workspace"] = "browserBridge"
+        var assets = try XCTUnwrap(payload["assets"] as? [String: Any])
+        var datasets = try XCTUnwrap(assets["datasets"] as? [[String: Any]])
+        datasets[0]["creatorClassifications"] = [[
+            "id": "decision-0",
+            "classifierTypeID": "type",
+            "creatorID": "creator-0",
+            "creatorName": "Creator 0",
+            "platformID": "youtube",
+            "treeID": "tree",
+            "treeRevision": 1,
+            "tags": ["tag"],
+            "negativeTags": [],
+            "origin": "manual",
+            "review": "approved",
+            "updatedAtMilliseconds": 1,
+        ]]
+        assets["datasets"] = datasets
+        payload["assets"] = assets
+        let update = try XCTUnwrap(VaultClassifierWebShell.stateUpdateJavaScript(payload: payload))
+        _ = try await evaluate(update, in: webView)
+
+        let lockedValue = try await evaluate(
+            """
+            const select = document.querySelector('.classifier-applicable-platform-section [data-field="applicablePlatformID"]');
+            JSON.stringify({
+              disabled: Boolean(select && select.disabled),
+              note: Boolean(document.querySelector('[data-platform-locked]'))
+            });
+            """,
+            in: webView
+        )
+        let lockedJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(try XCTUnwrap(lockedValue as? String).utf8)) as? [String: Any]
+        )
+        XCTAssertEqual(lockedJSON["disabled"] as? Bool, true)
+        XCTAssertEqual(lockedJSON["note"] as? Bool, true)
+    }
 }

@@ -2035,6 +2035,17 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             let existingClassifierType = catalog.classifierTypes[typeIndex]
             let existingLLMAssist = existingClassifierType.llmAssistConfiguration
+            // Identity lock: once this type owns an approved decision its platform
+            // is fixed. Changing it would orphan those decisions and break any
+            // local model's single-platform training set. The UI disables the
+            // control; this is the authoritative backstop.
+            let existingPlatformID = existingClassifierType.applicablePlatformID ?? ""
+            if !existingPlatformID.isEmpty, existingPlatformID != applicablePlatformID,
+               catalog.datasets.contains(where: { dataset in
+                   dataset.creatorClassifications.contains { $0.classifierTypeID == typeID && $0.review == .approved }
+               }) {
+                throw WebBridgeInputError.invalidChoice("applicable platform")
+            }
             let selectedBinding = try catalog.ensurePlatformBinding(applicablePlatformID)
             guard
                   let tree = catalog.trees.first(where: { $0.id == selectedBinding.treeID }),
