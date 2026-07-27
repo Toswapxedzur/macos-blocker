@@ -3110,140 +3110,6 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
-    /// A valid answer remains alongside a human decision for the same creator
-    /// and is approved by this deliberate action, making its collected titles
-    /// available to a compatible local-model retraining run.
-    func classifyCreatorWithLLM(typeID: String, creatorKey: String) {
-        guard !providerClassificationRunning else { return }
-        do {
-            guard let catalog = localState?.workspaceCatalog,
-                  let classifierType = catalog.classifierTypes.first(where: { $0.id == typeID }),
-                  let llmAssist = classifierType.llmAssistConfiguration,
-                  let profile = catalog.providerProfiles.first(where: { $0.id == llmAssist.providerProfileID }),
-                  let tree = catalog.trees.first(where: { $0.id == classifierType.treeID }),
-                  let dataset = catalog.datasets.first(where: { $0.id == classifierType.datasetID }) else {
-                throw WebBridgeInputError.invalidChoice("creator LLM classifier type")
-            }
-            let keyParts = creatorKey.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
-            guard keyParts.count == 2,
-                  !keyParts[0].isEmpty,
-                  !keyParts[1].isEmpty else {
-                throw WebBridgeInputError.invalidChoice("creator")
-            }
-            let platformID = String(keyParts[0])
-            let creatorID = String(keyParts[1])
-            guard classifierType.applicablePlatformID == platformID else {
-                throw WebBridgeInputError.invalidChoice("creator data source")
-            }
-            try validateLLMCreatorEvidenceConfiguration(
-                in: catalog,
-                platformID: platformID,
-                profile: profile,
-                configuration: llmAssist
-            )
-            guard let workItem = llmCreatorWorkItem(
-                platformID: platformID,
-                creatorID: creatorID,
-                entries: dataset.collectedEntries
-            ) else {
-                throw WebBridgeInputError.invalidChoice("complete creator evidence")
-            }
-            let representative = workItem.representative
-            let entry = workItem.entry
-            let taxonomy = try tree.inferenceTaxonomy()
-            let allowedTagIDs = llmAllowedTagIDs(taxonomy: taxonomy, configuration: llmAssist)
-            let tagDefinitions = llmTagDefinitions(taxonomy: taxonomy, allowedTagIDs: allowedTagIDs)
-            let dailyTokensRemaining = llmAssist.dailyTokenLimit - tokensUsedToday(
-                in: catalog,
-                classifierTypeID: classifierType.id
-            )
-            guard dailyTokensRemaining > 0 else {
-                throw WebBridgeInputError.invalidChoice("daily token budget")
-            }
-            let outputTokenLimit = min(llmAssist.maximumOutputTokensPerRequest, dailyTokensRemaining)
-            let recordPlan = try ProviderClassificationProtocol.prepare(
-                profile: profile,
-                configuration: llmAssist,
-                entry: entry,
-                allowedTagIDs: allowedTagIDs,
-                tagDefinitions: tagDefinitions,
-                maximumOutputTokens: outputTokenLimit
-            )
-            providerClassificationRunning = true
-            issue = nil
-            Task { [weak self] in
-                guard let self else { return }
-                await self.waitForLLMClassificationPace(configuration: llmAssist)
-                self.recordLLMClassificationRequestStart()
-                let startedAt = Date()
-                do {
-                    let run = try await self.runProviderClassification(
-                        profile: profile,
-                        configuration: llmAssist,
-                        entry: entry,
-                        allowedTagIDs: allowedTagIDs,
-                        tagDefinitions: tagDefinitions,
-                        catalog: catalog,
-                        maximumOutputTokens: outputTokenLimit,
-                        dailyTokensRemaining: dailyTokensRemaining,
-                        classifierTypeID: classifierType.id
-                    )
-                    let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
-                    let labelIDs = try self.parseClassificationLabelIDs(
-                        from: run,
-                        allowedTagIDs: allowedTagIDs,
-                        maximumTagCount: llmAssist.maximumTagCount
-                    )
-                    try self.recordLLMCreatorClassification(
-                        typeID: classifierType.id,
-                        creatorID: representative.creatorID,
-                        platformID: representative.platformID,
-                        creatorName: representative.creatorName,
-                        labelIDs: labelIDs
-                    )
-                    try self.appendProviderTestRecord(.init(
-                        profileID: profile.id,
-                        provider: profile.type.rawValue,
-                        model: llmAssist.modelIdentifier,
-                        operation: "classify-creator",
-                        endpoint: ProviderTestProtocol.safeEndpoint(recordPlan.plan.url),
-                        method: recordPlan.plan.method,
-                        statusCode: run.statusCode,
-                        durationMilliseconds: duration,
-                        tokenCount: run.usage.tokenCount ?? run.fallbackTokenCount,
-                        classifierTypeID: classifierType.id,
-                        outcome: "succeeded"
-                    ))
-                    self.issue = nil
-                } catch {
-                    let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
-                    let failure = self.providerFailureMetadata(for: error)
-                    if !(error is RawWebSearchFailure) {
-                        try? self.appendProviderTestRecord(.init(
-                            profileID: profile.id,
-                            provider: profile.type.rawValue,
-                            model: llmAssist.modelIdentifier,
-                            operation: "classify-creator",
-                            endpoint: ProviderTestProtocol.safeEndpoint(recordPlan.plan.url),
-                            method: recordPlan.plan.method,
-                            statusCode: failure.statusCode,
-                            responseShape: failure.responseShape,
-                            durationMilliseconds: duration,
-                            tokenCount: failure.tokenCount,
-                            classifierTypeID: classifierType.id,
-                            outcome: "failed"
-                        ))
-                    }
-                    self.issue = error.localizedDescription
-                }
-                self.providerClassificationRunning = false
-                self.onWebStateChange?()
-            }
-        } catch {
-            issue = error.localizedDescription
-        }
-    }
-
     /// Persisting a creator decision advances the dataset revision and
     /// reconciliation mirrors that revision onto the classifier type. That is
     /// expected progress, not a mid-batch configuration edit. Every other
@@ -4205,8 +4071,6 @@ final class VaultClassifierViewModel: ObservableObject {
                     typeID: try webString(data, key: "typeID", limit: 256),
                     isActive: data["isActive"] as? Bool ?? false
                 )
-            case "classifyCreatorBatchWithLLM":
-                classifyCreatorBatchWithLLM(typeID: try webString(data, key: "typeID", limit: 256))
             case "confirmDeleteProviderProfile":
                 confirmProviderProfileDeletion(profileID: try webString(data, key: "profileID", limit: 128))
             case "renameLocalModel":
@@ -4265,11 +4129,6 @@ final class VaultClassifierViewModel: ObservableObject {
                     creatorKey: try webString(data, key: "creatorKey", limit: 768),
                     tagIDs: try webStringArray(data, key: "tagIDs", limit: CreatorClassificationRecord.maximumTagIDs, elementLimit: 256),
                     negativeTagIDs: try webStringArray(data, key: "negativeTagIDs", limit: CreatorClassificationRecord.maximumTagIDs, elementLimit: 256)
-                )
-            case "classifyCreatorWithLLM":
-                classifyCreatorWithLLM(
-                    typeID: try webString(data, key: "typeID", limit: 256),
-                    creatorKey: try webString(data, key: "creatorKey", limit: 768)
                 )
             case "classify":
                 title = try webString(data, key: "title", limit: 4_096)
