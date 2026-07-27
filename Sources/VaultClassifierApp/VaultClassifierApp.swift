@@ -156,6 +156,7 @@ final class VaultClassifierViewModel: ObservableObject {
             self.policies = coordinator.policies()
             self.localState = coordinator.snapshot()
             try migrateRetiredProviderCredentialsToWorkspace()
+            purgeExpiredTrashOnLaunch()
             let providerModelCatalogStore = ProviderModelCatalogStore(fileURL: vaultDirectory.appendingPathComponent("provider-model-catalogs.json"))
             self.providerModelCatalogStore = providerModelCatalogStore
             self.providerModelCatalogs = providerModelCatalogStore.load(allowedProfileIDs: llmProviderProfileIDs())
@@ -190,6 +191,15 @@ final class VaultClassifierViewModel: ObservableObject {
     /// Copies a valid retired Keychain credential into the provider's ordinary
     /// workspace field, then deletes the old Keychain item. Existing plain
     /// workspace values take precedence.
+    /// Opportunistic trash purge: on launch, drop entries whose 24h lifetime
+    /// has elapsed. There is no background timer.
+    private func purgeExpiredTrashOnLaunch() {
+        guard var catalog = localState?.workspaceCatalog, !catalog.trash.isEmpty else { return }
+        guard catalog.purgeExpiredTrash() > 0 else { return }
+        try? coordinator?.updateWorkspaceCatalog(catalog)
+        localState = coordinator?.snapshot()
+    }
+
     private func migrateRetiredProviderCredentialsToWorkspace() throws {
         guard var catalog = localState?.workspaceCatalog else {
             LegacyProviderCredentialMigration.purgeRemaining()
@@ -1862,7 +1872,7 @@ final class VaultClassifierViewModel: ObservableObject {
     func deleteCollectionPlatform(platformID: String) {
         do {
             guard var catalog = localState?.workspaceCatalog,
-                  catalog.removePlatformBinding(platformID) else {
+                  catalog.trashCollectionPlatform(platformID) != nil else {
                 throw WebBridgeInputError.invalidChoice("collection platform")
             }
             try coordinator?.updateWorkspaceCatalog(catalog)
@@ -2351,20 +2361,32 @@ final class VaultClassifierViewModel: ObservableObject {
     func deleteClassifierType(typeID: String) {
         do {
             guard var catalog = localState?.workspaceCatalog,
-                  catalog.classifierTypes.contains(where: { $0.id == typeID }) else {
+                  catalog.trashClassifierType(typeID) != nil else {
                 throw WebBridgeInputError.invalidChoice("classifier type")
             }
-            catalog.classifierTypes.removeAll(where: { $0.id == typeID })
-            for datasetIndex in catalog.datasets.indices {
-                let priorCount = catalog.datasets[datasetIndex].creatorClassifications.count
-                catalog.datasets[datasetIndex].creatorClassifications.removeAll(where: { $0.classifierTypeID == typeID })
-                if catalog.datasets[datasetIndex].creatorClassifications.count != priorCount {
-                    catalog.datasets[datasetIndex].revision += 1
-                }
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
+    func restoreTrashedEntry(entryID: String) {
+        do {
+            guard var catalog = localState?.workspaceCatalog,
+                  catalog.restoreTrashedEntry(entryID) else {
+                throw WebBridgeInputError.invalidChoice("trash entry")
             }
-            for index in catalog.bindings.indices where catalog.bindings[index].activeClassifierTypeID == typeID {
-                catalog.bindings[index].activeClassifierTypeID = nil
-                catalog.bindings[index].activeModelID = nil
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
+    func permanentlyDeleteTrashedEntry(entryID: String) {
+        do {
+            guard var catalog = localState?.workspaceCatalog,
+                  catalog.permanentlyDeleteTrashedEntry(entryID) else {
+                throw WebBridgeInputError.invalidChoice("trash entry")
             }
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
@@ -2530,15 +2552,18 @@ final class VaultClassifierViewModel: ObservableObject {
 
     func deleteTree(treeID: String) {
         do {
-            guard var catalog = localState?.workspaceCatalog,
-                  let treeIndex = catalog.trees.firstIndex(where: { $0.id == treeID }) else {
+            guard var catalog = localState?.workspaceCatalog else {
                 throw WebBridgeInputError.invalidChoice("tag tree")
             }
-            catalog.trees.remove(at: treeIndex)
-            catalog.models.removeAll(where: { $0.treeID == treeID })
-            catalog.bindings.removeAll(where: { $0.treeID == treeID })
+            // A referenced ("bounded") tree cannot be trashed; trashTagTree
+            // throws treeInUse and the message names why. Only an unreferenced
+            // tree moves to trash.
+            guard try catalog.trashTagTree(treeID) != nil else {
+                throw WebBridgeInputError.invalidChoice("tag tree")
+            }
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
+            issue = nil
         } catch { issue = error.localizedDescription }
     }
 
@@ -4063,6 +4088,14 @@ final class VaultClassifierViewModel: ObservableObject {
             "training": trainingPayload,
             "backup": backupPayload,
             "assets": assets,
+            "trash": inspectCatalog.trash.map { entry in
+                [
+                    "id": entry.id,
+                    "kind": entry.kind.rawValue,
+                    "name": entry.name,
+                    "deletedAtMilliseconds": entry.deletedAtMilliseconds,
+                ] as [String: Any]
+            },
         ]
     }
 
@@ -4088,7 +4121,11 @@ final class VaultClassifierViewModel: ObservableObject {
             case "addCollectionPlatform":
                 addCollectionPlatform(platformID: try webString(data, key: "platformID", limit: 64))
             case "confirmDeleteCollectionPlatform":
-                confirmCollectionPlatformDeletion(platformID: try webString(data, key: "platformID", limit: 64))
+                deleteCollectionPlatform(platformID: try webString(data, key: "platformID", limit: 64))
+            case "restoreTrashedEntry":
+                restoreTrashedEntry(entryID: try webString(data, key: "id", limit: 64))
+            case "permanentlyDeleteTrashedEntry":
+                permanentlyDeleteTrashedEntry(entryID: try webString(data, key: "id", limit: 64))
             case "setCollectionEnabled":
                 setCollectionEnabled(
                     platformID: try webString(data, key: "platformID", limit: 64),
@@ -4142,7 +4179,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     profileID: try webOptionalString(data, key: "profileID", limit: 128)
                 )
             case "confirmDeleteClassifierType":
-                confirmClassifierTypeDeletion(typeID: try webString(data, key: "typeID", limit: 256))
+                deleteClassifierType(typeID: try webString(data, key: "typeID", limit: 256))
             case "createProviderProfile":
                 createProviderProfile(typeRaw: try webString(data, key: "type", limit: 32))
             case "testProviderProfile":

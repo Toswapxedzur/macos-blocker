@@ -42,6 +42,7 @@
   const selectedLLMProfileByType = new Map();
   const collapsedCollectionCreatorLists = new Set();
   const selectedCollectionCreatorByPlatform = new Map();
+  let pendingDeletion = null;
   let utilityPanel = null;
   let selectedLanguage = "en";
   let navigationPanelWidth = navigationWidthRange.fallback;
@@ -543,7 +544,7 @@
       return `<section class="tree-panel">${map}<div class="tree-canvas-hint"><span>${tx("tree.canvasHint")}</span>${treeActions}</div></section>`;
     };
     return `<div class="workspace tree-workspace">${header("tree.title", "tree.copy", t("tree.sharedLibrary"), "cyan")}
-      <section class="tree-create" data-form-id="new-tree-form">${field("tree.treeName", "", "name", "")}<button class="primary" data-action="createTree" data-form="new-tree-form">${tx("tree.create")}</button><span class="small-copy">${tx("tree.multiplePanels")}</span></section><div class="tree-panels">${assets.trees.map(panel).join("")}</div>${notice(state.issue, "red")}</div>`;
+      <section class="tree-create" data-form-id="new-tree-form">${field("tree.treeName", "", "name", "")}<button class="primary" data-action="createTree" data-form="new-tree-form">${tx("tree.create")}</button><span class="small-copy">${tx("tree.multiplePanels")}</span></section><div class="tree-panels">${assets.trees.map(panel).join("")}${trashOfKind("tagTree")}</div>${notice(state.issue, "red")}</div>`;
   }
 
   function baseEmbeddingLabelKey(identifier) {
@@ -965,7 +966,7 @@
       const llmSettings = selectedLLMProfile ? `${llmClassificationStatus}<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}${llmModelControl}${field("bridge.llmDailyTokenBudget", "bridge.llmDailyTokenBudgetCopy", "llmDailyTokenLimit", llmEditorSettings?.dailyTokenLimit || 10000, "text", "inputmode=\"numeric\"")}${llmAssist ? `<p class="small-copy">${tx("bridge.llmDailyTokenUsage", { used: llmAssist.dailyTokensUsed || 0, limit: llmAssist.dailyTokenLimit || 10000 })}</p>` : ""}${field("bridge.llmMaximumTokens", "bridge.llmMaximumTokensCopy", "llmMaximumOutputTokensPerRequest", llmEditorSettings?.maximumOutputTokensPerRequest || 4096, "text", "inputmode=\"numeric\"")}${textareaField("bridge.llmExtraDirection", "bridge.llmExtraDirectionCopy", "llmExtraDirection", llmEditorSettings?.extraDirection || "", "maxlength=\"4096\"")}${field("bridge.llmClassificationPace", "bridge.llmClassificationPaceCopy", "llmClassificationRequestsPerMinute", llmEditorSettings?.classificationRequestsPerMinute || 6, "text", "inputmode=\"numeric\"")}${field("bridge.llmBatchSize", "bridge.llmBatchSizeCopy", "llmBatchSize", llmEditorSettings?.batchSize || 5, "text", "inputmode=\"numeric\"")}${officialContentEvidenceControl}${field("bridge.llmMaximumTagCount", "bridge.llmMaximumTagCountCopy", "llmMaximumTagCount", llmEditorSettings?.maximumTagCount || 8, "text", "inputmode=\"numeric\"")}${toggle("bridge.llmLeafOnly", "llmRestrictToLeafTags", llmEditorSettings?.restrictToLeafTags ?? true)}<p class="small-copy">${tx("bridge.llmLeafOnlyCopy")}</p>${webSearchControls}</div>${creatorLLMEvidenceWarning}` : `<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}</div>`;
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}">
         <div class="classifier-type-head"><div><span class="eyebrow">${tx("bridge.typePanel")}</span><h3>${esc(classifierType.name)}</h3><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div>${statusPill(typeStatus, applicablePlatformID ? "navy" : "muted")}</div>
-        <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}<button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("bridge.saveType")}</button><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}">${tx("bridge.deleteType")}</button></div>
+        <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}<button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("bridge.saveType")}</button><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}" data-name="${esc(classifierType.name)}">${tx("bridge.deleteType")}</button></div>
         <section class="classifier-type-section classifier-applicable-platform-section"><div class="section-header"><div><h3>${tx("bridge.applicablePlatform")}</h3><p class="section-copy">${tx("bridge.assetSelectionCopy")}</p></div></div><div class="classifier-applicable-platform-row">${valueSelectField("bridge.applicablePlatform", "bridge.applicablePlatformCopy", "applicablePlatformID", applicablePlatformID, applicablePlatformOptions, applicablePlatformLocked ? "disabled" : "")}<div class="classifier-platform-data-status"><span class="eyebrow">${tx("bridge.platformData")}</span><p class="small-copy">${esc(platformDataStatus)}</p></div></div>${applicablePlatformLocked ? `<p class="small-copy classifier-platform-locked" data-platform-locked>${tx("bridge.applicablePlatformLocked", { count: approvedDecisionCount })}</p>` : ""}${applicablePlatform && !supportsLocalModel && !supportsLLMAssist ? `<p class="small-copy" data-manual-only-platform-note>${tx("bridge.manualOnlyCopy")}</p>` : ""}</section>
         <section class="classifier-type-section classifier-local-model-section" data-local-model-section${supportsLocalModel ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.localModel")}</h3><p class="section-copy">${tx("bridge.localModelCopy")}</p></div></div><div class="classifier-local-model-field">${valueSelectField("bridge.localModel", "", "localModelID", classifierType.localModelID || "", modelOptions)}</div></section>
         <section class="classifier-type-section creator-classification-section"><div class="section-header"><div><h3>${tx("bridge.manualSource", { source: sourceTerms.singular })}</h3><p class="section-copy">${tx("bridge.manualSourceCopy", { source: sourceTerms.singular })}</p></div><div class="action-row"><span class="small-copy">${tx("bridge.sourceCount", { count: creatorRecords.length, sources: sourceTerms.plural })}</span></div></div>${creatorClassification}</section>
@@ -976,7 +977,7 @@
     };
     return `<div class="workspace classifier-type-workspace">${header("bridge.title", "bridge.copy", t("bridge.typeLibrary"), "navy")}
       <section class="classifier-type-create" data-form-id="classifier-type-create-form">${field("bridge.newTypeName", "bridge.newTypeNameCopy", "name", "")}<button class="primary" data-action="createClassifierType" data-form="classifier-type-create-form">${tx("bridge.createType")}</button></section>
-      <div class="classifier-type-panels">${classifierTypes.length ? classifierTypes.map(typeForm).join("") : `<div class="empty">${tx("bridge.emptyTypes")}</div>`}</div>${notice(state.issue, "red")}</div>`;
+      <div class="classifier-type-panels">${classifierTypes.length ? classifierTypes.map(typeForm).join("") : `<div class="empty">${tx("bridge.emptyTypes")}</div>`}${trashOfKind("classifierType")}</div>${notice(state.issue, "red")}</div>`;
   }
 
   function classificationDataWorkspace() {
@@ -1086,11 +1087,11 @@
       const typeStatus = binding.activeClassifierTypeID ? "data.classifierTypeActive" : "data.classifierTypeNone";
       const localOnlyNotice = binding.id === "discord" ? `<p class="small-copy collection-local-only">${tx("data.discordLocalOnly")}</p>` : "";
       const creatorListOpen = !collapsedCollectionCreatorLists.has(binding.id);
-      return `<section class="collection-platform-panel" data-form-id="${esc(formID)}"><div class="collection-platform-head"><div><span class="eyebrow">${tx("data.platformPanel")}</span><h3>${esc(binding.name)}</h3><p class="section-copy">${esc(binding.browser)} · ${tx(availability)}</p></div><div class="collection-platform-actions">${statusPill(t(binding.collectionEnabled ? "data.collecting" : "data.collectionOff"), binding.collectionEnabled ? "cyan" : "muted")}<button class="danger" data-action="confirmDeleteCollectionPlatform" data-platform-id="${esc(binding.id)}">${tx("data.deletePlatform")}</button></div></div><div class="collection-platform-controls">${toggle("data.collectToggle", "enabled", Boolean(binding.collectionEnabled))}<button class="primary" data-action="setCollectionEnabled" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyCollection")}</button></div>${localOnlyNotice}<div class="collection-platform-controls">${valueSelectField("data.classifierType", "data.classifierTypeCopy", "classifierTypeID", binding.activeClassifierTypeID || "", typeOptions)}<button class="secondary" data-action="setActiveClassifierType" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyClassifierType")}</button>${statusPill(t(typeStatus), binding.activeClassifierTypeID ? "navy" : "muted")}</div>${entries.length ? `<details class="collection-creators" data-collection-creators-platform="${esc(binding.id)}"${creatorListOpen ? " open" : ""}><summary class="collection-creators-summary"><span>${tx("data.sourceCount", { count: creators.size, sources: sourceTerms.plural })}</span><span>${tx("data.entryCount", { count: entries.length })}</span></summary><div class="collection-master-detail"><div class="collection-master">${creatorList}</div><div class="collection-detail">${detailMarkup}</div></div></details>` : `<div class="empty collection-empty">${tx(binding.collectionEnabled ? "data.waitingForEntries" : "data.collectionDisabledCopy")}</div>`}</section>`;
+      return `<section class="collection-platform-panel" data-form-id="${esc(formID)}"><div class="collection-platform-head"><div><span class="eyebrow">${tx("data.platformPanel")}</span><h3>${esc(binding.name)}</h3><p class="section-copy">${esc(binding.browser)} · ${tx(availability)}</p></div><div class="collection-platform-actions">${statusPill(t(binding.collectionEnabled ? "data.collecting" : "data.collectionOff"), binding.collectionEnabled ? "cyan" : "muted")}<button class="danger" data-action="confirmDeleteCollectionPlatform" data-platform-id="${esc(binding.id)}" data-name="${esc(binding.name)}">${tx("data.deletePlatform")}</button></div></div><div class="collection-platform-controls">${toggle("data.collectToggle", "enabled", Boolean(binding.collectionEnabled))}<button class="primary" data-action="setCollectionEnabled" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyCollection")}</button></div>${localOnlyNotice}<div class="collection-platform-controls">${valueSelectField("data.classifierType", "data.classifierTypeCopy", "classifierTypeID", binding.activeClassifierTypeID || "", typeOptions)}<button class="secondary" data-action="setActiveClassifierType" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyClassifierType")}</button>${statusPill(t(typeStatus), binding.activeClassifierTypeID ? "navy" : "muted")}</div>${entries.length ? `<details class="collection-creators" data-collection-creators-platform="${esc(binding.id)}"${creatorListOpen ? " open" : ""}><summary class="collection-creators-summary"><span>${tx("data.sourceCount", { count: creators.size, sources: sourceTerms.plural })}</span><span>${tx("data.entryCount", { count: entries.length })}</span></summary><div class="collection-master-detail"><div class="collection-master">${creatorList}</div><div class="collection-detail">${detailMarkup}</div></div></details>` : `<div class="empty collection-empty">${tx(binding.collectionEnabled ? "data.waitingForEntries" : "data.collectionDisabledCopy")}</div>`}</section>`;
     };
     return `<div class="workspace collection-workspace">${header("data.title", "data.copy", t("data.entries", { count: allCollected.length }), "cyan")}
       <section class="collection-platform-create" data-form-id="collection-platform-create-form"><div><span class="eyebrow">${tx("data.addPlatform")}</span><p class="section-copy">${tx("data.addPlatformCopy")}</p></div>${availablePlatforms.length ? `${valueSelectField("data.platform", "", "platformID", availablePlatforms[0].id, availablePlatforms.map((platform) => [platform.id, platform.name]))}<button class="primary" data-action="addCollectionPlatform" data-form="collection-platform-create-form">${tx("data.addPlatformAction")}</button>` : `<span class="small-copy">${tx("data.allPlatformsAdded")}</span>`}</section>
-      <div class="collection-platform-panels">${bindings.length ? bindings.map(bindingPanel).join("") : `<div class="empty">${tx("data.noPlatforms")}</div>`}</div>
+      <div class="collection-platform-panels">${bindings.length ? bindings.map(bindingPanel).join("") : `<div class="empty">${tx("data.noPlatforms")}</div>`}${trashOfKind("collectionPlatform")}</div>
       ${notice(state.issue, "red")}</div>`;
   }
 
@@ -1233,6 +1234,12 @@
   }
 
   document.addEventListener("input", (event) => {
+    const deletionInput = event.target.closest("[data-deletion-name-input]");
+    if (deletionInput) {
+      const confirmButton = root.querySelector('[data-action="confirmPendingDeletion"]');
+      if (confirmButton) confirmButton.disabled = deletionInput.value.trim() !== (pendingDeletion?.name || "").trim();
+      return;
+    }
     const input = event.target.closest("input[data-live-tag-name]");
     if (!input) return;
     const { treeId: treeID, nodeId: nodeID } = input.dataset;
@@ -1307,11 +1314,30 @@
     });
   }
 
+  // A deleted entity leaves a small in-place tombstone (name + restore /
+  // permanently-delete). It auto-purges 24h after deletion (native, on launch).
+  function trashTombstone(entry) {
+    return `<div class="trash-tombstone"><span class="trash-tombstone-name" dir="auto">${esc(entry.name)}</span><span class="trash-tombstone-meta">${tx("trash.deleted")}</span><span class="trash-tombstone-actions"><button class="secondary" data-action="restoreTrashedEntry" data-id="${esc(entry.id)}">${tx("trash.restore")}</button><button class="danger" data-action="permanentlyDeleteTrashedEntry" data-id="${esc(entry.id)}">${tx("trash.permanentlyDelete")}</button></span></div>`;
+  }
+
+  function trashOfKind(kind) {
+    return (Array.isArray(state?.trash) ? state.trash : [])
+      .filter((entry) => entry.kind === kind)
+      .map(trashTombstone)
+      .join("");
+  }
+
+  // Type-the-name delete confirmation for a "massive data" entity.
+  function deletionModal() {
+    if (!pendingDeletion) return "";
+    return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelPendingDeletion" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog" role="dialog" aria-modal="true"><h3>${tx("trash.confirmTitle")}</h3><p class="section-copy">${tx("trash.confirmCopy", { name: pendingDeletion.name })}</p><label class="field"><span class="field-label">${tx("trash.typeNameLabel")}</span><input type="text" data-deletion-name-input autocomplete="off" spellcheck="false"></label><div class="action-row"><button class="secondary" data-action="cancelPendingDeletion">${tx("common.cancel")}</button><button class="danger" data-action="confirmPendingDeletion" disabled>${tx("trash.confirmDelete")}</button></div></div></div>`;
+  }
+
   function render() {
     rememberTreeViewportPositions();
     rememberEditorViewportPosition();
     resetDeferredRendering();
-    root.innerHTML = state ? shell(workspace()) : `<div class="popup"><div class="empty">${tx("app.loading")}</div></div>`;
+    root.innerHTML = state ? shell(workspace()) + deletionModal() : `<div class="popup"><div class="empty">${tx("app.loading")}</div></div>`;
     applyApplicablePlatformCapabilities();
     observeIncrementalLists();
     setupVirtualLists();
@@ -1366,6 +1392,31 @@
       state.workspace = nextWorkspace;
       render();
       send("workspace", { workspace: nextWorkspace });
+      return;
+    }
+    if (action === "confirmDeleteClassifierType" || action === "confirmDeleteCollectionPlatform") {
+      pendingDeletion = {
+        action,
+        name: button.dataset.name || "",
+        payload: action === "confirmDeleteClassifierType"
+          ? { typeID: button.dataset.typeId }
+          : { platformID: button.dataset.platformId },
+      };
+      render();
+      return;
+    }
+    if (action === "cancelPendingDeletion") {
+      pendingDeletion = null;
+      render();
+      return;
+    }
+    if (action === "confirmPendingDeletion") {
+      const input = root.querySelector("[data-deletion-name-input]");
+      if (!pendingDeletion || (input?.value || "").trim() !== pendingDeletion.name.trim()) return;
+      const pending = pendingDeletion;
+      pendingDeletion = null;
+      render();
+      send(pending.action, pending.payload);
       return;
     }
     const data = button.dataset.form ? collect(button.dataset.form) : {};

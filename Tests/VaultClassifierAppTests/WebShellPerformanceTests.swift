@@ -437,4 +437,54 @@ final class WebShellPerformanceTests: XCTestCase {
         XCTAssertEqual(lockedJSON["disabled"] as? Bool, true)
         XCTAssertEqual(lockedJSON["note"] as? Bool, true)
     }
+
+    func testTrashTombstoneRendersAndDeleteAsksForName() async throws {
+        let loaded = expectation(description: "web shell loaded")
+        let waiter = NavigationWaiter(expectation: loaded)
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(frame: .init(x: 0, y: 0, width: 1_200, height: 800), configuration: configuration)
+        webView.navigationDelegate = waiter
+        let index = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "index", extension: "html"))
+        webView.loadFileURL(index, allowingReadAccessTo: index.deletingLastPathComponent())
+        await fulfillment(of: [loaded], timeout: 5)
+
+        var payload = populatedPayload(creatorCount: 2)
+        payload["workspace"] = "browserBridge"
+        payload["trash"] = [[
+            "id": "trash-1",
+            "kind": "classifierType",
+            "name": "Trashed Type",
+            "deletedAtMilliseconds": 1,
+        ]]
+        let update = try XCTUnwrap(VaultClassifierWebShell.stateUpdateJavaScript(payload: payload))
+        _ = try await evaluate(update, in: webView)
+
+        let tombstone = try await evaluate(
+            """
+            const box = document.querySelector('.classifier-type-panels .trash-tombstone');
+            JSON.stringify({
+              name: box ? box.querySelector('.trash-tombstone-name').textContent : null,
+              restore: Boolean(box && box.querySelector('[data-action="restoreTrashedEntry"][data-id="trash-1"]')),
+              purge: Boolean(box && box.querySelector('[data-action="permanentlyDeleteTrashedEntry"][data-id="trash-1"]'))
+            });
+            """,
+            in: webView
+        )
+        let tombstoneJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(try XCTUnwrap(tombstone as? String).utf8)) as? [String: Any]
+        )
+        XCTAssertEqual(tombstoneJSON["name"] as? String, "Trashed Type")
+        XCTAssertEqual(tombstoneJSON["restore"] as? Bool, true)
+        XCTAssertEqual(tombstoneJSON["purge"] as? Bool, true)
+
+        let modalShown = try await evaluate(
+            """
+            document.querySelector('[data-action="confirmDeleteClassifierType"]').click();
+            Boolean(document.querySelector('.deletion-dialog [data-deletion-name-input]'));
+            """,
+            in: webView
+        )
+        XCTAssertEqual(modalShown as? Bool, true)
+    }
 }
