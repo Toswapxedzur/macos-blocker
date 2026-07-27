@@ -417,6 +417,8 @@ h3 { font-size: 13px; }
 .trash-tombstone-actions { margin-left: auto; display: flex; flex: 0 0 auto; gap: 6px; }
 
 .deletion-dialog {
+  position: relative;
+  z-index: 1;
   width: min(440px, 92vw);
   display: flex;
   flex-direction: column;
