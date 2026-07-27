@@ -382,6 +382,7 @@ window.VaultClassifierStrings = Object.freeze({
   "bridge.assetSelectionCopy": "Choose one platform. Its platform binding supplies this type's tag tree and collected classification data.",
   "bridge.applicablePlatform": "APPLICABLE PLATFORM",
   "bridge.applicablePlatformCopy": "Only one platform can be used by a classifier type.",
+  "bridge.applicablePlatformLocked": "Locked · {count} approved decisions are bound to this platform. Create a new classifier type to use a different one.",
   "bridge.noApplicablePlatform": "Choose a platform",
   "bridge.platformDataChoose": "Choose a platform to bind its local classification data.",
   "bridge.platformDataAutoCreate": "adds local data",
