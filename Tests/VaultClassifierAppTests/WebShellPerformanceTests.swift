@@ -296,8 +296,8 @@ final class WebShellPerformanceTests: XCTestCase {
               workspace: document.querySelector('[data-editor-panel]').dataset.workspace,
               creatorListOpen: document.querySelector('.collection-creators').open,
               creators: document.querySelectorAll('.collection-creator-row').length,
-              detailEntries: document.querySelectorAll('.collection-detail-list .collection-entry').length,
-              hasVirtualList: Boolean(document.querySelector('.collection-master [data-virtual-list]'))
+              detailEntries: document.querySelectorAll('.collection-detail .collection-detail-entry').length,
+              hasVirtualList: Boolean(document.querySelector('.collection-master [data-virtual-list]') && document.querySelector('.collection-detail [data-virtual-list]'))
             });
             """,
             in: webView
@@ -334,7 +334,7 @@ final class WebShellPerformanceTests: XCTestCase {
             document.querySelector('.collection-creators').open = true;
             document.querySelector('.collection-creators').dispatchEvent(new Event('toggle'));
             document.querySelector('.collection-creator-row').click();
-            document.querySelectorAll('.collection-detail-list .collection-entry').length;
+            document.querySelectorAll('.collection-detail .collection-detail-entry').length;
             """,
             in: webView
         )
@@ -343,8 +343,7 @@ final class WebShellPerformanceTests: XCTestCase {
 
         let evidenceValue = try await evaluate(
             """
-            const entry = document.querySelector('.collection-detail-list .collection-entry');
-            entry.open = true;
+            const entry = document.querySelector('.collection-detail .collection-detail-entry');
             JSON.stringify({
               text: entry.textContent,
               tags: [...entry.querySelectorAll('.collection-entry-tags span')].map((tag) => tag.textContent)

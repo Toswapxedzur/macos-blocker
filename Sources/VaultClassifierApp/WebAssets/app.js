@@ -48,6 +48,7 @@
   let navigationResize = null;
   const incrementalPageSize = 40;
   const collectionRowHeight = 48;
+  const collectionDetailRowHeight = 96;
   const workspaceNames = new Set(["tagTree", "localModel", "llmAssist", "browserBridge", "classificationData"]);
   const incrementalLists = new Map();
   const virtualLists = new Map();
@@ -1023,7 +1024,10 @@
       // one never reshuffles the rows above it.
       const creatorRows = [...creators.values()]
         .sort((lhs, rhs) => (lhs.firstObservedAtMilliseconds - rhs.firstObservedAtMilliseconds) || String(lhs.id).localeCompare(String(rhs.id)));
-      const renderEntry = (entry) => {
+      // Fixed-height entry cell so the detail pane can be windowed too. The
+      // full evidence stays in the DOM (title tooltip + CSS line-clamp), so a
+      // source with thousands of entries still keeps constant DOM/paint cost.
+      const renderDetailEntry = (entry) => {
         const attributes = Object.entries(entry.attributes || {})
           .map(([key, value]) => `${esc(collectionAttributeLabel(key))}: ${esc(value)}`)
           .join(" · ");
@@ -1031,20 +1035,17 @@
           ? `<span class="collection-entry-tags">${entry.suppliedTags.map((tag) => `<span>${esc(tag)}</span>`).join("")}</span>`
           : "";
         const summary = typeof entry.summary === "string" && entry.summary
-          ? `<p class="collection-entry-evidence" dir="auto">${esc(entry.summary)}</p>`
+          ? `<span class="collection-detail-evidence" dir="auto">${esc(entry.summary)}</span>`
           : "";
         const text = typeof entry.text === "string" && entry.text && entry.text !== entry.summary
-          ? `<p class="collection-entry-evidence" dir="auto">${esc(entry.text)}</p>`
+          ? `<span class="collection-detail-evidence" dir="auto">${esc(entry.text)}</span>`
           : "";
         const canonicalURL = typeof entry.canonicalURL === "string" && entry.canonicalURL
           ? `<span class="collection-entry-url">${esc(entry.canonicalURL)}</span>`
           : "";
+        const attributesMarkup = attributes ? `<span class="collection-entry-attributes">${attributes}</span>` : "";
         const entryMeta = `${esc(entry.surface || "feed")} · ${esc(entry.entryType)} · ${observedAt(entry.lastObservedAtMilliseconds)}`;
-        const detail = [summary, text, tags, attributes ? `<span class="collection-entry-attributes">${attributes}</span>` : "", canonicalURL].filter(Boolean).join("");
-        if (!detail) {
-          return `<div class="collection-entry"><span class="collection-entry-title" dir="auto">${esc(entry.title)}</span><span class="collection-entry-meta">${entryMeta}</span></div>`;
-        }
-        return `<details class="collection-entry"><summary><span class="collection-entry-title" dir="auto">${esc(entry.title)}</span><span class="collection-entry-meta">${entryMeta}</span></summary><div class="collection-entry-detail">${detail}</div></details>`;
+        return `<div class="collection-detail-entry" title="${esc(entry.title)}"><span class="collection-entry-title" dir="auto">${esc(entry.title)}</span><span class="collection-entry-meta">${entryMeta}</span>${summary}${text}${tags}${attributesMarkup}${canonicalURL}</div>`;
       };
       // Keep the selected source stable across re-renders; fall back to the
       // first source so the detail pane is never empty when sources exist.
@@ -1068,7 +1069,7 @@
         ? [...selectedCreator.entries].sort((lhs, rhs) => (Number(rhs.lastObservedAtMilliseconds) || 0) - (Number(lhs.lastObservedAtMilliseconds) || 0))
         : [];
       const detailMarkup = selectedCreator
-        ? `<div class="collection-detail-head"><span class="collection-detail-name" dir="auto">${esc(selectedCreator.name)}</span><span class="collection-detail-count">${tx("data.entryCount", { count: detailEntries.length })}</span></div><div class="collection-detail-list">${detailEntries.map(renderEntry).join("")}</div>`
+        ? `<div class="collection-detail-head"><span class="collection-detail-name" dir="auto">${esc(selectedCreator.name)}</span><span class="collection-detail-count">${tx("data.entryCount", { count: detailEntries.length })}</span></div>${virtualList(detailEntries, collectionDetailRowHeight, renderDetailEntry, { key: `collection-detail-${binding.id}-${selectedCreatorID}` })}`
         : "";
       const formID = `collection-platform-${binding.id}`;
       const availability = definition?.collectorAvailable ? "data.collectorAvailable" : "data.collectorPlanned";
