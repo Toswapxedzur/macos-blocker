@@ -402,6 +402,33 @@ h3 { font-size: 13px; }
 .collection-creator-row .collection-creator-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .collection-creator-avatar-empty { display: inline-block; }
 
+.trash-tombstone {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px dashed rgba(148, 163, 184, .55);
+  border-radius: 10px;
+  background: rgba(148, 163, 184, .07);
+}
+.trash-tombstone-name { min-width: 0; color: var(--ink); font-size: 12px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trash-tombstone-meta { color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .05em; white-space: nowrap; }
+.trash-tombstone-actions { margin-left: auto; display: flex; flex: 0 0 auto; gap: 6px; }
+
+.deletion-dialog {
+  width: min(440px, 92vw);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, .28);
+}
+.deletion-dialog h3 { color: var(--ink); font-size: 15px; }
+.deletion-dialog .action-row { display: flex; justify-content: flex-end; gap: 8px; }
+
 .incremental-list-sentinel {
   display: block;
   min-height: 1px;
