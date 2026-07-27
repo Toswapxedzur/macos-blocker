@@ -176,7 +176,9 @@ final class VaultClassifierViewModel: ObservableObject {
                     detail: hubError.isEmpty ? nil : hubError,
                     outcome: sharedHubClient?.state.rawValue ?? "off"
                 )
-                self.onWebStateChange?()
+                // Hub connection state is not part of the web snapshot, so a
+                // state change would push a byte-identical payload and force a
+                // wasteful full re-render. Record the diagnostic only.
             }
             sharedHubClient.connect()
             startActiveLLMClassification()
@@ -238,7 +240,9 @@ final class VaultClassifierViewModel: ObservableObject {
                     detail: diagnostic.detail?.rawValue,
                     outcome: "received"
                 )
-                onWebStateChange?()
+                // Diagnostics are recorded to the local log, not the web
+                // snapshot; pushing here would re-render the whole UI with an
+                // unchanged payload.
                 return try sharedHubReply(NativeCollectionDiagnosticResponse(accepted: true))
             case .collect:
                 let request = try JSONDecoder().decode(NativeCollectionRequest.self, from: request.bodyData)
