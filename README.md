@@ -13,9 +13,12 @@ description.
 ## Current capabilities
 
 - Local tag trees, datasets, classifier types, creator decisions, local models,
-  policy evaluation (`allow`, `dim`, `block`), bounded cache, and decision
-  ledger. A new workspace starts with a blank tree and dataset but no chosen
-  platform, local model, provider, or Gemini/search default.
+  policy evaluation, a bounded cache, and a decision ledger. A matched policy
+  carries a single **suppress** decision whose presentation is fixed by surface,
+  not a per-policy choice: list and feed cards are **dimmed**, and only the
+  watch/playback page is **blocked**. A new workspace starts with a blank tree
+  and dataset but no chosen platform, local model, provider, or Gemini/search
+  default.
 - A reusable **LLM Assist** connection library. Provider profiles contain
   non-secret connection configuration plus a visible local credential field.
   A classifier type explicitly selects one provider/model and owns its budget,

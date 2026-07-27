@@ -58,10 +58,17 @@ bounded rendered public evidence only when collection is enabled; ads are not
 retained. Classifier routes are available automatically whenever a compatible
 Vault Classifier peer is present.
 
-Feed decisions use `dim` by default, with local reveal/why affordances. Hard
-feed blocking requires the explicit hard-block setting. A disconnected peer,
-invalid message, unavailable classifier, or timeout leaves content visible:
-the browser path fails open.
+A matched policy carries one decision — *suppress* — and its presentation is
+fixed by surface, not a per-policy choice. List and feed surfaces (home,
+search, sidebar, channel grids, and Shorts cards) are **dimmed**, keeping the
+content in place with local reveal/why affordances. Only the actual
+watch/playback page is **blocked**, and that block is a hard stop with no
+in-page reveal. There is no separate hard-feed-block setting and no page-level
+dim.
+
+Fail-open is independent of that decision: a disconnected peer, invalid
+message, unavailable classifier, or timeout leaves content visible. The browser
+path never hides content it could not positively classify.
 
 ## Tests that define the boundary
 
