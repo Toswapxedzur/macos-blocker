@@ -4038,16 +4038,10 @@ final class VaultClassifierViewModel: ObservableObject {
         }
         assets["providerModelCatalogErrors"] = providerModelCatalogErrors
         assets["loadingProviderModelProfileIDs"] = Array(loadingProviderModelProfileIDs).sorted()
-        let collectionDiagnosticsPayload: [[String: Any]] = (collectionDiagnostics?.records ?? []).suffix(80).reversed().map { record in
-            [
-                "id": record.id.uuidString,
-                "recordedAtMilliseconds": record.recordedAtMilliseconds,
-                "platformID": record.platformID ?? NSNull(),
-                "event": record.event,
-                "detail": record.detail ?? NSNull(),
-                "outcome": record.outcome,
-            ]
-        }
+        // Collection diagnostics are recorded to the local
+        // `collection-diagnostics.json` log only. They are deliberately not
+        // included in the web snapshot, so they never reach the WebView state
+        // or the browser bridge.
         return [
             "workspace": workspace.rawValue,
             "issue": issue ?? NSNull(),
@@ -4058,7 +4052,6 @@ final class VaultClassifierViewModel: ObservableObject {
             "training": trainingPayload,
             "backup": backupPayload,
             "assets": assets,
-            "collectionDiagnostics": collectionDiagnosticsPayload,
         ]
     }
 
