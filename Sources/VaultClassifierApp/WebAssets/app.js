@@ -207,11 +207,14 @@
       });
       return;
     }
+    // Prefetch well ahead of the viewport (~1.5 screens) so paginated rows are
+    // in the DOM before they scroll into view, rather than appearing to "fail
+    // to load" when a fast scroll outruns a near-viewport trigger.
     incrementalListObserver ||= new IntersectionObserver((entries) => {
       entries.forEach((entry) => {
         if (entry.isIntersecting) appendIncrementalRows(entry.target);
       });
-    }, { rootMargin: "160px 0px" });
+    }, { rootMargin: "1200px 0px" });
     sentinels.forEach((sentinel) => incrementalListObserver.observe(sentinel));
   }
 
