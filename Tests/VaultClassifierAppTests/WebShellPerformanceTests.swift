@@ -17,6 +17,46 @@ final class WebShellPerformanceTests: XCTestCase {
         }
     }
 
+    /// Stands in for the native `deliverCreatorEntries`: answers a
+    /// `loadCreatorEntries` message by pushing the matching full entries back
+    /// through the same `receiveCreatorEntries` channel the app uses.
+    private final class CreatorEntriesResponder: NSObject, WKScriptMessageHandler {
+        weak var webView: WKWebView?
+        var entriesByKey: [String: [[String: Any]]] = [:]
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard message.name == "vaultClassifier",
+                  let body = message.body as? [String: Any],
+                  body["action"] as? String == "loadCreatorEntries",
+                  let data = body["data"] as? [String: Any],
+                  let datasetID = data["datasetID"] as? String,
+                  let platformID = data["platformID"] as? String,
+                  let creatorID = data["creatorID"] as? String else {
+                return
+            }
+            let payload: [String: Any] = [
+                "datasetID": datasetID,
+                "platformID": platformID,
+                "creatorID": creatorID,
+                "entries": entriesByKey["\(datasetID)|\(platformID)|\(creatorID)"] ?? [],
+            ]
+            guard let script = VaultClassifierWebShell.creatorEntriesJavaScript(payload: payload) else { return }
+            webView?.evaluateJavaScript(script) { _, _ in }
+        }
+    }
+
+    /// Polls a script that returns a count until it is positive, yielding the
+    /// main queue so the responder's async delivery can land.
+    @discardableResult
+    private func waitForPositiveCount(_ script: String, in webView: WKWebView, timeout: TimeInterval = 3) async throws -> Int {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let value = try await evaluate(script, in: webView) as? Int, value > 0 { return value }
+            try await Task.sleep(nanoseconds: 40_000_000)
+        }
+        return (try await evaluate(script, in: webView) as? Int) ?? 0
+    }
+
     private func evaluate(_ script: String, in webView: WKWebView) async throws -> Any? {
         try await withCheckedThrowingContinuation { continuation in
             webView.evaluateJavaScript(script) { value, error in
@@ -29,28 +69,56 @@ final class WebShellPerformanceTests: XCTestCase {
         }
     }
 
-    private func populatedPayload(creatorCount: Int) -> [String: Any] {
-        let entries: [[String: Any]] = (0..<creatorCount).map { index in
+    /// One full entry, matching the lazy `webCollectedEntry` projection. Each
+    /// fixture creator owns exactly one entry (creator-N ↔ entry-N).
+    private func makeEntry(index: Int) -> [String: Any] {
+        [
+            "id": "entry-\(index)",
+            "platformID": "youtube",
+            "entryID": "video-\(index)",
+            "creatorID": "creator-\(index)",
+            "creatorName": "Creator \(index)",
+            "entryType": "video",
+            "title": "Video \(index)",
+            "surface": "feed",
+            "text": "Full rendered public description",
+            "summary": "Rendered public summary",
+            "suppliedTags": ["guide", "video"],
+            "canonicalURL": NSNull(),
+            "attributes": [:],
+            "cachedSourceIconURL": NSNull(),
+            "firstObservedAtMilliseconds": index,
+            "lastObservedAtMilliseconds": index,
+            "observationCount": 1,
+        ]
+    }
+
+    /// The creator-level primary list the snapshot now carries in place of the
+    /// full entries.
+    private func creatorProjections(creatorCount: Int) -> [[String: Any]] {
+        (0..<creatorCount).map { index in
             [
-                "id": "entry-\(index)",
                 "platformID": "youtube",
-                "entryID": "video-\(index)",
                 "creatorID": "creator-\(index)",
                 "creatorName": "Creator \(index)",
-                "entryType": "video",
-                "title": "Video \(index)",
-                "surface": "feed",
-                "text": "Full rendered public description",
-                "summary": "Rendered public summary",
-                "suppliedTags": ["guide", "video"],
-                "canonicalURL": NSNull(),
-                "attributes": [:],
-                "cachedSourceIconURL": NSNull(),
+                "entryCount": 1,
                 "firstObservedAtMilliseconds": index,
                 "lastObservedAtMilliseconds": index,
-                "observationCount": 1,
+                "cachedSourceIconURL": NSNull(),
+                "subscriberCount": NSNull(),
             ]
         }
+    }
+
+    /// Full entries keyed as the JS cache keys them, for a test responder that
+    /// stands in for the native lazy-load channel.
+    private func creatorEntriesByKey(creatorCount: Int, datasetID: String = "dataset", platformID: String = "youtube") -> [String: [[String: Any]]] {
+        Dictionary(uniqueKeysWithValues: (0..<creatorCount).map { index in
+            ("\(datasetID)|\(platformID)|creator-\(index)", [makeEntry(index: index)])
+        })
+    }
+
+    private func populatedPayload(creatorCount: Int) -> [String: Any] {
         let tree: [String: Any] = [
             "id": "tree",
             "name": "Tree",
@@ -72,7 +140,7 @@ final class WebShellPerformanceTests: XCTestCase {
             "name": "Dataset",
             "revision": 1,
             "creatorClassifications": [],
-            "collectedEntries": entries,
+            "collectedCreators": creatorProjections(creatorCount: creatorCount),
         ]
         let classifierType: [String: Any] = [
             "id": "type",
@@ -82,7 +150,7 @@ final class WebShellPerformanceTests: XCTestCase {
             "datasetID": "dataset",
             "datasetRevision": 1,
             "applicablePlatformID": "youtube",
-            "localModelID": NSNull(),
+            "localModel": NSNull(),
             "selectedLLMProviderProfileID": "gemini",
             "llmAssistDraftConfiguration": NSNull(),
             "llmAssistConfiguration": [
@@ -191,8 +259,13 @@ final class WebShellPerformanceTests: XCTestCase {
         let waiter = NavigationWaiter(expectation: loaded)
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
+        // Serve one chosen creator's entries on demand, standing in for native.
+        let responder = CreatorEntriesResponder()
+        responder.entriesByKey = creatorEntriesByKey(creatorCount: 120)
+        configuration.userContentController.add(responder, name: "vaultClassifier")
         let webView = WKWebView(frame: .init(x: 0, y: 0, width: 1_200, height: 800), configuration: configuration)
         webView.navigationDelegate = waiter
+        responder.webView = webView
 
         let index = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "index", extension: "html"))
         let indexHTML = try String(contentsOf: index, encoding: .utf8)
@@ -293,15 +366,26 @@ final class WebShellPerformanceTests: XCTestCase {
         let expandedCardCount = try XCTUnwrap(expandedCardValue as? Int)
         XCTAssertGreaterThan(expandedCardCount, initialCardCount)
 
+        _ = try await evaluate(
+            "document.querySelector('[data-action=\"workspace\"][data-workspace=\"classificationData\"]').click();",
+            in: webView
+        )
+        // The first source is auto-selected; its entries arrive on the lazy
+        // channel, so poll until the detail pane has filled in.
+        try await waitForPositiveCount(
+            "document.querySelectorAll('.collection-detail .collection-detail-entry').length;",
+            in: webView
+        )
         let dataValue = try await evaluate(
             """
-            document.querySelector('[data-action="workspace"][data-workspace="classificationData"]').click();
             JSON.stringify({
               workspace: document.querySelector('[data-editor-panel]').dataset.workspace,
               creatorListOpen: document.querySelector('.collection-creators').open,
               creators: document.querySelectorAll('.collection-creator-row').length,
               detailEntries: document.querySelectorAll('.collection-detail .collection-detail-entry').length,
-              hasVirtualList: Boolean(document.querySelector('.collection-master [data-virtual-list]') && document.querySelector('.collection-detail [data-virtual-list]'))
+              masterVirtualList: Boolean(document.querySelector('.collection-master [data-virtual-list]')),
+              detailHasVirtualList: Boolean(document.querySelector('.collection-detail [data-virtual-list]')),
+              detailList: Boolean(document.querySelector('.collection-detail .collection-detail-list'))
             });
             """,
             in: webView
@@ -313,12 +397,16 @@ final class WebShellPerformanceTests: XCTestCase {
         XCTAssertEqual(dataJSON["workspace"] as? String, "classificationData")
         XCTAssertEqual(dataJSON["creatorListOpen"] as? Bool, true)
         // Master list is windowed: only a bounded slice of the 120 sources is
-        // in the DOM, and the first source is auto-selected so its entries show
-        // in the detail pane.
+        // in the DOM, and the first source is auto-selected so its lazily
+        // loaded entries show in the detail pane.
         XCTAssertGreaterThan(dataJSON["creators"] as? Int ?? 0, 0)
         XCTAssertLessThan(dataJSON["creators"] as? Int ?? .max, 120)
         XCTAssertGreaterThan(dataJSON["detailEntries"] as? Int ?? 0, 0)
-        XCTAssertEqual(dataJSON["hasVirtualList"] as? Bool, true)
+        // Only the master stays virtualized; the per-creator detail is a plain
+        // on-demand list, so the whole corpus never rides the snapshot.
+        XCTAssertEqual(dataJSON["masterVirtualList"] as? Bool, true)
+        XCTAssertEqual(dataJSON["detailHasVirtualList"] as? Bool, false)
+        XCTAssertEqual(dataJSON["detailList"] as? Bool, true)
 
         let collapsedCreatorListValue = try await evaluate(
             """
@@ -333,16 +421,20 @@ final class WebShellPerformanceTests: XCTestCase {
         )
         XCTAssertEqual(collapsedCreatorListValue as? Bool, false)
 
-        let selectedEntryValue = try await evaluate(
+        _ = try await evaluate(
             """
             document.querySelector('.collection-creators').open = true;
             document.querySelector('.collection-creators').dispatchEvent(new Event('toggle'));
             document.querySelector('.collection-creator-row').click();
-            document.querySelectorAll('.collection-detail .collection-detail-entry').length;
             """,
             in: webView
         )
-        let selectedEntryCount = try XCTUnwrap(selectedEntryValue as? Int)
+        // The clicked creator's entries are already cached, but they patch the
+        // pane on the same async channel, so poll for the swapped-in entry.
+        let selectedEntryCount = try await waitForPositiveCount(
+            "document.querySelectorAll('.collection-detail .collection-detail-entry').length;",
+            in: webView
+        )
         XCTAssertEqual(selectedEntryCount, 1)
 
         let evidenceValue = try await evaluate(

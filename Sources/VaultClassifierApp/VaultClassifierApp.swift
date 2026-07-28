@@ -1923,26 +1923,31 @@ final class VaultClassifierViewModel: ObservableObject {
         onWebStateChange?()
     }
 
-    func createLocalModel(name: String) {
+    func createLocalModel(name: String, classifierTypeID: String) {
         do {
             let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleaned.isEmpty else { throw WebBridgeInputError.invalidChoice("local model name") }
             guard var catalog = localState?.workspaceCatalog,
-                  let binding = catalog.bindings.first(where: {
-                      CollectionPlatformRegistry.definition(for: $0.id)?.supportsLocalModel == true
-                  }),
-                  let tree = catalog.trees.first(where: { $0.id == binding.treeID }),
-                  let dataset = catalog.datasets.first(where: { $0.id == binding.datasetID }) else {
-                throw WebBridgeInputError.invalidChoice("workspace assets")
+                  let type = catalog.classifierTypes.first(where: { $0.id == classifierTypeID }),
+                  let platformID = type.applicablePlatformID,
+                  CollectionPlatformRegistry.definition(for: platformID)?.supportsLocalModel == true,
+                  let tree = catalog.trees.first(where: { $0.id == type.treeID }),
+                  let dataset = catalog.datasets.first(where: { $0.id == type.datasetID }) else {
+                throw WebBridgeInputError.invalidChoice("classifier type")
+            }
+            // A classifier type owns at most one local model.
+            guard catalog.localModel(for: type.id) == nil else {
+                throw WebBridgeInputError.invalidChoice("existing local model")
             }
             catalog.models.append(.init(
                 name: cleaned,
+                classifierTypeID: type.id,
                 treeID: tree.id,
                 treeRevision: tree.revision,
                 datasetID: dataset.id,
                 datasetRevision: dataset.revision,
-                trainingPlatformID: binding.id,
-                trainingPlatformIDs: [binding.id]
+                trainingPlatformID: platformID,
+                trainingPlatformIDs: [platformID]
             ))
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
@@ -2023,7 +2028,6 @@ final class VaultClassifierViewModel: ObservableObject {
         typeID: String,
         name: String,
         applicablePlatformID: String,
-        localModelID: String?,
         llmProviderProfileID: String?,
         llmModelIdentifier: String?,
         llmDailyTokenLimit: String?,
@@ -2069,7 +2073,6 @@ final class VaultClassifierViewModel: ObservableObject {
                   let selectedDefinition = CollectionPlatformRegistry.definition(for: selectedBinding.id) else {
                 throw WebBridgeInputError.invalidChoice("classifier type")
             }
-            let supportsLocalModel = selectedDefinition.supportsLocalModel
             let supportsLLMAssist = selectedDefinition.supportsLLMAssist
             let selectedLLMAssist: LLMAssistConfiguration?
             let selectedLLMAssistDraft: LLMAssistDraftConfiguration?
@@ -2245,21 +2248,8 @@ final class VaultClassifierViewModel: ObservableObject {
                 selectedLLMAssistDraft = nil
                 selectedLLMProviderProfileID = nil
             }
-            let normalizedModelID = localModelID?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let compatibleModelID: String?
-            if supportsLocalModel,
-               let normalizedModelID, !normalizedModelID.isEmpty,
-               catalog.models.contains(where: { model in
-                   model.id == normalizedModelID && model.isReady && model.embeddedNeuralModel != nil &&
-                   model.treeID == tree.id && model.treeRevision == tree.revision &&
-                   model.datasetID == dataset.id && model.datasetRevision == dataset.revision &&
-                   model.effectiveTrainingPlatformIDs == [selectedBinding.id]
-               }) {
-                compatibleModelID = normalizedModelID
-            } else {
-                compatibleModelID = nil
-            }
-
+            // A local model is bound to its type (owns-one) and resolved by
+            // reverse lookup; there is no model selection to persist on the type.
             catalog.classifierTypes[typeIndex] = .init(
                 id: catalog.classifierTypes[typeIndex].id,
                 name: cleanedName,
@@ -2268,7 +2258,6 @@ final class VaultClassifierViewModel: ObservableObject {
                 datasetID: dataset.id,
                 datasetRevision: dataset.revision,
                 applicablePlatformID: selectedBinding.id,
-                localModelID: compatibleModelID,
                 selectedLLMProviderProfileID: selectedLLMProviderProfileID,
                 llmAssistDraftConfiguration: selectedLLMAssistDraft,
                 llmAssistConfiguration: selectedLLMAssist,
@@ -2339,24 +2328,15 @@ final class VaultClassifierViewModel: ObservableObject {
                 throw WebBridgeInputError.invalidChoice("collection platform")
             }
             guard (platform.supportsLocalModel ||
-                   classifierType.localModelID == nil),
+                   catalog.localModel(for: classifierType.id) == nil),
                   (platform.supportsLLMAssist ||
                    classifierType.llmAssistConfiguration == nil) else {
                 throw WebBridgeInputError.invalidChoice("manual-only platform classifier type")
             }
-            if let modelID = classifierType.localModelID {
-                guard
-                      catalog.models.contains(where: { model in
-                          model.id == modelID && model.isReady && model.embeddedNeuralModel != nil &&
-                          model.treeID == tree.id && model.treeRevision == tree.revision &&
-                          model.datasetID == dataset.id && model.datasetRevision == dataset.revision
-                      }) else {
-                    throw WebBridgeInputError.invalidChoice("ready local neural model")
-                }
-                catalog.bindings[bindingIndex].activeModelID = modelID
-            } else {
-                catalog.bindings[bindingIndex].activeModelID = nil
-            }
+            // The active model is the type's ready bound model, if it has trained
+            // one. A type with an untrained or stale model still activates and
+            // classifies through its remaining decision sources.
+            catalog.bindings[bindingIndex].activeModelID = catalog.readyLocalModel(for: classifierType)?.id
             catalog.bindings[bindingIndex].activeClassifierTypeID = normalizedTypeID
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
@@ -2440,72 +2420,51 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
-    func configureLocalModel(modelID: String, treeID: String, platformIDs: [String], baseEmbeddingID: String?) {
+    /// A local model inherits its tree, dataset, and platform from its bound
+    /// classifier type. The only per-model setting is the base language model,
+    /// so configuration is limited to that choice.
+    func configureLocalModel(modelID: String, baseEmbeddingID: String?) {
         do {
             guard var catalog = localState?.workspaceCatalog else { return }
-            try configureLocalModel(
-                in: &catalog,
-                modelID: modelID,
-                treeID: treeID,
-                platformIDs: platformIDs,
-                baseEmbeddingID: baseEmbeddingID
-            )
+            try applyLocalModelBaseEmbedding(in: &catalog, modelID: modelID, baseEmbeddingID: baseEmbeddingID)
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
             issue = nil
         } catch { issue = error.localizedDescription }
     }
 
-    func trainLocalModel(modelID: String, treeID: String, platformIDs: [String], baseEmbeddingID: String?) {
+    /// Runs one incremental training pass, folding the type's newly approved
+    /// creator decisions into the model's persisted artifact. Training is
+    /// accumulate-once: each decision contributes a single time over the model's
+    /// life. A pass with nothing new to fold leaves the model unchanged.
+    func trainLocalModel(modelID: String) {
         do {
-            guard var catalog = localState?.workspaceCatalog else { return }
-            try configureLocalModel(
-                in: &catalog,
-                modelID: modelID,
-                treeID: treeID,
-                platformIDs: platformIDs,
-                baseEmbeddingID: baseEmbeddingID
-            )
-            guard let modelIndex = catalog.models.firstIndex(where: { $0.id == modelID }),
-                  let tree = catalog.trees.first(where: { $0.id == catalog.models[modelIndex].treeID }),
-                  let dataset = catalog.datasets.first(where: { $0.id == catalog.models[modelIndex].datasetID }) else {
+            guard var catalog = localState?.workspaceCatalog,
+                  let modelIndex = catalog.models.firstIndex(where: { $0.id == modelID }),
+                  let type = catalog.classifierTypes.first(where: { $0.id == catalog.models[modelIndex].classifierTypeID }),
+                  let tree = catalog.trees.first(where: { $0.id == type.treeID }),
+                  let dataset = catalog.datasets.first(where: { $0.id == type.datasetID }) else {
                 throw WebBridgeInputError.invalidChoice("local model")
             }
-            catalog.models[modelIndex] = try LocalModelTrainer.train(catalog.models[modelIndex], tree: tree, dataset: dataset)
+            catalog.models[modelIndex] = try LocalModelTrainer.accumulate(
+                catalog.models[modelIndex],
+                type: type,
+                tree: tree,
+                dataset: dataset
+            )
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
             issue = nil
         } catch { issue = error.localizedDescription }
     }
 
-    private func configureLocalModel(
+    private func applyLocalModelBaseEmbedding(
         in catalog: inout WorkspaceCatalog,
         modelID: String,
-        treeID: String,
-        platformIDs: [String],
         baseEmbeddingID: String?
     ) throws {
-        guard let modelIndex = catalog.models.firstIndex(where: { $0.id == modelID }),
-              let tree = catalog.trees.first(where: { $0.id == treeID }) else {
-            throw WebBridgeInputError.invalidChoice("local model setup")
-        }
-        let selectedPlatformIDs = Array(Set(platformIDs)).sorted()
-        guard !selectedPlatformIDs.isEmpty,
-              selectedPlatformIDs.count <= LocalModelAsset.maximumTrainingPlatforms,
-              selectedPlatformIDs.allSatisfy({
-                  CollectionPlatformRegistry.definition(for: $0)?.supportsLocalModel == true
-              }) else {
-            throw WebBridgeInputError.invalidChoice("local model data sources")
-        }
-        let bindings = selectedPlatformIDs.compactMap { platformID in
-            catalog.bindings.first(where: { $0.id == platformID })
-        }
-        guard bindings.count == selectedPlatformIDs.count,
-              bindings.allSatisfy({ $0.treeID == tree.id }),
-              let datasetID = bindings.first?.datasetID,
-              bindings.allSatisfy({ $0.datasetID == datasetID }),
-              let dataset = catalog.datasets.first(where: { $0.id == datasetID }) else {
-            throw WebBridgeInputError.invalidChoice("local model data sources")
+        guard let modelIndex = catalog.models.firstIndex(where: { $0.id == modelID }) else {
+            throw WebBridgeInputError.invalidChoice("local model")
         }
         let normalizedBaseEmbeddingID = baseEmbeddingID?.trimmingCharacters(in: .whitespacesAndNewlines)
         let baseEmbedding = normalizedBaseEmbeddingID?.isEmpty == false
@@ -2514,30 +2473,17 @@ final class VaultClassifierViewModel: ObservableObject {
         if normalizedBaseEmbeddingID?.isEmpty == false, baseEmbedding == nil {
             throw WebBridgeInputError.invalidChoice("base embedding")
         }
-
-        let prior = catalog.models[modelIndex]
-        let changed = prior.treeID != tree.id ||
-            prior.treeRevision != tree.revision ||
-            prior.datasetID != dataset.id ||
-            prior.datasetRevision != dataset.revision ||
-            prior.effectiveTrainingPlatformIDs != selectedPlatformIDs ||
-            prior.baseEmbeddingID != baseEmbedding
-        catalog.models[modelIndex].treeID = tree.id
-        catalog.models[modelIndex].treeRevision = tree.revision
-        catalog.models[modelIndex].datasetID = dataset.id
-        catalog.models[modelIndex].datasetRevision = dataset.revision
-        catalog.models[modelIndex].trainingPlatformID = selectedPlatformIDs.first
-        catalog.models[modelIndex].trainingPlatformIDs = selectedPlatformIDs
+        guard catalog.models[modelIndex].baseEmbeddingID != baseEmbedding else { return }
         catalog.models[modelIndex].baseEmbeddingID = baseEmbedding
-        if changed {
-            catalog.models[modelIndex].isReady = false
-            catalog.models[modelIndex].embeddedNeuralModel = nil
-            catalog.models[modelIndex].embeddedTrainingReport = nil
-            catalog.models[modelIndex].trainedAtMilliseconds = nil
-            for bindingIndex in catalog.bindings.indices where catalog.bindings[bindingIndex].activeModelID == modelID {
-                catalog.bindings[bindingIndex].activeModelID = nil
-                catalog.bindings[bindingIndex].activeClassifierTypeID = nil
-            }
+        // A change of base embedding invalidates the trained artifact and its
+        // accumulate-once ledger; the model must be trained again from empty.
+        catalog.models[modelIndex].isReady = false
+        catalog.models[modelIndex].embeddedNeuralModel = nil
+        catalog.models[modelIndex].embeddedTrainingReport = nil
+        catalog.models[modelIndex].incorporatedDecisionIDs = []
+        catalog.models[modelIndex].trainedAtMilliseconds = nil
+        for bindingIndex in catalog.bindings.indices where catalog.bindings[bindingIndex].activeModelID == modelID {
+            catalog.bindings[bindingIndex].activeModelID = nil
         }
     }
 
@@ -3778,35 +3724,17 @@ final class VaultClassifierViewModel: ObservableObject {
                             "updatedAtMilliseconds": classification.updatedAtMilliseconds,
                         ] as [String: Any]
                     },
-                    "collectedEntries": dataset.collectedEntries.map { entry -> [String: Any] in
-                        [
-                            "id": entry.id,
-                            "platformID": entry.platformID,
-                            "entryID": entry.entryID,
-                            "creatorID": entry.creatorID,
-                            "creatorName": entry.creatorName,
-                            "entryType": entry.entryType,
-                            "title": entry.title,
-                            "surface": entry.surface.rawValue,
-                            "text": entry.text ?? NSNull(),
-                            "summary": entry.summary ?? NSNull(),
-                            "suppliedTags": entry.suppliedTags,
-                            "canonicalURL": entry.canonicalURL ?? NSNull(),
-                            "attributes": entry.attributes,
-                            "cachedSourceIconURL": entry.sourceIconURL.flatMap {
-                                sourceIconCache?.cachedURL(for: $0)?.absoluteString
-                            } ?? NSNull(),
-                            "firstObservedAtMilliseconds": entry.firstObservedAtMilliseconds,
-                            "lastObservedAtMilliseconds": entry.lastObservedAtMilliseconds,
-                            "observationCount": entry.observationCount,
-                        ] as [String: Any]
-                    },
+                    "collectedCreators": webCollectedCreators(dataset.collectedEntries),
                 ] as [String: Any]
             }
         assets["models"] = catalog.models.map { model in
-                [
+                let owningType = catalog.classifierTypes.first(where: { $0.id == model.classifierTypeID })
+                let pendingCount = owningType.map { catalog.pendingLocalModelDecisions(for: $0).count } ?? 0
+                let needsTraining = owningType.map { catalog.localModelNeedsTraining(for: $0) } ?? true
+                return [
                     "id": model.id,
                     "name": model.name,
+                    "classifierTypeID": model.classifierTypeID,
                     "treeID": model.treeID,
                     "treeRevision": model.treeRevision,
                     "datasetID": model.datasetID,
@@ -3816,12 +3744,17 @@ final class VaultClassifierViewModel: ObservableObject {
                     "baseEmbeddingID": model.baseEmbeddingID?.rawValue ?? NSNull(),
                     "version": model.version,
                     "ready": model.isReady,
+                    "incorporatedDecisions": model.incorporatedDecisionIDs.count,
+                    "pendingDecisions": pendingCount,
+                    "needsTraining": needsTraining,
                     "training": model.embeddedTrainingReport.map { report in
                         [
                             "examples": report.exampleCount,
                             "updates": report.labelUpdateCount,
                             "epochs": report.epochs,
                             "loss": report.meanBinaryCrossEntropy,
+                            "decisionsFolded": report.decisionsFolded,
+                            "incorporatedDecisions": report.incorporatedDecisions,
                         ] as [String: Any]
                     } ?? NSNull(),
                 ] as [String: Any]
@@ -3839,7 +3772,14 @@ final class VaultClassifierViewModel: ObservableObject {
                     "datasetID": classifierType.datasetID,
                     "datasetRevision": classifierType.datasetRevision,
                     "applicablePlatformID": classifierType.applicablePlatformID ?? NSNull(),
-                    "localModelID": classifierType.localModelID ?? NSNull(),
+                    "localModel": catalog.localModel(for: classifierType.id).map { model in
+                        [
+                            "id": model.id,
+                            "name": model.name,
+                            "ready": catalog.readyLocalModel(for: classifierType) != nil,
+                            "needsTraining": catalog.localModelNeedsTraining(for: classifierType),
+                        ] as [String: Any]
+                    } ?? NSNull(),
                     "selectedLLMProviderProfileID": classifierType.selectedLLMProviderProfileID ?? NSNull(),
                     "llmAssistDraftConfiguration": classifierType.llmAssistDraftConfiguration.map { draft in
                         [
@@ -4025,7 +3965,10 @@ final class VaultClassifierViewModel: ObservableObject {
                     classifierTypeID: try webOptionalString(data, key: "classifierTypeID", limit: 256)
                 )
             case "createLocalModel":
-                createLocalModel(name: try webString(data, key: "name", limit: 128))
+                createLocalModel(
+                    name: try webString(data, key: "name", limit: 128),
+                    classifierTypeID: try webString(data, key: "classifierTypeID", limit: 256)
+                )
             case "createClassifierType":
                 createClassifierType(name: try webString(data, key: "name", limit: ClassifierTypeAsset.maximumNameLength))
             case "configureClassifierType":
@@ -4044,7 +3987,6 @@ final class VaultClassifierViewModel: ObservableObject {
                     typeID: try webString(data, key: "typeID", limit: 256),
                     name: try webString(data, key: "name", limit: ClassifierTypeAsset.maximumNameLength),
                     applicablePlatformID: try webString(data, key: "applicablePlatformID", limit: 64),
-                    localModelID: try webOptionalString(data, key: "localModelID", limit: 256),
                     llmProviderProfileID: try webOptionalString(data, key: "llmProviderProfileID", limit: 128),
                     llmModelIdentifier: try webOptionalString(data, key: "llmModelIdentifier", limit: LLMAssistConfiguration.maximumModelIdentifierLength),
                     llmDailyTokenLimit: try webOptionalString(data, key: "llmDailyTokenLimit", limit: 16),
@@ -4100,17 +4042,10 @@ final class VaultClassifierViewModel: ObservableObject {
             case "configureLocalModel":
                 configureLocalModel(
                     modelID: try webString(data, key: "modelID", limit: 256),
-                    treeID: try webString(data, key: "treeID", limit: 256),
-                    platformIDs: try webStringArray(data, key: "platformIDs", limit: LocalModelAsset.maximumTrainingPlatforms, elementLimit: 64),
                     baseEmbeddingID: try webOptionalString(data, key: "baseEmbeddingID", limit: 128)
                 )
             case "trainLocalModel":
-                trainLocalModel(
-                    modelID: try webString(data, key: "modelID", limit: 256),
-                    treeID: try webString(data, key: "treeID", limit: 256),
-                    platformIDs: try webStringArray(data, key: "platformIDs", limit: LocalModelAsset.maximumTrainingPlatforms, elementLimit: 64),
-                    baseEmbeddingID: try webOptionalString(data, key: "baseEmbeddingID", limit: 128)
-                )
+                trainLocalModel(modelID: try webString(data, key: "modelID", limit: 256))
             case "renameTree":
                 renameTree(treeID: try webString(data, key: "treeID", limit: 256), name: try webString(data, key: "name", limit: 128))
             case "deleteTree":
@@ -4259,6 +4194,116 @@ final class VaultClassifierViewModel: ObservableObject {
                     "explanation": decision.explanation,
                 ] as [String: Any]
             },
+        ]
+    }
+
+    /// The primary (creator-level) list carried in every snapshot: one row per
+    /// (platform, creator) with only the fields the master lists and creator
+    /// cards render. The heavy per-entry body is intentionally excluded and
+    /// served lazily by `webCreatorEntriesPayload` when a creator is chosen, so
+    /// the collected corpus never rides along on unrelated state updates.
+    private func webCollectedCreators(_ entries: [CollectedPlatformEntry]) -> [[String: Any]] {
+        struct Aggregate {
+            var platformID: String
+            var creatorID: String
+            var creatorName: String
+            var entryCount: Int
+            var firstObserved: Int64
+            var lastObserved: Int64
+            var iconURL: String?
+            var subscriberCount: String?
+            var latestObservedForFields: Int64
+        }
+        var order: [String] = []
+        var groups: [String: Aggregate] = [:]
+        for entry in entries {
+            let key = "\(entry.platformID)\u{1F}\(entry.creatorID)"
+            let icon = entry.sourceIconURL.flatMap { sourceIconCache?.cachedURL(for: $0)?.absoluteString }
+            let subscriber = entry.attributes["subscriberCount"]
+            if var aggregate = groups[key] {
+                aggregate.entryCount += 1
+                aggregate.firstObserved = min(aggregate.firstObserved, entry.firstObservedAtMilliseconds)
+                aggregate.lastObserved = max(aggregate.lastObserved, entry.lastObservedAtMilliseconds)
+                // Display name/icon/subscriber follow the most recently observed
+                // entry; an older observation only fills a still-missing icon.
+                if entry.lastObservedAtMilliseconds >= aggregate.latestObservedForFields {
+                    aggregate.latestObservedForFields = entry.lastObservedAtMilliseconds
+                    aggregate.creatorName = entry.creatorName
+                    if let icon { aggregate.iconURL = icon }
+                    if let subscriber { aggregate.subscriberCount = subscriber }
+                } else if aggregate.iconURL == nil, let icon {
+                    aggregate.iconURL = icon
+                }
+                groups[key] = aggregate
+            } else {
+                order.append(key)
+                groups[key] = Aggregate(
+                    platformID: entry.platformID,
+                    creatorID: entry.creatorID,
+                    creatorName: entry.creatorName,
+                    entryCount: 1,
+                    firstObserved: entry.firstObservedAtMilliseconds,
+                    lastObserved: entry.lastObservedAtMilliseconds,
+                    iconURL: icon,
+                    subscriberCount: subscriber,
+                    latestObservedForFields: entry.lastObservedAtMilliseconds
+                )
+            }
+        }
+        return order.compactMap { key in
+            guard let aggregate = groups[key] else { return nil }
+            return [
+                "platformID": aggregate.platformID,
+                "creatorID": aggregate.creatorID,
+                "creatorName": aggregate.creatorName,
+                "entryCount": aggregate.entryCount,
+                "firstObservedAtMilliseconds": aggregate.firstObserved,
+                "lastObservedAtMilliseconds": aggregate.lastObserved,
+                "cachedSourceIconURL": aggregate.iconURL ?? NSNull(),
+                "subscriberCount": aggregate.subscriberCount ?? NSNull(),
+            ]
+        }
+    }
+
+    /// The full per-entry projection, delivered for one chosen creator only.
+    private func webCollectedEntry(_ entry: CollectedPlatformEntry) -> [String: Any] {
+        [
+            "id": entry.id,
+            "platformID": entry.platformID,
+            "entryID": entry.entryID,
+            "creatorID": entry.creatorID,
+            "creatorName": entry.creatorName,
+            "entryType": entry.entryType,
+            "title": entry.title,
+            "surface": entry.surface.rawValue,
+            "text": entry.text ?? NSNull(),
+            "summary": entry.summary ?? NSNull(),
+            "suppliedTags": entry.suppliedTags,
+            "canonicalURL": entry.canonicalURL ?? NSNull(),
+            "attributes": entry.attributes,
+            "cachedSourceIconURL": entry.sourceIconURL.flatMap {
+                sourceIconCache?.cachedURL(for: $0)?.absoluteString
+            } ?? NSNull(),
+            "firstObservedAtMilliseconds": entry.firstObservedAtMilliseconds,
+            "lastObservedAtMilliseconds": entry.lastObservedAtMilliseconds,
+            "observationCount": entry.observationCount,
+        ]
+    }
+
+    /// Serves the full entries for one chosen creator, in response to a bounded
+    /// `loadCreatorEntries` web action. Delivered on its own targeted channel so
+    /// choosing a creator never re-pushes or re-renders the whole snapshot.
+    func webCreatorEntriesPayload(datasetID: String, platformID: String, creatorID: String) -> [String: Any]? {
+        let catalog = (localState ?? coordinator?.snapshot())?.workspaceCatalog
+        guard let dataset = catalog?.datasets.first(where: { $0.id == datasetID }) else { return nil }
+        let entries = dataset.collectedEntries
+            .filter { $0.platformID == platformID && $0.creatorID == creatorID }
+            .map(webCollectedEntry)
+        return [
+            "datasetID": datasetID,
+            "platformID": platformID,
+            "creatorID": creatorID,
+            "entries": entries,
         ]
     }
 
