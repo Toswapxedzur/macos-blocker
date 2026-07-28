@@ -3156,7 +3156,10 @@ final class VaultClassifierViewModel: ObservableObject {
                 classifierType: classifierType,
                 platformID: platformID
             )
-            let queuedWorkItems = activatedRun ? workItems : Array(workItems.prefix(configuration.batchSize))
+            // The activated run is the only caller; it sweeps the whole eligible
+            // queue, paced by the classifier's classification pace. Batch size no
+            // longer gates it (it only ever limited the removed manual control).
+            let queuedWorkItems = workItems
             guard !queuedWorkItems.isEmpty else {
                 if activatedRun { return }
                 throw WebBridgeInputError.invalidChoice("unclassified creators")
@@ -3263,6 +3266,11 @@ final class VaultClassifierViewModel: ObservableObject {
                             )
                         }
                         successCount += 1
+                        // Publish each decision as it lands so the activated run
+                        // streams into the UI at the classification pace, rather
+                        // than appearing all at once when the sweep finishes.
+                        self.refreshLocalState()
+                        self.onWebStateChange?()
                     } catch {
                         firstFailure = firstFailure ?? error
                         if let recordPlan, !(error is RawWebSearchFailure) {
