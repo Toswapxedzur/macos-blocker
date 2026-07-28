@@ -2950,13 +2950,49 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             return entry.creatorID
         })
+        var entriesByCreator: [String: [CollectedPlatformEntry]] = [:]
+        for entry in dataset.collectedEntries where entry.platformID == platformID {
+            entriesByCreator[entry.creatorID, default: []].append(entry)
+        }
         return creatorIDs.compactMap {
-            llmCreatorWorkItem(platformID: platformID, creatorID: $0, entries: dataset.collectedEntries)
+            llmCreatorWorkItem(platformID: platformID, creatorID: $0, entries: entriesByCreator[$0] ?? [])
         }.sorted { lhs, rhs in
             let comparison = lhs.representative.creatorName.localizedCaseInsensitiveCompare(rhs.representative.creatorName)
             return comparison == .orderedSame
                 ? lhs.representative.creatorID < rhs.representative.creatorID
                 : comparison == .orderedAscending
+        }
+    }
+
+    /// Cheap O(entries) count of creators eligible for an activated run using
+    /// the same eligibility rules as `unclassifiedLLMCreatorWorkItems`, but
+    /// without building each creator's evidence. Safe to call on every render.
+    private func eligibleUnclassifiedCreatorCount(
+        dataset: ClassificationDataset,
+        classifierType: ClassifierTypeAsset,
+        platformID: String
+    ) -> Int {
+        let classifiedCreatorIDs = Set(dataset.creatorClassifications.compactMap { record -> String? in
+            guard record.classifierTypeID == classifierType.id,
+                  record.platformID == platformID,
+                  record.origin == .llmAssist else { return nil }
+            return record.creatorID
+        })
+        var entriesByCreator: [String: [CollectedPlatformEntry]] = [:]
+        for entry in dataset.collectedEntries where entry.platformID == platformID {
+            guard !entry.creatorID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !classifiedCreatorIDs.contains(entry.creatorID) else { continue }
+            entriesByCreator[entry.creatorID, default: []].append(entry)
+        }
+        return entriesByCreator.values.reduce(0) { count, creatorEntries in
+            let valid = creatorEntries.allSatisfy { entry in
+                !entry.entryID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                !entry.creatorID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                !entry.creatorName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                !entry.entryType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                !entry.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            return count + (valid ? 1 : 0)
         }
     }
 
@@ -2977,11 +3013,11 @@ final class VaultClassifierViewModel: ObservableObject {
         let queuedCreatorCount: Int
         if let dataset = catalog.datasets.first(where: { $0.id == classifierType.datasetID }),
            let platformID = classifierType.applicablePlatformID {
-            queuedCreatorCount = unclassifiedLLMCreatorWorkItems(
+            queuedCreatorCount = eligibleUnclassifiedCreatorCount(
                 dataset: dataset,
                 classifierType: classifierType,
                 platformID: platformID
-            ).count
+            )
         } else {
             queuedCreatorCount = 0
         }
@@ -3050,11 +3086,11 @@ final class VaultClassifierViewModel: ObservableObject {
         for classifierType in activeTypes {
             guard let dataset = catalog.datasets.first(where: { $0.id == classifierType.datasetID }),
                   let activePlatformID = classifierType.applicablePlatformID,
-                  !unclassifiedLLMCreatorWorkItems(
+                  eligibleUnclassifiedCreatorCount(
                       dataset: dataset,
                       classifierType: classifierType,
                       platformID: activePlatformID
-                  ).isEmpty else {
+                  ) > 0 else {
                 continue
             }
             classifyCreatorBatchWithLLM(typeID: classifierType.id, activatedRun: true)
