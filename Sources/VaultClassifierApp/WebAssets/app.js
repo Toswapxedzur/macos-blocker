@@ -47,20 +47,22 @@
   // datasetID|platformID|creatorID); the pending set guards in-flight requests.
   const loadedCreatorEntries = new Map();
   const pendingCreatorEntryRequests = new Set();
+  // Optimistic manual-decision overlay: typeID -> (creatorKey -> {tagIDs, negativeTagIDs}).
+  // A tag/untag moves one card and records the decision here so it survives
+  // re-renders without a full round-trip; cleared when an authoritative snapshot
+  // arrives (receive()), which by then already reflects the persisted decision.
+  const manualDecisionOverlay = new Map();
   let pendingDeletion = null;
   let utilityPanel = null;
   let selectedLanguage = "en";
   let navigationPanelWidth = navigationWidthRange.fallback;
   let navigationResize = null;
-  const incrementalPageSize = 40;
   const collectionRowHeight = 48;
+  const creatorTagRowHeight = 96;
   const workspaceNames = new Set(["tagTree", "localModel", "llmAssist", "browserBridge", "classificationData"]);
-  const incrementalLists = new Map();
   const virtualLists = new Map();
   const virtualListScrollByKey = new Map();
-  let incrementalListSequence = 0;
   let virtualListSequence = 0;
-  let incrementalListObserver = null;
   let virtualListResizeObserver = null;
   const keyedListRegistry = new Map();
   const keyedListRenderedRows = new Map();
@@ -177,65 +179,10 @@
   // which is what lets the render() fast path keep the existing DOM's observers
   // valid. Observers are disconnected only on a full rebuild (in render()).
   function resetDeferredRendering() {
-    incrementalLists.clear();
     virtualLists.clear();
     keyedListRegistry.clear();
     liveHTMLRegistry.clear();
-    incrementalListSequence = 0;
     virtualListSequence = 0;
-  }
-
-  function incrementalList(items, renderItem, emptyMarkup = "") {
-    if (!items.length) return emptyMarkup;
-    const id = `incremental-list-${incrementalListSequence += 1}`;
-    const nextIndex = Math.min(incrementalPageSize, items.length);
-    incrementalLists.set(id, { items, renderItem, nextIndex });
-    const initialRows = items.slice(0, nextIndex).map(renderItem).join("");
-    const sentinel = nextIndex < items.length
-      ? `<span class="incremental-list-sentinel" data-incremental-list="${id}" aria-hidden="true"></span>`
-      : "";
-    return `${initialRows}${sentinel}`;
-  }
-
-  function appendIncrementalRows(sentinel) {
-    const id = sentinel?.dataset.incrementalList;
-    const list = id ? incrementalLists.get(id) : null;
-    if (!list || !sentinel.isConnected) return;
-    incrementalListObserver?.unobserve(sentinel);
-    const endIndex = Math.min(list.nextIndex + incrementalPageSize, list.items.length);
-    const rows = list.items.slice(list.nextIndex, endIndex).map(list.renderItem).join("");
-    if (rows) sentinel.insertAdjacentHTML("beforebegin", rows);
-    list.nextIndex = endIndex;
-    if (endIndex >= list.items.length) {
-      incrementalLists.delete(id);
-      sentinel.remove();
-      return;
-    }
-    window.requestAnimationFrame(() => {
-      if (sentinel.isConnected) incrementalListObserver?.observe(sentinel);
-    });
-  }
-
-  function observeIncrementalLists() {
-    const sentinels = root.querySelectorAll("[data-incremental-list]");
-    if (!sentinels.length) return;
-    if (!("IntersectionObserver" in window)) {
-      sentinels.forEach((sentinel) => {
-        while (sentinel.isConnected && incrementalLists.has(sentinel.dataset.incrementalList)) {
-          appendIncrementalRows(sentinel);
-        }
-      });
-      return;
-    }
-    // Prefetch well ahead of the viewport (~1.5 screens) so paginated rows are
-    // in the DOM before they scroll into view, rather than appearing to "fail
-    // to load" when a fast scroll outruns a near-viewport trigger.
-    incrementalListObserver ||= new IntersectionObserver((entries) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) appendIncrementalRows(entry.target);
-      });
-    }, { rootMargin: "1200px 0px" });
-    sentinels.forEach((sentinel) => incrementalListObserver.observe(sentinel));
   }
 
   // Windowed list: renders only the rows in (or near) the visible box, so DOM
@@ -243,11 +190,71 @@
   // single fixed height (rowHeight). A stable `key` preserves scroll position
   // across full re-renders.
   function virtualList(items, rowHeight, renderRow, { key = "", emptyMarkup = "" } = {}) {
-    if (!items.length) return emptyMarkup;
+    // A keyed list always renders its container, even when empty, so a targeted
+    // update can add rows to it later without a full re-render.
+    if (!items.length && !key) return emptyMarkup;
     const id = `virtual-list-${virtualListSequence += 1}`;
     virtualLists.set(id, { items, rowHeight, renderRow, key });
     const totalHeight = items.length * rowHeight;
     return `<div class="virtual-list" data-virtual-list="${id}"${key ? ` data-virtual-key="${esc(key)}"` : ""}><div class="virtual-list-sizer" style="height:${totalHeight}px"><div class="virtual-list-window" data-virtual-window></div></div></div>`;
+  }
+
+  // Repaints every mounted virtual list from its (freshly rebuilt) registry
+  // entry. Because resetDeferredRendering resets the id sequence, identical
+  // markup re-registers with identical ids, so each container's id still maps to
+  // its entry — letting the render() fast path refresh windowed rows in place.
+  function repaintVirtualLists() {
+    root.querySelectorAll("[data-virtual-list]").forEach((container) => {
+      const state = virtualLists.get(container.dataset.virtualList);
+      if (!state) return;
+      const sizer = container.querySelector(".virtual-list-sizer");
+      if (sizer) sizer.style.height = `${state.items.length * state.rowHeight}px`;
+      paintVirtualList(container);
+    });
+  }
+
+  // Targeted move of one creator card between the three tag-decision columns:
+  // updates the windowed lists, counts, and empty states in place — no full
+  // re-render — so recording a decision costs the same regardless of list size.
+  function moveCreatorBetweenTagColumns(typeID, creatorKey, newTagIDs, newNegativeTagIDs) {
+    const kinds = ["needsDecision", "tagged", "notTagged"];
+    const selectedTagID = selectedCreatorTagByType.get(typeID);
+    const cols = {};
+    root.querySelectorAll("[data-virtual-key]").forEach((container) => {
+      kinds.forEach((kind) => {
+        if (container.dataset.virtualKey === `creator-tag-col-${typeID}-${kind}`) {
+          cols[kind] = { container, state: virtualLists.get(container.dataset.virtualList) };
+        }
+      });
+    });
+    if (kinds.some((kind) => !cols[kind]?.state)) return false;
+    let record = null;
+    for (const kind of kinds) {
+      const items = cols[kind].state.items;
+      const idx = items.findIndex((creator) => creator.key === creatorKey);
+      if (idx >= 0) { record = items[idx]; items.splice(idx, 1); break; }
+    }
+    if (!record) return false;
+    record.tagIDs = newTagIDs;
+    record.negativeTagIDs = newNegativeTagIDs;
+    const targetKind = newTagIDs.includes(selectedTagID)
+      ? "tagged"
+      : newNegativeTagIDs.includes(selectedTagID) ? "notTagged" : "needsDecision";
+    const targetItems = cols[targetKind].state.items;
+    targetItems.push(record);
+    targetItems.sort((lhs, rhs) => lhs.name.localeCompare(rhs.name));
+    for (const kind of kinds) {
+      const { container, state } = cols[kind];
+      const sizer = container.querySelector(".virtual-list-sizer");
+      if (sizer) sizer.style.height = `${state.items.length * state.rowHeight}px`;
+      paintVirtualList(container);
+      const section = container.closest("[data-creator-tag-column]");
+      const count = section?.querySelector("[data-creator-tag-count]");
+      if (count) count.textContent = state.items.length;
+      const empty = section?.querySelector("[data-creator-tag-empty]");
+      if (empty) empty.hidden = state.items.length > 0;
+    }
+    return true;
   }
 
   function paintVirtualList(container) {
@@ -920,17 +927,19 @@
         else selectedCreatorTagByType.delete(classifierType.id);
       }
       const selectedCreatorTagNode = leafTagOptions.find((node) => node.id === selectedCreatorTagID) || null;
+      const decisionOverlay = manualDecisionOverlay.get(classifierType.id);
       const creatorRecords = sortedCreatorCandidates
         .map(([key, creator]) => {
           const classification = currentDecisionByCreator.get(key);
+          const override = decisionOverlay?.get(key);
           return {
             key,
             platformName: platformDefinitions.get(creator.platformID)?.name || creator.platformID,
             name: creator.creatorName,
             subscriberCount: creator.subscriberCount || "",
             avatarURL: typeof creator.cachedSourceIconURL === "string" ? creator.cachedSourceIconURL : "",
-            tagIDs: classification?.tags || [],
-            negativeTagIDs: classification?.negativeTags || [],
+            tagIDs: override?.tagIDs ?? classification?.tags ?? [],
+            negativeTagIDs: override?.negativeTagIDs ?? classification?.negativeTags ?? [],
           };
         })
         .sort((lhs, rhs) => lhs.name.localeCompare(rhs.name));
@@ -1005,7 +1014,7 @@
               : `<span class="creator-tag-card-avatar creator-tag-card-avatar-fallback" aria-hidden="true">${esc(creator.name.slice(0, 1).toUpperCase())}</span>`;
             return `<article class="creator-tag-card"><div class="creator-tag-card-profile">${avatar}<div><strong dir="auto">${esc(creator.name)}</strong><span>${esc(creator.platformName)}${creator.subscriberCount ? ` · ${tx("bridge.creatorSubscribers", { count: creator.subscriberCount })}` : ""}</span></div></div><div class="creator-tag-card-actions">${actions}</div></article>`;
           };
-          const columns = columnData.map(([kind, titleKey, creators]) => `<section class="creator-tag-column"><div class="creator-tag-column-head"><h4>${kind === "needsDecision" ? tx(titleKey) : tagPhrase(titleKey, selectedCreatorTagNode)}</h4><span>${creators.length}</span></div><div class="creator-tag-column-list">${incrementalList(creators, (creator) => creatorCard(creator, kind), `<p class="creator-tag-empty">${esc(t("bridge.sourceTagEmpty", { sources: sourceTerms.plural }))}</p>`)}</div></section>`).join("");
+          const columns = columnData.map(([kind, titleKey, creators]) => `<section class="creator-tag-column" data-creator-tag-column="${esc(kind)}" data-type-id="${esc(classifierType.id)}"><div class="creator-tag-column-head"><h4>${kind === "needsDecision" ? tx(titleKey) : tagPhrase(titleKey, selectedCreatorTagNode)}</h4><span data-creator-tag-count>${creators.length}</span></div><div class="creator-tag-column-list">${virtualList(creators, creatorTagRowHeight, (creator) => creatorCard(creator, kind), { key: `creator-tag-col-${classifierType.id}-${kind}` })}<p class="creator-tag-empty" data-creator-tag-empty${creators.length ? " hidden" : ""}>${esc(t("bridge.sourceTagEmpty", { sources: sourceTerms.plural }))}</p></div></section>`).join("");
           return `<div class="creator-tag-browser"><nav class="creator-tag-navigation" aria-label="${tx("bridge.creatorTagNavigation")}" role="tablist">${leafTagOptions.map((node) => `<button class="creator-tag-tab tag-pill${selectedCreatorTagID === node.id ? " active" : ""}" style="${tagColorStyle(node)}" type="button" data-action="selectCreatorTag" data-type-id="${esc(classifierType.id)}" data-tag-id="${esc(node.id)}" role="tab" aria-selected="${selectedCreatorTagID === node.id}">${esc(node.name)}</button>`).join("")}</nav><div class="creator-tag-columns">${columns}</div></div>`;
         })()
         : `<div class="empty compact-empty">${!creatorRecords.length ? esc(t("bridge.noSources", { sources: sourceTerms.plural })) : tx("bridge.noCreatorTags")}</div>`;
@@ -1456,15 +1465,17 @@
     }
     resetDeferredRendering();
     const markup = shell(workspace()) + deletionModal();
-    // Fast path: the signature (everything except keyed-list rows and live
-    // regions) is unchanged, so only reconcilable data differs. Update those in
-    // place and keep scroll. Gated to DOM without virtual lists (they are
-    // JS-populated and repainted only on a full render). Any failure falls back
-    // to a full rebuild, so the worst case is the previous behavior.
-    if (markup === lastRenderedMarkup && root.firstChild && !root.querySelector("[data-virtual-list]")) {
+    // Fast path: the signature (everything except keyed-list rows, live
+    // regions, and windowed virtual-list rows) is unchanged, so only
+    // reconcilable data differs. Update those in place and keep scroll. Virtual
+    // lists re-register with identical ids on identical markup, so their windows
+    // can be repainted here rather than forcing a full rebuild. Any failure
+    // falls back to a full rebuild, so the worst case is the previous behavior.
+    if (markup === lastRenderedMarkup && root.firstChild) {
       try {
         reconcileLiveHTML();
         reconcileKeyedLists();
+        repaintVirtualLists();
         return;
       } catch (_) { /* fall through to full render */ }
     }
@@ -1474,14 +1485,12 @@
   function renderFull(markup) {
     rememberTreeViewportPositions();
     rememberEditorViewportPosition();
-    incrementalListObserver?.disconnect();
     virtualListResizeObserver?.disconnect();
     keyedListRenderedRows.clear();
     liveHTMLRendered.clear();
     root.innerHTML = markup;
     lastRenderedMarkup = markup;
     applyApplicablePlatformCapabilities();
-    observeIncrementalLists();
     setupVirtualLists();
     bindTreeMapWheel();
     reconcileLiveHTML();
@@ -1561,6 +1570,28 @@
       pendingDeletion = null;
       render();
       send(pending.action, pending.payload);
+      return;
+    }
+    if (action === "recordCreatorClassification") {
+      const typeID = button.dataset.typeId;
+      const creatorKey = button.dataset.creatorKey;
+      if (!typeID || !creatorKey) return;
+      let newTagIDs, newNegativeTagIDs;
+      try {
+        newTagIDs = JSON.parse(button.dataset.tagIds || "[]");
+        newNegativeTagIDs = JSON.parse(button.dataset.negativeTagIds || "[]");
+      } catch (_) { return; }
+      if (!Array.isArray(newTagIDs) || !newTagIDs.every((id) => typeof id === "string")) return;
+      if (!Array.isArray(newNegativeTagIDs) || !newNegativeTagIDs.every((id) => typeof id === "string")) return;
+      // Optimistic: record the decision locally, move just this card, then
+      // persist. Native does not re-push (returns false) so the whole list is
+      // never rebuilt; the overlay keeps the decision until an authoritative
+      // snapshot supersedes it.
+      let typeOverlay = manualDecisionOverlay.get(typeID);
+      if (!typeOverlay) { typeOverlay = new Map(); manualDecisionOverlay.set(typeID, typeOverlay); }
+      typeOverlay.set(creatorKey, { tagIDs: newTagIDs, negativeTagIDs: newNegativeTagIDs });
+      moveCreatorBetweenTagColumns(typeID, creatorKey, newTagIDs, newNegativeTagIDs);
+      send("recordCreatorClassification", { typeID, creatorKey, tagIDs: newTagIDs, negativeTagIDs: newNegativeTagIDs });
       return;
     }
     const data = button.dataset.form ? collect(button.dataset.form) : {};
@@ -2005,6 +2036,9 @@
         renderedPresentationRevision = revision;
       }
       state = payload;
+      // An authoritative snapshot already reflects every persisted manual
+      // decision, so the optimistic overlay is no longer needed.
+      manualDecisionOverlay.clear();
       render();
     },
     // Targeted channel for one chosen creator's entries (see the native

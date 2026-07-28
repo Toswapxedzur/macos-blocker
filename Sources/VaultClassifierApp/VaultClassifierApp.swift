@@ -4085,6 +4085,10 @@ final class VaultClassifierViewModel: ObservableObject {
                     tagIDs: try webStringArray(data, key: "tagIDs", limit: CreatorClassificationRecord.maximumTagIDs, elementLimit: 256),
                     negativeTagIDs: try webStringArray(data, key: "negativeTagIDs", limit: CreatorClassificationRecord.maximumTagIDs, elementLimit: 256)
                 )
+                // The WebView already moved the single card optimistically. Re-pushing
+                // the whole snapshot would force a full re-render of the decision list,
+                // so persist without echoing; the next authoritative snapshot reconciles.
+                return false
             case "classify":
                 title = try webString(data, key: "title", limit: 4_096)
                 sourceID = try webString(data, key: "sourceID", limit: 1_024)
