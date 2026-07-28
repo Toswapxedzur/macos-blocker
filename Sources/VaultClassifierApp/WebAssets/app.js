@@ -42,6 +42,11 @@
   const selectedLLMProfileByType = new Map();
   const collapsedCollectionCreatorLists = new Set();
   const selectedCollectionCreatorByPlatform = new Map();
+  // The snapshot carries only the creator-level primary list. A chosen
+  // creator's full entries are fetched on demand and cached here (keyed
+  // datasetID|platformID|creatorID); the pending set guards in-flight requests.
+  const loadedCreatorEntries = new Map();
+  const pendingCreatorEntryRequests = new Set();
   let pendingDeletion = null;
   let utilityPanel = null;
   let selectedLanguage = "en";
@@ -49,7 +54,6 @@
   let navigationResize = null;
   const incrementalPageSize = 40;
   const collectionRowHeight = 48;
-  const collectionDetailRowHeight = 96;
   const workspaceNames = new Set(["tagTree", "localModel", "llmAssist", "browserBridge", "classificationData"]);
   const incrementalLists = new Map();
   const virtualLists = new Map();
@@ -341,6 +345,83 @@
     };
   }
 
+  function collectionObservedAt(value) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric)
+      ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(numeric))
+      : t("data.unknownDate");
+  }
+
+  const collectionAttributeLabel = (key) => ({
+    subscriberCount: "Subscribers",
+    viewCount: "Views",
+    published: "Published",
+    duration: "Duration",
+    details: "Details",
+    metadata: "Feed details",
+    creatorURL: "Creator page",
+    sourceKind: "Source type"
+  })[key] || String(key).replaceAll(/([A-Z])/g, " $1").replaceAll(/[._-]/g, " ").replace(/^./, (letter) => letter.toUpperCase());
+
+  function renderCollectionDetailEntry(entry) {
+    const attributes = Object.entries(entry.attributes || {})
+      .map(([key, value]) => `${esc(collectionAttributeLabel(key))}: ${esc(value)}`)
+      .join(" · ");
+    const tags = Array.isArray(entry.suppliedTags) && entry.suppliedTags.length
+      ? `<span class="collection-entry-tags">${entry.suppliedTags.map((tag) => `<span>${esc(tag)}</span>`).join("")}</span>`
+      : "";
+    const summary = typeof entry.summary === "string" && entry.summary
+      ? `<span class="collection-detail-evidence" dir="auto">${esc(entry.summary)}</span>`
+      : "";
+    const text = typeof entry.text === "string" && entry.text && entry.text !== entry.summary
+      ? `<span class="collection-detail-evidence" dir="auto">${esc(entry.text)}</span>`
+      : "";
+    const canonicalURL = typeof entry.canonicalURL === "string" && entry.canonicalURL
+      ? `<span class="collection-entry-url">${esc(entry.canonicalURL)}</span>`
+      : "";
+    const attributesMarkup = attributes ? `<span class="collection-entry-attributes">${attributes}</span>` : "";
+    const entryMeta = `${esc(entry.surface || "feed")} · ${esc(entry.entryType)} · ${collectionObservedAt(entry.lastObservedAtMilliseconds)}`;
+    return `<div class="collection-detail-entry" title="${esc(entry.title)}"><span class="collection-entry-title" dir="auto">${esc(entry.title)}</span><span class="collection-entry-meta">${entryMeta}</span>${summary}${text}${tags}${attributesMarkup}${canonicalURL}</div>`;
+  }
+
+  function creatorEntriesKey(datasetID, platformID, creatorID) {
+    return `${datasetID}${platformID}${creatorID}`;
+  }
+
+  // Ask the native side for one creator's full entries. The detail body shows a
+  // loading placeholder until receiveCreatorEntries answers on its own channel.
+  function requestCreatorEntries(datasetID, platformID, creatorID) {
+    if (!datasetID || !platformID || !creatorID) return;
+    const key = creatorEntriesKey(datasetID, platformID, creatorID);
+    if (loadedCreatorEntries.has(key) || pendingCreatorEntryRequests.has(key)) return;
+    pendingCreatorEntryRequests.add(key);
+    send("loadCreatorEntries", { datasetID, platformID, creatorID });
+  }
+
+  // Builds the detail-pane body for one creator from the on-demand cache. One
+  // creator is a small slice of the dataset, so entries render plainly — which
+  // lets receiveCreatorEntries swap this pane in place with no list setup.
+  function collectionDetailBody(datasetID, platformID, creatorID, creatorName) {
+    if (!creatorID) return "";
+    const entries = loadedCreatorEntries.get(creatorEntriesKey(datasetID, platformID, creatorID));
+    const head = `<div class="collection-detail-head"><span class="collection-detail-name" dir="auto">${esc(creatorName || creatorID)}</span><span class="collection-detail-count">${entries ? tx("data.entryCount", { count: entries.length }) : ""}</span></div>`;
+    if (!entries) return `${head}<div class="collection-detail-loading empty">${tx("app.loading")}</div>`;
+    const sorted = [...entries].sort((lhs, rhs) => (Number(rhs.lastObservedAtMilliseconds) || 0) - (Number(lhs.lastObservedAtMilliseconds) || 0));
+    return `${head}<div class="collection-detail-list">${sorted.map(renderCollectionDetailEntry).join("")}</div>`;
+  }
+
+  function collectionDetailContainer(platformID) {
+    return [...root.querySelectorAll("[data-collection-detail]")].find((element) => element.dataset.platformId === platformID) || null;
+  }
+
+  // Targeted swap of a single platform's detail pane — never a full render.
+  function updateCollectionDetailPane(datasetID, platformID, creatorID, creatorName) {
+    const container = collectionDetailContainer(platformID);
+    if (!container) return;
+    container.dataset.creatorId = creatorID || "";
+    container.innerHTML = collectionDetailBody(datasetID, platformID, creatorID, creatorName);
+  }
+
   function languageSelection() {
     return `<label class="header-language"><span class="visually-hidden">${tx("language.label")}</span><select class="select-control" data-language-selection aria-label="${tx("language.label")}">${languageChoices.map(([identifier, nameKey]) => `<option value="${esc(identifier)}"${selected(selectedLanguage, identifier)}>${tx(nameKey)}</option>`).join("")}</select></label>`;
   }
@@ -571,37 +652,55 @@
   function localModelWorkspace() {
     const assets = state.assets;
     const models = assets.models || [];
-    const localModelBindings = (assets.bindings || []).filter((binding) => binding.supportsLocalModel);
+    const classifierTypes = assets.classifierTypes || [];
+    const platformDefs = new Map((assets.collectionPlatforms || []).map((platform) => [platform.id, platform]));
+    const typeByID = new Map(classifierTypes.map((type) => [type.id, type]));
+    // A model is bounded by a classifier type (owns-one). Eligible types for a
+    // new model support a local model and do not already have one.
+    const modeledTypeIDs = new Set(models.map((model) => model.classifierTypeID));
+    const creatableTypeOptions = classifierTypes
+      .filter((type) => type.applicablePlatformID
+        && platformDefs.get(type.applicablePlatformID)?.supportsLocalModel === true
+        && !modeledTypeIDs.has(type.id))
+      .map((type) => [type.id, type.name]);
+    const baseOptions = [["", t("model.base.none")], ...(assets.baseEmbeddings || []).map((identifier) => [identifier, t(baseEmbeddingLabelKey(identifier))])];
     const panel = (model) => {
       const formID = `local-model-${model.id}`;
+      const type = typeByID.get(model.classifierTypeID);
       const tree = assets.trees.find((candidate) => candidate.id === model.treeID);
-      const platformIDs = model.platformIDs?.length
-        ? model.platformIDs
-        : [model.platformID || assets.bindings.find((binding) => binding.datasetID === model.datasetID)?.id].filter(Boolean);
-      const dataset = assets.datasets.find((candidate) => candidate.id === model.datasetID);
-      const treeOptions = assets.trees.map((candidate) => [candidate.id, `${candidate.name} · r${candidate.revision}`]);
-      const platformOptions = localModelBindings.map((binding) => [binding.id, `${binding.name} · ${binding.browser}`]);
-      const baseOptions = [["", t("model.base.none")], ...(assets.baseEmbeddings || []).map((identifier) => [identifier, t(baseEmbeddingLabelKey(identifier))])];
-      const tagCount = tree?.nodes.filter((node) => !node.retired).length || 0;
-      const sourcePlatforms = new Set(platformIDs);
-      const recordCount = (dataset?.creatorClassifications || []).filter((classification) => sourcePlatforms.has(classification.platformID) && classification.review === "approved" && (classification.origin === "manual" || classification.origin === "llmAssist") && classification.treeID === model.treeID && classification.treeRevision === model.treeRevision).reduce((count, classification) => count + (dataset?.collectedEntries || []).filter((entry) => entry.platformID === classification.platformID && entry.creatorID === classification.creatorID).length, 0);
+      const platformDef = platformDefs.get(model.platformID);
+      const treeLabel = tree ? `${tree.name} · r${tree.revision}` : "—";
+      const platformLabel = platformDef ? `${platformDef.name} · ${platformDef.browser}` : (model.platformID || "—");
+      const pending = Number(model.pendingDecisions) || 0;
+      const incorporated = Number(model.incorporatedDecisions) || 0;
+      const needsTraining = model.needsTraining === true;
+      const isReady = model.ready === true && !needsTraining;
       const training = model.training;
       const trainingStatus = training
-        ? `<div class="model-run pink">${tx("model.trainedRun", { records: training.examples, updates: training.updates, epochs: training.epochs })}</div>`
+        ? `<div class="model-run pink">${tx("model.trainedRun", { folded: training.decisionsFolded, total: training.incorporatedDecisions, examples: training.examples })}</div>`
         : `<div class="model-run muted">${tx("model.untrained")}</div>`;
+      const statusPillMarkup = isReady
+        ? statusPill(t("model.ready"), "pink")
+        : statusPill(t(model.ready ? "model.updatesPending" : "model.needsTraining"), "gold");
       return `<section class="model-panel" data-model-panel data-model-id="${esc(model.id)}" data-form-id="${esc(formID)}">
         <div class="model-panel-head">
-          <div><span class="eyebrow">${tx("model.panel")}</span><h3>${esc(model.name)}</h3><p class="section-copy">${tx("model.boundRevisions", { tree: model.treeRevision, data: model.datasetRevision })}</p></div>
-          <div class="model-panel-status">${statusPill(t(model.ready ? "model.ready" : "model.needsTraining"), model.ready ? "pink" : "gold")}${statusPill(t("model.version", { value: model.version }), "navy")}</div>
+          <div><span class="eyebrow">${tx("model.panel")}</span><h3>${esc(model.name)}</h3><p class="section-copy">${tx("model.boundType", { type: type ? type.name : "—" })}</p></div>
+          <div class="model-panel-status">${statusPillMarkup}${statusPill(t("model.version", { value: model.version }), "navy")}</div>
         </div>
         <div class="model-name-row">${field("model.modelName", "", "name", model.name)}<div class="model-name-actions"><button class="secondary" data-action="renameLocalModel" data-form="${esc(formID)}" data-model-id="${esc(model.id)}">${tx("model.rename")}</button><button class="danger" data-action="deleteLocalModel" data-model-id="${esc(model.id)}">${tx("model.delete")}</button></div></div>
-        <div class="model-setup"><div class="section-header"><div><h3>${tx("model.setup")}</h3><p class="section-copy">${tx("model.setupCopy")}</p></div></div><div class="form-row model-setup-fields">${valueSelectField("model.targetTree", "", "treeID", model.treeID, treeOptions, "data-local-model-setup")}${multiValueSelectField("model.classificationPlatforms", "model.classificationPlatformsCopy", "platformIDs", platformIDs, platformOptions, "data-local-model-setup")}${valueSelectField("model.baseLanguageModel", "model.baseCopy", "baseEmbeddingID", model.baseEmbeddingID || "", baseOptions, "data-local-model-setup")}</div></div>
-        <div class="model-training-row"><div><span class="eyebrow">${tx("model.localTraining")}</span><p class="section-copy">${tx("model.trainingScope", { records: recordCount, tags: tagCount })}</p></div><button class="pink-action" data-action="trainLocalModel" data-form="${esc(formID)}" data-model-id="${esc(model.id)}"${disabled(!treeOptions.length || !platformOptions.length)}>${tx("model.train")}</button></div>
+        <div class="model-setup"><div class="section-header"><div><h3>${tx("model.setup")}</h3><p class="section-copy">${tx("model.setupCopy")}</p></div></div>
+          <div class="model-bound-context">
+            <div class="model-bound-item"><span class="eyebrow">${tx("model.boundTree")}</span><p class="small-copy">${esc(treeLabel)}</p></div>
+            <div class="model-bound-item"><span class="eyebrow">${tx("model.boundPlatform")}</span><p class="small-copy">${esc(platformLabel)}</p></div>
+          </div>
+          <div class="form-row model-setup-fields">${valueSelectField("model.baseLanguageModel", "model.baseCopy", "baseEmbeddingID", model.baseEmbeddingID || "", baseOptions, "data-local-model-setup")}</div>
+        </div>
+        <div class="model-training-row"><div><span class="eyebrow">${tx("model.localTraining")}</span><p class="section-copy">${tx("model.trainingScope", { incorporated, pending })}</p></div><button class="pink-action" data-action="trainLocalModel" data-form="${esc(formID)}" data-model-id="${esc(model.id)}"${disabled(!needsTraining)}>${tx(model.ready ? "model.trainMore" : "model.train")}</button></div>
         ${trainingStatus}
       </section>`;
     };
     return `<div class="workspace model-workspace">${header("model.title", "model.copy", t("model.sharedLibrary"), "pink")}
-      <section class="model-create" data-form-id="new-local-model-form">${field("model.modelName", "", "name", "")}<button class="pink-action" data-action="createLocalModel" data-form="new-local-model-form"${disabled(!assets.trees.length || !localModelBindings.length)}>${tx("model.create")}</button><span class="small-copy">${tx("model.multiplePanels")}</span></section>
+      <section class="model-create" data-form-id="new-local-model-form">${field("model.modelName", "", "name", "")}${valueSelectField("model.forClassifierType", "", "classifierTypeID", "", creatableTypeOptions)}<button class="pink-action" data-action="createLocalModel" data-form="new-local-model-form"${disabled(!creatableTypeOptions.length)}>${tx("model.create")}</button><span class="small-copy">${tx(creatableTypeOptions.length ? "model.multiplePanels" : "model.noEligibleTypes")}</span></section>
       <div class="model-panels">${models.length ? models.map(panel).join("") : `<div class="empty">${tx("model.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
   }
 
@@ -747,14 +846,9 @@
           : boundPlatformAPIProfile
             ? t("bridge.platformDataBound", { profile: boundPlatformAPIProfile.name })
             : t("bridge.platformDataMissingKey", { platform: applicablePlatform.name });
-      const compatibleModels = supportsLocalModel ? models.filter((model) => model.ready &&
-        model.treeID === selectedTree?.id &&
-        model.treeRevision === selectedTree?.revision &&
-        model.datasetID === selectedDataset?.id &&
-        model.datasetRevision === selectedDataset?.revision &&
-        new Set(model.platformIDs || [model.platformID].filter(Boolean)).size === dataSourcePlatforms.size &&
-        (model.platformIDs || [model.platformID].filter(Boolean)).every((platformID) => dataSourcePlatforms.has(platformID))) : [];
-      const modelOptions = [["", t("bridge.noLocalModel")], ...compatibleModels.map((model) => [model.id, `${model.name} · v${model.version}`])];
+      // A local model is bound to this type (owns-one) and resolved by the app.
+      // The type no longer selects a model; it reflects its own model's status.
+      const boundModel = classifierType.localModel || null;
       const llmAssist = classifierType.llmAssistConfiguration || null;
       const llmAssistDraft = classifierType.llmAssistDraftConfiguration || null;
       const savedLLMProfileID = classifierType.selectedLLMProviderProfileID || llmAssist?.providerProfileID || "";
@@ -815,14 +909,9 @@
       const currentDecisionByCreator = new Map((selectedDataset?.creatorClassifications || [])
         .filter((classification) => classification.classifierTypeID === classifierType.id && classification.origin === "manual")
         .map((classification) => [`${classification.platformID}|${classification.creatorID}`, classification]));
-      const creatorCandidates = new Map();
-      (selectedDataset?.collectedEntries || []).forEach((entry) => {
-        if (!dataSourcePlatforms.has(entry.platformID) || !entry.creatorID || !entry.creatorName) return;
-        const key = `${entry.platformID}|${entry.creatorID}`;
-        const current = creatorCandidates.get(key);
-        if (!current || Number(entry.lastObservedAtMilliseconds) > Number(current.lastObservedAtMilliseconds)) creatorCandidates.set(key, entry);
-      });
-      const sortedCreatorCandidates = [...creatorCandidates.entries()]
+      const sortedCreatorCandidates = (selectedDataset?.collectedCreators || [])
+        .filter((creator) => dataSourcePlatforms.has(creator.platformID) && creator.creatorID && creator.creatorName)
+        .map((creator) => [`${creator.platformID}|${creator.creatorID}`, creator])
         .sort(([, lhs], [, rhs]) => lhs.creatorName.localeCompare(rhs.creatorName));
       let selectedCreatorTagID = selectedCreatorTagByType.get(classifierType.id);
       if (!leafTagOptions.some((node) => node.id === selectedCreatorTagID)) {
@@ -832,14 +921,14 @@
       }
       const selectedCreatorTagNode = leafTagOptions.find((node) => node.id === selectedCreatorTagID) || null;
       const creatorRecords = sortedCreatorCandidates
-        .map(([key, entry]) => {
+        .map(([key, creator]) => {
           const classification = currentDecisionByCreator.get(key);
           return {
             key,
-            platformName: platformDefinitions.get(entry.platformID)?.name || entry.platformID,
-            name: entry.creatorName,
-            subscriberCount: entry.attributes?.subscriberCount || "",
-            avatarURL: typeof entry.cachedSourceIconURL === "string" ? entry.cachedSourceIconURL : "",
+            platformName: platformDefinitions.get(creator.platformID)?.name || creator.platformID,
+            name: creator.creatorName,
+            subscriberCount: creator.subscriberCount || "",
+            avatarURL: typeof creator.cachedSourceIconURL === "string" ? creator.cachedSourceIconURL : "",
             tagIDs: classification?.tags || [],
             negativeTagIDs: classification?.negativeTags || [],
           };
@@ -967,7 +1056,9 @@
         <div class="classifier-type-head"><div><span class="eyebrow">${tx("bridge.typePanel")}</span><h3>${esc(classifierType.name)}</h3><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div>${statusPill(typeStatus, applicablePlatformID ? "navy" : "muted")}</div>
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}<button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("bridge.saveType")}</button><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}" data-name="${esc(classifierType.name)}">${tx("bridge.deleteType")}</button></div>
         <section class="classifier-type-section classifier-applicable-platform-section"><div class="section-header"><div><h3>${tx("bridge.applicablePlatform")}</h3><p class="section-copy">${tx("bridge.assetSelectionCopy")}</p></div></div><div class="classifier-applicable-platform-row">${valueSelectField("bridge.applicablePlatform", "bridge.applicablePlatformCopy", "applicablePlatformID", applicablePlatformID, applicablePlatformOptions, applicablePlatformLocked ? "disabled" : "")}<div class="classifier-platform-data-status"><span class="eyebrow">${tx("bridge.platformData")}</span><p class="small-copy">${esc(platformDataStatus)}</p></div></div>${applicablePlatformLocked ? `<p class="small-copy classifier-platform-locked" data-platform-locked>${tx("bridge.applicablePlatformLocked", { count: approvedDecisionCount })}</p>` : ""}${applicablePlatform && !supportsLocalModel && !supportsLLMAssist ? `<p class="small-copy" data-manual-only-platform-note>${tx("bridge.manualOnlyCopy")}</p>` : ""}</section>
-        <section class="classifier-type-section classifier-local-model-section" data-local-model-section${supportsLocalModel ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.localModel")}</h3><p class="section-copy">${tx("bridge.localModelCopy")}</p></div></div><div class="classifier-local-model-field">${valueSelectField("bridge.localModel", "", "localModelID", classifierType.localModelID || "", modelOptions)}</div></section>
+        <section class="classifier-type-section classifier-local-model-section" data-local-model-section${supportsLocalModel ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.localModel")}</h3><p class="section-copy">${tx("bridge.localModelCopy")}</p></div></div><div class="classifier-local-model-status">${boundModel
+          ? `${statusPill(t(boundModel.ready && !boundModel.needsTraining ? "model.ready" : "model.needsTraining"), boundModel.ready && !boundModel.needsTraining ? "pink" : "gold")}<span class="small-copy">${tx("bridge.localModelBound", { name: boundModel.name })}</span><button class="secondary" type="button" data-action="workspace" data-workspace="localModel">${tx("bridge.localModelOpen")}</button>`
+          : `<span class="small-copy">${tx("bridge.localModelNone")}</span><button class="secondary" type="button" data-action="workspace" data-workspace="localModel">${tx("bridge.localModelCreate")}</button>`}</div></section>
         <section class="classifier-type-section creator-classification-section"><div class="section-header"><div><h3>${tx("bridge.manualSource", { source: sourceTerms.singular })}</h3><p class="section-copy">${tx("bridge.manualSourceCopy", { source: sourceTerms.singular })}</p></div><div class="action-row"><span class="small-copy">${tx("bridge.sourceCount", { count: creatorRecords.length, sources: sourceTerms.plural })}</span></div></div>${creatorClassification}</section>
         <section class="classifier-type-section classifier-llm-section" data-llm-assist-section${supportsLLMAssist ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.llmAssist")}</h3><p class="section-copy">${tx("bridge.llmAssistCopy")}</p></div>${llmActivation}</div>${llmProfiles.length ? llmSettings : `<div class="empty compact-empty">${tx("bridge.noLLMProfiles")}</div>`}</section>
         <section class="classifier-type-section classifier-decision-policy-section" data-decision-policy-section${supportsLocalModel || supportsLLMAssist ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.decisionPolicy")}</h3><p class="section-copy">${tx("bridge.decisionPolicyCopy")}</p></div></div><div class="classifier-priority-grid">${valueSelectField("bridge.priorityFirst", "", "priorityFirst", priority[0], sourceOptions)}${valueSelectField("bridge.prioritySecond", "", "prioritySecond", priority[1], sourceOptions)}${valueSelectField("bridge.priorityThird", "", "priorityThird", priority[2], sourceOptions)}</div></section>
@@ -986,109 +1077,65 @@
     const definitions = assets.collectionPlatforms || [];
     const datasetByID = new Map(datasets.map((dataset) => [dataset.id, dataset]));
     const treeByID = new Map((assets.trees || []).map((tree) => [tree.id, tree]));
-    const allCollected = datasets.flatMap((dataset) => dataset.collectedEntries || []);
+    const totalCollectedEntries = datasets.reduce((sum, dataset) => sum + (dataset.collectedCreators || []).reduce((inner, creator) => inner + (Number(creator.entryCount) || 0), 0), 0);
     const classifierTypes = assets.classifierTypes || [];
     const models = assets.models || [];
     const availablePlatforms = definitions.filter((definition) => !bindings.some((binding) => binding.id === definition.id));
-    const observedAt = (value) => {
-      const numeric = Number(value);
-      return Number.isFinite(numeric) ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(numeric)) : t("data.unknownDate");
-    };
-    // Collection diagnostics are stored to the local log only and are no
-    // longer surfaced in the UI (see webSnapshot); no panel is rendered.
-    const collectionAttributeLabel = (key) => ({
-      subscriberCount: "Subscribers",
-      viewCount: "Views",
-      published: "Published",
-      duration: "Duration",
-      details: "Details",
-      metadata: "Feed details",
-      creatorURL: "Creator page",
-      sourceKind: "Source type"
-    })[key] || String(key).replaceAll(/([A-Z])/g, " $1").replaceAll(/[._-]/g, " ").replace(/^./, (letter) => letter.toUpperCase());
     const bindingPanel = (binding) => {
       const definition = definitions.find((candidate) => candidate.id === binding.id);
       const sourceTerms = collectionSourceTerms(definition?.sourceKind);
       const dataset = datasetByID.get(binding.datasetID);
-      const entries = (dataset?.collectedEntries || []).filter((entry) => entry.platformID === binding.id);
-      const creators = new Map();
-      entries.forEach((entry) => {
-        const creatorID = entry.creatorID || "unknown";
-        const group = creators.get(creatorID) || { id: creatorID, name: entry.creatorName || creatorID, entries: [], firstObservedAtMilliseconds: Number.POSITIVE_INFINITY, latestObservedAtMilliseconds: 0 };
-        group.entries.push(entry);
-        const firstObserved = Number(entry.firstObservedAtMilliseconds) || Number(entry.lastObservedAtMilliseconds) || 0;
-        group.firstObservedAtMilliseconds = Math.min(group.firstObservedAtMilliseconds, firstObserved);
-        group.latestObservedAtMilliseconds = Math.max(group.latestObservedAtMilliseconds, Number(entry.lastObservedAtMilliseconds) || 0);
-        creators.set(creatorID, group);
-      });
-      // Stable order: a creator keeps its slot by when it was first seen, so a
-      // newly collected creator appends at the end and re-observing an existing
-      // one never reshuffles the rows above it.
-      const creatorRows = [...creators.values()]
-        .sort((lhs, rhs) => (lhs.firstObservedAtMilliseconds - rhs.firstObservedAtMilliseconds) || String(lhs.id).localeCompare(String(rhs.id)));
-      // Fixed-height entry cell so the detail pane can be windowed too. The
-      // full evidence stays in the DOM (title tooltip + CSS line-clamp), so a
-      // source with thousands of entries still keeps constant DOM/paint cost.
-      const renderDetailEntry = (entry) => {
-        const attributes = Object.entries(entry.attributes || {})
-          .map(([key, value]) => `${esc(collectionAttributeLabel(key))}: ${esc(value)}`)
-          .join(" · ");
-        const tags = Array.isArray(entry.suppliedTags) && entry.suppliedTags.length
-          ? `<span class="collection-entry-tags">${entry.suppliedTags.map((tag) => `<span>${esc(tag)}</span>`).join("")}</span>`
-          : "";
-        const summary = typeof entry.summary === "string" && entry.summary
-          ? `<span class="collection-detail-evidence" dir="auto">${esc(entry.summary)}</span>`
-          : "";
-        const text = typeof entry.text === "string" && entry.text && entry.text !== entry.summary
-          ? `<span class="collection-detail-evidence" dir="auto">${esc(entry.text)}</span>`
-          : "";
-        const canonicalURL = typeof entry.canonicalURL === "string" && entry.canonicalURL
-          ? `<span class="collection-entry-url">${esc(entry.canonicalURL)}</span>`
-          : "";
-        const attributesMarkup = attributes ? `<span class="collection-entry-attributes">${attributes}</span>` : "";
-        const entryMeta = `${esc(entry.surface || "feed")} · ${esc(entry.entryType)} · ${observedAt(entry.lastObservedAtMilliseconds)}`;
-        return `<div class="collection-detail-entry" title="${esc(entry.title)}"><span class="collection-entry-title" dir="auto">${esc(entry.title)}</span><span class="collection-entry-meta">${entryMeta}</span>${summary}${text}${tags}${attributesMarkup}${canonicalURL}</div>`;
-      };
+      const datasetID = binding.datasetID;
+      // Only the creator-level primary list is in the snapshot; a chosen
+      // creator's entries are fetched on demand (requestCreatorEntries).
+      // Stable order: a creator keeps its slot by when it was first seen.
+      const creatorRows = (dataset?.collectedCreators || [])
+        .filter((creator) => creator.platformID === binding.id)
+        .slice()
+        .sort((lhs, rhs) => (Number(lhs.firstObservedAtMilliseconds) - Number(rhs.firstObservedAtMilliseconds)) || String(lhs.creatorID).localeCompare(String(rhs.creatorID)));
+      const entryTotal = creatorRows.reduce((sum, creator) => sum + (Number(creator.entryCount) || 0), 0);
       // Keep the selected source stable across re-renders; fall back to the
       // first source so the detail pane is never empty when sources exist.
       let selectedCreatorID = selectedCollectionCreatorByPlatform.get(binding.id);
-      if (!creators.has(selectedCreatorID)) {
-        selectedCreatorID = creatorRows[0]?.id || "";
+      if (!creatorRows.some((creator) => creator.creatorID === selectedCreatorID)) {
+        selectedCreatorID = creatorRows[0]?.creatorID || "";
         if (selectedCreatorID) selectedCollectionCreatorByPlatform.set(binding.id, selectedCreatorID);
         else selectedCollectionCreatorByPlatform.delete(binding.id);
       }
       const creatorRow = (creator) => {
-        const avatarURL = creator.entries.find((entry) => typeof entry.cachedSourceIconURL === "string")?.cachedSourceIconURL || "";
+        const avatarURL = typeof creator.cachedSourceIconURL === "string" ? creator.cachedSourceIconURL : "";
         const avatar = avatarURL
           ? `<img class="collection-creator-avatar" src="${esc(avatarURL)}" alt="" aria-hidden="true" loading="lazy" decoding="async">`
           : `<span class="collection-creator-avatar collection-creator-avatar-empty" aria-hidden="true"></span>`;
-        const selectedClass = creator.id === selectedCreatorID ? " selected" : "";
-        return `<button type="button" class="collection-creator-row${selectedClass}" data-action="selectCollectionCreator" data-platform-id="${esc(binding.id)}" data-creator-id="${esc(creator.id)}">${avatar}<span class="collection-creator-name" dir="auto">${esc(creator.name)}</span><span class="collection-creator-count">${tx("data.entryCount", { count: creator.entries.length })}</span></button>`;
+        const selectedClass = creator.creatorID === selectedCreatorID ? " selected" : "";
+        return `<button type="button" class="collection-creator-row${selectedClass}" data-action="selectCollectionCreator" data-dataset-id="${esc(datasetID)}" data-platform-id="${esc(binding.id)}" data-creator-id="${esc(creator.creatorID)}">${avatar}<span class="collection-creator-name" dir="auto">${esc(creator.creatorName || creator.creatorID)}</span><span class="collection-creator-count">${tx("data.entryCount", { count: Number(creator.entryCount) || 0 })}</span></button>`;
       };
       const creatorList = virtualList(creatorRows, collectionRowHeight, creatorRow, { key: `collection-master-${binding.id}` });
-      const selectedCreator = selectedCreatorID ? creators.get(selectedCreatorID) : null;
-      const detailEntries = selectedCreator
-        ? [...selectedCreator.entries].sort((lhs, rhs) => (Number(rhs.lastObservedAtMilliseconds) || 0) - (Number(lhs.lastObservedAtMilliseconds) || 0))
-        : [];
+      const selectedCreator = creatorRows.find((creator) => creator.creatorID === selectedCreatorID) || null;
+      const creatorListOpen = !collapsedCollectionCreatorLists.has(binding.id);
+      // Lazy-load the chosen creator's entries only while the list is open; the
+      // detail pane fills in via receiveCreatorEntries with no full re-render.
+      if (creatorListOpen && selectedCreator) requestCreatorEntries(datasetID, binding.id, selectedCreator.creatorID);
       const detailMarkup = selectedCreator
-        ? `<div class="collection-detail-head"><span class="collection-detail-name" dir="auto">${esc(selectedCreator.name)}</span><span class="collection-detail-count">${tx("data.entryCount", { count: detailEntries.length })}</span></div>${virtualList(detailEntries, collectionDetailRowHeight, renderDetailEntry, { key: `collection-detail-${binding.id}-${selectedCreatorID}` })}`
+        ? collectionDetailBody(datasetID, binding.id, selectedCreator.creatorID, selectedCreator.creatorName)
         : "";
+      const detailPane = `<div class="collection-detail" data-collection-detail data-dataset-id="${esc(datasetID)}" data-platform-id="${esc(binding.id)}" data-creator-id="${esc(selectedCreator?.creatorID || "")}">${detailMarkup}</div>`;
       const formID = `collection-platform-${binding.id}`;
       const availability = definition?.collectorAvailable ? "data.collectorAvailable" : "data.collectorPlanned";
       const tree = treeByID.get(binding.treeID);
       const selectableTypes = classifierTypes.filter((classifierType) => {
         if (classifierType.applicablePlatformID !== binding.id || classifierType.treeID !== binding.treeID || classifierType.datasetID !== binding.datasetID || classifierType.treeRevision !== tree?.revision || classifierType.datasetRevision !== dataset?.revision) return false;
-        if (!definition?.supportsLocalModel && classifierType.localModelID) return false;
         if (!definition?.supportsLLMAssist && classifierType.llmAssistConfiguration) return false;
-        return !classifierType.localModelID || models.some((model) => model.id === classifierType.localModelID && model.ready && model.training);
+        // A type activates regardless of its local model's training state; an
+        // untrained or updating model simply contributes nothing yet.
+        return true;
       });
       const typeOptions = [["", t("data.noClassifierType")], ...selectableTypes.map((classifierType) => [classifierType.id, classifierType.name])];
       const typeStatus = binding.activeClassifierTypeID ? "data.classifierTypeActive" : "data.classifierTypeNone";
       const localOnlyNotice = binding.id === "discord" ? `<p class="small-copy collection-local-only">${tx("data.discordLocalOnly")}</p>` : "";
-      const creatorListOpen = !collapsedCollectionCreatorLists.has(binding.id);
-      return `<section class="collection-platform-panel" data-form-id="${esc(formID)}"><div class="collection-platform-head"><div><span class="eyebrow">${tx("data.platformPanel")}</span><h3>${esc(binding.name)}</h3><p class="section-copy">${esc(binding.browser)} · ${tx(availability)}</p></div><div class="collection-platform-actions">${statusPill(t(binding.collectionEnabled ? "data.collecting" : "data.collectionOff"), binding.collectionEnabled ? "cyan" : "muted")}<button class="danger" data-action="confirmDeleteCollectionPlatform" data-platform-id="${esc(binding.id)}" data-name="${esc(binding.name)}">${tx("data.deletePlatform")}</button></div></div><div class="collection-platform-controls">${toggle("data.collectToggle", "enabled", Boolean(binding.collectionEnabled))}<button class="primary" data-action="setCollectionEnabled" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyCollection")}</button></div>${localOnlyNotice}<div class="collection-platform-controls">${valueSelectField("data.classifierType", "data.classifierTypeCopy", "classifierTypeID", binding.activeClassifierTypeID || "", typeOptions)}<button class="secondary" data-action="setActiveClassifierType" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyClassifierType")}</button>${statusPill(t(typeStatus), binding.activeClassifierTypeID ? "navy" : "muted")}</div>${entries.length ? `<details class="collection-creators" data-collection-creators-platform="${esc(binding.id)}"${creatorListOpen ? " open" : ""}><summary class="collection-creators-summary"><span>${tx("data.sourceCount", { count: creators.size, sources: sourceTerms.plural })}</span><span>${tx("data.entryCount", { count: entries.length })}</span></summary><div class="collection-master-detail"><div class="collection-master">${creatorList}</div><div class="collection-detail">${detailMarkup}</div></div></details>` : `<div class="empty collection-empty">${tx(binding.collectionEnabled ? "data.waitingForEntries" : "data.collectionDisabledCopy")}</div>`}</section>`;
+      return `<section class="collection-platform-panel" data-form-id="${esc(formID)}"><div class="collection-platform-head"><div><span class="eyebrow">${tx("data.platformPanel")}</span><h3>${esc(binding.name)}</h3><p class="section-copy">${esc(binding.browser)} · ${tx(availability)}</p></div><div class="collection-platform-actions">${statusPill(t(binding.collectionEnabled ? "data.collecting" : "data.collectionOff"), binding.collectionEnabled ? "cyan" : "muted")}<button class="danger" data-action="confirmDeleteCollectionPlatform" data-platform-id="${esc(binding.id)}" data-name="${esc(binding.name)}">${tx("data.deletePlatform")}</button></div></div><div class="collection-platform-controls">${toggle("data.collectToggle", "enabled", Boolean(binding.collectionEnabled))}<button class="primary" data-action="setCollectionEnabled" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyCollection")}</button></div>${localOnlyNotice}<div class="collection-platform-controls">${valueSelectField("data.classifierType", "data.classifierTypeCopy", "classifierTypeID", binding.activeClassifierTypeID || "", typeOptions)}<button class="secondary" data-action="setActiveClassifierType" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyClassifierType")}</button>${statusPill(t(typeStatus), binding.activeClassifierTypeID ? "navy" : "muted")}</div>${creatorRows.length ? `<details class="collection-creators" data-collection-creators-platform="${esc(binding.id)}"${creatorListOpen ? " open" : ""}><summary class="collection-creators-summary"><span>${tx("data.sourceCount", { count: creatorRows.length, sources: sourceTerms.plural })}</span><span>${tx("data.entryCount", { count: entryTotal })}</span></summary><div class="collection-master-detail"><div class="collection-master">${creatorList}</div>${detailPane}</div></details>` : `<div class="empty collection-empty">${tx(binding.collectionEnabled ? "data.waitingForEntries" : "data.collectionDisabledCopy")}</div>`}</section>`;
     };
-    return `<div class="workspace collection-workspace">${header("data.title", "data.copy", t("data.entries", { count: allCollected.length }), "cyan")}
+    return `<div class="workspace collection-workspace">${header("data.title", "data.copy", t("data.entries", { count: totalCollectedEntries }), "cyan")}
       <section class="collection-platform-create" data-form-id="collection-platform-create-form"><div><span class="eyebrow">${tx("data.addPlatform")}</span><p class="section-copy">${tx("data.addPlatformCopy")}</p></div>${availablePlatforms.length ? `${valueSelectField("data.platform", "", "platformID", availablePlatforms[0].id, availablePlatforms.map((platform) => [platform.id, platform.name]))}<button class="primary" data-action="addCollectionPlatform" data-form="collection-platform-create-form">${tx("data.addPlatformAction")}</button>` : `<span class="small-copy">${tx("data.allPlatformsAdded")}</span>`}</section>
       <div class="collection-platform-panels">${bindings.length ? bindings.map(bindingPanel).join("") : `<div class="empty">${tx("data.noPlatforms")}</div>`}${trashOfKind("collectionPlatform")}</div>
       ${notice(state.issue, "red")}</div>`;
@@ -1300,11 +1347,8 @@
         panel.querySelector(".classifier-applicable-platform-section")?.append(note);
       }
       if (note) note.hidden = !isManualOnlyPlatform;
-      panel.querySelectorAll('[data-field="localModelID"], [data-field="creatorLocalModel"], [data-field="entryLocalModel"]').forEach((control) => {
-        control.disabled = !supportsLocalModel;
-        if (!supportsLocalModel && control.type === "checkbox") control.checked = false;
-        if (!supportsLocalModel && control.dataset.field === "localModelID") control.value = "";
-      });
+      // The local model is bound to the type and shown read-only; there is no
+      // per-type model control to enable or disable here.
       panel.querySelectorAll('[data-field^="llm"], [data-field="creatorLLM"], [data-field="entryLLM"]').forEach((control) => {
         control.disabled = !supportsLLMAssist;
         if (!supportsLLMAssist && control.type === "checkbox") control.checked = false;
@@ -1564,9 +1608,18 @@
     if (action === "selectCollectionCreator") {
       const platformID = button.dataset.platformId;
       const creatorID = button.dataset.creatorId;
+      const datasetID = button.dataset.datasetId;
       if (!platformID || !creatorID) return;
       selectedCollectionCreatorByPlatform.set(platformID, creatorID);
-      render();
+      // Targeted: move the selection highlight and swap only this platform's
+      // detail pane. The master list and the rest of the page are untouched —
+      // no full re-render. Entries load lazily if not already cached.
+      const master = button.closest(".collection-master");
+      master?.querySelectorAll(".collection-creator-row.selected").forEach((row) => row.classList.remove("selected"));
+      button.classList.add("selected");
+      const creatorName = button.querySelector(".collection-creator-name")?.textContent || creatorID;
+      updateCollectionDetailPane(datasetID, platformID, creatorID, creatorName);
+      requestCreatorEntries(datasetID, platformID, creatorID);
       return;
     }
     if (action === "cancelTagPanel") {
@@ -1764,7 +1817,9 @@
     const modelID = panel?.dataset.modelId;
     if (!formID || !modelID) return;
     const data = collect(formID);
-    send("configureLocalModel", { modelID, treeID: data.treeID, platformIDs: data.platformIDs || [], baseEmbeddingID: data.baseEmbeddingID });
+    // A model inherits tree/dataset/platform from its type; the only per-model
+    // setting is the base language model.
+    send("configureLocalModel", { modelID, baseEmbeddingID: data.baseEmbeddingID });
   });
 
   document.addEventListener("pointerdown", (event) => {
@@ -1951,6 +2006,21 @@
       }
       state = payload;
       render();
+    },
+    // Targeted channel for one chosen creator's entries (see the native
+    // deliverCreatorEntries). Caches the result and patches only the open
+    // detail pane if this creator is still selected — never a full render.
+    receiveCreatorEntries(payload) {
+      const datasetID = payload?.datasetID;
+      const platformID = payload?.platformID;
+      const creatorID = payload?.creatorID;
+      if (!datasetID || !platformID || !creatorID) return;
+      const entries = Array.isArray(payload.entries) ? payload.entries : [];
+      pendingCreatorEntryRequests.delete(creatorEntriesKey(datasetID, platformID, creatorID));
+      loadedCreatorEntries.set(creatorEntriesKey(datasetID, platformID, creatorID), entries);
+      if (selectedCollectionCreatorByPlatform.get(platformID) === creatorID) {
+        updateCollectionDetailPane(datasetID, platformID, creatorID, entries[0]?.creatorName || creatorID);
+      }
     },
   };
 
