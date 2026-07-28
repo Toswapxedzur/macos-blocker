@@ -347,8 +347,8 @@ h3 { font-size: 13px; }
 
 .collection-detail-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .collection-detail-count { margin-left: auto; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .04em; }
-.collection-detail-list { flex: 1 1 0; min-height: 0; overflow-y: auto; }
-.collection-detail-loading { flex: 1 1 0; display: flex; align-items: center; justify-content: center; }
+.collection-detail-list { min-height: 0; max-height: 416px; overflow-y: auto; }
+.collection-detail-loading { min-height: 120px; display: flex; align-items: center; justify-content: center; }
 
 .collection-detail-entry {
   box-sizing: border-box;
