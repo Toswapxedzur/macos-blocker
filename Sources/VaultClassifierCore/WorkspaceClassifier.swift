@@ -229,18 +229,18 @@ public extension WorkspaceCatalog {
               classifierType.datasetRevision == dataset.revision else {
             throw WorkspaceClassifierError.incompatibleClassifierType(classifierTypeID)
         }
+        // A local model is bound to its classifier type (owns-one), resolved by
+        // reverse lookup. Its readiness is gated by the tree revision — the
+        // label-set boundary — not by exact dataset-revision equality, so it
+        // stays usable as approved decisions accrue between training passes.
         let model: LocalModelAsset?
-        if let modelID = classifierType.localModelID {
-            guard binding.activeModelID == modelID,
-                  let resolvedModel = models.first(where: { $0.id == modelID }),
-                  resolvedModel.isReady,
-                  resolvedModel.embeddedNeuralModel != nil,
-                  resolvedModel.treeID == tree.id,
-                  resolvedModel.treeRevision == tree.revision,
-                  resolvedModel.datasetID == dataset.id,
-                  resolvedModel.datasetRevision == dataset.revision else {
-                throw WorkspaceClassifierError.missingLocalModel(classifierTypeID)
-            }
+        if let resolvedModel = models.first(where: { $0.classifierTypeID == classifierType.id }),
+           resolvedModel.isReady,
+           resolvedModel.embeddedNeuralModel != nil,
+           resolvedModel.treeID == tree.id,
+           resolvedModel.treeRevision == tree.revision,
+           resolvedModel.datasetID == dataset.id,
+           binding.activeModelID == resolvedModel.id {
             model = resolvedModel
         } else {
             model = nil

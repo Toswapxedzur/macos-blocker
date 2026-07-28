@@ -493,17 +493,25 @@ public struct LocalModelAsset: Codable, Equatable, Sendable, Identifiable {
 
     public var id: String
     public var name: String
+    /// The classifier type this model is bound to. The model inherits its tree,
+    /// dataset, and platform from that type; it is never configured independently.
+    public var classifierTypeID: String
     public var treeID: String
     public var treeRevision: Int
     public var datasetID: String
     public var datasetRevision: Int
     public var version: Int
     public var isReady: Bool
-    /// Legacy single-platform value retained for state migration. New model
-    /// setup persists `trainingPlatformIDs` and can train from several local
-    /// platform sources at once.
+    /// The resolved single platform this model trains from, snapshotted from the
+    /// owning classifier type's applicable platform. A type owns exactly one
+    /// platform, so a model trains from a single local source.
     public var trainingPlatformID: String?
+    /// Retained only for legacy decode of the former multi-platform setup.
     public var trainingPlatformIDs: [String]?
+    /// The creator-decision ids already folded into the persisted artifact.
+    /// Training is incremental and accumulates once: each approved decision
+    /// contributes exactly one time over the model's life. A reset clears this.
+    public var incorporatedDecisionIDs: [String]
     /// `nil` means use the compact on-device embedding learned from the local
     /// corpus. A non-nil value records the requested downloadable base package.
     public var baseEmbeddingID: LocalBaseEmbedding?
@@ -513,9 +521,27 @@ public struct LocalModelAsset: Codable, Equatable, Sendable, Identifiable {
     public var embeddedTrainingReport: EmbeddedNeuralTrainingReport?
     public var trainedAtMilliseconds: Int64?
 
-    public init(id: String = UUID().uuidString, name: String, treeID: String, treeRevision: Int, datasetID: String, datasetRevision: Int, version: Int = 1, isReady: Bool = false, trainingPlatformID: String? = nil, trainingPlatformIDs: [String]? = nil, baseEmbeddingID: LocalBaseEmbedding? = nil, embeddedNeuralModel: EmbeddedNeuralTextClassifier? = nil, embeddedTrainingReport: EmbeddedNeuralTrainingReport? = nil, trainedAtMilliseconds: Int64? = nil) {
+    public init(
+        id: String = UUID().uuidString,
+        name: String,
+        classifierTypeID: String,
+        treeID: String,
+        treeRevision: Int,
+        datasetID: String,
+        datasetRevision: Int,
+        version: Int = 1,
+        isReady: Bool = false,
+        trainingPlatformID: String? = nil,
+        trainingPlatformIDs: [String]? = nil,
+        incorporatedDecisionIDs: [String] = [],
+        baseEmbeddingID: LocalBaseEmbedding? = nil,
+        embeddedNeuralModel: EmbeddedNeuralTextClassifier? = nil,
+        embeddedTrainingReport: EmbeddedNeuralTrainingReport? = nil,
+        trainedAtMilliseconds: Int64? = nil
+    ) {
         self.id = id
         self.name = name
+        self.classifierTypeID = classifierTypeID
         self.treeID = treeID
         self.treeRevision = treeRevision
         self.datasetID = datasetID
@@ -524,10 +550,60 @@ public struct LocalModelAsset: Codable, Equatable, Sendable, Identifiable {
         self.isReady = isReady
         self.trainingPlatformID = trainingPlatformID
         self.trainingPlatformIDs = trainingPlatformIDs.map { Array(Set($0)).sorted() }
+        self.incorporatedDecisionIDs = Array(Set(incorporatedDecisionIDs)).sorted()
         self.baseEmbeddingID = baseEmbeddingID
         self.embeddedNeuralModel = embeddedNeuralModel
         self.embeddedTrainingReport = embeddedTrainingReport
         self.trainedAtMilliseconds = trainedAtMilliseconds
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, classifierTypeID, treeID, treeRevision, datasetID, datasetRevision,
+             version, isReady, trainingPlatformID, trainingPlatformIDs, incorporatedDecisionIDs,
+             baseEmbeddingID, embeddedNeuralModel, embeddedTrainingReport, trainedAtMilliseconds
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        // Absent on models persisted before the model became bound to a type;
+        // `WorkspaceCatalog` migration rebinds these from the legacy selection.
+        classifierTypeID = try container.decodeIfPresent(String.self, forKey: .classifierTypeID) ?? ""
+        treeID = try container.decode(String.self, forKey: .treeID)
+        treeRevision = try container.decode(Int.self, forKey: .treeRevision)
+        datasetID = try container.decode(String.self, forKey: .datasetID)
+        datasetRevision = try container.decode(Int.self, forKey: .datasetRevision)
+        version = try container.decodeIfPresent(Int.self, forKey: .version) ?? 1
+        isReady = try container.decodeIfPresent(Bool.self, forKey: .isReady) ?? false
+        trainingPlatformID = try container.decodeIfPresent(String.self, forKey: .trainingPlatformID)
+        trainingPlatformIDs = (try container.decodeIfPresent([String].self, forKey: .trainingPlatformIDs))
+            .map { Array(Set($0)).sorted() }
+        incorporatedDecisionIDs = Array(Set(try container.decodeIfPresent([String].self, forKey: .incorporatedDecisionIDs) ?? [])).sorted()
+        baseEmbeddingID = try container.decodeIfPresent(LocalBaseEmbedding.self, forKey: .baseEmbeddingID)
+        embeddedNeuralModel = try container.decodeIfPresent(EmbeddedNeuralTextClassifier.self, forKey: .embeddedNeuralModel)
+        embeddedTrainingReport = try container.decodeIfPresent(EmbeddedNeuralTrainingReport.self, forKey: .embeddedTrainingReport)
+        trainedAtMilliseconds = try container.decodeIfPresent(Int64.self, forKey: .trainedAtMilliseconds)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(classifierTypeID, forKey: .classifierTypeID)
+        try container.encode(treeID, forKey: .treeID)
+        try container.encode(treeRevision, forKey: .treeRevision)
+        try container.encode(datasetID, forKey: .datasetID)
+        try container.encode(datasetRevision, forKey: .datasetRevision)
+        try container.encode(version, forKey: .version)
+        try container.encode(isReady, forKey: .isReady)
+        try container.encodeIfPresent(trainingPlatformID, forKey: .trainingPlatformID)
+        try container.encodeIfPresent(trainingPlatformIDs, forKey: .trainingPlatformIDs)
+        try container.encode(incorporatedDecisionIDs, forKey: .incorporatedDecisionIDs)
+        try container.encodeIfPresent(baseEmbeddingID, forKey: .baseEmbeddingID)
+        try container.encodeIfPresent(embeddedNeuralModel, forKey: .embeddedNeuralModel)
+        try container.encodeIfPresent(embeddedTrainingReport, forKey: .embeddedTrainingReport)
+        try container.encodeIfPresent(trainedAtMilliseconds, forKey: .trainedAtMilliseconds)
     }
 
     public var effectiveTrainingPlatformIDs: [String] {
@@ -880,9 +956,12 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     /// One platform binding supplies this type's tree and collected local
     /// classification data. A type cannot combine platform sources.
     public var applicablePlatformID: String?
-    /// A ready model is optional: a human-only type is valid, while a local
-    /// model source is enabled only when this compatible model is selected.
-    public var localModelID: String?
+    /// Legacy pointer to a formerly user-selected model. A local model is now
+    /// bound to its classifier type (owns-one) and resolved by reverse lookup,
+    /// not selected here. This is retained only so `WorkspaceCatalog` migration
+    /// can rebind the model to its type; it is never part of the authored API
+    /// and is never re-encoded.
+    public internal(set) var legacyLocalModelID: String?
     /// The provider shown in the LLM Assist editor. This is a persistent
     /// pre-attachment choice, so a user can Probe and choose a provider before
     /// selecting a model. It cannot authorize or activate provider work.
@@ -906,7 +985,6 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         datasetID: String,
         datasetRevision: Int,
         applicablePlatformID: String? = nil,
-        localModelID: String? = nil,
         selectedLLMProviderProfileID: String? = nil,
         llmAssistDraftConfiguration: LLMAssistDraftConfiguration? = nil,
         llmAssistConfiguration: LLMAssistConfiguration? = nil,
@@ -921,7 +999,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         self.datasetRevision = datasetRevision
         let cleanedPlatformID = applicablePlatformID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.applicablePlatformID = cleanedPlatformID.isEmpty ? nil : cleanedPlatformID
-        self.localModelID = localModelID
+        self.legacyLocalModelID = nil
         let cleanedLLMProviderID = selectedLLMProviderProfileID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.selectedLLMProviderProfileID = cleanedLLMProviderID.isEmpty
             ? llmAssistConfiguration?.providerProfileID
@@ -957,7 +1035,9 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             applicablePlatformID = legacyPlatformIDs.count == 1 ? legacyPlatformIDs[0] : nil
         }
-        localModelID = try container.decodeIfPresent(String.self, forKey: .localModelID)
+        // Read the retired selection only so catalog migration can rebind the
+        // model to this type. It is not re-encoded and never selected again.
+        legacyLocalModelID = try container.decodeIfPresent(String.self, forKey: .localModelID)
         // The former multi-profile selection had no model-specific policy. It
         // is intentionally ignored rather than recreated as an implicit LLM
         // attachment; users configure one explicit model again.
@@ -983,7 +1063,6 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         try container.encode(datasetID, forKey: .datasetID)
         try container.encode(datasetRevision, forKey: .datasetRevision)
         try container.encodeIfPresent(applicablePlatformID, forKey: .applicablePlatformID)
-        try container.encodeIfPresent(localModelID, forKey: .localModelID)
         try container.encodeIfPresent(selectedLLMProviderProfileID, forKey: .selectedLLMProviderProfileID)
         try container.encodeIfPresent(llmAssistDraftConfiguration, forKey: .llmAssistDraftConfiguration)
         try container.encodeIfPresent(llmAssistConfiguration, forKey: .llmAssistConfiguration)
@@ -1024,6 +1103,32 @@ public enum LocalModelTrainingError: Error, Equatable, LocalizedError, Sendable 
 public enum LocalModelTrainer {
     public static let defaultEpochs = 48
 
+    /// Expands one approved creator decision into per-entry neural examples from
+    /// that creator's retained public entries. Labels are filtered to the tree's
+    /// predictable leaves; a decision with no predictable label or no matching
+    /// entry yields nothing and is therefore not trainable.
+    private static func examples(
+        for classification: CreatorClassificationRecord,
+        in dataset: ClassificationDataset,
+        availableTagIDs: Set<String>
+    ) -> [EmbeddedNeuralTrainingExample] {
+        let positiveLabelIDs = classification.tagIDs.filter { availableTagIDs.contains($0) }
+        let negativeLabelIDs = classification.negativeTagIDs.filter { availableTagIDs.contains($0) }
+        guard !positiveLabelIDs.isEmpty || !negativeLabelIDs.isEmpty else { return [] }
+        return dataset.collectedEntries.compactMap { entry in
+            guard entry.platformID == classification.platformID,
+                  entry.creatorID == classification.creatorID,
+                  !entry.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return nil
+            }
+            return .init(
+                text: entry.title,
+                positiveLabelIDs: positiveLabelIDs,
+                negativeLabelIDs: negativeLabelIDs
+            )
+        }
+    }
+
     public static func approvedExamples(
         for tree: TagTreeAsset,
         dataset: ClassificationDataset,
@@ -1040,7 +1145,7 @@ public enum LocalModelTrainer {
         let sourcePlatformIDs = Set(platformIDs)
         guard !sourcePlatformIDs.isEmpty else { return [] }
         let availableTagIDs = (try? tree.inferenceTaxonomy())?.predictableLeafIDs ?? []
-        let creatorExamples = dataset.creatorClassifications.flatMap { classification -> [EmbeddedNeuralTrainingExample] in
+        return dataset.creatorClassifications.flatMap { classification -> [EmbeddedNeuralTrainingExample] in
             guard classification.review == .approved,
                   classification.origin == .manual || classification.origin == .llmAssist,
                   sourcePlatformIDs.contains(classification.platformID),
@@ -1048,23 +1153,139 @@ public enum LocalModelTrainer {
                   classification.treeRevision == tree.revision else {
                 return []
             }
-            let positiveLabelIDs = classification.tagIDs.filter { availableTagIDs.contains($0) }
-            let negativeLabelIDs = classification.negativeTagIDs.filter { availableTagIDs.contains($0) }
-            guard !positiveLabelIDs.isEmpty || !negativeLabelIDs.isEmpty else { return [] }
-            return dataset.collectedEntries.compactMap { entry in
-                guard entry.platformID == classification.platformID,
-                      entry.creatorID == classification.creatorID,
-                      !entry.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    return nil
-                }
-                return .init(
-                    text: entry.title,
-                    positiveLabelIDs: positiveLabelIDs,
-                    negativeLabelIDs: negativeLabelIDs
-                )
-            }
+            return examples(for: classification, in: dataset, availableTagIDs: availableTagIDs)
         }
-        return creatorExamples
+    }
+
+    /// The approved manual/LLM creator decisions for a classifier type at a tree
+    /// revision that currently expand to at least one neural example — the exact
+    /// set eligible to be folded into that type's model, in a stable order.
+    public static func approvedDecisions(
+        for type: ClassifierTypeAsset,
+        in dataset: ClassificationDataset,
+        tree: TagTreeAsset
+    ) -> [CreatorClassificationRecord] {
+        guard let platformID = type.applicablePlatformID else { return [] }
+        let availableTagIDs = (try? tree.inferenceTaxonomy())?.predictableLeafIDs ?? []
+        return dataset.creatorClassifications
+            .filter { classification in
+                classification.review == .approved &&
+                (classification.origin == .manual || classification.origin == .llmAssist) &&
+                classification.classifierTypeID == type.id &&
+                classification.platformID == platformID &&
+                classification.treeID == tree.id &&
+                classification.treeRevision == tree.revision &&
+                !examples(for: classification, in: dataset, availableTagIDs: availableTagIDs).isEmpty
+            }
+            .sorted { ($0.createdAtMilliseconds, $0.id) < ($1.createdAtMilliseconds, $1.id) }
+    }
+
+    /// Folds newly approved creator decisions for the model's classifier type
+    /// into its persisted artifact. Training is incremental and accumulate-once:
+    /// the model keeps its weights and each eligible decision contributes exactly
+    /// one online pass over the life of the artifact. A change of tree revision,
+    /// label set, or bound dataset resets the artifact and re-folds from empty.
+    /// A continue pass with nothing new returns the model unchanged.
+    public static func accumulate(
+        _ model: LocalModelAsset,
+        type: ClassifierTypeAsset,
+        tree: TagTreeAsset,
+        dataset: ClassificationDataset,
+        configuration: EmbeddedNeuralModelConfiguration = .init()
+    ) throws -> LocalModelAsset {
+        guard let platformID = type.applicablePlatformID else {
+            throw LocalModelTrainingError.missingPlatform
+        }
+        guard tree.id == type.treeID, tree.revision == type.treeRevision else {
+            throw LocalModelTrainingError.incompatibleTree
+        }
+        guard dataset.id == type.datasetID else {
+            throw LocalModelTrainingError.incompatibleDataset
+        }
+        // The label space is the tree's full predictable leaf taxonomy so any
+        // decision at this revision is representable by an output head.
+        let currentLabelIDs = Array((try? tree.inferenceTaxonomy())?.predictableLeafIDs ?? []).sorted()
+        guard !currentLabelIDs.isEmpty else {
+            throw LocalModelTrainingError.noApprovedExamples
+        }
+
+        let existing = model.embeddedNeuralModel
+        let canContinue = existing != nil &&
+            model.classifierTypeID == type.id &&
+            model.treeID == tree.id &&
+            model.treeRevision == tree.revision &&
+            model.datasetID == dataset.id &&
+            existing.map { Set($0.labelIDs) == Set(currentLabelIDs) } == true
+        let reset = !canContinue
+
+        let eligibleDecisions = approvedDecisions(for: type, in: dataset, tree: tree)
+        var incorporated = reset ? Set<String>() : Set(model.incorporatedDecisionIDs)
+        let decisionsToFold = eligibleDecisions.filter { !incorporated.contains($0.id) }
+
+        let availableTagIDs = Set(currentLabelIDs)
+        let foldExamples = decisionsToFold.flatMap {
+            examples(for: $0, in: dataset, availableTagIDs: availableTagIDs)
+        }
+
+        // A continue pass with nothing new to fold is a no-op: the artifact and
+        // its ledger are already current. The caller surfaces "up to date".
+        if !reset, decisionsToFold.isEmpty {
+            var refreshed = model
+            refreshed.datasetRevision = dataset.revision
+            refreshed.trainingPlatformID = platformID
+            refreshed.trainingPlatformIDs = [platformID]
+            return refreshed
+        }
+
+        guard !foldExamples.isEmpty else {
+            throw LocalModelTrainingError.noApprovedExamples
+        }
+
+        var classifier: EmbeddedNeuralTextClassifier
+        if reset {
+            // Build the vocabulary from every eligible decision at this revision
+            // so continued passes share a stable, representative token space.
+            let vocabularyExamples = eligibleDecisions.flatMap {
+                examples(for: $0, in: dataset, availableTagIDs: availableTagIDs)
+            }
+            let vocabulary = LocalEmbeddingVocabulary.build(
+                from: vocabularyExamples.isEmpty ? foldExamples : vocabularyExamples,
+                limit: configuration.vocabularyLimit
+            )
+            classifier = try EmbeddedNeuralTextClassifier(
+                configuration: configuration,
+                labelIDs: currentLabelIDs,
+                vocabulary: vocabulary
+            )
+        } else {
+            classifier = existing!
+        }
+
+        let runReport = try classifier.train(foldExamples, epochs: 1)
+        for decision in decisionsToFold { incorporated.insert(decision.id) }
+
+        var trained = model
+        trained.classifierTypeID = type.id
+        trained.treeID = tree.id
+        trained.treeRevision = tree.revision
+        trained.datasetID = dataset.id
+        trained.datasetRevision = dataset.revision
+        trained.trainingPlatformID = platformID
+        trained.trainingPlatformIDs = [platformID]
+        trained.incorporatedDecisionIDs = incorporated.sorted()
+        trained.version += 1
+        trained.isReady = true
+        trained.embeddedNeuralModel = classifier
+        trained.embeddedTrainingReport = EmbeddedNeuralTrainingReport(
+            epochs: runReport.epochs,
+            exampleCount: runReport.exampleCount,
+            labelUpdateCount: runReport.labelUpdateCount,
+            meanBinaryCrossEntropy: runReport.meanBinaryCrossEntropy,
+            decisionsFolded: decisionsToFold.count,
+            incorporatedDecisions: incorporated.count
+        )
+        trained.trainedAtMilliseconds = WorkspaceCatalog.now()
+        return trained
     }
 
     public static func train(
@@ -1834,13 +2055,26 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             guard let dataset = datasets.first(where: { $0.id == binding.datasetID }) else { throw WorkspaceCatalogError.missingDataset(binding.datasetID) }
             guard let activeModelID = binding.activeModelID else { continue }
             guard let model = models.first(where: { $0.id == activeModelID }) else { throw WorkspaceCatalogError.missingModel(activeModelID) }
-            guard model.isReady, model.treeID == tree.id, model.treeRevision == tree.revision, model.datasetID == dataset.id, model.datasetRevision == dataset.revision else {
+            // A model stays valid as approved decisions accrue (the dataset
+            // revision only advances); usability is gated by the tree revision,
+            // the label-set boundary, not by exact dataset-revision equality.
+            guard model.isReady, model.embeddedNeuralModel != nil,
+                  model.treeID == tree.id, model.treeRevision == tree.revision,
+                  model.datasetID == dataset.id else {
                 throw WorkspaceCatalogError.incompatibleActiveModel(activeModelID)
             }
         }
         for model in models {
+            // A model is bound to exactly one classifier type and inherits that
+            // type's tree, dataset, and single platform.
+            guard let owningType = classifierTypes.first(where: { $0.id == model.classifierTypeID }) else {
+                throw WorkspaceCatalogError.invalidLocalModel(model.id)
+            }
             let sourcePlatformIDs = model.effectiveTrainingPlatformIDs
             guard sourcePlatformIDs.count <= LocalModelAsset.maximumTrainingPlatforms,
+                  model.treeID == owningType.treeID,
+                  model.datasetID == owningType.datasetID,
+                  owningType.applicablePlatformID.map({ sourcePlatformIDs == [$0] }) == true,
                   sourcePlatformIDs.allSatisfy({ platformID in
                       CollectionPlatformRegistry.definition(for: platformID)?.supportsLocalModel == true &&
                       bindings.contains(where: { binding in
@@ -1984,19 +2218,10 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                     throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
                 }
             }
-            if let localModelID = classifierType.localModelID {
-                guard let model = models.first(where: { $0.id == localModelID }),
-                      model.isReady,
-                      model.embeddedNeuralModel != nil,
-                      model.treeID == tree.id,
-                      model.treeRevision == tree.revision,
-                      model.datasetID == dataset.id,
-                      model.datasetRevision == dataset.revision,
-                      classifierType.applicablePlatformID.map({ model.effectiveTrainingPlatformIDs == [$0] }) == true else {
-                throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
-            }
-            }
-            let usesLocalModel = classifierType.localModelID != nil
+            // The bound model, if any, is validated in the models loop above. A
+            // type contributes the local-model source only when its model is
+            // trained and current (`readyLocalModel`).
+            let usesLocalModel = typeUsesLocalModel(classifierType)
             let usesLLMAssist = classifierType.llmAssistConfiguration != nil
             let applicablePlatform = classifierType.applicablePlatformID.flatMap(CollectionPlatformRegistry.definition(for:))
             guard (!usesLocalModel || applicablePlatform?.supportsLocalModel == true),
@@ -2020,19 +2245,14 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                 throw WorkspaceCatalogError.incompatibleActiveClassifierType(classifierTypeID)
             }
             guard (platform.supportsLocalModel ||
-                   classifierType.localModelID == nil),
+                   localModel(for: classifierType.id) == nil),
                   (platform.supportsLLMAssist ||
                    classifierType.llmAssistConfiguration == nil) else {
                 throw WorkspaceCatalogError.incompatibleActiveClassifierType(classifierTypeID)
             }
-            if let localModelID = classifierType.localModelID {
-                guard binding.activeModelID == localModelID,
-                      let model = models.first(where: { $0.id == localModelID }),
-                      model.isReady,
-                      model.embeddedNeuralModel != nil else {
-                    throw WorkspaceCatalogError.incompatibleActiveClassifierType(classifierTypeID)
-                }
-            } else if binding.activeModelID != nil {
+            // The active model on the binding must be exactly the type's ready
+            // bound model (nil when it has none or still needs training).
+            guard binding.activeModelID == readyLocalModel(for: classifierType)?.id else {
                 throw WorkspaceCatalogError.incompatibleActiveClassifierType(classifierTypeID)
             }
         }
@@ -2066,6 +2286,94 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         providerRequestRecords = try container.decodeIfPresent([ProviderRequestRecord].self, forKey: .providerRequestRecords) ?? []
         providerProfiles = try container.decodeIfPresent([APIKeyProviderProfile].self, forKey: .providerProfiles) ?? []
         trash = try container.decodeIfPresent([TrashedEntry].self, forKey: .trash) ?? []
+        migrateLegacyLocalModelBindings()
+    }
+
+    // MARK: - Local model binding
+
+    /// The local model bound to a classifier type, if one exists. A type owns at
+    /// most one model, resolved by reverse lookup rather than user selection.
+    public func localModel(for classifierTypeID: String) -> LocalModelAsset? {
+        models.first { $0.classifierTypeID == classifierTypeID }
+    }
+
+    /// The bound model only when it is trained and usable at the type's current
+    /// tree revision. A model whose tree revision has moved needs retraining and
+    /// is deliberately excluded until it is trained again.
+    public func readyLocalModel(for type: ClassifierTypeAsset) -> LocalModelAsset? {
+        guard let model = localModel(for: type.id),
+              model.isReady,
+              model.embeddedNeuralModel != nil,
+              model.treeID == type.treeID,
+              model.treeRevision == type.treeRevision,
+              model.datasetID == type.datasetID,
+              type.applicablePlatformID.map({ model.effectiveTrainingPlatformIDs == [$0] }) == true else {
+            return nil
+        }
+        return model
+    }
+
+    /// Whether a type currently contributes a local-model decision source: a
+    /// ready, bound model exists for its current tree revision.
+    public func typeUsesLocalModel(_ type: ClassifierTypeAsset) -> Bool {
+        readyLocalModel(for: type) != nil
+    }
+
+    /// Approved decisions for a type not yet folded into its bound model at the
+    /// current tree revision. A stale-revision or untrained artifact treats
+    /// every eligible decision as pending. Nonzero means a training pass is due.
+    public func pendingLocalModelDecisions(for type: ClassifierTypeAsset) -> [CreatorClassificationRecord] {
+        guard let model = localModel(for: type.id),
+              let tree = trees.first(where: { $0.id == type.treeID }),
+              tree.revision == type.treeRevision,
+              let dataset = datasets.first(where: { $0.id == type.datasetID }) else {
+            return []
+        }
+        let usable = model.isReady && model.embeddedNeuralModel != nil && model.treeRevision == tree.revision
+        let incorporated: Set<String> = usable ? Set(model.incorporatedDecisionIDs) : []
+        return LocalModelTrainer.approvedDecisions(for: type, in: dataset, tree: tree)
+            .filter { !incorporated.contains($0.id) }
+    }
+
+    /// Whether a type's bound model would change on the next training pass: it is
+    /// untrained, stale for the current tree revision, or has newly approved
+    /// decisions to fold.
+    public func localModelNeedsTraining(for type: ClassifierTypeAsset) -> Bool {
+        guard localModel(for: type.id) != nil else { return false }
+        if readyLocalModel(for: type) == nil { return true }
+        return !pendingLocalModelDecisions(for: type).isEmpty
+    }
+
+    /// One-time migration for state written before a local model was bound to
+    /// its classifier type. The retired `ClassifierTypeAsset.localModelID`
+    /// selection is consumed to set the model's owning type, its single platform
+    /// snapshot, and — for an already-trained artifact — the incremental
+    /// "incorporated" ledger, so an existing trained model survives without a
+    /// forced full retrain. Models left without an owning type are dropped.
+    private mutating func migrateLegacyLocalModelBindings() {
+        for typeIndex in classifierTypes.indices {
+            guard let legacyModelID = classifierTypes[typeIndex].legacyLocalModelID else { continue }
+            classifierTypes[typeIndex].legacyLocalModelID = nil
+            guard let modelIndex = models.firstIndex(where: { $0.id == legacyModelID }),
+                  models[modelIndex].classifierTypeID.isEmpty else { continue }
+            let type = classifierTypes[typeIndex]
+            models[modelIndex].classifierTypeID = type.id
+            if let platformID = type.applicablePlatformID {
+                models[modelIndex].trainingPlatformID = platformID
+                models[modelIndex].trainingPlatformIDs = [platformID]
+            }
+            if models[modelIndex].isReady,
+               models[modelIndex].incorporatedDecisionIDs.isEmpty,
+               let dataset = datasets.first(where: { $0.id == models[modelIndex].datasetID }),
+               let tree = trees.first(where: { $0.id == models[modelIndex].treeID }),
+               tree.revision == models[modelIndex].treeRevision {
+                let incorporated = LocalModelTrainer.approvedDecisions(for: type, in: dataset, tree: tree).map(\.id)
+                models[modelIndex].incorporatedDecisionIDs = Array(Set(incorporated)).sorted()
+            }
+        }
+        models.removeAll { model in
+            model.classifierTypeID.isEmpty || !classifierTypes.contains(where: { $0.id == model.classifierTypeID })
+        }
     }
 
     private func unique(_ identifiers: [String]) throws {
@@ -2172,10 +2480,10 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             capturedDecisions.append(contentsOf: datasets[dIndex].creatorClassifications.filter { $0.classifierTypeID == typeID })
             datasets[dIndex].creatorClassifications.removeAll { $0.classifierTypeID == typeID }
         }
+        // A model is owned by exactly one type, so trashing the type captures
+        // and removes its bound model with it.
         var capturedModels: [LocalModelAsset] = []
-        if let modelID = type.localModelID,
-           !classifierTypes.contains(where: { $0.localModelID == modelID }),
-           let modelIndex = models.firstIndex(where: { $0.id == modelID }) {
+        if let modelIndex = models.firstIndex(where: { $0.classifierTypeID == typeID }) {
             capturedModels.append(models.remove(at: modelIndex))
         }
         for bindingIndex in bindings.indices where bindings[bindingIndex].activeClassifierTypeID == typeID {
@@ -2323,7 +2631,6 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             }
             reconciled.applicablePlatformID = applicableBinding?.id
             let applicablePlatform = reconciled.applicablePlatformID.flatMap(CollectionPlatformRegistry.definition(for:))
-            let supportsLocalModel = applicablePlatform?.supportsLocalModel == true
             let supportsLLMAssist = applicablePlatform?.supportsLLMAssist == true
             if let llmAssist = reconciled.llmAssistConfiguration,
                supportsLLMAssist,
@@ -2383,24 +2690,25 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             } else {
                 reconciled.selectedLLMProviderProfileID = reconciled.llmAssistConfiguration?.providerProfileID
             }
-            if let modelID = reconciled.localModelID {
-                let compatible = models.contains(where: { model in
-                    model.id == modelID && model.isReady && model.embeddedNeuralModel != nil &&
-                    model.treeID == tree.id && model.treeRevision == tree.revision &&
-                    model.datasetID == dataset.id && model.datasetRevision == dataset.revision &&
-                    model.effectiveTrainingPlatformIDs == [reconciled.applicablePlatformID ?? ""]
-                })
-                if !compatible { reconciled.localModelID = nil }
-            }
-            if !supportsLocalModel {
-                reconciled.localModelID = nil
-            }
+            // A local model is bound to its type by reverse lookup; there is no
+            // per-type model selection to reconcile here. Models bound to a type
+            // whose platform stopped supporting local models are pruned below.
             let retainedPriority = reconciled.decisionPriority.reduce(into: [ClassifierDecisionSource]()) { result, source in
                 if !result.contains(source) { result.append(source) }
             }
             reconciled.decisionPriority = retainedPriority + ClassifierDecisionSource.allCases.filter { !retainedPriority.contains($0) }
             reconciled.updatedAtMilliseconds = WorkspaceCatalog.now()
             return reconciled
+        }
+        // Drop models orphaned by a removed type or a platform that no longer
+        // supports a local model, then clear bindings pointing at a dropped model.
+        models.removeAll { model in
+            guard let owningType = classifierTypes.first(where: { $0.id == model.classifierTypeID }) else { return true }
+            let platform = owningType.applicablePlatformID.flatMap(CollectionPlatformRegistry.definition(for:))
+            return platform?.supportsLocalModel != true
+        }
+        for index in bindings.indices where bindings[index].activeModelID.map({ id in !models.contains(where: { $0.id == id }) }) == true {
+            bindings[index].activeModelID = nil
         }
         for index in bindings.indices {
             guard let classifierTypeID = bindings[index].activeClassifierTypeID else { continue }
@@ -2418,26 +2726,17 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                 continue
             }
             if (!platform.supportsLocalModel &&
-                classifierType.localModelID != nil) ||
+                localModel(for: classifierType.id) != nil) ||
                 (!platform.supportsLLMAssist &&
                 classifierType.llmAssistConfiguration != nil) {
                 bindings[index].activeClassifierTypeID = nil
                 bindings[index].activeModelID = nil
                 continue
             }
-            if let modelID = classifierType.localModelID,
-               models.contains(where: { model in
-                   model.id == modelID && model.isReady && model.embeddedNeuralModel != nil &&
-                   model.treeID == tree.id && model.treeRevision == tree.revision &&
-                   model.datasetID == dataset.id && model.datasetRevision == dataset.revision
-               }) {
-                bindings[index].activeModelID = modelID
-            } else if classifierType.localModelID != nil {
-                bindings[index].activeClassifierTypeID = nil
-                bindings[index].activeModelID = nil
-            } else {
-                bindings[index].activeModelID = nil
-            }
+            // The active model is the type's ready bound model, if it has one.
+            // An untrained or stale-revision model leaves the binding without an
+            // active model (the type still classifies via its other sources).
+            bindings[index].activeModelID = readyLocalModel(for: classifierType)?.id
         }
     }
 }

@@ -103,15 +103,45 @@ public struct EmbeddedNeuralPrediction: Codable, Equatable, Sendable {
 
 public struct EmbeddedNeuralTrainingReport: Codable, Equatable, Sendable {
     public var epochs: Int
+    /// Training examples processed in the most recent incremental pass.
     public var exampleCount: Int
     public var labelUpdateCount: Int
     public var meanBinaryCrossEntropy: Double
+    /// Creator decisions folded into the model by the most recent pass. Training
+    /// is accumulate-once, so a decision is folded a single time over the life
+    /// of the artifact; a repeated pass with nothing new reports zero here.
+    public var decisionsFolded: Int
+    /// Total distinct creator decisions incorporated into the model to date.
+    public var incorporatedDecisions: Int
 
-    public init(epochs: Int, exampleCount: Int, labelUpdateCount: Int, meanBinaryCrossEntropy: Double) {
+    public init(
+        epochs: Int,
+        exampleCount: Int,
+        labelUpdateCount: Int,
+        meanBinaryCrossEntropy: Double,
+        decisionsFolded: Int = 0,
+        incorporatedDecisions: Int = 0
+    ) {
         self.epochs = epochs
         self.exampleCount = exampleCount
         self.labelUpdateCount = labelUpdateCount
         self.meanBinaryCrossEntropy = meanBinaryCrossEntropy
+        self.decisionsFolded = decisionsFolded
+        self.incorporatedDecisions = incorporatedDecisions
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case epochs, exampleCount, labelUpdateCount, meanBinaryCrossEntropy, decisionsFolded, incorporatedDecisions
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        epochs = try container.decode(Int.self, forKey: .epochs)
+        exampleCount = try container.decode(Int.self, forKey: .exampleCount)
+        labelUpdateCount = try container.decode(Int.self, forKey: .labelUpdateCount)
+        meanBinaryCrossEntropy = try container.decode(Double.self, forKey: .meanBinaryCrossEntropy)
+        decisionsFolded = try container.decodeIfPresent(Int.self, forKey: .decisionsFolded) ?? 0
+        incorporatedDecisions = try container.decodeIfPresent(Int.self, forKey: .incorporatedDecisions) ?? 0
     }
 }
 

@@ -11,10 +11,22 @@ final class WorkspaceAssetsTests: XCTestCase {
         catalog.bindings = [
             .init(id: "youtube", name: "YouTube", treeID: tree.id, datasetID: dataset.id)
         ]
+        catalog.classifierTypes = [
+            .init(
+                id: "youtube-type",
+                name: "YouTube type",
+                treeID: tree.id,
+                treeRevision: tree.revision,
+                datasetID: dataset.id,
+                datasetRevision: dataset.revision,
+                applicablePlatformID: "youtube"
+            )
+        ]
         catalog.models = [
             .init(
                 id: "local-neural-model",
                 name: "Local neural model",
+                classifierTypeID: "youtube-type",
                 treeID: tree.id,
                 treeRevision: tree.revision,
                 datasetID: dataset.id,
@@ -62,6 +74,8 @@ final class WorkspaceAssetsTests: XCTestCase {
         let dataset = try XCTUnwrap(catalog.datasets.first)
         catalog.bindings.append(.init(id: "twitch", name: "Twitch", treeID: tree.id, datasetID: dataset.id))
 
+        // A human-only type on a manual-only platform is valid alongside the
+        // helper's youtube type and its bound model.
         let humanOnly = ClassifierTypeAsset(
             id: "twitch-manual",
             name: "Twitch manual",
@@ -71,20 +85,24 @@ final class WorkspaceAssetsTests: XCTestCase {
             datasetRevision: dataset.revision,
             applicablePlatformID: "twitch"
         )
-        catalog.classifierTypes = [humanOnly]
+        catalog.classifierTypes.append(humanOnly)
         XCTAssertNoThrow(try catalog.validate())
 
+        // A model bound to a manual-only platform's type is rejected.
+        catalog.models[0].classifierTypeID = "twitch-manual"
         catalog.models[0].trainingPlatformID = "twitch"
         catalog.models[0].trainingPlatformIDs = ["twitch"]
         XCTAssertThrowsError(try catalog.validate()) { error in
             XCTAssertEqual(error as? WorkspaceCatalogError, .invalidLocalModel(catalog.models[0].id))
         }
 
+        // Restore the model to its youtube type.
+        catalog.models[0].classifierTypeID = "youtube-type"
         catalog.models[0].trainingPlatformID = "youtube"
         catalog.models[0].trainingPlatformIDs = ["youtube"]
         let profile = APIKeyProviderProfile(id: "manual-only-profile", type: .gemini)
         catalog.providerProfiles = [profile]
-        catalog.classifierTypes = [.init(
+        catalog.classifierTypes.append(.init(
             id: "twitch-automated",
             name: "Twitch automated",
             treeID: tree.id,
@@ -93,14 +111,15 @@ final class WorkspaceAssetsTests: XCTestCase {
             datasetRevision: dataset.revision,
             applicablePlatformID: "twitch",
             llmAssistConfiguration: .init(providerProfileID: profile.id, modelIdentifier: "gemini-3.1-flash-lite")
-        )]
+        ))
         XCTAssertThrowsError(try catalog.validate()) { error in
             XCTAssertEqual(error as? WorkspaceCatalogError, .invalidClassifierType("twitch-automated"))
         }
 
         catalog.reconcileClassifierTypes()
-        XCTAssertEqual(catalog.classifierTypes[0].applicablePlatformID, "twitch")
-        XCTAssertNil(catalog.classifierTypes[0].llmAssistConfiguration)
+        let twitchAutomated = try XCTUnwrap(catalog.classifierTypes.first(where: { $0.id == "twitch-automated" }))
+        XCTAssertEqual(twitchAutomated.applicablePlatformID, "twitch")
+        XCTAssertNil(twitchAutomated.llmAssistConfiguration)
         XCTAssertNoThrow(try catalog.validate())
     }
 
@@ -959,6 +978,7 @@ final class WorkspaceAssetsTests: XCTestCase {
         )
         let model = LocalModelAsset(
             name: "Cross-platform model",
+            classifierTypeID: "creator-focus",
             treeID: tree.id,
             treeRevision: tree.revision,
             datasetID: dataset.id,
@@ -975,6 +995,91 @@ final class WorkspaceAssetsTests: XCTestCase {
         )
         XCTAssertEqual(Set(examples.map(\.text)), ["YouTube deck guide", "Instagram neural model guide"])
         XCTAssertEqual(Set(examples.flatMap(\.positiveLabelIDs)), ["games", "technology"])
+    }
+
+    func testIncrementalTrainingFoldsEachApprovedCreatorDecisionExactlyOnce() throws {
+        var catalog = catalogWithYouTubeAssets()
+        catalog.trees[0].nodes = [.init(id: "games", name: "Games"), .init(id: "technology", name: "Technology")]
+        catalog.datasets[0].creatorClassifications = [
+            .init(id: "decision-a", classifierTypeID: "youtube-type", creatorID: "creator-a", creatorName: "Creator A", platformID: "youtube", treeID: catalog.trees[0].id, treeRevision: catalog.trees[0].revision, tagIDs: ["games"], origin: .manual, review: .approved),
+            .init(id: "decision-b", classifierTypeID: "youtube-type", creatorID: "creator-b", creatorName: "Creator B", platformID: "youtube", treeID: catalog.trees[0].id, treeRevision: catalog.trees[0].revision, tagIDs: ["technology"], origin: .manual, review: .approved),
+        ]
+        catalog.datasets[0].collectedEntries = [
+            .init(id: "entry-a", platformID: "youtube", entryID: "entry-a", creatorID: "creator-a", creatorName: "Creator A", entryType: "video", title: "Ranked deck game guide"),
+            .init(id: "entry-b", platformID: "youtube", entryID: "entry-b", creatorID: "creator-b", creatorName: "Creator B", entryType: "video", title: "Build a compact neural network"),
+        ]
+        let configuration = EmbeddedNeuralModelConfiguration(vocabularyLimit: 32, embeddingDimension: 6, hiddenDimension: 6, initializationSeed: 4)
+
+        // The first pass folds both approved decisions once and marks them ready.
+        let firstPass = try LocalModelTrainer.accumulate(catalog.models[0], type: catalog.classifierTypes[0], tree: catalog.trees[0], dataset: catalog.datasets[0], configuration: configuration)
+        XCTAssertTrue(firstPass.isReady)
+        XCTAssertEqual(Set(firstPass.incorporatedDecisionIDs), ["decision-a", "decision-b"])
+        XCTAssertEqual(firstPass.embeddedTrainingReport?.decisionsFolded, 2)
+        XCTAssertEqual(firstPass.embeddedTrainingReport?.incorporatedDecisions, 2)
+        let firstVersion = firstPass.version
+
+        // A pass with nothing new to fold is a no-op: no version bump, ledger kept.
+        let noOp = try LocalModelTrainer.accumulate(firstPass, type: catalog.classifierTypes[0], tree: catalog.trees[0], dataset: catalog.datasets[0], configuration: configuration)
+        XCTAssertEqual(noOp.version, firstVersion)
+        XCTAssertEqual(Set(noOp.incorporatedDecisionIDs), ["decision-a", "decision-b"])
+
+        // A newly approved decision is folded exactly once on the next pass.
+        catalog.datasets[0].creatorClassifications.append(
+            .init(id: "decision-c", classifierTypeID: "youtube-type", creatorID: "creator-c", creatorName: "Creator C", platformID: "youtube", treeID: catalog.trees[0].id, treeRevision: catalog.trees[0].revision, tagIDs: ["games"], origin: .manual, review: .approved)
+        )
+        catalog.datasets[0].collectedEntries.append(
+            .init(id: "entry-c", platformID: "youtube", entryID: "entry-c", creatorID: "creator-c", creatorName: "Creator C", entryType: "video", title: "Speedrun a ranked deck")
+        )
+        let thirdPass = try LocalModelTrainer.accumulate(noOp, type: catalog.classifierTypes[0], tree: catalog.trees[0], dataset: catalog.datasets[0], configuration: configuration)
+        XCTAssertEqual(thirdPass.embeddedTrainingReport?.decisionsFolded, 1)
+        XCTAssertEqual(thirdPass.embeddedTrainingReport?.incorporatedDecisions, 3)
+        XCTAssertEqual(Set(thirdPass.incorporatedDecisionIDs), ["decision-a", "decision-b", "decision-c"])
+        XCTAssertGreaterThan(thirdPass.version, firstVersion)
+    }
+
+    func testTreeRevisionBumpResetsTheIncrementalModelAndRefolds() throws {
+        var catalog = catalogWithYouTubeAssets()
+        catalog.trees[0].nodes = [.init(id: "games", name: "Games")]
+        catalog.datasets[0].creatorClassifications = [
+            .init(id: "decision-a", classifierTypeID: "youtube-type", creatorID: "creator-a", creatorName: "Creator A", platformID: "youtube", treeID: catalog.trees[0].id, treeRevision: catalog.trees[0].revision, tagIDs: ["games"], origin: .manual, review: .approved),
+        ]
+        catalog.datasets[0].collectedEntries = [
+            .init(id: "entry-a", platformID: "youtube", entryID: "entry-a", creatorID: "creator-a", creatorName: "Creator A", entryType: "video", title: "Ranked deck game guide"),
+        ]
+        let configuration = EmbeddedNeuralModelConfiguration(vocabularyLimit: 32, embeddingDimension: 6, hiddenDimension: 6, initializationSeed: 4)
+        let trained = try LocalModelTrainer.accumulate(catalog.models[0], type: catalog.classifierTypes[0], tree: catalog.trees[0], dataset: catalog.datasets[0], configuration: configuration)
+        XCTAssertEqual(trained.treeRevision, catalog.trees[0].revision)
+
+        // Bump the tree revision and re-stamp the type and its decision.
+        catalog.trees[0].revision += 1
+        catalog.classifierTypes[0].treeRevision = catalog.trees[0].revision
+        catalog.datasets[0].creatorClassifications[0].treeRevision = catalog.trees[0].revision
+
+        // The new revision is the label-set reset boundary: the model re-folds
+        // its decisions from empty rather than continuing stale weights.
+        let reset = try LocalModelTrainer.accumulate(trained, type: catalog.classifierTypes[0], tree: catalog.trees[0], dataset: catalog.datasets[0], configuration: configuration)
+        XCTAssertEqual(reset.treeRevision, catalog.trees[0].revision)
+        XCTAssertEqual(reset.embeddedTrainingReport?.decisionsFolded, 1)
+        XCTAssertEqual(Set(reset.incorporatedDecisionIDs), ["decision-a"])
+    }
+
+    func testLegacyLocalModelSelectionMigratesToTypeBinding() throws {
+        // Start from a valid bound catalog, then rewrite it to the pre-migration
+        // shape: the model had no owning type and the type selected it via the
+        // retired `localModelID` field.
+        let bound = catalogWithYouTubeAssets()
+        var json = String(data: try JSONEncoder().encode(bound), encoding: .utf8)!
+        json = json.replacingOccurrences(of: "\"classifierTypeID\":\"youtube-type\",", with: "")
+        json = json.replacingOccurrences(
+            of: "\"applicablePlatformID\":\"youtube\"",
+            with: "\"applicablePlatformID\":\"youtube\",\"localModelID\":\"local-neural-model\""
+        )
+        let migrated = try JSONDecoder().decode(WorkspaceCatalog.self, from: Data(json.utf8))
+        let model = try XCTUnwrap(migrated.models.first(where: { $0.id == "local-neural-model" }))
+        XCTAssertEqual(model.classifierTypeID, "youtube-type")
+        XCTAssertEqual(model.trainingPlatformID, "youtube")
+        XCTAssertNil(migrated.classifierTypes.first?.legacyLocalModelID)
+        XCTAssertNoThrow(try migrated.validate())
     }
 
     func testRetiredDecisionScopeSettingsAreIgnoredUntilOneApplicablePlatformIsChosen() throws {
@@ -1026,6 +1131,7 @@ final class WorkspaceAssetsTests: XCTestCase {
 
     func testSelectedLLMProviderPersistsBeforeAModelIsAttached() throws {
         var catalog = catalogWithYouTubeAssets()
+        catalog.models = []
         let profile = APIKeyProviderProfile(id: "openai-profile", type: .openAI)
         catalog.providerProfiles = [profile]
         let tree = try XCTUnwrap(catalog.trees.first)
@@ -1053,6 +1159,7 @@ final class WorkspaceAssetsTests: XCTestCase {
 
     func testLLMDraftPersistsBeforeAModelIsAttached() throws {
         var catalog = catalogWithYouTubeAssets()
+        catalog.models = []
         let tree = try XCTUnwrap(catalog.trees.first)
         let dataset = try XCTUnwrap(catalog.datasets.first)
         let provider = APIKeyProviderProfile(id: "gemini", type: .gemini)
@@ -1298,23 +1405,23 @@ final class WorkspaceAssetsTests: XCTestCase {
             .init(id: "instagram-entry", platformID: "instagram", entryID: "instagram-entry", creatorID: "instagram:creator", creatorName: "Instagram creator", entryType: "reel", title: "Instagram guide"),
         ]
         catalog.datasets[0].creatorClassifications = [
-            .init(classifierTypeID: "creator-type", creatorID: "youtube:creator", creatorName: "YouTube creator", platformID: "youtube", treeID: tree.id, treeRevision: tree.revision, tagIDs: ["games"], origin: .manual, review: .approved),
-            .init(classifierTypeID: "creator-type", creatorID: "instagram:creator", creatorName: "Instagram creator", platformID: "instagram", treeID: tree.id, treeRevision: tree.revision, tagIDs: ["games"], origin: .manual, review: .approved),
+            .init(classifierTypeID: "youtube-type", creatorID: "youtube:creator", creatorName: "YouTube creator", platformID: "youtube", treeID: tree.id, treeRevision: tree.revision, tagIDs: ["games"], origin: .manual, review: .approved),
+            .init(classifierTypeID: "instagram-type", creatorID: "instagram:creator", creatorName: "Instagram creator", platformID: "instagram", treeID: tree.id, treeRevision: tree.revision, tagIDs: ["games"], origin: .manual, review: .approved),
         ]
-        catalog.models.append(.init(
-            id: "combined-model",
-            name: "Combined model",
+        // A second classifier type owns a model on the platform being removed.
+        catalog.classifierTypes.append(.init(
+            id: "instagram-type",
+            name: "Instagram type",
             treeID: tree.id,
             treeRevision: tree.revision,
             datasetID: dataset.id,
             datasetRevision: dataset.revision,
-            isReady: true,
-            trainingPlatformID: "youtube",
-            trainingPlatformIDs: ["youtube", "instagram"]
+            applicablePlatformID: "instagram"
         ))
         catalog.models.append(.init(
             id: "instagram-only-model",
             name: "Instagram-only model",
+            classifierTypeID: "instagram-type",
             treeID: tree.id,
             treeRevision: tree.revision,
             datasetID: dataset.id,
@@ -1323,28 +1430,18 @@ final class WorkspaceAssetsTests: XCTestCase {
             trainingPlatformID: "instagram",
             trainingPlatformIDs: ["instagram"]
         ))
-        catalog.classifierTypes = [.init(
-            id: "creator-type",
-            name: "Creator type",
-            treeID: tree.id,
-            treeRevision: tree.revision,
-            datasetID: dataset.id,
-            datasetRevision: dataset.revision,
-            applicablePlatformID: "youtube"
-        )]
 
         XCTAssertTrue(catalog.removePlatformBinding("instagram"))
         XCTAssertEqual(catalog.bindings.map(\.id), ["youtube"])
         XCTAssertEqual(catalog.datasets[0].collectedEntries.map(\.platformID), ["youtube"])
         XCTAssertEqual(catalog.datasets[0].creatorClassifications.map(\.platformID), ["youtube"])
         XCTAssertEqual(catalog.datasets[0].revision, dataset.revision + 1)
-        XCTAssertEqual(catalog.classifierTypes[0].applicablePlatformID, "youtube")
+        // The platform's model is dropped; the model on the surviving platform stays.
         XCTAssertFalse(catalog.models.contains(where: { $0.id == "instagram-only-model" }))
-        let combined = try XCTUnwrap(catalog.models.first(where: { $0.id == "combined-model" }))
-        XCTAssertEqual(combined.effectiveTrainingPlatformIDs, ["youtube"])
-        XCTAssertEqual(combined.datasetRevision, catalog.datasets[0].revision)
-        XCTAssertFalse(combined.isReady)
-        XCTAssertFalse(catalog.models[0].isReady)
+        XCTAssertTrue(catalog.models.contains(where: { $0.id == "local-neural-model" }))
+        // The type that owned the removed platform loses its applicable platform.
+        let instagramType = try XCTUnwrap(catalog.classifierTypes.first(where: { $0.id == "instagram-type" }))
+        XCTAssertNil(instagramType.applicablePlatformID)
         XCTAssertNoThrow(try catalog.validate())
         XCTAssertFalse(catalog.removePlatformBinding("instagram"))
     }
@@ -1354,11 +1451,27 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertTrue(try JSONDecoder().decode(ClassificationDataset.self, from: legacy).creatorClassifications.isEmpty)
     }
 
-    func testPlatformRejectsAnIncompatibleActiveModel() {
+    func testPlatformRejectsAnActiveModelStaleForTheCurrentTreeRevision() throws {
         var catalog = catalogWithYouTubeAssets()
+        catalog.trees[0].nodes = [.init(id: "games", name: "Games")]
+        let example = EmbeddedNeuralTrainingExample(text: "ranked deck game", positiveLabelIDs: ["games"])
+        var neural = try EmbeddedNeuralTextClassifier(
+            configuration: .init(vocabularyLimit: 16, embeddingDimension: 4, hiddenDimension: 4, initializationSeed: 5),
+            labelIDs: ["games"],
+            trainingExamples: [example]
+        )
+        _ = try neural.train([example], epochs: 1)
         catalog.models[0].isReady = true
-        catalog.models[0].datasetRevision = 99
+        catalog.models[0].embeddedNeuralModel = neural
         catalog.bindings[0].activeModelID = catalog.models[0].id
+        // A dataset-revision bump alone keeps the active model valid: readiness is
+        // gated by the tree revision, not by exact dataset-revision equality.
+        catalog.datasets[0].revision += 1
+        catalog.models[0].datasetRevision = 99
+        catalog.classifierTypes[0].datasetRevision = catalog.datasets[0].revision
+        XCTAssertNoThrow(try catalog.validate())
+        // A tree-revision bump makes the trained artifact stale and rejects it.
+        catalog.models[0].treeRevision = 99
         XCTAssertThrowsError(try catalog.validate()) { error in
             XCTAssertEqual(error as? WorkspaceCatalogError, .incompatibleActiveModel(catalog.models[0].id))
         }
@@ -1402,10 +1515,10 @@ final class WorkspaceAssetsTests: XCTestCase {
             datasetID: dataset.id,
             datasetRevision: dataset.revision,
             applicablePlatformID: "youtube",
-            localModelID: catalog.models[0].id,
             llmAssistConfiguration: .init(providerProfileID: profile.id, modelIdentifier: "gemini-3.1-flash-lite")
         )
         catalog.classifierTypes = [classifierType]
+        catalog.models[0].classifierTypeID = classifierType.id
         XCTAssertNoThrow(try catalog.validate())
 
         catalog.datasets[0].revision += 1
@@ -1415,7 +1528,9 @@ final class WorkspaceAssetsTests: XCTestCase {
         catalog.reconcileClassifierTypes()
         XCTAssertNoThrow(try catalog.validate())
         XCTAssertEqual(catalog.classifierTypes[0].datasetRevision, catalog.datasets[0].revision)
-        XCTAssertNil(catalog.classifierTypes[0].localModelID)
+        // The model stays bound and ready as the dataset revision advances; its
+        // validity is gated by the tree revision, not by dataset-revision parity.
+        XCTAssertNotNil(catalog.readyLocalModel(for: catalog.classifierTypes[0]))
 
         catalog.providerProfiles = []
         catalog.reconcileClassifierTypes()
@@ -1451,10 +1566,10 @@ final class WorkspaceAssetsTests: XCTestCase {
             treeRevision: tree.revision,
             datasetID: dataset.id,
             datasetRevision: dataset.revision,
-            applicablePlatformID: "youtube",
-            localModelID: catalog.models[0].id
+            applicablePlatformID: "youtube"
         )
         catalog.classifierTypes = [classifierType]
+        catalog.models[0].classifierTypeID = classifierType.id
         catalog.bindings[0].activeClassifierTypeID = classifierType.id
         catalog.bindings[0].activeModelID = catalog.models[0].id
         try coordinator.updateWorkspaceCatalog(catalog)
@@ -1570,6 +1685,7 @@ final class WorkspaceAssetsTests: XCTestCase {
         let model = LocalModelAsset(
             id: "interests-model",
             name: "Interests model",
+            classifierTypeID: "interests-type",
             treeID: tree.id,
             treeRevision: tree.revision,
             datasetID: dataset.id,
