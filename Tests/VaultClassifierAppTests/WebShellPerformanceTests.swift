@@ -255,7 +255,8 @@ final class WebShellPerformanceTests: XCTestCase {
             document.querySelector('[data-action="workspace"][data-workspace="browserBridge"]').click();
             JSON.stringify({
               workspace: document.querySelector('[data-editor-panel]').dataset.workspace,
-              cards: document.querySelectorAll('.creator-tag-card').length,
+              cards: document.querySelectorAll('.creator-tag-column .creator-tag-card').length,
+              decisionCards: document.querySelectorAll('[data-keyed-list] .creator-tag-card').length,
               hasDeferredRows: Boolean(document.querySelector('[data-incremental-list]')),
               officialContentEvidenceCount: document.querySelector('[data-field="llmOfficialContentEvidenceCount"]')?.value || null,
               hasNativeSearchOption: Boolean(document.querySelector('[data-field="llmWebSearchMode"] option[value="providerNative"]')),
@@ -273,6 +274,9 @@ final class WebShellPerformanceTests: XCTestCase {
         XCTAssertEqual(classifierJSON["workspace"] as? String, "browserBridge")
         XCTAssertGreaterThan(classifierJSON["cards"] as? Int ?? 0, 0)
         XCTAssertLessThan(classifierJSON["cards"] as? Int ?? .max, 120)
+        // The decisions list is a keyed list: it renders every row (no
+        // pagination) so rows can be reconciled per-element and scroll kept.
+        XCTAssertGreaterThan(classifierJSON["decisionCards"] as? Int ?? 0, 100)
         XCTAssertEqual(classifierJSON["hasDeferredRows"] as? Bool, true)
         XCTAssertEqual(classifierJSON["officialContentEvidenceCount"] as? String, "37")
         XCTAssertEqual(classifierJSON["hasNativeSearchOption"] as? Bool, false)
@@ -285,7 +289,7 @@ final class WebShellPerformanceTests: XCTestCase {
             in: webView
         )
         try await Task.sleep(nanoseconds: 100_000_000)
-        let expandedCardValue = try await evaluate("document.querySelectorAll('.creator-tag-card').length;", in: webView)
+        let expandedCardValue = try await evaluate("document.querySelectorAll('.creator-tag-column .creator-tag-card').length;", in: webView)
         let expandedCardCount = try XCTUnwrap(expandedCardValue as? Int)
         XCTAssertGreaterThan(expandedCardCount, initialCardCount)
 
@@ -486,5 +490,57 @@ final class WebShellPerformanceTests: XCTestCase {
             in: webView
         )
         XCTAssertEqual(modalShown as? Bool, true)
+    }
+
+    func testScopedRenderKeepsDomAndUpdatesLiveRegionInPlace() async throws {
+        let loaded = expectation(description: "web shell loaded")
+        let waiter = NavigationWaiter(expectation: loaded)
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(frame: .init(x: 0, y: 0, width: 1_200, height: 800), configuration: configuration)
+        webView.navigationDelegate = waiter
+        let index = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "index", extension: "html"))
+        webView.loadFileURL(index, allowingReadAccessTo: index.deletingLastPathComponent())
+        await fulfillment(of: [loaded], timeout: 5)
+
+        var payload = populatedPayload(creatorCount: 3)
+        payload["workspace"] = "browserBridge"
+        _ = try await evaluate(try XCTUnwrap(VaultClassifierWebShell.stateUpdateJavaScript(payload: payload)), in: webView)
+
+        // Mark stable DOM nodes; a full rebuild would drop the marks.
+        _ = try await evaluate(
+            "document.querySelector('[data-keyed-list]')?.setAttribute('data-test-kept', '1'); document.querySelector('.llm-classification-metrics')?.setAttribute('data-test-kept', '1');",
+            in: webView
+        )
+
+        // Change only a live counter (completed today). The render signature is
+        // unchanged, so render() must take the fast path — preserve the DOM and
+        // update the live region in place.
+        var payload2 = payload
+        var assets = try XCTUnwrap(payload2["assets"] as? [String: Any])
+        var types = try XCTUnwrap(assets["classifierTypes"] as? [[String: Any]])
+        var llm = try XCTUnwrap(types[0]["llmAssistConfiguration"] as? [String: Any])
+        llm["completedToday"] = 5
+        types[0]["llmAssistConfiguration"] = llm
+        assets["classifierTypes"] = types
+        payload2["assets"] = assets
+        _ = try await evaluate(try XCTUnwrap(VaultClassifierWebShell.stateUpdateJavaScript(payload: payload2)), in: webView)
+
+        let result = try await evaluate(
+            """
+            JSON.stringify({
+              listKept: document.querySelector('[data-keyed-list]')?.getAttribute('data-test-kept') || null,
+              metricsKept: document.querySelector('.llm-classification-metrics')?.getAttribute('data-test-kept') || null,
+              metrics: document.querySelector('.llm-classification-metrics')?.textContent || ''
+            });
+            """,
+            in: webView
+        )
+        let json = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(try XCTUnwrap(result as? String).utf8)) as? [String: Any]
+        )
+        XCTAssertEqual(json["listKept"] as? String, "1")
+        XCTAssertEqual(json["metricsKept"] as? String, "1")
+        XCTAssertTrue((json["metrics"] as? String)?.contains("5") == true)
     }
 }

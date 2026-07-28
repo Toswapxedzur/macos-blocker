@@ -58,6 +58,11 @@
   let virtualListSequence = 0;
   let incrementalListObserver = null;
   let virtualListResizeObserver = null;
+  const keyedListRegistry = new Map();
+  const keyedListRenderedRows = new Map();
+  const liveHTMLRegistry = new Map();
+  const liveHTMLRendered = new Map();
+  let lastRenderedMarkup = null;
 
   try {
     const storedLanguage = window.localStorage.getItem("vaultClassifier.language");
@@ -163,11 +168,15 @@
     return payload;
   }
 
+  // Clears the per-render registries that shell() repopulates. Because the
+  // sequences reset to 0, identical markup re-registers with identical ids —
+  // which is what lets the render() fast path keep the existing DOM's observers
+  // valid. Observers are disconnected only on a full rebuild (in render()).
   function resetDeferredRendering() {
-    incrementalListObserver?.disconnect();
-    virtualListResizeObserver?.disconnect();
     incrementalLists.clear();
     virtualLists.clear();
+    keyedListRegistry.clear();
+    liveHTMLRegistry.clear();
     incrementalListSequence = 0;
     virtualListSequence = 0;
   }
@@ -940,20 +949,20 @@
         const avatar = avatarURL ? `<img class="creator-tag-card-avatar" src="${esc(avatarURL)}" alt="" aria-hidden="true" loading="lazy" decoding="async">` : `<span class="creator-tag-card-avatar creator-tag-card-avatar-fallback" aria-hidden="true">${esc(entry.creatorName.slice(0, 1).toUpperCase())}</span>`;
         return `<article class="creator-tag-card"><div class="creator-tag-card-profile">${avatar}<div><strong dir="auto">${esc(entry.creatorName)}</strong><span>${esc(platformDefinitions.get(entry.platformID)?.name || entry.platformID)}</span></div></div><div class="creator-tag-card-actions"><span class="creator-decision-tags"><span class="small-copy">${tx("bridge.humanTags")}:</span>${labelMarkup(human)}</span><span class="creator-decision-tags"><span class="small-copy">${tx("bridge.llmTags")}:</span>${labelMarkup(llm)}</span></div></article>`;
       };
-      const creatorDecisionList = `<section class="classifier-type-section creator-classification-section"><div class="section-header"><div><h3>${tx("bridge.sourceDecisionList", { source: sourceTerms.singular })}</h3><p class="section-copy">${tx("bridge.sourceDecisionListCopy", { sources: sourceTerms.plural })}</p></div></div><div class="creator-tag-column-list">${incrementalList(creatorDecisionRows, creatorDecisionRow, `<div class="empty compact-empty">${esc(t("bridge.noSources", { sources: sourceTerms.plural }))}</div>`)}</div></section>`;
+      const creatorDecisionList = `<section class="classifier-type-section creator-classification-section"><div class="section-header"><div><h3>${tx("bridge.sourceDecisionList", { source: sourceTerms.singular })}</h3><p class="section-copy">${tx("bridge.sourceDecisionListCopy", { sources: sourceTerms.plural })}</p></div></div>${keyedList(`creator-decisions-${classifierType.id}`, creatorDecisionRows, ([key]) => key, creatorDecisionRow, { emptyMarkup: `<div class="empty compact-empty">${esc(t("bridge.noSources", { sources: sourceTerms.plural }))}</div>`, listClass: "creator-tag-column-list" })}</section>`;
       const llmModelControl = !selectedLLMProfile
         ? `<p class="small-copy">${tx("bridge.llmChooseProviderFirst")}</p>`
         : `<div class="field"><span class="field-label">${tx("bridge.llmModel")} · ${tx("bridge.llmModelCopy")}</span><select class="select-control" data-field="llmModelIdentifier"><option value="">${tx("bridge.llmChooseModel")}</option>${visibleModels.map((model) => `<option value="${esc(model)}"${selected(currentModel, model)}>${esc(model)}</option>`).join("")}</select><span class="action-row"><button type="button" class="secondary" data-action="probeProviderModelCatalog" data-profile-id="${esc(selectedLLMProfile.id)}"${disabled(loadingModelCatalogs.has(selectedLLMProfile.id))}>${tx(loadingModelCatalogs.has(selectedLLMProfile.id) ? "bridge.llmProbingModels" : "bridge.llmProbeModels")}</button><span class="small-copy">${esc(loadingModelCatalogs.has(selectedLLMProfile.id) ? tx("bridge.llmProbingModels") : modelCatalogErrors[selectedLLMProfile.id] || tx("bridge.llmProbeModelsCopy"))}</span></span></div>`;
       const llmActivation = llmAssist
-        ? `<div class="action-row"><span class="small-copy">${tx(llmAssist.isActive ? (llmRunning ? "bridge.llmActivationRunning" : "bridge.llmActive") : "bridge.llmInactive")}</span><button class="${llmAssist.isActive ? "secondary" : "gold-action"}" data-action="setLLMAssistActive" data-type-id="${esc(classifierType.id)}" data-is-active="${llmAssist.isActive ? "false" : "true"}"${disabled(!llmAssist.isActive && (!creatorLLMReady || llmRunning))}>${tx(llmAssist.isActive ? "bridge.llmDeactivate" : "bridge.llmActivate")}</button></div>`
+        ? `<div class="action-row">${liveHTML(`llm-activation-status-${classifierType.id}`, tx(llmAssist.isActive ? (llmRunning ? "bridge.llmActivationRunning" : "bridge.llmActive") : "bridge.llmInactive"), { tag: "span", className: "small-copy" })}<button class="${llmAssist.isActive ? "secondary" : "gold-action"}" data-action="setLLMAssistActive" data-type-id="${esc(classifierType.id)}" data-is-active="${llmAssist.isActive ? "false" : "true"}"${disabled(!llmAssist.isActive && (!creatorLLMReady || llmRunning))}>${tx(llmAssist.isActive ? "bridge.llmDeactivate" : "bridge.llmActivate")}</button></div>`
         : `<span class="small-copy">${tx("bridge.llmModelRequired")}</span>`;
       const llmLastOutcome = llmAssist?.lastClassificationOutcome;
       const llmClassificationStatus = llmAssist
-        ? `<div class="llm-classification-status"><div><span class="eyebrow">${tx("bridge.llmClassificationStatus")}</span><p class="small-copy">${tx(llmAssist.isActive ? (llmRunning ? "bridge.llmActivationRunning" : "bridge.llmActive") : "bridge.llmInactive")}</p></div><div class="llm-classification-metrics"><span>${tx("bridge.llmQueuedCreators", { count: llmAssist.queuedCreatorCount || 0 })}</span><span>${tx("bridge.llmCompletedToday", { count: llmAssist.completedToday || 0 })}</span>${llmLastOutcome ? `<span>${tx("bridge.llmLastResult", { result: tx(llmLastOutcome === "succeeded" ? "bridge.llmOutcomeSucceeded" : "bridge.llmOutcomeFailed") })}</span>` : ""}</div></div>`
+        ? `<div class="llm-classification-status"><div><span class="eyebrow">${tx("bridge.llmClassificationStatus")}</span>${liveHTML(`llm-status-${classifierType.id}`, tx(llmAssist.isActive ? (llmRunning ? "bridge.llmActivationRunning" : "bridge.llmActive") : "bridge.llmInactive"), { tag: "p", className: "small-copy" })}</div>${liveHTML(`llm-metrics-${classifierType.id}`, `<span>${tx("bridge.llmQueuedCreators", { count: llmAssist.queuedCreatorCount || 0 })}</span><span>${tx("bridge.llmCompletedToday", { count: llmAssist.completedToday || 0 })}</span>${llmLastOutcome ? `<span>${tx("bridge.llmLastResult", { result: tx(llmLastOutcome === "succeeded" ? "bridge.llmOutcomeSucceeded" : "bridge.llmOutcomeFailed") })}</span>` : ""}`, { tag: "div", className: "llm-classification-metrics" })}</div>`
         : "";
       const webSearchControls = `${valueSelectField("bridge.llmWebSearchMode", "bridge.llmWebSearchModeCopy", "llmWebSearchMode", savedWebSearchMode, webSearchModeOptions)}<p class="small-copy" data-native-search-copy${savedWebSearchMode === "providerNative" ? "" : " hidden"}>${tx("bridge.llmNativeWebSearchCopy")}</p><div data-attached-search-controls${savedWebSearchMode === "attached" ? "" : " hidden"}>${valueSelectField("bridge.llmWebSearchProvider", "bridge.llmWebSearchProviderCopy", "llmWebSearchProviderProfileID", savedWebSearchProfileID, webSearchProviderOptions)}<p class="small-copy">${tx("bridge.llmAttachedWebSearchCopy")}</p></div>`;
       const officialContentEvidenceControl = field("bridge.llmOfficialContentEvidenceCount", "bridge.llmOfficialContentEvidenceCountCopy", "llmOfficialContentEvidenceCount", llmEditorSettings?.officialContentEvidenceCount || 25, "text", "inputmode=\"numeric\"");
-      const llmSettings = selectedLLMProfile ? `${llmClassificationStatus}<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}${llmModelControl}${field("bridge.llmDailyTokenBudget", "bridge.llmDailyTokenBudgetCopy", "llmDailyTokenLimit", llmEditorSettings?.dailyTokenLimit || 10000, "text", "inputmode=\"numeric\"")}${llmAssist ? `<p class="small-copy">${tx("bridge.llmDailyTokenUsage", { used: llmAssist.dailyTokensUsed || 0, limit: llmAssist.dailyTokenLimit || 10000 })}</p>` : ""}${field("bridge.llmMaximumTokens", "bridge.llmMaximumTokensCopy", "llmMaximumOutputTokensPerRequest", llmEditorSettings?.maximumOutputTokensPerRequest || 4096, "text", "inputmode=\"numeric\"")}${textareaField("bridge.llmExtraDirection", "bridge.llmExtraDirectionCopy", "llmExtraDirection", llmEditorSettings?.extraDirection || "", "maxlength=\"4096\"")}${field("bridge.llmClassificationPace", "bridge.llmClassificationPaceCopy", "llmClassificationRequestsPerMinute", llmEditorSettings?.classificationRequestsPerMinute || 6, "text", "inputmode=\"numeric\"")}${field("bridge.llmBatchSize", "bridge.llmBatchSizeCopy", "llmBatchSize", llmEditorSettings?.batchSize || 5, "text", "inputmode=\"numeric\"")}${officialContentEvidenceControl}${field("bridge.llmMaximumTagCount", "bridge.llmMaximumTagCountCopy", "llmMaximumTagCount", llmEditorSettings?.maximumTagCount || 8, "text", "inputmode=\"numeric\"")}${toggle("bridge.llmLeafOnly", "llmRestrictToLeafTags", llmEditorSettings?.restrictToLeafTags ?? true)}<p class="small-copy">${tx("bridge.llmLeafOnlyCopy")}</p>${webSearchControls}</div>${creatorLLMEvidenceWarning}` : `<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}</div>`;
+      const llmSettings = selectedLLMProfile ? `${llmClassificationStatus}<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}${llmModelControl}${field("bridge.llmDailyTokenBudget", "bridge.llmDailyTokenBudgetCopy", "llmDailyTokenLimit", llmEditorSettings?.dailyTokenLimit || 10000, "text", "inputmode=\"numeric\"")}${llmAssist ? liveHTML(`llm-tokens-${classifierType.id}`, tx("bridge.llmDailyTokenUsage", { used: llmAssist.dailyTokensUsed || 0, limit: llmAssist.dailyTokenLimit || 10000 }), { tag: "p", className: "small-copy" }) : ""}${field("bridge.llmMaximumTokens", "bridge.llmMaximumTokensCopy", "llmMaximumOutputTokensPerRequest", llmEditorSettings?.maximumOutputTokensPerRequest || 4096, "text", "inputmode=\"numeric\"")}${textareaField("bridge.llmExtraDirection", "bridge.llmExtraDirectionCopy", "llmExtraDirection", llmEditorSettings?.extraDirection || "", "maxlength=\"4096\"")}${field("bridge.llmClassificationPace", "bridge.llmClassificationPaceCopy", "llmClassificationRequestsPerMinute", llmEditorSettings?.classificationRequestsPerMinute || 6, "text", "inputmode=\"numeric\"")}${field("bridge.llmBatchSize", "bridge.llmBatchSizeCopy", "llmBatchSize", llmEditorSettings?.batchSize || 5, "text", "inputmode=\"numeric\"")}${officialContentEvidenceControl}${field("bridge.llmMaximumTagCount", "bridge.llmMaximumTagCountCopy", "llmMaximumTagCount", llmEditorSettings?.maximumTagCount || 8, "text", "inputmode=\"numeric\"")}${toggle("bridge.llmLeafOnly", "llmRestrictToLeafTags", llmEditorSettings?.restrictToLeafTags ?? true)}<p class="small-copy">${tx("bridge.llmLeafOnlyCopy")}</p>${webSearchControls}</div>${creatorLLMEvidenceWarning}` : `<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}</div>`;
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}">
         <div class="classifier-type-head"><div><span class="eyebrow">${tx("bridge.typePanel")}</span><h3>${esc(classifierType.name)}</h3><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div>${statusPill(typeStatus, applicablePlatformID ? "navy" : "muted")}</div>
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}<button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("bridge.saveType")}</button><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}" data-name="${esc(classifierType.name)}">${tx("bridge.deleteType")}</button></div>
@@ -1323,15 +1332,116 @@
     return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelPendingDeletion" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog" role="dialog" aria-modal="true"><h3>${tx("trash.confirmTitle")}</h3><p class="section-copy">${tx("trash.confirmCopy", { name: pendingDeletion.name })}</p><label class="field"><span class="field-label">${tx("trash.typeNameLabel")}</span><input type="text" data-deletion-name-input autocomplete="off" spellcheck="false"></label><div class="action-row"><button class="secondary" data-action="cancelPendingDeletion">${tx("common.cancel")}</button><button class="danger" data-action="confirmPendingDeletion" disabled>${tx("trash.confirmDelete")}</button></div></div></div>`;
   }
 
+  // Keyed list: rendered as an empty container in the shell (so its row data is
+  // excluded from the render signature) and populated/updated by
+  // reconcileKeyedLists. On a state push that only changes row data, render()
+  // updates just the changed rows in place and preserves the container's
+  // scroll, instead of rebuilding the page.
+  function keyedList(id, items, keyOf, renderRow, { emptyMarkup = "", listClass = "" } = {}) {
+    keyedListRegistry.set(id, { items, keyOf, renderRow, emptyMarkup });
+    return `<div${listClass ? ` class="${esc(listClass)}"` : ""} data-keyed-list="${esc(id)}"></div>`;
+  }
+
+  function reconcileKeyedLists() {
+    root.querySelectorAll("[data-keyed-list]").forEach((container) => {
+      const reg = keyedListRegistry.get(container.dataset.keyedList);
+      if (reg) reconcileKeyedList(container, reg);
+    });
+  }
+
+  function reconcileKeyedList(container, { items, keyOf, renderRow, emptyMarkup }) {
+    const id = container.dataset.keyedList;
+    let rendered = keyedListRenderedRows.get(id);
+    if (!rendered) { rendered = new Map(); keyedListRenderedRows.set(id, rendered); }
+    if (!items.length) {
+      if (container.dataset.keyedEmpty !== "true") { container.innerHTML = emptyMarkup; container.dataset.keyedEmpty = "true"; }
+      rendered.clear();
+      return;
+    }
+    if (container.dataset.keyedEmpty === "true") { container.innerHTML = ""; delete container.dataset.keyedEmpty; }
+    const existing = new Map();
+    container.querySelectorAll(":scope > [data-key]").forEach((el) => existing.set(el.dataset.key, el));
+    const desired = new Set();
+    let prev = null;
+    for (const item of items) {
+      const key = String(keyOf(item));
+      desired.add(key);
+      const html = renderRow(item);
+      let el = existing.get(key);
+      if (el) {
+        if (rendered.get(key) !== html) { el.innerHTML = html; rendered.set(key, html); }
+      } else {
+        el = document.createElement("div");
+        el.className = "keyed-row";
+        el.dataset.key = key;
+        el.innerHTML = html;
+        rendered.set(key, html);
+        existing.set(key, el);
+      }
+      const anchor = prev ? prev.nextSibling : container.firstChild;
+      if (el !== anchor) container.insertBefore(el, anchor);
+      prev = el;
+    }
+    existing.forEach((el, key) => {
+      if (!desired.has(key)) { el.remove(); rendered.delete(key); }
+    });
+  }
+
+  // Live region: an empty container in the shell whose inner markup is updated
+  // in place by reconcileLiveHTML — for small volatile bits (status counters)
+  // that change alongside a keyed list.
+  function liveHTML(id, html, { tag = "span", className = "" } = {}) {
+    liveHTMLRegistry.set(id, html);
+    return `<${tag}${className ? ` class="${esc(className)}"` : ""} data-live-html="${esc(id)}"></${tag}>`;
+  }
+
+  function reconcileLiveHTML() {
+    root.querySelectorAll("[data-live-html]").forEach((el) => {
+      const id = el.dataset.liveHtml;
+      const html = liveHTMLRegistry.get(id);
+      if (html == null) return;
+      if (liveHTMLRendered.get(id) !== html) { el.innerHTML = html; liveHTMLRendered.set(id, html); }
+    });
+  }
+
   function render() {
+    if (!state) {
+      root.innerHTML = `<div class="popup"><div class="empty">${tx("app.loading")}</div></div>`;
+      lastRenderedMarkup = null;
+      return;
+    }
+    resetDeferredRendering();
+    const markup = shell(workspace()) + deletionModal();
+    // Fast path: the signature (everything except keyed-list rows and live
+    // regions) is unchanged, so only reconcilable data differs. Update those in
+    // place and keep scroll. Gated to DOM without virtual lists (they are
+    // JS-populated and repainted only on a full render). Any failure falls back
+    // to a full rebuild, so the worst case is the previous behavior.
+    if (markup === lastRenderedMarkup && root.firstChild && !root.querySelector("[data-virtual-list]")) {
+      try {
+        reconcileLiveHTML();
+        reconcileKeyedLists();
+        return;
+      } catch (_) { /* fall through to full render */ }
+    }
+    renderFull(markup);
+  }
+
+  function renderFull(markup) {
     rememberTreeViewportPositions();
     rememberEditorViewportPosition();
-    resetDeferredRendering();
-    root.innerHTML = state ? shell(workspace()) + deletionModal() : `<div class="popup"><div class="empty">${tx("app.loading")}</div></div>`;
+    incrementalListObserver?.disconnect();
+    virtualListResizeObserver?.disconnect();
+    keyedListRenderedRows.clear();
+    liveHTMLRendered.clear();
+    root.innerHTML = markup;
+    lastRenderedMarkup = markup;
     applyApplicablePlatformCapabilities();
     observeIncrementalLists();
     setupVirtualLists();
     bindTreeMapWheel();
+    reconcileLiveHTML();
+    reconcileKeyedLists();
     window.requestAnimationFrame(() => {
       applyNavigationPanelWidth();
       restoreEditorViewportPosition();
