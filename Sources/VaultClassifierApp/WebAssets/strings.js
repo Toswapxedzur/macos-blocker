@@ -472,7 +472,7 @@ window.VaultClassifierStrings = Object.freeze({
   "bridge.llmExtraDirection": "EXTRA DIRECTION",
   "bridge.llmExtraDirectionCopy": "Optional local instructions appended before the required label JSON response.",
   "bridge.llmClassificationPace": "CLASSIFICATION PACE",
-  "bridge.llmClassificationPaceCopy": "How many batches an activated run starts per minute (1–120). One interval elapses, then a whole batch is classified — so the effective creator rate is pace × batch size, and pace alone no longer sets the true speed.",
+  "bridge.llmClassificationPaceCopy": "Upper bound on batches started per minute (1–120), not a guaranteed rate. A batch is classified one creator at a time and the next batch never starts before the current one finishes, so provider latency can make the real rate lower than pace × batch size.",
   "bridge.llmBatchSize": "CREATOR BATCH SIZE",
   "bridge.llmBatchSizeCopy": "How many eligible creators an activated run classifies in each batch, back to back, once per classification-pace interval.",
   "bridge.llmOfficialContentEvidenceCount": "OFFICIAL CONTENT RECORDS",
