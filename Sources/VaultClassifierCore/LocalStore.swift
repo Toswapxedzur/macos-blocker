@@ -263,26 +263,84 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
     }
 }
 
-public final class LocalStateFile {
+public final class LocalStateFile: @unchecked Sendable {
     public let url: URL
+
+    // One process-wide serial queue owns every state write. Because it is
+    // shared, `load()` can flush a write that a *different* instance enqueued
+    // for the same file, so save→reload stays deterministic while callers never
+    // block on the encode/write themselves.
+    private static let ioQueue = DispatchQueue(label: "com.adamancia.vault.classifier.state-io", qos: .utility)
+    private static let lock = NSLock()
+    private static var pending: [String: LocalClassifierState] = [:]
+    private static var scheduled: Set<String> = []
 
     public init(url: URL) { self.url = url }
 
     public func load(or defaultState: LocalClassifierState = .init()) throws -> LocalClassifierState {
+        Self.ioQueue.sync {}
         guard FileManager.default.fileExists(atPath: url.path) else { return defaultState }
         return try JSONDecoder().decode(LocalClassifierState.self, from: Data(contentsOf: url))
     }
 
+    /// Persists without blocking the caller. The encode and atomic write run on
+    /// a serial background queue, and rapid successive saves of the same file
+    /// coalesce into a single write of the newest state — so a high-frequency
+    /// writer (the activated LLM loop) never stalls the main thread. The
+    /// in-memory state stays authoritative for the session; `throws` is retained
+    /// for source compatibility and background write failures are best-effort.
     public func save(_ state: LocalClassifierState) throws {
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(state).write(to: url, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        let key = url.path
+        let fileURL = url
+        Self.lock.lock()
+        Self.pending[key] = state
+        let shouldStart = Self.scheduled.insert(key).inserted
+        Self.lock.unlock()
+        guard shouldStart else { return }
+        Self.ioQueue.async { Self.drainPendingWrites(key: key, url: fileURL) }
+    }
+
+    /// Blocks until every queued write has finished. Call before process exit so
+    /// the newest state reaches disk.
+    public func flushSynchronously() {
+        Self.ioQueue.sync {}
+    }
+
+    /// Blocks until every queued write across all state files has finished.
+    /// Call from `applicationWillTerminate` so a clean quit never drops the last
+    /// coalesced write.
+    public static func flushAllPendingWrites() {
+        ioQueue.sync {}
+    }
+
+    private static func drainPendingWrites(key: String, url: URL) {
+        while true {
+            lock.lock()
+            guard let state = pending[key] else {
+                scheduled.remove(key)
+                lock.unlock()
+                return
+            }
+            pending[key] = nil
+            lock.unlock()
+            writeToDisk(state, url: url)
+        }
+    }
+
+    private static func writeToDisk(_ state: LocalClassifierState, url: URL) {
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(state).write(to: url, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        } catch {
+            // Best-effort background persistence.
+        }
     }
 }
 
