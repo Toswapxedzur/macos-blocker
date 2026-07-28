@@ -330,7 +330,7 @@ final class WebShellPerformanceTests: XCTestCase {
               workspace: document.querySelector('[data-editor-panel]').dataset.workspace,
               cards: document.querySelectorAll('.creator-tag-column .creator-tag-card').length,
               decisionCards: document.querySelectorAll('[data-keyed-list] .creator-tag-card').length,
-              hasDeferredRows: Boolean(document.querySelector('[data-incremental-list]')),
+              columnsVirtual: [...document.querySelectorAll('.creator-tag-column')].every((column) => Boolean(column.querySelector('[data-virtual-list]'))),
               officialContentEvidenceCount: document.querySelector('[data-field="llmOfficialContentEvidenceCount"]')?.value || null,
               hasNativeSearchOption: Boolean(document.querySelector('[data-field="llmWebSearchMode"] option[value="providerNative"]')),
               tagPillColor: getComputedStyle(document.querySelector('.creator-tag-tab.tag-pill')).backgroundColor,
@@ -350,21 +350,35 @@ final class WebShellPerformanceTests: XCTestCase {
         // The decisions list is a keyed list: it renders every row (no
         // pagination) so rows can be reconciled per-element and scroll kept.
         XCTAssertGreaterThan(classifierJSON["decisionCards"] as? Int ?? 0, 100)
-        XCTAssertEqual(classifierJSON["hasDeferredRows"] as? Bool, true)
+        // Every decision column is windowed, so the master card count above is a
+        // bounded visible slice, not all 120 sources.
+        XCTAssertEqual(classifierJSON["columnsVirtual"] as? Bool, true)
         XCTAssertEqual(classifierJSON["officialContentEvidenceCount"] as? String, "37")
         XCTAssertEqual(classifierJSON["hasNativeSearchOption"] as? Bool, false)
         XCTAssertEqual(classifierJSON["tagPillColor"] as? String, "rgb(219, 229, 243)")
         XCTAssertEqual(classifierJSON["tagPillTextColor"] as? String, "rgb(0, 0, 0)")
         XCTAssertEqual(classifierJSON["tagPillRadius"] as? String, "999px")
-        let initialCardCount = classifierJSON["cards"] as? Int ?? 0
-        _ = try await evaluate(
-            "document.querySelector('[data-incremental-list]').scrollIntoView({ block: 'center' });",
+        // Tagging one source moves just that card between columns and updates the
+        // counts, without rebuilding the workspace (no full re-render) — so the
+        // cost of a decision is independent of the list size.
+        let moveValue = try await evaluate(
+            """
+            document.querySelector('.classifier-type-workspace').setAttribute('data-move-kept', '1');
+            document.querySelector('[data-creator-tag-column="needsDecision"] .creator-tag-card button.primary[data-action="recordCreatorClassification"]').click();
+            JSON.stringify({
+              needs: document.querySelector('[data-creator-tag-column="needsDecision"] [data-creator-tag-count]').textContent,
+              tagged: document.querySelector('[data-creator-tag-column="tagged"] [data-creator-tag-count]').textContent,
+              workspaceKept: document.querySelector('.classifier-type-workspace').getAttribute('data-move-kept') === '1'
+            });
+            """,
             in: webView
         )
-        try await Task.sleep(nanoseconds: 100_000_000)
-        let expandedCardValue = try await evaluate("document.querySelectorAll('.creator-tag-column .creator-tag-card').length;", in: webView)
-        let expandedCardCount = try XCTUnwrap(expandedCardValue as? Int)
-        XCTAssertGreaterThan(expandedCardCount, initialCardCount)
+        let moveJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(try XCTUnwrap(moveValue as? String).utf8)) as? [String: Any]
+        )
+        XCTAssertEqual(moveJSON["needs"] as? String, "119")
+        XCTAssertEqual(moveJSON["tagged"] as? String, "1")
+        XCTAssertEqual(moveJSON["workspaceKept"] as? Bool, true)
 
         _ = try await evaluate(
             "document.querySelector('[data-action=\"workspace\"][data-workspace=\"classificationData\"]').click();",
