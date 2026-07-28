@@ -3157,8 +3157,8 @@ final class VaultClassifierViewModel: ObservableObject {
                 platformID: platformID
             )
             // The activated run is the only caller; it sweeps the whole eligible
-            // queue, paced by the classifier's classification pace. Batch size no
-            // longer gates it (it only ever limited the removed manual control).
+            // queue in batches of batchSize, one batch per classification-pace
+            // interval (the loop below applies the batching and pacing).
             let queuedWorkItems = workItems
             guard !queuedWorkItems.isEmpty else {
                 if activatedRun { return }
@@ -3180,7 +3180,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 guard let self else { return }
                 var successCount = 0
                 var firstFailure: Error?
-                for workItem in queuedWorkItems {
+                for (offset, workItem) in queuedWorkItems.enumerated() {
                     if activatedRun && !self.isLLMAssistActive(typeID: typeID) { break }
                     guard remainingTokens > 0 else { break }
                     guard let liveCatalog = self.localState?.workspaceCatalog,
@@ -3194,7 +3194,12 @@ final class VaultClassifierViewModel: ObservableObject {
                         firstFailure = firstFailure ?? WebBridgeInputError.invalidChoice("LLM configuration changed; start a new batch")
                         break
                     }
-                    await self.waitForLLMClassificationPace(configuration: configuration)
+                    // Pace gates batches, not individual creators: wait one
+                    // interval at the start of each batch, then classify its
+                    // members back to back. Effective speed is pace * batchSize.
+                    if offset.isMultiple(of: max(1, configuration.batchSize)) {
+                        await self.waitForLLMClassificationPace(configuration: configuration)
+                    }
                     if activatedRun && !self.isLLMAssistActive(typeID: typeID) { break }
                     guard let currentCatalog = self.localState?.workspaceCatalog,
                           let currentClassifierType = currentCatalog.classifierTypes.first(where: { $0.id == typeID }),
@@ -3266,11 +3271,12 @@ final class VaultClassifierViewModel: ObservableObject {
                             )
                         }
                         successCount += 1
-                        // Publish each decision as it lands so the activated run
-                        // streams into the UI at the classification pace, rather
-                        // than appearing all at once when the sweep finishes.
-                        self.refreshLocalState()
-                        self.onWebStateChange?()
+                        // Publish once per batch so decisions stream into the UI
+                        // one batch per classification-pace interval.
+                        if (offset + 1).isMultiple(of: max(1, configuration.batchSize)) {
+                            self.refreshLocalState()
+                            self.onWebStateChange?()
+                        }
                     } catch {
                         firstFailure = firstFailure ?? error
                         if let recordPlan, !(error is RawWebSearchFailure) {
