@@ -69,6 +69,18 @@ final class VaultClassifierWebShell {
         return "window.VaultClassifier && window.VaultClassifier.receive(JSON.parse(new TextDecoder().decode(Uint8Array.from(atob('\(encoded)'), value => value.charCodeAt(0)))));"
     }
 
+    /// Targeted delivery of one chosen creator's entries. Same binary-safe
+    /// decode as `stateUpdateJavaScript`, but routed to `receiveCreatorEntries`
+    /// so it patches only the open detail pane instead of the whole snapshot.
+    static func creatorEntriesJavaScript(payload: [String: Any]) -> String? {
+        guard JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else {
+            return nil
+        }
+        let encoded = data.base64EncodedString()
+        return "window.VaultClassifier && window.VaultClassifier.receiveCreatorEntries && window.VaultClassifier.receiveCreatorEntries(JSON.parse(new TextDecoder().decode(Uint8Array.from(atob('\(encoded)'), value => value.charCodeAt(0)))));"
+    }
+
     static func bundledWebAssetURL(named name: String, extension fileExtension: String) -> URL? {
         Bundle.module.url(forResource: name, withExtension: fileExtension, subdirectory: "WebAssets")
     }
@@ -128,6 +140,10 @@ final class VaultClassifierWebShell {
                     Self.layoutLogger.recordWebTrace(data)
                     return
                 }
+                if action == "loadCreatorEntries" {
+                    self.deliverCreatorEntries(data)
+                    return
+                }
                 if self.model.performWebAction(action, data: data) {
                     self.sendState()
                 }
@@ -153,6 +169,27 @@ final class VaultClassifierWebShell {
 
         func sendState() {
             stateDelivery.request()
+        }
+
+        /// Answers a bounded `loadCreatorEntries` request on its own channel:
+        /// the chosen creator's full entries are pushed straight to the WebView
+        /// via `receiveCreatorEntries`, bypassing the authoritative snapshot so
+        /// selecting a creator never re-renders the page.
+        @MainActor
+        private func deliverCreatorEntries(_ data: [String: Any]) {
+            guard let datasetID = data["datasetID"] as? String, datasetID.count <= 64,
+                  let platformID = data["platformID"] as? String, platformID.count <= 64,
+                  let creatorID = data["creatorID"] as? String, creatorID.count <= 256,
+                  let payload = model.webCreatorEntriesPayload(
+                      datasetID: datasetID,
+                      platformID: platformID,
+                      creatorID: creatorID
+                  ),
+                  let script = VaultClassifierWebShell.creatorEntriesJavaScript(payload: payload),
+                  let webView else {
+                return
+            }
+            webView.evaluateJavaScript(script) { _, _ in }
         }
     }
 }
