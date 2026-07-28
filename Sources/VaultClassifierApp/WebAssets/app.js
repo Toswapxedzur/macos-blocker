@@ -257,6 +257,24 @@
     return true;
   }
 
+  // Keeps the "creator decisions" overview row for one creator in sync after a
+  // targeted manual decision — re-runs the keyed list's registered row renderer
+  // (which now reads the overlay) for just that row, no full re-render.
+  function syncManualDecisionRow(typeID, creatorKey) {
+    const reg = keyedListRegistry.get(`creator-decisions-${typeID}`);
+    if (!reg) return;
+    const item = reg.items.find((pair) => String(reg.keyOf(pair)) === creatorKey);
+    if (!item) return;
+    const container = [...root.querySelectorAll("[data-keyed-list]")]
+      .find((element) => element.dataset.keyedList === `creator-decisions-${typeID}`);
+    const row = container && [...container.querySelectorAll(":scope > [data-key]")]
+      .find((element) => element.dataset.key === creatorKey);
+    if (!row) return;
+    const html = reg.renderRow(item);
+    row.innerHTML = html;
+    keyedListRenderedRows.get(`creator-decisions-${typeID}`)?.set(creatorKey, html);
+  }
+
   function paintVirtualList(container) {
     const state = virtualLists.get(container.dataset.virtualList);
     const win = container.querySelector("[data-virtual-window]");
@@ -1030,7 +1048,17 @@
       const creatorDecisionRows = sortedCreatorCandidates;
       const creatorDecisionRow = ([key, entry]) => {
         const decisions = decisionsByCreator.get(key) || [];
-        const human = decisions.find((record) => record.origin === "manual");
+        // Reflect an optimistic manual decision (from the 3-column view) so this
+        // overview stays in sync before the authoritative snapshot arrives. Read
+        // fresh each call so a targeted re-render of one row picks up the change.
+        // An empty override means the decision was cleared; native removes the
+        // record, so show no manual decision rather than an empty one.
+        const override = manualDecisionOverlay.get(classifierType.id)?.get(key);
+        const human = override
+          ? (override.tagIDs.length || override.negativeTagIDs.length
+              ? { origin: "manual", tags: override.tagIDs, negativeTags: override.negativeTagIDs }
+              : null)
+          : decisions.find((record) => record.origin === "manual");
         const llm = decisions.find((record) => record.origin === "llmAssist");
         const labelMarkup = (record) => {
           if (!record) return `<span class="small-copy">${tx("bridge.noDecision")}</span>`;
@@ -1047,7 +1075,7 @@
         const avatar = avatarURL ? `<img class="creator-tag-card-avatar" src="${esc(avatarURL)}" alt="" aria-hidden="true" loading="lazy" decoding="async">` : `<span class="creator-tag-card-avatar creator-tag-card-avatar-fallback" aria-hidden="true">${esc(entry.creatorName.slice(0, 1).toUpperCase())}</span>`;
         return `<article class="creator-tag-card"><div class="creator-tag-card-profile">${avatar}<div><strong dir="auto">${esc(entry.creatorName)}</strong><span>${esc(platformDefinitions.get(entry.platformID)?.name || entry.platformID)}</span></div></div><div class="creator-tag-card-actions"><span class="creator-decision-tags"><span class="small-copy">${tx("bridge.humanTags")}:</span>${labelMarkup(human)}</span><span class="creator-decision-tags"><span class="small-copy">${tx("bridge.llmTags")}:</span>${labelMarkup(llm)}</span></div></article>`;
       };
-      const creatorDecisionList = `<section class="classifier-type-section creator-classification-section"><div class="section-header"><div><h3>${tx("bridge.sourceDecisionList", { source: sourceTerms.singular })}</h3><p class="section-copy">${tx("bridge.sourceDecisionListCopy", { sources: sourceTerms.plural })}</p></div></div>${keyedList(`creator-decisions-${classifierType.id}`, creatorDecisionRows, ([key]) => key, creatorDecisionRow, { emptyMarkup: `<div class="empty compact-empty">${esc(t("bridge.noSources", { sources: sourceTerms.plural }))}</div>`, listClass: "creator-tag-column-list" })}</section>`;
+      const creatorDecisionList = `<section class="classifier-type-section creator-classification-section"><div class="section-header"><div><h3>${tx("bridge.sourceDecisionList", { source: sourceTerms.singular })}</h3><p class="section-copy">${tx("bridge.sourceDecisionListCopy", { sources: sourceTerms.plural })}</p></div></div>${keyedList(`creator-decisions-${classifierType.id}`, creatorDecisionRows, ([key]) => key, creatorDecisionRow, { emptyMarkup: `<div class="empty compact-empty">${esc(t("bridge.noSources", { sources: sourceTerms.plural }))}</div>`, listClass: "creator-decision-list" })}</section>`;
       const llmModelControl = !selectedLLMProfile
         ? `<p class="small-copy">${tx("bridge.llmChooseProviderFirst")}</p>`
         : `<div class="field"><span class="field-label">${tx("bridge.llmModel")} · ${tx("bridge.llmModelCopy")}</span><select class="select-control" data-field="llmModelIdentifier"><option value="">${tx("bridge.llmChooseModel")}</option>${visibleModels.map((model) => `<option value="${esc(model)}"${selected(currentModel, model)}>${esc(model)}</option>`).join("")}</select><span class="action-row"><button type="button" class="secondary" data-action="probeProviderModelCatalog" data-profile-id="${esc(selectedLLMProfile.id)}"${disabled(loadingModelCatalogs.has(selectedLLMProfile.id))}>${tx(loadingModelCatalogs.has(selectedLLMProfile.id) ? "bridge.llmProbingModels" : "bridge.llmProbeModels")}</button><span class="small-copy">${esc(loadingModelCatalogs.has(selectedLLMProfile.id) ? tx("bridge.llmProbingModels") : modelCatalogErrors[selectedLLMProfile.id] || tx("bridge.llmProbeModelsCopy"))}</span></span></div>`;
@@ -1591,6 +1619,7 @@
       if (!typeOverlay) { typeOverlay = new Map(); manualDecisionOverlay.set(typeID, typeOverlay); }
       typeOverlay.set(creatorKey, { tagIDs: newTagIDs, negativeTagIDs: newNegativeTagIDs });
       moveCreatorBetweenTagColumns(typeID, creatorKey, newTagIDs, newNegativeTagIDs);
+      syncManualDecisionRow(typeID, creatorKey);
       send("recordCreatorClassification", { typeID, creatorKey, tagIDs: newTagIDs, negativeTagIDs: newNegativeTagIDs });
       return;
     }
