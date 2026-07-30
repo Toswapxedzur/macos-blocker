@@ -1328,6 +1328,135 @@ final class VaultClassifierViewModel: ObservableObject {
         )
     }
 
+    /// Attaches bounded official-platform evidence to a single creator entry
+    /// when a ready official API exists, mirroring the per-creator path but
+    /// callable ahead of a batched request. Throws only when neither official
+    /// evidence nor web search can supply the required evidence for the entry.
+    private func enrichedCreatorEntry(
+        _ entry: EntryEvidence,
+        configuration: LLMAssistConfiguration,
+        catalog: WorkspaceCatalog
+    ) async throws -> EntryEvidence {
+        guard let platform = CollectionPlatformRegistry.definition(for: entry.platform) else {
+            throw WebBridgeInputError.invalidChoice("creator platform")
+        }
+        var enrichedEntry = entry
+        var officialEvidenceAvailable = false
+        if platform.apiProviderType != nil,
+           let officialProfile = readyPlatformAPIProfile(in: catalog, platformID: entry.platform) {
+            do {
+                enrichedEntry = try await addingOfficialPlatformEvidence(
+                    to: entry,
+                    profile: officialProfile,
+                    officialContentEvidenceCount: configuration.officialContentEvidenceCount
+                )
+                officialEvidenceAvailable = true
+            } catch {
+                if configuration.webSearchMode == .off { throw error }
+            }
+        }
+        if !officialEvidenceAvailable, configuration.webSearchMode == .off {
+            let requirement = platform.apiProviderType == nil
+                ? "a ready web search capability"
+                : "a ready official \(entry.platform) API connection or web search"
+            throw WebBridgeInputError.invalidChoice(requirement)
+        }
+        return enrichedEntry
+    }
+
+    /// Classifies a whole batch of creator entries in a single provider request.
+    /// The caller enriches each entry first; this performs the one model call
+    /// whose prompt carries every target and whose response returns one label
+    /// set per index. Only single-turn grammars (search off or provider-native)
+    /// reach here — attached client-tool search stays on the per-creator path,
+    /// because its multi-turn continuation cannot batch.
+    private func runProviderClassificationBatch(
+        profile: APIKeyProviderProfile,
+        configuration: LLMAssistConfiguration,
+        entries: [EntryEvidence],
+        allowedTagIDs: Set<String>,
+        tagDefinitions: [String: ProviderClassificationTagDefinition],
+        maximumOutputTokens: Int,
+        dailyTokensRemaining: Int
+    ) async throws -> ProviderClassificationRun {
+        let mainCredential = try providerCredential(for: profile.id)
+        let effectiveMaximumOutputTokens = min(maximumOutputTokens, dailyTokensRemaining)
+        guard effectiveMaximumOutputTokens > 0 else {
+            throw WebBridgeInputError.invalidChoice("daily token budget")
+        }
+        let request = try ProviderClassificationProtocol.prepareBatch(
+            profile: profile,
+            configuration: configuration,
+            entries: entries,
+            allowedTagIDs: allowedTagIDs,
+            tagDefinitions: tagDefinitions,
+            maximumOutputTokens: effectiveMaximumOutputTokens
+        )
+        let response = try await performProviderRequest(
+            plan: request.plan,
+            body: request.body,
+            credential: mainCredential,
+            timeout: 60,
+            followAnthropicSearchPause: profile.type == .anthropic &&
+                configuration.webSearchMode == .providerNative
+        )
+        let fallbackTokenCount = conservativeAggregateTokenFallback(
+            body: request.body,
+            requestedOutputTokens: effectiveMaximumOutputTokens
+        )
+        let chargeableResponseUsage = ProviderTestUsage(
+            tokenCount: (try? ProviderTestProtocol.usage(
+                from: response.data,
+                format: request.plan.bodyFormat
+            ))?.tokenCount ?? fallbackTokenCount
+        )
+        let parsed: ProviderTestParsedResponse
+        do {
+            parsed = try ProviderTestProtocol.parseResponse(
+                response.data,
+                format: request.plan.bodyFormat,
+                operation: request.operation
+            )
+        } catch {
+            throw ProviderResponseParseFailure(
+                underlyingError: error,
+                statusCode: response.response.statusCode,
+                responseShape: ProviderTestProtocol.responseShape(for: response.data),
+                usage: chargeableResponseUsage
+            )
+        }
+        return ProviderClassificationRun(
+            prompt: request.prompt,
+            content: parsed.content,
+            usage: parsed.usage,
+            statusCode: response.response.statusCode,
+            fallbackTokenCount: fallbackTokenCount
+        )
+    }
+
+    private func parseBatchClassificationLabelIDs(
+        from run: ProviderClassificationRun,
+        count: Int,
+        allowedTagIDs: Set<String>,
+        maximumTagCount: Int
+    ) throws -> [Int: [String]] {
+        do {
+            return try ProviderClassificationProtocol.parseBatchLabelIDs(
+                run.content,
+                count: count,
+                allowedTagIDs: allowedTagIDs,
+                maximumTagCount: maximumTagCount
+            )
+        } catch {
+            throw ProviderResponseParseFailure(
+                underlyingError: error,
+                statusCode: run.statusCode,
+                responseShape: "generated text did not match the batch results contract",
+                usage: .init(tokenCount: run.usage.tokenCount ?? run.fallbackTokenCount)
+            )
+        }
+    }
+
     private func rawWebSearchProfile(
         in catalog: WorkspaceCatalog,
         configuration: LLMAssistConfiguration
@@ -2039,15 +2168,12 @@ final class VaultClassifierViewModel: ObservableObject {
         llmMaximumTagCount: String?,
         llmRestrictToLeafTags: Bool,
         llmWebSearchMode: String?,
-        llmWebSearchProviderProfileID: String?,
-        priority: [ClassifierDecisionSource]
+        llmWebSearchProviderProfileID: String?
     ) {
         do {
             let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleanedName.isEmpty,
                   cleanedName.count <= ClassifierTypeAsset.maximumNameLength,
-                  priority.count == ClassifierDecisionSource.allCases.count,
-                  Set(priority) == Set(ClassifierDecisionSource.allCases),
                   var catalog = localState?.workspaceCatalog,
                   let typeIndex = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }),
                   CollectionPlatformRegistry.definition(for: applicablePlatformID) != nil else {
@@ -2261,7 +2387,10 @@ final class VaultClassifierViewModel: ObservableObject {
                 selectedLLMProviderProfileID: selectedLLMProviderProfileID,
                 llmAssistDraftConfiguration: selectedLLMAssistDraft,
                 llmAssistConfiguration: selectedLLMAssist,
-                decisionPriority: priority
+                // Signal-fusion order is fixed at the sensible default
+                // (human > llmAssist > localModel, weights 3/2/1); the reorder
+                // UI was removed, so preserve whatever the type already carries.
+                decisionPriority: catalog.classifierTypes[typeIndex].decisionPriority
             )
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
@@ -2471,6 +2600,11 @@ final class VaultClassifierViewModel: ObservableObject {
             ? LocalBaseEmbedding(rawValue: normalizedBaseEmbeddingID!)
             : nil
         if normalizedBaseEmbeddingID?.isEmpty == false, baseEmbedding == nil {
+            throw WebBridgeInputError.invalidChoice("base embedding")
+        }
+        // Downloadable base embeddings are sealed off: only the native on-device
+        // embedding (nil) or a currently-selectable package may be chosen.
+        if let baseEmbedding, !LocalBaseEmbedding.selectableCases.contains(baseEmbedding) {
             throw WebBridgeInputError.invalidChoice("base embedding")
         }
         guard catalog.models[modelIndex].baseEmbeddingID != baseEmbedding else { return }
@@ -3139,8 +3273,11 @@ final class VaultClassifierViewModel: ObservableObject {
                 platformID: platformID
             )
             // The activated run is the only caller; it sweeps the whole eligible
-            // queue in batches of batchSize, one batch per classification-pace
-            // interval (the loop below applies the batching and pacing).
+            // queue in batches of batchSize. Every non-attached mode sends one
+            // batch as a single provider request whose prompt carries all of its
+            // creators; attached client-tool search cannot batch its multi-turn
+            // continuation, so it still sends one creator per request. Either
+            // way, pace gates request starts (the loop below applies both).
             let queuedWorkItems = workItems
             guard !queuedWorkItems.isEmpty else {
                 if activatedRun { return }
@@ -3156,15 +3293,24 @@ final class VaultClassifierViewModel: ObservableObject {
             guard remainingTokens > 0 else {
                 throw WebBridgeInputError.invalidChoice("daily token budget")
             }
+            let batchSize = max(1, configuration.batchSize)
+            // Only batch when the provider structurally enforces the results
+            // schema. Without that, an all-or-nothing batch could waste every
+            // creator's tokens on one stray field, so those cases (attached
+            // search, JSON-object-only modes, prompt-only or searched-and-
+            // unschema'd endpoints) stay on the repairable per-creator path.
+            let canBatchRequest = ProviderClassificationProtocol.supportsBatchedClassification(
+                profile: profile,
+                configuration: configuration
+            )
             providerClassificationRunning = true
             issue = nil
             Task { [weak self] in
                 guard let self else { return }
                 var successCount = 0
                 var firstFailure: Error?
-                for (offset, workItem) in queuedWorkItems.enumerated() {
-                    if activatedRun && !self.isLLMAssistActive(typeID: typeID) { break }
-                    guard remainingTokens > 0 else { break }
+
+                @MainActor func configurationIsLive() -> Bool {
                     guard let liveCatalog = self.localState?.workspaceCatalog,
                           let liveClassifierType = liveCatalog.classifierTypes.first(where: { $0.id == typeID }),
                           Self.llmBatchConfigurationIsUnchanged(
@@ -3173,118 +3319,241 @@ final class VaultClassifierViewModel: ObservableObject {
                           ),
                           let liveProfile = liveCatalog.providerProfiles.first(where: { $0.id == profile.id }),
                           liveProfile == profile else {
-                        firstFailure = firstFailure ?? WebBridgeInputError.invalidChoice("LLM configuration changed; start a new batch")
-                        break
+                        return false
                     }
-                    // Pace gates batches, not individual creators: wait one
-                    // interval at the start of each batch, then classify its
-                    // members back to back. Effective speed is pace * batchSize.
-                    if offset.isMultiple(of: max(1, configuration.batchSize)) {
-                        await self.waitForLLMClassificationPace(configuration: configuration)
-                    }
+                    return true
+                }
+
+                var startIndex = 0
+                batchLoop: while startIndex < queuedWorkItems.count {
+                    let batch = Array(queuedWorkItems[startIndex ..< min(startIndex + batchSize, queuedWorkItems.count)])
+                    startIndex += batch.count
+
                     if activatedRun && !self.isLLMAssistActive(typeID: typeID) { break }
-                    guard let currentCatalog = self.localState?.workspaceCatalog,
-                          let currentClassifierType = currentCatalog.classifierTypes.first(where: { $0.id == typeID }),
-                          Self.llmBatchConfigurationIsUnchanged(
-                              expected: classifierType,
-                              current: currentClassifierType
-                          ),
-                          let currentProfile = currentCatalog.providerProfiles.first(where: { $0.id == profile.id }),
-                          currentProfile == profile else {
+                    guard remainingTokens > 0 else { break }
+                    guard configurationIsLive() else {
                         firstFailure = firstFailure ?? WebBridgeInputError.invalidChoice("LLM configuration changed; start a new batch")
                         break
                     }
-                    self.recordLLMClassificationRequestStart()
-                    let representative = workItem.representative
-                    let entry = workItem.entry
-                    let outputTokenLimit = min(configuration.maximumOutputTokensPerRequest, remainingTokens)
-                    let startedAt = Date()
-                    var recordPlan: ProviderTestPreparedRequest?
-                    do {
-                        recordPlan = try ProviderClassificationProtocol.prepare(
-                            profile: profile,
-                            configuration: configuration,
-                            entry: entry,
-                            allowedTagIDs: allowedTagIDs,
-                            tagDefinitions: tagDefinitions,
-                            maximumOutputTokens: outputTokenLimit
-                        )
-                        let run = try await self.runProviderClassification(
-                            profile: profile,
-                            configuration: configuration,
-                            entry: entry,
-                            allowedTagIDs: allowedTagIDs,
-                            tagDefinitions: tagDefinitions,
-                            catalog: catalog,
-                            maximumOutputTokens: outputTokenLimit,
-                            dailyTokensRemaining: remainingTokens,
-                            classifierTypeID: classifierType.id
-                        )
-                        let labelIDs = try self.parseClassificationLabelIDs(
-                            from: run,
-                            allowedTagIDs: allowedTagIDs,
-                            maximumTagCount: configuration.maximumTagCount
-                        )
-                        try self.recordLLMCreatorClassification(
-                            typeID: classifierType.id,
-                            creatorID: representative.creatorID,
-                            platformID: platformID,
-                            creatorName: representative.creatorName,
-                            labelIDs: labelIDs
-                        )
-                        let recordedTokenCount = run.usage.tokenCount ?? run.fallbackTokenCount
-                        try self.appendProviderTestRecord(.init(
-                            profileID: profile.id,
-                            provider: profile.type.rawValue,
-                            model: configuration.modelIdentifier,
-                            operation: activatedRun ? "classify-creator-active" : "classify-creator-batch",
-                            endpoint: ProviderTestProtocol.safeEndpoint(recordPlan!.plan.url),
-                            method: recordPlan!.plan.method,
-                            statusCode: run.statusCode,
-                            durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
-                            tokenCount: recordedTokenCount,
-                            classifierTypeID: classifierType.id,
-                            outcome: "succeeded"
-                        ))
-                        if let currentCatalog = self.localState?.workspaceCatalog {
-                            remainingTokens = configuration.dailyTokenLimit - self.tokensUsedToday(
-                                in: currentCatalog,
-                                classifierTypeID: classifierType.id
+
+                    if canBatchRequest {
+                        // One provider request classifies the entire batch. Pace
+                        // gates the request start, so a batch begins at most once
+                        // per classification-pace interval; the effective
+                        // creators/minute ceiling is pace * batchSize.
+                        await self.waitForLLMClassificationPace(configuration: configuration)
+                        if activatedRun && !self.isLLMAssistActive(typeID: typeID) { break }
+                        guard configurationIsLive() else {
+                            firstFailure = firstFailure ?? WebBridgeInputError.invalidChoice("LLM configuration changed; start a new batch")
+                            break
+                        }
+                        self.recordLLMClassificationRequestStart()
+                        let outputTokenLimit = min(configuration.maximumOutputTokensPerRequest, remainingTokens)
+                        let startedAt = Date()
+                        var recordPlan: ProviderTestPreparedRequest?
+                        do {
+                            recordPlan = try ProviderClassificationProtocol.prepareBatch(
+                                profile: profile,
+                                configuration: configuration,
+                                entries: batch.map { $0.entry },
+                                allowedTagIDs: allowedTagIDs,
+                                tagDefinitions: tagDefinitions,
+                                maximumOutputTokens: outputTokenLimit
                             )
-                        }
-                        successCount += 1
-                        // Publish once per batch so decisions stream into the UI
-                        // one batch per classification-pace interval.
-                        if (offset + 1).isMultiple(of: max(1, configuration.batchSize)) {
-                            self.refreshLocalState()
-                            self.onWebStateChange?()
-                        }
-                    } catch {
-                        firstFailure = firstFailure ?? error
-                        if let recordPlan, !(error is RawWebSearchFailure) {
-                            let failure = self.providerFailureMetadata(for: error)
-                            try? self.appendProviderTestRecord(.init(
+                            var enrichedEntries: [EntryEvidence] = []
+                            enrichedEntries.reserveCapacity(batch.count)
+                            for workItem in batch {
+                                enrichedEntries.append(try await self.enrichedCreatorEntry(
+                                    workItem.entry,
+                                    configuration: configuration,
+                                    catalog: catalog
+                                ))
+                            }
+                            let run = try await self.runProviderClassificationBatch(
+                                profile: profile,
+                                configuration: configuration,
+                                entries: enrichedEntries,
+                                allowedTagIDs: allowedTagIDs,
+                                tagDefinitions: tagDefinitions,
+                                maximumOutputTokens: outputTokenLimit,
+                                dailyTokensRemaining: remainingTokens
+                            )
+                            let labelMap = try self.parseBatchClassificationLabelIDs(
+                                from: run,
+                                count: batch.count,
+                                allowedTagIDs: allowedTagIDs,
+                                maximumTagCount: configuration.maximumTagCount
+                            )
+                            for (offset, workItem) in batch.enumerated() {
+                                try self.recordLLMCreatorClassification(
+                                    typeID: classifierType.id,
+                                    creatorID: workItem.representative.creatorID,
+                                    platformID: platformID,
+                                    creatorName: workItem.representative.creatorName,
+                                    labelIDs: labelMap[offset + 1] ?? []
+                                )
+                            }
+                            let recordedTokenCount = run.usage.tokenCount ?? run.fallbackTokenCount
+                            try self.appendProviderTestRecord(.init(
                                 profileID: profile.id,
                                 provider: profile.type.rawValue,
                                 model: configuration.modelIdentifier,
                                 operation: activatedRun ? "classify-creator-active" : "classify-creator-batch",
-                                endpoint: ProviderTestProtocol.safeEndpoint(recordPlan.plan.url),
-                                method: recordPlan.plan.method,
-                                statusCode: failure.statusCode,
-                                responseShape: failure.responseShape,
+                                endpoint: ProviderTestProtocol.safeEndpoint(recordPlan!.plan.url),
+                                method: recordPlan!.plan.method,
+                                statusCode: run.statusCode,
                                 durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
-                                tokenCount: failure.tokenCount,
+                                tokenCount: recordedTokenCount,
                                 classifierTypeID: classifierType.id,
-                                outcome: "failed"
+                                outcome: "succeeded"
                             ))
+                            if let currentCatalog = self.localState?.workspaceCatalog {
+                                remainingTokens = configuration.dailyTokenLimit - self.tokensUsedToday(
+                                    in: currentCatalog,
+                                    classifierTypeID: classifierType.id
+                                )
+                            }
+                            successCount += batch.count
+                            // Publish once per batch so decisions stream into the
+                            // UI one batch per classification-pace interval.
+                            self.refreshLocalState()
+                            self.onWebStateChange?()
+                        } catch {
+                            firstFailure = firstFailure ?? error
+                            if let recordPlan, !(error is RawWebSearchFailure) {
+                                let failure = self.providerFailureMetadata(for: error)
+                                try? self.appendProviderTestRecord(.init(
+                                    profileID: profile.id,
+                                    provider: profile.type.rawValue,
+                                    model: configuration.modelIdentifier,
+                                    operation: activatedRun ? "classify-creator-active" : "classify-creator-batch",
+                                    endpoint: ProviderTestProtocol.safeEndpoint(recordPlan.plan.url),
+                                    method: recordPlan.plan.method,
+                                    statusCode: failure.statusCode,
+                                    responseShape: failure.responseShape,
+                                    durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
+                                    tokenCount: failure.tokenCount,
+                                    classifierTypeID: classifierType.id,
+                                    outcome: "failed"
+                                ))
+                            }
+                            if let currentCatalog = self.localState?.workspaceCatalog {
+                                remainingTokens = configuration.dailyTokenLimit - self.tokensUsedToday(
+                                    in: currentCatalog,
+                                    classifierTypeID: classifierType.id
+                                )
+                            }
+                            if activatedRun { break }
                         }
-                        if let currentCatalog = self.localState?.workspaceCatalog {
-                            remainingTokens = configuration.dailyTokenLimit - self.tokensUsedToday(
-                                in: currentCatalog,
-                                classifierTypeID: classifierType.id
-                            )
+                    } else {
+                        // Attached client-tool search runs one creator per
+                        // request because its multi-turn search continuation
+                        // cannot batch. Per-request pacing and history match the
+                        // single-target contract exactly.
+                        for workItem in batch {
+                            if activatedRun && !self.isLLMAssistActive(typeID: typeID) { break batchLoop }
+                            guard remainingTokens > 0 else { break batchLoop }
+                            guard configurationIsLive() else {
+                                firstFailure = firstFailure ?? WebBridgeInputError.invalidChoice("LLM configuration changed; start a new batch")
+                                break batchLoop
+                            }
+                            await self.waitForLLMClassificationPace(configuration: configuration)
+                            if activatedRun && !self.isLLMAssistActive(typeID: typeID) { break batchLoop }
+                            guard configurationIsLive() else {
+                                firstFailure = firstFailure ?? WebBridgeInputError.invalidChoice("LLM configuration changed; start a new batch")
+                                break batchLoop
+                            }
+                            self.recordLLMClassificationRequestStart()
+                            let representative = workItem.representative
+                            let entry = workItem.entry
+                            let outputTokenLimit = min(configuration.maximumOutputTokensPerRequest, remainingTokens)
+                            let startedAt = Date()
+                            var recordPlan: ProviderTestPreparedRequest?
+                            do {
+                                recordPlan = try ProviderClassificationProtocol.prepare(
+                                    profile: profile,
+                                    configuration: configuration,
+                                    entry: entry,
+                                    allowedTagIDs: allowedTagIDs,
+                                    tagDefinitions: tagDefinitions,
+                                    maximumOutputTokens: outputTokenLimit
+                                )
+                                let run = try await self.runProviderClassification(
+                                    profile: profile,
+                                    configuration: configuration,
+                                    entry: entry,
+                                    allowedTagIDs: allowedTagIDs,
+                                    tagDefinitions: tagDefinitions,
+                                    catalog: catalog,
+                                    maximumOutputTokens: outputTokenLimit,
+                                    dailyTokensRemaining: remainingTokens,
+                                    classifierTypeID: classifierType.id
+                                )
+                                let labelIDs = try self.parseClassificationLabelIDs(
+                                    from: run,
+                                    allowedTagIDs: allowedTagIDs,
+                                    maximumTagCount: configuration.maximumTagCount
+                                )
+                                try self.recordLLMCreatorClassification(
+                                    typeID: classifierType.id,
+                                    creatorID: representative.creatorID,
+                                    platformID: platformID,
+                                    creatorName: representative.creatorName,
+                                    labelIDs: labelIDs
+                                )
+                                let recordedTokenCount = run.usage.tokenCount ?? run.fallbackTokenCount
+                                try self.appendProviderTestRecord(.init(
+                                    profileID: profile.id,
+                                    provider: profile.type.rawValue,
+                                    model: configuration.modelIdentifier,
+                                    operation: activatedRun ? "classify-creator-active" : "classify-creator-batch",
+                                    endpoint: ProviderTestProtocol.safeEndpoint(recordPlan!.plan.url),
+                                    method: recordPlan!.plan.method,
+                                    statusCode: run.statusCode,
+                                    durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
+                                    tokenCount: recordedTokenCount,
+                                    classifierTypeID: classifierType.id,
+                                    outcome: "succeeded"
+                                ))
+                                if let currentCatalog = self.localState?.workspaceCatalog {
+                                    remainingTokens = configuration.dailyTokenLimit - self.tokensUsedToday(
+                                        in: currentCatalog,
+                                        classifierTypeID: classifierType.id
+                                    )
+                                }
+                                successCount += 1
+                            } catch {
+                                firstFailure = firstFailure ?? error
+                                if let recordPlan, !(error is RawWebSearchFailure) {
+                                    let failure = self.providerFailureMetadata(for: error)
+                                    try? self.appendProviderTestRecord(.init(
+                                        profileID: profile.id,
+                                        provider: profile.type.rawValue,
+                                        model: configuration.modelIdentifier,
+                                        operation: activatedRun ? "classify-creator-active" : "classify-creator-batch",
+                                        endpoint: ProviderTestProtocol.safeEndpoint(recordPlan.plan.url),
+                                        method: recordPlan.plan.method,
+                                        statusCode: failure.statusCode,
+                                        responseShape: failure.responseShape,
+                                        durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
+                                        tokenCount: failure.tokenCount,
+                                        classifierTypeID: classifierType.id,
+                                        outcome: "failed"
+                                    ))
+                                }
+                                if let currentCatalog = self.localState?.workspaceCatalog {
+                                    remainingTokens = configuration.dailyTokenLimit - self.tokensUsedToday(
+                                        in: currentCatalog,
+                                        classifierTypeID: classifierType.id
+                                    )
+                                }
+                                if activatedRun { break batchLoop }
+                            }
                         }
-                        if activatedRun { break }
+                        // Publish once per attached batch, matching the batched
+                        // path's one-refresh-per-batch cadence.
+                        self.refreshLocalState()
+                        self.onWebStateChange?()
                     }
                 }
                 self.providerClassificationRunning = false
@@ -3853,10 +4122,11 @@ final class VaultClassifierViewModel: ObservableObject {
                             "isActive": configuration.isActive,
                         ] as [String: Any]
                     } ?? NSNull(),
-                    "decisionPriority": classifierType.decisionPriority.map(\.rawValue),
                 ] as [String: Any]
             }
-        assets["baseEmbeddings"] = LocalBaseEmbedding.allCases.map(\.rawValue)
+        // Only currently-selectable base embeddings are offered. Downloadable
+        // packages are sealed off, leaving the native on-device embedding.
+        assets["baseEmbeddings"] = LocalBaseEmbedding.selectableCases.map(\.rawValue)
         assets["providerProfiles"] = catalog.providerProfiles.map { profile in
                 let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
                 return [
@@ -4008,17 +4278,6 @@ final class VaultClassifierViewModel: ObservableObject {
             case "createClassifierType":
                 createClassifierType(name: try webString(data, key: "name", limit: ClassifierTypeAsset.maximumNameLength))
             case "configureClassifierType":
-                let priorityRaw = [
-                    try webString(data, key: "priorityFirst", limit: 32),
-                    try webString(data, key: "prioritySecond", limit: 32),
-                    try webString(data, key: "priorityThird", limit: 32),
-                ]
-                let priority = try priorityRaw.map { raw -> ClassifierDecisionSource in
-                    guard let source = ClassifierDecisionSource(rawValue: raw) else {
-                        throw WebBridgeInputError.invalidChoice("decision priority")
-                    }
-                    return source
-                }
                 configureClassifierType(
                     typeID: try webString(data, key: "typeID", limit: 256),
                     name: try webString(data, key: "name", limit: ClassifierTypeAsset.maximumNameLength),
@@ -4034,8 +4293,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     llmMaximumTagCount: try webOptionalString(data, key: "llmMaximumTagCount", limit: 4),
                     llmRestrictToLeafTags: data["llmRestrictToLeafTags"] as? Bool ?? false,
                     llmWebSearchMode: try webOptionalString(data, key: "llmWebSearchMode", limit: 32),
-                    llmWebSearchProviderProfileID: try webOptionalString(data, key: "llmWebSearchProviderProfileID", limit: 128),
-                    priority: priority
+                    llmWebSearchProviderProfileID: try webOptionalString(data, key: "llmWebSearchProviderProfileID", limit: 128)
                 )
             case "selectLLMProvider":
                 selectLLMProvider(
@@ -4254,10 +4512,14 @@ final class VaultClassifierViewModel: ObservableObject {
             var subscriberCount: String?
             var latestObservedForFields: Int64
         }
+        // Collapse a creator's observed identity forms (e.g. @handle + channel)
+        // into one canonical row so the same creator never appears twice.
+        let identityIndex = CreatorIdentityIndex(entries: entries)
         var order: [String] = []
         var groups: [String: Aggregate] = [:]
         for entry in entries {
-            let key = "\(entry.platformID)\u{1F}\(entry.creatorID)"
+            let canonicalCreatorID = identityIndex.canonical(of: entry.creatorID)
+            let key = "\(entry.platformID)\u{1F}\(canonicalCreatorID)"
             let icon = entry.sourceIconURL.flatMap { sourceIconCache?.cachedURL(for: $0)?.absoluteString }
             let subscriber = entry.attributes["subscriberCount"]
             if var aggregate = groups[key] {
@@ -4279,7 +4541,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 order.append(key)
                 groups[key] = Aggregate(
                     platformID: entry.platformID,
-                    creatorID: entry.creatorID,
+                    creatorID: canonicalCreatorID,
                     creatorName: entry.creatorName,
                     entryCount: 1,
                     firstObserved: entry.firstObservedAtMilliseconds,
@@ -4336,8 +4598,11 @@ final class VaultClassifierViewModel: ObservableObject {
     func webCreatorEntriesPayload(datasetID: String, platformID: String, creatorID: String) -> [String: Any]? {
         let catalog = (localState ?? coordinator?.snapshot())?.workspaceCatalog
         guard let dataset = catalog?.datasets.first(where: { $0.id == datasetID }) else { return nil }
+        // The selected creator is a canonical identity; return the entries of
+        // every form in its class so a merged creator shows all its content.
+        let identityClass = CreatorIdentityIndex(entries: dataset.collectedEntries).members(of: creatorID)
         let entries = dataset.collectedEntries
-            .filter { $0.platformID == platformID && $0.creatorID == creatorID }
+            .filter { $0.platformID == platformID && identityClass.contains($0.creatorID) }
             .map(webCollectedEntry)
         return [
             "datasetID": datasetID,

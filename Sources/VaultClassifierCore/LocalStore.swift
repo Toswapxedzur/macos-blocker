@@ -780,6 +780,7 @@ public final class LocalClassifierCoordinator {
             platformID: entry.platform,
             entryID: entryID,
             creatorID: creatorID,
+            sourceAliases: entry.sourceAliases,
             creatorName: creatorName?.isEmpty == false ? creatorName! : creatorID,
             entryType: entryType,
             title: title,

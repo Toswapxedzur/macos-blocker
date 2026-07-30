@@ -239,6 +239,7 @@ public struct CollectedPlatformEntry: Codable, Equatable, Sendable, Identifiable
     public static let maximumAttributeKeyLength = 64
     public static let maximumAttributeValueLength = 512
     public static let maximumSuppliedTags = EntryEvidenceValidator.tagLimit
+    public static let maximumSourceAliases = EntryEvidenceValidator.sourceAliasLimit
 
     /// The platform's durable public-content identifier. It is scoped by
     /// `platformID`, so the same raw identifier on different platforms is
@@ -247,6 +248,11 @@ public struct CollectedPlatformEntry: Codable, Equatable, Sendable, Identifiable
     public var platformID: String
     public var entryID: String
     public var creatorID: String
+    /// Other identity forms observed for this creator alongside `creatorID`
+    /// (e.g. the channel `UC…` seen with the `@handle`). The workspace unions
+    /// these to treat one creator's forms as a single source for tags and
+    /// de-duplication.
+    public var sourceAliases: [String]
     public var creatorName: String
     /// A small, platform-provided content kind such as `video`, `short`,
     /// `live`, `post`, or `track`. Advertisement kinds are rejected before
@@ -269,6 +275,7 @@ public struct CollectedPlatformEntry: Codable, Equatable, Sendable, Identifiable
         platformID: String,
         entryID: String,
         creatorID: String,
+        sourceAliases: [String] = [],
         creatorName: String,
         entryType: String,
         title: String,
@@ -287,6 +294,7 @@ public struct CollectedPlatformEntry: Codable, Equatable, Sendable, Identifiable
         self.platformID = platformID
         self.entryID = entryID
         self.creatorID = creatorID
+        self.sourceAliases = Self.normalizedSourceAliases(sourceAliases, primary: creatorID, platformID: platformID)
         self.creatorName = creatorName
         self.entryType = entryType
         self.title = title
@@ -305,9 +313,30 @@ public struct CollectedPlatformEntry: Codable, Equatable, Sendable, Identifiable
     public var deduplicationKey: String { "\(platformID)\u{1F}\(entryID)" }
 
     private enum CodingKeys: String, CodingKey {
-        case id, platformID, entryID, creatorID, creatorName, entryType, title
+        case id, platformID, entryID, creatorID, sourceAliases, creatorName, entryType, title
         case surface, text, summary, suppliedTags, canonicalURL, sourceIconURL
         case attributes, firstObservedAtMilliseconds, lastObservedAtMilliseconds, observationCount
+    }
+
+    /// Dedupes aliases, drops the primary and anything not scoped to the same
+    /// platform, and caps the list — so an alias is always another same-platform
+    /// identity of this creator.
+    static func normalizedSourceAliases(_ aliases: [String], primary: String, platformID: String) -> [String] {
+        var seen = Set<String>()
+        var output: [String] = []
+        for alias in aliases {
+            let trimmed = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty,
+                  trimmed != primary,
+                  trimmed.hasPrefix("\(platformID):"),
+                  trimmed.count <= EntryEvidenceValidator.sourceIDLimit,
+                  seen.insert(trimmed).inserted else {
+                continue
+            }
+            output.append(trimmed)
+            if output.count >= maximumSourceAliases { break }
+        }
+        return output
     }
 
     public init(from decoder: Decoder) throws {
@@ -316,7 +345,13 @@ public struct CollectedPlatformEntry: Codable, Equatable, Sendable, Identifiable
         let decodedPlatformID = try container.decode(String.self, forKey: .platformID)
         platformID = decodedPlatformID
         entryID = try container.decode(String.self, forKey: .entryID)
-        creatorID = try container.decode(String.self, forKey: .creatorID)
+        let decodedCreatorID = try container.decode(String.self, forKey: .creatorID)
+        creatorID = decodedCreatorID
+        sourceAliases = Self.normalizedSourceAliases(
+            try container.decodeIfPresent([String].self, forKey: .sourceAliases) ?? [],
+            primary: decodedCreatorID,
+            platformID: decodedPlatformID
+        )
         creatorName = try container.decode(String.self, forKey: .creatorName)
         entryType = try container.decode(String.self, forKey: .entryType)
         title = try container.decode(String.self, forKey: .title)
@@ -437,6 +472,14 @@ public struct ClassificationDataset: Codable, Equatable, Sendable, Identifiable 
                 .compactMap { $0 as? String }
                 .prefix(CollectedPlatformEntry.maximumSuppliedTags)
                 .map(\.self)
+            // A creator accumulates its observed identity forms across sightings,
+            // so an alias seen once (e.g. on a watch page) keeps linking that
+            // creator's forms even on later feed-only observations.
+            refreshed.sourceAliases = CollectedPlatformEntry.normalizedSourceAliases(
+                existing.sourceAliases + entry.sourceAliases,
+                primary: refreshed.creatorID,
+                platformID: refreshed.platformID
+            )
             refreshed.canonicalURL = entry.canonicalURL ?? existing.canonicalURL
             refreshed.sourceIconURL = entry.sourceIconURL ?? existing.sourceIconURL
             refreshed.attributes = existing.attributes.merging(entry.attributes) { _, incoming in incoming }
@@ -486,6 +529,12 @@ public enum LocalBaseEmbedding: String, Codable, Sendable, CaseIterable {
     case multilingualE5Base = "multilingual-e5-base"
     case multilingualE5Large = "multilingual-e5-large"
     case bgeM3 = "bge-m3"
+
+    /// Downloadable base embeddings are sealed off for now: a local model uses
+    /// only the native on-device embedding. The cases above and their loading,
+    /// storage, and label machinery are intentionally retained, not deleted —
+    /// re-enable a package simply by listing it here again.
+    public static var selectableCases: [LocalBaseEmbedding] { [] }
 }
 
 public struct LocalModelAsset: Codable, Equatable, Sendable, Identifiable {
@@ -2711,6 +2760,31 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             bindings[index].activeModelID = nil
         }
         for index in bindings.indices {
+            // Auto-activate the single compatible classifier type when a binding
+            // has none, so classifying creators alone drives that binding's live
+            // source-tag projection — no separate "activate" step to forget.
+            // Ambiguity (zero or several compatible types) leaves the choice to
+            // the owner.
+            if bindings[index].activeClassifierTypeID == nil,
+               let tree = trees.first(where: { $0.id == bindings[index].treeID }),
+               let dataset = datasets.first(where: { $0.id == bindings[index].datasetID }),
+               let platform = CollectionPlatformRegistry.definition(for: bindings[index].id) {
+                let compatible = classifierTypes.filter { candidate in
+                    guard candidate.applicablePlatformID == bindings[index].id,
+                          candidate.treeID == tree.id,
+                          candidate.treeRevision == tree.revision,
+                          candidate.datasetID == dataset.id,
+                          candidate.datasetRevision == dataset.revision else {
+                        return false
+                    }
+                    if !platform.supportsLocalModel, localModel(for: candidate.id) != nil { return false }
+                    if !platform.supportsLLMAssist, candidate.llmAssistConfiguration != nil { return false }
+                    return true
+                }
+                if compatible.count == 1 {
+                    bindings[index].activeClassifierTypeID = compatible[0].id
+                }
+            }
             guard let classifierTypeID = bindings[index].activeClassifierTypeID else { continue }
             guard let classifierType = classifierTypes.first(where: { $0.id == classifierTypeID }),
                   let tree = trees.first(where: { $0.id == bindings[index].treeID }),
