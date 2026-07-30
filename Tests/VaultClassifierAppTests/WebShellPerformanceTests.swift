@@ -83,7 +83,9 @@ final class WebShellPerformanceTests: XCTestCase {
             "surface": "feed",
             "text": "Full rendered public description",
             "summary": "Rendered public summary",
-            "suppliedTags": ["guide", "video"],
+            // "#Tag" matches the fixture tree node "Tag" (colored); "video" does
+            // not (neutral). The leading "#" must be stripped in the rendered pill.
+            "suppliedTags": ["#Tag", "video"],
             "canonicalURL": NSNull(),
             "attributes": [:],
             "cachedSourceIconURL": NSNull(),
@@ -172,7 +174,6 @@ final class WebShellPerformanceTests: XCTestCase {
                 "webSearchProviderProfileID": NSNull(),
                 "isActive": false,
             ],
-            "decisionPriority": ["human", "llmAssist", "localModel"],
         ]
         let binding: [String: Any] = [
             "id": "youtube",
@@ -454,9 +455,15 @@ final class WebShellPerformanceTests: XCTestCase {
         let evidenceValue = try await evaluate(
             """
             const entry = document.querySelector('.collection-detail .collection-detail-entry');
+            const tagEls = [...entry.querySelectorAll('.collection-entry-tags span')];
+            const tagsWrap = entry.querySelector('.collection-entry-tags');
+            const evidence = entry.querySelector('.collection-detail-evidence');
             JSON.stringify({
               text: entry.textContent,
-              tags: [...entry.querySelectorAll('.collection-entry-tags span')].map((tag) => tag.textContent)
+              tags: tagEls.map((tag) => tag.textContent),
+              matchedTagBg: tagEls[0] ? getComputedStyle(tagEls[0]).backgroundColor : '',
+              unmatchedTagBg: tagEls[1] ? getComputedStyle(tagEls[1]).backgroundColor : '',
+              tagsBeforeEvidence: Boolean(tagsWrap && evidence) && (tagsWrap.compareDocumentPosition(evidence) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
             });
             """,
             in: webView
@@ -467,7 +474,14 @@ final class WebShellPerformanceTests: XCTestCase {
             ) as? [String: Any]
         )
         XCTAssertTrue((evidenceJSON["text"] as? String)?.contains("Full rendered public description") == true)
-        XCTAssertEqual(evidenceJSON["tags"] as? [String], ["guide", "video"])
+        // The leading "#" is stripped from the rendered pill labels.
+        XCTAssertEqual(evidenceJSON["tags"] as? [String], ["Tag", "video"])
+        // "#Tag" matched the tree node "Tag" and takes its color (#DBE5F3); the
+        // unmatched "video" keeps the neutral pill (--cyan-100 = #cffafe).
+        XCTAssertEqual(evidenceJSON["matchedTagBg"] as? String, "rgb(219, 229, 243)")
+        XCTAssertEqual(evidenceJSON["unmatchedTagBg"] as? String, "rgb(207, 250, 254)")
+        // Tags render above the evidence text so the fixed-height card can't clip them.
+        XCTAssertEqual(evidenceJSON["tagsBeforeEvidence"] as? Bool, true)
 
         var newestPayload = populatedPayload(creatorCount: 4)
         newestPayload["workspace"] = "classificationData"
@@ -648,5 +662,76 @@ final class WebShellPerformanceTests: XCTestCase {
         XCTAssertEqual(json["listKept"] as? String, "1")
         XCTAssertEqual(json["metricsKept"] as? String, "1")
         XCTAssertTrue((json["metrics"] as? String)?.contains("5") == true)
+    }
+
+    func testListSearchFiltersDecisionListInPlaceAndRestoresOnClear() async throws {
+        let loaded = expectation(description: "web shell loaded")
+        let waiter = NavigationWaiter(expectation: loaded)
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(frame: .init(x: 0, y: 0, width: 1_200, height: 800), configuration: configuration)
+        webView.navigationDelegate = waiter
+        let index = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "index", extension: "html"))
+        webView.loadFileURL(index, allowingReadAccessTo: index.deletingLastPathComponent())
+        await fulfillment(of: [loaded], timeout: 5)
+
+        var payload = populatedPayload(creatorCount: 12)
+        payload["workspace"] = "browserBridge"
+        _ = try await evaluate(try XCTUnwrap(VaultClassifierWebShell.stateUpdateJavaScript(payload: payload)), in: webView)
+
+        // Baseline: the keyed decision list renders every candidate row (0…11).
+        let baseline = try await evaluate("document.querySelectorAll('[data-keyed-list] > [data-key]').length;", in: webView) as? Int
+        XCTAssertEqual(baseline, 12)
+        // Mark a row node; an in-place filter must not rebuild the whole list.
+        _ = try await evaluate("document.querySelector('[data-keyed-list]').setAttribute('data-test-kept', '1');", in: webView)
+
+        // "-7" is a substring of exactly one row's haystack ("…creator-7") and is
+        // short enough (<4 chars) that the trigram fallback never fires, so this
+        // isolates exact-substring filtering on the homogeneous "Creator N"
+        // fixture (where any longer non-substring query trigram-matches them all).
+        _ = try await evaluate(
+            """
+            (() => {
+              const input = document.querySelector('input[data-list-search^="creator-decisions"]');
+              input.value = "-7";
+              input.dispatchEvent(new Event("input", { bubbles: true }));
+            })();
+            """,
+            in: webView
+        )
+        try await Task.sleep(nanoseconds: 300_000_000) // 120ms debounce + margin
+
+        let filtered = try await evaluate(
+            """
+            JSON.stringify({
+              rows: document.querySelectorAll('[data-keyed-list] > [data-key]').length,
+              kept: document.querySelector('[data-keyed-list]').getAttribute('data-test-kept'),
+              count: document.querySelector('input[data-list-search^="creator-decisions"]').closest('.creator-classification-section').querySelector('[data-list-search-count]').textContent
+            });
+            """,
+            in: webView
+        )
+        let filteredJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(try XCTUnwrap(filtered as? String).utf8)) as? [String: Any]
+        )
+        XCTAssertEqual(filteredJSON["rows"] as? Int, 1)
+        // In-place filter: the container survived (no full rebuild).
+        XCTAssertEqual(filteredJSON["kept"] as? String, "1")
+        XCTAssertEqual(filteredJSON["count"] as? String, "1 of 12")
+
+        // Clearing the query restores every row.
+        _ = try await evaluate(
+            """
+            (() => {
+              const input = document.querySelector('input[data-list-search^="creator-decisions"]');
+              input.value = "";
+              input.dispatchEvent(new Event("input", { bubbles: true }));
+            })();
+            """,
+            in: webView
+        )
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let restored = try await evaluate("document.querySelectorAll('[data-keyed-list] > [data-key]').length;", in: webView) as? Int
+        XCTAssertEqual(restored, 12)
     }
 }

@@ -41,6 +41,61 @@ public extension TagTreeAsset {
 /// Performs deterministic on-device inference for an explicitly selected
 /// classifier type. Browser calls can only reach this component through a
 /// platform binding; provider profiles are intentionally not consulted here.
+/// Groups a creator's observed identity forms (e.g. a YouTube `@handle` and its
+/// `channel/UC…`) into one equivalence class via union-find over each collected
+/// entry's `creatorID` and its `sourceAliases`. It lets a source classified or
+/// collected under one form be recognized when later queried under another, and
+/// picks one canonical form per creator for de-duplicated aggregation.
+public struct CreatorIdentityIndex: Sendable {
+    private let groupByForm: [String: Set<String>]
+    private let canonicalByForm: [String: String]
+
+    public init(entries: [CollectedPlatformEntry] = []) {
+        var parent: [String: String] = [:]
+        func find(_ value: String) -> String {
+            var root = value
+            while let next = parent[root], next != root { root = next }
+            return root
+        }
+        func union(_ lhs: String, _ rhs: String) {
+            parent[lhs] = parent[lhs] ?? lhs
+            parent[rhs] = parent[rhs] ?? rhs
+            let rootLHS = find(lhs)
+            let rootRHS = find(rhs)
+            if rootLHS != rootRHS { parent[rootLHS] = rootRHS }
+        }
+        for entry in entries {
+            parent[entry.creatorID] = parent[entry.creatorID] ?? entry.creatorID
+            for alias in entry.sourceAliases { union(entry.creatorID, alias) }
+        }
+        var membersByRoot: [String: Set<String>] = [:]
+        for form in parent.keys { membersByRoot[find(form), default: []].insert(form) }
+        var groupByForm: [String: Set<String>] = [:]
+        var canonicalByForm: [String: String] = [:]
+        for members in membersByRoot.values {
+            let canonical = Self.canonicalForm(members)
+            for form in members {
+                groupByForm[form] = members
+                canonicalByForm[form] = canonical
+            }
+        }
+        self.groupByForm = groupByForm
+        self.canonicalByForm = canonicalByForm
+    }
+
+    /// All identity forms of the creator that `id` belongs to (at least `id`).
+    public func members(of id: String) -> Set<String> { groupByForm[id] ?? [id] }
+
+    /// One stable representative for the creator that `id` belongs to. A
+    /// user-facing `:handle:` form is preferred, then a deterministic order.
+    public func canonical(of id: String) -> String { canonicalByForm[id] ?? id }
+
+    static func canonicalForm(_ members: Set<String>) -> String {
+        if let handle = members.filter({ $0.contains(":handle:") }).min() { return handle }
+        return members.min() ?? ""
+    }
+}
+
 public struct WorkspaceNeuralClassifier: Sendable {
     public static let threshold = 0.50
     public static let maximumScores = 256
@@ -51,19 +106,22 @@ public struct WorkspaceNeuralClassifier: Sendable {
     public let taxonomy: Taxonomy
     public let policies: [NamedPolicy]
     public let creatorClassifications: [CreatorClassificationRecord]
+    public let identityIndex: CreatorIdentityIndex
 
     public init(
         classifierType: ClassifierTypeAsset,
         model: LocalModelAsset?,
         taxonomy: Taxonomy,
         policies: [NamedPolicy],
-        creatorClassifications: [CreatorClassificationRecord]
+        creatorClassifications: [CreatorClassificationRecord],
+        identityIndex: CreatorIdentityIndex = CreatorIdentityIndex()
     ) {
         self.classifierType = classifierType
         self.model = model
         self.taxonomy = taxonomy
         self.policies = policies
         self.creatorClassifications = creatorClassifications
+        self.identityIndex = identityIndex
     }
 
     public func classify(_ entry: EntryEvidence) throws -> ClassificationResult {
@@ -182,11 +240,16 @@ public struct WorkspaceNeuralClassifier: Sendable {
         allowedTags: Set<String>
     ) -> [String: [ClassifierDecisionSource: Double]] {
         guard !creatorID.isEmpty else { return [:] }
+        // A source may have been classified under a different identity form than
+        // the one queried (e.g. classified from a feed `@handle`, queried from a
+        // watch-page `channel/UC…`). Match any classification for a form in the
+        // same creator's identity class.
+        let identityClass = identityIndex.members(of: creatorID)
         var signals = [String: [ClassifierDecisionSource: Double]]()
         for classification in creatorClassifications where
             classification.classifierTypeID == classifierType.id &&
             classification.platformID == platformID &&
-            classification.creatorID == creatorID &&
+            identityClass.contains(classification.creatorID) &&
             classification.treeID == classifierType.treeID &&
             classification.treeRevision == classifierType.treeRevision &&
             classification.review == .approved {
@@ -250,7 +313,8 @@ public extension WorkspaceCatalog {
             model: model,
             taxonomy: try tree.inferenceTaxonomy(),
             policies: policies,
-            creatorClassifications: dataset.creatorClassifications
+            creatorClassifications: dataset.creatorClassifications,
+            identityIndex: CreatorIdentityIndex(entries: dataset.collectedEntries)
         )
     }
 }

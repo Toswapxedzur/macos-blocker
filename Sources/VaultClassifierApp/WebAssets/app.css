@@ -322,6 +322,26 @@ h3 { font-size: 13px; }
   min-width: 0;
 }
 
+.list-search { position: relative; display: flex; align-items: center; margin-bottom: 8px; }
+.list-search-icon { position: absolute; left: 9px; color: var(--muted); font-size: 13px; line-height: 1; pointer-events: none; }
+.list-search-input {
+  width: 100%;
+  min-width: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  padding: 6px 58px 6px 26px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+.list-search-input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+.list-search-input::placeholder { color: var(--muted); }
+.list-search-input:focus { outline: none; border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15); }
+.list-search-count { position: absolute; right: 10px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .03em; pointer-events: none; white-space: nowrap; }
+
 .collection-detail {
   display: flex;
   flex: 1 1 0;
@@ -476,7 +496,7 @@ h3 { font-size: 13px; }
 .collection-entry-attributes,
 .collection-entry-url { display: block; }
 .collection-entry-tags { display: flex; flex-wrap: wrap; gap: 4px; }
-.collection-entry-tags span { padding: 2px 6px; border-radius: 999px; background: var(--cyan-100); color: var(--cyan-800); font-weight: 700; }
+.collection-entry-tags span { padding: 2px 6px; border-radius: 999px; background: var(--cyan-100); color: var(--cyan-text); font-weight: 700; }
 .collection-empty { margin: 0; border: 0; border-radius: 0; }
 
 .collection-diagnostics {
@@ -622,7 +642,6 @@ h3 { font-size: 13px; }
 .classifier-type-workspace { gap: 14px; }
 .classifier-type-create,
 .classifier-name-row,
-.classifier-priority-grid,
 .classifier-llm-config { display: grid; }
 
 .classifier-type-create {
@@ -740,7 +759,6 @@ h3 { font-size: 13px; }
 .creator-tag-card-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .creator-tag-card-action { width: 100%; min-width: 0; min-height: 27px; padding: 5px 8px; border-radius: 7px; font-size: 10px; }
 .creator-tag-empty { margin: auto 0; color: var(--muted); font-size: 10.5px; font-weight: 600; text-align: center; }
-.classifier-priority-grid { grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 10px; }
 .classifier-llm-section { background: rgba(255, 251, 235, .52); }
 .classifier-llm-config { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .classifier-llm-config .field.wide { grid-column: 1 / -1; }
@@ -778,8 +796,7 @@ h3 { font-size: 13px; }
   .classifier-name-row,
   .classifier-applicable-platform-row,
   .creator-classification-fields,
-  .creator-tag-columns,
-  .classifier-priority-grid { grid-template-columns: 1fr; }
+  .creator-tag-columns { grid-template-columns: 1fr; }
 }
 
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; }

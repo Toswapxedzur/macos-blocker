@@ -53,20 +53,43 @@ public struct EntryEvidence: Codable, Equatable, Sendable, Identifiable {
     public var platform: String
     public var entryID: String?
     public var sourceID: String?
+    /// Other identity forms observed for the same source alongside `sourceID`
+    /// (e.g. a YouTube channel `UC…` seen next to the creator's `@handle`).
+    /// These let a source classified under one form be found and de-duplicated
+    /// when later observed under another.
+    public var sourceAliases: [String]
     public var surface: EntrySurface
     public var evidence: EvidencePayload
     public var policyIDs: [String]
 
     public var id: String { requestID }
 
-    public init(requestID: String = UUID().uuidString, platform: String, entryID: String? = nil, sourceID: String? = nil, surface: EntrySurface, evidence: EvidencePayload, policyIDs: [String] = []) {
+    public init(requestID: String = UUID().uuidString, platform: String, entryID: String? = nil, sourceID: String? = nil, sourceAliases: [String] = [], surface: EntrySurface, evidence: EvidencePayload, policyIDs: [String] = []) {
         self.requestID = requestID
         self.platform = platform
         self.entryID = entryID
         self.sourceID = sourceID
+        self.sourceAliases = sourceAliases
         self.surface = surface
         self.evidence = evidence
         self.policyIDs = policyIDs
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case requestID, platform, entryID, sourceID, sourceAliases, surface, evidence, policyIDs
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        requestID = try container.decode(String.self, forKey: .requestID)
+        platform = try container.decode(String.self, forKey: .platform)
+        entryID = try container.decodeIfPresent(String.self, forKey: .entryID)
+        sourceID = try container.decodeIfPresent(String.self, forKey: .sourceID)
+        // Crash guard for pre-alias payloads: a missing list is an empty one.
+        sourceAliases = try container.decodeIfPresent([String].self, forKey: .sourceAliases) ?? []
+        surface = try container.decode(EntrySurface.self, forKey: .surface)
+        evidence = try container.decode(EvidencePayload.self, forKey: .evidence)
+        policyIDs = try container.decodeIfPresent([String].self, forKey: .policyIDs) ?? []
     }
 }
 
@@ -89,6 +112,7 @@ public struct EntryEvidenceValidator: Sendable {
     public static let platformLimit = 64
     public static let entryIDLimit = 256
     public static let sourceIDLimit = 256
+    public static let sourceAliasLimit = 8
     public static let titleLimit = 500
     public static let textLimit = 16_000
     public static let summaryLimit = 16_000
@@ -105,6 +129,17 @@ public struct EntryEvidenceValidator: Sendable {
         try required(entry.platform, field: "platform", limit: Self.platformLimit)
         try optional(entry.entryID, field: "entryID", limit: Self.entryIDLimit)
         try optional(entry.sourceID, field: "sourceID", limit: Self.sourceIDLimit)
+        guard entry.sourceAliases.count <= Self.sourceAliasLimit else {
+            throw EntryEvidenceValidationError.exceedsLimit("sourceAliases", Self.sourceAliasLimit)
+        }
+        for alias in entry.sourceAliases {
+            try required(alias, field: "sourceAliases[]", limit: Self.sourceIDLimit)
+            // An alias is only meaningful as another identity of the same source:
+            // it must be scoped to the same platform and differ from the primary.
+            guard alias.hasPrefix("\(entry.platform):"), alias != entry.sourceID else {
+                throw EntryEvidenceValidationError.invalidValue("sourceAliases[]")
+            }
+        }
         try optional(entry.evidence.title, field: "title", limit: Self.titleLimit)
         try optional(entry.evidence.text, field: "text", limit: Self.textLimit)
         try optional(entry.evidence.summary, field: "summary", limit: Self.summaryLimit)

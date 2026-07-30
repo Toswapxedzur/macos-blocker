@@ -1537,6 +1537,99 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertNil(catalog.classifierTypes[0].llmAssistConfiguration)
     }
 
+    func testSourceTagsResolveAcrossCreatorIdentityAliases() throws {
+        var catalog = catalogWithYouTubeAssets()
+        catalog.models = []
+        catalog.trees[0].nodes = [.init(id: "games", name: "Games")]
+        let tree = catalog.trees[0]
+        // The creator is classified under its @handle form (as feeds collect it).
+        catalog.datasets[0].creatorClassifications = [
+            .init(
+                classifierTypeID: "youtube-type",
+                creatorID: "youtube:handle:@abc",
+                creatorName: "ABC",
+                platformID: "youtube",
+                treeID: tree.id,
+                treeRevision: tree.revision,
+                tagIDs: ["games"],
+                origin: .llmAssist,
+                review: .approved
+            ),
+        ]
+        // A collected entry links the channel form to the @handle via an alias.
+        catalog.datasets[0].collectedEntries = [
+            .init(
+                id: "e1",
+                platformID: "youtube",
+                entryID: "v1",
+                creatorID: "youtube:channel:UCabc",
+                sourceAliases: ["youtube:handle:@abc"],
+                creatorName: "ABC",
+                entryType: "video",
+                title: "A video"
+            ),
+        ]
+        catalog.reconcileClassifierTypes()
+
+        let classifier = try XCTUnwrap(try catalog.workspaceClassifier(for: "youtube", policies: []))
+        // Queried under the channel form (as a watch page would), it resolves the
+        // classification stored under the @handle.
+        XCTAssertEqual(
+            classifier.sourceTags(platformID: "youtube", sourceID: "youtube:channel:UCabc").map(\.id),
+            ["games"]
+        )
+        // And still resolves directly under the handle.
+        XCTAssertEqual(
+            classifier.sourceTags(platformID: "youtube", sourceID: "youtube:handle:@abc").map(\.id),
+            ["games"]
+        )
+
+        // The index unions the forms and prefers the handle as canonical.
+        let index = CreatorIdentityIndex(entries: catalog.datasets[0].collectedEntries)
+        XCTAssertEqual(index.members(of: "youtube:channel:UCabc"), ["youtube:channel:UCabc", "youtube:handle:@abc"])
+        XCTAssertEqual(index.canonical(of: "youtube:channel:UCabc"), "youtube:handle:@abc")
+    }
+
+    func testReconcileAutoActivatesTheSoleCompatibleClassifierTypeForABinding() throws {
+        var catalog = catalogWithYouTubeAssets()
+        catalog.models = []
+        let tree = try XCTUnwrap(catalog.trees.first)
+        let dataset = try XCTUnwrap(catalog.datasets.first)
+        let bindingIndex = try XCTUnwrap(catalog.bindings.firstIndex(where: { $0.id == "youtube" }))
+        catalog.bindings[bindingIndex].activeClassifierTypeID = nil
+
+        let creatorBrain = ClassifierTypeAsset(
+            id: "creator-brain",
+            name: "Creator brain",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            datasetID: dataset.id,
+            datasetRevision: dataset.revision,
+            applicablePlatformID: "youtube"
+        )
+        catalog.classifierTypes = [creatorBrain]
+
+        // A single compatible classifier type is auto-activated on the binding so
+        // its source-tag projection (and thus on-page rendering) works without a
+        // separate manual activation step.
+        catalog.reconcileClassifierTypes()
+        XCTAssertEqual(catalog.bindings[bindingIndex].activeClassifierTypeID, "creator-brain")
+
+        // Two compatible types are ambiguous — the binding is left for the owner.
+        catalog.bindings[bindingIndex].activeClassifierTypeID = nil
+        catalog.classifierTypes.append(ClassifierTypeAsset(
+            id: "creator-brain-2",
+            name: "Creator brain 2",
+            treeID: tree.id,
+            treeRevision: tree.revision,
+            datasetID: dataset.id,
+            datasetRevision: dataset.revision,
+            applicablePlatformID: "youtube"
+        ))
+        catalog.reconcileClassifierTypes()
+        XCTAssertNil(catalog.bindings[bindingIndex].activeClassifierTypeID)
+    }
+
     func testCoordinatorDispatchesAnActiveClassifierTypeToThePersistedNeuralModel() throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }

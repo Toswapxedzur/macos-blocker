@@ -115,13 +115,32 @@ text model name.
 
 An explicit **Test request** uses a bounded provider-specific health/test
 request. It does not send collected browser content. Provider classification
-is opt-in: an inactive attachment may be run manually, while activation
-processes only eligible creators sequentially and stops before the next request
-when disabled or the daily allowance is exhausted. A running batch captures
-the attachment and provider profile it started with; if either is saved with a
-change, the batch stops before its next provider request and asks the user to
-start a new batch. It never quietly mixes an old request with newly saved
-settings.
+is opt-in: an inactive attachment may be run manually, while activation sweeps
+the eligible-creator queue in batches and stops before the next request when
+disabled or the daily allowance is exhausted. A **batch** is one provider
+request: the prompt carries up to `batchSize` eligible creators as independent,
+numbered targets and the response returns one label set per index, so a single
+model call classifies the whole batch. Batches run one at a time — the next
+never starts before the current one finishes — and the classification pace gates
+the start of each batch, so the effective ceiling is `pace × batchSize` creators
+per minute, not a guaranteed rate. The batch contract is all-or-nothing: a
+response that does not validly cover every numbered target is rejected and its
+creators are retried on a later sweep. A running batch captures the attachment
+and provider profile it started with; if either is saved with a change, the
+sweep stops before its next provider request and asks the user to start a new
+batch. It never quietly mixes an old request with newly saved settings.
+
+Batching is used only when the provider **structurally enforces** the batch
+`results` schema, precisely because the contract is all-or-nothing: a single
+malformed field would otherwise waste every creator's tokens with no repair.
+When that guarantee is absent the run falls back to one request per creator,
+which keeps the schema-repair turn and risks only one creator per failure. Three
+cases fall back: attached client-tool search (its multi-turn continuation cannot
+share a batched prompt); shape-unconstrained JSON Object Mode (DeepSeek, Groq)
+and prompt-only OpenAI-compatible/Custom endpoints; and searched models that
+must drop the native schema (Anthropic hosted search, and Gemini models outside
+the documented structured-output-with-tools set). Search-off and the
+schema-preserving provider-native modes use the single batched request.
 
 Each attachment persists a **classification pace** of 1–120 provider requests
 started per minute (default 6). It is enforced for both manual and activated
@@ -153,9 +172,14 @@ that has not selected a tag.
 
 Classification requests also use the strongest documented provider-native
 output constraint that does not remove the selected search/tool capability.
-The common schema requires exactly one `labelIDs` array of strings and rejects
-extra top-level properties; the local parser remains authoritative for the
-eligible-ID vocabulary, duplicates, and configured maximum count. OpenAI,
+The single-target schema requires exactly one `labelIDs` array of strings and
+rejects extra top-level properties. A batched request instead requires one
+`results` array whose every element is `{index, labelIDs}` — a bounded integer
+index the caller already assigned plus that target's label array — and nothing
+else, so provider prose can never become a tag or address an unknown creator.
+For both grammars the local parser remains authoritative for the eligible-ID
+vocabulary, duplicates, per-target maximum count, and (for a batch) that every
+index in range appears exactly once. OpenAI,
 Anthropic, Mistral, Gemini, Cohere, OpenRouter, and Ollama receive their native
 JSON-schema grammar where compatible. DeepSeek receives JSON Object Mode, and
 Groq receives its roster-wide JSON Object Mode unless attached tools are
