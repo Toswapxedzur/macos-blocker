@@ -247,6 +247,142 @@ final class ProviderTestProtocolTests: XCTestCase {
         )
     }
 
+    func testBatchClassificationPreparesOneRequestCarryingEveryNumberedTarget() throws {
+        let profile = APIKeyProviderProfile(type: .gemini)
+        let configuration = LLMAssistConfiguration(
+            providerProfileID: profile.id,
+            modelIdentifier: "gemini-3.1-flash-lite",
+            dailyTokenLimit: 4_096,
+            webSearchMode: .off
+        )
+        let entries = ["Alpha gameplay", "Beta cooking", "Gamma news"].map { title in
+            EntryEvidence(platform: "youtube", entryID: title, surface: .feed, evidence: .init(title: title))
+        }
+        let prepared = try ProviderClassificationProtocol.prepareBatch(
+            profile: profile,
+            configuration: configuration,
+            entries: entries,
+            allowedTagIDs: ["games", "technology"],
+            tagDefinitions: readableTagDefinitions(["games", "technology"])
+        )
+        // One request, every target inside it, numbered.
+        XCTAssertEqual(prepared.operation, .generateText)
+        XCTAssertTrue(prepared.prompt.contains("Alpha gameplay"))
+        XCTAssertTrue(prepared.prompt.contains("Beta cooking"))
+        XCTAssertTrue(prepared.prompt.contains("Gamma news"))
+        XCTAssertTrue(prepared.prompt.contains("\"index\""))
+        XCTAssertTrue(prepared.prompt.contains("Include every index from 1 to 3"))
+        XCTAssertTrue(prepared.prompt.contains("one key, results"))
+        XCTAssertFalse(prepared.prompt.contains("apiKey"))
+        // The provider's native structured-output constraint carries the batch
+        // shape, not the single-creator labelIDs object.
+        let body = try XCTUnwrap(String(data: prepared.body, encoding: .utf8))
+        XCTAssertTrue(body.contains("results"))
+        XCTAssertTrue(body.contains("index"))
+    }
+
+    func testBatchLabelParsingMapsIndicesAndRefusesMalformedResponses() throws {
+        let allowed: Set<String> = ["games", "technology"]
+        let valid = try ProviderClassificationProtocol.parseBatchLabelIDs(
+            #"{"results":[{"index":1,"labelIDs":["games"]},{"index":2,"labelIDs":[]},{"index":3,"labelIDs":["technology","games"]}]}"#,
+            count: 3,
+            allowedTagIDs: allowed
+        )
+        XCTAssertEqual(valid[1], ["games"])
+        XCTAssertEqual(valid[2], [])
+        XCTAssertEqual(valid[3], ["games", "technology"])
+
+        // Missing an index (partial coverage) is all-or-nothing rejected.
+        XCTAssertThrowsError(try ProviderClassificationProtocol.parseBatchLabelIDs(
+            #"{"results":[{"index":1,"labelIDs":["games"]}]}"#,
+            count: 2,
+            allowedTagIDs: allowed
+        ))
+        // An index outside the known range can never address an unknown creator.
+        XCTAssertThrowsError(try ProviderClassificationProtocol.parseBatchLabelIDs(
+            #"{"results":[{"index":1,"labelIDs":[]},{"index":9,"labelIDs":[]}]}"#,
+            count: 2,
+            allowedTagIDs: allowed
+        ))
+        // A duplicated index is refused rather than overwriting a target.
+        XCTAssertThrowsError(try ProviderClassificationProtocol.parseBatchLabelIDs(
+            #"{"results":[{"index":1,"labelIDs":[]},{"index":1,"labelIDs":[]}]}"#,
+            count: 2,
+            allowedTagIDs: allowed
+        ))
+        // An unknown label is refused.
+        XCTAssertThrowsError(try ProviderClassificationProtocol.parseBatchLabelIDs(
+            #"{"results":[{"index":1,"labelIDs":["mystery"]}]}"#,
+            count: 1,
+            allowedTagIDs: allowed
+        ))
+        // A label list longer than the per-target maximum is refused.
+        XCTAssertThrowsError(try ProviderClassificationProtocol.parseBatchLabelIDs(
+            #"{"results":[{"index":1,"labelIDs":["games","technology"]}]}"#,
+            count: 1,
+            allowedTagIDs: allowed,
+            maximumTagCount: 1
+        ))
+    }
+
+    func testBatchingIsGatedOnEnforcedNativeResponseSchema() throws {
+        func config(_ profile: APIKeyProviderProfile, model: String, search: LLMWebSearchMode) -> LLMAssistConfiguration {
+            LLMAssistConfiguration(
+                providerProfileID: profile.id,
+                modelIdentifier: model,
+                dailyTokenLimit: 4_096,
+                webSearchMode: search,
+                webSearchProviderProfileID: search == .attached ? profile.id : nil
+            )
+        }
+        // Strict schema installed → safe to batch.
+        let openAI = APIKeyProviderProfile(type: .openAI)
+        XCTAssertTrue(ProviderClassificationProtocol.supportsBatchedClassification(
+            profile: openAI, configuration: config(openAI, model: "gpt-5", search: .off)))
+
+        // Gemini enforces the schema with tools only for the documented models.
+        let gemini = APIKeyProviderProfile(type: .gemini)
+        XCTAssertTrue(ProviderClassificationProtocol.supportsBatchedClassification(
+            profile: gemini, configuration: config(gemini, model: "gemini-3.6-flash", search: .providerNative)))
+        XCTAssertFalse(ProviderClassificationProtocol.supportsBatchedClassification(
+            profile: gemini, configuration: config(gemini, model: "gemini-3.1-flash-lite", search: .providerNative)))
+        XCTAssertTrue(ProviderClassificationProtocol.supportsBatchedClassification(
+            profile: gemini, configuration: config(gemini, model: "gemini-3.1-flash-lite", search: .off)))
+
+        // Anthropic hosted search drops the JSON-output constraint.
+        let anthropic = APIKeyProviderProfile(type: .anthropic)
+        XCTAssertFalse(ProviderClassificationProtocol.supportsBatchedClassification(
+            profile: anthropic, configuration: config(anthropic, model: "claude-sonnet-5", search: .providerNative)))
+        XCTAssertTrue(ProviderClassificationProtocol.supportsBatchedClassification(
+            profile: anthropic, configuration: config(anthropic, model: "claude-sonnet-5", search: .off)))
+
+        // JSON Object Mode only (DeepSeek) does not constrain the batch shape.
+        let deepSeek = APIKeyProviderProfile(type: .deepSeek)
+        XCTAssertFalse(ProviderClassificationProtocol.supportsBatchedClassification(
+            profile: deepSeek, configuration: config(deepSeek, model: "deepseek-chat", search: .off)))
+
+        // Attached client-tool search never batches, whatever the provider.
+        XCTAssertFalse(ProviderClassificationProtocol.supportsBatchedClassification(
+            profile: openAI, configuration: config(openAI, model: "gpt-5", search: .attached)))
+    }
+
+    func testBatchPreparationRefusesAttachedSearchMode() throws {
+        let profile = APIKeyProviderProfile(type: .gemini)
+        let configuration = LLMAssistConfiguration(
+            providerProfileID: profile.id,
+            modelIdentifier: "gemini-3.6-flash",
+            dailyTokenLimit: 4_096,
+            webSearchMode: .attached
+        )
+        XCTAssertThrowsError(try ProviderClassificationProtocol.prepareBatch(
+            profile: profile,
+            configuration: configuration,
+            entries: [EntryEvidence(platform: "youtube", entryID: "entry", surface: .feed, evidence: .init(title: "Deck gameplay"))],
+            allowedTagIDs: ["games"],
+            tagDefinitions: readableTagDefinitions(["games"])
+        ))
+    }
+
     func testClassificationRequestIncludesReadableTagDefinitionsAndExtraDirection() throws {
         let profile = APIKeyProviderProfile(type: .deepSeek)
         let configuration = LLMAssistConfiguration(

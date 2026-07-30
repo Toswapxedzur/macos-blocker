@@ -47,6 +47,11 @@
   // datasetID|platformID|creatorID); the pending set guards in-flight requests.
   const loadedCreatorEntries = new Map();
   const pendingCreatorEntryRequests = new Set();
+  // Per-platform lookup (platformID -> Map(normalized tag name -> tree node))
+  // used to color platform-supplied tags (YouTube hashtags, Reddit flair) with
+  // the matching tag-tree tag's color. Rebuilt whenever the collection workspace
+  // renders; the detail pane reads it during its targeted refreshes too.
+  const suppliedTagNodeByPlatform = new Map();
   // Optimistic manual-decision overlay: typeID -> (creatorKey -> {tagIDs, negativeTagIDs}).
   // A tag/untag moves one card and records the decision here so it survives
   // re-renders without a full round-trip; cleared when an authoritative snapshot
@@ -68,6 +73,17 @@
   const keyedListRenderedRows = new Map();
   const liveHTMLRegistry = new Map();
   const liveHTMLRendered = new Map();
+  // List search: raw query text per search group (persists across re-renders so a
+  // background snapshot push never wipes what the user typed), debounce timers,
+  // and a per-item normalized-haystack cache (WeakMap auto-clears when the
+  // snapshot rebuilds the item objects).
+  const listSearchQueryByGroup = new Map();
+  const listSearchTimers = new Map();
+  const searchHaystackCache = new WeakMap();
+  // Minimum fraction of a query's trigrams that must appear in a candidate for
+  // the typo-tolerant fallback to accept it. Raise toward 1 for stricter, lower
+  // toward 0 for more forgiving.
+  const trigramMatchThreshold = 0.5;
   let lastRenderedMarkup = null;
 
   try {
@@ -99,6 +115,12 @@
       ? value.toUpperCase()
       : ""
   );
+
+  // Fold a tag label to a match key: strip a leading hashtag and case/space so a
+  // YouTube "#Minecraft" or a tree "minecraft" node compare equal.
+  function normalizeTagName(value) {
+    return (value == null ? "" : String(value)).trim().replace(/^#+/, "").toLowerCase();
+  }
 
   function tagColorStyle(node) {
     const lightColor = normalizedTagColor(node?.lightColorHex);
@@ -189,14 +211,161 @@
   // and paint cost stay constant regardless of total row count. Rows must be a
   // single fixed height (rowHeight). A stable `key` preserves scroll position
   // across full re-renders.
-  function virtualList(items, rowHeight, renderRow, { key = "", emptyMarkup = "" } = {}) {
+  // Fold a raw string to a comparable form: strip diacritics and invisible
+  // bidi/zero-width controls (creator names carry both), lowercase, and collapse
+  // whitespace. CJK and digits pass through unchanged.
+  function normalizeSearch(value) {
+    return (value == null ? "" : String(value))
+      .normalize("NFKD")
+      .replace(/[̀-ͯ]/g, "")
+      .replace(/[​-‏‪-‮⁦-⁩﻿]/g, "")
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  // Score one already-normalized haystack against a normalized, non-empty query.
+  // Exact substring tiers (exact/prefix/word-prefix/contained) always outrank the
+  // trigram-similarity fallback, so an exact match is never buried. The fallback
+  // only fires for longer, typo'd queries with no substring hit; there is no
+  // loose subsequence "scatter" matching. Returns -1 for no match.
+  function searchScore(haystack, query) {
+    const idx = haystack.indexOf(query);
+    if (idx === 0) return haystack.length === query.length ? 1200 : 1000;
+    if (idx > 0) return haystack[idx - 1] === " " ? 700 : 500 - Math.min(idx, 200);
+    // Trigram fallback needs >= 2 shingles (query length >= 4) to offer real typo
+    // tolerance. Its score stays strictly below the substring floor (300), so it
+    // only ever appears beneath exact hits.
+    if (query.length < 4) return -1;
+    const coverage = trigramCoverage(haystack, query);
+    if (coverage < trigramMatchThreshold) return -1;
+    return Math.round(50 + coverage * 150);
+  }
+
+  // Fraction of the query's distinct overlapping 3-grams that occur as substrings
+  // of the haystack. Trigram overlap requires real contiguous 3-char runs, so —
+  // unlike subsequence matching — it never rewards arbitrarily scattered
+  // characters, only genuine near-substring similarity (typos, transpositions).
+  function trigramCoverage(haystack, query) {
+    const grams = new Set();
+    for (let i = 0; i + 3 <= query.length; i += 1) grams.add(query.slice(i, i + 3));
+    if (grams.size < 2) return 0;
+    let hit = 0;
+    grams.forEach((gram) => { if (haystack.indexOf(gram) >= 0) hit += 1; });
+    return hit / grams.size;
+  }
+
+  function searchHaystack(item, searchOf) {
+    let hay = searchHaystackCache.get(item);
+    if (hay === undefined) {
+      hay = normalizeSearch(searchOf(item));
+      if (item !== null && typeof item === "object") searchHaystackCache.set(item, hay);
+    }
+    return hay;
+  }
+
+  // Filter + rank items by relevance for a raw query. Empty query returns the
+  // input untouched (stable original order). O(N·L) — fine for the few-thousand
+  // rows these lists hold; no index needed below ~50k.
+  function rankItems(items, searchOf, rawQuery) {
+    const query = normalizeSearch(rawQuery);
+    if (!query) return items;
+    const scored = [];
+    for (const item of items) {
+      const score = searchScore(searchHaystack(item, searchOf), query);
+      if (score >= 0) scored.push([score, item]);
+    }
+    scored.sort((lhs, rhs) => rhs[0] - lhs[0]);
+    return scored.map(([, item]) => item);
+  }
+
+  function listSearchBox(group, placeholderKey) {
+    const query = listSearchQueryByGroup.get(group) || "";
+    return `<div class="list-search"><span class="list-search-icon" aria-hidden="true">⌕</span><input type="search" class="list-search-input" data-list-search="${esc(group)}" value="${esc(query)}" placeholder="${esc(tx(placeholderKey))}" aria-label="${esc(tx(placeholderKey))}" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search"><span class="list-search-count" data-list-search-count="${esc(group)}"></span></div>`;
+  }
+
+  function listSearchGroupContainers(group) {
+    return [...root.querySelectorAll("[data-search-group]")].filter((container) => container.dataset.searchGroup === group);
+  }
+
+  function listSearchRegistry(container) {
+    return container.dataset.virtualList
+      ? virtualLists.get(container.dataset.virtualList)
+      : keyedListRegistry.get(container.dataset.keyedList);
+  }
+
+  // Refreshes the "N / M" count shown in each of a group's search boxes from the
+  // group's live registries.
+  function refreshListSearchMeta(group) {
+    let total = 0;
+    let shown = 0;
+    let hasRegistry = false;
+    listSearchGroupContainers(group).forEach((container) => {
+      const registry = listSearchRegistry(container);
+      if (!registry) return;
+      hasRegistry = true;
+      total += registry.allItems.length;
+      shown += registry.items.length;
+    });
+    const active = (listSearchQueryByGroup.get(group) || "").trim().length > 0;
+    root.querySelectorAll("[data-list-search-count]").forEach((element) => {
+      if (element.dataset.listSearchCount !== group) return;
+      element.textContent = (active && hasRegistry) ? tx("bridge.searchCount", { shown, total }) : "";
+    });
+  }
+
+  // Re-filters and repaints every list in a search group in place — no full
+  // render() — so search-as-you-type keeps the input focused and stays cheap.
+  function applyListSearch(group) {
+    const raw = listSearchQueryByGroup.get(group) || "";
+    listSearchGroupContainers(group).forEach((container) => {
+      const registry = listSearchRegistry(container);
+      if (!registry) return;
+      registry.items = (registry.searchOf && raw.trim())
+        ? rankItems(registry.allItems, registry.searchOf, raw)
+        : registry.allItems;
+      if (container.dataset.virtualList) {
+        const sizer = container.querySelector(".virtual-list-sizer");
+        if (sizer) sizer.style.height = `${registry.items.length * registry.rowHeight}px`;
+        container.scrollTop = 0;
+        paintVirtualList(container);
+        const column = container.closest("[data-creator-tag-column]");
+        if (column) {
+          const count = column.querySelector("[data-creator-tag-count]");
+          if (count) count.textContent = registry.items.length;
+          const empty = column.querySelector("[data-creator-tag-empty]");
+          if (empty) empty.hidden = registry.items.length > 0;
+        }
+      } else if (container.dataset.keyedList) {
+        reconcileKeyedList(container, registry);
+      }
+    });
+    refreshListSearchMeta(group);
+  }
+
+  function scheduleListSearch(group) {
+    clearTimeout(listSearchTimers.get(group));
+    listSearchTimers.set(group, setTimeout(() => applyListSearch(group), 120));
+  }
+
+  function refreshAllListSearchMeta() {
+    const groups = new Set();
+    root.querySelectorAll("[data-list-search-count]").forEach((element) => groups.add(element.dataset.listSearchCount));
+    groups.forEach(refreshListSearchMeta);
+  }
+
+  function virtualList(items, rowHeight, renderRow, { key = "", emptyMarkup = "", searchOf = null, searchGroup = "" } = {}) {
     // A keyed list always renders its container, even when empty, so a targeted
     // update can add rows to it later without a full re-render.
-    if (!items.length && !key) return emptyMarkup;
+    if (!items.length && !key && !searchGroup) return emptyMarkup;
     const id = `virtual-list-${virtualListSequence += 1}`;
-    virtualLists.set(id, { items, rowHeight, renderRow, key });
-    const totalHeight = items.length * rowHeight;
-    return `<div class="virtual-list" data-virtual-list="${id}"${key ? ` data-virtual-key="${esc(key)}"` : ""}><div class="virtual-list-sizer" style="height:${totalHeight}px"><div class="virtual-list-window" data-virtual-window></div></div></div>`;
+    // Apply any persisted search query up front so a full re-render (e.g. a
+    // background snapshot push) reproduces the filtered view without a flash.
+    const rawQuery = searchGroup ? (listSearchQueryByGroup.get(searchGroup) || "") : "";
+    const filtered = (searchOf && rawQuery.trim()) ? rankItems(items, searchOf, rawQuery) : items;
+    virtualLists.set(id, { items: filtered, allItems: items, rowHeight, renderRow, key, searchOf });
+    const totalHeight = filtered.length * rowHeight;
+    return `<div class="virtual-list" data-virtual-list="${id}"${key ? ` data-virtual-key="${esc(key)}"` : ""}${searchGroup ? ` data-search-group="${esc(searchGroup)}"` : ""}><div class="virtual-list-sizer" style="height:${totalHeight}px"><div class="virtual-list-window" data-virtual-window></div></div></div>`;
   }
 
   // Repaints every mounted virtual list from its (freshly rebuilt) registry
@@ -386,14 +555,33 @@
     metadata: "Feed details",
     creatorURL: "Creator page",
     sourceKind: "Source type"
-  })[key] || String(key).replaceAll(/([A-Z])/g, " $1").replaceAll(/[._-]/g, " ").replace(/^./, (letter) => letter.toUpperCase());
+  })[key] || String(key)
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/[._-]+/g, " ")
+    .replace(/^./, (letter) => letter.toUpperCase());
 
   function renderCollectionDetailEntry(entry) {
     const attributes = Object.entries(entry.attributes || {})
-      .map(([key, value]) => `${esc(collectionAttributeLabel(key))}: ${esc(value)}`)
+      .map(([key, value]) => {
+        // The YouTube "details" attribute repeats the hashtags already shown as
+        // tag pills; drop the trailing hashtag cluster so they render once.
+        const cleaned = key === "details" ? String(value).replace(/(?:\s*#\S+)+\s*$/, "").trim() : String(value);
+        return cleaned ? `${esc(collectionAttributeLabel(key))}: ${esc(cleaned)}` : "";
+      })
+      .filter(Boolean)
       .join(" · ");
+    const colorByName = suppliedTagNodeByPlatform.get(entry.platformID);
     const tags = Array.isArray(entry.suppliedTags) && entry.suppliedTags.length
-      ? `<span class="collection-entry-tags">${entry.suppliedTags.map((tag) => `<span>${esc(tag)}</span>`).join("")}</span>`
+      ? `<span class="collection-entry-tags">${entry.suppliedTags.map((tag) => {
+          const label = String(tag).replace(/^#+/, "").trim();
+          if (!label) return "";
+          // Color a platform tag with its matching tag-tree tag's color; leave
+          // unmatched tags on the neutral pill style.
+          const light = normalizedTagColor(colorByName?.get(normalizeTagName(tag))?.lightColorHex);
+          const style = light ? ` style="background:${light};color:#000"` : "";
+          return `<span${style}>${esc(label)}</span>`;
+        }).filter(Boolean).join("")}</span>`
       : "";
     const summary = typeof entry.summary === "string" && entry.summary
       ? `<span class="collection-detail-evidence" dir="auto">${esc(entry.summary)}</span>`
@@ -406,7 +594,9 @@
       : "";
     const attributesMarkup = attributes ? `<span class="collection-entry-attributes">${attributes}</span>` : "";
     const entryMeta = `${esc(entry.surface || "feed")} · ${esc(entry.entryType)} · ${collectionObservedAt(entry.lastObservedAtMilliseconds)}`;
-    return `<div class="collection-detail-entry" title="${esc(entry.title)}"><span class="collection-entry-title" dir="auto">${esc(entry.title)}</span><span class="collection-entry-meta">${entryMeta}</span>${summary}${text}${tags}${attributesMarkup}${canonicalURL}</div>`;
+    // Tags render above the evidence text so the fixed-height card never clips
+    // them (long evidence/attributes may still be clamped below).
+    return `<div class="collection-detail-entry" title="${esc(entry.title)}"><span class="collection-entry-title" dir="auto">${esc(entry.title)}</span><span class="collection-entry-meta">${entryMeta}</span>${tags}${summary}${text}${attributesMarkup}${canonicalURL}</div>`;
   }
 
   function creatorEntriesKey(datasetID, platformID, creatorID) {
@@ -832,11 +1022,6 @@
     const protocols = assets.providerProtocols || {};
     const llmProfiles = profiles.filter((profile) => protocols[profile.type]?.supportsLLMConfiguration);
     const rawWebSearchProfiles = profiles.filter((profile) => protocols[profile.type]?.supportsRawWebSearch);
-    const sourceOptions = [
-      ["human", t("bridge.source.human")],
-      ["llmAssist", t("bridge.source.llmAssist")],
-      ["localModel", t("bridge.source.localModel")],
-    ];
     const typeForm = (classifierType) => {
       const formID = `classifier-type-${classifierType.id}`;
       const applicablePlatformID = typeof classifierType.applicablePlatformID === "string" ? classifierType.applicablePlatformID : "";
@@ -926,7 +1111,6 @@
         ["", t("bridge.llmChooseSearchProvider")],
         ...rawWebSearchProfiles.map((profile) => [profile.id, `${profile.name} · ${tx(providerTypeLabelKey(profile.type))}`]),
       ];
-      const priority = classifierType.decisionPriority || ["human", "llmAssist", "localModel"];
       const typeStatus = applicablePlatformID ? t("bridge.configured") : t("bridge.needsSource");
       const leafTagOptions = (selectedTree?.nodes || [])
         .filter((node) => !node.retired && !(selectedTree?.nodes || []).some((candidate) => candidate.parentID === node.id))
@@ -1032,8 +1216,9 @@
               : `<span class="creator-tag-card-avatar creator-tag-card-avatar-fallback" aria-hidden="true">${esc(creator.name.slice(0, 1).toUpperCase())}</span>`;
             return `<article class="creator-tag-card"><div class="creator-tag-card-profile">${avatar}<div><strong dir="auto">${esc(creator.name)}</strong><span>${esc(creator.platformName)}${creator.subscriberCount ? ` · ${tx("bridge.creatorSubscribers", { count: creator.subscriberCount })}` : ""}</span></div></div><div class="creator-tag-card-actions">${actions}</div></article>`;
           };
-          const columns = columnData.map(([kind, titleKey, creators]) => `<section class="creator-tag-column" data-creator-tag-column="${esc(kind)}" data-type-id="${esc(classifierType.id)}"><div class="creator-tag-column-head"><h4>${kind === "needsDecision" ? tx(titleKey) : tagPhrase(titleKey, selectedCreatorTagNode)}</h4><span data-creator-tag-count>${creators.length}</span></div><div class="creator-tag-column-list">${virtualList(creators, creatorTagRowHeight, (creator) => creatorCard(creator, kind), { key: `creator-tag-col-${classifierType.id}-${kind}` })}<p class="creator-tag-empty" data-creator-tag-empty${creators.length ? " hidden" : ""}>${esc(t("bridge.sourceTagEmpty", { sources: sourceTerms.plural }))}</p></div></section>`).join("");
-          return `<div class="creator-tag-browser"><nav class="creator-tag-navigation" aria-label="${tx("bridge.creatorTagNavigation")}" role="tablist">${leafTagOptions.map((node) => `<button class="creator-tag-tab tag-pill${selectedCreatorTagID === node.id ? " active" : ""}" style="${tagColorStyle(node)}" type="button" data-action="selectCreatorTag" data-type-id="${esc(classifierType.id)}" data-tag-id="${esc(node.id)}" role="tab" aria-selected="${selectedCreatorTagID === node.id}">${esc(node.name)}</button>`).join("")}</nav><div class="creator-tag-columns">${columns}</div></div>`;
+          const tagSearchGroup = `creator-tags-${classifierType.id}`;
+          const columns = columnData.map(([kind, titleKey, creators]) => `<section class="creator-tag-column" data-creator-tag-column="${esc(kind)}" data-type-id="${esc(classifierType.id)}"><div class="creator-tag-column-head"><h4>${kind === "needsDecision" ? tx(titleKey) : tagPhrase(titleKey, selectedCreatorTagNode)}</h4><span data-creator-tag-count>${creators.length}</span></div><div class="creator-tag-column-list">${virtualList(creators, creatorTagRowHeight, (creator) => creatorCard(creator, kind), { key: `creator-tag-col-${classifierType.id}-${kind}`, searchGroup: tagSearchGroup, searchOf: (creator) => `${creator.name || ""} ${creator.platformName || ""}` })}<p class="creator-tag-empty" data-creator-tag-empty${creators.length ? " hidden" : ""}>${esc(t("bridge.sourceTagEmpty", { sources: sourceTerms.plural }))}</p></div></section>`).join("");
+          return `<div class="creator-tag-browser"><nav class="creator-tag-navigation" aria-label="${tx("bridge.creatorTagNavigation")}" role="tablist">${leafTagOptions.map((node) => `<button class="creator-tag-tab tag-pill${selectedCreatorTagID === node.id ? " active" : ""}" style="${tagColorStyle(node)}" type="button" data-action="selectCreatorTag" data-type-id="${esc(classifierType.id)}" data-tag-id="${esc(node.id)}" role="tab" aria-selected="${selectedCreatorTagID === node.id}">${esc(node.name)}</button>`).join("")}</nav>${listSearchBox(tagSearchGroup, "bridge.searchSources")}<div class="creator-tag-columns">${columns}</div></div>`;
         })()
         : `<div class="empty compact-empty">${!creatorRecords.length ? esc(t("bridge.noSources", { sources: sourceTerms.plural })) : tx("bridge.noCreatorTags")}</div>`;
       const tagNodeByID = new Map((selectedTree?.nodes || []).map((node) => [node.id, node]));
@@ -1075,7 +1260,7 @@
         const avatar = avatarURL ? `<img class="creator-tag-card-avatar" src="${esc(avatarURL)}" alt="" aria-hidden="true" loading="lazy" decoding="async">` : `<span class="creator-tag-card-avatar creator-tag-card-avatar-fallback" aria-hidden="true">${esc(entry.creatorName.slice(0, 1).toUpperCase())}</span>`;
         return `<article class="creator-tag-card"><div class="creator-tag-card-profile">${avatar}<div><strong dir="auto">${esc(entry.creatorName)}</strong><span>${esc(platformDefinitions.get(entry.platformID)?.name || entry.platformID)}</span></div></div><div class="creator-tag-card-actions"><span class="creator-decision-tags"><span class="small-copy">${tx("bridge.humanTags")}:</span>${labelMarkup(human)}</span><span class="creator-decision-tags"><span class="small-copy">${tx("bridge.llmTags")}:</span>${labelMarkup(llm)}</span></div></article>`;
       };
-      const creatorDecisionList = `<section class="classifier-type-section creator-classification-section"><div class="section-header"><div><h3>${tx("bridge.sourceDecisionList", { source: sourceTerms.singular })}</h3><p class="section-copy">${tx("bridge.sourceDecisionListCopy", { sources: sourceTerms.plural })}</p></div></div>${keyedList(`creator-decisions-${classifierType.id}`, creatorDecisionRows, ([key]) => key, creatorDecisionRow, { emptyMarkup: `<div class="empty compact-empty">${esc(t("bridge.noSources", { sources: sourceTerms.plural }))}</div>`, listClass: "creator-decision-list" })}</section>`;
+      const creatorDecisionList = `<section class="classifier-type-section creator-classification-section"><div class="section-header"><div><h3>${tx("bridge.sourceDecisionList", { source: sourceTerms.singular })}</h3><p class="section-copy">${tx("bridge.sourceDecisionListCopy", { sources: sourceTerms.plural })}</p></div></div>${listSearchBox(`creator-decisions-${classifierType.id}`, "bridge.searchSources")}${keyedList(`creator-decisions-${classifierType.id}`, creatorDecisionRows, ([key]) => key, creatorDecisionRow, { emptyMarkup: `<div class="empty compact-empty">${esc(t("bridge.noSources", { sources: sourceTerms.plural }))}</div>`, listClass: "creator-decision-list", searchGroup: `creator-decisions-${classifierType.id}`, searchOf: ([, creator]) => `${creator.creatorName || ""} ${creator.creatorID || ""}` })}</section>`;
       const llmModelControl = !selectedLLMProfile
         ? `<p class="small-copy">${tx("bridge.llmChooseProviderFirst")}</p>`
         : `<div class="field"><span class="field-label">${tx("bridge.llmModel")} · ${tx("bridge.llmModelCopy")}</span><select class="select-control" data-field="llmModelIdentifier"><option value="">${tx("bridge.llmChooseModel")}</option>${visibleModels.map((model) => `<option value="${esc(model)}"${selected(currentModel, model)}>${esc(model)}</option>`).join("")}</select><span class="action-row"><button type="button" class="secondary" data-action="probeProviderModelCatalog" data-profile-id="${esc(selectedLLMProfile.id)}"${disabled(loadingModelCatalogs.has(selectedLLMProfile.id))}>${tx(loadingModelCatalogs.has(selectedLLMProfile.id) ? "bridge.llmProbingModels" : "bridge.llmProbeModels")}</button><span class="small-copy">${esc(loadingModelCatalogs.has(selectedLLMProfile.id) ? tx("bridge.llmProbingModels") : modelCatalogErrors[selectedLLMProfile.id] || tx("bridge.llmProbeModelsCopy"))}</span></span></div>`;
@@ -1098,7 +1283,6 @@
           : `<span class="small-copy">${tx("bridge.localModelNone")}</span><button class="secondary" type="button" data-action="workspace" data-workspace="localModel">${tx("bridge.localModelCreate")}</button>`}</div></section>
         <section class="classifier-type-section creator-classification-section"><div class="section-header"><div><h3>${tx("bridge.manualSource", { source: sourceTerms.singular })}</h3><p class="section-copy">${tx("bridge.manualSourceCopy", { source: sourceTerms.singular })}</p></div><div class="action-row"><span class="small-copy">${tx("bridge.sourceCount", { count: creatorRecords.length, sources: sourceTerms.plural })}</span></div></div>${creatorClassification}</section>
         <section class="classifier-type-section classifier-llm-section" data-llm-assist-section${supportsLLMAssist ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.llmAssist")}</h3><p class="section-copy">${tx("bridge.llmAssistCopy")}</p></div>${llmActivation}</div>${llmProfiles.length ? llmSettings : `<div class="empty compact-empty">${tx("bridge.noLLMProfiles")}</div>`}</section>
-        <section class="classifier-type-section classifier-decision-policy-section" data-decision-policy-section${supportsLocalModel || supportsLLMAssist ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.decisionPolicy")}</h3><p class="section-copy">${tx("bridge.decisionPolicyCopy")}</p></div></div><div class="classifier-priority-grid">${valueSelectField("bridge.priorityFirst", "", "priorityFirst", priority[0], sourceOptions)}${valueSelectField("bridge.prioritySecond", "", "prioritySecond", priority[1], sourceOptions)}${valueSelectField("bridge.priorityThird", "", "priorityThird", priority[2], sourceOptions)}</div></section>
         ${creatorDecisionList}
       </section>`;
     };
@@ -1114,6 +1298,22 @@
     const definitions = assets.collectionPlatforms || [];
     const datasetByID = new Map(datasets.map((dataset) => [dataset.id, dataset]));
     const treeByID = new Map((assets.trees || []).map((tree) => [tree.id, tree]));
+    // Rebuild the platform -> (tag name -> tree node) color lookup for the detail
+    // pane. Each binding owns one tree; a supplied tag is colored by the matching
+    // tree tag, falling back to a neutral pill when the platform tag is not in
+    // the taxonomy.
+    suppliedTagNodeByPlatform.clear();
+    bindings.forEach((binding) => {
+      const tree = treeByID.get(binding.treeID);
+      if (!tree) return;
+      const nameToNode = new Map();
+      (tree.nodes || []).forEach((node) => {
+        if (node.retired) return;
+        const key = normalizeTagName(node.name);
+        if (key && !nameToNode.has(key)) nameToNode.set(key, node);
+      });
+      suppliedTagNodeByPlatform.set(binding.id, nameToNode);
+    });
     const totalCollectedEntries = datasets.reduce((sum, dataset) => sum + (dataset.collectedCreators || []).reduce((inner, creator) => inner + (Number(creator.entryCount) || 0), 0), 0);
     const classifierTypes = assets.classifierTypes || [];
     const models = assets.models || [];
@@ -1147,7 +1347,7 @@
         const selectedClass = creator.creatorID === selectedCreatorID ? " selected" : "";
         return `<button type="button" class="collection-creator-row${selectedClass}" data-action="selectCollectionCreator" data-dataset-id="${esc(datasetID)}" data-platform-id="${esc(binding.id)}" data-creator-id="${esc(creator.creatorID)}">${avatar}<span class="collection-creator-name" dir="auto">${esc(creator.creatorName || creator.creatorID)}</span><span class="collection-creator-count">${tx("data.entryCount", { count: Number(creator.entryCount) || 0 })}</span></button>`;
       };
-      const creatorList = virtualList(creatorRows, collectionRowHeight, creatorRow, { key: `collection-master-${binding.id}` });
+      const creatorList = virtualList(creatorRows, collectionRowHeight, creatorRow, { key: `collection-master-${binding.id}`, searchGroup: `collection-master-${binding.id}`, searchOf: (creator) => `${creator.creatorName || ""} ${creator.creatorID || ""}` });
       const selectedCreator = creatorRows.find((creator) => creator.creatorID === selectedCreatorID) || null;
       const creatorListOpen = !collapsedCollectionCreatorLists.has(binding.id);
       // Lazy-load the chosen creator's entries only while the list is open; the
@@ -1170,7 +1370,7 @@
       const typeOptions = [["", t("data.noClassifierType")], ...selectableTypes.map((classifierType) => [classifierType.id, classifierType.name])];
       const typeStatus = binding.activeClassifierTypeID ? "data.classifierTypeActive" : "data.classifierTypeNone";
       const localOnlyNotice = binding.id === "discord" ? `<p class="small-copy collection-local-only">${tx("data.discordLocalOnly")}</p>` : "";
-      return `<section class="collection-platform-panel" data-form-id="${esc(formID)}"><div class="collection-platform-head"><div><span class="eyebrow">${tx("data.platformPanel")}</span><h3>${esc(binding.name)}</h3><p class="section-copy">${esc(binding.browser)} · ${tx(availability)}</p></div><div class="collection-platform-actions">${statusPill(t(binding.collectionEnabled ? "data.collecting" : "data.collectionOff"), binding.collectionEnabled ? "cyan" : "muted")}<button class="danger" data-action="confirmDeleteCollectionPlatform" data-platform-id="${esc(binding.id)}" data-name="${esc(binding.name)}">${tx("data.deletePlatform")}</button></div></div><div class="collection-platform-controls">${toggle("data.collectToggle", "enabled", Boolean(binding.collectionEnabled))}<button class="primary" data-action="setCollectionEnabled" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyCollection")}</button></div>${localOnlyNotice}<div class="collection-platform-controls">${valueSelectField("data.classifierType", "data.classifierTypeCopy", "classifierTypeID", binding.activeClassifierTypeID || "", typeOptions)}<button class="secondary" data-action="setActiveClassifierType" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyClassifierType")}</button>${statusPill(t(typeStatus), binding.activeClassifierTypeID ? "navy" : "muted")}</div>${creatorRows.length ? `<details class="collection-creators" data-collection-creators-platform="${esc(binding.id)}"${creatorListOpen ? " open" : ""}><summary class="collection-creators-summary"><span>${tx("data.sourceCount", { count: creatorRows.length, sources: sourceTerms.plural })}</span><span>${tx("data.entryCount", { count: entryTotal })}</span></summary><div class="collection-master-detail"><div class="collection-master">${creatorList}</div>${detailPane}</div></details>` : `<div class="empty collection-empty">${tx(binding.collectionEnabled ? "data.waitingForEntries" : "data.collectionDisabledCopy")}</div>`}</section>`;
+      return `<section class="collection-platform-panel" data-form-id="${esc(formID)}"><div class="collection-platform-head"><div><span class="eyebrow">${tx("data.platformPanel")}</span><h3>${esc(binding.name)}</h3><p class="section-copy">${esc(binding.browser)} · ${tx(availability)}</p></div><div class="collection-platform-actions">${statusPill(t(binding.collectionEnabled ? "data.collecting" : "data.collectionOff"), binding.collectionEnabled ? "cyan" : "muted")}<button class="danger" data-action="confirmDeleteCollectionPlatform" data-platform-id="${esc(binding.id)}" data-name="${esc(binding.name)}">${tx("data.deletePlatform")}</button></div></div><div class="collection-platform-controls">${toggle("data.collectToggle", "enabled", Boolean(binding.collectionEnabled))}<button class="primary" data-action="setCollectionEnabled" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyCollection")}</button></div>${localOnlyNotice}<div class="collection-platform-controls">${valueSelectField("data.classifierType", "data.classifierTypeCopy", "classifierTypeID", binding.activeClassifierTypeID || "", typeOptions)}<button class="secondary" data-action="setActiveClassifierType" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyClassifierType")}</button>${statusPill(t(typeStatus), binding.activeClassifierTypeID ? "navy" : "muted")}</div>${creatorRows.length ? `<details class="collection-creators" data-collection-creators-platform="${esc(binding.id)}"${creatorListOpen ? " open" : ""}><summary class="collection-creators-summary"><span>${tx("data.sourceCount", { count: creatorRows.length, sources: sourceTerms.plural })}</span><span>${tx("data.entryCount", { count: entryTotal })}</span></summary><div class="collection-master-detail"><div class="collection-master">${listSearchBox(`collection-master-${binding.id}`, "bridge.searchSources")}${creatorList}</div>${detailPane}</div></details>` : `<div class="empty collection-empty">${tx(binding.collectionEnabled ? "data.waitingForEntries" : "data.collectionDisabledCopy")}</div>`}</section>`;
     };
     return `<div class="workspace collection-workspace">${header("data.title", "data.copy", t("data.entries", { count: totalCollectedEntries }), "cyan")}
       <section class="collection-platform-create" data-form-id="collection-platform-create-form"><div><span class="eyebrow">${tx("data.addPlatform")}</span><p class="section-copy">${tx("data.addPlatformCopy")}</p></div>${availablePlatforms.length ? `${valueSelectField("data.platform", "", "platformID", availablePlatforms[0].id, availablePlatforms.map((platform) => [platform.id, platform.name]))}<button class="primary" data-action="addCollectionPlatform" data-form="collection-platform-create-form">${tx("data.addPlatformAction")}</button>` : `<span class="small-copy">${tx("data.allPlatformsAdded")}</span>`}</section>
@@ -1317,6 +1517,13 @@
   }
 
   document.addEventListener("input", (event) => {
+    const searchInput = event.target.closest("input[data-list-search]");
+    if (searchInput) {
+      const group = searchInput.dataset.listSearch;
+      listSearchQueryByGroup.set(group, searchInput.value);
+      scheduleListSearch(group);
+      return;
+    }
     const deletionInput = event.target.closest("[data-deletion-name-input]");
     if (deletionInput) {
       const confirmButton = root.querySelector('[data-action="confirmPendingDeletion"]');
@@ -1418,9 +1625,11 @@
   // reconcileKeyedLists. On a state push that only changes row data, render()
   // updates just the changed rows in place and preserves the container's
   // scroll, instead of rebuilding the page.
-  function keyedList(id, items, keyOf, renderRow, { emptyMarkup = "", listClass = "" } = {}) {
-    keyedListRegistry.set(id, { items, keyOf, renderRow, emptyMarkup });
-    return `<div${listClass ? ` class="${esc(listClass)}"` : ""} data-keyed-list="${esc(id)}"></div>`;
+  function keyedList(id, items, keyOf, renderRow, { emptyMarkup = "", listClass = "", searchOf = null, searchGroup = "" } = {}) {
+    const rawQuery = searchGroup ? (listSearchQueryByGroup.get(searchGroup) || "") : "";
+    const filtered = (searchOf && rawQuery.trim()) ? rankItems(items, searchOf, rawQuery) : items;
+    keyedListRegistry.set(id, { items: filtered, allItems: items, keyOf, renderRow, emptyMarkup, searchOf });
+    return `<div${listClass ? ` class="${esc(listClass)}"` : ""} data-keyed-list="${esc(id)}"${searchGroup ? ` data-search-group="${esc(searchGroup)}"` : ""}></div>`;
   }
 
   function reconcileKeyedLists() {
@@ -1504,6 +1713,7 @@
         reconcileLiveHTML();
         reconcileKeyedLists();
         repaintVirtualLists();
+        refreshAllListSearchMeta();
         return;
       } catch (_) { /* fall through to full render */ }
     }
@@ -1513,6 +1723,13 @@
   function renderFull(markup) {
     rememberTreeViewportPositions();
     rememberEditorViewportPosition();
+    // A snapshot push can rebuild the DOM while the user is typing in a list
+    // search (classification runs push often). Preserve which search box was
+    // focused and the caret so search-as-you-type is not interrupted.
+    const focusedSearch = document.activeElement?.closest?.("input[data-list-search]");
+    const focusedSearchState = focusedSearch
+      ? { group: focusedSearch.dataset.listSearch, start: focusedSearch.selectionStart, end: focusedSearch.selectionEnd }
+      : null;
     virtualListResizeObserver?.disconnect();
     keyedListRenderedRows.clear();
     liveHTMLRendered.clear();
@@ -1523,6 +1740,15 @@
     bindTreeMapWheel();
     reconcileLiveHTML();
     reconcileKeyedLists();
+    refreshAllListSearchMeta();
+    if (focusedSearchState) {
+      const restored = [...root.querySelectorAll("input[data-list-search]")]
+        .find((input) => input.dataset.listSearch === focusedSearchState.group);
+      if (restored) {
+        restored.focus();
+        try { restored.setSelectionRange(focusedSearchState.start, focusedSearchState.end); } catch (_) { /* non-text input */ }
+      }
+    }
     window.requestAnimationFrame(() => {
       applyNavigationPanelWidth();
       restoreEditorViewportPosition();
