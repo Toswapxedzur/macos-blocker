@@ -55,10 +55,27 @@ public struct NativeCollectionResponse: Codable, Equatable, Sendable {
 public struct NativeSourceTagsRequest: Codable, Equatable, Sendable {
     public var platformID: String
     public var sourceID: String
+    /// Best-effort display names for cards that expose no creator link (YouTube
+    /// collaboration cards). Used only when `sourceID` resolves nothing.
+    public var creatorNames: [String]
 
-    public init(platformID: String, sourceID: String) {
+    public static let maximumCreatorNames = 4
+    public static let maximumCreatorNameLength = 120
+
+    public init(platformID: String, sourceID: String, creatorNames: [String] = []) {
         self.platformID = platformID
         self.sourceID = sourceID
+        self.creatorNames = creatorNames
+    }
+
+    private enum CodingKeys: String, CodingKey { case platformID, sourceID, creatorNames }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        platformID = try container.decode(String.self, forKey: .platformID)
+        sourceID = try container.decode(String.self, forKey: .sourceID)
+        // Crash-guard for payloads from an older extension that omit the field.
+        creatorNames = (try container.decodeIfPresent([String].self, forKey: .creatorNames)) ?? []
     }
 
     public func validate() throws {
@@ -72,6 +89,10 @@ public struct NativeSourceTagsRequest: Codable, Equatable, Sendable {
               sourceID.unicodeScalars.allSatisfy({
                   $0.value >= 0x21 && $0.value != 0x7f
               }) else {
+            throw NativeSourceTagsError.invalidSource
+        }
+        guard creatorNames.count <= Self.maximumCreatorNames,
+              creatorNames.allSatisfy({ !$0.isEmpty && $0.count <= Self.maximumCreatorNameLength }) else {
             throw NativeSourceTagsError.invalidSource
         }
     }
@@ -117,6 +138,80 @@ public struct NativeSourceTagsResponse: Codable, Equatable, Sendable {
                 }
                 .prefix(CreatorClassificationRecord.maximumTagIDs)
         )
+    }
+}
+
+/// One creator lookup inside a batch: a source id and, for link-less
+/// collaboration cards, the byline names to match by if the id resolves nothing.
+public struct NativeSourceTagsBatchItem: Codable, Equatable, Sendable {
+    public var sourceID: String
+    public var creatorNames: [String]
+
+    public init(sourceID: String, creatorNames: [String] = []) {
+        self.sourceID = sourceID
+        self.creatorNames = creatorNames
+    }
+
+    private enum CodingKeys: String, CodingKey { case sourceID, creatorNames }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sourceID = try container.decode(String.self, forKey: .sourceID)
+        creatorNames = (try container.decodeIfPresent([String].self, forKey: .creatorNames)) ?? []
+    }
+}
+
+/// Resolves many creators in one round trip so a whole feed screenful costs a
+/// single hub slot instead of one per card.
+public struct NativeSourceTagsBatchRequest: Codable, Equatable, Sendable {
+    public static let maximumItems = 128
+
+    public var platformID: String
+    public var items: [NativeSourceTagsBatchItem]
+
+    public init(platformID: String, items: [NativeSourceTagsBatchItem]) {
+        self.platformID = platformID
+        self.items = items
+    }
+
+    public func validate() throws {
+        guard !platformID.isEmpty, platformID.count <= 64, platformID.unicodeScalars.allSatisfy({
+            ($0.value >= 0x61 && $0.value <= 0x7a) || ($0.value >= 0x30 && $0.value <= 0x39) || $0.value == 0x2d
+        }) else {
+            throw NativeSourceTagsError.invalidPlatform
+        }
+        guard items.count <= Self.maximumItems else { throw NativeSourceTagsError.invalidSource }
+        for item in items {
+            guard !item.sourceID.isEmpty,
+                  item.sourceID.count <= 256,
+                  item.sourceID.hasPrefix("\(platformID):"),
+                  item.sourceID == item.sourceID.trimmingCharacters(in: .whitespacesAndNewlines),
+                  item.sourceID.unicodeScalars.allSatisfy({ $0.value >= 0x21 && $0.value != 0x7f }),
+                  item.creatorNames.count <= NativeSourceTagsRequest.maximumCreatorNames,
+                  item.creatorNames.allSatisfy({ !$0.isEmpty && $0.count <= NativeSourceTagsRequest.maximumCreatorNameLength }) else {
+                throw NativeSourceTagsError.invalidSource
+            }
+        }
+    }
+}
+
+public struct NativeSourceTagsBatchEntry: Codable, Equatable, Sendable {
+    public var sourceID: String
+    public var tags: [NativeSourceTag]
+
+    public init(sourceID: String, tags: [NativeSourceTag]) {
+        self.sourceID = sourceID
+        self.tags = tags
+    }
+}
+
+public struct NativeSourceTagsBatchResponse: Codable, Equatable, Sendable {
+    public var platformID: String
+    public var results: [NativeSourceTagsBatchEntry]
+
+    public init(platformID: String, results: [NativeSourceTagsBatchEntry]) {
+        self.platformID = platformID
+        self.results = results
     }
 }
 
