@@ -233,6 +233,16 @@ final class VaultClassifierViewModel: ObservableObject {
     }
 
     private func handleSharedHubRequest(_ request: SharedHubClient.Request) -> SharedHubClient.Reply {
+        // DEBUG: measure pure in-app processing (request received → reply built),
+        // isolated from transport. Remove before shipping.
+        let started = DispatchTime.now().uptimeNanoseconds
+        let reply = handleSharedHubRequestBody(request)
+        let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds &- started) / 1_000_000
+        fputs(String(format: "[BRIDGE-TIMING] op=%@ inApp=%.3fms\n", request.operation.rawValue, elapsedMs), stderr)
+        return reply
+    }
+
+    private func handleSharedHubRequestBody(_ request: SharedHubClient.Request) -> SharedHubClient.Reply {
         do {
             guard let coordinator else { return .failure("classifier-unavailable") }
             switch request.operation {
@@ -282,7 +292,8 @@ final class VaultClassifierViewModel: ObservableObject {
                 try sourceTags.validate()
                 let tags = try coordinator.sourceTags(
                     platformID: sourceTags.platformID,
-                    sourceID: sourceTags.sourceID
+                    sourceID: sourceTags.sourceID,
+                    creatorNames: sourceTags.creatorNames
                 )
                 return try sharedHubReply(NativeSourceTagsResponse(
                     platformID: sourceTags.platformID,
@@ -297,6 +308,33 @@ final class VaultClassifierViewModel: ObservableObject {
                             name: tag.name,
                             lightColorHex: lightColorHex,
                             darkColorHex: darkColorHex
+                        )
+                    }
+                ))
+            case .sourceTagsBatch:
+                let batch = try JSONDecoder().decode(NativeSourceTagsBatchRequest.self, from: request.bodyData)
+                try batch.validate()
+                let results = try coordinator.sourceTagsBatch(
+                    platformID: batch.platformID,
+                    items: batch.items.map { ($0.sourceID, $0.creatorNames) }
+                )
+                return try sharedHubReply(NativeSourceTagsBatchResponse(
+                    platformID: batch.platformID,
+                    results: results.map { result in
+                        NativeSourceTagsBatchEntry(
+                            sourceID: result.sourceID,
+                            tags: result.tags.compactMap { tag in
+                                guard let lightColorHex = TagColorAssignment.normalizedHex(tag.lightColorHex),
+                                      let darkColorHex = TagColorAssignment.normalizedHex(tag.darkColorHex) else {
+                                    return nil
+                                }
+                                return NativeSourceTag(
+                                    id: tag.id,
+                                    name: tag.name,
+                                    lightColorHex: lightColorHex,
+                                    darkColorHex: darkColorHex
+                                )
+                            }
                         )
                     }
                 ))

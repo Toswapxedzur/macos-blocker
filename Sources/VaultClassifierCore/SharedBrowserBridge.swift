@@ -8,6 +8,7 @@ public enum SharedBrowserBridgeOperation: String, CaseIterable, Codable, Sendabl
     case diagnostic = "diagnostic"
     case collect
     case sourceTags = "source-tags"
+    case sourceTagsBatch = "source-tags-batch"
     case classify
     case correct
 }

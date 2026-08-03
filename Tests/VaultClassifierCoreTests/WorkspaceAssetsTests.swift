@@ -855,6 +855,146 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertTrue(classifier.sourceTags(platformID: "discord", sourceID: "discord:server:missing").isEmpty)
     }
 
+    func testInjectedIdentityIndexResolvesSourceTagsAcrossCreatorForms() throws {
+        // Locks in the mechanism LocalStore's source-tag cache depends on: a
+        // caller-supplied identity index (memoized across a burst of pill
+        // lookups) must drive cross-form resolution exactly as a freshly built
+        // one would, so a creator classified under its @handle still resolves
+        // when a watch page queries its channel/UC form.
+        let tree = TagTreeAsset(id: "tree", name: "Topics", nodes: [.init(id: "games", name: "Games")])
+        let handleID = "youtube:handle:@creator"
+        let channelID = "youtube:channel:UC0123456789012345678901"
+        let classifierType = ClassifierTypeAsset(
+            id: "type", name: "Manual-only", treeID: tree.id, treeRevision: tree.revision,
+            datasetID: "dataset", datasetRevision: 1, applicablePlatformID: "youtube"
+        )
+        let records = [CreatorClassificationRecord(
+            classifierTypeID: "type", creatorID: handleID, creatorName: "Creator",
+            platformID: "youtube", treeID: tree.id, treeRevision: tree.revision,
+            tagIDs: ["games"], origin: .manual, review: .approved
+        )]
+        func classifier(identityIndex: CreatorIdentityIndex) throws -> WorkspaceNeuralClassifier {
+            WorkspaceNeuralClassifier(
+                classifierType: classifierType, model: nil,
+                taxonomy: try tree.inferenceTaxonomy(), policies: [],
+                creatorClassifications: records, identityIndex: identityIndex
+            )
+        }
+
+        // The entry links the handle to its channel alias — the same input the
+        // cached index is built from.
+        let linkingEntry = CollectedPlatformEntry(
+            id: "e1", platformID: "youtube", entryID: "youtube:video:v1",
+            creatorID: handleID, sourceAliases: [channelID],
+            creatorName: "Creator", entryType: "video", title: "Title"
+        )
+        let linkedIndex = CreatorIdentityIndex(entries: [linkingEntry])
+        let expected = [TagNode(id: "games", name: "Games")]
+
+        // Queried by either form, the injected index resolves the same tag.
+        XCTAssertEqual(try classifier(identityIndex: linkedIndex).sourceTags(platformID: "youtube", sourceID: handleID), expected)
+        XCTAssertEqual(try classifier(identityIndex: linkedIndex).sourceTags(platformID: "youtube", sourceID: channelID), expected)
+
+        // Without the alias link (e.g. before the linking entry was collected),
+        // the channel form does not resolve — proving the injected index, not
+        // some incidental match, is what carries cross-form resolution.
+        let emptyIndex = CreatorIdentityIndex(entries: [])
+        XCTAssertEqual(try classifier(identityIndex: emptyIndex).sourceTags(platformID: "youtube", sourceID: handleID), expected)
+        XCTAssertTrue(try classifier(identityIndex: emptyIndex).sourceTags(platformID: "youtube", sourceID: channelID).isEmpty)
+    }
+
+    func testSourceTagsBatchResolvesEachSourceInOneCall() throws {
+        // The batch path resolves each item independently — a linked id directly,
+        // and a link-less collab item by its byline name — mirroring the single
+        // lookup, so a whole screenful costs one request.
+        let tree = TagTreeAsset(id: "tree", name: "Topics", nodes: [
+            .init(id: "games", name: "Games"),
+            .init(id: "science", name: "Science")
+        ])
+        let classifierType = ClassifierTypeAsset(
+            id: "type", name: "Manual-only", treeID: tree.id, treeRevision: tree.revision,
+            datasetID: "dataset", datasetRevision: 1, applicablePlatformID: "youtube"
+        )
+        let records = [
+            CreatorClassificationRecord(
+                classifierTypeID: "type", creatorID: "youtube:handle:@gamer", creatorName: "Gamer",
+                platformID: "youtube", treeID: tree.id, treeRevision: tree.revision,
+                tagIDs: ["games"], origin: .manual, review: .approved
+            ),
+            CreatorClassificationRecord(
+                classifierTypeID: "type", creatorID: "youtube:handle:@scientist", creatorName: "Sci Person",
+                platformID: "youtube", treeID: tree.id, treeRevision: tree.revision,
+                tagIDs: ["science"], origin: .manual, review: .approved
+            )
+        ]
+        let classifier = WorkspaceNeuralClassifier(
+            classifierType: classifierType, model: nil,
+            taxonomy: try tree.inferenceTaxonomy(), policies: [], creatorClassifications: records
+        )
+
+        // Simulate the batch loop the coordinator runs (build-once, look up each).
+        let items: [(sourceID: String, creatorNames: [String])] = [
+            ("youtube:handle:@gamer", []),               // linked, direct hit
+            ("youtube:collab:VIDID123456", ["Sci Person"]), // link-less collab, name match
+            ("youtube:handle:@nobody", [])               // unclassified → empty
+        ]
+        let results = items.map { item -> (String, [TagNode]) in
+            let direct = classifier.sourceTags(platformID: "youtube", sourceID: item.sourceID)
+            if direct.isEmpty, !item.creatorNames.isEmpty {
+                return (item.sourceID, classifier.sourceTags(platformID: "youtube", anyOfCreatorNames: item.creatorNames))
+            }
+            return (item.sourceID, direct)
+        }
+
+        XCTAssertEqual(results[0].1, [TagNode(id: "games", name: "Games")])
+        XCTAssertEqual(results[1].1, [TagNode(id: "science", name: "Science")])
+        XCTAssertTrue(results[2].1.isEmpty)
+    }
+
+    func testSourceTagsMatchByCreatorNameForLinklessCollaborationCards() throws {
+        // YouTube collaboration cards expose no creator link, only unlinked
+        // names. The by-name fallback must project the tags of an approved
+        // classification whose creator name matches (case-insensitive), and
+        // return nothing for a name with no approved classification.
+        let tree = TagTreeAsset(id: "tree", name: "Topics", nodes: [
+            .init(id: "games", name: "Games"),
+            .init(id: "science", name: "Science")
+        ])
+        let classifierType = ClassifierTypeAsset(
+            id: "type", name: "Manual-only", treeID: tree.id, treeRevision: tree.revision,
+            datasetID: "dataset", datasetRevision: 1, applicablePlatformID: "youtube"
+        )
+        let records = [
+            CreatorClassificationRecord(
+                classifierTypeID: "type", creatorID: "youtube:handle:@atlasarcade", creatorName: "Atlas Arcade",
+                platformID: "youtube", treeID: tree.id, treeRevision: tree.revision,
+                tagIDs: ["games"], origin: .manual, review: .approved
+            ),
+            CreatorClassificationRecord(
+                classifierTypeID: "type", creatorID: "youtube:handle:@pending", creatorName: "Pending Creator",
+                platformID: "youtube", treeID: tree.id, treeRevision: tree.revision,
+                tagIDs: ["science"], origin: .llmAssist, review: .pending
+            )
+        ]
+        let classifier = WorkspaceNeuralClassifier(
+            classifierType: classifierType, model: nil,
+            taxonomy: try tree.inferenceTaxonomy(), policies: [],
+            creatorClassifications: records
+        )
+
+        // The first collaborator is classified (case-insensitive match wins).
+        XCTAssertEqual(
+            classifier.sourceTags(platformID: "youtube", anyOfCreatorNames: ["ATLAS ARCADE", "Animated Subtitles"]),
+            [TagNode(id: "games", name: "Games")]
+        )
+        // A name with only a pending (unapproved) classification resolves nothing.
+        XCTAssertTrue(classifier.sourceTags(platformID: "youtube", anyOfCreatorNames: ["Pending Creator"]).isEmpty)
+        // A name that matches nobody resolves nothing.
+        XCTAssertTrue(classifier.sourceTags(platformID: "youtube", anyOfCreatorNames: ["Nobody At All"]).isEmpty)
+        // Empty / whitespace names never match.
+        XCTAssertTrue(classifier.sourceTags(platformID: "youtube", anyOfCreatorNames: ["   ", ""]).isEmpty)
+    }
+
     func testCreatorClassificationsAreTheOnlyActiveTrainingLabels() throws {
         let tree = TagTreeAsset(
             id: "interests",

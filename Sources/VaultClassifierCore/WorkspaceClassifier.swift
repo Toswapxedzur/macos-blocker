@@ -207,6 +207,17 @@ public struct WorkspaceNeuralClassifier: Sendable {
     /// predictions are deliberately excluded because browser annotations
     /// describe the source, not a guess about one visible title.
     public func sourceTags(platformID: String, sourceID: String) -> [TagNode] {
+        // TEST-ONLY: when ADAMANCIA_VAULT_VIRTUAL_SHOW_SOURCE_NAME is set, project
+        // the queried source's own identity (its handle/channel/collab form) as the
+        // tag — over the real async path — so every card visibly shows which creator
+        // it resolved to, without writing any real classification. Not for production.
+        if ProcessInfo.processInfo.environment["ADAMANCIA_VAULT_VIRTUAL_SHOW_SOURCE_NAME"] != nil,
+           !sourceID.isEmpty {
+            let name = sourceID.hasPrefix("\(platformID):")
+                ? String(sourceID.dropFirst(platformID.count + 1))
+                : sourceID
+            return [TagNode(id: sourceID, name: name, predictable: true, lightColorHex: "#DBE5F3", darkColorHex: "#2A3B4D")]
+        }
         let allowedTags = Set(taxonomy.nodes.values.filter(\.predictable).map(\.id))
         let signals = creatorSignals(
             platformID: platformID,
@@ -232,6 +243,29 @@ public struct WorkspaceNeuralClassifier: Sendable {
         }
         .prefix(Self.maximumSelectedTags)
         .map(\.0)
+    }
+
+    /// Best-effort source tags for a creator identified only by a display name.
+    /// YouTube collaboration cards expose no creator link — just unlinked
+    /// collaborator names — so there is no stable id to match. This projects the
+    /// tags of the first approved classification whose creator name equals one of
+    /// `names` (case-insensitive). Display names are not unique, so on a collision
+    /// an arbitrary matching creator wins; callers use this only when no linked
+    /// identity is available.
+    public func sourceTags(platformID: String, anyOfCreatorNames names: [String]) -> [TagNode] {
+        let wanted = Set(names
+            .map { $0.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty })
+        guard !wanted.isEmpty else { return [] }
+        for classification in creatorClassifications where
+            classification.classifierTypeID == classifierType.id &&
+            classification.platformID == platformID &&
+            classification.review == .approved &&
+            wanted.contains(classification.creatorName.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)) {
+            let tags = sourceTags(platformID: platformID, sourceID: classification.creatorID)
+            if !tags.isEmpty { return tags }
+        }
+        return []
     }
 
     private func creatorSignals(
@@ -275,7 +309,11 @@ public extension WorkspaceCatalog {
     /// Returns `nil` only when the platform has not selected a classifier type
     /// yet. That preserves a deliberate migration path for existing profiles;
     /// once selected, an invalid type is an error rather than a fallback.
-    func workspaceClassifier(for platformID: String, policies: [NamedPolicy]) throws -> WorkspaceNeuralClassifier? {
+    func workspaceClassifier(
+        for platformID: String,
+        policies: [NamedPolicy],
+        identityIndex: CreatorIdentityIndex? = nil
+    ) throws -> WorkspaceNeuralClassifier? {
         guard let binding = bindings.first(where: { $0.id == platformID }),
               let classifierTypeID = binding.activeClassifierTypeID else {
             return nil
@@ -314,7 +352,11 @@ public extension WorkspaceCatalog {
             taxonomy: try tree.inferenceTaxonomy(),
             policies: policies,
             creatorClassifications: dataset.creatorClassifications,
-            identityIndex: CreatorIdentityIndex(entries: dataset.collectedEntries)
+            // The identity index is a pure function of the dataset's collected
+            // entries. Callers that issue many lookups against an unchanged
+            // dataset (e.g. rendering a page of source-tag pills) pass a memoized
+            // index so the O(entries) union-find is not rebuilt per request.
+            identityIndex: identityIndex ?? CreatorIdentityIndex(entries: dataset.collectedEntries)
         )
     }
 }
