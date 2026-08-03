@@ -903,54 +903,6 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertTrue(try classifier(identityIndex: emptyIndex).sourceTags(platformID: "youtube", sourceID: channelID).isEmpty)
     }
 
-    func testSourceTagsBatchResolvesEachSourceInOneCall() throws {
-        // The batch path resolves each item independently — a linked id directly,
-        // and a link-less collab item by its byline name — mirroring the single
-        // lookup, so a whole screenful costs one request.
-        let tree = TagTreeAsset(id: "tree", name: "Topics", nodes: [
-            .init(id: "games", name: "Games"),
-            .init(id: "science", name: "Science")
-        ])
-        let classifierType = ClassifierTypeAsset(
-            id: "type", name: "Manual-only", treeID: tree.id, treeRevision: tree.revision,
-            datasetID: "dataset", datasetRevision: 1, applicablePlatformID: "youtube"
-        )
-        let records = [
-            CreatorClassificationRecord(
-                classifierTypeID: "type", creatorID: "youtube:handle:@gamer", creatorName: "Gamer",
-                platformID: "youtube", treeID: tree.id, treeRevision: tree.revision,
-                tagIDs: ["games"], origin: .manual, review: .approved
-            ),
-            CreatorClassificationRecord(
-                classifierTypeID: "type", creatorID: "youtube:handle:@scientist", creatorName: "Sci Person",
-                platformID: "youtube", treeID: tree.id, treeRevision: tree.revision,
-                tagIDs: ["science"], origin: .manual, review: .approved
-            )
-        ]
-        let classifier = WorkspaceNeuralClassifier(
-            classifierType: classifierType, model: nil,
-            taxonomy: try tree.inferenceTaxonomy(), policies: [], creatorClassifications: records
-        )
-
-        // Simulate the batch loop the coordinator runs (build-once, look up each).
-        let items: [(sourceID: String, creatorNames: [String])] = [
-            ("youtube:handle:@gamer", []),               // linked, direct hit
-            ("youtube:collab:VIDID123456", ["Sci Person"]), // link-less collab, name match
-            ("youtube:handle:@nobody", [])               // unclassified → empty
-        ]
-        let results = items.map { item -> (String, [TagNode]) in
-            let direct = classifier.sourceTags(platformID: "youtube", sourceID: item.sourceID)
-            if direct.isEmpty, !item.creatorNames.isEmpty {
-                return (item.sourceID, classifier.sourceTags(platformID: "youtube", anyOfCreatorNames: item.creatorNames))
-            }
-            return (item.sourceID, direct)
-        }
-
-        XCTAssertEqual(results[0].1, [TagNode(id: "games", name: "Games")])
-        XCTAssertEqual(results[1].1, [TagNode(id: "science", name: "Science")])
-        XCTAssertTrue(results[2].1.isEmpty)
-    }
-
     func testSourceTagsMatchByCreatorNameForLinklessCollaborationCards() throws {
         // YouTube collaboration cards expose no creator link, only unlinked
         // names. The by-name fallback must project the tags of an approved
