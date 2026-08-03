@@ -311,33 +311,6 @@ final class VaultClassifierViewModel: ObservableObject {
                         )
                     }
                 ))
-            case .sourceTagsBatch:
-                let batch = try JSONDecoder().decode(NativeSourceTagsBatchRequest.self, from: request.bodyData)
-                try batch.validate()
-                let results = try coordinator.sourceTagsBatch(
-                    platformID: batch.platformID,
-                    items: batch.items.map { ($0.sourceID, $0.creatorNames) }
-                )
-                return try sharedHubReply(NativeSourceTagsBatchResponse(
-                    platformID: batch.platformID,
-                    results: results.map { result in
-                        NativeSourceTagsBatchEntry(
-                            sourceID: result.sourceID,
-                            tags: result.tags.compactMap { tag in
-                                guard let lightColorHex = TagColorAssignment.normalizedHex(tag.lightColorHex),
-                                      let darkColorHex = TagColorAssignment.normalizedHex(tag.darkColorHex) else {
-                                    return nil
-                                }
-                                return NativeSourceTag(
-                                    id: tag.id,
-                                    name: tag.name,
-                                    lightColorHex: lightColorHex,
-                                    darkColorHex: darkColorHex
-                                )
-                            }
-                        )
-                    }
-                ))
             case .classify:
                 let classification = try JSONDecoder().decode(NativeClassificationRequest.self, from: request.bodyData)
                 let output = try coordinator.classifyWithLedger(classification.entry)
