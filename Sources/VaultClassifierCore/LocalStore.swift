@@ -371,6 +371,11 @@ public final class LocalClassifierCoordinator {
     private var activeVerifiedManifest: ModelPackageManifest?
     private var engine: LocalClassifierEngine
     private var state: LocalClassifierState
+    // Memoized creator-identity index for source-tag lookups. Rebuilding the
+    // union-find over every collected entry per request dominated pill latency
+    // (~11 ms per lookup over a few thousand entries); the index depends only on
+    // the dataset's collected entries, so it is reused until those change.
+    private var identityIndexCache: (datasetID: String, revision: Int, entryCount: Int, index: CreatorIdentityIndex)?
 
     public convenience init(verifiedPackage: VerifiedSeedPackage, stateFile: LocalStateFile, defaultPolicies: [NamedPolicy] = []) throws {
         try self.init(
@@ -704,20 +709,76 @@ public final class LocalClassifierCoordinator {
     /// Returns a display-only projection of approved tags for one verified
     /// source. This does not classify an entry, create a ledger record, or
     /// persist browser state.
-    public func sourceTags(platformID: String, sourceID: String) throws -> [TagNode] {
+    public func sourceTags(platformID: String, sourceID: String, creatorNames: [String] = []) throws -> [TagNode] {
         lock.lock()
         defer { lock.unlock() }
         guard let binding = state.workspaceCatalog.bindings.first(where: { $0.id == platformID }),
               binding.collectionEnabled else {
             throw PlatformCollectionError.disabled(platformID)
         }
+        let dataset = state.workspaceCatalog.datasets.first(where: { $0.id == binding.datasetID })
         guard let classifier = try state.workspaceCatalog.workspaceClassifier(
             for: platformID,
-            policies: engine.policies
+            policies: engine.policies,
+            identityIndex: dataset.map(memoizedIdentityIndex(for:))
         ) else {
             return []
         }
-        return classifier.sourceTags(platformID: platformID, sourceID: sourceID)
+        let direct = classifier.sourceTags(platformID: platformID, sourceID: sourceID)
+        // A collaboration card exposes no creator link, only unlinked names. When
+        // the linked identity resolves nothing, fall back to matching a supplied
+        // display name against an approved classification.
+        if direct.isEmpty, !creatorNames.isEmpty {
+            return classifier.sourceTags(platformID: platformID, anyOfCreatorNames: creatorNames)
+        }
+        return direct
+    }
+
+    /// Resolves many creators in one call — building the classifier and identity
+    /// index once and looking up each source — so a whole feed screenful is a
+    /// single request instead of one round trip per card.
+    public func sourceTagsBatch(
+        platformID: String,
+        items: [(sourceID: String, creatorNames: [String])]
+    ) throws -> [(sourceID: String, tags: [TagNode])] {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let binding = state.workspaceCatalog.bindings.first(where: { $0.id == platformID }),
+              binding.collectionEnabled else {
+            throw PlatformCollectionError.disabled(platformID)
+        }
+        let dataset = state.workspaceCatalog.datasets.first(where: { $0.id == binding.datasetID })
+        guard let classifier = try state.workspaceCatalog.workspaceClassifier(
+            for: platformID,
+            policies: engine.policies,
+            identityIndex: dataset.map(memoizedIdentityIndex(for:))
+        ) else {
+            return items.map { ($0.sourceID, []) }
+        }
+        return items.map { item in
+            let direct = classifier.sourceTags(platformID: platformID, sourceID: item.sourceID)
+            if direct.isEmpty, !item.creatorNames.isEmpty {
+                return (item.sourceID, classifier.sourceTags(platformID: platformID, anyOfCreatorNames: item.creatorNames))
+            }
+            return (item.sourceID, direct)
+        }
+    }
+
+    /// Returns a creator-identity index for `dataset`, reusing the cached one
+    /// while the dataset's collected entries are unchanged. Collecting an entry
+    /// or approving a label does not advance the dataset revision, so the entry
+    /// count is included in the key to catch newly collected creators. The caller
+    /// already holds `lock`.
+    private func memoizedIdentityIndex(for dataset: ClassificationDataset) -> CreatorIdentityIndex {
+        if let cache = identityIndexCache,
+           cache.datasetID == dataset.id,
+           cache.revision == dataset.revision,
+           cache.entryCount == dataset.collectedEntries.count {
+            return cache.index
+        }
+        let index = CreatorIdentityIndex(entries: dataset.collectedEntries)
+        identityIndexCache = (dataset.id, dataset.revision, dataset.collectedEntries.count, index)
+        return index
     }
 
     /// Persists one bounded, already-rendered platform entry. This is separate
