@@ -734,36 +734,6 @@ public final class LocalClassifierCoordinator {
         return direct
     }
 
-    /// Resolves many creators in one call — building the classifier and identity
-    /// index once and looking up each source — so a whole feed screenful is a
-    /// single request instead of one round trip per card.
-    public func sourceTagsBatch(
-        platformID: String,
-        items: [(sourceID: String, creatorNames: [String])]
-    ) throws -> [(sourceID: String, tags: [TagNode])] {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let binding = state.workspaceCatalog.bindings.first(where: { $0.id == platformID }),
-              binding.collectionEnabled else {
-            throw PlatformCollectionError.disabled(platformID)
-        }
-        let dataset = state.workspaceCatalog.datasets.first(where: { $0.id == binding.datasetID })
-        guard let classifier = try state.workspaceCatalog.workspaceClassifier(
-            for: platformID,
-            policies: engine.policies,
-            identityIndex: dataset.map(memoizedIdentityIndex(for:))
-        ) else {
-            return items.map { ($0.sourceID, []) }
-        }
-        return items.map { item in
-            let direct = classifier.sourceTags(platformID: platformID, sourceID: item.sourceID)
-            if direct.isEmpty, !item.creatorNames.isEmpty {
-                return (item.sourceID, classifier.sourceTags(platformID: platformID, anyOfCreatorNames: item.creatorNames))
-            }
-            return (item.sourceID, direct)
-        }
-    }
-
     /// Returns a creator-identity index for `dataset`, reusing the cached one
     /// while the dataset's collected entries are unchanged. Collecting an entry
     /// or approving a label does not advance the dataset revision, so the entry
