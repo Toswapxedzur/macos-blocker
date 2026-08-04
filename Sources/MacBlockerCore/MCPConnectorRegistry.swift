@@ -1,6 +1,5 @@
 #if os(macOS)
 import Foundation
-import MacBlockerCore
 
 /// Registers the local Vault MCP server(s) into the configuration of whichever
 /// third-party MCP clients (Claude Code, Codex, Cursor, …) are installed on this
@@ -123,9 +122,30 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
         return result
     }
 
+    @discardableResult
+    public func connectByID(_ id: String) -> ActionResult {
+        guard let connector = connector(id: id) else { return .failed("unknown-connector") }
+        return connect(connector)
+    }
+
+    @discardableResult
+    public func disconnectByID(_ id: String) -> ActionResult {
+        guard let connector = connector(id: id) else { return .failed("unknown-connector") }
+        return disconnect(connector)
+    }
+
+    /// Gates the launch-time mass registration. It stays off until the Vault MCP
+    /// server actually ships, so the app never writes dead-endpoint entries into
+    /// the user's real AI-tool configs before there is a server to reach. Manual
+    /// per-tool toggles in Settings are unaffected and always work. Flip to true
+    /// (with the server) to make "default to connect" fire at launch.
+    public static var isLaunchAutoConnectEnabled = false
+
     /// Connects every installed client the user has not explicitly turned off.
-    /// New/undecided clients default to connected.
+    /// New/undecided clients default to connected. No-op until the integration is
+    /// live (see `isLaunchAutoConnectEnabled`).
     public func applyDefaultConnections() {
+        guard Self.isLaunchAutoConnectEnabled else { return }
         let disconnected = userDisconnectedIDs()
         for connector in installedConnectors() where !disconnected.contains(connector.id) {
             if !isConnected(connector) { connect(connector) }

@@ -369,6 +369,12 @@
         return bridgeOrResolve("groups-announce", message, { ok: true });
       case "clusters-status":
         return bridgeOrResolve("clusters-status", message, { ok: true });
+      case "mcp-connectors-status":
+        return bridgeOrResolve("mcp-connectors-status", message, { ok: true });
+      case "mcp-connect":
+        return bridgeOrResolve("mcp-connect", message, { ok: true });
+      case "mcp-disconnect":
+        return bridgeOrResolve("mcp-disconnect", message, { ok: true });
       default:
         return Promise.resolve({ ok: true });
     }
