@@ -62,6 +62,11 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
     let catalog: [Connector]
     private let lock = NSLock()
 
+    /// Supplies the bearer token written into each client's config (and required
+    /// by the MCP server). Set by the app at launch from the hub-derived token.
+    /// Nil (the default, and in tests) writes tokenless entries.
+    public var authTokenProvider: (() -> String?)?
+
     private static let userDisconnectedDefaultsKey = "MCPConnectorRegistry.userDisconnected.v1"
 
     public init(
@@ -154,6 +159,7 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
 
     private func write(_ connector: Connector, connect: Bool) -> ActionResult {
         let url = home.appendingPathComponent(connector.configPath)
+        let token = authTokenProvider?()
         do {
             switch connector.format {
             case .json(let serversKey):
@@ -163,12 +169,13 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
                     serversKey: serversKey,
                     servers: servers,
                     transport: connector.transport,
+                    token: token,
                     connect: connect
                 )
                 try writeAtomically(updated, to: url)
             case .codexToml:
                 let existing = (try? String(contentsOf: url, encoding: .utf8))
-                let updated = Self.applyCodexToml(existing: existing, servers: servers, connect: connect)
+                let updated = Self.applyCodexToml(existing: existing, servers: servers, token: token, connect: connect)
                 try writeAtomically(Data(updated.utf8), to: url)
             }
         } catch {
@@ -195,6 +202,7 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
         serversKey: String,
         servers: [ServerTarget],
         transport: Transport,
+        token: String? = nil,
         connect: Bool
     ) throws -> Data {
         var root: [String: Any] = [:]
@@ -207,7 +215,7 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
         var serverMap = root[serversKey] as? [String: Any] ?? [:]
         for target in servers {
             if connect {
-                serverMap[target.key] = serverEntry(for: target, transport: transport)
+                serverMap[target.key] = serverEntry(for: target, transport: transport, token: token)
             } else {
                 serverMap.removeValue(forKey: target.key)
             }
@@ -223,13 +231,17 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
         )
     }
 
-    static func serverEntry(for target: ServerTarget, transport: Transport) -> [String: Any] {
+    static func serverEntry(for target: ServerTarget, transport: Transport, token: String? = nil) -> [String: Any] {
         switch transport {
         case .http:
-            return ["type": "http", "url": target.httpURL]
+            var entry: [String: Any] = ["type": "http", "url": target.httpURL]
+            if let token { entry["headers"] = ["Authorization": "Bearer \(token)"] }
+            return entry
         case .stdio:
             // mcp-remote bridges a stdio client to a loopback HTTP MCP server.
-            return ["command": "npx", "args": ["-y", "mcp-remote", target.httpURL]]
+            var args = ["-y", "mcp-remote", target.httpURL]
+            if let token { args += ["--header", "Authorization: Bearer \(token)"] }
+            return ["command": "npx", "args": args]
         }
     }
 
@@ -241,7 +253,7 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
     /// Appends (connect) or removes (disconnect) a single managed marker block in
     /// `~/.codex/config.toml`, leaving all other TOML untouched. Codex launches
     /// stdio servers, so each target is written as an mcp-remote shim command.
-    static func applyCodexToml(existing: String?, servers: [ServerTarget], connect: Bool) -> String {
+    static func applyCodexToml(existing: String?, servers: [ServerTarget], token: String? = nil, connect: Bool) -> String {
         var base = stripCodexBlock(existing ?? "")
         guard connect else { return base }
 
@@ -249,7 +261,11 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
         for target in servers {
             block += "[mcp_servers.\(target.key)]\n"
             block += "command = \"npx\"\n"
-            block += "args = [\"-y\", \"mcp-remote\", \"\(target.httpURL)\"]\n\n"
+            if let token {
+                block += "args = [\"-y\", \"mcp-remote\", \"\(target.httpURL)\", \"--header\", \"Authorization: Bearer \(token)\"]\n\n"
+            } else {
+                block += "args = [\"-y\", \"mcp-remote\", \"\(target.httpURL)\"]\n\n"
+            }
         }
         block += codexMarkerEnd + "\n"
 
