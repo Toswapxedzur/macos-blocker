@@ -423,7 +423,21 @@ public struct BlockerWebView: _CBViewRepresentable {
         /// and after each connect/disconnect, not on the per-second timer.
         private func pushMcpConnectors() {
             guard let webView else { return }
-            let json = MCPConnectorRegistry.shared.stateJSON()
+            let registry = MCPConnectorRegistry.shared
+            let connectors: [[String: Any]] = registry.installedConnectors().map { connector in
+                var entry: [String: Any] = [
+                    "id": connector.id,
+                    "name": connector.displayName,
+                    "transport": connector.transport.rawValue,
+                    "connected": registry.isConnected(connector),
+                ]
+                if let icon = MCPConnectorIcons.iconDataURL(connectorID: connector.id) {
+                    entry["icon"] = icon
+                }
+                return entry
+            }
+            guard let data = try? JSONSerialization.data(withJSONObject: ["connectors": connectors]),
+                  let json = String(data: data, encoding: .utf8) else { return }
             webView.evaluateJavaScript(
                 "window.__cbMcpConnectors && window.__cbMcpConnectors(\(json));",
                 completionHandler: nil

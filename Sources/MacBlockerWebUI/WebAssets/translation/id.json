@@ -546,5 +546,7 @@
   "sites.removeAria": "Hapus {name}",
   "settings.mcpTitle": "Koneksi Alat AI",
   "settings.mcpCopy": "Memungkinkan alat AI yang terpasang di Mac ini mengendalikan Vault melalui server MCP lokal. Hanya alat yang ditemukan di Mac Anda yang ditampilkan. Vault ditambahkan ke konfigurasi sebuah alat selama terhubung, dan dihapus saat Anda menonaktifkannya.",
-  "settings.mcpEmpty": "Tidak ada alat AI yang kompatibel ditemukan di Mac ini."
+  "settings.mcpEmpty": "Tidak ada alat AI yang kompatibel ditemukan di Mac ini.",
+  "settings.mcpActivate": "Aktifkan",
+  "settings.mcpDeactivate": "Nonaktifkan"
 }

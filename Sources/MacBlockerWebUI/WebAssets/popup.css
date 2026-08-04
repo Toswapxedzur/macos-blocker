@@ -1965,3 +1965,93 @@ code {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* AI Tool Connections (MCP) list: icon + name + activate/deactivate switch. */
+.mcp-connectors-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.mcp-connector-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--navy-ring);
+  border-radius: 12px;
+  background: #ffffff;
+}
+.mcp-connector-icon {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  overflow: hidden;
+}
+.mcp-connector-icon img {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  display: block;
+}
+.mcp-connector-icon.is-fallback {
+  background: var(--navy-100);
+  color: var(--navy-700);
+  font-weight: 700;
+  font-size: 14px;
+}
+.mcp-connector-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mcp-switch {
+  position: relative;
+  display: inline-block;
+  width: 42px;
+  height: 24px;
+  flex: none;
+  cursor: pointer;
+}
+.mcp-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.mcp-switch-track {
+  position: absolute;
+  inset: 0;
+  background: #cbd5e1;
+  border-radius: 999px;
+  transition: background 0.15s ease;
+}
+.mcp-switch-track::before {
+  content: "";
+  position: absolute;
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  top: 3px;
+  background: #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.25);
+  transition: transform 0.15s ease;
+}
+.mcp-switch input:checked + .mcp-switch-track {
+  background: var(--navy-700);
+}
+.mcp-switch input:checked + .mcp-switch-track::before {
+  transform: translateX(18px);
+}
+.mcp-switch input:focus-visible + .mcp-switch-track {
+  box-shadow: 0 0 0 3px var(--navy-ring);
+}

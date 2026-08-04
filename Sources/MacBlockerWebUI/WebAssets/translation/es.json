@@ -546,5 +546,7 @@
   "discord.targetsPlaceholder": "123456789012345678\nhttps://discord.com/channels/123456789012345678/\nhttps://discord.com/channels/123456789012345678/234567890123456789",
   "settings.mcpTitle": "Conexiones de herramientas de IA",
   "settings.mcpCopy": "Permite que las herramientas de IA instaladas en este Mac controlen Vault a través del servidor MCP local. Solo se muestran las herramientas encontradas en tu Mac. Vault se añade a la configuración de una herramienta mientras está conectada, y se elimina cuando la desactivas.",
-  "settings.mcpEmpty": "No se encontraron herramientas de IA compatibles en este Mac."
+  "settings.mcpEmpty": "No se encontraron herramientas de IA compatibles en este Mac.",
+  "settings.mcpActivate": "Activar",
+  "settings.mcpDeactivate": "Desactivar"
 }

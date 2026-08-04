@@ -859,22 +859,49 @@ function renderMcpConnectors(payload) {
   mcpConnectorsList.textContent = "";
   for (const connector of connectors) {
     if (!connector || typeof connector.id !== "string") continue;
-    const row = document.createElement("label");
-    row.className = "checkbox-row compact mcp-connector-row";
+    const connected = connector.connected === true;
+    const displayName = String(connector.name || connector.id);
+
+    const row = document.createElement("div");
+    row.className = "mcp-connector-row";
     row.setAttribute("role", "listitem");
 
-    const toggle = document.createElement("input");
-    toggle.type = "checkbox";
-    toggle.checked = connector.connected === true;
-    toggle.addEventListener("change", () => {
-      setMcpConnector(connector.id, toggle.checked);
-    });
+    // App icon, or a lettered fallback badge for CLI/extension tools.
+    const iconWrap = document.createElement("span");
+    iconWrap.className = "mcp-connector-icon";
+    if (connector.icon) {
+      const img = document.createElement("img");
+      img.src = connector.icon;
+      img.alt = "";
+      iconWrap.appendChild(img);
+    } else {
+      iconWrap.classList.add("is-fallback");
+      iconWrap.textContent = displayName.trim().charAt(0).toUpperCase() || "?";
+    }
 
     const name = document.createElement("span");
-    name.textContent = String(connector.name || connector.id);
+    name.className = "mcp-connector-name";
+    name.textContent = displayName;
 
-    row.appendChild(toggle);
+    // Toggle switch whose position reflects the real (native) connected state.
+    const toggleLabel = document.createElement("label");
+    toggleLabel.className = "mcp-switch";
+    const toggle = document.createElement("input");
+    toggle.type = "checkbox";
+    toggle.checked = connected;
+    toggle.setAttribute(
+      "aria-label",
+      (connected ? t("settings.mcpDeactivate") : t("settings.mcpActivate")) + " " + displayName
+    );
+    toggle.addEventListener("change", () => setMcpConnector(connector.id, toggle.checked));
+    const slider = document.createElement("span");
+    slider.className = "mcp-switch-track";
+    toggleLabel.appendChild(toggle);
+    toggleLabel.appendChild(slider);
+
+    row.appendChild(iconWrap);
     row.appendChild(name);
+    row.appendChild(toggleLabel);
     mcpConnectorsList.appendChild(row);
   }
 }
