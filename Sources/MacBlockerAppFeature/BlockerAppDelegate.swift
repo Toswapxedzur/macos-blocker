@@ -25,10 +25,10 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
             do {
                 try LocalHubAuthentication.moveProductionSecretToDevelopmentOnce()
             } catch {
-                NSLog("[ConnectionHub] development Keychain migration failed: \(error)")
-                NSApp.presentError(error)
-                NSApp.terminate(nil)
-                return
+                // A Keychain migration hiccup must never block the dev app from
+                // launching (crash-guard). The hub fails open when auth is
+                // unavailable, so log and continue rather than terminating.
+                NSLog("[ConnectionHub] development Keychain migration skipped: \(error)")
             }
         }
 
