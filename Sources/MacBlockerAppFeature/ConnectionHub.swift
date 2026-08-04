@@ -15,6 +15,12 @@ final class ConnectionHub: ObservableObject {
     private static let maxClassifierBodyBytes = 88_000
     private static let maxClassifierRequests = 32
     static let classifierRelayTimeoutSeconds = 30
+    // The browser relay carries larger bodies than the classifier route because
+    // an MCP-driven read can return page content or the open-tab list; still
+    // well under the 1 MiB socket frame cap.
+    private static let maxBrowserBodyBytes = 800_000
+    private static let maxBrowserRequests = 32
+    static let browserRelayTimeoutSeconds = 30
     private static let remotePrograms = LocalHubAuthentication.browserPrograms.union(["classifier"])
     private static let browserPrograms = LocalHubAuthentication.browserPrograms
 
@@ -41,6 +47,22 @@ final class ConnectionHub: ObservableObject {
         case mismatched
     }
 
+    /// A short-lived request the hub host relays *to* a connected browser peer on
+    /// behalf of the in-process MCP server. The hub owns the correlation so a
+    /// browser can only answer the request actually routed to it — the mirror of
+    /// the classifier route, in the opposite direction.
+    struct BrowserRequest {
+        let requestID: String
+        let browserPeerID: String
+        let operation: String
+        let completion: (BrowserRelayResult) -> Void
+    }
+
+    enum BrowserRelayResult {
+        case success([String: Any])
+        case failure(String)
+    }
+
     /// Process-wide hub. Owned at the app-delegate level (not by any SwiftUI
     /// view) so the server survives closing the editor window and lives for the
     /// whole app session.
@@ -52,6 +74,7 @@ final class ConnectionHub: ObservableObject {
     private var listener: NWListener?
     private var peers: [ObjectIdentifier: Peer] = [:]
     private var classifierRequests: [String: ClassifierRequest] = [:]
+    private var browserRequests: [String: BrowserRequest] = [:]
     private var running = false
     private static var brokerAddress: String {
         VaultRuntimeEnvironment.current.hubAddress
@@ -127,6 +150,56 @@ final class ConnectionHub: ObservableObject {
         guard let pending else { return .expired }
         guard pending.classifierPeerID == classifierPeerID,
               pending.sourcePeerID == sourcePeerID,
+              pending.operation == operation else {
+            return .mismatched
+        }
+        return .matched
+    }
+
+    /// Validates an outbound browser-relay call. The operation namespace is a
+    /// bounded visible identifier rather than a fixed enum: unlike the classifier
+    /// route, the browser relay is deliberately generic, and the extension's own
+    /// inbound adapter is the authority on which operations it honors.
+    static func browserRequestRejectionReason(operation: String, body: [String: Any]) -> String? {
+        guard isVisibleBridgeIdentifier(operation, maximumLength: 64) else {
+            return "invalid-browser-operation"
+        }
+        guard JSONSerialization.isValidJSONObject(body),
+              let data = try? JSONSerialization.data(withJSONObject: body),
+              data.count <= maxBrowserBodyBytes else {
+            return "invalid-browser-request"
+        }
+        return nil
+    }
+
+    static func browserResponseRejectionReason(_ obj: [String: Any]) -> String? {
+        guard let requestID = obj["requestID"] as? String,
+              isVisibleBridgeIdentifier(requestID, maximumLength: 128),
+              let operation = obj["operation"] as? String,
+              isVisibleBridgeIdentifier(operation, maximumLength: 64) else {
+            return "invalid-browser-response"
+        }
+        if let body = obj["body"] as? [String: Any],
+           JSONSerialization.isValidJSONObject(body),
+           let bodyData = try? JSONSerialization.data(withJSONObject: body),
+           bodyData.count <= maxBrowserBodyBytes {
+            return nil
+        }
+        if let error = obj["error"] as? String,
+           error.count <= 256,
+           error.unicodeScalars.allSatisfy({ $0.value >= 0x20 && $0.value <= 0x7e }) {
+            return nil
+        }
+        return "invalid-browser-response"
+    }
+
+    static func browserResponseCorrelation(
+        pending: BrowserRequest?,
+        browserPeerID: String,
+        operation: String
+    ) -> ClassifierResponseCorrelation {
+        guard let pending else { return .expired }
+        guard pending.browserPeerID == browserPeerID,
               pending.operation == operation else {
             return .mismatched
         }
@@ -239,12 +312,15 @@ final class ConnectionHub: ObservableObject {
         listener = nil
         lock.lock()
         let conns = peers.values.map { $0.connection }
+        let strandedBrowserRequests = browserRequests.values.map { $0.completion }
+        browserRequests.removeAll()
         peers.removeAll()
         running = false
         hostingLocalHub = false
         joinedHubProgram = ""
         lock.unlock()
         for conn in conns { conn.cancel() }
+        for completion in strandedBrowserRequests { completion(.failure("browser-unavailable")) }
     }
 
     private func startLocalHubOrJoinExisting() {
@@ -594,6 +670,11 @@ final class ConnectionHub: ObservableObject {
             let program = peers[key]?.program ?? ""
             lock.unlock()
             routeClassifierResponse(from: key, program: program, object: obj)
+        case "browser-response":
+            lock.lock()
+            let program = peers[key]?.program ?? ""
+            lock.unlock()
+            routeBrowserResponse(from: key, program: program, object: obj)
         case "ping":
             send(conn, dict: ["kind": "pong", "t": (obj["t"] as? Double) ?? 0])
         default:
@@ -742,6 +823,118 @@ final class ConnectionHub: ObservableObject {
         }
     }
 
+    // MARK: Browser relay (in-process MCP server → connected browser peer)
+
+    /// Relays a bounded request to a connected browser peer and calls `completion`
+    /// with its response. Called by the in-process MCP server that runs inside the
+    /// hub host, so the initiator is trusted and never a socket peer. Fails fast
+    /// when this app isn't hosting, when there is no browser (or an ambiguous set
+    /// of browsers) to target, on overflow, or after the relay timeout. The
+    /// completion always runs exactly once (inline on the fast-fail paths, or on
+    /// the hub queue once a response, timeout, or disconnect resolves the relay).
+    func sendBrowserRequest(
+        operation: String,
+        body: [String: Any],
+        targetProgram: String? = nil,
+        completion: @escaping (BrowserRelayResult) -> Void
+    ) {
+        if let reason = Self.browserRequestRejectionReason(operation: operation, body: body) {
+            completion(.failure(reason))
+            return
+        }
+        lock.lock()
+        guard hostingLocalHub else {
+            lock.unlock()
+            completion(.failure("browser-relay-requires-host"))
+            return
+        }
+        let browsers = peers.values.filter {
+            $0.connected && Self.browserPrograms.contains($0.program)
+                && (targetProgram == nil || $0.program == targetProgram)
+        }
+        guard let target = browsers.first else {
+            lock.unlock()
+            completion(.failure("browser-unavailable"))
+            return
+        }
+        // With two browsers connected the caller must name one, so a request is
+        // never silently answered by an arbitrary browser.
+        guard browsers.count == 1 else {
+            lock.unlock()
+            completion(.failure("browser-ambiguous"))
+            return
+        }
+        guard browserRequests.count < Self.maxBrowserRequests else {
+            lock.unlock()
+            completion(.failure("browser-busy"))
+            return
+        }
+        let requestID = UUID().uuidString
+        browserRequests[requestID] = BrowserRequest(
+            requestID: requestID,
+            browserPeerID: target.id,
+            operation: operation,
+            completion: completion
+        )
+        let connection = target.connection
+        lock.unlock()
+        send(connection, dict: [
+            "kind": "browser-request",
+            "requestID": requestID,
+            "operation": operation,
+            "body": body,
+        ])
+        queue.asyncAfter(deadline: .now() + .seconds(Self.browserRelayTimeoutSeconds)) { [weak self] in
+            self?.expireBrowserRequest(requestID)
+        }
+    }
+
+    private func routeBrowserResponse(from key: ObjectIdentifier, program: String, object: [String: Any]) {
+        guard Self.browserPrograms.contains(program),
+              Self.browserResponseRejectionReason(object) == nil,
+              let requestID = object["requestID"] as? String,
+              let operation = object["operation"] as? String else {
+            lock.lock(); let responder = peers[key]?.connection; lock.unlock()
+            if let responder { rejectAndClose(responder, reason: "invalid-browser-response") }
+            return
+        }
+        lock.lock()
+        guard let responder = peers[key] else { lock.unlock(); return }
+        let pending = browserRequests[requestID]
+        switch Self.browserResponseCorrelation(
+            pending: pending,
+            browserPeerID: responder.id,
+            operation: operation
+        ) {
+        case .expired:
+            // A late but valid response after the relay timeout is not a protocol
+            // violation; it simply has no destination left.
+            lock.unlock()
+            return
+        case .mismatched:
+            lock.unlock()
+            rejectAndClose(responder.connection, reason: "unmatched-browser-response")
+            return
+        case .matched:
+            break
+        }
+        guard let pending else { lock.unlock(); return }
+        browserRequests.removeValue(forKey: requestID)
+        lock.unlock()
+        if let responseBody = object["body"] as? [String: Any] {
+            pending.completion(.success(responseBody))
+        } else {
+            pending.completion(.failure((object["error"] as? String) ?? "browser-error"))
+        }
+    }
+
+    private func expireBrowserRequest(_ requestID: String) {
+        lock.lock()
+        let pending = browserRequests.removeValue(forKey: requestID)
+        lock.unlock()
+        pending?.completion(.failure("browser-timeout"))
+    }
+
     private func removePeer(_ key: ObjectIdentifier) {
         lock.lock()
         let removed = peers.removeValue(forKey: key)
@@ -765,8 +958,14 @@ final class ConnectionHub: ObservableObject {
             }
             return (source.connection, requestID, pending.operation)
         }
+        // A dropped browser peer strands every relay routed to it; fail those
+        // completions so the in-process MCP caller never hangs.
+        let strandedBrowserRequests = browserRequests.filter { $0.value.browserPeerID == removedPeerID }
+        for (requestID, _) in strandedBrowserRequests { browserRequests.removeValue(forKey: requestID) }
+        let strandedBrowserCompletions = strandedBrowserRequests.values.map { $0.completion }
         let existed = removed != nil
         lock.unlock()
+        for completion in strandedBrowserCompletions { completion(.failure("browser-unavailable")) }
         for (source, requestID, operation) in replyTargets {
             send(source, dict: [
                 "kind": "classifier-response",

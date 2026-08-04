@@ -172,5 +172,106 @@ final class ConnectionHubProtocolTests: XCTestCase {
         XCTAssertFalse(ConnectionHub.isWebSocketClose(textContext))
         XCTAssertFalse(ConnectionHub.isWebSocketClose(nil))
     }
+
+    // MARK: Browser relay (MCP → browser)
+
+    func testBrowserRequestStaysSchemaBounded() {
+        XCTAssertNil(ConnectionHub.browserRequestRejectionReason(
+            operation: "get_groups", body: ["scope": "site"]
+        ))
+        // Empty body is valid — many reads take no arguments.
+        XCTAssertNil(ConnectionHub.browserRequestRejectionReason(operation: "list_tabs", body: [:]))
+        // A blank or over-long operation namespace is rejected.
+        XCTAssertEqual(
+            ConnectionHub.browserRequestRejectionReason(operation: "", body: [:]),
+            "invalid-browser-operation"
+        )
+        XCTAssertEqual(
+            ConnectionHub.browserRequestRejectionReason(
+                operation: String(repeating: "x", count: 65), body: [:]
+            ),
+            "invalid-browser-operation"
+        )
+        // A body larger than the browser cap is rejected.
+        let huge = ["blob": String(repeating: "a", count: 900_000)]
+        XCTAssertEqual(
+            ConnectionHub.browserRequestRejectionReason(operation: "read_page", body: huge),
+            "invalid-browser-request"
+        )
+    }
+
+    func testBrowserResponseRejectionReasonAcceptsBodyOrError() {
+        XCTAssertNil(ConnectionHub.browserResponseRejectionReason([
+            "requestID": "req-1", "operation": "get_groups", "body": ["groups": []],
+        ]))
+        XCTAssertNil(ConnectionHub.browserResponseRejectionReason([
+            "requestID": "req-1", "operation": "get_groups", "error": "browser-unavailable",
+        ]))
+        // Neither a valid body nor a valid error present.
+        XCTAssertEqual(
+            ConnectionHub.browserResponseRejectionReason(["requestID": "req-1", "operation": "get_groups"]),
+            "invalid-browser-response"
+        )
+        // Missing identifiers.
+        XCTAssertEqual(
+            ConnectionHub.browserResponseRejectionReason(["operation": "get_groups", "body": [:]]),
+            "invalid-browser-response"
+        )
+    }
+
+    func testBrowserResponseCorrelationMustMatchPeerAndOperation() {
+        let pending = ConnectionHub.BrowserRequest(
+            requestID: "req-1",
+            browserPeerID: "peer-chrome",
+            operation: "get_groups",
+            completion: { _ in }
+        )
+        XCTAssertEqual(
+            ConnectionHub.browserResponseCorrelation(
+                pending: pending, browserPeerID: "peer-chrome", operation: "get_groups"
+            ),
+            .matched
+        )
+        // A different browser peer must not be able to answer this request.
+        XCTAssertEqual(
+            ConnectionHub.browserResponseCorrelation(
+                pending: pending, browserPeerID: "peer-edge", operation: "get_groups"
+            ),
+            .mismatched
+        )
+        // Operation must match the routed one.
+        XCTAssertEqual(
+            ConnectionHub.browserResponseCorrelation(
+                pending: pending, browserPeerID: "peer-chrome", operation: "close_tab"
+            ),
+            .mismatched
+        )
+        // A response after the timeout (no pending) is expired, not a violation.
+        XCTAssertEqual(
+            ConnectionHub.browserResponseCorrelation(
+                pending: nil, browserPeerID: "peer-chrome", operation: "get_groups"
+            ),
+            .expired
+        )
+    }
+
+    func testBrowserRelayFailsFastWhenNotHosting() {
+        // The shared hub is not hosting in a unit-test process, so a relay call
+        // must invoke its completion with a failure rather than hang.
+        let expectation = expectation(description: "browser relay completes")
+        var result: ConnectionHub.BrowserRelayResult?
+        ConnectionHub.shared.sendBrowserRequest(operation: "get_groups", body: [:]) {
+            result = $0
+            expectation.fulfill()
+        }
+        wait(for: [expectation], timeout: 2)
+        guard case .failure(let reason)? = result else {
+            return XCTFail("expected a failure result")
+        }
+        XCTAssertTrue(
+            ["browser-relay-requires-host", "browser-unavailable"].contains(reason),
+            "unexpected reason: \(reason)"
+        )
+    }
 }
 #endif
