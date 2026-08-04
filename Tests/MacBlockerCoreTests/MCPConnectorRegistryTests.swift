@@ -209,5 +209,39 @@ final class MCPConnectorRegistryTests: XCTestCase {
         XCTAssertTrue(json.contains("\"connected\":true"))
         XCTAssertFalse(json.contains("\"vscode\""), "a client the user does not have is never surfaced")
     }
+
+    // MARK: Bearer token
+
+    func testHTTPEntryEmbedsBearerHeaderWhenTokenPresent() throws {
+        let entry = MCPConnectorRegistry.serverEntry(for: servers[0], transport: .http, token: "T0K3N")
+        let headers = try XCTUnwrap(entry["headers"] as? [String: String])
+        XCTAssertEqual(headers["Authorization"], "Bearer T0K3N")
+    }
+
+    func testStdioEntryEmbedsBearerHeaderArgWhenTokenPresent() throws {
+        let entry = MCPConnectorRegistry.serverEntry(for: servers[0], transport: .stdio, token: "T0K3N")
+        let args = try XCTUnwrap(entry["args"] as? [String])
+        XCTAssertTrue(args.contains("--header"))
+        XCTAssertTrue(args.contains("Authorization: Bearer T0K3N"))
+    }
+
+    func testTokenlessEntryHasNoAuthorization() {
+        XCTAssertNil(MCPConnectorRegistry.serverEntry(for: servers[0], transport: .http, token: nil)["headers"])
+        let args = MCPConnectorRegistry.serverEntry(for: servers[0], transport: .stdio, token: nil)["args"] as? [String]
+        XCTAssertEqual(args?.contains("--header"), false)
+    }
+
+    func testCodexTomlEmbedsBearerHeaderWhenTokenPresent() {
+        let out = MCPConnectorRegistry.applyCodexToml(existing: "", servers: servers, token: "T0K3N", connect: true)
+        XCTAssertTrue(out.contains("Authorization: Bearer T0K3N"))
+    }
+
+    func testConnectWritesTokenFromProviderIntoConfig() throws {
+        try touch(".cursor/mcp.json", "{}")
+        let registry = registry()
+        registry.authTokenProvider = { "LIVE-TOKEN" }
+        registry.connect(try XCTUnwrap(registry.connector(id: "cursor")))
+        XCTAssertTrue(try read(".cursor/mcp.json").contains("Bearer LIVE-TOKEN"))
+    }
 }
 #endif

@@ -14,6 +14,9 @@ import MacBlockerWebUI
 open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
     public override init() { super.init() }
 
+    /// Retains the running MCP server for the app session.
+    private var mcpServer: VaultMCPHTTPServer?
+
     open func applicationDidFinishLaunching(_ notification: Notification) {
         if CommandLine.arguments.contains("--unregister-login-item") {
             unregisterLoginItemForUninstall()
@@ -35,6 +38,19 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
         // Every app instance participates in its environment's authenticated local
         // hub, which may listen on loopback when it wins host election.
         ConnectionHub.shared.start()
+
+        // MCP go-live. Start the loopback MCP server gated by a bearer token
+        // derived from the hub secret, tell the connector registry to write that
+        // token into each tool's config, and enable launch auto-connect so the
+        // registered tools point at a live, authenticated endpoint. Fail closed:
+        // if the token is unavailable we do not expose an unauthenticated server.
+        if let token = LocalHubAuthentication.mcpBearerToken() {
+            let mcpServer = VaultMCPHTTPServer.vault(token: token)
+            mcpServer.start()
+            self.mcpServer = mcpServer
+            MCPConnectorRegistry.shared.authTokenProvider = { LocalHubAuthentication.mcpBearerToken() }
+            MCPConnectorRegistry.isLaunchAutoConnectEnabled = true
+        }
 
         // "Connect your AI tools" defaults to on: register the Vault MCP server
         // into every installed desktop MCP client the user has not explicitly

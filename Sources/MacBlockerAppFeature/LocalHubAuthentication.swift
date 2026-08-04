@@ -36,6 +36,21 @@ enum LocalHubAuthentication {
         try ensureSecret(environment: .current)
     }
 
+    /// A stable bearer token for the local MCP server, derived from the shared
+    /// hub secret via HMAC. This reuses the one Keychain item the app already
+    /// unlocks at launch, so the MCP server needs no separate secret and no extra
+    /// access prompt. Deterministic → the token written into a client's config
+    /// stays valid across relaunches. Nil only if the hub secret is unavailable
+    /// (in which case the caller should not expose an unauthenticated server).
+    static func mcpBearerToken(environment: VaultRuntimeEnvironment = .current) -> String? {
+        guard let secret = try? ensureSecret(environment: environment) else { return nil }
+        let code = HMAC<SHA256>.authenticationCode(
+            for: Data("vault-mcp-bearer-v1".utf8),
+            using: SymmetricKey(data: secret)
+        )
+        return base64URL(Data(code))
+    }
+
     static func makeProof(program: String, challenge: String, secret: Data) throws -> String {
         guard (isBrowserProgram(program) || isDesktopProgram(program)),
               isValidChallenge(challenge),
