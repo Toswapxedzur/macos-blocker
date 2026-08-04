@@ -72,6 +72,20 @@ public struct EnforcementPlan: Codable, Equatable, Sendable {
 }
 
 public enum EnforcementPlanBuilder {
+    /// Rebuilds a plan straight from a raw `web-store.json` blob (the editor's
+    /// chrome.storage snapshot), merging natively-assigned targets. This is the
+    /// single derivation every writer of `web-store.json` funnels through, so the
+    /// enforcement plan can never drift between the WebView persist path and the
+    /// native `GroupStore`. Returns nil only if the blob can't be parsed.
+    public static func build(
+        fromWebStoreData data: Data,
+        nativeTargetsByGroup: [String: [BlockTarget]],
+        generatedAt: Date = Date()
+    ) -> EnforcementPlan? {
+        guard let result = try? ChromeExtensionImporter.importGroups(from: data) else { return nil }
+        return build(from: result.groups, nativeTargetsByGroup: nativeTargetsByGroup, generatedAt: generatedAt)
+    }
+
     /// Builds a plan, merging any natively-assigned targets (app/category
     /// tokens the web editor can't express) into each group by ID.
     public static func build(

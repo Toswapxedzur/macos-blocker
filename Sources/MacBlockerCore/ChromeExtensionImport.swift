@@ -150,7 +150,10 @@ public enum ChromeExtensionImporter {
         return days.isEmpty ? Set(Weekday.allCases) : Set(days)
     }
 
-    private static func normalizeHost(_ value: String?) -> String? {
+    /// Normalizes a user-typed site/URL to a bare host (scheme- and `www.`-
+    /// stripped, lowercased) for enforcement and for `GroupStore` dedupe. Kept
+    /// module-internal so there is one normalization, not a drifting copy.
+    static func normalizeHost(_ value: String?) -> String? {
         guard var value = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
               !value.isEmpty
         else {
