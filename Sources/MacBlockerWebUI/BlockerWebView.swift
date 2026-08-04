@@ -287,11 +287,8 @@ public struct BlockerWebView: _CBViewRepresentable {
         private let onGroupSync: ((String) -> Void)?
 
         private var usagePushTimer: Timer?
-        #if canImport(AppKit)
-        private var didBecomeActiveObserver: Any?
-        #endif
-        // Starts true so the grant modal is offered once on first launch; set
-        // again whenever the app is reactivated so we re-offer it on each open.
+        // Starts true so the grant modal is offered exactly once per app launch
+        // (when Accessibility is still missing) and never re-shown on reactivation.
         private var promptPermissionOnOpenPending = true
 
         init(
@@ -338,11 +335,6 @@ public struct BlockerWebView: _CBViewRepresentable {
 
         deinit {
             usagePushTimer?.invalidate()
-            #if canImport(AppKit)
-            if let observer = didBecomeActiveObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            #endif
             if let wv = webView {
                 wv.configuration.userContentController.removeScriptMessageHandler(forName: "cbBridge")
             }
@@ -360,19 +352,6 @@ public struct BlockerWebView: _CBViewRepresentable {
                 self?.pushGroupRejection()
             }
             usagePushTimer = timer
-
-            #if canImport(AppKit)
-            // Re-offer the grant modal whenever the app is (re)activated.
-            if didBecomeActiveObserver == nil {
-                didBecomeActiveObserver = NotificationCenter.default.addObserver(
-                    forName: NSApplication.didBecomeActiveNotification,
-                    object: nil,
-                    queue: .main
-                ) { [weak self] _ in
-                    self?.promptPermissionOnOpenPending = true
-                }
-            }
-            #endif
         }
 
         private func pushSystemPanelEvents() {
