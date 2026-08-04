@@ -67,7 +67,14 @@ enum LocalHubAuthentication {
         let source = loadSecret(environment: .production)
         let destination = loadSecret(environment: .development)
         if let source, let destination, source != destination {
-            throw LocalHubAuthenticationError.environmentConflict
+            // Both a production and a development secret exist and differ. The
+            // development environment already owns an authoritative secret, so
+            // there is nothing to migrate. Leave both in place rather than
+            // clobbering the dev secret or failing the launch — crash-guard:
+            // reconcile/ignore bad local state, never crash. (Bindings are used
+            // by the condition above.)
+            _ = (source, destination)
+            return
         }
         if let source, destination == nil {
             try storeSecret(source, environment: .development)
