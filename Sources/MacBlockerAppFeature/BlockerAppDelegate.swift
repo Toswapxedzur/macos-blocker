@@ -35,6 +35,12 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
         // Every app instance participates in its environment's authenticated local
         // hub, which may listen on loopback when it wins host election.
         ConnectionHub.shared.start()
+
+        // "Connect your AI tools" defaults to on: register the Vault MCP server
+        // into every installed desktop MCP client the user has not explicitly
+        // turned off. Explicit disconnects are remembered and never re-registered.
+        MCPConnectorRegistry.shared.applyDefaultConnections()
+
         syncLoginItem(enabled: false)
     }
 

@@ -1,6 +1,6 @@
 #if os(macOS)
 import XCTest
-@testable import MacBlockerAppFeature
+@testable import MacBlockerCore
 
 final class MCPConnectorRegistryTests: XCTestCase {
     private var home: URL!
@@ -172,7 +172,18 @@ final class MCPConnectorRegistryTests: XCTestCase {
 
     // MARK: Default-to-connect
 
+    func testApplyDefaultConnectionsIsInertUntilIntegrationLive() throws {
+        try touch(".cursor/mcp.json", "{}")
+        let registry = registry()
+        let cursor = try XCTUnwrap(registry.connector(id: "cursor"))
+        MCPConnectorRegistry.isLaunchAutoConnectEnabled = false
+        registry.applyDefaultConnections()
+        XCTAssertFalse(registry.isConnected(cursor), "no launch auto-write before the integration is live")
+    }
+
     func testApplyDefaultConnectionsConnectsInstalledButRespectsExplicitDisconnect() throws {
+        MCPConnectorRegistry.isLaunchAutoConnectEnabled = true
+        defer { MCPConnectorRegistry.isLaunchAutoConnectEnabled = false }
         try touch(".cursor/mcp.json", "{}")
         try mkdir(".codex")
         let registry = registry()

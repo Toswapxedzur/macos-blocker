@@ -418,6 +418,18 @@ public struct BlockerWebView: _CBViewRepresentable {
             )
         }
 
+        /// Pushes the installed MCP client connectors (and their connected state)
+        /// to the settings UI. Requested on demand when the settings panel opens
+        /// and after each connect/disconnect, not on the per-second timer.
+        private func pushMcpConnectors() {
+            guard let webView else { return }
+            let json = MCPConnectorRegistry.shared.stateJSON()
+            webView.evaluateJavaScript(
+                "window.__cbMcpConnectors && window.__cbMcpConnectors(\(json));",
+                completionHandler: nil
+            )
+        }
+
         private func pushGroupRejection() {
             guard let webView, let provider = groupRejectionJSON,
                   let json = provider(), !json.isEmpty else { return }
@@ -523,6 +535,20 @@ public struct BlockerWebView: _CBViewRepresentable {
                 if let json = messageJSON(body) { onGroupSync?(json) }
             case "clusters-status":
                 pushClusters()
+            case "mcp-connectors-status":
+                pushMcpConnectors()
+            case "mcp-connect":
+                if let payload = body["message"] as? [String: Any],
+                   let id = payload["id"] as? String {
+                    MCPConnectorRegistry.shared.connectByID(id)
+                }
+                pushMcpConnectors()
+            case "mcp-disconnect":
+                if let payload = body["message"] as? [String: Any],
+                   let id = payload["id"] as? String {
+                    MCPConnectorRegistry.shared.disconnectByID(id)
+                }
+                pushMcpConnectors()
             case "local-folder-reveal":
                 revealLocalFolder()
             default:

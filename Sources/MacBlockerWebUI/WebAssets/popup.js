@@ -831,6 +831,62 @@ function requestConnectionStatus() {
 }
 
 // ---------------------------------------------------------------------------
+// AI Tool Connections (MCP): list the desktop MCP clients installed on this Mac
+// and let the user connect/disconnect the local Vault MCP server into each. The
+// native host is the source of truth; this layer renders state and sends intents.
+// ---------------------------------------------------------------------------
+const mcpConnectorsList = document.getElementById("mcpConnectorsList");
+const mcpConnectorsEmpty = document.getElementById("mcpConnectorsEmpty");
+
+function requestMcpConnectors() {
+  try {
+    chrome.runtime.sendMessage({ type: "mcp-connectors-status" }).catch(() => {});
+  } catch (_) {}
+}
+
+function setMcpConnector(id, connected) {
+  try {
+    chrome.runtime
+      .sendMessage({ type: connected ? "mcp-connect" : "mcp-disconnect", id })
+      .catch(() => {});
+  } catch (_) {}
+}
+
+function renderMcpConnectors(payload) {
+  if (!mcpConnectorsList) return;
+  const connectors = Array.isArray(payload && payload.connectors) ? payload.connectors : [];
+  if (mcpConnectorsEmpty) mcpConnectorsEmpty.classList.toggle("hidden", connectors.length > 0);
+  mcpConnectorsList.textContent = "";
+  for (const connector of connectors) {
+    if (!connector || typeof connector.id !== "string") continue;
+    const row = document.createElement("label");
+    row.className = "checkbox-row compact mcp-connector-row";
+    row.setAttribute("role", "listitem");
+
+    const toggle = document.createElement("input");
+    toggle.type = "checkbox";
+    toggle.checked = connector.connected === true;
+    toggle.addEventListener("change", () => {
+      setMcpConnector(connector.id, toggle.checked);
+    });
+
+    const name = document.createElement("span");
+    name.textContent = String(connector.name || connector.id);
+
+    row.appendChild(toggle);
+    row.appendChild(name);
+    mcpConnectorsList.appendChild(row);
+  }
+}
+
+window.__cbMcpConnectors = function (json) {
+  try {
+    const incoming = typeof json === "string" ? JSON.parse(json) : json;
+    renderMcpConnectors(incoming);
+  } catch (_) {}
+};
+
+// ---------------------------------------------------------------------------
 // Per-group web-app bridge: link a Default/Custom group with the same-named
 // group on another connected program (a "cluster"). The hub is the single
 // source of truth for cluster membership; this layer only renders it and sends
@@ -1436,6 +1492,7 @@ function openSettings() {
   state.isSettingsOpen = true;
   syncSettingsFormFromState();
   requestConnectionStatus();
+  requestMcpConnectors();
   settingsModal.classList.remove("hidden");
   renderLocalFolderStatus().catch((error) => {
     if (localFolderStatus) localFolderStatus.textContent = String(error?.message ?? error);
