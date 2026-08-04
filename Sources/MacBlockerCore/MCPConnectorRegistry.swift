@@ -320,7 +320,7 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
     /// install's registered server.
     public static func defaultServers(environment: VaultRuntimeEnvironment = .current) -> [ServerTarget] {
         let development = environment == .development
-        let port = development ? 18_788 : 8_788
+        let port = environment.mcpPort
         let suffix = development ? "-dev" : ""
         return [
             ServerTarget(

@@ -29,6 +29,15 @@ public enum VaultRuntimeEnvironment: String, Codable, Sendable {
         "ws://127.0.0.1:\(hubPort)"
     }
 
+    /// Loopback port for the Mac Vault MCP server, distinct from the hub. Mac
+    /// Vault is the suite's sole MCP host; the classifier does not host one.
+    public var mcpPort: UInt16 {
+        switch self {
+        case .production: return 8_788
+        case .development: return 18_788
+        }
+    }
+
     public var appGroupIdentifier: String {
         switch self {
         case .production: return "group.com.adamancia.vault"
