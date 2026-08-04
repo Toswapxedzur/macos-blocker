@@ -543,5 +543,8 @@
   "platform.short.youtube": "Shorts",
   "platform.placeholder.tiktok": "@creatorhandle\nhttps://www.tiktok.com/@creator",
   "discord.targetsPlaceholder": "123456789012345678\nhttps://discord.com/channels/123456789012345678/\nhttps://discord.com/channels/123456789012345678/234567890123456789",
-  "meta.appCount": "app{suffix}"
+  "meta.appCount": "app{suffix}",
+  "settings.mcpTitle": "KI-Tool-Verbindungen",
+  "settings.mcpCopy": "Lässt KI-Tools auf diesem Mac Vault über den lokalen MCP-Server steuern. Es werden nur auf Ihrem Mac gefundene Tools aufgelistet. Vault wird der Konfiguration eines Tools hinzugefügt, solange es verbunden ist, und entfernt, wenn Sie es ausschalten.",
+  "settings.mcpEmpty": "Auf diesem Mac wurden keine kompatiblen KI-Tools gefunden."
 }

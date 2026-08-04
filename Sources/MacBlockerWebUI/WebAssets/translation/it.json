@@ -543,5 +543,8 @@
   "platform.placeholder.twitter": "@handle\nhttps://x.com/anotheruser",
   "platform.placeholder.tiktok": "@creatorhandle\nhttps://www.tiktok.com/@creator",
   "discord.targetsPlaceholder": "123456789012345678\nhttps://discord.com/channels/123456789012345678/\nhttps://discord.com/channels/123456789012345678/234567890123456789",
-  "meta.appCount": "app{suffix}"
+  "meta.appCount": "app{suffix}",
+  "settings.mcpTitle": "Connessioni degli strumenti IA",
+  "settings.mcpCopy": "Consente agli strumenti IA installati su questo Mac di controllare Vault tramite il server MCP locale. Vengono elencati solo gli strumenti trovati sul tuo Mac. Vault viene aggiunto alla configurazione di uno strumento mentre è connesso e rimosso quando lo disattivi.",
+  "settings.mcpEmpty": "Nessuno strumento IA compatibile trovato su questo Mac."
 }

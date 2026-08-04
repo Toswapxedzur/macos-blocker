@@ -543,5 +543,8 @@
   "platform.placeholder.facebook": "page.name\nhttps://www.facebook.com/pagename\nprofile.php?id=123456",
   "platform.placeholder.instagram": "creatorhandle\nhttps://www.instagram.com/creatorhandle/",
   "discord.targetsPlaceholder": "123456789012345678\nhttps://discord.com/channels/123456789012345678/\nhttps://discord.com/channels/123456789012345678/234567890123456789",
-  "meta.appCount": "app{suffix}"
+  "meta.appCount": "app{suffix}",
+  "settings.mcpTitle": "AI ਟੂਲ ਕਨੈਕਸ਼ਨ",
+  "settings.mcpCopy": "ਇਸ Mac 'ਤੇ ਇੰਸਟਾਲ ਕੀਤੇ AI ਟੂਲਾਂ ਨੂੰ ਸਥਾਨਕ MCP ਸਰਵਰ ਰਾਹੀਂ Vault ਨੂੰ ਕੰਟਰੋਲ ਕਰਨ ਦਿਓ। ਸਿਰਫ਼ ਤੁਹਾਡੇ Mac 'ਤੇ ਮਿਲੇ ਟੂਲ ਸੂਚੀਬੱਧ ਹੁੰਦੇ ਹਨ। ਕਨੈਕਟ ਹੋਣ ਦੌਰਾਨ Vault ਨੂੰ ਉਸ ਟੂਲ ਦੀ ਆਪਣੀ ਸੰਰਚਨਾ ਵਿੱਚ ਜੋੜਿਆ ਜਾਂਦਾ ਹੈ, ਅਤੇ ਬੰਦ ਕਰਨ 'ਤੇ ਹਟਾ ਦਿੱਤਾ ਜਾਂਦਾ ਹੈ।",
+  "settings.mcpEmpty": "ਇਸ Mac 'ਤੇ ਕੋਈ ਅਨੁਕੂਲ AI ਟੂਲ ਨਹੀਂ ਮਿਲਿਆ।"
 }

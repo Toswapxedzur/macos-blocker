@@ -543,5 +543,8 @@
   "sites.addCancel": "취소",
   "sites.removeAria": "{name} 삭제",
   "platform.placeholder.tiktok": "@creatorhandle\nhttps://www.tiktok.com/@creator",
-  "discord.targetsPlaceholder": "123456789012345678\nhttps://discord.com/channels/123456789012345678/\nhttps://discord.com/channels/123456789012345678/234567890123456789"
+  "discord.targetsPlaceholder": "123456789012345678\nhttps://discord.com/channels/123456789012345678/\nhttps://discord.com/channels/123456789012345678/234567890123456789",
+  "settings.mcpTitle": "AI 도구 연결",
+  "settings.mcpCopy": "이 Mac에 설치된 AI 도구가 로컬 MCP 서버를 통해 Vault를 제어하도록 허용합니다. Mac에서 발견된 도구만 표시됩니다. 도구가 연결된 동안 Vault가 해당 도구의 설정에 추가되고, 끄면 제거됩니다.",
+  "settings.mcpEmpty": "이 Mac에서 호환되는 AI 도구를 찾을 수 없습니다."
 }

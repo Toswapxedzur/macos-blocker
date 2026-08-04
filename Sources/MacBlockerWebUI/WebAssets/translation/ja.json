@@ -543,5 +543,8 @@
   "sites.addCancel": "キャンセル",
   "sites.removeAria": "{name} を削除します",
   "discord.targetsPlaceholder": "123456789012345678\nhttps://discord.com/channels/123456789012345678/\nhttps://discord.com/channels/123456789012345678/234567890123456789",
-  "meta.appCount": "app{suffix}"
+  "meta.appCount": "app{suffix}",
+  "settings.mcpTitle": "AI ツール接続",
+  "settings.mcpCopy": "この Mac にインストールされた AI ツールが、ローカルの MCP サーバーを介して Vault を操作できるようにします。お使いの Mac で見つかったツールのみが一覧表示されます。Vault は接続中はそのツール自身の設定に追加され、オフにすると削除されます。",
+  "settings.mcpEmpty": "この Mac では対応する AI ツールが見つかりませんでした。"
 }
