@@ -543,5 +543,8 @@
   "sites.addCancel": "Annuler",
   "sites.removeAria": "Supprimer {name}",
   "meta.appCount": "app{suffix}",
-  "settings.tierProbation": "Probation"
+  "settings.tierProbation": "Probation",
+  "settings.mcpTitle": "Connexions aux outils d'IA",
+  "settings.mcpCopy": "Permet aux outils d'IA installés sur ce Mac de contrôler Vault via le serveur MCP local. Seuls les outils trouvés sur votre Mac sont listés. Vault est ajouté à la configuration d'un outil tant qu'il est connecté, et retiré lorsque vous le désactivez.",
+  "settings.mcpEmpty": "Aucun outil d'IA compatible n'a été trouvé sur ce Mac."
 }

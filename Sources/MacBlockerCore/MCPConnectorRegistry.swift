@@ -314,23 +314,19 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
 
     // MARK: Defaults
 
-    /// The Vault MCP endpoints, per environment so development never collides with
-    /// a production install's registered servers.
+    /// The Vault MCP endpoint. Mac Vault is the single MCP host for the whole
+    /// suite (Vault Classifier does not host one), so there is exactly one server.
+    /// The port is per environment so development never collides with a production
+    /// install's registered server.
     public static func defaultServers(environment: VaultRuntimeEnvironment = .current) -> [ServerTarget] {
         let development = environment == .development
-        let macPort = development ? 18_788 : 8_788
-        let classifierPort = development ? 18_789 : 8_789
+        let port = development ? 18_788 : 8_788
         let suffix = development ? "-dev" : ""
         return [
             ServerTarget(
-                key: "vault-mac\(suffix)",
-                displayName: "Mac Vault",
-                httpURL: "http://127.0.0.1:\(macPort)/mcp"
-            ),
-            ServerTarget(
-                key: "vault-classifier\(suffix)",
-                displayName: "Vault Classifier",
-                httpURL: "http://127.0.0.1:\(classifierPort)/mcp"
+                key: "vault\(suffix)",
+                displayName: "Vault",
+                httpURL: "http://127.0.0.1:\(port)/mcp"
             ),
         ]
     }

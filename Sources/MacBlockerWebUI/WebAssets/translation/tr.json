@@ -543,5 +543,8 @@
   "sites.addCancel": "İptal etmek",
   "sites.removeAria": "{name}'yi kaldır",
   "platform.placeholder.tiktok": "@creatorhandle\nhttps://www.tiktok.com/@creator",
-  "discord.targetsPlaceholder": "123456789012345678\nhttps://discord.com/channels/123456789012345678/\nhttps://discord.com/channels/123456789012345678/234567890123456789"
+  "discord.targetsPlaceholder": "123456789012345678\nhttps://discord.com/channels/123456789012345678/\nhttps://discord.com/channels/123456789012345678/234567890123456789",
+  "settings.mcpTitle": "Yapay Zekâ Aracı Bağlantıları",
+  "settings.mcpCopy": "Bu Mac'te yüklü yapay zekâ araçlarının yerel MCP sunucusu üzerinden Vault'u denetlemesine izin verir. Yalnızca Mac'inizde bulunan araçlar listelenir. Vault, bir araç bağlıyken o aracın yapılandırmasına eklenir ve kapattığınızda kaldırılır.",
+  "settings.mcpEmpty": "Bu Mac'te uyumlu bir yapay zekâ aracı bulunamadı."
 }

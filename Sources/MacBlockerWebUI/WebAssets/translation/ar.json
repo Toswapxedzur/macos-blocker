@@ -543,5 +543,8 @@
   "sites.removeAria": "إزالة {name}",
   "platform.placeholder.twitter": "@handle\nhttps://x.com/anotheruser",
   "platform.placeholder.tiktok": "@creatorhandle\nhttps://www.tiktok.com/@creator",
-  "discord.targetsPlaceholder": "123456789012345678\nhttps://discord.com/channels/123456789012345678/\nhttps://discord.com/channels/123456789012345678/234567890123456789"
+  "discord.targetsPlaceholder": "123456789012345678\nhttps://discord.com/channels/123456789012345678/\nhttps://discord.com/channels/123456789012345678/234567890123456789",
+  "settings.mcpTitle": "اتصالات أدوات الذكاء الاصطناعي",
+  "settings.mcpCopy": "يتيح لأدوات الذكاء الاصطناعي المثبتة على هذا الـ Mac التحكم في Vault عبر خادم MCP المحلي. تُدرَج فقط الأدوات الموجودة على جهاز Mac لديك. يُضاف Vault إلى إعدادات الأداة أثناء اتصالها، ويُزال عند إيقاف تشغيلها.",
+  "settings.mcpEmpty": "لم يتم العثور على أدوات ذكاء اصطناعي متوافقة على هذا الـ Mac."
 }
