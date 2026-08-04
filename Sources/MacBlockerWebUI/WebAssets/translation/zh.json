@@ -546,5 +546,7 @@
   "discord.targetsPlaceholder": "123456789012345678\nhttps://discord.com/channels/123456789012345678/\nhttps://discord.com/channels/123456789012345678/234567890123456789",
   "settings.mcpTitle": "AI 工具连接",
   "settings.mcpCopy": "让安装在这台 Mac 上的 AI 工具通过本地 MCP 服务器控制 Vault。仅列出在你 Mac 上找到的工具。工具连接时会将 Vault 添加到该工具自己的配置中，关闭时移除。",
-  "settings.mcpEmpty": "在这台 Mac 上未找到兼容的 AI 工具。"
+  "settings.mcpEmpty": "在这台 Mac 上未找到兼容的 AI 工具。",
+  "settings.mcpActivate": "启用",
+  "settings.mcpDeactivate": "停用"
 }

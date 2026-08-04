@@ -546,5 +546,7 @@
   "meta.appCount": "app{suffix}",
   "settings.mcpTitle": "Connessioni degli strumenti IA",
   "settings.mcpCopy": "Consente agli strumenti IA installati su questo Mac di controllare Vault tramite il server MCP locale. Vengono elencati solo gli strumenti trovati sul tuo Mac. Vault viene aggiunto alla configurazione di uno strumento mentre è connesso e rimosso quando lo disattivi.",
-  "settings.mcpEmpty": "Nessuno strumento IA compatibile trovato su questo Mac."
+  "settings.mcpEmpty": "Nessuno strumento IA compatibile trovato su questo Mac.",
+  "settings.mcpActivate": "Attiva",
+  "settings.mcpDeactivate": "Disattiva"
 }

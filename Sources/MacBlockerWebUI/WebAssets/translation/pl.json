@@ -546,5 +546,7 @@
   "groupName.twitterPattern": "Twitter / X Block {number}",
   "settings.mcpTitle": "Połączenia narzędzi AI",
   "settings.mcpCopy": "Pozwala narzędziom AI zainstalowanym na tym Macu sterować Vault przez lokalny serwer MCP. Wyświetlane są tylko narzędzia znalezione na Twoim Macu. Vault jest dodawany do konfiguracji narzędzia, gdy jest połączone, i usuwany po jego wyłączeniu.",
-  "settings.mcpEmpty": "Nie znaleziono zgodnych narzędzi AI na tym Macu."
+  "settings.mcpEmpty": "Nie znaleziono zgodnych narzędzi AI na tym Macu.",
+  "settings.mcpActivate": "Aktywuj",
+  "settings.mcpDeactivate": "Dezaktywuj"
 }

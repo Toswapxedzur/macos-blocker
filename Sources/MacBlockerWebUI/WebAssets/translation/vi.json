@@ -546,5 +546,7 @@
   "discord.targetsPlaceholder": "123456789012345678\nhttps://discord.com/channels/123456789012345678/\nhttps://discord.com/channels/123456789012345678/234567890123456789",
   "settings.mcpTitle": "Kết nối công cụ AI",
   "settings.mcpCopy": "Cho phép các công cụ AI được cài trên máy Mac này điều khiển Vault thông qua máy chủ MCP cục bộ. Chỉ những công cụ tìm thấy trên máy Mac của bạn mới được liệt kê. Vault được thêm vào cấu hình của một công cụ khi nó được kết nối, và bị xóa khi bạn tắt nó.",
-  "settings.mcpEmpty": "Không tìm thấy công cụ AI tương thích nào trên máy Mac này."
+  "settings.mcpEmpty": "Không tìm thấy công cụ AI tương thích nào trên máy Mac này.",
+  "settings.mcpActivate": "Kích hoạt",
+  "settings.mcpDeactivate": "Hủy kích hoạt"
 }

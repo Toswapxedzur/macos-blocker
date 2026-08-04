@@ -546,5 +546,7 @@
   "discord.targetsPlaceholder": "123456789012345678\nhttps://discord.com/channels/123456789012345678/\nhttps://discord.com/channels/123456789012345678/234567890123456789",
   "settings.mcpTitle": "AI टूल कनेक्शन",
   "settings.mcpCopy": "इस Mac पर इंस्टॉल किए गए AI टूल को स्थानीय MCP सर्वर के माध्यम से Vault को नियंत्रित करने दें। केवल आपके Mac पर मिले टूल सूचीबद्ध होते हैं। कनेक्ट रहने के दौरान Vault को उस टूल के अपने कॉन्फ़िगरेशन में जोड़ा जाता है, और बंद करने पर हटा दिया जाता है।",
-  "settings.mcpEmpty": "इस Mac पर कोई संगत AI टूल नहीं मिला।"
+  "settings.mcpEmpty": "इस Mac पर कोई संगत AI टूल नहीं मिला।",
+  "settings.mcpActivate": "सक्रिय करें",
+  "settings.mcpDeactivate": "निष्क्रिय करें"
 }

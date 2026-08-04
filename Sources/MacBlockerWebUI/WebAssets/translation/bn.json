@@ -546,5 +546,7 @@
   "meta.appCount": "app{suffix}",
   "settings.mcpTitle": "AI টুল সংযোগ",
   "settings.mcpCopy": "এই Mac-এ ইনস্টল করা AI টুলগুলিকে স্থানীয় MCP সার্ভারের মাধ্যমে Vault নিয়ন্ত্রণ করতে দিন। শুধু আপনার Mac-এ পাওয়া টুলগুলি তালিকাভুক্ত হয়। কানেক্ট থাকা অবস্থায় Vault সেই টুলের নিজস্ব কনফিগারেশনে যোগ করা হয়, এবং বন্ধ করলে সরিয়ে ফেলা হয়।",
-  "settings.mcpEmpty": "এই Mac-এ কোনো সামঞ্জস্যপূর্ণ AI টুল পাওয়া যায়নি।"
+  "settings.mcpEmpty": "এই Mac-এ কোনো সামঞ্জস্যপূর্ণ AI টুল পাওয়া যায়নি।",
+  "settings.mcpActivate": "সক্রিয় করুন",
+  "settings.mcpDeactivate": "নিষ্ক্রিয় করুন"
 }
