@@ -222,6 +222,26 @@ final class GroupStoreTests: XCTestCase {
         XCTAssertEqual(posts, 2, "a direct save must notify the editor too")
     }
 
+    func testSaveWithNotifyFalseDoesNotPost() throws {
+        let (store, shared, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let seed = try JSONSerialization.data(withJSONObject: sampleEnvelope())
+        shared.writeData(seed, to: SharedAppGroupStore.webStoreFileName)
+
+        var posts = 0
+        let token = NotificationCenter.default.addObserver(
+            forName: GroupStore.didChangeNotification, object: nil, queue: nil
+        ) { _ in posts += 1 }
+        defer { NotificationCenter.default.removeObserver(token) }
+
+        // The editor's own persist path passes notify:false so it never re-seeds
+        // itself; the default (true) still notifies so external writes reach it.
+        store.save(store.load(), notify: false)
+        XCTAssertEqual(posts, 0, "notify:false must not post the change notification")
+        store.save(store.load())
+        XCTAssertEqual(posts, 1, "the default still notifies")
+    }
+
     func testFailedMutationDoesNotPostAndReleasesLock() throws {
         let (store, shared, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }

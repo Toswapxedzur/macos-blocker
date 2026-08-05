@@ -50,11 +50,16 @@ public final class GroupStore: @unchecked Sendable {
     /// Persists the document verbatim, then rebuilds the enforcement plan the
     /// Screen Time extensions read. Kept private-of-behavior identical to the
     /// WebView persist path so the two writers can never derive different plans.
-    public func save(_ document: WebStoreDocument) {
+    /// Writes the whole document (and rebuilds the enforcement plan) under the
+    /// lock. `notify` posts `didChangeNotification` so a live editor re-seeds; the
+    /// editor's OWN persist path passes `false` (it already shows this state, and
+    /// re-seeding itself would be wasted work), while native/MCP writers leave it
+    /// true so the open editor learns about the out-of-band change.
+    public func save(_ document: WebStoreDocument, notify: Bool = true) {
         lock.lock()
         saveLocked(document)
         lock.unlock()
-        Self.postDidChange()
+        if notify { Self.postDidChange() }
     }
 
     /// Load → mutate → save under one lock, so two concurrent edits (e.g. the

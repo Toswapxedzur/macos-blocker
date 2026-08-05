@@ -9,9 +9,14 @@ import MacBlockerCore
 /// applies.
 public final class BlockerWebStore: @unchecked Sendable {
     private let shared: SharedAppGroupStore
+    /// The native owner of `web-store.json`. The editor persists THROUGH it so the
+    /// editor and MCP/native writers share one lock (no read-modify-write race)
+    /// and one enforcement-plan derivation.
+    private let groupStore: GroupStore
 
     public init(shared: SharedAppGroupStore = SharedAppGroupStore()) {
         self.shared = shared
+        self.groupStore = GroupStore(shared: shared)
     }
 
     public var fileURL: URL {
@@ -46,13 +51,16 @@ public final class BlockerWebStore: @unchecked Sendable {
     }
 
     public func save(rawStore: Any) {
-        guard JSONSerialization.isValidJSONObject(rawStore),
-              let data = try? JSONSerialization.data(withJSONObject: rawStore, options: [.sortedKeys])
+        guard let raw = rawStore as? [String: Any],
+              JSONSerialization.isValidJSONObject(raw)
         else {
             return
         }
-        shared.writeData(data, to: SharedAppGroupStore.webStoreFileName)
-        rebuildEnforcementPlan(from: data)
+        // Persist through GroupStore: it writes the file and rebuilds the plan
+        // under its lock (same derivation the native/MCP writers use). notify is
+        // false — this is the editor persisting its own state, so it must not
+        // trigger a re-seed of itself.
+        groupStore.save(WebStoreDocument(raw: raw), notify: false)
     }
 
     // MARK: Usage timers (the editor's own per-group spent-time, in ms)
