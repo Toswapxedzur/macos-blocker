@@ -58,7 +58,17 @@
   // arrives (receive()), which by then already reflects the persisted decision.
   const manualDecisionOverlay = new Map();
   let pendingDeletion = null;
+  // Pending platform-lock confirmation: { typeID, replay } — replay runs the
+  // original action once the person confirms locking the type to its platform.
+  let pendingPlatformLock = null;
   let utilityPanel = null;
+  // Which classifier type is open in the left-panel list (client-only UI state).
+  let selectedTypeID = null;
+  // Which trash entry's recover/delete panel is expanded in the left panel.
+  let selectedTrashID = null;
+  // Set to the pre-create set of type ids when "New type" is clicked, so the
+  // next snapshot can open the freshly created type.
+  let pendingSelectNewType = null;
   let selectedLanguage = "en";
   let navigationPanelWidth = navigationWidthRange.fallback;
   let navigationResize = null;
@@ -487,28 +497,28 @@
   }
 
   function field(labelKey, hintKey, key, value, type = "text", extra = "") {
-    return `<label class="field"><span class="field-label">${tx(labelKey)}${hintKey ? ` · ${tx(hintKey)}` : ""}</span><input type="${type}" data-field="${esc(key)}" value="${type === "password" ? "" : esc(value)}" ${extra}></label>`;
+    return `<label class="field"><span class="field-label">${tx(labelKey)}${hintKey ? `<span class="field-hint"> · ${tx(hintKey)}</span>` : ""}</span><input type="${type}" data-field="${esc(key)}" value="${type === "password" ? "" : esc(value)}" ${extra}></label>`;
   }
 
   function textareaField(labelKey, hintKey, key, value, extra = "") {
-    return `<label class="field wide"><span class="field-label">${tx(labelKey)}${hintKey ? ` · ${tx(hintKey)}` : ""}</span><textarea data-field="${esc(key)}" ${extra}>${esc(value)}</textarea></label>`;
+    return `<label class="field wide"><span class="field-label">${tx(labelKey)}${hintKey ? `<span class="field-hint"> · ${tx(hintKey)}</span>` : ""}</span><textarea data-field="${esc(key)}" ${extra}>${esc(value)}</textarea></label>`;
   }
 
   function selectField(labelKey, hintKey, key, value, options) {
-    return `<label class="field"><span class="field-label">${tx(labelKey)}${hintKey ? ` · ${tx(hintKey)}` : ""}</span><select class="select-control" data-field="${esc(key)}">${options.map(([id, labelKey]) => `<option value="${esc(id)}"${selected(value, id)}>${tx(labelKey)}</option>`).join("")}</select></label>`;
+    return `<label class="field"><span class="field-label">${tx(labelKey)}${hintKey ? `<span class="field-hint"> · ${tx(hintKey)}</span>` : ""}</span><select class="select-control" data-field="${esc(key)}">${options.map(([id, labelKey]) => `<option value="${esc(id)}"${selected(value, id)}>${tx(labelKey)}</option>`).join("")}</select></label>`;
   }
 
   function valueSelectField(labelKey, hintKey, key, value, options, extra = "") {
-    return `<label class="field"><span class="field-label">${tx(labelKey)}${hintKey ? ` · ${tx(hintKey)}` : ""}</span><select class="select-control" data-field="${esc(key)}" ${extra}>${options.map(([id, label]) => `<option value="${esc(id)}"${selected(value, id)}>${esc(label)}</option>`).join("")}</select></label>`;
+    return `<label class="field"><span class="field-label">${tx(labelKey)}${hintKey ? `<span class="field-hint"> · ${tx(hintKey)}</span>` : ""}</span><select class="select-control" data-field="${esc(key)}" ${extra}>${options.map(([id, label]) => `<option value="${esc(id)}"${selected(value, id)}>${esc(label)}</option>`).join("")}</select></label>`;
   }
 
   function multiValueSelectField(labelKey, hintKey, key, values, options, extra = "") {
     const selectedValues = new Set(values || []);
-    return `<label class="field"><span class="field-label">${tx(labelKey)}${hintKey ? ` · ${tx(hintKey)}` : ""}</span><select class="select-control multi-select-control" data-field="${esc(key)}" multiple ${extra}>${options.map(([id, label]) => `<option value="${esc(id)}"${selectedValues.has(id) ? " selected" : ""}>${esc(label)}</option>`).join("")}</select></label>`;
+    return `<label class="field"><span class="field-label">${tx(labelKey)}${hintKey ? `<span class="field-hint"> · ${tx(hintKey)}</span>` : ""}</span><select class="select-control multi-select-control" data-field="${esc(key)}" multiple ${extra}>${options.map(([id, label]) => `<option value="${esc(id)}"${selectedValues.has(id) ? " selected" : ""}>${esc(label)}</option>`).join("")}</select></label>`;
   }
 
   function groupedValueSelectField(labelKey, hintKey, key, value, groups, extra = "") {
-    return `<label class="field"><span class="field-label">${tx(labelKey)}${hintKey ? ` · ${tx(hintKey)}` : ""}</span><select class="select-control" data-field="${esc(key)}" ${extra}><option value=""${selected(value, "")}>${tx("llm.chooseProviderType")}</option>${groups.map(([groupKey, options]) => `<optgroup label="${tx(groupKey)}">${options.map(([id, label]) => `<option value="${esc(id)}"${selected(value, id)}>${esc(label)}</option>`).join("")}</optgroup>`).join("")}</select></label>`;
+    return `<label class="field"><span class="field-label">${tx(labelKey)}${hintKey ? `<span class="field-hint"> · ${tx(hintKey)}</span>` : ""}</span><select class="select-control" data-field="${esc(key)}" ${extra}><option value=""${selected(value, "")}>${tx("llm.chooseProviderType")}</option>${groups.map(([groupKey, options]) => `<optgroup label="${tx(groupKey)}">${options.map(([id, label]) => `<option value="${esc(id)}"${selected(value, id)}>${esc(label)}</option>`).join("")}</optgroup>`).join("")}</select></label>`;
   }
 
   function toggle(labelKey, key, value) {
@@ -657,6 +667,52 @@
     return `<button class="sidebar-row${active}" type="button" data-action="workspace" data-workspace="${esc(workspace)}"><span class="sidebar-symbol" aria-hidden="true">${symbol}</span><span class="sidebar-copy"><span class="sidebar-name">${tx(titleKey)}</span><span class="sidebar-meta">${tx(metaKey)}</span></span></button>`;
   }
 
+  // Classifier types in list order (ascending `order`, id as a stable tiebreak).
+  function orderedClassifierTypes() {
+    return [...(state.assets?.classifierTypes || [])]
+      .sort((lhs, rhs) => (lhs.order - rhs.order) || String(lhs.id).localeCompare(String(rhs.id)));
+  }
+
+  function classifierTypeRow(type) {
+    const platform = (state.assets?.collectionPlatforms || []).find((definition) => definition.id === type.applicablePlatformID);
+    const active = selectedTypeID === type.id ? " active" : "";
+    const meta = platform ? platform.name : tx("bridge.noApplicablePlatform");
+    return `<div class="classifier-type-row${active}" data-type-id="${esc(type.id)}">
+      <button class="sidebar-row classifier-type-select${active}" type="button" data-action="selectType" data-type-id="${esc(type.id)}"><span class="sidebar-symbol" aria-hidden="true">◧</span><span class="sidebar-copy"><span class="sidebar-name">${esc(type.name)}</span><span class="sidebar-meta">${esc(meta)}</span></span></button>
+    </div>`;
+  }
+
+  // A trashed entity in the left panel; clicking it expands a compact
+  // recover / permanently-delete panel in place.
+  function trashRow(entry) {
+    const active = selectedTrashID === entry.id;
+    return `<div class="sidebar-trash-item${active ? " active" : ""}">
+      <button class="sidebar-row sidebar-trash-row${active ? " active" : ""}" type="button" data-action="selectTrash" data-id="${esc(entry.id)}"><span class="sidebar-symbol" aria-hidden="true">🗑</span><span class="sidebar-copy"><span class="sidebar-name" dir="auto">${esc(entry.name)}</span><span class="sidebar-meta">${tx("trash.deleted")}</span></span></button>
+      ${active ? `<div class="sidebar-trash-actions"><button class="secondary" data-action="restoreTrashedEntry" data-id="${esc(entry.id)}">${tx("trash.restore")}</button><button class="danger" data-action="permanentlyDeleteTrashedEntry" data-id="${esc(entry.id)}">${tx("trash.permanentlyDelete")}</button></div>` : ""}
+    </div>`;
+  }
+
+  // Left-panel body: the reorderable classifier-type list is primary; collection
+  // sits below, and any trashed entities follow.
+  function sidebarContent() {
+    const types = orderedClassifierTypes();
+    const typeRows = types.length
+      ? types.map((type) => classifierTypeRow(type)).join("")
+      : `<div class="empty compact-empty">${tx("navigation.noTypes")}</div>`;
+    const trash = Array.isArray(state?.trash) ? state.trash : [];
+    const trashSection = trash.length
+      ? `<div class="sidebar-divider" role="separator"></div><div class="sidebar-group-title">${tx("trash.title")}</div><div class="sidebar-trash">${trash.map(trashRow).join("")}</div>`
+      : "";
+    return `
+      <div class="sidebar-group-title">${tx("navigation.classifierTypes")}</div>
+      <div class="classifier-type-nav" data-classifier-type-nav>${typeRows}</div>
+      <button class="sidebar-add" type="button" data-action="newType"><span aria-hidden="true">＋</span> ${tx("navigation.newType")}</button>
+      <div class="sidebar-divider" role="separator"></div>
+      ${navButton("classificationData", "▤", "navigation.classificationData", "navigation.classificationDataMeta")}
+      ${navButton("llmAssist", "◌", "navigation.apiKeys", "navigation.apiKeysMeta")}
+      ${trashSection}`;
+  }
+
   function shell(content) {
     return `<div class="popup">
       <header class="hero">
@@ -666,13 +722,7 @@
       <div class="layout">
         <aside class="navigation-panel" aria-label="${tx("navigation.aria")}">
           <div class="panel-header"><div><h2>${tx("navigation.title")}</h2><p class="small-copy">${tx("navigation.subtitle")}</p></div></div>
-          <div class="sidebar-list">
-            ${navButton("tagTree", "⌘", "navigation.tagTree", "navigation.tagTreeMeta")}
-            ${navButton("localModel", "◉", "navigation.localModel", "navigation.localModelMeta")}
-            ${navButton("llmAssist", "◌", "navigation.llmAssist", "navigation.llmAssistMeta")}
-            ${navButton("browserBridge", "⇄", "navigation.browserBridge", "navigation.browserBridgeMeta")}
-            ${navButton("classificationData", "▤", "navigation.classificationData", "navigation.classificationDataMeta")}
-          </div>
+          <div class="sidebar-list">${sidebarContent()}</div>
         </aside>
         <div class="layout-resizer" data-navigation-resizer role="separator" aria-orientation="vertical" aria-label="${tx("navigation.resize")}" aria-valuemin="${navigationWidthRange.minimum}" aria-valuemax="${navigationWidthRange.maximum}" aria-valuenow="${navigationPanelWidth}" tabindex="0"></div>
         <section class="editor-panel" data-editor-panel data-workspace="${esc(state.workspace)}">${content}</section>
@@ -769,7 +819,7 @@
       <section class="section-card cyan"><div class="form-stack">${line("integration.app", "integration.ready")}${line("integration.pairing", "integration.keychain")}${line("integration.host", "integration.notRegistered")}${line("integration.server", "integration.notRequired")}</div></section><div class="notice cyan">${tx("integration.notice")}</div></div>`;
   }
 
-  function tagTreeWorkspace() {
+  function tagTreeWorkspace(scopeTreeID = null) {
     const assets = state.assets;
     const coordinate = (value, fallback) => {
       const number = Number(value);
@@ -848,8 +898,13 @@
       const treeActions = `<div class="tree-canvas-actions"><button class="secondary" data-action="renameTree" data-tree-id="${esc(tree.id)}">${tx("tree.rename")}</button><button class="danger" data-action="deleteTree" data-tree-id="${esc(tree.id)}">${tx("tree.delete")}</button><button class="secondary" data-action="rearrangeTree" data-tree-id="${esc(tree.id)}">${tx("tree.rearrange")}</button></div>`;
       return `<section class="tree-panel">${map}<div class="tree-canvas-hint"><span>${tx("tree.canvasHint")}</span>${treeActions}</div></section>`;
     };
+    // Scoped to one type's tree: no shared-library header, create box, or trash.
+    if (scopeTreeID) {
+      const scopedTrees = assets.trees.filter((tree) => tree.id === scopeTreeID);
+      return `<div class="workspace tree-workspace tree-workspace-scoped"><div class="tree-panels">${scopedTrees.map(panel).join("") || `<div class="empty">${tx("tree.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
+    }
     return `<div class="workspace tree-workspace">${header("tree.title", "tree.copy", t("tree.sharedLibrary"), "cyan")}
-      <section class="tree-create" data-form-id="new-tree-form">${field("tree.treeName", "", "name", "")}<button class="primary" data-action="createTree" data-form="new-tree-form">${tx("tree.create")}</button><span class="small-copy">${tx("tree.multiplePanels")}</span></section><div class="tree-panels">${assets.trees.map(panel).join("")}${trashOfKind("tagTree")}</div>${notice(state.issue, "red")}</div>`;
+      <section class="tree-create" data-form-id="new-tree-form">${field("tree.treeName", "", "name", "")}<button class="primary" data-action="createTree" data-form="new-tree-form">${tx("tree.create")}</button><span class="small-copy">${tx("tree.multiplePanels")}</span></section><div class="tree-panels">${assets.trees.map(panel).join("")}</div>${notice(state.issue, "red")}</div>`;
   }
 
   function baseEmbeddingLabelKey(identifier) {
@@ -864,17 +919,19 @@
     return keys[identifier] || "model.base.none";
   }
 
-  function localModelWorkspace() {
+  function localModelWorkspace(scopeTypeID = null) {
     const assets = state.assets;
-    const models = assets.models || [];
+    const allModels = assets.models || [];
+    const models = scopeTypeID ? allModels.filter((model) => model.classifierTypeID === scopeTypeID) : allModels;
     const classifierTypes = assets.classifierTypes || [];
     const platformDefs = new Map((assets.collectionPlatforms || []).map((platform) => [platform.id, platform]));
     const typeByID = new Map(classifierTypes.map((type) => [type.id, type]));
     // A model is bounded by a classifier type (owns-one). Eligible types for a
     // new model support a local model and do not already have one.
-    const modeledTypeIDs = new Set(models.map((model) => model.classifierTypeID));
+    const modeledTypeIDs = new Set(allModels.map((model) => model.classifierTypeID));
     const creatableTypeOptions = classifierTypes
       .filter((type) => type.applicablePlatformID
+        && (!scopeTypeID || type.id === scopeTypeID)
         && platformDefs.get(type.applicablePlatformID)?.supportsLocalModel === true
         && !modeledTypeIDs.has(type.id))
       .map((type) => [type.id, type.name]);
@@ -914,8 +971,16 @@
         ${trainingStatus}
       </section>`;
     };
+    // Scoped to one type: hide the shared-library header; the create box carries
+    // the single eligible type (hidden if the model already exists).
+    const createModel = creatableTypeOptions.length
+      ? `<section class="model-create" data-form-id="new-local-model-form">${field("model.modelName", "", "name", "")}${scopeTypeID ? `<input type="hidden" data-field="classifierTypeID" value="${esc(scopeTypeID)}">` : valueSelectField("model.forClassifierType", "", "classifierTypeID", "", creatableTypeOptions)}<button class="pink-action" data-action="createLocalModel" data-form="new-local-model-form">${tx("model.create")}</button><span class="small-copy">${tx("model.multiplePanels")}</span></section>`
+      : (scopeTypeID ? "" : `<section class="model-create"><span class="small-copy">${tx("model.noEligibleTypes")}</span></section>`);
+    if (scopeTypeID) {
+      return `<div class="workspace model-workspace model-workspace-scoped">${models.length ? "" : createModel}<div class="model-panels">${models.length ? models.map(panel).join("") : `<div class="empty">${tx("model.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
+    }
     return `<div class="workspace model-workspace">${header("model.title", "model.copy", t("model.sharedLibrary"), "pink")}
-      <section class="model-create" data-form-id="new-local-model-form">${field("model.modelName", "", "name", "")}${valueSelectField("model.forClassifierType", "", "classifierTypeID", "", creatableTypeOptions)}<button class="pink-action" data-action="createLocalModel" data-form="new-local-model-form"${disabled(!creatableTypeOptions.length)}>${tx("model.create")}</button><span class="small-copy">${tx(creatableTypeOptions.length ? "model.multiplePanels" : "model.noEligibleTypes")}</span></section>
+      ${createModel}
       <div class="model-panels">${models.length ? models.map(panel).join("") : `<div class="empty">${tx("model.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
   }
 
@@ -1026,7 +1091,8 @@
       const formID = `classifier-type-${classifierType.id}`;
       const applicablePlatformID = typeof classifierType.applicablePlatformID === "string" ? classifierType.applicablePlatformID : "";
       const applicableBinding = (assets.bindings || []).find((binding) => binding.id === applicablePlatformID);
-      const selectedTree = trees.find((tree) => tree.id === applicableBinding?.treeID);
+      // A type owns its own tree; the binding only supplies the shared dataset.
+      const selectedTree = trees.find((tree) => tree.id === classifierType.treeID);
       const selectedDataset = datasets.find((dataset) => dataset.id === applicableBinding?.datasetID);
       const applicablePlatform = platformDefinitions.get(applicablePlatformID);
       const sourceTerms = collectionSourceTerms(applicablePlatform?.sourceKind);
@@ -1041,7 +1107,7 @@
       // decision is keyed to this platform + tree revision, so switching would
       // orphan them (and break the local model's one-platform training set).
       const approvedDecisionCount = datasets.reduce((count, dataset) => count + (dataset.creatorClassifications || []).filter((record) => record.classifierTypeID === classifierType.id && record.review === "approved").length, 0);
-      const applicablePlatformLocked = Boolean(applicablePlatformID) && approvedDecisionCount > 0;
+      const applicablePlatformLocked = classifierType.platformLocked === true || (Boolean(applicablePlatformID) && approvedDecisionCount > 0);
       const platformAPIProfiles = applicablePlatform?.apiProviderType
         ? profiles.filter((profile) => profile.type === applicablePlatform.apiProviderType)
         : [];
@@ -1273,22 +1339,42 @@
         : "";
       const webSearchControls = `${valueSelectField("bridge.llmWebSearchMode", "bridge.llmWebSearchModeCopy", "llmWebSearchMode", savedWebSearchMode, webSearchModeOptions)}<p class="small-copy" data-native-search-copy${savedWebSearchMode === "providerNative" ? "" : " hidden"}>${tx("bridge.llmNativeWebSearchCopy")}</p><div data-attached-search-controls${savedWebSearchMode === "attached" ? "" : " hidden"}>${valueSelectField("bridge.llmWebSearchProvider", "bridge.llmWebSearchProviderCopy", "llmWebSearchProviderProfileID", savedWebSearchProfileID, webSearchProviderOptions)}<p class="small-copy">${tx("bridge.llmAttachedWebSearchCopy")}</p></div>`;
       const officialContentEvidenceControl = field("bridge.llmOfficialContentEvidenceCount", "bridge.llmOfficialContentEvidenceCountCopy", "llmOfficialContentEvidenceCount", llmEditorSettings?.officialContentEvidenceCount || 25, "text", "inputmode=\"numeric\"");
-      const llmSettings = selectedLLMProfile ? `${llmClassificationStatus}<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}${llmModelControl}${field("bridge.llmDailyTokenBudget", "bridge.llmDailyTokenBudgetCopy", "llmDailyTokenLimit", llmEditorSettings?.dailyTokenLimit || 10000, "text", "inputmode=\"numeric\"")}${llmAssist ? liveHTML(`llm-tokens-${classifierType.id}`, tx("bridge.llmDailyTokenUsage", { used: llmAssist.dailyTokensUsed || 0, limit: llmAssist.dailyTokenLimit || 10000 }), { tag: "p", className: "small-copy" }) : ""}${field("bridge.llmMaximumTokens", "bridge.llmMaximumTokensCopy", "llmMaximumOutputTokensPerRequest", llmEditorSettings?.maximumOutputTokensPerRequest || 4096, "text", "inputmode=\"numeric\"")}${textareaField("bridge.llmExtraDirection", "bridge.llmExtraDirectionCopy", "llmExtraDirection", llmEditorSettings?.extraDirection || "", "maxlength=\"4096\"")}${field("bridge.llmClassificationPace", "bridge.llmClassificationPaceCopy", "llmClassificationRequestsPerMinute", llmEditorSettings?.classificationRequestsPerMinute || 6, "text", "inputmode=\"numeric\"")}${field("bridge.llmBatchSize", "bridge.llmBatchSizeCopy", "llmBatchSize", llmEditorSettings?.batchSize || 5, "text", "inputmode=\"numeric\"")}${officialContentEvidenceControl}${field("bridge.llmMaximumTagCount", "bridge.llmMaximumTagCountCopy", "llmMaximumTagCount", llmEditorSettings?.maximumTagCount || 8, "text", "inputmode=\"numeric\"")}${toggle("bridge.llmLeafOnly", "llmRestrictToLeafTags", llmEditorSettings?.restrictToLeafTags ?? true)}<p class="small-copy">${tx("bridge.llmLeafOnlyCopy")}</p>${webSearchControls}</div>${creatorLLMEvidenceWarning}` : `<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}</div>`;
+      // Activation (provider + model) is the common, up-front control; the many
+      // numeric knobs are the least-used detail and move to their own section.
+      const llmActivationBody = selectedLLMProfile
+        ? `${llmClassificationStatus}<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}${llmModelControl}</div>`
+        : `<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}</div>`;
+      const llmAdvancedBody = `<div class="classifier-llm-config">${field("bridge.llmDailyTokenBudget", "bridge.llmDailyTokenBudgetCopy", "llmDailyTokenLimit", llmEditorSettings?.dailyTokenLimit || 10000, "text", "inputmode=\"numeric\"")}${llmAssist ? liveHTML(`llm-tokens-${classifierType.id}`, tx("bridge.llmDailyTokenUsage", { used: llmAssist.dailyTokensUsed || 0, limit: llmAssist.dailyTokenLimit || 10000 }), { tag: "p", className: "small-copy" }) : ""}${field("bridge.llmMaximumTokens", "bridge.llmMaximumTokensCopy", "llmMaximumOutputTokensPerRequest", llmEditorSettings?.maximumOutputTokensPerRequest || 4096, "text", "inputmode=\"numeric\"")}${textareaField("bridge.llmExtraDirection", "bridge.llmExtraDirectionCopy", "llmExtraDirection", llmEditorSettings?.extraDirection || "", "maxlength=\"4096\"")}${field("bridge.llmClassificationPace", "bridge.llmClassificationPaceCopy", "llmClassificationRequestsPerMinute", llmEditorSettings?.classificationRequestsPerMinute || 6, "text", "inputmode=\"numeric\"")}${field("bridge.llmBatchSize", "bridge.llmBatchSizeCopy", "llmBatchSize", llmEditorSettings?.batchSize || 5, "text", "inputmode=\"numeric\"")}${officialContentEvidenceControl}${field("bridge.llmMaximumTagCount", "bridge.llmMaximumTagCountCopy", "llmMaximumTagCount", llmEditorSettings?.maximumTagCount || 8, "text", "inputmode=\"numeric\"")}${toggle("bridge.llmLeafOnly", "llmRestrictToLeafTags", llmEditorSettings?.restrictToLeafTags ?? true)}<p class="small-copy">${tx("bridge.llmLeafOnlyCopy")}</p>${webSearchControls}</div>${creatorLLMEvidenceWarning}`;
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}">
-        <div class="classifier-type-head"><div><span class="eyebrow">${tx("bridge.typePanel")}</span><h3>${esc(classifierType.name)}</h3><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div>${statusPill(typeStatus, applicablePlatformID ? "navy" : "muted")}</div>
+        <div class="classifier-type-head"><div><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div>${statusPill(typeStatus, applicablePlatformID ? "navy" : "muted")}</div>
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}<button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("bridge.saveType")}</button><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}" data-name="${esc(classifierType.name)}">${tx("bridge.deleteType")}</button></div>
-        <section class="classifier-type-section classifier-applicable-platform-section"><div class="section-header"><div><h3>${tx("bridge.applicablePlatform")}</h3><p class="section-copy">${tx("bridge.assetSelectionCopy")}</p></div></div><div class="classifier-applicable-platform-row">${valueSelectField("bridge.applicablePlatform", "bridge.applicablePlatformCopy", "applicablePlatformID", applicablePlatformID, applicablePlatformOptions, applicablePlatformLocked ? "disabled" : "")}<div class="classifier-platform-data-status"><span class="eyebrow">${tx("bridge.platformData")}</span><p class="small-copy">${esc(platformDataStatus)}</p></div></div>${applicablePlatformLocked ? `<p class="small-copy classifier-platform-locked" data-platform-locked>${tx("bridge.applicablePlatformLocked", { count: approvedDecisionCount })}</p>` : ""}${applicablePlatform && !supportsLocalModel && !supportsLLMAssist ? `<p class="small-copy" data-manual-only-platform-note>${tx("bridge.manualOnlyCopy")}</p>` : ""}</section>
-        <section class="classifier-type-section classifier-local-model-section" data-local-model-section${supportsLocalModel ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.localModel")}</h3><p class="section-copy">${tx("bridge.localModelCopy")}</p></div></div><div class="classifier-local-model-status">${boundModel
-          ? `${statusPill(t(boundModel.ready && !boundModel.needsTraining ? "model.ready" : "model.needsTraining"), boundModel.ready && !boundModel.needsTraining ? "pink" : "gold")}<span class="small-copy">${tx("bridge.localModelBound", { name: boundModel.name })}</span><button class="secondary" type="button" data-action="workspace" data-workspace="localModel">${tx("bridge.localModelOpen")}</button>`
-          : `<span class="small-copy">${tx("bridge.localModelNone")}</span><button class="secondary" type="button" data-action="workspace" data-workspace="localModel">${tx("bridge.localModelCreate")}</button>`}</div></section>
+        <section class="classifier-type-section classifier-applicable-platform-section"><div class="section-header"><div><h3>${tx("bridge.applicablePlatform")}</h3><p class="section-copy">${tx("bridge.assetSelectionCopy")}</p></div></div><div class="classifier-applicable-platform-row">${valueSelectField("bridge.applicablePlatform", "bridge.applicablePlatformCopy", "applicablePlatformID", applicablePlatformID, applicablePlatformOptions, applicablePlatformLocked ? "disabled" : "")}<div class="classifier-platform-data-status"><span class="eyebrow">${tx("bridge.platformData")}</span><p class="small-copy">${esc(platformDataStatus)}</p></div></div>${applicablePlatformLocked ? `<p class="small-copy classifier-platform-locked" data-platform-locked>${approvedDecisionCount > 0 ? tx("bridge.applicablePlatformLocked", { count: approvedDecisionCount }) : tx("bridge.platformLockedNote")}</p>` : ""}${applicablePlatform && !supportsLocalModel && !supportsLLMAssist ? `<p class="small-copy" data-manual-only-platform-note>${tx("bridge.manualOnlyCopy")}</p>` : ""}</section>
         <section class="classifier-type-section creator-classification-section"><div class="section-header"><div><h3>${tx("bridge.manualSource", { source: sourceTerms.singular })}</h3><p class="section-copy">${tx("bridge.manualSourceCopy", { source: sourceTerms.singular })}</p></div><div class="action-row"><span class="small-copy">${tx("bridge.sourceCount", { count: creatorRecords.length, sources: sourceTerms.plural })}</span></div></div>${creatorClassification}</section>
-        <section class="classifier-type-section classifier-llm-section" data-llm-assist-section${supportsLLMAssist ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.llmAssist")}</h3><p class="section-copy">${tx("bridge.llmAssistCopy")}</p></div>${llmActivation}</div>${llmProfiles.length ? llmSettings : `<div class="empty compact-empty">${tx("bridge.noLLMProfiles")}</div>`}</section>
+        <section class="classifier-type-section classifier-llm-section" data-llm-assist-section${supportsLLMAssist ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.llmAssist")}</h3><p class="section-copy">${tx("bridge.llmAssistCopy")}</p></div>${llmActivation}</div>${llmProfiles.length ? llmActivationBody : `<div class="empty compact-empty">${tx("bridge.noLLMProfiles")}</div>`}</section>
+        ${selectedLLMProfile && llmProfiles.length ? `<section class="classifier-type-section classifier-llm-advanced-section" data-llm-assist-section${supportsLLMAssist ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.llmAdvanced")}</h3><p class="section-copy">${tx("bridge.llmAdvancedCopy")}</p></div></div>${llmAdvancedBody}</section>` : ""}
         ${creatorDecisionList}
       </section>`;
     };
+    // A type now targets one platform at creation and owns a fresh tree. The
+    // left panel selects which type is open; a selected type shows Config / Tree
+    // / Model sub-tabs, so its tree and model live inside the type.
+    const selectedType = selectedTypeID ? classifierTypes.find((type) => type.id === selectedTypeID) : null;
+    if (selectedType) {
+      const platformDef = (assets.collectionPlatforms || []).find((definition) => definition.id === selectedType.applicablePlatformID);
+      // Config, Tag tree, and Local model stacked in one continuous scroll.
+      const section = (labelKey, inner) => `<section class="type-section"><h3 class="type-section-title">${tx(labelKey)}</h3>${inner}</section>`;
+      return `<div class="workspace classifier-type-workspace">
+        <div class="type-detail-head"><div><span class="eyebrow">${tx("bridge.typeLibrary")}</span><h2>${esc(selectedType.name)}</h2><p class="section-copy">${esc(platformDef ? platformDef.name : tx("bridge.noApplicablePlatform"))}</p></div></div>
+        <div class="type-detail-body">
+          ${section("bridge.tabConfig", typeForm(selectedType))}
+          ${section("bridge.tabTree", tagTreeWorkspace(selectedType.treeID))}
+          ${section("bridge.tabModel", localModelWorkspace(selectedType.id))}
+        </div></div>`;
+    }
+    // Nothing selected: '+ New type' creates directly and the sidebar lists the
+    // types, so this is just a prompt.
     return `<div class="workspace classifier-type-workspace">${header("bridge.title", "bridge.copy", t("bridge.typeLibrary"), "navy")}
-      <section class="classifier-type-create" data-form-id="classifier-type-create-form">${field("bridge.newTypeName", "bridge.newTypeNameCopy", "name", "")}<button class="primary" data-action="createClassifierType" data-form="classifier-type-create-form">${tx("bridge.createType")}</button></section>
-      <div class="classifier-type-panels">${classifierTypes.length ? classifierTypes.map(typeForm).join("") : `<div class="empty">${tx("bridge.emptyTypes")}</div>`}${trashOfKind("classifierType")}</div>${notice(state.issue, "red")}</div>`;
+      <div class="empty">${tx(classifierTypes.length ? "bridge.selectType" : "bridge.emptyTypes")}</div>${notice(state.issue, "red")}</div>`;
   }
 
   function classificationDataWorkspace() {
@@ -1374,7 +1460,7 @@
     };
     return `<div class="workspace collection-workspace">${header("data.title", "data.copy", t("data.entries", { count: totalCollectedEntries }), "cyan")}
       <section class="collection-platform-create" data-form-id="collection-platform-create-form"><div><span class="eyebrow">${tx("data.addPlatform")}</span><p class="section-copy">${tx("data.addPlatformCopy")}</p></div>${availablePlatforms.length ? `${valueSelectField("data.platform", "", "platformID", availablePlatforms[0].id, availablePlatforms.map((platform) => [platform.id, platform.name]))}<button class="primary" data-action="addCollectionPlatform" data-form="collection-platform-create-form">${tx("data.addPlatformAction")}</button>` : `<span class="small-copy">${tx("data.allPlatformsAdded")}</span>`}</section>
-      <div class="collection-platform-panels">${bindings.length ? bindings.map(bindingPanel).join("") : `<div class="empty">${tx("data.noPlatforms")}</div>`}${trashOfKind("collectionPlatform")}</div>
+      <div class="collection-platform-panels">${bindings.length ? bindings.map(bindingPanel).join("") : `<div class="empty">${tx("data.noPlatforms")}</div>`}</div>
       ${notice(state.issue, "red")}</div>`;
   }
 
@@ -1620,6 +1706,12 @@
     return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelPendingDeletion" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog" role="dialog" aria-modal="true"><h3>${tx("trash.confirmTitle")}</h3><p class="section-copy">${tx("trash.confirmCopy", { name: pendingDeletion.name })}</p><label class="field"><span class="field-label">${tx("trash.typeNameLabel")}</span><input type="text" data-deletion-name-input autocomplete="off" spellcheck="false"></label><div class="action-row"><button class="secondary" data-action="cancelPendingDeletion">${tx("common.cancel")}</button><button class="danger" data-action="confirmPendingDeletion" disabled>${tx("trash.confirmDelete")}</button></div></div></div>`;
   }
 
+  // Confirmation shown before the first action that binds a type to its platform.
+  function platformLockModal() {
+    if (!pendingPlatformLock) return "";
+    return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelPlatformLock" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog" role="dialog" aria-modal="true"><h3>${tx("bridge.lockPlatformTitle")}</h3><p class="section-copy">${tx("bridge.lockPlatformCopy", { platform: pendingPlatformLock.platformName })}</p><div class="action-row"><button class="secondary" data-action="cancelPlatformLock">${tx("common.cancel")}</button><button class="primary" data-action="confirmPlatformLock">${tx("bridge.lockPlatformConfirm")}</button></div></div></div>`;
+  }
+
   // Keyed list: rendered as an empty container in the shell (so its row data is
   // excluded from the render signature) and populated/updated by
   // reconcileKeyedLists. On a state push that only changes row data, render()
@@ -1701,7 +1793,7 @@
       return;
     }
     resetDeferredRendering();
-    const markup = shell(workspace()) + deletionModal();
+    const markup = shell(workspace()) + deletionModal() + platformLockModal();
     // Fast path: the signature (everything except keyed-list rows, live
     // regions, and windowed virtual-list rows) is unchanged, so only
     // reconcilable data differs. Update those in place and keep scroll. Virtual
@@ -1801,6 +1893,31 @@
       send("workspace", { workspace: nextWorkspace });
       return;
     }
+    if (action === "selectType") {
+      // A drag just ended: the trailing click must not also select.
+      if (Date.now() < suppressTypeSelectUntil) return;
+      const id = button.dataset.typeId;
+      if (!id) return;
+      selectedTypeID = id;
+      if (state.workspace !== "browserBridge") { state.workspace = "browserBridge"; send("workspace", { workspace: "browserBridge" }); }
+      render();
+      return;
+    }
+    if (action === "selectTrash") {
+      const id = button.dataset.id;
+      selectedTrashID = selectedTrashID === id ? null : id;
+      render();
+      return;
+    }
+    if (action === "newType") {
+      const platforms = state.assets?.collectionPlatforms || [];
+      if (!platforms.length) return;
+      // Directly create a type (default name + first platform) and open its
+      // Config tab on the next snapshot — no separate create form.
+      pendingSelectNewType = new Set((state.assets?.classifierTypes || []).map((type) => type.id));
+      send("createClassifierType", { name: t("navigation.newType"), platformID: platforms[0].id });
+      return;
+    }
     if (action === "confirmDeleteClassifierType" || action === "confirmDeleteCollectionPlatform") {
       pendingDeletion = {
         action,
@@ -1814,6 +1931,22 @@
     }
     if (action === "cancelPendingDeletion") {
       pendingDeletion = null;
+      render();
+      return;
+    }
+    if (action === "confirmPlatformLock") {
+      const pending = pendingPlatformLock;
+      pendingPlatformLock = null;
+      if (pending) {
+        // Lock first, then the original action; the host processes them in order.
+        send("lockClassifierTypePlatform", { typeID: pending.typeID });
+        pending.replay();
+      }
+      render();
+      return;
+    }
+    if (action === "cancelPlatformLock") {
+      pendingPlatformLock = null;
       render();
       return;
     }
@@ -1837,6 +1970,24 @@
       } catch (_) { return; }
       if (!Array.isArray(newTagIDs) || !newTagIDs.every((id) => typeof id === "string")) return;
       if (!Array.isArray(newNegativeTagIDs) || !newNegativeTagIDs.every((id) => typeof id === "string")) return;
+      // Lock gate: the first classification binds decisions to the type's
+      // platform. Confirm the lock first, then replay this record.
+      const lockType = (state.assets?.classifierTypes || []).find((type) => type.id === typeID);
+      if (lockType && lockType.platformLocked !== true && lockType.applicablePlatformID) {
+        const platform = (state.assets?.collectionPlatforms || []).find((definition) => definition.id === lockType.applicablePlatformID);
+        pendingPlatformLock = {
+          typeID,
+          platformName: platform ? platform.name : lockType.applicablePlatformID,
+          replay: () => {
+            let overlay = manualDecisionOverlay.get(typeID);
+            if (!overlay) { overlay = new Map(); manualDecisionOverlay.set(typeID, overlay); }
+            overlay.set(creatorKey, { tagIDs: newTagIDs, negativeTagIDs: newNegativeTagIDs });
+            send("recordCreatorClassification", { typeID, creatorKey, tagIDs: newTagIDs, negativeTagIDs: newNegativeTagIDs });
+          },
+        };
+        render();
+        return;
+      }
       // Optimistic: record the decision locally, move just this card, then
       // persist. Native does not re-push (returns false) so the whole list is
       // never rebuilt; the overlay keeps the decision until an authoritative
@@ -2136,6 +2287,172 @@
   document.addEventListener("pointerup", finishNavigationResize);
   document.addEventListener("pointercancel", finishNavigationResize);
 
+  // Drag-reorder the classifier-type list. Ported from the extension's group
+  // reorder (customBlocker/popup.js): the whole row is the drag target (no
+  // handle), a movement threshold keeps a short press a select, the dragged row
+  // is clamped so it cannot leave the top of the list ("ceiling"), the others
+  // glide aside, and on release the dragged row snaps to its slot.
+  function typeNavElement() { return root.querySelector("[data-classifier-type-nav]"); }
+  function getTypeDragCards() {
+    const nav = typeNavElement();
+    return nav ? Array.from(nav.querySelectorAll(".classifier-type-row[data-type-id]")) : [];
+  }
+  function getTypeCardGap() {
+    const nav = typeNavElement();
+    if (!nav) return 0;
+    const computed = window.getComputedStyle(nav);
+    const parsed = Number.parseFloat(computed.rowGap || computed.gap || "0");
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  function resetTypeDragLayout() {
+    const nav = typeNavElement();
+    if (nav) nav.classList.remove("is-reordering");
+    for (const card of getTypeDragCards()) {
+      card.classList.remove("dragging");
+      card.style.removeProperty("transform");
+      card.style.removeProperty("transition");
+      card.style.removeProperty("z-index");
+    }
+  }
+  function createTypeDragContext(typeID, pointerY) {
+    const nav = typeNavElement();
+    const cards = getTypeDragCards();
+    const sourceIndex = cards.findIndex((card) => card.dataset.typeId === typeID);
+    if (sourceIndex === -1 || !nav) return null;
+    const draggedRect = cards[sourceIndex].getBoundingClientRect();
+    const listRect = nav.getBoundingClientRect();
+    const gap = getTypeCardGap();
+    return {
+      cards,
+      sourceIndex,
+      startY: pointerY,
+      pointerOffsetY: pointerY - draggedRect.top,
+      draggedHeight: draggedRect.height,
+      minTop: listRect.top,
+      shiftDistance: draggedRect.height + gap,
+      rects: cards.map((card) => card.getBoundingClientRect())
+    };
+  }
+  function getTypeDragInsertIndex(context, pointerY) {
+    const draggedTop = pointerY - context.pointerOffsetY;
+    const draggedCenterY = draggedTop + context.draggedHeight / 2;
+    let insertIndex = 0;
+    for (let i = 0; i < context.rects.length; i++) {
+      if (i === context.sourceIndex) continue;
+      const rect = context.rects[i];
+      if (draggedCenterY > rect.top + rect.height / 2) insertIndex += 1;
+    }
+    return insertIndex;
+  }
+  let typeDragInsertIndex = -1;
+  function applyTypeDragLayout(context, pointerY) {
+    if (!context) return;
+    const clampedPointerY = Math.max(pointerY, context.minTop + context.pointerOffsetY);
+    const dragY = clampedPointerY - context.startY;
+    const insertIndex = getTypeDragInsertIndex(context, clampedPointerY);
+    typeDragInsertIndex = insertIndex;
+    for (let i = 0; i < context.cards.length; i++) {
+      const card = context.cards[i];
+      let offsetY = 0;
+      if (i === context.sourceIndex) { offsetY = dragY; card.style.zIndex = "20"; }
+      else if (insertIndex > context.sourceIndex && i > context.sourceIndex && i <= insertIndex) offsetY = -context.shiftDistance;
+      else if (insertIndex < context.sourceIndex && i >= insertIndex && i < context.sourceIndex) offsetY = context.shiftDistance;
+      if (offsetY === 0) card.style.removeProperty("transform");
+      else card.style.transform = `translateY(${offsetY}px)`;
+    }
+  }
+  function getTypeDragSnapOffset(context, insertIndex) {
+    if (!context || !Number.isInteger(insertIndex)) return 0;
+    const normalized = Math.max(0, Math.min(insertIndex, context.rects.length - 1));
+    const sourceRect = context.rects[context.sourceIndex];
+    const targetRect = context.rects[normalized];
+    if (!sourceRect || !targetRect) return 0;
+    return targetRect.top - sourceRect.top;
+  }
+  function finishTypeDragRelease(context, insertIndex, callback) {
+    if (!context) { callback(); return; }
+    const draggedCard = context.cards[context.sourceIndex];
+    if (!draggedCard) { callback(); return; }
+    const snapOffset = getTypeDragSnapOffset(context, insertIndex);
+    const done = () => {
+      draggedCard.removeEventListener("transitionend", handleTransitionEnd);
+      window.clearTimeout(fallbackTimeout);
+      callback();
+    };
+    const handleTransitionEnd = (event) => {
+      if (event.target === draggedCard && event.propertyName === "transform") done();
+    };
+    const fallbackTimeout = window.setTimeout(done, 220);
+    draggedCard.addEventListener("transitionend", handleTransitionEnd);
+    draggedCard.style.transition = "transform 180ms ease, box-shadow 120ms ease, opacity 120ms ease";
+    window.requestAnimationFrame(() => {
+      if (snapOffset === 0) draggedCard.style.removeProperty("transform");
+      else draggedCard.style.transform = `translateY(${snapOffset}px)`;
+    });
+  }
+
+  const TYPE_DRAG_THRESHOLD_PX = 5;
+  let suppressTypeSelectUntil = 0;
+  function startTypeReorder(event, typeID) {
+    if (event.button !== 0) return;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let dragActive = false;
+    let dragContext = null;
+    const beginDrag = () => {
+      dragContext = createTypeDragContext(typeID, startY);
+      if (!dragContext) return;
+      dragActive = true;
+      document.body.style.userSelect = "none";
+      const nav = typeNavElement();
+      if (nav) nav.classList.add("is-reordering");
+      dragContext.cards[dragContext.sourceIndex].classList.add("dragging");
+      applyTypeDragLayout(dragContext, startY);
+    };
+    const handleMove = (moveEvent) => {
+      if (!dragActive) {
+        const dx = moveEvent.clientX - startX;
+        const dy = moveEvent.clientY - startY;
+        if (dx * dx + dy * dy < TYPE_DRAG_THRESHOLD_PX * TYPE_DRAG_THRESHOLD_PX) return;
+        beginDrag();
+      }
+      if (!dragActive) return;
+      moveEvent.preventDefault();
+      applyTypeDragLayout(dragContext, moveEvent.clientY);
+    };
+    const handleUp = () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+      if (!dragActive) return;
+      document.body.style.userSelect = "";
+      // The row's select click fires right after mouseup; suppress it so a drag
+      // never doubles as a selection.
+      suppressTypeSelectUntil = Date.now() + 250;
+      const insertIndex = typeDragInsertIndex;
+      const sourceIndex = dragContext.sourceIndex;
+      if (!Number.isInteger(insertIndex) || insertIndex === sourceIndex) {
+        finishTypeDragRelease(dragContext, sourceIndex, () => resetTypeDragLayout());
+        return;
+      }
+      const ids = dragContext.cards.map((card) => card.dataset.typeId);
+      const [draggedID] = ids.splice(sourceIndex, 1);
+      ids.splice(Math.max(0, Math.min(insertIndex, ids.length)), 0, draggedID);
+      // Snap into place, then persist. The layout is left in the dropped order
+      // and the next snapshot re-renders it cleanly (no flash).
+      finishTypeDragRelease(dragContext, insertIndex, () => {
+        send("reorderClassifierTypes", { orderedIDs: ids });
+      });
+    };
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+  }
+
+  document.addEventListener("mousedown", (event) => {
+    const row = event.target.closest?.(".classifier-type-row[data-type-id]");
+    if (!row) return;
+    startTypeReorder(event, row.dataset.typeId);
+  });
+
   document.addEventListener("keydown", (event) => {
     const resizer = event.target.closest?.("[data-navigation-resizer]");
     if (!resizer) return;
@@ -2291,6 +2608,21 @@
         renderedPresentationRevision = revision;
       }
       state = payload;
+      // Drop a stale left-panel selection if that type no longer exists.
+      const typeIDs = new Set((state.assets?.classifierTypes || []).map((type) => type.id));
+      if (selectedTypeID && !typeIDs.has(selectedTypeID)) selectedTypeID = null;
+      // Close the trash panel if that entry was restored or purged.
+      if (selectedTrashID && !(Array.isArray(state.trash) ? state.trash : []).some((entry) => entry.id === selectedTrashID)) selectedTrashID = null;
+      // Tag tree and local model are folded into a type now (rendered only inside
+      // the type's sub-tabs), so they are no longer top-level pages. Land on the
+      // classifier-type area instead.
+      if (state.workspace === "tagTree" || state.workspace === "localModel") state.workspace = "browserBridge";
+      // Open a just-created type: the one id absent before "New type" was clicked.
+      if (pendingSelectNewType) {
+        const created = (state.assets?.classifierTypes || []).find((type) => !pendingSelectNewType.has(type.id));
+        if (created) { selectedTypeID = created.id; state.workspace = "browserBridge"; }
+        pendingSelectNewType = null;
+      }
       // An authoritative snapshot already reflects every persisted manual
       // decision, so the optimistic overlay is no longer needed.
       manualDecisionOverlay.clear();

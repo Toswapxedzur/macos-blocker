@@ -97,7 +97,7 @@ public struct NativeSourceTagsRequest: Codable, Equatable, Sendable {
         }
     }
 
-    private static func isValidPlatformID(_ value: String) -> Bool {
+    static func isValidPlatformID(_ value: String) -> Bool {
         !value.isEmpty && value.count <= 64 && value.unicodeScalars.allSatisfy {
             ($0.value >= 0x61 && $0.value <= 0x7a) ||
             ($0.value >= 0x30 && $0.value <= 0x39) ||
@@ -124,11 +124,32 @@ public struct NativeSourceTagsResponse: Codable, Equatable, Sendable {
     public var platformID: String
     public var sourceID: String
     public var tags: [NativeSourceTag]
+    /// True when `tags` are the local model's fallback prediction (no approved
+    /// human/LLM decision), so the browser can render them as a distinct pill.
+    public var predicted: Bool
 
-    public init(platformID: String, sourceID: String, tags: [NativeSourceTag]) {
+    public init(platformID: String, sourceID: String, tags: [NativeSourceTag], predicted: Bool = false) {
         self.platformID = platformID
         self.sourceID = sourceID
-        self.tags = Array(
+        self.tags = NativeSourceTagsResponse.acceptedTags(tags)
+        self.predicted = predicted
+    }
+
+    private enum CodingKeys: String, CodingKey { case platformID, sourceID, tags, predicted }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        platformID = try container.decode(String.self, forKey: .platformID)
+        sourceID = try container.decode(String.self, forKey: .sourceID)
+        tags = NativeSourceTagsResponse.acceptedTags(try container.decode([NativeSourceTag].self, forKey: .tags))
+        predicted = try container.decodeIfPresent(Bool.self, forKey: .predicted) ?? false
+    }
+
+    /// Keeps only tags whose light/dark colors form a valid theme pair, capped at
+    /// the persisted tag-count limit. Shared by the single and batch responses so
+    /// both apply the identical outbound color/size gate.
+    static func acceptedTags(_ tags: [NativeSourceTag]) -> [NativeSourceTag] {
+        Array(
             tags
                 .filter {
                     TagColorAssignment.isValidThemePair(
@@ -138,6 +159,90 @@ public struct NativeSourceTagsResponse: Codable, Equatable, Sendable {
                 }
                 .prefix(CreatorClassificationRecord.maximumTagIDs)
         )
+    }
+}
+
+/// One source's tags inside a batched request. `platformID` is carried once on
+/// the batch envelope; per item only the sourceID and optional collaboration
+/// display names travel.
+public struct NativeSourceTagsBatchItem: Codable, Equatable, Sendable {
+    public var sourceID: String
+    public var creatorNames: [String]
+
+    public init(sourceID: String, creatorNames: [String] = []) {
+        self.sourceID = sourceID
+        self.creatorNames = creatorNames
+    }
+
+    private enum CodingKeys: String, CodingKey { case sourceID, creatorNames }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sourceID = try container.decode(String.self, forKey: .sourceID)
+        creatorNames = (try container.decodeIfPresent([String].self, forKey: .creatorNames)) ?? []
+    }
+}
+
+public struct NativeSourceTagsBatchRequest: Codable, Equatable, Sendable {
+    public var platformID: String
+    public var items: [NativeSourceTagsBatchItem]
+
+    public static let maximumItems = 64
+
+    public init(platformID: String, items: [NativeSourceTagsBatchItem]) {
+        self.platformID = platformID
+        self.items = items
+    }
+
+    public func validate() throws {
+        guard NativeSourceTagsRequest.isValidPlatformID(platformID) else {
+            throw NativeSourceTagsError.invalidPlatform
+        }
+        guard !items.isEmpty, items.count <= Self.maximumItems else {
+            throw NativeSourceTagsError.invalidSource
+        }
+        // Reuse the single-request validator per item so a batch can never admit
+        // a sourceID or creator-name set the single path would reject.
+        for item in items {
+            try NativeSourceTagsRequest(
+                platformID: platformID,
+                sourceID: item.sourceID,
+                creatorNames: item.creatorNames
+            ).validate()
+        }
+    }
+}
+
+public struct NativeSourceTagsBatchResponseItem: Codable, Equatable, Sendable {
+    public var sourceID: String
+    public var tags: [NativeSourceTag]
+    /// True when `tags` are the local model's fallback prediction rather than an
+    /// approved human/LLM decision. See `NativeSourceTagsResponse.predicted`.
+    public var predicted: Bool
+
+    public init(sourceID: String, tags: [NativeSourceTag], predicted: Bool = false) {
+        self.sourceID = sourceID
+        self.tags = NativeSourceTagsResponse.acceptedTags(tags)
+        self.predicted = predicted
+    }
+
+    private enum CodingKeys: String, CodingKey { case sourceID, tags, predicted }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sourceID = try container.decode(String.self, forKey: .sourceID)
+        tags = NativeSourceTagsResponse.acceptedTags(try container.decode([NativeSourceTag].self, forKey: .tags))
+        predicted = try container.decodeIfPresent(Bool.self, forKey: .predicted) ?? false
+    }
+}
+
+public struct NativeSourceTagsBatchResponse: Codable, Equatable, Sendable {
+    public var platformID: String
+    public var items: [NativeSourceTagsBatchResponseItem]
+
+    public init(platformID: String, items: [NativeSourceTagsBatchResponseItem]) {
+        self.platformID = platformID
+        self.items = items
     }
 }
 

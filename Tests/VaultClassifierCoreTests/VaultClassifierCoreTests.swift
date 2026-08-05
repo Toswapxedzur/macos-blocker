@@ -318,6 +318,53 @@ final class VaultClassifierCoreTests: XCTestCase {
         ).tags.isEmpty)
     }
 
+    func testNativeSourceTagsBatchValidatesEveryItemAndGatesResponseColors() throws {
+        // A batch admits only what the single path would: each item is validated
+        // with the same platform-bound identity rules.
+        XCTAssertNoThrow(try NativeSourceTagsBatchRequest(
+            platformID: "youtube",
+            items: [
+                NativeSourceTagsBatchItem(sourceID: "youtube:channel:UC123"),
+                NativeSourceTagsBatchItem(sourceID: "youtube:collab:abcdefghijk", creatorNames: ["Mark Rober"])
+            ]
+        ).validate())
+        XCTAssertThrowsError(try NativeSourceTagsBatchRequest(
+            platformID: "youtube",
+            items: [NativeSourceTagsBatchItem(sourceID: "reddit:subreddit:games")]
+        ).validate())
+        XCTAssertThrowsError(try NativeSourceTagsBatchRequest(platformID: "youtube", items: []).validate())
+        XCTAssertThrowsError(try NativeSourceTagsBatchRequest(
+            platformID: "youtube",
+            items: (0...NativeSourceTagsBatchRequest.maximumItems).map {
+                NativeSourceTagsBatchItem(sourceID: "youtube:channel:UC\($0)")
+            }
+        ).validate())
+
+        // Per-item responses apply the identical theme-pair + count gate as the
+        // single response: a valid pair survives, an invalid one is dropped.
+        let good = NativeSourceTagsBatchResponseItem(
+            sourceID: "youtube:channel:UC123",
+            tags: [NativeSourceTag(
+                id: "games", name: "Games",
+                lightColorHex: TagColorAssignment.neutralRootLightHex,
+                darkColorHex: TagColorAssignment.neutralRootDarkHex
+            )]
+        )
+        XCTAssertEqual(good.tags.count, 1)
+        let bad = NativeSourceTagsBatchResponseItem(
+            sourceID: "youtube:channel:UC123",
+            tags: [NativeSourceTag(
+                id: "games", name: "Games",
+                lightColorHex: TagColorAssignment.neutralRootLightHex,
+                darkColorHex: "navy"
+            )]
+        )
+        XCTAssertTrue(bad.tags.isEmpty)
+
+        // The batch operation round-trips through its raw wire token.
+        XCTAssertEqual(SharedBrowserBridgeOperation(rawValue: "source-tags-batch"), .sourceTagsBatch)
+    }
+
     func testLocalHubProofBindsTheProgramAndChallenge() throws {
         let secret = Data(repeating: 7, count: 32)
         let challenge = String(repeating: "a", count: 43)
@@ -454,7 +501,11 @@ final class VaultClassifierCoreTests: XCTestCase {
                 "sourceIconURL": .string("https://yt3.ggpht.com/creator-avatar=s88"),
             ])
         )
-        XCTAssertEqual(coordinator.enabledCollectionPlatformIDs(), ["youtube"])
+        // Every supported platform is collected by default now, not just YouTube.
+        XCTAssertEqual(
+            coordinator.enabledCollectionPlatformIDs(),
+            CollectionPlatformRegistry.definitions.map(\.id).sorted()
+        )
         XCTAssertTrue(try coordinator.collectPlatformEntry(
             collected,
             firstObservedAtMilliseconds: 100,

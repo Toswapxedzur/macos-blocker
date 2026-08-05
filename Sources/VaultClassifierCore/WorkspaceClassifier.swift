@@ -96,6 +96,18 @@ public struct CreatorIdentityIndex: Sendable {
     }
 }
 
+/// The browser feed pill's source tags plus whether they came from the local
+/// model as a fallback (no approved human/LLM decision) rather than a durable
+/// decision. `predicted` lets the extension render the pill distinctly.
+public struct SourceTagsProjection: Sendable, Equatable {
+    public var tags: [TagNode]
+    public var predicted: Bool
+    public init(tags: [TagNode], predicted: Bool) {
+        self.tags = tags
+        self.predicted = predicted
+    }
+}
+
 public struct WorkspaceNeuralClassifier: Sendable {
     public static let threshold = 0.50
     public static let maximumScores = 256
@@ -207,17 +219,6 @@ public struct WorkspaceNeuralClassifier: Sendable {
     /// predictions are deliberately excluded because browser annotations
     /// describe the source, not a guess about one visible title.
     public func sourceTags(platformID: String, sourceID: String) -> [TagNode] {
-        // TEST-ONLY: when ADAMANCIA_VAULT_VIRTUAL_SHOW_SOURCE_NAME is set, project
-        // the queried source's own identity (its handle/channel/collab form) as the
-        // tag — over the real async path — so every card visibly shows which creator
-        // it resolved to, without writing any real classification. Not for production.
-        if ProcessInfo.processInfo.environment["ADAMANCIA_VAULT_VIRTUAL_SHOW_SOURCE_NAME"] != nil,
-           !sourceID.isEmpty {
-            let name = sourceID.hasPrefix("\(platformID):")
-                ? String(sourceID.dropFirst(platformID.count + 1))
-                : sourceID
-            return [TagNode(id: sourceID, name: name, predictable: true, lightColorHex: "#DBE5F3", darkColorHex: "#2A3B4D")]
-        }
         let allowedTags = Set(taxonomy.nodes.values.filter(\.predictable).map(\.id))
         let signals = creatorSignals(
             platformID: platformID,
@@ -243,6 +244,41 @@ public struct WorkspaceNeuralClassifier: Sendable {
         }
         .prefix(Self.maximumSelectedTags)
         .map(\.0)
+    }
+
+    /// The local model's aggregated prediction for a creator, meaned over the
+    /// supplied collected titles and thresholded to leaf tags. Used only as the
+    /// browser feed pill fallback when a creator has no approved human/LLM
+    /// decision; the per-entry `classify` path already blends the model into
+    /// dim/block. Empty when there is no ready model or no usable title.
+    public func predictedSourceTags(candidateTitles: [String]) -> [TagNode] {
+        guard let neural = model?.embeddedNeuralModel else { return [] }
+        let allowedTags = Set(taxonomy.nodes.values.filter(\.predictable).map(\.id))
+        guard !allowedTags.isEmpty else { return [] }
+        var probabilitySums: [String: Double] = [:]
+        var usableTitleCount = 0
+        for title in candidateTitles {
+            let text = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+            usableTitleCount += 1
+            for prediction in neural.predictions(for: text)
+                where allowedTags.contains(prediction.labelID) && prediction.probability.isFinite {
+                probabilitySums[prediction.labelID, default: 0] += min(1, max(0, prediction.probability))
+            }
+        }
+        guard usableTitleCount > 0 else { return [] }
+        return probabilitySums
+            .compactMap { tagID, sum -> (TagNode, Double)? in
+                guard let node = taxonomy.nodes[tagID] else { return nil }
+                let mean = sum / Double(usableTitleCount)
+                return mean >= Self.threshold ? (node, mean) : nil
+            }
+            .sorted { lhs, rhs in
+                if lhs.1 == rhs.1 { return lhs.0.id < rhs.0.id }
+                return lhs.1 > rhs.1
+            }
+            .prefix(Self.maximumSelectedTags)
+            .map(\.0)
     }
 
     /// Best-effort source tags for a creator identified only by a display name.
@@ -358,5 +394,50 @@ public extension WorkspaceCatalog {
             // index so the O(entries) union-find is not rebuilt per request.
             identityIndex: identityIndex ?? CreatorIdentityIndex(entries: dataset.collectedEntries)
         )
+    }
+
+    /// Every classifier type targeting `platformID`, in list order, built into
+    /// runnable classifiers. Each type owns its own tree and (optional) model and
+    /// shares the platform's collected data. A type whose tree/dataset revision no
+    /// longer matches is skipped rather than failing the whole platform, so one
+    /// stale type cannot blank a card's other tags.
+    func workspaceClassifiers(
+        for platformID: String,
+        policies: [NamedPolicy],
+        identityIndex: CreatorIdentityIndex? = nil
+    ) throws -> [WorkspaceNeuralClassifier] {
+        let orderedTypes = classifierTypes
+            .filter { $0.applicablePlatformID == platformID }
+            .sorted { ($0.order, $0.id) < ($1.order, $1.id) }
+        return try orderedTypes.compactMap { classifierType -> WorkspaceNeuralClassifier? in
+            guard let tree = trees.first(where: { $0.id == classifierType.treeID }),
+                  let dataset = datasets.first(where: { $0.id == classifierType.datasetID }),
+                  classifierType.treeRevision == tree.revision,
+                  classifierType.datasetRevision == dataset.revision else {
+                return nil
+            }
+            // A local model is bound to its classifier type (owns-one). Readiness
+            // is gated by the tree revision, not by a binding's active-model
+            // pointer (a platform may now host several types).
+            let model: LocalModelAsset?
+            if let resolvedModel = models.first(where: { $0.classifierTypeID == classifierType.id }),
+               resolvedModel.isReady,
+               resolvedModel.embeddedNeuralModel != nil,
+               resolvedModel.treeID == tree.id,
+               resolvedModel.treeRevision == tree.revision,
+               resolvedModel.datasetID == dataset.id {
+                model = resolvedModel
+            } else {
+                model = nil
+            }
+            return .init(
+                classifierType: classifierType,
+                model: model,
+                taxonomy: try tree.inferenceTaxonomy(),
+                policies: policies,
+                creatorClassifications: dataset.creatorClassifications,
+                identityIndex: identityIndex ?? CreatorIdentityIndex(entries: dataset.collectedEntries)
+            )
+        }
     }
 }
