@@ -48,6 +48,34 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
         /// Home-relative config file to write.
         let configPath: String
         let format: ConfigFormat
+
+        /// Detection paths that live OUTSIDE a TCC-guarded app-data container, so
+        /// probing them with `fileExists` doesn't pop the "access data from other
+        /// apps" dialog.
+        var unprotectedDetectionPaths: [String] {
+            detectionPaths.filter { !MCPConnectorRegistry.isProtectedAppDataPath($0) }
+        }
+
+        /// True when we can BOTH detect and write this client without touching a
+        /// TCC-guarded location — i.e. it's safe to auto-register at launch with no
+        /// prompt. Clients whose only home is another app's data container (VS
+        /// Code, Claude Desktop, Cline) are false here and are deferred to an
+        /// explicit user toggle, where the one-time prompt is in context.
+        var isSilentlyRegisterable: Bool {
+            !MCPConnectorRegistry.isProtectedAppDataPath(configPath)
+                && !unprotectedDetectionPaths.isEmpty
+        }
+    }
+
+    /// A home-relative path macOS Sequoia guards behind the "access data from
+    /// other apps" (App Data) prompt. Even a `fileExists` probe of one of these
+    /// pops that dialog, so the launch-time sweep must never touch them — that
+    /// storm (once per guarded app, every launch) is exactly what this avoids.
+    static func isProtectedAppDataPath(_ relativePath: String) -> Bool {
+        let path = relativePath.hasPrefix("/") ? String(relativePath.dropFirst()) : relativePath
+        return path.hasPrefix("Library/Application Support/")
+            || path.hasPrefix("Library/Containers/")
+            || path.hasPrefix("Library/Group Containers/")
     }
 
     public enum ActionResult: Sendable, Equatable {
@@ -88,6 +116,15 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
 
     func isInstalled(_ connector: Connector) -> Bool {
         connector.detectionPaths.contains {
+            fileManager.fileExists(atPath: home.appendingPathComponent($0).path)
+        }
+    }
+
+    /// Detection that only probes non-TCC-guarded paths, so it never pops the
+    /// App Data dialog. Used by the launch sweep; the Settings panel still uses
+    /// full `isInstalled` (its prompt is a deliberate, in-context user action).
+    func isInstalledSilently(_ connector: Connector) -> Bool {
+        connector.unprotectedDetectionPaths.contains {
             fileManager.fileExists(atPath: home.appendingPathComponent($0).path)
         }
     }
@@ -146,13 +183,23 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
     /// (with the server) to make "default to connect" fire at launch.
     public static var isLaunchAutoConnectEnabled = false
 
-    /// Connects every installed client the user has not explicitly turned off.
-    /// New/undecided clients default to connected. No-op until the integration is
-    /// live (see `isLaunchAutoConnectEnabled`).
+    /// Connects, at launch, every SILENTLY-registerable installed client the user
+    /// has not explicitly turned off. "Silently registerable" = detectable and
+    /// writable without touching a TCC-guarded app-data container (the CLI/home
+    /// clients: Claude Code, Codex, Cursor, Windsurf, Zed). Clients that live only
+    /// inside another app's data (VS Code, Claude Desktop, Cline) are intentionally
+    /// skipped here — auto-registering them would pop the "access data from other
+    /// apps" dialog on every launch. They stay available in Settings, where the
+    /// user connects them explicitly and the one-time prompt is in context.
+    /// New/undecided silent clients default to connected. No-op until the
+    /// integration is live (see `isLaunchAutoConnectEnabled`).
     public func applyDefaultConnections() {
         guard Self.isLaunchAutoConnectEnabled else { return }
         let disconnected = userDisconnectedIDs()
-        for connector in installedConnectors() where !disconnected.contains(connector.id) {
+        for connector in catalog
+        where connector.isSilentlyRegisterable
+            && !disconnected.contains(connector.id)
+            && isInstalledSilently(connector) {
             if !isConnected(connector) { connect(connector) }
         }
     }
