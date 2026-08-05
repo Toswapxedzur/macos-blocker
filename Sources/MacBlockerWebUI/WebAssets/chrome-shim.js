@@ -63,16 +63,43 @@
 
   var store = loadStore();
 
-  // Allow the native host to seed/replace the store before first read.
+  // Allow the native host to seed/replace the store. Also used at RUNTIME to
+  // reconcile the open editor after a native writer (e.g. an MCP tool) mutated
+  // web-store.json out-of-band: replace the store, mirror it into localStorage,
+  // and fire chrome.storage change listeners for the keys that actually differ —
+  // WITHOUT calling persist(), so there is no write-back echo to native (mirrors
+  // the safe __cbApplyNativeRuleLog / __cbApplyNativeUsage pattern). Before the
+  // editor registers its listeners this is just a seed (notifyChanges no-ops).
   window.__cbApplyNativeStore = function (json) {
     try {
       var incoming = typeof json === "string" ? JSON.parse(json) : json;
-      if (incoming && typeof incoming === "object") {
-        store = incoming;
-        try {
-          window.localStorage.setItem(STORE_KEY, JSON.stringify(store));
-        } catch (_) {}
+      if (!incoming || typeof incoming !== "object") return;
+      var previous = store;
+      store = incoming;
+      try {
+        window.localStorage.setItem(STORE_KEY, JSON.stringify(store));
+      } catch (_) {}
+      var changes = {};
+      var keys = {};
+      var k;
+      for (k in (previous || {})) {
+        if (Object.prototype.hasOwnProperty.call(previous, k)) keys[k] = true;
       }
+      for (k in incoming) {
+        if (Object.prototype.hasOwnProperty.call(incoming, k)) keys[k] = true;
+      }
+      for (k in keys) {
+        var oldVal = previous ? previous[k] : undefined;
+        var newVal = incoming[k];
+        var differs;
+        try {
+          differs = JSON.stringify(oldVal) !== JSON.stringify(newVal);
+        } catch (_) {
+          differs = true;
+        }
+        if (differs) changes[k] = { oldValue: oldVal, newValue: newVal };
+      }
+      if (Object.keys(changes).length > 0) notifyChanges(changes);
     } catch (_) {}
   };
 

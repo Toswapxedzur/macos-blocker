@@ -51,8 +51,10 @@ public final class GroupStore: @unchecked Sendable {
     /// Screen Time extensions read. Kept private-of-behavior identical to the
     /// WebView persist path so the two writers can never derive different plans.
     public func save(_ document: WebStoreDocument) {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
         saveLocked(document)
+        lock.unlock()
+        Self.postDidChange()
     }
 
     /// Load → mutate → save under one lock, so two concurrent edits (e.g. the
@@ -61,11 +63,31 @@ public final class GroupStore: @unchecked Sendable {
     /// Returns the persisted document so a caller can reconcile the live WebView.
     @discardableResult
     public func mutate(_ body: (inout WebStoreDocument) throws -> Void) rethrows -> WebStoreDocument {
-        lock.lock(); defer { lock.unlock() }
-        var document = loadLocked()
-        try body(&document)
-        saveLocked(document)
+        lock.lock()
+        let document: WebStoreDocument
+        do {
+            var working = loadLocked()
+            try body(&working)
+            saveLocked(working)
+            document = working
+        } catch {
+            lock.unlock()
+            throw error
+        }
+        lock.unlock()
+        Self.postDidChange()
         return document
+    }
+
+    /// Fired after any native write to `web-store.json` (an MCP tool call, a
+    /// direct `save`), so a live WebView editor can re-seed itself instead of
+    /// showing a stale tree. Posted OUTSIDE the lock: an observer that reads the
+    /// store back must never re-enter it while the writer still holds the lock.
+    /// A no-op when nothing is listening (no editor open).
+    public static let didChangeNotification = Notification.Name("com.adamancia.vault.GroupStoreDidChange")
+
+    private static func postDidChange() {
+        NotificationCenter.default.post(name: didChangeNotification, object: nil)
     }
 
     // MARK: Locked internals
