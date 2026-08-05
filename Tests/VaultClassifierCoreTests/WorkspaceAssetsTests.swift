@@ -123,15 +123,20 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertNoThrow(try catalog.validate())
     }
 
-    func testStarterCatalogIsPlatformAndModelNeutral() {
+    func testStarterCatalogSeedsEveryPlatformCollectedByDefault() {
         let catalog = WorkspaceCatalog.starter()
         XCTAssertEqual(catalog.trees.count, 1)
         XCTAssertEqual(catalog.datasets.count, 1)
-        XCTAssertTrue(catalog.bindings.isEmpty)
+        // Every supported platform is collected by default; the person turns one
+        // off rather than adding platforms one at a time.
+        XCTAssertEqual(catalog.bindings.count, CollectionPlatformRegistry.definitions.count)
+        XCTAssertEqual(Set(catalog.bindings.map(\.id)), Set(CollectionPlatformRegistry.definitions.map(\.id)))
+        XCTAssertTrue(catalog.bindings.allSatisfy { $0.collectionEnabled })
         XCTAssertTrue(catalog.models.isEmpty)
         XCTAssertTrue(catalog.classifierTypes.isEmpty)
         XCTAssertTrue(catalog.providerProfiles.isEmpty)
         XCTAssertTrue(catalog.trees.first?.nodes.isEmpty == true)
+        XCTAssertNoThrow(try catalog.validate())
     }
 
     func testCollectedEntryMigratesRetiredCreatorFieldsToSourceNeutralEvidence() throws {
@@ -855,6 +860,46 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertTrue(classifier.sourceTags(platformID: "discord", sourceID: "discord:server:missing").isEmpty)
     }
 
+    func testWorkspaceClassifiersReturnsEveryTypeForAPlatformInListOrder() throws {
+        // A platform may host several classifier types, each owning its own tree
+        // and sharing the platform's collected data. The resolution returns them
+        // ordered so a card can union their tags in list order.
+        var catalog = WorkspaceCatalog.starter()
+        let datasetID = catalog.datasets[0].id
+        let datasetRevision = catalog.datasets[0].revision
+        let creatorID = "youtube:channel:UCunion0000000000000000"
+        let treeA = TagTreeAsset(id: "treeA", name: "A", nodes: [.init(id: "games", name: "Games")])
+        let treeB = TagTreeAsset(id: "treeB", name: "B", nodes: [.init(id: "tech", name: "Technology")])
+        catalog.trees.append(contentsOf: [treeA, treeB])
+        catalog.classifierTypes = [
+            ClassifierTypeAsset(id: "typeA", name: "A type", treeID: treeA.id, treeRevision: treeA.revision,
+                                datasetID: datasetID, datasetRevision: datasetRevision,
+                                applicablePlatformID: "youtube", order: 1),
+            ClassifierTypeAsset(id: "typeB", name: "B type", treeID: treeB.id, treeRevision: treeB.revision,
+                                datasetID: datasetID, datasetRevision: datasetRevision,
+                                applicablePlatformID: "youtube", order: 0),
+        ]
+        catalog.datasets[0].creatorClassifications = [
+            CreatorClassificationRecord(classifierTypeID: "typeA", creatorID: creatorID, creatorName: "U",
+                                        platformID: "youtube", treeID: treeA.id, treeRevision: treeA.revision,
+                                        tagIDs: ["games"], origin: .manual, review: .approved),
+            CreatorClassificationRecord(classifierTypeID: "typeB", creatorID: creatorID, creatorName: "U",
+                                        platformID: "youtube", treeID: treeB.id, treeRevision: treeB.revision,
+                                        tagIDs: ["tech"], origin: .manual, review: .approved),
+        ]
+        XCTAssertNoThrow(try catalog.validate())
+
+        let classifiers = try catalog.workspaceClassifiers(for: "youtube", policies: [])
+        XCTAssertEqual(classifiers.count, 2)
+        // Ordered by `order`: typeB (0) before typeA (1); each resolves its own tree.
+        XCTAssertEqual(classifiers[0].sourceTags(platformID: "youtube", sourceID: creatorID),
+                       [TagNode(id: "tech", name: "Technology")])
+        XCTAssertEqual(classifiers[1].sourceTags(platformID: "youtube", sourceID: creatorID),
+                       [TagNode(id: "games", name: "Games")])
+        // A platform with no types resolves nothing.
+        XCTAssertTrue(try catalog.workspaceClassifiers(for: "reddit", policies: []).isEmpty)
+    }
+
     func testInjectedIdentityIndexResolvesSourceTagsAcrossCreatorForms() throws {
         // Locks in the mechanism LocalStore's source-tag cache depends on: a
         // caller-supplied identity index (memoized across a burst of pill
@@ -901,6 +946,42 @@ final class WorkspaceAssetsTests: XCTestCase {
         let emptyIndex = CreatorIdentityIndex(entries: [])
         XCTAssertEqual(try classifier(identityIndex: emptyIndex).sourceTags(platformID: "youtube", sourceID: handleID), expected)
         XCTAssertTrue(try classifier(identityIndex: emptyIndex).sourceTags(platformID: "youtube", sourceID: channelID).isEmpty)
+    }
+
+    func testSourceTagsFallBackToLocalModelPredictionWhenNoApprovedDecision() throws {
+        let tree = TagTreeAsset(id: "tree", name: "Topics", nodes: [.init(id: "games", name: "Games")])
+        let classifierType = ClassifierTypeAsset(
+            id: "type", name: "YouTube", treeID: tree.id, treeRevision: tree.revision,
+            datasetID: "dataset", datasetRevision: 1, applicablePlatformID: "youtube"
+        )
+        let titles = ["ranked deck game guide", "speedrun a ranked deck"]
+        let examples = titles.map { EmbeddedNeuralTrainingExample(text: $0, positiveLabelIDs: ["games"]) }
+        var neural = try EmbeddedNeuralTextClassifier(
+            configuration: .init(vocabularyLimit: 32, embeddingDimension: 6, hiddenDimension: 6, initializationSeed: 7),
+            labelIDs: ["games"], trainingExamples: examples
+        )
+        _ = try neural.train(examples, epochs: 200)
+        let model = LocalModelAsset(
+            id: "m", name: "M", classifierTypeID: "type", treeID: tree.id, treeRevision: tree.revision,
+            datasetID: "dataset", datasetRevision: 1, isReady: true, trainingPlatformID: "youtube",
+            embeddedNeuralModel: neural
+        )
+        let classifier = WorkspaceNeuralClassifier(
+            classifierType: classifierType, model: model,
+            taxonomy: try tree.inferenceTaxonomy(), policies: [],
+            creatorClassifications: [], identityIndex: CreatorIdentityIndex()
+        )
+        // No approved human/LLM decision, so the durable projection is empty.
+        XCTAssertTrue(classifier.sourceTags(platformID: "youtube", sourceID: "youtube:channel:games").isEmpty)
+        // The local model fills the gap by predicting from the creator's titles.
+        XCTAssertEqual(classifier.predictedSourceTags(candidateTitles: titles).map(\.id), ["games"])
+        // With no ready model there is no prediction to show.
+        let noModel = WorkspaceNeuralClassifier(
+            classifierType: classifierType, model: nil,
+            taxonomy: try tree.inferenceTaxonomy(), policies: [],
+            creatorClassifications: [], identityIndex: CreatorIdentityIndex()
+        )
+        XCTAssertTrue(noModel.predictedSourceTags(candidateTitles: titles).isEmpty)
     }
 
     func testSourceTagsMatchByCreatorNameForLinklessCollaborationCards() throws {
@@ -1180,7 +1261,7 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertNil(type.applicablePlatformID)
 
         var catalog = WorkspaceCatalog.starter()
-        catalog.bindings.append(.init(id: "instagram", name: "Instagram", treeID: "vault-starter", datasetID: "local-dataset"))
+        // starter() already seeds an Instagram binding by default.
         catalog.classifierTypes = [type]
         catalog.reconcileClassifierTypes()
 

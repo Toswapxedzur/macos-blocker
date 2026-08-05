@@ -152,6 +152,7 @@ final class WebShellPerformanceTests: XCTestCase {
             "datasetID": "dataset",
             "datasetRevision": 1,
             "applicablePlatformID": "youtube",
+            "platformLocked": true,
             "localModel": NSNull(),
             "selectedLLMProviderProfileID": "gemini",
             "llmAssistDraftConfiguration": NSNull(),
@@ -281,6 +282,9 @@ final class WebShellPerformanceTests: XCTestCase {
         let treeTagStyleValue = try await evaluate(
             """
             (() => {
+              // The tag tree is folded into the classifier type's continuous
+              // detail scroll: selecting the type renders it.
+              document.querySelector('.classifier-type-select').click();
               const node = document.querySelector('.tree-map-node');
               const style = getComputedStyle(node);
               return `${style.backgroundColor}|${style.borderRadius}|${style.color}`;
@@ -326,7 +330,7 @@ final class WebShellPerformanceTests: XCTestCase {
 
         let classifierValue = try await evaluate(
             """
-            document.querySelector('[data-action="workspace"][data-workspace="browserBridge"]').click();
+            document.querySelector('.classifier-type-select').click();
             JSON.stringify({
               workspace: document.querySelector('[data-editor-panel]').dataset.workspace,
               cards: document.querySelectorAll('.creator-tag-column .creator-tag-card').length,
@@ -428,7 +432,7 @@ final class WebShellPerformanceTests: XCTestCase {
             const creatorList = document.querySelector('.collection-creators');
             creatorList.open = false;
             creatorList.dispatchEvent(new Event('toggle'));
-            document.querySelector('[data-action="workspace"][data-workspace="browserBridge"]').click();
+            document.querySelector('.classifier-type-select').click();
             document.querySelector('[data-action="workspace"][data-workspace="classificationData"]').click();
             document.querySelector('.collection-creators').open;
             """,
@@ -547,6 +551,7 @@ final class WebShellPerformanceTests: XCTestCase {
 
         let lockedValue = try await evaluate(
             """
+            document.querySelector('.classifier-type-select').click();
             const select = document.querySelector('.classifier-applicable-platform-section [data-field="applicablePlatformID"]');
             JSON.stringify({
               disabled: Boolean(select && select.disabled),
@@ -586,11 +591,14 @@ final class WebShellPerformanceTests: XCTestCase {
 
         let tombstone = try await evaluate(
             """
-            const box = document.querySelector('.classifier-type-panels .trash-tombstone');
+            // Trash lives in the left panel now; clicking a row expands its
+            // recover / permanently-delete panel in place.
+            document.querySelector('.sidebar-trash-row').click();
+            const item = document.querySelector('.sidebar-trash-item');
             JSON.stringify({
-              name: box ? box.querySelector('.trash-tombstone-name').textContent : null,
-              restore: Boolean(box && box.querySelector('[data-action="restoreTrashedEntry"][data-id="trash-1"]')),
-              purge: Boolean(box && box.querySelector('[data-action="permanentlyDeleteTrashedEntry"][data-id="trash-1"]'))
+              name: item ? item.querySelector('.sidebar-name').textContent : null,
+              restore: Boolean(item && item.querySelector('[data-action="restoreTrashedEntry"][data-id="trash-1"]')),
+              purge: Boolean(item && item.querySelector('[data-action="permanentlyDeleteTrashedEntry"][data-id="trash-1"]'))
             });
             """,
             in: webView
@@ -604,6 +612,7 @@ final class WebShellPerformanceTests: XCTestCase {
 
         let modalShown = try await evaluate(
             """
+            document.querySelector('.classifier-type-select').click();
             document.querySelector('[data-action="confirmDeleteClassifierType"]').click();
             Boolean(document.querySelector('.deletion-dialog [data-deletion-name-input]'));
             """,
@@ -626,6 +635,9 @@ final class WebShellPerformanceTests: XCTestCase {
         var payload = populatedPayload(creatorCount: 3)
         payload["workspace"] = "browserBridge"
         _ = try await evaluate(try XCTUnwrap(VaultClassifierWebShell.stateUpdateJavaScript(payload: payload)), in: webView)
+        // The type editor (decision list, LLM metrics) lives inside the selected
+        // type's continuous detail scroll.
+        _ = try await evaluate("document.querySelector('.classifier-type-select').click();", in: webView)
 
         // Mark stable DOM nodes; a full rebuild would drop the marks.
         _ = try await evaluate(
@@ -678,6 +690,8 @@ final class WebShellPerformanceTests: XCTestCase {
         var payload = populatedPayload(creatorCount: 12)
         payload["workspace"] = "browserBridge"
         _ = try await evaluate(try XCTUnwrap(VaultClassifierWebShell.stateUpdateJavaScript(payload: payload)), in: webView)
+        // The decision list lives inside the selected type's detail scroll.
+        _ = try await evaluate("document.querySelector('.classifier-type-select').click();", in: webView)
 
         // Baseline: the keyed decision list renders every candidate row (0…11).
         let baseline = try await evaluate("document.querySelectorAll('[data-keyed-list] > [data-key]').length;", in: webView) as? Int

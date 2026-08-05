@@ -1024,6 +1024,14 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     /// Ordered once by the user. Every available source contributes to a
     /// decision, with relative weights of 3, 2, and 1 in this order.
     public var decisionPriority: [ClassifierDecisionSource]
+    /// Position in the reorderable classifier-type list. Types targeting the
+    /// same platform apply in ascending order; a card unions their tags in this
+    /// order.
+    public var order: Int
+    /// Set once the person confirms locking the type to its platform (before the
+    /// first action that binds data to it, e.g. a creator classification). After
+    /// this the applicable platform can no longer change.
+    public var platformLocked: Bool
     public var updatedAtMilliseconds: Int64
 
     public init(
@@ -1038,6 +1046,8 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         llmAssistDraftConfiguration: LLMAssistDraftConfiguration? = nil,
         llmAssistConfiguration: LLMAssistConfiguration? = nil,
         decisionPriority: [ClassifierDecisionSource] = [.human, .llmAssist, .localModel],
+        order: Int = 0,
+        platformLocked: Bool = false,
         updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
     ) {
         self.id = id
@@ -1056,13 +1066,15 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         self.llmAssistDraftConfiguration = llmAssistDraftConfiguration
         self.llmAssistConfiguration = llmAssistConfiguration
         self.decisionPriority = decisionPriority
+        self.order = order
+        self.platformLocked = platformLocked
         self.updatedAtMilliseconds = updatedAtMilliseconds
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, treeID, treeRevision, datasetID, datasetRevision, applicablePlatformID, dataSourcePlatformIDs, localModelID,
              selectedLLMProviderProfileID,
-             llmAssistDraftConfiguration, llmAssistConfiguration, llmProfileIDs, decisionPriority, updatedAtMilliseconds
+             llmAssistDraftConfiguration, llmAssistConfiguration, llmProfileIDs, decisionPriority, order, platformLocked, updatedAtMilliseconds
     }
 
     public init(from decoder: Decoder) throws {
@@ -1099,6 +1111,8 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         llmAssistDraftConfiguration = try container.decodeIfPresent(LLMAssistDraftConfiguration.self, forKey: .llmAssistDraftConfiguration)
         decisionPriority = try container.decodeIfPresent([ClassifierDecisionSource].self, forKey: .decisionPriority)
             ?? [.human, .llmAssist, .localModel]
+        order = try container.decodeIfPresent(Int.self, forKey: .order) ?? 0
+        platformLocked = try container.decodeIfPresent(Bool.self, forKey: .platformLocked) ?? false
         updatedAtMilliseconds = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMilliseconds)
             ?? WorkspaceCatalog.now()
     }
@@ -1116,6 +1130,8 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         try container.encodeIfPresent(llmAssistDraftConfiguration, forKey: .llmAssistDraftConfiguration)
         try container.encodeIfPresent(llmAssistConfiguration, forKey: .llmAssistConfiguration)
         try container.encode(decisionPriority, forKey: .decisionPriority)
+        try container.encode(order, forKey: .order)
+        try container.encode(platformLocked, forKey: .platformLocked)
         try container.encode(updatedAtMilliseconds, forKey: .updatedAtMilliseconds)
     }
 
@@ -2091,7 +2107,21 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         // an optional import rather than an imposed first node or hierarchy.
         let tree = TagTreeAsset(id: "vault-starter", name: "Vault starter tree", nodes: [])
         let dataset = ClassificationDataset(id: "local-dataset", name: "Local classification data")
-        return .init(trees: [tree], datasets: [dataset])
+        // Every supported platform is collected by default; the person turns any
+        // one off rather than adding them one at a time. Bindings share the local
+        // dataset (entries self-tag with their platform); classifier types own
+        // their own trees, so the shared starter tree is only the binding anchor.
+        let bindings = CollectionPlatformRegistry.definitions.map { definition in
+            PlatformBinding(
+                id: definition.id,
+                name: definition.name,
+                browser: definition.browser,
+                treeID: tree.id,
+                datasetID: dataset.id,
+                collectionEnabled: true
+            )
+        }
+        return .init(trees: [tree], datasets: [dataset], bindings: bindings)
     }
 
     public func validate() throws {
@@ -2127,8 +2157,9 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                   sourcePlatformIDs.allSatisfy({ platformID in
                       CollectionPlatformRegistry.definition(for: platformID)?.supportsLocalModel == true &&
                       bindings.contains(where: { binding in
+                          // A binding no longer owns a tree; classifier types own
+                          // their own. Only the platform + shared dataset must match.
                           binding.id == platformID &&
-                          binding.treeID == model.treeID &&
                           binding.datasetID == model.datasetID
                       })
                   }) else {
@@ -2200,7 +2231,9 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                   dataset.revision == classifierType.datasetRevision,
                   (classifierType.applicablePlatformID == nil || (classifierType.applicablePlatformID?.count ?? 0) <= 64),
                   (classifierType.applicablePlatformID == nil || bindings.contains(where: { binding in
-                      binding.id == classifierType.applicablePlatformID && binding.treeID == tree.id && binding.datasetID == dataset.id
+                      // Multiple types may target one platform, each owning its own
+                      // tree; only the platform + shared dataset must match here.
+                      binding.id == classifierType.applicablePlatformID && binding.datasetID == dataset.id
                   })),
                   classifierType.decisionPriority.count == ClassifierDecisionSource.allCases.count,
                   Set(classifierType.decisionPriority) == Set(ClassifierDecisionSource.allCases) else {
@@ -2673,9 +2706,12 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             var reconciled = classifierType
             reconciled.treeRevision = tree.revision
             reconciled.datasetRevision = dataset.revision
+            // A type owns its own tree now; the binding only supplies the shared
+            // dataset and the platform. Do not require the binding to hold the
+            // type's tree (that would orphan the platform on every reconcile).
             let applicableBinding = reconciled.applicablePlatformID.flatMap { platformID in
                 bindings.first(where: { binding in
-                    binding.id == platformID && binding.treeID == tree.id && binding.datasetID == dataset.id
+                    binding.id == platformID && binding.datasetID == dataset.id
                 })
             }
             reconciled.applicablePlatformID = applicableBinding?.id

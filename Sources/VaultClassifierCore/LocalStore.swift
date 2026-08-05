@@ -709,7 +709,7 @@ public final class LocalClassifierCoordinator {
     /// Returns a display-only projection of approved tags for one verified
     /// source. This does not classify an entry, create a ledger record, or
     /// persist browser state.
-    public func sourceTags(platformID: String, sourceID: String, creatorNames: [String] = []) throws -> [TagNode] {
+    public func sourceTags(platformID: String, sourceID: String, creatorNames: [String] = []) throws -> SourceTagsProjection {
         lock.lock()
         defer { lock.unlock() }
         guard let binding = state.workspaceCatalog.bindings.first(where: { $0.id == platformID }),
@@ -717,21 +717,63 @@ public final class LocalClassifierCoordinator {
             throw PlatformCollectionError.disabled(platformID)
         }
         let dataset = state.workspaceCatalog.datasets.first(where: { $0.id == binding.datasetID })
-        guard let classifier = try state.workspaceCatalog.workspaceClassifier(
+        // A platform may host several classifier types, each owning its own tree.
+        // A card unions their tags in list order (deduped by id); the union is
+        // "predicted" only when every contributing tag came from a model guess.
+        let classifiers = try state.workspaceCatalog.workspaceClassifiers(
             for: platformID,
             policies: engine.policies,
             identityIndex: dataset.map(memoizedIdentityIndex(for:))
-        ) else {
-            return []
+        )
+        var tags: [TagNode] = []
+        var seen = Set<String>()
+        var anyApproved = false
+        for classifier in classifiers {
+            let resolved = classifierSourceTags(
+                classifier,
+                platformID: platformID,
+                sourceID: sourceID,
+                creatorNames: creatorNames,
+                dataset: dataset
+            )
+            guard !resolved.tags.isEmpty else { continue }
+            if !resolved.predicted { anyApproved = true }
+            for tag in resolved.tags where seen.insert(tag.id).inserted {
+                tags.append(tag)
+            }
         }
+        return SourceTagsProjection(tags: tags, predicted: !tags.isEmpty && !anyApproved)
+    }
+
+    /// One classifier type's tags for a source: an approved decision by linked
+    /// identity, then by supplied collaboration names, then the local model's
+    /// on-demand prediction over the creator's collected titles. The caller
+    /// already holds `lock`.
+    private func classifierSourceTags(
+        _ classifier: WorkspaceNeuralClassifier,
+        platformID: String,
+        sourceID: String,
+        creatorNames: [String],
+        dataset: ClassificationDataset?
+    ) -> (tags: [TagNode], predicted: Bool) {
         let direct = classifier.sourceTags(platformID: platformID, sourceID: sourceID)
+        if !direct.isEmpty { return (direct, false) }
         // A collaboration card exposes no creator link, only unlinked names. When
         // the linked identity resolves nothing, fall back to matching a supplied
         // display name against an approved classification.
-        if direct.isEmpty, !creatorNames.isEmpty {
-            return classifier.sourceTags(platformID: platformID, anyOfCreatorNames: creatorNames)
+        if !creatorNames.isEmpty {
+            let named = classifier.sourceTags(platformID: platformID, anyOfCreatorNames: creatorNames)
+            if !named.isEmpty { return (named, false) }
         }
-        return direct
+        // Fallback (computed on demand, not stored): with no approved human/LLM
+        // decision, project the local model's aggregated prediction so the feed
+        // pill still shows a guess.
+        let identityForms = classifier.identityIndex.members(of: sourceID)
+        let candidateTitles = (dataset?.collectedEntries ?? [])
+            .filter { identityForms.contains($0.creatorID) }
+            .map(\.title)
+        let predicted = classifier.predictedSourceTags(candidateTitles: candidateTitles)
+        return (predicted, !predicted.isEmpty)
     }
 
     /// Returns a creator-identity index for `dataset`, reusing the cached one

@@ -69,12 +69,13 @@ final class TrashTests: XCTestCase {
         XCTAssertEqual(entry?.kind, .collectionPlatform)
         XCTAssertEqual(entry?.collectedEntries.count, 1)
         XCTAssertEqual(entry?.creatorClassifications.count, 1)
-        XCTAssertTrue(catalog.bindings.isEmpty)
+        // Other default platforms remain; only YouTube's binding is removed.
+        XCTAssertFalse(catalog.bindings.contains(where: { $0.id == "youtube" }))
         XCTAssertTrue(catalog.datasets[0].collectedEntries.isEmpty)
         XCTAssertTrue(catalog.datasets[0].creatorClassifications.isEmpty)
 
         XCTAssertTrue(catalog.restoreTrashedEntry(entry!.id))
-        XCTAssertEqual(catalog.bindings.map(\.id), ["youtube"])
+        XCTAssertTrue(catalog.bindings.contains(where: { $0.id == "youtube" }))
         XCTAssertEqual(catalog.datasets[0].collectedEntries.count, 1)
         XCTAssertEqual(catalog.datasets[0].creatorClassifications.count, 1)
         XCTAssertTrue(catalog.trash.isEmpty)
