@@ -26,7 +26,7 @@
   --muted: #64748b;
   --surface: #ffffff;
   --canvas: #f8fafc;
-  --line: rgba(148, 163, 184, 0.42);
+  --line: rgba(148, 163, 184, 0.20);
   --panel-shadow: 0 12px 34px rgba(15, 23, 42, 0.08);
   /* Keep the extension-like Arial look for Latin text while letting macOS
      select its script-specific system fallback for collected metadata. */
@@ -609,8 +609,7 @@ h3 { font-size: 13px; }
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
-  letter-spacing: .04em;
-  text-transform: uppercase;
+  letter-spacing: .02em;
 }
 
 .utility-settings-fields {
@@ -689,7 +688,7 @@ h3 { font-size: 13px; }
 .classifier-type-section:last-child { border-bottom: 0; }
 .classifier-type-section .section-header { margin-bottom: 10px; }
 .classifier-applicable-platform-row { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr); gap: 14px; align-items: end; }
-.classifier-platform-data-status { border: 1px solid var(--line); border-radius: 10px; background: var(--cream); padding: 9px 11px; min-height: 56px; }
+.classifier-platform-data-status { border: 0; box-shadow: inset 0 0 0 1px var(--line); border-radius: 10px; background: var(--cream); padding: 9px 11px; min-height: 56px; }
 .classifier-platform-data-status .small-copy { margin: 4px 0 0; }
 .classifier-local-model-field { max-width: 520px; }
 .creator-classification-section { background: rgba(236, 253, 245, .48); }
@@ -860,10 +859,18 @@ h3 { font-size: 13px; }
 .field-label {
   display: block;
   margin-bottom: 6px;
-  color: #475569;
+  color: #64748b;
   font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+/* The optional "· description" after a field label is secondary — let it read
+   as regular muted prose so the label itself carries the emphasis. */
+.field-hint {
+  font-weight: 400;
+  letter-spacing: normal;
+  color: #94a3b8;
 }
 
 .sidebar-list { display: flex; flex-direction: column; gap: 10px; }
@@ -887,6 +894,48 @@ h3 { font-size: 13px; }
 .sidebar-copy { min-width: 0; }
 .sidebar-name { display: block; font-weight: 700; }
 .sidebar-meta { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; }
+
+/* Classifier-type list + reorder in the left panel */
+.sidebar-group-title { margin: 2px 4px; color: var(--muted); font-size: 10.5px; font-weight: 800; letter-spacing: 0.08em; }
+.classifier-type-nav { display: flex; flex-direction: column; gap: 8px; }
+.classifier-type-row { display: block; }
+.classifier-type-select { width: 100%; }
+/* Drag-reorder states (ported from the extension's group reorder) */
+.classifier-type-nav.is-reordering .classifier-type-row { will-change: transform; }
+.classifier-type-nav.is-reordering .classifier-type-row:not(.dragging) { transition: transform 160ms ease; }
+.classifier-type-nav.is-reordering .classifier-type-row.dragging { position: relative; z-index: 20; transition: box-shadow 120ms ease, opacity 120ms ease; }
+.classifier-type-nav.is-reordering .classifier-type-row.dragging .classifier-type-select { box-shadow: 0 6px 16px rgba(15, 23, 42, 0.12); }
+.classifier-type-nav.is-reordering .classifier-type-select:hover { transform: none; box-shadow: none; }
+.sidebar-add {
+  align-self: flex-start; padding: 7px 12px; border-radius: 10px;
+  color: var(--navy-700); font-weight: 700; font-size: 12px;
+  background: color-mix(in srgb, var(--navy-100) 35%, #fff);
+  transition: background 120ms ease, transform 120ms ease;
+}
+.sidebar-add:hover { background: var(--navy-100); transform: translateY(-1px); }
+.sidebar-divider { height: 1px; margin: 4px 2px; background: var(--hairline, rgba(15, 23, 42, 0.1)); }
+.compact-empty { padding: 10px 9px; color: var(--muted); font-size: 11.5px; }
+
+/* Trashed entities in the left panel + their in-place recover/delete panel */
+.sidebar-trash { display: flex; flex-direction: column; gap: 6px; }
+.sidebar-trash-item { display: flex; flex-direction: column; gap: 6px; }
+.sidebar-trash-row { opacity: 0.82; }
+.sidebar-trash-row.active { opacity: 1; }
+.sidebar-trash-row .sidebar-symbol { font-size: 13px; }
+.sidebar-trash-actions { display: flex; gap: 6px; padding: 0 2px 4px; }
+.sidebar-trash-actions button { flex: 1 1 auto; padding: 6px 8px; font-size: 11.5px; border-radius: 8px; }
+
+/* Selected classifier type: header + Config / Tag tree / Local model stacked in
+   one continuous scroll. */
+.type-detail-head { margin-bottom: 16px; }
+.type-detail-head .eyebrow { color: var(--muted); }
+.type-detail-head h2 { margin: 4px 0 2px; }
+.type-detail-body { display: flex; flex-direction: column; gap: 24px; }
+.type-section { display: flex; flex-direction: column; gap: 10px; }
+.type-section-title { margin: 0; color: color-mix(in srgb, var(--muted) 82%, transparent); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; }
+/* Embedded (scoped) workspaces drop their own outer padding/scroll. */
+.type-section > .workspace { padding: 0; }
+.tree-workspace-scoped, .model-workspace-scoped { gap: 12px; }
 
 .workspace { display: flex; flex-direction: column; gap: 14px; max-width: none; }
 .workspace-head { min-height: 36px; }
@@ -954,8 +1003,9 @@ h3 { font-size: 13px; }
 .model-setup {
   margin-left: 4px;
   padding: 12px;
-  border: 1px solid rgba(8, 145, 178, 0.22);
+  border: 0;
   border-radius: 10px;
+  box-shadow: inset 0 0 0 1px rgba(8, 145, 178, 0.14);
   background: color-mix(in srgb, var(--cyan-50) 68%, #fff);
 }
 
@@ -1380,22 +1430,28 @@ textarea:focus {
 .gold-action,
 .pink-action {
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: 10px;
   font-weight: 700;
-  transition: transform 120ms ease, background 120ms ease, box-shadow 120ms ease;
+  transition: background 120ms ease, color 120ms ease;
 }
 
+/* Solid fill is reserved for the primary action; every other action is a
+   pale tinted wash with colored text (matches the Mac Vault app), so a screen
+   never shouts in several saturated colors at once. */
 .primary {
   color: #fff;
-  background: linear-gradient(180deg, var(--navy-700), var(--navy-800));
-  box-shadow: 0 4px 10px rgba(30, 58, 138, 0.2);
+  background: var(--navy-700);
 }
 
-.secondary { color: var(--cyan-text); background: var(--cyan-100); }
-.danger { color: #fff; background: var(--red-700); }
-.gold-action { color: #fff; background: var(--gold-700); }
-.pink-action { color: #fff; background: var(--pink-700); }
-.primary:hover:not(:disabled), .secondary:hover:not(:disabled), .danger:hover:not(:disabled), .gold-action:hover:not(:disabled), .pink-action:hover:not(:disabled) { transform: translateY(-1px); }
+.secondary { color: #0f172a; background: #e2e8f0; }
+.danger { color: var(--red-text); background: var(--red-100); }
+.gold-action { color: var(--gold-text); background: var(--gold-100); }
+.pink-action { color: var(--pink-text); background: var(--pink-100); }
+.primary:hover:not(:disabled) { background: var(--navy-800); }
+.secondary:hover:not(:disabled) { background: #cbd5e1; }
+.danger:hover:not(:disabled) { background: #fecaca; }
+.gold-action:hover:not(:disabled) { background: #fde68a; }
+.pink-action:hover:not(:disabled) { background: #fbcfe8; }
 
 .metric-row { flex-wrap: wrap; gap: 9px; }
 .metric {

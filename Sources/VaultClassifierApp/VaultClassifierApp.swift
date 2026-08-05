@@ -233,13 +233,26 @@ final class VaultClassifierViewModel: ObservableObject {
     }
 
     private func handleSharedHubRequest(_ request: SharedHubClient.Request) -> SharedHubClient.Reply {
-        // DEBUG: measure pure in-app processing (request received → reply built),
-        // isolated from transport. Remove before shipping.
-        let started = DispatchTime.now().uptimeNanoseconds
-        let reply = handleSharedHubRequestBody(request)
-        let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds &- started) / 1_000_000
-        fputs(String(format: "[BRIDGE-TIMING] op=%@ inApp=%.3fms\n", request.operation.rawValue, elapsedMs), stderr)
-        return reply
+        handleSharedHubRequestBody(request)
+    }
+
+    /// Maps display tag nodes to the wire tag shape, dropping any whose colors do
+    /// not normalize. The response struct additionally gates on a valid theme
+    /// pair; keeping this mapping shared means the single and batch paths emit
+    /// identical tags.
+    private static func nativeSourceTags(from tags: [TagNode]) -> [NativeSourceTag] {
+        tags.compactMap { tag in
+            guard let lightColorHex = TagColorAssignment.normalizedHex(tag.lightColorHex),
+                  let darkColorHex = TagColorAssignment.normalizedHex(tag.darkColorHex) else {
+                return nil
+            }
+            return NativeSourceTag(
+                id: tag.id,
+                name: tag.name,
+                lightColorHex: lightColorHex,
+                darkColorHex: darkColorHex
+            )
+        }
     }
 
     private func handleSharedHubRequestBody(_ request: SharedHubClient.Request) -> SharedHubClient.Reply {
@@ -290,7 +303,7 @@ final class VaultClassifierViewModel: ObservableObject {
             case .sourceTags:
                 let sourceTags = try JSONDecoder().decode(NativeSourceTagsRequest.self, from: request.bodyData)
                 try sourceTags.validate()
-                let tags = try coordinator.sourceTags(
+                let projection = try coordinator.sourceTags(
                     platformID: sourceTags.platformID,
                     sourceID: sourceTags.sourceID,
                     creatorNames: sourceTags.creatorNames
@@ -298,19 +311,28 @@ final class VaultClassifierViewModel: ObservableObject {
                 return try sharedHubReply(NativeSourceTagsResponse(
                     platformID: sourceTags.platformID,
                     sourceID: sourceTags.sourceID,
-                    tags: tags.compactMap { tag in
-                        guard let lightColorHex = TagColorAssignment.normalizedHex(tag.lightColorHex),
-                              let darkColorHex = TagColorAssignment.normalizedHex(tag.darkColorHex) else {
-                            return nil
-                        }
-                        return NativeSourceTag(
-                            id: tag.id,
-                            name: tag.name,
-                            lightColorHex: lightColorHex,
-                            darkColorHex: darkColorHex
-                        )
-                    }
+                    tags: Self.nativeSourceTags(from: projection.tags),
+                    predicted: projection.predicted
                 ))
+            case .sourceTagsBatch:
+                let batch = try JSONDecoder().decode(NativeSourceTagsBatchRequest.self, from: request.bodyData)
+                try batch.validate()
+                // One @MainActor hop resolves every queued source; the memoized
+                // identity index makes the per-item lookups cheap, so a viewport
+                // of cards costs one round-trip instead of one each.
+                let items = try batch.items.map { item -> NativeSourceTagsBatchResponseItem in
+                    let projection = try coordinator.sourceTags(
+                        platformID: batch.platformID,
+                        sourceID: item.sourceID,
+                        creatorNames: item.creatorNames
+                    )
+                    return NativeSourceTagsBatchResponseItem(
+                        sourceID: item.sourceID,
+                        tags: Self.nativeSourceTags(from: projection.tags),
+                        predicted: projection.predicted
+                    )
+                }
+                return try sharedHubReply(NativeSourceTagsBatchResponse(platformID: batch.platformID, items: items))
             case .classify:
                 let classification = try JSONDecoder().decode(NativeClassificationRequest.self, from: request.bodyData)
                 let output = try coordinator.classifyWithLedger(classification.entry)
@@ -2141,23 +2163,71 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
-    func createClassifierType(name: String) {
+    func createClassifierType(name: String, platformID: String) {
         do {
             let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleaned.isEmpty,
                   cleaned.count <= ClassifierTypeAsset.maximumNameLength,
-                  var catalog = localState?.workspaceCatalog,
-                  let tree = catalog.trees.first,
-                  let dataset = catalog.datasets.first else {
+                  CollectionPlatformRegistry.definition(for: platformID) != nil,
+                  var catalog = localState?.workspaceCatalog else {
                 throw WebBridgeInputError.invalidChoice("classifier type")
             }
+            // Every platform is collectable by default; make sure its binding (the
+            // shared dataset + collection toggle) exists before binding the type.
+            let binding = try catalog.ensurePlatformBinding(platformID)
+            guard let dataset = catalog.datasets.first(where: { $0.id == binding.datasetID }) else {
+                throw WebBridgeInputError.invalidChoice("classifier type")
+            }
+            // Each type owns a fresh, empty tree — its own taxonomy.
+            let tree = TagTreeAsset(name: cleaned, nodes: [])
+            catalog.trees.append(tree)
+            let nextOrder = (catalog.classifierTypes.map(\.order).max() ?? -1) + 1
             catalog.classifierTypes.append(.init(
                 name: cleaned,
                 treeID: tree.id,
                 treeRevision: tree.revision,
                 datasetID: dataset.id,
-                datasetRevision: dataset.revision
+                datasetRevision: dataset.revision,
+                applicablePlatformID: platformID,
+                order: nextOrder
             ))
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
+    /// Rewrites the reorderable list positions from the order the person dragged
+    /// them into. Unknown ids are ignored; omitted types keep their position.
+    func reorderClassifierTypes(orderedIDs: [String]) {
+        do {
+            guard var catalog = localState?.workspaceCatalog else {
+                throw WebBridgeInputError.invalidChoice("classifier type order")
+            }
+            var rank: [String: Int] = [:]
+            for (index, id) in orderedIDs.enumerated() { rank[id] = index }
+            for index in catalog.classifierTypes.indices {
+                if let position = rank[catalog.classifierTypes[index].id] {
+                    catalog.classifierTypes[index].order = position
+                }
+            }
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
+    /// Locks a classifier type to its current platform (confirmed by the person
+    /// before the first action that binds data to it). After this the applicable
+    /// platform can no longer change.
+    func lockClassifierTypePlatform(typeID: String) {
+        do {
+            guard var catalog = localState?.workspaceCatalog,
+                  let index = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }),
+                  (catalog.classifierTypes[index].applicablePlatformID ?? "").isEmpty == false else {
+                throw WebBridgeInputError.invalidChoice("classifier type")
+            }
+            catalog.classifierTypes[index].platformLocked = true
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
             issue = nil
@@ -2186,26 +2256,33 @@ final class VaultClassifierViewModel: ObservableObject {
             guard !cleanedName.isEmpty,
                   cleanedName.count <= ClassifierTypeAsset.maximumNameLength,
                   var catalog = localState?.workspaceCatalog,
-                  let typeIndex = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }),
-                  CollectionPlatformRegistry.definition(for: applicablePlatformID) != nil else {
+                  let typeIndex = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }) else {
                 throw WebBridgeInputError.invalidChoice("classifier type")
             }
             let existingClassifierType = catalog.classifierTypes[typeIndex]
             let existingLLMAssist = existingClassifierType.llmAssistConfiguration
-            // Identity lock: once this type owns an approved decision its platform
-            // is fixed. Changing it would orphan those decisions and break any
-            // local model's single-platform training set. The UI disables the
-            // control; this is the authoritative backstop.
             let existingPlatformID = existingClassifierType.applicablePlatformID ?? ""
-            if !existingPlatformID.isEmpty, existingPlatformID != applicablePlatformID,
+            // Once the platform is locked (the person confirmed it before the first
+            // binding action), it can no longer change; ignore any incoming value.
+            let effectivePlatformID = existingClassifierType.platformLocked && !existingPlatformID.isEmpty
+                ? existingPlatformID
+                : applicablePlatformID
+            guard CollectionPlatformRegistry.definition(for: effectivePlatformID) != nil else {
+                throw WebBridgeInputError.invalidChoice("classifier type")
+            }
+            // Identity backstop: once this type owns an approved decision its
+            // platform is fixed, even if the lock flag was somehow bypassed.
+            if !existingPlatformID.isEmpty, existingPlatformID != effectivePlatformID,
                catalog.datasets.contains(where: { dataset in
                    dataset.creatorClassifications.contains { $0.classifierTypeID == typeID && $0.review == .approved }
                }) {
                 throw WebBridgeInputError.invalidChoice("applicable platform")
             }
-            let selectedBinding = try catalog.ensurePlatformBinding(applicablePlatformID)
+            let selectedBinding = try catalog.ensurePlatformBinding(effectivePlatformID)
             guard
-                  let tree = catalog.trees.first(where: { $0.id == selectedBinding.treeID }),
+                  // A type owns its own tree; the binding only supplies the shared
+                  // dataset and the platform.
+                  let tree = catalog.trees.first(where: { $0.id == existingClassifierType.treeID }),
                   let dataset = catalog.datasets.first(where: { $0.id == selectedBinding.datasetID }),
                   let selectedDefinition = CollectionPlatformRegistry.definition(for: selectedBinding.id) else {
                 throw WebBridgeInputError.invalidChoice("classifier type")
@@ -2401,7 +2478,11 @@ final class VaultClassifierViewModel: ObservableObject {
                 // Signal-fusion order is fixed at the sensible default
                 // (human > llmAssist > localModel, weights 3/2/1); the reorder
                 // UI was removed, so preserve whatever the type already carries.
-                decisionPriority: catalog.classifierTypes[typeIndex].decisionPriority
+                decisionPriority: catalog.classifierTypes[typeIndex].decisionPriority,
+                // Preserve the type's position in the reorderable list and its
+                // platform-lock state.
+                order: catalog.classifierTypes[typeIndex].order,
+                platformLocked: catalog.classifierTypes[typeIndex].platformLocked
             )
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
@@ -4083,6 +4164,8 @@ final class VaultClassifierViewModel: ObservableObject {
                 return [
                     "id": classifierType.id,
                     "name": classifierType.name,
+                    "order": classifierType.order,
+                    "platformLocked": classifierType.platformLocked,
                     "treeID": classifierType.treeID,
                     "treeRevision": classifierType.treeRevision,
                     "datasetID": classifierType.datasetID,
@@ -4287,7 +4370,14 @@ final class VaultClassifierViewModel: ObservableObject {
                     classifierTypeID: try webString(data, key: "classifierTypeID", limit: 256)
                 )
             case "createClassifierType":
-                createClassifierType(name: try webString(data, key: "name", limit: ClassifierTypeAsset.maximumNameLength))
+                createClassifierType(
+                    name: try webString(data, key: "name", limit: ClassifierTypeAsset.maximumNameLength),
+                    platformID: try webString(data, key: "platformID", limit: 64)
+                )
+            case "reorderClassifierTypes":
+                reorderClassifierTypes(orderedIDs: try webStringArray(data, key: "orderedIDs", limit: 256, elementLimit: 256))
+            case "lockClassifierTypePlatform":
+                lockClassifierTypePlatform(typeID: try webString(data, key: "typeID", limit: 256))
             case "configureClassifierType":
                 configureClassifierType(
                     typeID: try webString(data, key: "typeID", limit: 256),
