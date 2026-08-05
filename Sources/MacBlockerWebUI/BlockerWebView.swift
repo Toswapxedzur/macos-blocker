@@ -287,6 +287,10 @@ public struct BlockerWebView: _CBViewRepresentable {
         private let onGroupSync: ((String) -> Void)?
 
         private var usagePushTimer: Timer?
+        // Observes native writes to web-store.json (an MCP tool call, a direct
+        // GroupStore.save) so the open editor re-seeds instead of showing a stale
+        // tree. Retained so deinit can detach it.
+        private var groupStoreObserver: NSObjectProtocol?
         // Starts true so the grant modal is offered exactly once per app launch
         // (when Accessibility is still missing) and never re-shown on reactivation.
         private var promptPermissionOnOpenPending = true
@@ -335,6 +339,9 @@ public struct BlockerWebView: _CBViewRepresentable {
 
         deinit {
             usagePushTimer?.invalidate()
+            if let observer = groupStoreObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
             if let wv = webView {
                 wv.configuration.userContentController.removeScriptMessageHandler(forName: "cbBridge")
             }
@@ -352,6 +359,29 @@ public struct BlockerWebView: _CBViewRepresentable {
                 self?.pushGroupRejection()
             }
             usagePushTimer = timer
+
+            // Re-seed the editor when a native writer (MCP tool, direct save)
+            // mutates the store out-of-band. The notification can fire on the MCP
+            // server's thread, so hop to main for evaluateJavaScript.
+            if groupStoreObserver == nil {
+                groupStoreObserver = NotificationCenter.default.addObserver(
+                    forName: GroupStore.didChangeNotification,
+                    object: nil,
+                    queue: .main
+                ) { [weak self] _ in
+                    self?.pushNativeStore()
+                }
+            }
+        }
+
+        /// Push the current on-disk store into the open editor so it repaints
+        /// after a native mutation. Mirrors the load-time seed: the shim receives
+        /// a JSON string, JSON.parses it, and fires change listeners WITHOUT
+        /// persisting (no write-back echo).
+        private func pushNativeStore() {
+            guard let webView, let raw = store.loadRawJSON() else { return }
+            let escaped = BlockerWebView.javaScriptStringLiteral(raw)
+            webView.evaluateJavaScript("window.__cbApplyNativeStore(\(escaped));", completionHandler: nil)
         }
 
         private func pushSystemPanelEvents() {

@@ -197,4 +197,50 @@ final class GroupStoreTests: XCTestCase {
         XCTAssertEqual(store.load().groupCount, 0)
         XCTAssertTrue(store.loadGroups().isEmpty)
     }
+
+    // MARK: Change notification — live-editor reconciliation
+
+    func testMutateAndSavePostDidChangeNotification() throws {
+        let (store, shared, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let seed = try JSONSerialization.data(withJSONObject: sampleEnvelope())
+        shared.writeData(seed, to: SharedAppGroupStore.webStoreFileName)
+
+        // A live WebView editor listens for this to re-seed itself after a native
+        // (e.g. MCP) write. Observed synchronously (queue: nil) so the count is
+        // deterministic on the posting thread.
+        var posts = 0
+        let token = NotificationCenter.default.addObserver(
+            forName: GroupStore.didChangeNotification, object: nil, queue: nil
+        ) { _ in posts += 1 }
+        defer { NotificationCenter.default.removeObserver(token) }
+
+        _ = try store.mutate { try $0.setGroupEnabled(id: "g1", false) }
+        XCTAssertEqual(posts, 1, "a successful mutation must notify the editor")
+
+        store.save(store.load())
+        XCTAssertEqual(posts, 2, "a direct save must notify the editor too")
+    }
+
+    func testFailedMutationDoesNotPostAndReleasesLock() throws {
+        let (store, shared, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let seed = try JSONSerialization.data(withJSONObject: sampleEnvelope())
+        shared.writeData(seed, to: SharedAppGroupStore.webStoreFileName)
+
+        var posts = 0
+        let token = NotificationCenter.default.addObserver(
+            forName: GroupStore.didChangeNotification, object: nil, queue: nil
+        ) { _ in posts += 1 }
+        defer { NotificationCenter.default.removeObserver(token) }
+
+        // A throwing body writes nothing, so there is no editor-visible change.
+        XCTAssertThrowsError(try store.mutate { try $0.setGroupEnabled(id: "missing", false) })
+        XCTAssertEqual(posts, 0, "a no-op/failed mutation must not notify")
+
+        // The lock was released on the throw path: this real mutation must not
+        // deadlock, and it notifies exactly once.
+        _ = try store.mutate { try $0.setGroupEnabled(id: "g1", false) }
+        XCTAssertEqual(posts, 1)
+    }
 }
