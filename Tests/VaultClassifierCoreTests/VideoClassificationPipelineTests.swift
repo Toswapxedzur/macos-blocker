@@ -1,0 +1,145 @@
+import XCTest
+@testable import VaultClassifierCore
+
+// Captures the request the pipeline sent, and returns a scripted result.
+private final class RequestRecorder: @unchecked Sendable {
+    var last: LLMClassificationRequest?
+}
+
+private struct ScriptedOnDeviceLLM: OnDeviceLLM {
+    let modelVersion: String
+    let result: LLMClassificationResult
+    let recorder: RequestRecorder
+    func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult {
+        recorder.last = request
+        return result
+    }
+}
+
+final class VideoClassificationPipelineTests: XCTestCase {
+
+    private func makeTree() -> TagTreeAsset {
+        TagTreeAsset(id: "tree", name: "Topics", nodes: [
+            .init(id: "g", name: "Games"),
+            .init(id: "m", name: "Minecraft", parentID: "g"),
+            .init(id: "p", name: "Politics"),
+            .init(id: "o", name: "Old", isRetired: true),
+        ])
+    }
+
+    private func makeType() -> ClassifierTypeAsset {
+        ClassifierTypeAsset(
+            id: "type", name: "YT", treeID: "tree", treeRevision: 1,
+            datasetID: "ds", datasetRevision: 1, applicablePlatformID: "youtube"
+        )
+    }
+
+    // MARK: - Assembler
+
+    func testTagOptionsSkipRetiredAndResolveParentName() {
+        let options = ClassificationPromptAssembler.tagOptions(from: makeTree())
+        XCTAssertEqual(options.map(\.name), ["Games", "Minecraft", "Politics"]) // "Old" retired, excluded
+        XCTAssertEqual(options.first { $0.name == "Minecraft" }?.parentName, "Games")
+        XCTAssertNil(options.first { $0.name == "Politics" }?.parentName)
+    }
+
+    func testStaticPrefixIsDeterministicAndIncludesHouseRules() {
+        let taxonomy = ClassificationPromptAssembler.tagOptions(from: makeTree())
+        let a = ClassificationPromptAssembler.staticPrefix(taxonomy: taxonomy, houseRules: "Tag gaming-news as Politics.", maximumTags: 5)
+        let b = ClassificationPromptAssembler.staticPrefix(taxonomy: taxonomy, houseRules: "Tag gaming-news as Politics.", maximumTags: 5)
+        XCTAssertEqual(a, b, "same input must produce a byte-identical prefix for KV caching")
+        XCTAssertTrue(a.contains("House rules"))
+        XCTAssertTrue(a.contains("Tag gaming-news as Politics."))
+        XCTAssertTrue(a.contains("- Minecraft (under Games)"))
+    }
+
+    func testDynamicSuffixIncludesKnowledgePriorCaveatAndTitle() {
+        let knowledge = [KnowledgeEntry(kind: .term, subject: "HermitCraft", meaning: "A Minecraft SMP.")]
+        let suffix = ClassificationPromptAssembler.dynamicSuffix(
+            title: "HermitCraft finale", summary: nil, text: nil,
+            creatorPrior: [(tagName: "Games", averageConfidence: 4.0)],
+            knowledge: knowledge
+        )
+        XCTAssertTrue(suffix.contains("HermitCraft: A Minecraft SMP."))
+        XCTAssertTrue(suffix.contains("partial, possibly biased sample"))
+        XCTAssertTrue(suffix.contains("Games: average confidence 4.0"))
+        XCTAssertTrue(suffix.contains("Title: HermitCraft finale"))
+    }
+
+    // MARK: - Pipeline
+
+    func testPipelineWithStubProducesTagFromTitle() async throws {
+        let pipeline = VideoClassificationPipeline(llm: StubOnDeviceLLM())
+        let catalog = WorkspaceCatalog()
+        let result = try await pipeline.classify(
+            title: "A great Games montage", entryID: "v1", creatorID: "c1", platformID: "youtube",
+            classifierType: makeType(), tree: makeTree(), catalog: catalog
+        )
+        XCTAssertEqual(result.tags.map(\.tagID), ["g"])   // "Games" matched -> id g
+        XCTAssertEqual(result.source, .model)
+        XCTAssertEqual(result.creatorID, "c1")
+    }
+
+    func testPipelineMapsNamesToIDsDropsUnknownAndRecordsUnknownTerms() async throws {
+        let recorder = RequestRecorder()
+        let llm = ScriptedOnDeviceLLM(
+            modelVersion: "scripted/v9",
+            result: LLMClassificationResult(
+                tags: [LLMTagScore(name: "Games", confidence: 5), LLMTagScore(name: "NotATag", confidence: 3)],
+                unknownTerms: ["HermitCraft"]
+            ),
+            recorder: recorder
+        )
+        let pipeline = VideoClassificationPipeline(llm: llm, promptVersion: "pX")
+        let result = try await pipeline.classify(
+            title: "Some vague title", entryID: "v1", creatorID: "c1", platformID: "youtube",
+            classifierType: makeType(), tree: makeTree(), catalog: WorkspaceCatalog()
+        )
+        XCTAssertEqual(result.tags, [ScoredTag(tagID: "g", confidence: 5)]) // NotATag dropped
+        XCTAssertEqual(result.unknownTerms, ["HermitCraft"])
+        XCTAssertEqual(result.modelVersion, "scripted/v9+pX")
+    }
+
+    func testPipelineInjectsKnowledgeAndMarksSource() async throws {
+        let recorder = RequestRecorder()
+        let llm = ScriptedOnDeviceLLM(
+            modelVersion: "s/1",
+            result: LLMClassificationResult(tags: [LLMTagScore(name: "Games", confidence: 4)]),
+            recorder: recorder
+        )
+        var catalog = WorkspaceCatalog()
+        catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .term, subject: "HermitCraft", meaning: "A Minecraft SMP."))
+        let pipeline = VideoClassificationPipeline(llm: llm)
+        let result = try await pipeline.classify(
+            title: "HermitCraft season 9", entryID: "v1", creatorID: "c1", platformID: "youtube",
+            classifierType: makeType(), tree: makeTree(), catalog: catalog
+        )
+        XCTAssertEqual(result.source, .modelKnowledge)
+        XCTAssertEqual(result.knowledgeRefs, ["term:hermitcraft"])
+        XCTAssertTrue(recorder.last?.dynamicSuffix.contains("A Minecraft SMP.") ?? false)
+    }
+
+    func testPipelineFeedsDerivedCreatorPriorIntoPrompt() async throws {
+        let recorder = RequestRecorder()
+        let llm = ScriptedOnDeviceLLM(
+            modelVersion: "s/1",
+            result: LLMClassificationResult(tags: []),
+            recorder: recorder
+        )
+        // Seed a prior: creator c1 already has a video tagged Games(5).
+        var catalog = WorkspaceCatalog()
+        catalog.upsertVideoClassification(VideoClassification(
+            classifierTypeID: "type", platformID: "youtube", entryID: "seed", creatorID: "c1",
+            treeID: "tree", treeRevision: 1, tags: [ScoredTag(tagID: "g", confidence: 5)],
+            source: .model, modelVersion: "s/1"))
+
+        let pipeline = VideoClassificationPipeline(llm: llm)
+        _ = try await pipeline.classify(
+            title: "vague", entryID: "v2", creatorID: "c1", platformID: "youtube",
+            classifierType: makeType(), tree: makeTree(), catalog: catalog
+        )
+        let suffix = try XCTUnwrap(recorder.last?.dynamicSuffix)
+        XCTAssertTrue(suffix.contains("Creator prior"))
+        XCTAssertTrue(suffix.contains("Games: average confidence 5.0"))
+    }
+}

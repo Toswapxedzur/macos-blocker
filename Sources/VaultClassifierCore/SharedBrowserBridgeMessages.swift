@@ -106,6 +106,96 @@ public struct NativeSourceTagsRequest: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - Per-video tags (local-LLM rework)
+
+/// A request for one video's tags, keyed by the video's durable `entryID` and
+/// carrying the evidence the on-device LLM classifies (the creator is only a
+/// weak derived prior, not the key).
+public struct NativeVideoTagsRequest: Codable, Equatable, Sendable {
+    public var platformID: String
+    public var entryID: String
+    public var creatorID: String
+    public var title: String
+    public var summary: String?
+    public var text: String?
+
+    public static let maximumTitleLength = 500
+    public static let maximumEvidenceLength = 4_000
+
+    public init(platformID: String, entryID: String, creatorID: String, title: String, summary: String? = nil, text: String? = nil) {
+        self.platformID = platformID
+        self.entryID = entryID
+        self.creatorID = creatorID
+        self.title = title
+        self.summary = summary
+        self.text = text
+    }
+
+    private enum CodingKeys: String, CodingKey { case platformID, entryID, creatorID, title, summary, text }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        platformID = try container.decode(String.self, forKey: .platformID)
+        entryID = try container.decode(String.self, forKey: .entryID)
+        creatorID = try container.decode(String.self, forKey: .creatorID)
+        title = try container.decode(String.self, forKey: .title)
+        summary = try container.decodeIfPresent(String.self, forKey: .summary)
+        text = try container.decodeIfPresent(String.self, forKey: .text)
+    }
+
+    public func validate() throws {
+        guard NativeSourceTagsRequest.isValidPlatformID(platformID) else {
+            throw NativeSourceTagsError.invalidPlatform
+        }
+        guard !entryID.isEmpty, entryID.count <= 256,
+              entryID.hasPrefix("\(platformID):"),
+              entryID == entryID.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            throw NativeSourceTagsError.invalidSource
+        }
+        guard !creatorID.isEmpty, creatorID.count <= 256,
+              creatorID.hasPrefix("\(platformID):") else {
+            throw NativeSourceTagsError.invalidSource
+        }
+        guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              title.count <= Self.maximumTitleLength else {
+            throw NativeSourceTagsError.invalidSource
+        }
+        guard (summary?.count ?? 0) <= Self.maximumEvidenceLength,
+              (text?.count ?? 0) <= Self.maximumEvidenceLength else {
+            throw NativeSourceTagsError.invalidSource
+        }
+    }
+}
+
+public struct NativeVideoTagsResponse: Codable, Equatable, Sendable {
+    public var platformID: String
+    public var entryID: String
+    public var tags: [NativeSourceTag]
+    public var predicted: Bool
+    /// True when the video is not yet classified: classification was queued and
+    /// the caller should re-request shortly (the pill fills in on the next pass).
+    public var pending: Bool
+
+    public init(platformID: String, entryID: String, tags: [NativeSourceTag], predicted: Bool = false, pending: Bool = false) {
+        self.platformID = platformID
+        self.entryID = entryID
+        self.tags = NativeSourceTagsResponse.acceptedTags(tags)
+        self.predicted = predicted
+        self.pending = pending
+    }
+
+    private enum CodingKeys: String, CodingKey { case platformID, entryID, tags, predicted, pending }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        platformID = try container.decode(String.self, forKey: .platformID)
+        entryID = try container.decode(String.self, forKey: .entryID)
+        tags = NativeSourceTagsResponse.acceptedTags(try container.decode([NativeSourceTag].self, forKey: .tags))
+        predicted = try container.decodeIfPresent(Bool.self, forKey: .predicted) ?? false
+        pending = try container.decodeIfPresent(Bool.self, forKey: .pending) ?? false
+    }
+}
+
 public struct NativeSourceTag: Codable, Equatable, Sendable {
     public var id: String
     public var name: String

@@ -9,6 +9,9 @@ public enum SharedBrowserBridgeOperation: String, CaseIterable, Codable, Sendabl
     case collect
     case sourceTags = "source-tags"
     case sourceTagsBatch = "source-tags-batch"
+    // Local-LLM rework: per-video tags, keyed by the video's entryID + evidence
+    // (not the creator). The pill on the extension is now per-video.
+    case videoTags = "video-tags"
     case classify
     case correct
 }
