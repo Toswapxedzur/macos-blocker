@@ -236,6 +236,19 @@ final class VaultClassifierViewModel: ObservableObject {
         handleSharedHubRequestBody(request)
     }
 
+    // TEMPORARY perf instrumentation (dev only). Logs to stderr so a repro of the
+    // "tag injection slow after a while" report shows which hub op costs time and
+    // whether it grows with the collected-entry count. Remove after diagnosing.
+    private static let perfEnabled = ProcessInfo.processInfo.environment["ADAMANCIA_VAULT_ENVIRONMENT"] == "development"
+    private func perfLog(_ message: @autoclosure () -> String) {
+        guard Self.perfEnabled else { return }
+        let collected = localState?.workspaceCatalog.datasets.reduce(0) { $0 + $1.collectedEntries.count } ?? -1
+        FileHandle.standardError.write(Data("[VaultPerf] \(message()) collected=\(collected)\n".utf8))
+    }
+    private func perfMS(_ start: DispatchTime, _ end: DispatchTime = DispatchTime.now()) -> String {
+        String(format: "%.1f", Double(end.uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000)
+    }
+
     /// Maps display tag nodes to the wire tag shape, dropping any whose colors do
     /// not normalize. The response struct additionally gates on a valid theme
     /// pair; keeping this mapping shared means the single and batch paths emit
@@ -286,6 +299,7 @@ final class VaultClassifierViewModel: ObservableObject {
             case .collect:
                 let request = try JSONDecoder().decode(NativeCollectionRequest.self, from: request.bodyData)
                 collectionDiagnostics?.record(platformID: request.entry.platform, event: "collection-received", outcome: "received")
+                let tStore = DispatchTime.now()
                 let inserted = try coordinator.collectPlatformEntry(
                     request.entry,
                     firstObservedAtMilliseconds: request.firstObservedAtMilliseconds,
@@ -296,18 +310,25 @@ final class VaultClassifierViewModel: ObservableObject {
                 collectionDiagnostics?.record(platformID: request.entry.platform, event: "collection-stored", outcome: inserted ? "inserted" : "duplicate")
                 // Browser collection bypasses WebKit actions, so publish the
                 // freshly persisted catalog to the already-open app now.
+                let tSnapshot = DispatchTime.now()
                 refreshLocalState()
+                let tPush = DispatchTime.now()
                 onWebStateChange?()
+                let tLLM = DispatchTime.now()
                 startActiveLLMClassification(platformID: request.entry.platform)
+                let tEnd = DispatchTime.now()
+                perfLog("collect store=\(perfMS(tStore, tSnapshot)) snapshot=\(perfMS(tSnapshot, tPush)) push=\(perfMS(tPush, tLLM)) llm=\(perfMS(tLLM, tEnd)) total=\(perfMS(tStore, tEnd))ms")
                 return try sharedHubReply(NativeCollectionResponse(accepted: true, inserted: inserted))
             case .sourceTags:
                 let sourceTags = try JSONDecoder().decode(NativeSourceTagsRequest.self, from: request.bodyData)
                 try sourceTags.validate()
+                let tPill = DispatchTime.now()
                 let projection = try coordinator.sourceTags(
                     platformID: sourceTags.platformID,
                     sourceID: sourceTags.sourceID,
                     creatorNames: sourceTags.creatorNames
                 )
+                perfLog("sourceTags one=\(perfMS(tPill))ms")
                 return try sharedHubReply(NativeSourceTagsResponse(
                     platformID: sourceTags.platformID,
                     sourceID: sourceTags.sourceID,
@@ -317,6 +338,8 @@ final class VaultClassifierViewModel: ObservableObject {
             case .sourceTagsBatch:
                 let batch = try JSONDecoder().decode(NativeSourceTagsBatchRequest.self, from: request.bodyData)
                 try batch.validate()
+                let tBatch = DispatchTime.now()
+                defer { perfLog("sourceTagsBatch items=\(batch.items.count) total=\(perfMS(tBatch))ms") }
                 // One @MainActor hop resolves every queued source; the memoized
                 // identity index makes the per-item lookups cheap, so a viewport
                 // of cards costs one round-trip instead of one each.
@@ -333,6 +356,26 @@ final class VaultClassifierViewModel: ObservableObject {
                     )
                 }
                 return try sharedHubReply(NativeSourceTagsBatchResponse(platformID: batch.platformID, items: items))
+            case .videoTags:
+                let videoTags = try JSONDecoder().decode(NativeVideoTagsRequest.self, from: request.bodyData)
+                try videoTags.validate()
+                if let cached = coordinator.cachedVideoTags(platformID: videoTags.platformID, entryID: videoTags.entryID) {
+                    return try sharedHubReply(NativeVideoTagsResponse(
+                        platformID: videoTags.platformID, entryID: videoTags.entryID,
+                        tags: Self.nativeSourceTags(from: cached.tags), predicted: cached.predicted, pending: false))
+                }
+                // Not classified yet: queue background classification (the LLM call
+                // runs off the main actor) and report pending; the extension
+                // re-requests and the pill fills in once the result is cached.
+                Task { @MainActor [weak self] in
+                    guard let coordinator = self?.coordinator else { return }
+                    _ = try? await coordinator.classifyVideo(
+                        platformID: videoTags.platformID, entryID: videoTags.entryID, creatorID: videoTags.creatorID,
+                        title: videoTags.title, summary: videoTags.summary, text: videoTags.text)
+                    self?.onWebStateChange?()
+                }
+                return try sharedHubReply(NativeVideoTagsResponse(
+                    platformID: videoTags.platformID, entryID: videoTags.entryID, tags: [], predicted: false, pending: true))
             case .classify:
                 let classification = try JSONDecoder().decode(NativeClassificationRequest.self, from: request.bodyData)
                 let output = try coordinator.classifyWithLedger(classification.entry)

@@ -376,6 +376,10 @@ public final class LocalClassifierCoordinator {
     // (~11 ms per lookup over a few thousand entries); the index depends only on
     // the dataset's collected entries, so it is reused until those change.
     private var identityIndexCache: (datasetID: String, revision: Int, entryCount: Int, index: CreatorIdentityIndex)?
+    // The on-device LLM used for per-video classification (local-LLM rework).
+    // Defaults to a deterministic stub until a real MLX-backed model is wired;
+    // settable so the app can inject one without touching the many initializers.
+    private var onDeviceLLM: any OnDeviceLLM = StubOnDeviceLLM()
 
     public convenience init(verifiedPackage: VerifiedSeedPackage, stateFile: LocalStateFile, defaultPolicies: [NamedPolicy] = []) throws {
         try self.init(
@@ -791,6 +795,107 @@ public final class LocalClassifierCoordinator {
         let index = CreatorIdentityIndex(entries: dataset.collectedEntries)
         identityIndexCache = (dataset.id, dataset.revision, dataset.collectedEntries.count, index)
         return index
+    }
+
+    // MARK: - Per-video classification (local-LLM rework)
+
+    /// Injects the on-device LLM used for per-video classification.
+    public func setOnDeviceLLM(_ llm: any OnDeviceLLM) {
+        lock.lock()
+        defer { lock.unlock() }
+        onDeviceLLM = llm
+    }
+
+    /// The decision cache: the union of every applicable classifier type's stored
+    /// `VideoClassification` for this video, if any exists. Returns nil when the
+    /// video has not been classified yet (the caller then triggers classification).
+    public func cachedVideoTags(platformID: String, entryID: String) -> SourceTagsProjection? {
+        lock.lock()
+        defer { lock.unlock() }
+        let catalog = state.workspaceCatalog
+        let types = Self.orderedTypes(for: platformID, in: catalog)
+        guard !types.isEmpty else { return nil }
+        let hasAny = types.contains { type in
+            catalog.videoClassification(classifierTypeID: type.id, platformID: platformID, entryID: entryID) != nil
+        }
+        guard hasAny else { return nil }
+        return Self.videoTagsProjection(entryID: entryID, platformID: platformID, types: types, catalog: catalog)
+    }
+
+    /// Classify one video with the on-device LLM across every applicable
+    /// classifier type on its platform, persist the results (refreshing the
+    /// derived creator histograms), and return the union of tags. The LLM call
+    /// runs OUTSIDE the lock (the lock is only held to snapshot inputs and to
+    /// persist outputs), so it never blocks other requests during inference.
+    public func classifyVideo(
+        platformID: String,
+        entryID: String,
+        creatorID: String,
+        title: String,
+        summary: String? = nil,
+        text: String? = nil
+    ) async throws -> SourceTagsProjection {
+        lock.lock()
+        let catalog = state.workspaceCatalog
+        let llm = onDeviceLLM
+        lock.unlock()
+
+        guard let binding = catalog.bindings.first(where: { $0.id == platformID }), binding.collectionEnabled else {
+            throw PlatformCollectionError.disabled(platformID)
+        }
+        let types = Self.orderedTypes(for: platformID, in: catalog)
+        guard !types.isEmpty else { return SourceTagsProjection(tags: [], predicted: false) }
+
+        let pipeline = VideoClassificationPipeline(llm: llm)
+        var classifications: [VideoClassification] = []
+        for type in types {
+            guard let tree = catalog.trees.first(where: { $0.id == type.treeID }),
+                  type.treeRevision == tree.revision else { continue }
+            let classification = try await pipeline.classify(
+                title: title, summary: summary, text: text,
+                entryID: entryID, creatorID: creatorID, platformID: platformID,
+                classifierType: type, tree: tree, catalog: catalog, houseRules: nil
+            )
+            classifications.append(classification)
+        }
+
+        lock.lock()
+        for classification in classifications {
+            state.workspaceCatalog.upsertVideoClassification(classification)
+        }
+        try? stateFile.save(state)
+        let saved = state.workspaceCatalog
+        lock.unlock()
+
+        return Self.videoTagsProjection(entryID: entryID, platformID: platformID, types: types, catalog: saved)
+    }
+
+    private static func orderedTypes(for platformID: String, in catalog: WorkspaceCatalog) -> [ClassifierTypeAsset] {
+        catalog.classifierTypes
+            .filter { $0.applicablePlatformID == platformID }
+            .sorted { ($0.order, $0.id) < ($1.order, $1.id) }
+    }
+
+    /// Union the per-type video classifications for one video into display tags,
+    /// in classifier-type order, deduped by id.
+    private static func videoTagsProjection(
+        entryID: String,
+        platformID: String,
+        types: [ClassifierTypeAsset],
+        catalog: WorkspaceCatalog
+    ) -> SourceTagsProjection {
+        var tags: [TagNode] = []
+        var seen = Set<String>()
+        for type in types {
+            guard let classification = catalog.videoClassification(classifierTypeID: type.id, platformID: platformID, entryID: entryID),
+                  let tree = catalog.trees.first(where: { $0.id == type.treeID }),
+                  let taxonomy = try? tree.inferenceTaxonomy() else { continue }
+            for scored in classification.tags {
+                guard let node = taxonomy.nodes[scored.tagID], seen.insert(node.id).inserted else { continue }
+                tags.append(node)
+            }
+        }
+        return SourceTagsProjection(tags: tags, predicted: false)
     }
 
     /// Persists one bounded, already-rendered platform entry. This is separate
