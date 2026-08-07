@@ -65,9 +65,6 @@ final class VaultClassifierWebShell {
               let data = try? JSONSerialization.data(withJSONObject: deliveredPayload, options: [.sortedKeys]) else {
             return nil
         }
-        if ProcessInfo.processInfo.environment["ADAMANCIA_VAULT_ENVIRONMENT"] == "development" {
-            try? data.write(to: URL(fileURLWithPath: "/tmp/vault-web-payload.json"))
-        }
         let encoded = data.base64EncodedString()
         return "window.VaultClassifier && window.VaultClassifier.receive(JSON.parse(new TextDecoder().decode(Uint8Array.from(atob('\(encoded)'), value => value.charCodeAt(0)))));"
     }

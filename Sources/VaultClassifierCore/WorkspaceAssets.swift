@@ -2087,8 +2087,15 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     /// not include them.
     public var providerProfiles: [APIKeyProviderProfile]
     public var trash: [TrashedEntry]
+    // Local-LLM rework stores (additive; see LocalLLMModel.swift). Primary per-video
+    // labels, the grounded-research knowledge map, user corrections, and the derived
+    // creator priors. Empty until the new pipeline populates them.
+    public var videoClassifications: [VideoClassification]
+    public var knowledgeEntries: [KnowledgeEntry]
+    public var correctionExamples: [CorrectionExample]
+    public var creatorHistograms: [CreatorTagHistogram]
 
-    public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], models: [LocalModelAsset] = [], bindings: [PlatformBinding] = [], classifierTypes: [ClassifierTypeAsset] = [], tokenUsage: [TokenUsageRecord] = [], providerRequestRecords: [ProviderRequestRecord] = [], providerProfiles: [APIKeyProviderProfile] = [], trash: [TrashedEntry] = []) {
+    public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], models: [LocalModelAsset] = [], bindings: [PlatformBinding] = [], classifierTypes: [ClassifierTypeAsset] = [], tokenUsage: [TokenUsageRecord] = [], providerRequestRecords: [ProviderRequestRecord] = [], providerProfiles: [APIKeyProviderProfile] = [], trash: [TrashedEntry] = [], videoClassifications: [VideoClassification] = [], knowledgeEntries: [KnowledgeEntry] = [], correctionExamples: [CorrectionExample] = [], creatorHistograms: [CreatorTagHistogram] = []) {
         self.trees = trees
         self.datasets = datasets
         self.models = models
@@ -2098,6 +2105,10 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         self.providerRequestRecords = providerRequestRecords
         self.providerProfiles = providerProfiles
         self.trash = trash
+        self.videoClassifications = videoClassifications
+        self.knowledgeEntries = knowledgeEntries
+        self.correctionExamples = correctionExamples
+        self.creatorHistograms = creatorHistograms
     }
 
     public static func now() -> Int64 { Int64(Date().timeIntervalSince1970 * 1_000) }
@@ -2126,6 +2137,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
 
     public func validate() throws {
         try unique(trees.map(\.id) + datasets.map(\.id) + models.map(\.id) + bindings.map(\.id) + classifierTypes.map(\.id) + providerProfiles.map(\.id))
+        try validateLocalLLMStores()
         for binding in bindings {
             guard CollectionPlatformRegistry.definition(for: binding.id) != nil else {
                 throw WorkspaceCatalogError.unsupportedCollectionPlatform(binding.id)
@@ -2354,7 +2366,8 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case trees, datasets, models, bindings, classifierTypes, tokenUsage, providerRequestRecords, providerProfiles, trash
+        case trees, datasets, models, bindings, classifierTypes, tokenUsage, providerRequestRecords, providerProfiles, trash,
+             videoClassifications, knowledgeEntries, correctionExamples, creatorHistograms
     }
 
     public init(from decoder: Decoder) throws {
@@ -2368,6 +2381,10 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         providerRequestRecords = try container.decodeIfPresent([ProviderRequestRecord].self, forKey: .providerRequestRecords) ?? []
         providerProfiles = try container.decodeIfPresent([APIKeyProviderProfile].self, forKey: .providerProfiles) ?? []
         trash = try container.decodeIfPresent([TrashedEntry].self, forKey: .trash) ?? []
+        videoClassifications = try container.decodeIfPresent([VideoClassification].self, forKey: .videoClassifications) ?? []
+        knowledgeEntries = try container.decodeIfPresent([KnowledgeEntry].self, forKey: .knowledgeEntries) ?? []
+        correctionExamples = try container.decodeIfPresent([CorrectionExample].self, forKey: .correctionExamples) ?? []
+        creatorHistograms = try container.decodeIfPresent([CreatorTagHistogram].self, forKey: .creatorHistograms) ?? []
         migrateLegacyLocalModelBindings()
     }
 
