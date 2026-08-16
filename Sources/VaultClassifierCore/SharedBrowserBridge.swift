@@ -12,6 +12,11 @@ public enum SharedBrowserBridgeOperation: String, CaseIterable, Codable, Sendabl
     // Local-LLM rework: per-video tags, keyed by the video's entryID + evidence
     // (not the creator). The pill on the extension is now per-video.
     case videoTags = "video-tags"
+    case videoTagsBatch = "video-tags-batch"
+    // Dev-only: extension layers forward structured log lines into the unified
+    // VaultDevLog file (blockerGroup/misc/dev.log). No-op unless the app is in
+    // the development environment.
+    case devLog = "dev-log"
     case classify
     case correct
 }

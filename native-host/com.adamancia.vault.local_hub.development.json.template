@@ -4,6 +4,6 @@
   "path": "__ABSOLUTE_PATH_TO_VAULT_LOCAL_HUB_NATIVE_HOST__",
   "type": "stdio",
   "allowed_origins": [
-    "chrome-extension://opjogfpcmllpgplgofionfejkjeanhkc/"
+    "chrome-extension://fjichnkbaoilbfbjcjkggllmbicmeegk/"
   ]
 }
