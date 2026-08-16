@@ -181,6 +181,7 @@ final class LocalClassifierHub {
         case "hello": handleHello(frame, connection: connection, key: key)
         case "classifier-request": routeRequest(frame, from: key)
         case "classifier-response": routeResponse(frame, from: key)
+        case "classifier-broadcast": routeBroadcast(frame, from: key)
         case "ping": send(connection, ["kind": "pong", "t": frame["t"] ?? 0])
         default: break
         }
@@ -224,7 +225,7 @@ final class LocalClassifierHub {
         guard let requestID = frame["requestID"] as? String,
               requestID.count > 0, requestID.count <= 128,
               let operation = frame["operation"] as? String,
-              ["bridge-info", "collection-info", "diagnostic", "collect", "source-tags", "source-tags-batch", "video-tags", "classify", "correct"].contains(operation),
+              ["bridge-info", "collection-info", "diagnostic", "collect", "source-tags", "source-tags-batch", "video-tags", "video-tags-batch", "dev-log", "classify", "correct"].contains(operation),
               let body = frame["body"] as? [String: Any], JSONSerialization.isValidJSONObject(body) else { return }
         lock.lock()
         guard let source = peers[key], LocalHubAuthentication.isBrowserProgram(source.program),
@@ -241,6 +242,28 @@ final class LocalClassifierHub {
         send(classifier.connection, ["kind": "classifier-request", "sourcePeerID": source.id, "requestID": requestID, "operation": operation, "body": body])
         queue.asyncAfter(deadline: .now() + .seconds(Self.classifierRelayTimeoutSeconds)) { [weak self] in
             self?.expire(requestID)
+        }
+    }
+
+    /// Relays an unsolicited classifier push (a completed classification) to
+    /// every connected browser peer. Fire-and-forget: no correlation state, and
+    /// an invalid frame is dropped rather than disconnecting the classifier.
+    private func routeBroadcast(_ frame: [String: Any], from key: ObjectIdentifier) {
+        guard let operation = frame["operation"] as? String,
+              ["video-tags-updated"].contains(operation),
+              let body = frame["body"] as? [String: Any],
+              JSONSerialization.isValidJSONObject(body) else { return }
+        lock.lock()
+        guard let source = peers[key], source.ready, source.program == "classifier" else {
+            lock.unlock()
+            return
+        }
+        let browsers = peers.values
+            .filter { $0.ready && LocalHubAuthentication.isBrowserProgram($0.program) }
+            .map(\.connection)
+        lock.unlock()
+        for connection in browsers {
+            send(connection, ["kind": "classifier-broadcast", "operation": operation, "body": body])
         }
     }
 

@@ -24,7 +24,21 @@ public struct NativeCollectionInfoRequest: Codable, Equatable, Sendable {
 
 public struct NativeCollectionInfoResponse: Codable, Equatable, Sendable {
     public var enabledPlatformIDs: [String]
-    public init(enabledPlatformIDs: [String]) { self.enabledPlatformIDs = enabledPlatformIDs.sorted() }
+    /// True when the native app runs in the development environment. Lets the
+    /// extension auto-enable dev logging without a manual toggle.
+    public var developmentMode: Bool
+    public init(enabledPlatformIDs: [String], developmentMode: Bool = false) {
+        self.enabledPlatformIDs = enabledPlatformIDs.sorted()
+        self.developmentMode = developmentMode
+    }
+
+    private enum CodingKeys: String, CodingKey { case enabledPlatformIDs, developmentMode }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        enabledPlatformIDs = (try container.decodeIfPresent([String].self, forKey: .enabledPlatformIDs) ?? []).sorted()
+        developmentMode = try container.decodeIfPresent(Bool.self, forKey: .developmentMode) ?? false
+    }
 }
 
 public struct NativeCollectionRequest: Codable, Equatable, Sendable {
@@ -194,6 +208,149 @@ public struct NativeVideoTagsResponse: Codable, Equatable, Sendable {
         predicted = try container.decodeIfPresent(Bool.self, forKey: .predicted) ?? false
         pending = try container.decodeIfPresent(Bool.self, forKey: .pending) ?? false
     }
+}
+
+/// Unsolicited push emitted when queued classification completes: the hub
+/// relays it to every connected browser so provisional pills resolve without
+/// polling. Reuses the batch response item shape (including its color-pair
+/// filtering) so pushed tags are exactly what a re-request would return.
+public struct NativeVideoTagsBroadcast: Codable, Equatable, Sendable {
+    public var platformID: String
+    public var items: [NativeVideoTagsBatchResponseItem]
+
+    public init(platformID: String, items: [NativeVideoTagsBatchResponseItem]) {
+        self.platformID = platformID
+        self.items = items
+    }
+}
+
+/// One video inside a batched per-video request. `platformID` rides on the
+/// envelope; per item the entryID + evidence travel.
+public struct NativeVideoTagsBatchItem: Codable, Equatable, Sendable {
+    public var entryID: String
+    public var creatorID: String
+    public var title: String
+    public var summary: String?
+    public var text: String?
+
+    public init(entryID: String, creatorID: String, title: String, summary: String? = nil, text: String? = nil) {
+        self.entryID = entryID
+        self.creatorID = creatorID
+        self.title = title
+        self.summary = summary
+        self.text = text
+    }
+
+    private enum CodingKeys: String, CodingKey { case entryID, creatorID, title, summary, text }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        entryID = try container.decode(String.self, forKey: .entryID)
+        creatorID = try container.decode(String.self, forKey: .creatorID)
+        title = try container.decode(String.self, forKey: .title)
+        summary = try container.decodeIfPresent(String.self, forKey: .summary)
+        text = try container.decodeIfPresent(String.self, forKey: .text)
+    }
+}
+
+public struct NativeVideoTagsBatchRequest: Codable, Equatable, Sendable {
+    public var platformID: String
+    public var items: [NativeVideoTagsBatchItem]
+
+    public static let maximumItems = 64
+
+    public init(platformID: String, items: [NativeVideoTagsBatchItem]) {
+        self.platformID = platformID
+        self.items = items
+    }
+
+    public func validate() throws {
+        guard NativeSourceTagsRequest.isValidPlatformID(platformID) else {
+            throw NativeSourceTagsError.invalidPlatform
+        }
+        guard items.count <= Self.maximumItems else { throw NativeSourceTagsError.invalidSource }
+        for item in items {
+            try NativeVideoTagsRequest(
+                platformID: platformID, entryID: item.entryID, creatorID: item.creatorID,
+                title: item.title, summary: item.summary, text: item.text
+            ).validate()
+        }
+    }
+}
+
+public struct NativeVideoTagsBatchResponseItem: Codable, Equatable, Sendable {
+    public var entryID: String
+    public var tags: [NativeSourceTag]
+    public var predicted: Bool
+    public var pending: Bool
+
+    public init(entryID: String, tags: [NativeSourceTag], predicted: Bool = false, pending: Bool = false) {
+        self.entryID = entryID
+        self.tags = NativeSourceTagsResponse.acceptedTags(tags)
+        self.predicted = predicted
+        self.pending = pending
+    }
+
+    private enum CodingKeys: String, CodingKey { case entryID, tags, predicted, pending }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        entryID = try container.decode(String.self, forKey: .entryID)
+        tags = NativeSourceTagsResponse.acceptedTags(try container.decode([NativeSourceTag].self, forKey: .tags))
+        predicted = try container.decodeIfPresent(Bool.self, forKey: .predicted) ?? false
+        pending = try container.decodeIfPresent(Bool.self, forKey: .pending) ?? false
+    }
+}
+
+public struct NativeVideoTagsBatchResponse: Codable, Equatable, Sendable {
+    public var platformID: String
+    public var items: [NativeVideoTagsBatchResponseItem]
+
+    public init(platformID: String, items: [NativeVideoTagsBatchResponseItem]) {
+        self.platformID = platformID
+        self.items = items
+    }
+}
+
+/// Dev-only: a structured log line forwarded from an extension layer into the
+/// unified VaultDevLog. The native side only persists it in the development
+/// environment; it is discarded otherwise.
+public struct NativeDevLogRequest: Codable, Equatable, Sendable {
+    public var layer: String
+    public var event: String
+    public var fields: [String: String]
+
+    public static let maximumFields = 24
+    public static let maximumValueLength = 512
+
+    public init(layer: String, event: String, fields: [String: String] = [:]) {
+        self.layer = layer
+        self.event = event
+        self.fields = fields
+    }
+
+    private enum CodingKeys: String, CodingKey { case layer, event, fields }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        layer = try container.decode(String.self, forKey: .layer)
+        event = try container.decode(String.self, forKey: .event)
+        fields = try container.decodeIfPresent([String: String].self, forKey: .fields) ?? [:]
+    }
+
+    public func validate() throws {
+        guard !layer.isEmpty, layer.count <= 32,
+              !event.isEmpty, event.count <= 200,
+              fields.count <= Self.maximumFields,
+              fields.allSatisfy({ $0.key.count <= 64 && $0.value.count <= Self.maximumValueLength }) else {
+            throw NativeSourceTagsError.invalidSource
+        }
+    }
+}
+
+public struct NativeDevLogResponse: Codable, Equatable, Sendable {
+    public var accepted: Bool
+    public init(accepted: Bool) { self.accepted = accepted }
 }
 
 public struct NativeSourceTag: Codable, Equatable, Sendable {

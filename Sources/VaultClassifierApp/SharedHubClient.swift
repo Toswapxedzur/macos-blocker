@@ -177,6 +177,15 @@ final class SharedHubClient {
         send(payload, on: task, completion: nil)
     }
 
+    /// Unsolicited push to the hub, relayed to every connected browser peer.
+    /// Fire-and-forget: broadcasts carry freshly resolved state (e.g. completed
+    /// video classifications), so a drop only means the browser falls back to
+    /// its next pull.
+    func broadcast(operation: String, body: Any) {
+        guard state == .connected, SharedBrowserBridgeProtocol.isValidBody(body) else { return }
+        send(["kind": "classifier-broadcast", "operation": operation, "body": body], on: task, completion: nil)
+    }
+
     private func send(_ object: [String: Any], on task: URLSessionWebSocketTask?, completion: ((Error?) -> Void)?) {
         guard let task,
               JSONSerialization.isValidJSONObject(object),
