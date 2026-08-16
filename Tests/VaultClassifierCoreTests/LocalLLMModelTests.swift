@@ -127,6 +127,29 @@ final class LocalLLMModelTests: XCTestCase {
         XCTAssertTrue(catalog.matchedKnowledge(title: "unrelated title", creatorID: "youtube:handle:unknown").isEmpty)
     }
 
+    func testMatchedKnowledgeIsBoundedAndRetainsCreatorContext() {
+        var catalog = WorkspaceCatalog()
+        let creatorID = "youtube:handle:c1"
+        catalog.upsertKnowledgeEntry(.init(kind: .creator, subject: creatorID, meaning: "Creator context"))
+        let subjects = (1...12).map { "Entity" + String(repeating: "x", count: $0) }
+        for (index, subject) in subjects.enumerated() {
+            catalog.upsertKnowledgeEntry(.init(
+                kind: .term,
+                subject: subject,
+                meaning: "Meaning \(index)",
+                updatedAtMilliseconds: Int64(index)
+            ))
+        }
+
+        let matched = catalog.matchedKnowledge(
+            title: subjects.joined(separator: " "),
+            creatorID: creatorID
+        )
+        XCTAssertEqual(matched.count, WorkspaceCatalog.maximumMatchedKnowledgeEntries)
+        XCTAssertEqual(matched.first?.id, KnowledgeEntry.key(kind: .creator, subject: creatorID))
+        XCTAssertEqual(matched.dropFirst().first?.subject, subjects.last)
+    }
+
     func testUpsertKnowledgeEntryDedupsByKey() {
         var catalog = WorkspaceCatalog()
         catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .term, subject: "HermitCraft", meaning: "old"))

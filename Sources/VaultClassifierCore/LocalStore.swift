@@ -159,9 +159,23 @@ public enum PlatformCollectionError: Error, Equatable, LocalizedError, Sendable 
     }
 }
 
+public enum CorrectionSubmissionError: Error, Equatable, LocalizedError, Sendable {
+    case invalidClassifierType
+    case missingCollectedEntry
+    case invalidTagSelection
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidClassifierType: return "The classifier type cannot correct this platform."
+        case .missingCollectedEntry: return "The collected video is no longer available."
+        case .invalidTagSelection: return "The correction contains a tag that is not eligible for this classifier type."
+        }
+    }
+}
+
 /// Coordinates collection, per-video on-device LLM classification, settings,
 /// policy validation, backups, and signed taxonomy-package lifecycle.
-public final class LocalClassifierCoordinator {
+public final class LocalClassifierCoordinator: @unchecked Sendable {
     private let stateFile: LocalStateFile
     private let lock = NSLock()
     private var activeVerifiedPackage: VerifiedSeedPackage
@@ -169,6 +183,8 @@ public final class LocalClassifierCoordinator {
     private var onDeviceLLM: any OnDeviceLLM = StubOnDeviceLLM()
     private var classificationMaximumTags: Int
     private var classificationHouseRules: String?
+    private var groundedResearchQueue: GroundedResearchQueue?
+    private var onVideoReclassifiedCallback: (@Sendable (String, String, VideoTagsProjection) -> Void)?
 
     public convenience init(
         verifiedPackage: VerifiedSeedPackage,
@@ -313,6 +329,26 @@ public final class LocalClassifierCoordinator {
         classificationHouseRules = (trimmed?.isEmpty ?? true) ? nil : trimmed
     }
 
+    public func setGroundedResearchQueue(_ queue: GroundedResearchQueue?) {
+        lock.withLock { groundedResearchQueue = queue }
+    }
+
+    public func setOnVideoReclassified(
+        _ callback: (@Sendable (String, String, VideoTagsProjection) -> Void)?
+    ) {
+        lock.withLock { onVideoReclassifiedCallback = callback }
+    }
+
+    public func groundedResearchQueueSnapshot() -> GroundedResearchQueueSnapshot {
+        lock.withLock {
+            .init(
+                existingKnowledgeKeys: Set(state.workspaceCatalog.knowledgeEntries.map(\.id)),
+                failedAttempts: state.workspaceCatalog.researchAttempts,
+                tokenUsage: state.workspaceCatalog.tokenUsage
+            )
+        }
+    }
+
     public func cachedVideoTags(platformID: String, entryID: String) -> VideoTagsProjection? {
         lock.lock()
         defer { lock.unlock() }
@@ -334,9 +370,16 @@ public final class LocalClassifierCoordinator {
         text: String? = nil
     ) async throws -> VideoTagsProjection {
         let snapshot = lock.withLock {
-            (state.workspaceCatalog, onDeviceLLM, classificationMaximumTags, classificationHouseRules)
+            (
+                state.workspaceCatalog,
+                onDeviceLLM,
+                classificationMaximumTags,
+                classificationHouseRules,
+                state.settings.research,
+                groundedResearchQueue
+            )
         }
-        let (catalog, llm, maximumTags, houseRules) = snapshot
+        let (catalog, llm, maximumTags, houseRules, researchSettings, researchQueue) = snapshot
 
         guard let binding = catalog.bindings.first(where: { $0.id == platformID }), binding.collectionEnabled else {
             throw PlatformCollectionError.disabled(platformID)
@@ -349,6 +392,20 @@ public final class LocalClassifierCoordinator {
         for type in types {
             guard let tree = catalog.trees.first(where: { $0.id == type.treeID }),
                   type.treeRevision == tree.revision else { continue }
+            // A correction is authoritative for this taxonomy revision. Live
+            // requests and research-triggered refreshes must not overwrite it
+            // with a later model decision.
+            if let corrected = catalog.videoClassification(
+                classifierTypeID: type.id,
+                platformID: platformID,
+                entryID: entryID
+            ), corrected.source == .humanCorrected,
+               corrected.treeID == tree.id,
+               corrected.treeRevision == tree.revision {
+                classifications.append(corrected)
+                continue
+            }
+            let overrides = type.localModelOverrides
             classifications.append(try await pipeline.classify(
                 title: title,
                 summary: summary,
@@ -359,7 +416,12 @@ public final class LocalClassifierCoordinator {
                 classifierType: type,
                 tree: tree,
                 catalog: catalog,
-                houseRules: houseRules
+                houseRules: Self.effectiveHouseRules(
+                    global: houseRules,
+                    perType: overrides?.houseRules
+                ),
+                allowDecline: overrides?.allowDecline,
+                confidenceThresholds: overrides?.confidenceThresholds
             ))
         }
 
@@ -378,7 +440,397 @@ public final class LocalClassifierCoordinator {
             "classified": "\(classifications.count)",
             "tags": "\(projection.tags.count)"
         ])
+        if researchSettings.enabled,
+           let researchQueue,
+           Self.hasExplicitModelDecline(classifications) {
+            let hasWeakCreatorPrior = !types.contains { type in
+                catalog.creatorHistogram(
+                    classifierTypeID: type.id,
+                    platformID: platformID,
+                    creatorID: creatorID
+                ) != nil
+            }
+            Self.scheduleResearchSubjectExtraction(
+                llm: llm,
+                queue: researchQueue,
+                settings: researchSettings,
+                platformID: platformID,
+                entryID: entryID,
+                creatorID: creatorID,
+                title: title,
+                summary: summary,
+                includeCreator: hasWeakCreatorPrior
+            )
+        }
         return projection
+    }
+
+    private static func effectiveHouseRules(global: String?, perType: String?) -> String? {
+        guard CorrectionDistiller.containsLearnedPreferences(perType) else {
+            return perType ?? global
+        }
+        return [global, perType]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+    }
+
+    public static func hasExplicitModelDecline(
+        _ classifications: [VideoClassification]
+    ) -> Bool {
+        classifications.contains { $0.source == .model && $0.tags.isEmpty }
+    }
+
+    private static func scheduleResearchSubjectExtraction(
+        llm: any OnDeviceLLM,
+        queue: GroundedResearchQueue,
+        settings: ResearchSettings,
+        platformID: String,
+        entryID: String,
+        creatorID: String,
+        title: String,
+        summary: String?,
+        includeCreator: Bool
+    ) {
+        Task.detached(priority: .utility) {
+            guard let extractor = llm as? any OnDeviceResearchSubjectExtracting else { return }
+            var subjects: [ResearchSubject] = []
+            if let subject = try? await extractor.extractResearchSubject(
+                .init(title: title, summary: summary)
+            ) {
+                subjects.append(subject)
+            }
+            if includeCreator,
+               subjects.count < settings.maxSubjectsPerVideo,
+               let creator = ResearchSubject(kind: .creator, subject: creatorID) {
+                subjects.append(creator)
+            }
+            guard !subjects.isEmpty else { return }
+            _ = await queue.enqueue(.init(
+                platformID: platformID,
+                entryID: entryID,
+                creatorID: creatorID,
+                subjects: Array(subjects.prefix(settings.maxSubjectsPerVideo))
+            ))
+        }
+    }
+
+    public func recordResearchMutation(_ mutation: GroundedResearchQueueMutation) async {
+        do {
+            switch mutation {
+            case .failed(_, let attempt):
+                try lock.withLock {
+                    state.workspaceCatalog.upsertResearchAttempt(attempt)
+                    try stateFile.save(state)
+                }
+            case .succeeded(let task, let result, let usage):
+                try await recordResearchKnowledge(
+                    result.knowledge,
+                    usage: usage,
+                    triggeringTask: task
+                )
+            }
+        } catch {
+            VaultDevLog.shared.log("research", "persist-failed", ["error": String(describing: error)])
+        }
+    }
+
+    /// Persists under the coordinator lock, releases it, then performs every
+    /// local reclassification. The non-reentrant NSLock is never held across an
+    /// await.
+    public func recordResearchKnowledge(
+        _ entry: KnowledgeEntry,
+        usage: TokenUsageRecord,
+        triggeringTask: ResearchTask
+    ) async throws {
+        let affected: [CollectedPlatformEntry] = try lock.withLock {
+            let storedEntry: KnowledgeEntry
+            if entry.kind == .creator {
+                storedEntry = KnowledgeEntry(
+                    kind: .creator,
+                    subject: triggeringTask.creatorID,
+                    meaning: entry.meaning,
+                    contextTagHints: [],
+                    sourceURLs: entry.sourceURLs,
+                    createdAtMilliseconds: entry.createdAtMilliseconds,
+                    updatedAtMilliseconds: entry.updatedAtMilliseconds
+                )
+            } else {
+                storedEntry = entry
+            }
+            state.workspaceCatalog.upsertKnowledgeEntry(storedEntry)
+            state.workspaceCatalog.removeResearchAttempt(subjectKey: entry.id)
+            state.workspaceCatalog.tokenUsage.insert(usage, at: 0)
+            Self.pruneTokenUsage(&state.workspaceCatalog.tokenUsage)
+            let affected = Self.affectedEntries(
+                for: storedEntry,
+                triggeringTask: triggeringTask,
+                catalog: state.workspaceCatalog,
+                limit: 8
+            )
+            try stateFile.save(state)
+            return affected
+        }
+
+        for collected in affected {
+            let projection = try await Task.detached(priority: .utility) { [self] in
+                try await classifyVideo(
+                    platformID: collected.platformID,
+                    entryID: collected.entryID,
+                    creatorID: collected.creatorID,
+                    title: collected.title,
+                    summary: collected.summary,
+                    text: collected.text
+                )
+            }.value
+            let callback = lock.withLock { onVideoReclassifiedCallback }
+            callback?(collected.platformID, collected.entryID, projection)
+        }
+    }
+
+    public func startResearchBackfill(limit requestedLimit: Int = 16) {
+        let snapshot = lock.withLock {
+            (
+                state.workspaceCatalog,
+                state.settings.research,
+                groundedResearchQueue,
+                onDeviceLLM
+            )
+        }
+        let (catalog, settings, queue, llm) = snapshot
+        guard settings.enabled, let queue,
+              let extractor = llm as? any OnDeviceResearchSubjectExtracting else { return }
+        let limit = min(32, max(1, requestedLimit))
+        let eligible = catalog.videoClassifications
+            .filter { classification in
+                guard classification.source == .model else { return false }
+                return classification.tags.isEmpty ||
+                    (classification.tags.map(\.confidence).max() ?? 0) <= 2
+            }
+            .sorted { $0.updatedAtMilliseconds < $1.updatedAtMilliseconds }
+        var seen = Set<String>()
+        let candidates = eligible.compactMap { classification -> CollectedPlatformEntry? in
+            let key = "\(classification.platformID)\u{1F}\(classification.entryID)"
+            guard seen.insert(key).inserted else { return nil }
+            return Self.collectedEntry(
+                platformID: classification.platformID,
+                entryID: classification.entryID,
+                catalog: catalog
+            )
+        }.prefix(limit)
+
+        Task.detached(priority: .utility) {
+            for entry in candidates {
+                var subjects: [ResearchSubject] = []
+                if let subject = try? await extractor.extractResearchSubject(
+                    .init(title: entry.title, summary: entry.summary)
+                ) {
+                    subjects.append(subject)
+                }
+                if subjects.count < settings.maxSubjectsPerVideo,
+                   let creator = ResearchSubject(kind: .creator, subject: entry.creatorID) {
+                    subjects.append(creator)
+                }
+                guard !subjects.isEmpty else { continue }
+                _ = await queue.enqueue(.init(
+                    platformID: entry.platformID,
+                    entryID: entry.entryID,
+                    creatorID: entry.creatorID,
+                    subjects: Array(subjects.prefix(settings.maxSubjectsPerVideo))
+                ))
+            }
+        }
+    }
+
+    /// Stores an authoritative human correction, periodically refreshes the
+    /// type's learned rule block, updates the cached projection, and—when the
+    /// user has opted in—schedules the same sanitized second-decode research
+    /// path used by explicit model declines.
+    @discardableResult
+    public func submitCorrection(
+        classifierTypeID: String,
+        platformID: String,
+        entryID: String,
+        correctTagIDs: [String],
+        note: String? = nil
+    ) throws -> VideoTagsProjection {
+        let saved = try lock.withLock { () throws -> (
+            projection: VideoTagsProjection,
+            entry: CollectedPlatformEntry,
+            llm: any OnDeviceLLM,
+            queue: GroundedResearchQueue?,
+            settings: ResearchSettings,
+            callback: (@Sendable (String, String, VideoTagsProjection) -> Void)?
+        ) in
+            guard let typeIndex = state.workspaceCatalog.classifierTypes.firstIndex(where: {
+                $0.id == classifierTypeID && $0.applicablePlatformID == platformID
+            }) else { throw CorrectionSubmissionError.invalidClassifierType }
+            let type = state.workspaceCatalog.classifierTypes[typeIndex]
+            guard let tree = state.workspaceCatalog.trees.first(where: {
+                $0.id == type.treeID && $0.revision == type.treeRevision
+            }) else { throw CorrectionSubmissionError.invalidClassifierType }
+            guard let entry = Self.collectedEntry(
+                platformID: platformID,
+                entryID: entryID,
+                catalog: state.workspaceCatalog
+            ) else { throw CorrectionSubmissionError.missingCollectedEntry }
+            let taxonomy = try tree.inferenceTaxonomy()
+            let uniqueTagIDs = Array(Set(correctTagIDs)).sorted()
+            guard uniqueTagIDs.count <= CorrectionExample.maximumTagIDs,
+                  uniqueTagIDs.allSatisfy({ taxonomy.nodes[$0]?.predictable == true }) else {
+                throw CorrectionSubmissionError.invalidTagSelection
+            }
+
+            let example = CorrectionExample(
+                classifierTypeID: classifierTypeID,
+                platformID: platformID,
+                entryID: entryID,
+                creatorID: entry.creatorID,
+                title: entry.title,
+                correctTagIDs: uniqueTagIDs,
+                note: note
+            )
+            state.workspaceCatalog.appendCorrectionExample(example)
+
+            let typeCorrections = state.workspaceCatalog.correctionExamples.filter {
+                $0.classifierTypeID == classifierTypeID
+            }
+            let existingOverrides = state.workspaceCatalog.classifierTypes[typeIndex].localModelOverrides
+            let distilledCount = CorrectionDistiller.distilledCorrectionCount(
+                in: existingOverrides?.houseRules
+            )
+            if typeCorrections.count >= distilledCount + CorrectionDistiller.batchSize {
+                let learned = CorrectionDistiller.distill(
+                    corrections: typeCorrections,
+                    tree: tree,
+                    limit: CorrectionDistiller.maximumLearnedRulesCharacters
+                )
+                let houseRules = CorrectionDistiller.combinedHouseRules(
+                    manualHouseRules: existingOverrides?.houseRules,
+                    learnedRules: learned,
+                    correctionCount: typeCorrections.count
+                )
+                let overrides = LocalModelOverrides(
+                    houseRules: houseRules,
+                    allowDecline: existingOverrides?.allowDecline,
+                    confidenceThresholds: existingOverrides?.confidenceThresholds
+                )
+                state.workspaceCatalog.classifierTypes[typeIndex].localModelOverrides = overrides.isEmpty ? nil : overrides
+                state.workspaceCatalog.classifierTypes[typeIndex].updatedAtMilliseconds = WorkspaceCatalog.now()
+            }
+
+            let previous = state.workspaceCatalog.videoClassification(
+                classifierTypeID: classifierTypeID,
+                platformID: platformID,
+                entryID: entryID
+            )
+            state.workspaceCatalog.upsertVideoClassification(.init(
+                id: previous?.id ?? UUID().uuidString,
+                classifierTypeID: classifierTypeID,
+                platformID: platformID,
+                entryID: entryID,
+                creatorID: entry.creatorID,
+                treeID: tree.id,
+                treeRevision: tree.revision,
+                tags: uniqueTagIDs.map { .init(tagID: $0, confidence: ScoredTag.maxConfidence) },
+                unknownTerms: [],
+                knowledgeRefs: previous?.knowledgeRefs ?? [],
+                source: .humanCorrected,
+                modelVersion: previous?.modelVersion ?? "human-correction-v1",
+                createdAtMilliseconds: previous?.createdAtMilliseconds ?? WorkspaceCatalog.now()
+            ))
+            try stateFile.save(state)
+            let types = Self.orderedTypes(for: platformID, in: state.workspaceCatalog)
+            return (
+                Self.videoTagsProjection(
+                    entryID: entryID,
+                    platformID: platformID,
+                    types: types,
+                    catalog: state.workspaceCatalog
+                ),
+                entry,
+                onDeviceLLM,
+                groundedResearchQueue,
+                state.settings.research,
+                onVideoReclassifiedCallback
+            )
+        }
+
+        saved.callback?(platformID, entryID, saved.projection)
+        if saved.settings.enabled, let queue = saved.queue {
+            Self.scheduleResearchSubjectExtraction(
+                llm: saved.llm,
+                queue: queue,
+                settings: saved.settings,
+                platformID: platformID,
+                entryID: entryID,
+                creatorID: saved.entry.creatorID,
+                title: saved.entry.title,
+                summary: saved.entry.summary,
+                includeCreator: true
+            )
+        }
+        return saved.projection
+    }
+
+    private static func collectedEntry(
+        platformID: String,
+        entryID: String,
+        catalog: WorkspaceCatalog
+    ) -> CollectedPlatformEntry? {
+        catalog.datasets.lazy.flatMap(\.collectedEntries).first {
+            $0.platformID == platformID && $0.entryID == entryID
+        }
+    }
+
+    private static func affectedEntries(
+        for knowledge: KnowledgeEntry,
+        triggeringTask: ResearchTask,
+        catalog: WorkspaceCatalog,
+        limit: Int
+    ) -> [CollectedPlatformEntry] {
+        let allEntries = catalog.datasets.flatMap(\.collectedEntries)
+        let creatorMembers: Set<String>
+        if knowledge.kind == .creator {
+            creatorMembers = CreatorIdentityIndex(entries: allEntries).members(of: triggeringTask.creatorID)
+        } else {
+            creatorMembers = []
+        }
+        let candidates = allEntries.filter { entry in
+            guard entry.platformID == triggeringTask.platformID else { return false }
+            if entry.entryID == triggeringTask.entryID { return true }
+            switch knowledge.kind {
+            case .term: return knowledge.matches(title: entry.title)
+            case .creator: return creatorMembers.contains(entry.creatorID)
+            }
+        }.filter { entry in
+            if entry.entryID == triggeringTask.entryID { return true }
+            let rows = catalog.videoClassifications.filter {
+                $0.platformID == entry.platformID && $0.entryID == entry.entryID
+            }
+            return rows.contains {
+                $0.tags.isEmpty || ($0.tags.map(\.confidence).max() ?? 0) <= 2
+            }
+        }.sorted { lhs, rhs in
+            if lhs.entryID == triggeringTask.entryID { return true }
+            if rhs.entryID == triggeringTask.entryID { return false }
+            return lhs.lastObservedAtMilliseconds > rhs.lastObservedAtMilliseconds
+        }
+        var seen = Set<String>()
+        return Array(candidates.filter {
+            seen.insert("\($0.platformID)\u{1F}\($0.entryID)").inserted
+        }.prefix(max(1, limit)))
+    }
+
+    private static func pruneTokenUsage(_ records: inout [TokenUsageRecord]) {
+        let todayStart = Int64(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970 * 1_000)
+        let required = Set(records.filter {
+            $0.status == GroundedResearchQueue.researchUsageStatus &&
+                $0.createdAtMilliseconds >= todayStart
+        }.map(\.id))
+        records = Array(records.enumerated().filter { offset, record in
+            offset < 200 || required.contains(record.id)
+        }.map(\.element).prefix(2_000))
     }
 
     private static func orderedTypes(for platformID: String, in catalog: WorkspaceCatalog) -> [ClassifierTypeAsset] {

@@ -786,6 +786,9 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     /// One configured model may be attached for explicit runs. Its credential
     /// connection stays separate from this classification policy.
     public var llmAssistConfiguration: LLMAssistConfiguration?
+    /// Optional request-time overrides for this type. Runtime/model/context
+    /// controls stay global because the llama context is shared app-wide.
+    public var localModelOverrides: LocalModelOverrides?
     /// Position in the reorderable classifier-type list. Types targeting the
     /// same platform apply in ascending order; a card unions their tags in this
     /// order.
@@ -803,6 +806,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         selectedLLMProviderProfileID: String? = nil,
         llmAssistDraftConfiguration: LLMAssistDraftConfiguration? = nil,
         llmAssistConfiguration: LLMAssistConfiguration? = nil,
+        localModelOverrides: LocalModelOverrides? = nil,
         order: Int = 0,
         updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
     ) {
@@ -821,6 +825,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
             : cleanedLLMProviderID
         self.llmAssistDraftConfiguration = llmAssistDraftConfiguration
         self.llmAssistConfiguration = llmAssistConfiguration
+        self.localModelOverrides = localModelOverrides?.isEmpty == false ? localModelOverrides : nil
         self.order = order
         self.updatedAtMilliseconds = updatedAtMilliseconds
     }
@@ -828,7 +833,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case id, name, treeID, treeRevision, datasetID, datasetRevision, applicablePlatformID, dataSourcePlatformIDs, localModelID,
              selectedLLMProviderProfileID,
-             llmAssistDraftConfiguration, llmAssistConfiguration, llmProfileIDs, decisionPriority, order, platformLocked, updatedAtMilliseconds
+             llmAssistDraftConfiguration, llmAssistConfiguration, localModelOverrides, llmProfileIDs, decisionPriority, order, platformLocked, updatedAtMilliseconds
     }
 
     public init(from decoder: Decoder) throws {
@@ -863,6 +868,8 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
             ? llmAssistConfiguration?.providerProfileID
             : decodedSelectedLLMProviderID
         llmAssistDraftConfiguration = try container.decodeIfPresent(LLMAssistDraftConfiguration.self, forKey: .llmAssistDraftConfiguration)
+        let decodedOverrides = try container.decodeIfPresent(LocalModelOverrides.self, forKey: .localModelOverrides)
+        localModelOverrides = decodedOverrides?.isEmpty == false ? decodedOverrides : nil
         _ = container.contains(.decisionPriority)
         order = try container.decodeIfPresent(Int.self, forKey: .order) ?? 0
         _ = try container.decodeIfPresent(Bool.self, forKey: .platformLocked)
@@ -882,6 +889,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         try container.encodeIfPresent(selectedLLMProviderProfileID, forKey: .selectedLLMProviderProfileID)
         try container.encodeIfPresent(llmAssistDraftConfiguration, forKey: .llmAssistDraftConfiguration)
         try container.encodeIfPresent(llmAssistConfiguration, forKey: .llmAssistConfiguration)
+        try container.encodeIfPresent(localModelOverrides, forKey: .localModelOverrides)
         try container.encode(order, forKey: .order)
         try container.encode(updatedAtMilliseconds, forKey: .updatedAtMilliseconds)
     }
@@ -1598,10 +1606,11 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     // creator priors. Empty until the new pipeline populates them.
     public var videoClassifications: [VideoClassification]
     public var knowledgeEntries: [KnowledgeEntry]
+    public var researchAttempts: [ResearchAttemptRecord]
     public var correctionExamples: [CorrectionExample]
     public var creatorHistograms: [CreatorTagHistogram]
 
-    public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], models: [LocalModelAsset] = [], bindings: [PlatformBinding] = [], classifierTypes: [ClassifierTypeAsset] = [], tokenUsage: [TokenUsageRecord] = [], providerRequestRecords: [ProviderRequestRecord] = [], providerProfiles: [APIKeyProviderProfile] = [], trash: [TrashedEntry] = [], videoClassifications: [VideoClassification] = [], knowledgeEntries: [KnowledgeEntry] = [], correctionExamples: [CorrectionExample] = [], creatorHistograms: [CreatorTagHistogram] = []) {
+    public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], models: [LocalModelAsset] = [], bindings: [PlatformBinding] = [], classifierTypes: [ClassifierTypeAsset] = [], tokenUsage: [TokenUsageRecord] = [], providerRequestRecords: [ProviderRequestRecord] = [], providerProfiles: [APIKeyProviderProfile] = [], trash: [TrashedEntry] = [], videoClassifications: [VideoClassification] = [], knowledgeEntries: [KnowledgeEntry] = [], researchAttempts: [ResearchAttemptRecord] = [], correctionExamples: [CorrectionExample] = [], creatorHistograms: [CreatorTagHistogram] = []) {
         self.trees = trees
         self.datasets = datasets
         self.models = models
@@ -1613,6 +1622,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         self.trash = trash
         self.videoClassifications = videoClassifications
         self.knowledgeEntries = knowledgeEntries
+        self.researchAttempts = researchAttempts
         self.correctionExamples = correctionExamples
         self.creatorHistograms = creatorHistograms
     }
@@ -1828,7 +1838,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case trees, datasets, models, bindings, classifierTypes, tokenUsage, providerRequestRecords, providerProfiles, trash,
-             videoClassifications, knowledgeEntries, correctionExamples, creatorHistograms
+             videoClassifications, knowledgeEntries, researchAttempts, correctionExamples, creatorHistograms
     }
 
     public init(from decoder: Decoder) throws {
@@ -1844,6 +1854,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         trash = try container.decodeIfPresent([TrashedEntry].self, forKey: .trash) ?? []
         videoClassifications = try container.decodeIfPresent([VideoClassification].self, forKey: .videoClassifications) ?? []
         knowledgeEntries = try container.decodeIfPresent([KnowledgeEntry].self, forKey: .knowledgeEntries) ?? []
+        researchAttempts = try container.decodeIfPresent([ResearchAttemptRecord].self, forKey: .researchAttempts) ?? []
         correctionExamples = try container.decodeIfPresent([CorrectionExample].self, forKey: .correctionExamples) ?? []
         creatorHistograms = try container.decodeIfPresent([CreatorTagHistogram].self, forKey: .creatorHistograms) ?? []
         migrateLegacyLocalModelBindings()

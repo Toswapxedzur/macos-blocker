@@ -1,0 +1,444 @@
+import Foundation
+
+/// A data-minimized entity that may be sent to configured research providers.
+/// Raw titles, summaries, body text, URLs, and platform-scoped opaque creator
+/// identifiers cannot be represented by this type.
+public struct ResearchSubject: Equatable, Sendable {
+    public static let maximumCharacters = 120
+    public static let maximumWords = 8
+
+    public let kind: KnowledgeEntryKind
+    public let subject: String
+
+    public init?(kind: KnowledgeEntryKind, subject rawSubject: String) {
+        guard let sanitized = Self.sanitize(kind: kind, value: rawSubject) else { return nil }
+        self.kind = kind
+        self.subject = sanitized
+    }
+
+    public var key: String { KnowledgeEntry.key(kind: kind, subject: subject) }
+
+    public static func sanitize(kind: KnowledgeEntryKind, value: String) -> String? {
+        var cleaned = value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+        let pairedQuotes: [(Character, Character)] = [
+            ("\"", "\""), ("'", "'"), ("“", "”"), ("‘", "’"),
+        ]
+        if let first = cleaned.first, let last = cleaned.last,
+           pairedQuotes.contains(where: { $0.0 == first && $0.1 == last }), cleaned.count > 1 {
+            cleaned.removeFirst()
+            cleaned.removeLast()
+            cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        if kind == .creator, let marker = cleaned.range(of: ":handle:", options: .caseInsensitive) {
+            cleaned = String(cleaned[marker.upperBound...])
+        }
+
+        let lowercase = cleaned.lowercased()
+        let words = cleaned.split(whereSeparator: \.isWhitespace)
+        guard !cleaned.isEmpty,
+              cleaned.count <= maximumCharacters,
+              words.count <= maximumWords,
+              !lowercase.contains("://"),
+              !lowercase.hasPrefix("www."),
+              !lowercase.contains("\n"),
+              !lowercase.contains("\r"),
+              cleaned.unicodeScalars.allSatisfy({ $0.properties.generalCategory != .control })
+        else { return nil }
+
+        if kind == .creator {
+            // Raw channel/account IDs are not acceptable research subjects. A
+            // public handle or short human-readable creator name is.
+            if cleaned.hasPrefix("@") {
+                guard cleaned.count > 1 else { return nil }
+            } else {
+                guard words.count <= 5,
+                      !cleaned.contains(":"),
+                      cleaned.range(of: #"^(UC|user:|channel:)"#, options: [.regularExpression, .caseInsensitive]) == nil
+                else { return nil }
+            }
+        } else {
+            // A noun phrase may contain title punctuation, but a sentence is
+            // outside the consented entity-only data boundary.
+            guard !cleaned.hasSuffix("?"), !cleaned.hasSuffix("!") else { return nil }
+        }
+        return cleaned
+    }
+}
+
+/// Local routing metadata plus already-sanitized subjects. It deliberately has
+/// no title/summary/body fields, so the remote executor cannot leak them.
+public struct ResearchTask: Equatable, Sendable {
+    public static let maximumSubjects = 3
+
+    public let platformID: String
+    public let entryID: String
+    public let creatorID: String
+    public let subjects: [ResearchSubject]
+
+    public init(
+        platformID: String,
+        entryID: String,
+        creatorID: String,
+        subjects: [ResearchSubject]
+    ) {
+        self.platformID = platformID
+        self.entryID = entryID
+        self.creatorID = creatorID
+        var seen = Set<String>()
+        self.subjects = Array(subjects.filter { seen.insert($0.key).inserted }.prefix(Self.maximumSubjects))
+    }
+}
+
+public struct GroundedResearchProviderConfiguration: Sendable {
+    public var llmProfile: APIKeyProviderProfile
+    public var llmCredential: ProviderCredentialRecord
+    public var llmModelIdentifier: String
+    public var webSearchProfile: APIKeyProviderProfile
+    public var webSearchCredential: ProviderCredentialRecord
+    public var maximumOutputTokens: Int
+
+    public init(
+        llmProfile: APIKeyProviderProfile,
+        llmCredential: ProviderCredentialRecord,
+        llmModelIdentifier: String,
+        webSearchProfile: APIKeyProviderProfile,
+        webSearchCredential: ProviderCredentialRecord,
+        maximumOutputTokens: Int = 512
+    ) {
+        self.llmProfile = llmProfile
+        self.llmCredential = llmCredential
+        self.llmModelIdentifier = llmModelIdentifier
+        self.webSearchProfile = webSearchProfile
+        self.webSearchCredential = webSearchCredential
+        self.maximumOutputTokens = min(
+            ProviderGenerationProtocol.maximumOutputTokens,
+            max(1, maximumOutputTokens)
+        )
+    }
+}
+
+public struct GroundedResearchResult: Equatable, Sendable {
+    public var knowledge: KnowledgeEntry
+    /// Missing provider usage is charged conservatively as the requested cap.
+    public var chargedTokenCount: Int
+
+    public init(knowledge: KnowledgeEntry, chargedTokenCount: Int) {
+        self.knowledge = knowledge
+        self.chargedTokenCount = max(0, chargedTokenCount)
+    }
+}
+
+public struct GroundedResearchExecutor: Sendable {
+    public static let requestTimeout: TimeInterval = 30
+    private let http: any ProviderHTTPClient
+
+    public init(http: any ProviderHTTPClient) {
+        self.http = http
+    }
+
+    public func research(
+        _ subject: ResearchSubject,
+        using configuration: GroundedResearchProviderConfiguration
+    ) async throws -> GroundedResearchResult {
+        guard let sanitized = ResearchSubject(kind: subject.kind, subject: subject.subject),
+              sanitized == subject,
+              configuration.llmProfile.type.supportsLLMConfiguration,
+              configuration.webSearchProfile.type.supportsRawWebSearch
+        else {
+            throw GroundedResearchError.invalidConfiguration
+        }
+
+        let search = try RawWebSearchProtocol.prepareSearch(
+            profile: configuration.webSearchProfile,
+            query: sanitized.subject,
+            resultCount: RawWebSearchProtocol.maximumResults
+        )
+        let searchResponse = try await http.send(
+            plan: search.plan,
+            body: search.body,
+            credential: configuration.webSearchCredential,
+            timeout: Self.requestTimeout
+        )
+        let results = try RawWebSearchProtocol.parseResults(
+            searchResponse.data,
+            format: search.plan.bodyFormat
+        )
+
+        let evidence = results.enumerated().map { index, result in
+            "[\(index + 1)] \(result.title)\n\(result.url)\n\(result.snippet)"
+        }.joined(separator: "\n\n")
+        let generation = try ProviderGenerationProtocol.prepareGenerateText(
+            profile: configuration.llmProfile,
+            modelIdentifier: configuration.llmModelIdentifier,
+            systemPrompt: "Distill a short factual description of the named subject from the supplied public web results. Never assign, suggest, or mention classification tags. Do not infer facts absent from the evidence. Return plain text only.",
+            userPrompt: "Subject: \(sanitized.subject)\n\nPublic web results:\n\(evidence)",
+            maximumOutputTokens: configuration.maximumOutputTokens
+        )
+        let generatedResponse = try await http.send(
+            plan: generation.plan,
+            body: generation.body,
+            credential: configuration.llmCredential,
+            timeout: Self.requestTimeout
+        )
+        let parsed = try ProviderGenerationProtocol.parseGeneratedText(
+            generatedResponse.data,
+            format: generation.plan.bodyFormat
+        )
+        let meaning = parsed.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !meaning.isEmpty else { throw GroundedResearchError.emptyMeaning }
+
+        let knowledge = KnowledgeEntry(
+            kind: sanitized.kind,
+            subject: sanitized.subject,
+            meaning: meaning,
+            contextTagHints: [],
+            sourceURLs: results.map(\.url)
+        )
+        return GroundedResearchResult(
+            knowledge: knowledge,
+            chargedTokenCount: parsed.usage.tokenCount ?? configuration.maximumOutputTokens
+        )
+    }
+}
+
+public enum GroundedResearchError: Error, Equatable, LocalizedError, Sendable {
+    case invalidConfiguration
+    case emptyMeaning
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidConfiguration: return "The research providers or sanitized subject are invalid."
+        case .emptyMeaning: return "The research provider returned no grounded meaning."
+        }
+    }
+}
+
+/// Durable negative-cache entry. Successful subjects are deduplicated by the
+/// knowledge map; failures need their own persisted cooldown across launches.
+public struct ResearchAttemptRecord: Codable, Equatable, Sendable, Identifiable {
+    public var id: String { subjectKey }
+    public var subjectKey: String
+    public var lastAttemptAtMilliseconds: Int64
+    public var retryAfterMilliseconds: Int64
+
+    public init(subjectKey: String, lastAttemptAtMilliseconds: Int64, retryAfterMilliseconds: Int64) {
+        self.subjectKey = String(subjectKey.prefix(ResearchSubject.maximumCharacters + 16))
+        self.lastAttemptAtMilliseconds = max(0, lastAttemptAtMilliseconds)
+        self.retryAfterMilliseconds = max(self.lastAttemptAtMilliseconds, retryAfterMilliseconds)
+    }
+}
+
+public struct GroundedResearchQueueConfiguration: Sendable {
+    public var providers: GroundedResearchProviderConfiguration
+    public var requestsPerMinute: Int
+    public var dailyTokenLimit: Int
+    public var failureCooldownMilliseconds: Int64
+
+    public init(
+        providers: GroundedResearchProviderConfiguration,
+        requestsPerMinute: Int,
+        dailyTokenLimit: Int,
+        failureCooldownMilliseconds: Int64 = 24 * 60 * 60 * 1_000
+    ) {
+        self.providers = providers
+        self.requestsPerMinute = min(120, max(1, requestsPerMinute))
+        self.dailyTokenLimit = min(10_000_000, max(1, dailyTokenLimit))
+        self.failureCooldownMilliseconds = min(
+            30 * 24 * 60 * 60 * 1_000,
+            max(60_000, failureCooldownMilliseconds)
+        )
+    }
+}
+
+public struct GroundedResearchQueueSnapshot: Sendable {
+    public var existingKnowledgeKeys: Set<String>
+    public var failedAttempts: [ResearchAttemptRecord]
+    public var tokenUsage: [TokenUsageRecord]
+
+    public init(
+        existingKnowledgeKeys: Set<String> = [],
+        failedAttempts: [ResearchAttemptRecord] = [],
+        tokenUsage: [TokenUsageRecord] = []
+    ) {
+        self.existingKnowledgeKeys = existingKnowledgeKeys
+        self.failedAttempts = failedAttempts
+        self.tokenUsage = tokenUsage
+    }
+}
+
+public enum GroundedResearchQueueMutation: Sendable {
+    case succeeded(task: ResearchTask, result: GroundedResearchResult, usage: TokenUsageRecord)
+    case failed(task: ResearchTask, attempt: ResearchAttemptRecord)
+}
+
+/// Serial, bounded background lane. `enqueue` only appends; all rate limiting,
+/// network work, persistence, and callbacks happen in the detached drain.
+public actor GroundedResearchQueue {
+    public static let maximumPendingSubjects = 32
+    public static let researchUsageStatus = "grounded-research"
+
+    public typealias ConfigurationProvider = @Sendable () -> GroundedResearchQueueConfiguration?
+    public typealias SnapshotProvider = @Sendable () -> GroundedResearchQueueSnapshot
+    public typealias MutationWriter = @Sendable (GroundedResearchQueueMutation) async -> Void
+    public typealias Researcher = @Sendable (
+        ResearchSubject,
+        GroundedResearchProviderConfiguration
+    ) async throws -> GroundedResearchResult
+
+    private struct Pending: Sendable {
+        let task: ResearchTask
+        let subject: ResearchSubject
+    }
+
+    private let configurationProvider: ConfigurationProvider
+    private let snapshotProvider: SnapshotProvider
+    private let mutationWriter: MutationWriter
+    private let researcher: Researcher
+    private let now: @Sendable () -> Date
+    private let sleeper: @Sendable (TimeInterval) async -> Void
+    private var pending: [Pending] = []
+    private var pendingKeys = Set<String>()
+    private var isDraining = false
+    private var lastRequestStartedAt: Date?
+
+    public init(
+        executor: GroundedResearchExecutor,
+        configurationProvider: @escaping ConfigurationProvider,
+        snapshotProvider: @escaping SnapshotProvider,
+        mutationWriter: @escaping MutationWriter
+    ) {
+        self.init(
+            configurationProvider: configurationProvider,
+            snapshotProvider: snapshotProvider,
+            mutationWriter: mutationWriter,
+            researcher: { subject, configuration in
+                try await executor.research(subject, using: configuration)
+            }
+        )
+    }
+
+    public init(
+        configurationProvider: @escaping ConfigurationProvider,
+        snapshotProvider: @escaping SnapshotProvider,
+        mutationWriter: @escaping MutationWriter,
+        researcher: @escaping Researcher,
+        now: @escaping @Sendable () -> Date = { Date() },
+        sleeper: @escaping @Sendable (TimeInterval) async -> Void = { seconds in
+            guard seconds > 0 else { return }
+            try? await Task<Never, Never>.sleep(nanoseconds: UInt64(min(seconds, 60) * 1_000_000_000))
+        }
+    ) {
+        self.configurationProvider = configurationProvider
+        self.snapshotProvider = snapshotProvider
+        self.mutationWriter = mutationWriter
+        self.researcher = researcher
+        self.now = now
+        self.sleeper = sleeper
+    }
+
+    /// Returns false only when every subject was already queued or the bounded
+    /// lane was full. The caller never waits for the drain.
+    @discardableResult
+    public func enqueue(_ task: ResearchTask) -> Bool {
+        var accepted = false
+        for subject in task.subjects {
+            guard pendingKeys.count < Self.maximumPendingSubjects,
+                  pendingKeys.insert(subject.key).inserted else { continue }
+            pending.append(Pending(task: task, subject: subject))
+            accepted = true
+        }
+        if accepted, !isDraining {
+            isDraining = true
+            Task { await drain() }
+        }
+        return accepted
+    }
+
+    public var pendingCount: Int { pending.count }
+
+    public func waitUntilIdle() async {
+        while isDraining || !pending.isEmpty {
+            await Task.yield()
+        }
+    }
+
+    private func drain() async {
+        while !pending.isEmpty {
+            let item = pending.removeFirst()
+            defer { pendingKeys.remove(item.subject.key) }
+            guard var configuration = configurationProvider() else { continue }
+            let snapshot = snapshotProvider()
+            let nowDate = now()
+            let nowMilliseconds = Int64(nowDate.timeIntervalSince1970 * 1_000)
+
+            guard !snapshot.existingKnowledgeKeys.contains(item.subject.key),
+                  !snapshot.failedAttempts.contains(where: {
+                      $0.subjectKey == item.subject.key && $0.retryAfterMilliseconds > nowMilliseconds
+                  }) else { continue }
+
+            let usedToday = Self.usedResearchTokens(in: snapshot.tokenUsage, at: nowDate)
+            let remaining = configuration.dailyTokenLimit - usedToday
+            guard remaining > 0 else { continue }
+            configuration.providers.maximumOutputTokens = min(configuration.providers.maximumOutputTokens, remaining)
+
+            if let lastRequestStartedAt {
+                let minimumInterval = 60.0 / Double(configuration.requestsPerMinute)
+                let elapsed = nowDate.timeIntervalSince(lastRequestStartedAt)
+                if elapsed < minimumInterval {
+                    await sleeper(minimumInterval - elapsed)
+                }
+            }
+            let requestStart = now()
+            lastRequestStartedAt = requestStart
+
+            do {
+                let result = try await researcher(item.subject, configuration.providers)
+                let usage = TokenUsageRecord(
+                    provider: configuration.providers.llmProfile.id,
+                    model: configuration.providers.llmModelIdentifier,
+                    // Record what the provider actually reported (or the
+                    // executor's conservative requested-cap fallback). The
+                    // output cap is reduced to the remaining allowance before
+                    // dispatch, but a provider may still report input + output
+                    // usage above that cap; retaining the full charge keeps the
+                    // persisted daily gate conservative on subsequent drains.
+                    tokenCount: result.chargedTokenCount,
+                    status: Self.researchUsageStatus,
+                    createdAtMilliseconds: Int64(requestStart.timeIntervalSince1970 * 1_000)
+                )
+                await mutationWriter(.succeeded(task: item.task, result: result, usage: usage))
+            } catch {
+                let attemptedAt = Int64(requestStart.timeIntervalSince1970 * 1_000)
+                let retry = attemptedAt.addingReportingOverflow(configuration.failureCooldownMilliseconds)
+                await mutationWriter(.failed(
+                    task: item.task,
+                    attempt: .init(
+                        subjectKey: item.subject.key,
+                        lastAttemptAtMilliseconds: attemptedAt,
+                        retryAfterMilliseconds: retry.overflow ? Int64.max : retry.partialValue
+                    )
+                ))
+            }
+        }
+        isDraining = false
+    }
+
+    public static func usedResearchTokens(
+        in records: [TokenUsageRecord],
+        at date: Date,
+        calendar: Calendar = .current
+    ) -> Int {
+        let start = Int64(calendar.startOfDay(for: date).timeIntervalSince1970 * 1_000)
+        var total = 0
+        for record in records where
+            record.status == researchUsageStatus && record.createdAtMilliseconds >= start {
+            let addition = total.addingReportingOverflow(record.tokenCount)
+            total = addition.overflow ? Int.max : addition.partialValue
+        }
+        return total
+    }
+}
