@@ -108,7 +108,7 @@ final class ConnectionHub: ObservableObject {
         guard let requestID = obj["requestID"] as? String,
               isVisibleBridgeIdentifier(requestID, maximumLength: 128),
               let operation = obj["operation"] as? String,
-              ["bridge-info", "collection-info", "diagnostic", "collect", "source-tags", "classify", "correct"].contains(operation),
+              ["bridge-info", "collection-info", "diagnostic", "collect", "source-tags", "source-tags-batch", "video-tags", "video-tags-batch", "dev-log", "classify", "correct"].contains(operation),
               let body = obj["body"] as? [String: Any],
               JSONSerialization.isValidJSONObject(body),
               let bodyData = try? JSONSerialization.data(withJSONObject: body),
@@ -124,7 +124,7 @@ final class ConnectionHub: ObservableObject {
               let requestID = obj["requestID"] as? String,
               isVisibleBridgeIdentifier(requestID, maximumLength: 128),
               let operation = obj["operation"] as? String,
-              ["bridge-info", "collection-info", "diagnostic", "collect", "source-tags", "classify", "correct"].contains(operation) else {
+              ["bridge-info", "collection-info", "diagnostic", "collect", "source-tags", "source-tags-batch", "video-tags", "video-tags-batch", "dev-log", "classify", "correct"].contains(operation) else {
             return "invalid-classifier-response"
         }
         if let body = obj["body"] as? [String: Any],
@@ -670,6 +670,11 @@ final class ConnectionHub: ObservableObject {
             let program = peers[key]?.program ?? ""
             lock.unlock()
             routeClassifierResponse(from: key, program: program, object: obj)
+        case "classifier-broadcast":
+            lock.lock()
+            let program = peers[key]?.program ?? ""
+            lock.unlock()
+            routeClassifierBroadcast(from: key, program: program, object: obj)
         case "browser-response":
             lock.lock()
             let program = peers[key]?.program ?? ""
@@ -750,6 +755,29 @@ final class ConnectionHub: ObservableObject {
         ])
         queue.asyncAfter(deadline: .now() + .seconds(Self.classifierRelayTimeoutSeconds)) { [weak self] in
             self?.expireClassifierRequest(requestID)
+        }
+    }
+
+    /// Relays an unsolicited classifier push (a completed classification) to
+    /// every connected browser peer. Fire-and-forget: no correlation state, and
+    /// an invalid frame is dropped rather than disconnecting the classifier.
+    private func routeClassifierBroadcast(from key: ObjectIdentifier, program: String, object: [String: Any]) {
+        guard program == "classifier",
+              let operation = object["operation"] as? String,
+              ["video-tags-updated"].contains(operation),
+              let body = object["body"] as? [String: Any],
+              JSONSerialization.isValidJSONObject(body),
+              let bodyData = try? JSONSerialization.data(withJSONObject: body),
+              bodyData.count <= Self.maxClassifierBodyBytes else {
+            return
+        }
+        lock.lock()
+        let browsers = peers.values
+            .filter { $0.connected && Self.browserPrograms.contains($0.program) }
+            .map(\.connection)
+        lock.unlock()
+        for conn in browsers {
+            send(conn, dict: ["kind": "classifier-broadcast", "operation": operation, "body": body])
         }
     }
 
