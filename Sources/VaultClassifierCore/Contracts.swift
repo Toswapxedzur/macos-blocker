@@ -249,22 +249,95 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
     }
 }
 
+/// The effective per-request local-model controls a classifier type may
+/// override. Model/context/runtime knobs remain app-wide because they belong to
+/// the shared llama model and context.
+public struct LocalModelOverrides: Codable, Equatable, Sendable {
+    public var houseRules: String?
+    public var allowDecline: Bool?
+    public var confidenceThresholds: [Double]?
+
+    public init(
+        houseRules: String? = nil,
+        allowDecline: Bool? = nil,
+        confidenceThresholds: [Double]? = nil
+    ) {
+        self.houseRules = houseRules.map { String($0.prefix(4_000)) }
+        self.allowDecline = allowDecline
+        if let confidenceThresholds {
+            let cleaned = confidenceThresholds
+                .filter(\.isFinite)
+                .map { min(0.999, max(0.001, $0)) }
+                .sorted()
+            self.confidenceThresholds = cleaned.count == 4 ? cleaned : nil
+        } else {
+            self.confidenceThresholds = nil
+        }
+    }
+
+    public var isEmpty: Bool {
+        houseRules == nil && allowDecline == nil && confidenceThresholds == nil
+    }
+}
+
+public struct ResearchSettings: Codable, Equatable, Sendable {
+    public static let maximumRequestsPerMinute = 120
+    public static let maximumDailyTokenLimit = 10_000_000
+    public static let maximumSubjectsPerVideo = ResearchTask.maximumSubjects
+
+    /// Explicit opt-in. When false, classification performs no extra decode,
+    /// queue work, credential lookup, or network request.
+    public var enabled: Bool
+    public var llmProviderProfileID: String?
+    public var llmModelIdentifier: String?
+    public var webSearchProviderProfileID: String?
+    public var requestsPerMinute: Int
+    public var dailyTokenLimit: Int
+    public var maxSubjectsPerVideo: Int
+
+    public init(
+        enabled: Bool = false,
+        llmProviderProfileID: String? = nil,
+        llmModelIdentifier: String? = nil,
+        webSearchProviderProfileID: String? = nil,
+        requestsPerMinute: Int = 6,
+        dailyTokenLimit: Int = 10_000,
+        maxSubjectsPerVideo: Int = 3
+    ) {
+        self.enabled = enabled
+        self.llmProviderProfileID = Self.optionalIdentifier(llmProviderProfileID)
+        self.llmModelIdentifier = Self.optionalIdentifier(llmModelIdentifier)
+        self.webSearchProviderProfileID = Self.optionalIdentifier(webSearchProviderProfileID)
+        self.requestsPerMinute = min(Self.maximumRequestsPerMinute, max(1, requestsPerMinute))
+        self.dailyTokenLimit = min(Self.maximumDailyTokenLimit, max(1, dailyTokenLimit))
+        self.maxSubjectsPerVideo = min(Self.maximumSubjectsPerVideo, max(1, maxSubjectsPerVideo))
+    }
+
+    private static func optionalIdentifier(_ value: String?) -> String? {
+        let cleaned = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return cleaned.isEmpty ? nil : String(cleaned.prefix(256))
+    }
+}
+
 public struct ClassifierSettings: Codable, Equatable, Sendable {
     /// This is only a persisted local preference. A separately configured
     /// transport must still make every manifest request and activation.
     public var packageUpdateMode: PackageUpdateMode
     public var localLLM: LocalLLMSettings
+    public var research: ResearchSettings
 
     public init(
         packageUpdateMode: PackageUpdateMode = .automatic,
-        localLLM: LocalLLMSettings = LocalLLMSettings()
+        localLLM: LocalLLMSettings = LocalLLMSettings(),
+        research: ResearchSettings = ResearchSettings()
     ) {
         self.packageUpdateMode = packageUpdateMode
         self.localLLM = localLLM
+        self.research = research
     }
 
     private enum CodingKeys: String, CodingKey {
-        case packageUpdateMode, localLLM
+        case packageUpdateMode, localLLM, research
     }
 
     private enum RetiredCodingKeys: String, CodingKey {
@@ -281,7 +354,8 @@ public struct ClassifierSettings: Codable, Equatable, Sendable {
         _ = try decoder.container(keyedBy: RetiredCodingKeys.self)
         self.init(
             packageUpdateMode: try container.decodeIfPresent(PackageUpdateMode.self, forKey: .packageUpdateMode) ?? .automatic,
-            localLLM: try container.decodeIfPresent(LocalLLMSettings.self, forKey: .localLLM) ?? LocalLLMSettings()
+            localLLM: try container.decodeIfPresent(LocalLLMSettings.self, forKey: .localLLM) ?? LocalLLMSettings(),
+            research: try container.decodeIfPresent(ResearchSettings.self, forKey: .research) ?? ResearchSettings()
         )
     }
 }

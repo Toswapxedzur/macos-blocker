@@ -142,4 +142,23 @@ final class VideoClassificationPipelineTests: XCTestCase {
         XCTAssertTrue(suffix.contains("Creator prior"))
         XCTAssertTrue(suffix.contains("Games: average confidence 5.0"))
     }
+
+    func testPipelineCarriesPerTypeRequestOverrides() async throws {
+        let recorder = RequestRecorder()
+        let llm = ScriptedOnDeviceLLM(
+            modelVersion: "s/1",
+            result: .init(tags: []),
+            recorder: recorder
+        )
+        let pipeline = VideoClassificationPipeline(llm: llm)
+        _ = try await pipeline.classify(
+            title: "Unclear title", entryID: "v1", creatorID: "c1", platformID: "youtube",
+            classifierType: makeType(), tree: makeTree(), catalog: WorkspaceCatalog(),
+            houseRules: "Prefer Politics.", allowDecline: false,
+            confidenceThresholds: [0.1, 0.3, 0.6, 0.9]
+        )
+        XCTAssertEqual(recorder.last?.allowDecline, false)
+        XCTAssertEqual(recorder.last?.confidenceThresholds, [0.1, 0.3, 0.6, 0.9])
+        XCTAssertTrue(recorder.last?.staticPrefix.contains("Prefer Politics.") == true)
+    }
 }

@@ -374,7 +374,9 @@ public struct CreatorTagHistogram: Codable, Equatable, Sendable, Identifiable {
 public extension WorkspaceCatalog {
     static let maximumRetainedVideoClassifications = 5_000
     static let maximumKnowledgeEntries = 20_000
+    static let maximumResearchAttempts = 20_000
     static let maximumCorrectionExamples = 5_000
+    static let maximumMatchedKnowledgeEntries = 8
 
     /// The current per-video classification for a type + platform + video.
     func videoClassification(classifierTypeID: String, platformID: String, entryID: String) -> VideoClassification? {
@@ -457,9 +459,17 @@ public extension WorkspaceCatalog {
         if let creatorEntry = knowledgeEntries.first(where: { $0.id == creatorKey }) {
             matched.append(creatorEntry)
         }
-        for entry in knowledgeEntries where entry.kind == .term && entry.matches(title: title) {
-            matched.append(entry)
-        }
+        let remaining = max(0, Self.maximumMatchedKnowledgeEntries - matched.count)
+        let terms = knowledgeEntries
+            .filter { $0.kind == .term && $0.matches(title: title) }
+            .sorted { lhs, rhs in
+                if lhs.subject.count != rhs.subject.count { return lhs.subject.count > rhs.subject.count }
+                if lhs.updatedAtMilliseconds != rhs.updatedAtMilliseconds {
+                    return lhs.updatedAtMilliseconds > rhs.updatedAtMilliseconds
+                }
+                return lhs.id < rhs.id
+            }
+        matched.append(contentsOf: terms.prefix(remaining))
         return matched
     }
 
@@ -477,6 +487,43 @@ public extension WorkspaceCatalog {
         }
     }
 
+    mutating func upsertResearchAttempt(_ attempt: ResearchAttemptRecord) {
+        researchAttempts.removeAll { $0.subjectKey == attempt.subjectKey }
+        researchAttempts.insert(attempt, at: 0)
+        if researchAttempts.count > Self.maximumResearchAttempts {
+            researchAttempts = Array(researchAttempts.prefix(Self.maximumResearchAttempts))
+        }
+    }
+
+    mutating func removeResearchAttempt(subjectKey: String) {
+        researchAttempts.removeAll { $0.subjectKey == subjectKey }
+    }
+
+    /// Stores one authoritative correction per classifier type/platform/video.
+    /// Replacing an existing identity retains its stable id, while new examples
+    /// are kept newest-first under the catalog's persisted bound.
+    mutating func appendCorrectionExample(_ example: CorrectionExample) {
+        let identity = "\(example.classifierTypeID)\u{1F}\(example.platformID)\u{1F}\(example.entryID)"
+        if let index = correctionExamples.firstIndex(where: {
+            "\($0.classifierTypeID)\u{1F}\($0.platformID)\u{1F}\($0.entryID)" == identity
+        }) {
+            var replacement = example
+            replacement.id = correctionExamples[index].id
+            correctionExamples[index] = replacement
+        } else {
+            correctionExamples.insert(example, at: 0)
+        }
+        correctionExamples.sort {
+            if $0.createdAtMilliseconds != $1.createdAtMilliseconds {
+                return $0.createdAtMilliseconds > $1.createdAtMilliseconds
+            }
+            return $0.id < $1.id
+        }
+        if correctionExamples.count > Self.maximumCorrectionExamples {
+            correctionExamples = Array(correctionExamples.prefix(Self.maximumCorrectionExamples))
+        }
+    }
+
     /// Light structural validation for the new stores. Empty stores pass trivially,
     /// so existing/greenfield states are unaffected.
     func validateLocalLLMStores() throws {
@@ -484,11 +531,13 @@ public extension WorkspaceCatalog {
             throw WorkspaceCatalogError.invalidCollectedEntry("videoClassifications")
         }
         guard knowledgeEntries.count <= Self.maximumKnowledgeEntries,
+              researchAttempts.count <= Self.maximumResearchAttempts,
               correctionExamples.count <= Self.maximumCorrectionExamples else {
             throw WorkspaceCatalogError.invalidCollectedEntry("localLLMStores")
         }
         try llmUniqueIDs(videoClassifications.map(\.id))
         try llmUniqueIDs(knowledgeEntries.map(\.id))
+        try llmUniqueIDs(researchAttempts.map(\.id))
         try llmUniqueIDs(correctionExamples.map(\.id))
         try llmUniqueIDs(creatorHistograms.map(\.id))
         for classification in videoClassifications {

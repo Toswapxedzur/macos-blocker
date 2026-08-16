@@ -48,6 +48,24 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertFalse(encoded.contains("decisionPriority"))
     }
 
+    func testClassifierTypeLocalModelOverridesLegacyAndRoundTrip() throws {
+        let legacy = Data(#"{"id":"type","name":"Type","treeID":"tree","treeRevision":1,"datasetID":"dataset","datasetRevision":1,"applicablePlatformID":"youtube","order":0}"#.utf8)
+        let decodedLegacy = try JSONDecoder().decode(ClassifierTypeAsset.self, from: legacy)
+        XCTAssertNil(decodedLegacy.localModelOverrides)
+
+        let value = ClassifierTypeAsset(
+            id: "type", name: "Type", treeID: "tree", treeRevision: 1,
+            datasetID: "dataset", datasetRevision: 1, applicablePlatformID: "youtube",
+            localModelOverrides: .init(
+                houseRules: "Prefer documentaries.",
+                allowDecline: false,
+                confidenceThresholds: [0.1, 0.3, 0.6, 0.9]
+            )
+        )
+        let roundTrip = try JSONDecoder().decode(ClassifierTypeAsset.self, from: JSONEncoder().encode(value))
+        XCTAssertEqual(roundTrip.localModelOverrides, value.localModelOverrides)
+    }
+
     func testLLMAssistConfigurationDiscardsRetiredActivationFlag() throws {
         let legacy = Data(#"{"providerProfileID":"provider","modelIdentifier":"model","isActive":true}"#.utf8)
         let configuration = try JSONDecoder().decode(LLMAssistConfiguration.self, from: legacy)
