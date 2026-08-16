@@ -799,6 +799,15 @@ public final class LocalClassifierCoordinator {
 
     // MARK: - Per-video classification (local-LLM rework)
 
+    /// Whether any classifier type targets this platform. When none do, the
+    /// per-video path returns a definitive empty result rather than queuing
+    /// classification forever (which would leave a stuck "Tagging" pill).
+    public func hasClassifierTypes(platformID: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return state.workspaceCatalog.classifierTypes.contains { $0.applicablePlatformID == platformID }
+    }
+
     /// Injects the on-device LLM used for per-video classification.
     public func setOnDeviceLLM(_ llm: any OnDeviceLLM) {
         lock.lock()
@@ -867,7 +876,12 @@ public final class LocalClassifierCoordinator {
         let saved = state.workspaceCatalog
         lock.unlock()
 
-        return Self.videoTagsProjection(entryID: entryID, platformID: platformID, types: types, catalog: saved)
+        let projection = Self.videoTagsProjection(entryID: entryID, platformID: platformID, types: types, catalog: saved)
+        VaultDevLog.shared.log("classify", "video", [
+            "platform": platformID, "entry": entryID, "creator": creatorID,
+            "types": "\(types.count)", "classified": "\(classifications.count)", "tags": "\(projection.tags.count)"
+        ])
+        return projection
     }
 
     private static func orderedTypes(for platformID: String, in catalog: WorkspaceCatalog) -> [ClassifierTypeAsset] {
