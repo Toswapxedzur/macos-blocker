@@ -41,15 +41,14 @@ same-user malware that can access the relevant Keychain item.
 ## Bounded routing
 
 The browser path is limited to `bridge-info`, `collection-info`, `diagnostic`,
-`collect`, `source-tags`, `classify`, and `correct`. The hub owns request
-correlation, destination routing, a bounded global route count, and route
-expiry. A classifier response cannot select a different browser peer.
+`collect`, `video-tags`, `video-tags-batch`, and development-only `dev-log`.
+The hub owns request correlation, destination routing, a bounded global route
+count, and route expiry. A classifier response cannot select a different
+browser peer.
 
-The classifier returns only the local policy identifiers/names, a bounded
-display projection of approved source-tag identifiers/names, decisions, and
-correction acknowledgements needed by the extension. It never sends its full
-tree, model, raw evidence, decision ledger, provider credentials, or Keychain
-data over the bridge.
+The classifier returns only policy identifiers/names and bounded per-video tag
+projections. It never sends its full tree, local model prompt, collected corpus,
+provider credentials, or Keychain data over the bridge.
 
 ## Collection and enforcement
 

@@ -29,34 +29,46 @@ public struct LocalModelBackupManifest: Codable, Equatable, Sendable {
     public var createdAtMilliseconds: Int64
     public var activeModelIdentity: ActiveModelIdentity?
     public var packageChecksum: String
-    public var trainingExampleCount: Int
-    public var personalFeatureCount: Int
+    public var collectedEntryCount: Int
+    public var videoClassificationCount: Int
 
     public init(
         createdAtMilliseconds: Int64,
         activeModelIdentity: ActiveModelIdentity?,
         packageChecksum: String,
-        trainingExampleCount: Int,
-        personalFeatureCount: Int
+        collectedEntryCount: Int,
+        videoClassificationCount: Int
     ) {
         self.createdAtMilliseconds = createdAtMilliseconds
         self.activeModelIdentity = activeModelIdentity
         self.packageChecksum = packageChecksum
-        self.trainingExampleCount = trainingExampleCount
-        self.personalFeatureCount = personalFeatureCount
+        self.collectedEntryCount = collectedEntryCount
+        self.videoClassificationCount = videoClassificationCount
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case createdAtMilliseconds, activeModelIdentity, packageChecksum
+        case collectedEntryCount, videoClassificationCount
+    }
+    private enum RetiredCodingKeys: String, CodingKey { case trainingExampleCount, personalFeatureCount }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        _ = try decoder.container(keyedBy: RetiredCodingKeys.self)
+        createdAtMilliseconds = try container.decode(Int64.self, forKey: .createdAtMilliseconds)
+        activeModelIdentity = try container.decodeIfPresent(ActiveModelIdentity.self, forKey: .activeModelIdentity)
+        packageChecksum = try container.decode(String.self, forKey: .packageChecksum)
+        collectedEntryCount = try container.decodeIfPresent(Int.self, forKey: .collectedEntryCount) ?? 0
+        videoClassificationCount = try container.decodeIfPresent(Int.self, forKey: .videoClassificationCount) ?? 0
     }
 }
 
-/// The intentionally narrow backup payload. Browsing cache, decision ledger,
-/// audit queue/results, source observations, and local-hub authentication data are not
-/// copied: a model backup is for restoring the package and explicit local
-/// training material, not for archiving activity history.
+/// The local backup payload contains current authored and collected state only.
 public struct LocalModelBackupPayload: Codable, Equatable, Sendable {
     public var schemaVersion: Int
     public var settings: ClassifierSettings
     public var policies: [NamedPolicy]
-    public var personalModel: PersonalFTRLModel
-    public var trainingCorpus: LocalTrainingCorpus
+    public var workspaceCatalog: WorkspaceCatalog
     public var activeModelIdentity: ActiveModelIdentity?
     public var highestAcceptedSignedRelease: PackageReleaseStamp?
     public var signedRollbackIdentities: [ActiveModelIdentity]
@@ -65,8 +77,7 @@ public struct LocalModelBackupPayload: Codable, Equatable, Sendable {
         schemaVersion = state.schemaVersion
         settings = state.settings
         policies = state.policies
-        personalModel = state.personalModel
-        trainingCorpus = state.trainingCorpus
+        workspaceCatalog = state.workspaceCatalog
         activeModelIdentity = state.activeModelIdentity
         highestAcceptedSignedRelease = state.highestAcceptedSignedRelease
         signedRollbackIdentities = state.signedRollbackIdentities
@@ -93,7 +104,7 @@ public enum LocalBackupError: Error, Equatable, LocalizedError, Sendable {
     }
 }
 
-/// Private snapshots of the active package and local model material. The
+/// Private snapshots of the active package and current local workspace. The
 /// output is an ordinary directory intended for a user-controlled disk or Mac
 /// mini share; this type never opens a network connection or uploads anything.
 public struct LocalModelBackup: Sendable {
@@ -131,8 +142,8 @@ public struct LocalModelBackup: Sendable {
                 createdAtMilliseconds: milliseconds,
                 activeModelIdentity: state.activeModelIdentity,
                 packageChecksum: package.checksum,
-                trainingExampleCount: state.trainingCorpus.examples.count,
-                personalFeatureCount: state.personalModel.state.values.reduce(0) { $0 + $1.count }
+                collectedEntryCount: state.workspaceCatalog.datasets.reduce(0) { $0 + $1.collectedEntries.count },
+                videoClassificationCount: state.workspaceCatalog.videoClassifications.count
             )
             try encoder.encode(manifest).write(to: staging.appendingPathComponent("manifest.json"), options: .atomic)
             for file in ["model-state.json", "seed-package.json", "manifest.json"] {

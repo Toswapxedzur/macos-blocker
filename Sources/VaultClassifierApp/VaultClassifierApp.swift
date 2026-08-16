@@ -1,4 +1,3 @@
-import CryptoKit
 import AppKit
 import Combine
 import VaultClassifierCore
@@ -92,13 +91,6 @@ final class VaultClassifierViewModel: ObservableObject {
     }
 
     @Published var workspace: Workspace = .tagTree
-    @Published var title = ""
-    @Published var sourceID = ""
-    @Published var surface: EntrySurface = .feed
-    /// Manual inspection uses a real platform binding so it exercises the
-    /// same selected classifier type as the browser bridge.
-    @Published var manualPlatformID = "manual"
-    @Published var result: ClassificationResult?
     @Published var issue: String?
     @Published var localState: LocalClassifierState?
     @Published var policies: [NamedPolicy] = []
@@ -108,15 +100,10 @@ final class VaultClassifierViewModel: ObservableObject {
     @Published var editingPolicyExcludeTag = ""
     @Published var editingFeedAction: PresentationAction = .dim
     @Published var editingPageAction: PresentationAction = .block
-    @Published var profile: ResourceProfile = .balanced
-    @Published var resourceCacheCapacity = "50,000"
-    @Published var allowIdleWork = true
-    @Published var allowBackgroundSync = true
     @Published var packageUpdateMode: PackageUpdateMode = .automatic
-    @Published var trainingPositiveTags = ""
-    @Published var trainingNegativeTags = ""
-    @Published var trainingEpochs = "3"
-    @Published private(set) var trainingNotice: String?
+    // Local-model settings, mirrored from ClassifierSettings.localLLM.
+    @Published var llmSettings = LocalLLMSettings()
+    @Published private(set) var llmEngineStatus = "loading"
     @Published var backupOwnerCode = ""
     @Published var backupDirectory = ""
     @Published var backupEnabled = false
@@ -132,7 +119,6 @@ final class VaultClassifierViewModel: ObservableObject {
     private var collectionDiagnostics: CollectionDiagnosticsStore?
     private var providerModelCatalogStore: ProviderModelCatalogStore?
     private(set) var sourceIconCache: SourceIconCache?
-    private var latestLedgerID: UUID?
     private var testingProviderProfileIDs = Set<String>()
     private var successfulProviderTestProfileIDs = Set<String>()
     /// Model identifiers and model-list capability signals come from explicit
@@ -140,11 +126,6 @@ final class VaultClassifierViewModel: ObservableObject {
     private var providerModelCatalogs = [String: [ProviderModelCatalogEntry]]()
     private var providerModelCatalogErrors = [String: String]()
     private var loadingProviderModelProfileIDs = Set<String>()
-    @Published private(set) var providerClassificationRunning = false
-    /// One serial classification lane serves every classifier type. Retaining
-    /// the most recent request start lets each type enforce its own selected
-    /// pace without allowing a manual run to bypass an active queue's delay.
-    private var lastLLMClassificationRequestStartedAt: Date?
 
     init() {
         do {
@@ -167,7 +148,6 @@ final class VaultClassifierViewModel: ObservableObject {
             let providerModelCatalogStore = ProviderModelCatalogStore(fileURL: vaultDirectory.appendingPathComponent("provider-model-catalogs.json"))
             self.providerModelCatalogStore = providerModelCatalogStore
             self.providerModelCatalogs = providerModelCatalogStore.load(allowedProfileIDs: llmProviderProfileIDs())
-            self.manualPlatformID = self.localState?.workspaceCatalog.bindings.first?.id ?? "manual"
             loadResourceSettings(from: coordinator.snapshot().settings)
             loadBackupConfiguration(from: coordinator.snapshot().backupConfiguration)
             self.hasBackupOwnerCode = LocalBackupOwnerCodeStore.hasOwnerCode
@@ -190,29 +170,46 @@ final class VaultClassifierViewModel: ObservableObject {
                 // wasteful full re-render. Record the diagnostic only.
             }
             sharedHubClient.connect()
-            startActiveLLMClassification()
             installLocalLLMEngine(coordinator: coordinator)
         } catch {
             issue = error.localizedDescription
         }
     }
 
-    /// Loads the in-process llama.cpp engine (final Phase-0 contract) and
-    /// installs it as the coordinator's on-device LLM, replacing the stub.
+    /// Loads the in-process llama.cpp engine (final Phase-0 contract) with the
+    /// user's settings and installs it as the coordinator's on-device LLM.
     /// Loading is a ~1–2 s mmap, done off the main actor; until it completes
-    /// (or if no model file is present) classification stays on the stub.
+    /// (or if the engine is disabled / no model file is present) classification
+    /// stays on the stub.
     private func installLocalLLMEngine(coordinator: LocalClassifierCoordinator) {
-        guard let modelPath = VaultLocalLLMEngine.defaultModelPath() else {
+        let configuration = llmSettings
+        guard configuration.engineEnabled else {
+            coordinator.setOnDeviceLLM(StubOnDeviceLLM())
+            llmEngineStatus = "disabled"
+            VaultDevLog.shared.log("llm", "engine-disabled", [:])
+            return
+        }
+        guard let modelPath = VaultLocalLLMEngine.defaultModelPath(preferredFileName: configuration.modelFileName) else {
+            llmEngineStatus = "no-model"
             VaultDevLog.shared.log("llm", "engine-skipped", ["reason": "no-model-file"])
             return
         }
+        llmEngineStatus = "loading"
         Task.detached(priority: .userInitiated) {
             do {
-                let engine = try VaultLocalLLMEngine(modelPath: modelPath)
+                let engine = try VaultLocalLLMEngine(modelPath: modelPath, configuration: configuration)
                 coordinator.setOnDeviceLLM(engine)
                 VaultDevLog.shared.log("llm", "engine-loaded", ["model": (modelPath as NSString).lastPathComponent])
+                await MainActor.run { [weak self] in
+                    self?.llmEngineStatus = "loaded"
+                    self?.onWebStateChange?()
+                }
             } catch {
                 VaultDevLog.shared.log("llm", "engine-load-failed", ["error": String(describing: error)])
+                await MainActor.run { [weak self] in
+                    self?.llmEngineStatus = "failed"
+                    self?.onWebStateChange?()
+                }
             }
         }
     }
@@ -278,13 +275,13 @@ final class VaultClassifierViewModel: ObservableObject {
     /// not normalize. The response struct additionally gates on a valid theme
     /// pair; keeping this mapping shared means the single and batch paths emit
     /// identical tags.
-    private static func nativeSourceTags(from tags: [TagNode]) -> [NativeSourceTag] {
+    private static func nativeVideoTags(from tags: [TagNode]) -> [NativeVideoTag] {
         tags.compactMap { tag in
             guard let lightColorHex = TagColorAssignment.normalizedHex(tag.lightColorHex),
                   let darkColorHex = TagColorAssignment.normalizedHex(tag.darkColorHex) else {
                 return nil
             }
-            return NativeSourceTag(
+            return NativeVideoTag(
                 id: tag.id,
                 name: tag.name,
                 lightColorHex: lightColorHex,
@@ -325,9 +322,9 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
-    private func broadcastResolvedVideoTags(platformID: String, entryID: String, projection: SourceTagsProjection) {
+    private func broadcastResolvedVideoTags(platformID: String, entryID: String, projection: VideoTagsProjection) {
         let broadcast = NativeVideoTagsBroadcast(platformID: platformID, items: [NativeVideoTagsBatchResponseItem(
-            entryID: entryID, tags: Self.nativeSourceTags(from: projection.tags),
+            entryID: entryID, tags: Self.nativeVideoTags(from: projection.tags),
             predicted: projection.predicted, pending: false)])
         guard let encoded = try? JSONEncoder().encode(broadcast),
               let object = try? JSONSerialization.jsonObject(with: encoded) as? [String: Any] else { return }
@@ -361,10 +358,10 @@ final class VaultClassifierViewModel: ObservableObject {
         return ("#E5E7EB", "#3F3F46")
     }()
 
-    private static func creatorEchoTag(creatorID: String) -> NativeSourceTag {
+    private static func creatorEchoTag(creatorID: String) -> NativeVideoTag {
         // "youtube:handle:@name" → "@name"; fall back to the whole identifier.
         let name = creatorID.split(separator: ":").last.map(String.init) ?? creatorID
-        return NativeSourceTag(
+        return NativeVideoTag(
             id: "vault:test:\(name)",
             name: name,
             lightColorHex: Self.creatorEchoColors.light,
@@ -421,48 +418,9 @@ final class VaultClassifierViewModel: ObservableObject {
                 refreshLocalState()
                 let tPush = DispatchTime.now()
                 onWebStateChange?()
-                let tLLM = DispatchTime.now()
-                startActiveLLMClassification(platformID: request.entry.platform)
                 let tEnd = DispatchTime.now()
-                perfLog("collect store=\(perfMS(tStore, tSnapshot)) snapshot=\(perfMS(tSnapshot, tPush)) push=\(perfMS(tPush, tLLM)) llm=\(perfMS(tLLM, tEnd)) total=\(perfMS(tStore, tEnd))ms")
+                perfLog("collect store=\(perfMS(tStore, tSnapshot)) snapshot=\(perfMS(tSnapshot, tPush)) push=\(perfMS(tPush, tEnd)) total=\(perfMS(tStore, tEnd))ms")
                 return try sharedHubReply(NativeCollectionResponse(accepted: true, inserted: inserted))
-            case .sourceTags:
-                let sourceTags = try JSONDecoder().decode(NativeSourceTagsRequest.self, from: request.bodyData)
-                try sourceTags.validate()
-                let tPill = DispatchTime.now()
-                let projection = try coordinator.sourceTags(
-                    platformID: sourceTags.platformID,
-                    sourceID: sourceTags.sourceID,
-                    creatorNames: sourceTags.creatorNames
-                )
-                perfLog("sourceTags one=\(perfMS(tPill))ms")
-                return try sharedHubReply(NativeSourceTagsResponse(
-                    platformID: sourceTags.platformID,
-                    sourceID: sourceTags.sourceID,
-                    tags: Self.nativeSourceTags(from: projection.tags),
-                    predicted: projection.predicted
-                ))
-            case .sourceTagsBatch:
-                let batch = try JSONDecoder().decode(NativeSourceTagsBatchRequest.self, from: request.bodyData)
-                try batch.validate()
-                let tBatch = DispatchTime.now()
-                defer { perfLog("sourceTagsBatch items=\(batch.items.count) total=\(perfMS(tBatch))ms") }
-                // One @MainActor hop resolves every queued source; the memoized
-                // identity index makes the per-item lookups cheap, so a viewport
-                // of cards costs one round-trip instead of one each.
-                let items = try batch.items.map { item -> NativeSourceTagsBatchResponseItem in
-                    let projection = try coordinator.sourceTags(
-                        platformID: batch.platformID,
-                        sourceID: item.sourceID,
-                        creatorNames: item.creatorNames
-                    )
-                    return NativeSourceTagsBatchResponseItem(
-                        sourceID: item.sourceID,
-                        tags: Self.nativeSourceTags(from: projection.tags),
-                        predicted: projection.predicted
-                    )
-                }
-                return try sharedHubReply(NativeSourceTagsBatchResponse(platformID: batch.platformID, items: items))
             case .videoTags:
                 let videoTags = try JSONDecoder().decode(NativeVideoTagsRequest.self, from: request.bodyData)
                 try videoTags.validate()
@@ -476,7 +434,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     devLog("video-tags", ["platform": videoTags.platformID, "entry": videoTags.entryID, "outcome": "cached", "tags": "\(cached.tags.count)"])
                     return try sharedHubReply(NativeVideoTagsResponse(
                         platformID: videoTags.platformID, entryID: videoTags.entryID,
-                        tags: Self.nativeSourceTags(from: cached.tags), predicted: cached.predicted, pending: false))
+                        tags: Self.nativeVideoTags(from: cached.tags), predicted: cached.predicted, pending: false))
                 }
                 // No classifier type targets this platform → definitively empty, not
                 // pending (avoids a stuck "Tagging" pill that re-requests forever).
@@ -516,7 +474,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     if let cached = coordinator.cachedVideoTags(platformID: batch.platformID, entryID: item.entryID) {
                         cachedCount += 1
                         responses.append(NativeVideoTagsBatchResponseItem(
-                            entryID: item.entryID, tags: Self.nativeSourceTags(from: cached.tags), predicted: cached.predicted, pending: false))
+                            entryID: item.entryID, tags: Self.nativeVideoTags(from: cached.tags), predicted: cached.predicted, pending: false))
                     } else if !platformHasTypes {
                         // No classifier type for this platform → definitively empty.
                         responses.append(NativeVideoTagsBatchResponseItem(entryID: item.entryID, tags: [], predicted: false, pending: false))
@@ -535,14 +493,6 @@ final class VaultClassifierViewModel: ObservableObject {
                 try entry.validate()
                 VaultDevLog.shared.log(entry.layer, entry.event, entry.fields)
                 return try sharedHubReply(NativeDevLogResponse(accepted: true))
-            case .classify:
-                let classification = try JSONDecoder().decode(NativeClassificationRequest.self, from: request.bodyData)
-                let output = try coordinator.classifyWithLedger(classification.entry)
-                return try sharedHubReply(NativeClassificationResponse(result: output.result, ledgerID: output.ledgerID))
-            case .correct:
-                let correction = try JSONDecoder().decode(NativeCorrectionRequest.self, from: request.bodyData)
-                try coordinator.setCorrection(ledgerID: correction.ledgerID, correction: correction.correction)
-                return try sharedHubReply(NativeCorrectionResponse(accepted: true))
             }
         } catch {
             collectionDiagnostics?.record(event: "request-rejected", outcome: "rejected")
@@ -572,20 +522,6 @@ final class VaultClassifierViewModel: ObservableObject {
             return .failure("classifier-response-invalid")
         }
         return .success(object)
-    }
-
-    func classify() {
-        do {
-            guard let coordinator else { return }
-            let entry = currentManualEntry()
-            let output = try coordinator.classifyWithLedger(entry)
-            result = output.result
-            latestLedgerID = output.ledgerID
-            issue = nil
-            refreshLocalState()
-        } catch {
-            issue = error.localizedDescription
-        }
     }
 
     func savePolicy() {
@@ -646,33 +582,9 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
-    func markCurrentResult(_ correction: UserCorrection) {
-        do {
-            guard let coordinator, let latestLedgerID else { return }
-            try coordinator.setCorrection(ledgerID: latestLedgerID, correction: correction)
-            refreshLocalState()
-            issue = nil
-        } catch {
-            issue = error.localizedDescription
-        }
-    }
-
-    func clearCorrection(_ ledgerID: UUID) {
-        do {
-            try coordinator?.setCorrection(ledgerID: ledgerID, correction: nil)
-            refreshLocalState()
-        } catch {
-            issue = error.localizedDescription
-        }
-    }
-
     func refreshLocalState() {
         localState = coordinator?.snapshot()
         reconcileProviderModelCatalogs()
-        if let bindings = localState?.workspaceCatalog.bindings,
-           !bindings.contains(where: { $0.id == manualPlatformID }) {
-            manualPlatformID = bindings.first?.id ?? "manual"
-        }
     }
 
     private func llmProviderProfileIDs() -> Set<String> {
@@ -897,189 +809,6 @@ final class VaultClassifierViewModel: ObservableObject {
         fetchProviderModelCatalog(profileID: profileID)
     }
 
-    private func llmAllowedTagIDs(
-        taxonomy: Taxonomy,
-        configuration: LLMAssistConfiguration
-    ) -> Set<String> {
-        if configuration.restrictToLeafTags {
-            return taxonomy.predictableLeafIDs
-        }
-        return Set(taxonomy.nodes.values.filter(\.predictable).map(\.id))
-    }
-
-    private func llmTagDefinitions(
-        taxonomy: Taxonomy,
-        allowedTagIDs: Set<String>
-    ) -> [String: ProviderClassificationTagDefinition] {
-        Dictionary(uniqueKeysWithValues: allowedTagIDs.compactMap { identifier in
-            guard let node = taxonomy.nodes[identifier] else { return nil }
-            let name = node.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty else { return nil }
-            let description = node.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return (
-                identifier,
-                ProviderClassificationTagDefinition(
-                    name: name,
-                    description: description.isEmpty ? nil : description
-                )
-            )
-        })
-    }
-
-    private func tokensUsedToday(
-        in catalog: WorkspaceCatalog,
-        classifierTypeID: String,
-        now: Date = Date()
-    ) -> Int {
-        let start = Calendar.current.startOfDay(for: now)
-        let startMilliseconds = Int64(start.timeIntervalSince1970 * 1_000)
-        return catalog.providerRequestRecords.reduce(into: 0) { total, record in
-            guard record.classifierTypeID == classifierTypeID,
-                  record.createdAtMilliseconds >= startMilliseconds else {
-                return
-            }
-            let addition = total.addingReportingOverflow(max(0, record.tokenCount ?? 0))
-            total = addition.overflow ? Int.max : addition.partialValue
-        }
-    }
-
-    /// Sleeps only until the next classification request may start. This is a
-    /// request-start cap, not a promise about completed creators: provider
-    /// latency and failures can always make the observed completion rate lower.
-    private func waitForLLMClassificationPace(configuration: LLMAssistConfiguration) async {
-        let minimumInterval = 60.0 / Double(configuration.classificationRequestsPerMinute)
-        if let lastStartedAt = lastLLMClassificationRequestStartedAt {
-            let delay = lastStartedAt.addingTimeInterval(minimumInterval).timeIntervalSinceNow
-            if delay > 0 {
-                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            }
-        }
-    }
-
-    private func recordLLMClassificationRequestStart() {
-        lastLLMClassificationRequestStartedAt = Date()
-    }
-
-    /// Generic provider classification is intentionally available only from
-    /// this manual inspector action. Shared-hub/browser requests always call
-    /// the coordinator's local dispatch and can never enter this method.
-    func classifyCurrentEntryWithLLM() {
-        guard !providerClassificationRunning else { return }
-        do {
-            guard let catalog = localState?.workspaceCatalog,
-                  let binding = catalog.bindings.first(where: { $0.id == manualPlatformID }),
-                  CollectionPlatformRegistry.definition(for: binding.id)?.supportsLLMAssist == true,
-                  let classifierTypeID = binding.activeClassifierTypeID,
-                  let classifierType = catalog.classifierTypes.first(where: { $0.id == classifierTypeID }),
-                  let llmAssist = classifierType.llmAssistConfiguration,
-                  let profile = catalog.providerProfiles.first(where: { $0.id == llmAssist.providerProfileID }),
-                  let tree = catalog.trees.first(where: { $0.id == binding.treeID }) else {
-                throw WebBridgeInputError.invalidChoice("manual LLM classifier type")
-            }
-            let taxonomy = try tree.inferenceTaxonomy()
-            let allowedTagIDs = llmAllowedTagIDs(taxonomy: taxonomy, configuration: llmAssist)
-            let tagDefinitions = llmTagDefinitions(taxonomy: taxonomy, allowedTagIDs: allowedTagIDs)
-            let dailyTokensRemaining = llmAssist.dailyTokenLimit - tokensUsedToday(
-                in: catalog,
-                classifierTypeID: classifierType.id
-            )
-            guard dailyTokensRemaining > 0 else {
-                throw WebBridgeInputError.invalidChoice("daily token budget")
-            }
-            let outputTokenLimit = min(llmAssist.maximumOutputTokensPerRequest, dailyTokensRemaining)
-            let entry = currentManualEntry()
-            let recordPlan = try ProviderClassificationProtocol.prepare(
-                profile: profile,
-                configuration: llmAssist,
-                entry: entry,
-                allowedTagIDs: allowedTagIDs,
-                tagDefinitions: tagDefinitions,
-                maximumOutputTokens: outputTokenLimit
-            )
-            providerClassificationRunning = true
-            issue = nil
-            Task { [weak self] in
-                guard let self else { return }
-                await self.waitForLLMClassificationPace(configuration: llmAssist)
-                self.recordLLMClassificationRequestStart()
-                let startedAt = Date()
-                do {
-                    let run = try await self.runProviderClassification(
-                        profile: profile,
-                        configuration: llmAssist,
-                        entry: entry,
-                        allowedTagIDs: allowedTagIDs,
-                        tagDefinitions: tagDefinitions,
-                        catalog: catalog,
-                        maximumOutputTokens: outputTokenLimit,
-                        dailyTokensRemaining: dailyTokensRemaining,
-                        classifierTypeID: classifierType.id
-                    )
-                    let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
-                    let labelIDs = try self.parseClassificationLabelIDs(
-                        from: run,
-                        allowedTagIDs: allowedTagIDs,
-                        maximumTagCount: llmAssist.maximumTagCount
-                    )
-                    self.result = ProviderClassificationProtocol.result(
-                        entry: entry,
-                        classifierType: classifierType,
-                        profile: profile,
-                        configuration: llmAssist,
-                        taxonomy: taxonomy,
-                        policies: self.policies,
-                        labelIDs: labelIDs
-                    )
-                    self.latestLedgerID = nil
-                    // Individual-entry provider output is an inspection result
-                    // only. Durable dataset labels are creator classifications:
-                    // the user labels a retained creator explicitly, or starts
-                    // the creator-specific LLM action below. Do not create an
-                    // unreviewable entry row that can drift from that source of
-                    // truth.
-                    try self.appendProviderTestRecord(.init(
-                        profileID: profile.id,
-                        provider: profile.type.rawValue,
-                        model: llmAssist.modelIdentifier,
-                        operation: "classify",
-                        endpoint: ProviderTestProtocol.safeEndpoint(recordPlan.plan.url),
-                        method: recordPlan.plan.method,
-                        statusCode: run.statusCode,
-                        durationMilliseconds: duration,
-                        tokenCount: run.usage.tokenCount ?? run.fallbackTokenCount,
-                        classifierTypeID: classifierType.id,
-                        outcome: "succeeded"
-                    ))
-                    self.issue = nil
-                } catch {
-                    let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
-                    let failure = self.providerFailureMetadata(for: error)
-                    if !(error is RawWebSearchFailure) {
-                        try? self.appendProviderTestRecord(.init(
-                            profileID: profile.id,
-                            provider: profile.type.rawValue,
-                            model: llmAssist.modelIdentifier,
-                            operation: "classify",
-                            endpoint: ProviderTestProtocol.safeEndpoint(recordPlan.plan.url),
-                            method: recordPlan.plan.method,
-                            statusCode: failure.statusCode,
-                            responseShape: failure.responseShape,
-                            durationMilliseconds: duration,
-                            tokenCount: failure.tokenCount,
-                            classifierTypeID: classifierType.id,
-                            outcome: "failed"
-                        ))
-                    }
-                    self.issue = error.localizedDescription
-                }
-                self.providerClassificationRunning = false
-                self.onWebStateChange?()
-            }
-        } catch {
-            issue = error.localizedDescription
-        }
-    }
-
     private func providerCredential(for profileID: String) throws -> ProviderCredentialRecord {
         guard let profile = localState?.workspaceCatalog.providerProfiles.first(where: { $0.id == profileID }) else {
             throw ProviderTestProtocolError.missingCredential
@@ -1098,169 +827,14 @@ final class VaultClassifierViewModel: ObservableObject {
         return credential
     }
 
-    private struct ProviderClassificationRun {
-        var prompt: String
-        var content: String
-        var usage: ProviderTestUsage
-        var statusCode: Int
-        var fallbackTokenCount: Int
-    }
-
-    private func conservativeAggregateTokenFallback(
-        body: Data,
-        requestedOutputTokens: Int
-    ) -> Int {
-        // Provider tokenizers differ. Three UTF-8 bytes per input token is a
-        // deliberately conservative local approximation for both Latin and
-        // CJK prompts, then the full allowed output is added.
-        max(1, (body.count + 2) / 3) + requestedOutputTokens
-    }
-
-    private func parseClassificationLabelIDs(
-        from run: ProviderClassificationRun,
-        allowedTagIDs: Set<String>,
-        maximumTagCount: Int
-    ) throws -> [String] {
-        do {
-            return try ProviderClassificationProtocol.parseLabelIDs(
-                run.content,
-                allowedTagIDs: allowedTagIDs,
-                maximumTagCount: maximumTagCount
-            )
-        } catch {
-            throw ProviderResponseParseFailure(
-                underlyingError: error,
-                statusCode: run.statusCode,
-                responseShape: "generated text did not match the labelIDs contract",
-                usage: .init(tokenCount: run.usage.tokenCount ?? run.fallbackTokenCount)
-            )
+    private func providerFailureMetadata(
+        for error: Error
+    ) -> (statusCode: Int?, responseShape: String?, tokenCount: Int?) {
+        if case let ProviderTestHTTPError.status(statusCode) = error {
+            return (statusCode, nil, nil)
         }
-    }
-
-    /// Search/tool modes that cannot carry a native output schema get one
-    /// same-model, search-free repair turn only after the completed answer
-    /// violates the local contract. The malformed source turn is recorded
-    /// independently so its usage remains charged even when repair succeeds.
-    private func schemaNormalizedRunIfNeeded(
-        _ run: ProviderClassificationRun,
-        profile: APIKeyProviderProfile,
-        configuration: LLMAssistConfiguration,
-        allowedTagIDs: Set<String>,
-        remainingTokensBeforeRun: Int,
-        classifierTypeID: String,
-        sourceDurationMilliseconds: Int
-    ) async throws -> ProviderClassificationRun {
-        do {
-            _ = try ProviderClassificationProtocol.parseLabelIDs(
-                run.content,
-                allowedTagIDs: allowedTagIDs,
-                maximumTagCount: configuration.maximumTagCount
-            )
-            return run
-        } catch {
-            guard ProviderClassificationProtocol.needsSchemaNormalizationFallback(
-                providerType: profile.type,
-                webSearchMode: configuration.webSearchMode,
-                modelIdentifier: configuration.modelIdentifier
-            ) else {
-                return run
-            }
-        }
-
-        let sourceTokenCount = run.usage.tokenCount ?? run.fallbackTokenCount
-        let normalizationMaximumOutputTokens = min(
-            configuration.maximumOutputTokensPerRequest,
-            remainingTokensBeforeRun - sourceTokenCount
-        )
-        guard normalizationMaximumOutputTokens > 0 else {
-            return run
-        }
-        let normalization = try ProviderClassificationProtocol.prepareSchemaNormalization(
-            profile: profile,
-            configuration: configuration,
-            originalPrompt: run.prompt,
-            candidateContent: run.content,
-            maximumOutputTokens: normalizationMaximumOutputTokens
-        )
-        try? appendProviderTestRecord(.init(
-            profileID: profile.id,
-            provider: profile.type.rawValue,
-            model: configuration.modelIdentifier,
-            operation: "classify-output-normalization-source",
-            endpoint: ProviderTestProtocol.safeEndpoint(normalization.plan.url),
-            method: normalization.plan.method,
-            statusCode: run.statusCode,
-            responseShape: "generated text did not match the labelIDs contract",
-            durationMilliseconds: sourceDurationMilliseconds,
-            tokenCount: sourceTokenCount,
-            classifierTypeID: classifierTypeID,
-            outcome: "failed"
-        ))
-
-        await waitForLLMClassificationPace(configuration: configuration)
-        recordLLMClassificationRequestStart()
-        let response = try await performProviderRequest(
-            plan: normalization.plan,
-            body: normalization.body,
-            credential: providerCredential(for: profile.id),
-            timeout: 30
-        )
-        let responseUsage = (try? ProviderTestProtocol.usage(
-            from: response.data,
-            format: normalization.plan.bodyFormat
-        )) ?? .init(tokenCount: nil)
-        let fallbackTokenCount = conservativeAggregateTokenFallback(
-            body: normalization.body,
-            requestedOutputTokens: normalizationMaximumOutputTokens
-        )
-        let chargeableUsage = ProviderTestUsage(
-            tokenCount: responseUsage.tokenCount ?? fallbackTokenCount
-        )
-        let parsed: ProviderTestParsedResponse
-        do {
-            parsed = try ProviderTestProtocol.parseResponse(
-                response.data,
-                format: normalization.plan.bodyFormat,
-                operation: normalization.operation
-            )
-        } catch {
-            throw ProviderResponseParseFailure(
-                underlyingError: error,
-                statusCode: response.response.statusCode,
-                responseShape: ProviderTestProtocol.responseShape(for: response.data),
-                usage: chargeableUsage
-            )
-        }
-        let normalizedRun = ProviderClassificationRun(
-            prompt: normalization.prompt,
-            content: parsed.content,
-            usage: parsed.usage,
-            statusCode: response.response.statusCode,
-            fallbackTokenCount: fallbackTokenCount
-        )
-        do {
-            _ = try ProviderClassificationProtocol.parseLabelIDs(
-                normalizedRun.content,
-                allowedTagIDs: allowedTagIDs,
-                maximumTagCount: configuration.maximumTagCount
-            )
-        } catch {
-            throw ProviderResponseParseFailure(
-                underlyingError: error,
-                statusCode: normalizedRun.statusCode,
-                responseShape: "schema-normalized text did not match the labelIDs contract",
-                usage: chargeableUsage
-            )
-        }
-        return normalizedRun
-    }
-
-    private struct RawWebSearchFailure: LocalizedError {
-        let underlyingError: Error
-
-        var errorDescription: String? {
-            underlyingError.localizedDescription
-        }
+        guard let failure = error as? ProviderResponseParseFailure else { return (nil, nil, nil) }
+        return (failure.statusCode, failure.responseShape, failure.usage.tokenCount)
     }
 
     private struct ProviderResponseParseFailure: LocalizedError {
@@ -1281,747 +855,28 @@ final class VaultClassifierViewModel: ObservableObject {
             self.usage = usage
         }
 
-        var errorDescription: String? {
-            underlyingError.localizedDescription
-        }
+        var errorDescription: String? { underlyingError.localizedDescription }
     }
 
-    private func providerFailureMetadata(
-        for error: Error
-    ) -> (statusCode: Int?, responseShape: String?, tokenCount: Int?) {
-        if let searchFailure = error as? RawWebSearchFailure {
-            return providerFailureMetadata(for: searchFailure.underlyingError)
-        }
-        if case let ProviderTestHTTPError.status(statusCode) = error {
-            return (statusCode, nil, nil)
-        }
-        guard let failure = error as? ProviderResponseParseFailure else { return (nil, nil, nil) }
-        return (failure.statusCode, failure.responseShape, failure.usage.tokenCount)
-    }
-
-    /// Runs an explicit creator classification through the selected LLM.
-    /// Provider-native search completes inside that provider. Attached search
-    /// is a bounded two-turn tool loop in which this same model decides whether
-    /// to call the app-owned `web_search` function.
-    private func runProviderClassification(
-        profile: APIKeyProviderProfile,
-        configuration: LLMAssistConfiguration,
-        entry: EntryEvidence,
-        allowedTagIDs: Set<String>,
-        tagDefinitions: [String: ProviderClassificationTagDefinition],
-        catalog: WorkspaceCatalog,
-        maximumOutputTokens: Int,
-        dailyTokensRemaining: Int,
-        classifierTypeID: String
-    ) async throws -> ProviderClassificationRun {
-        let mainCredential = try providerCredential(for: profile.id)
-        guard let platform = CollectionPlatformRegistry.definition(for: entry.platform) else {
-            throw WebBridgeInputError.invalidChoice("creator platform")
-        }
-        var enrichedEntry = entry
-        var officialEvidenceAvailable = false
-        var preliminaryProviderRequestWasStarted = false
-        if platform.apiProviderType != nil {
-            if let officialProfile = readyPlatformAPIProfile(in: catalog, platformID: entry.platform) {
-                preliminaryProviderRequestWasStarted = true
-                do {
-                    enrichedEntry = try await addingOfficialPlatformEvidence(
-                        to: entry,
-                        profile: officialProfile,
-                        officialContentEvidenceCount: configuration.officialContentEvidenceCount
-                    )
-                    officialEvidenceAvailable = true
-                } catch {
-                    let canSearchInstead = configuration.webSearchMode != .off
-                    if !canSearchInstead { throw error }
-                }
-            }
-        }
-        if !officialEvidenceAvailable,
-           configuration.webSearchMode == .off {
-            let requirement = platform.apiProviderType == nil
-                ? "a ready web search capability"
-                : "a ready official \(entry.platform) API connection or web search"
-            throw WebBridgeInputError.invalidChoice(requirement)
-        }
-        let effectiveMaximumOutputTokens = min(maximumOutputTokens, dailyTokensRemaining)
-        guard effectiveMaximumOutputTokens > 0 else {
-            throw WebBridgeInputError.invalidChoice("daily token budget")
-        }
-        if preliminaryProviderRequestWasStarted {
-            await waitForLLMClassificationPace(configuration: configuration)
-            recordLLMClassificationRequestStart()
-        }
-        let request = try ProviderClassificationProtocol.prepare(
-            profile: profile,
-            configuration: configuration,
-            entry: enrichedEntry,
-            allowedTagIDs: allowedTagIDs,
-            tagDefinitions: tagDefinitions,
-            maximumOutputTokens: effectiveMaximumOutputTokens
-        )
-        let initialRequestStartedAt = Date()
-        let response = try await performProviderRequest(
-            plan: request.plan,
-            body: request.body,
-            credential: mainCredential,
-            timeout: 30,
-            followAnthropicSearchPause: profile.type == .anthropic &&
-                configuration.webSearchMode == .providerNative
-        )
-        let responseUsage = (try? ProviderTestProtocol.usage(
-            from: response.data,
-            format: request.plan.bodyFormat
-        )) ?? .init(tokenCount: nil)
-        let chargeableResponseUsage = ProviderTestUsage(
-            tokenCount: responseUsage.tokenCount ?? conservativeAggregateTokenFallback(
-                body: request.body,
-                requestedOutputTokens: effectiveMaximumOutputTokens
-            )
-        )
-        let toolCall: ProviderAttachedWebSearchCall?
-        do {
-            toolCall = configuration.webSearchMode == .attached
-                ? try ProviderClassificationProtocol.attachedWebSearchCall(
-                    from: response.data,
-                    format: request.plan.bodyFormat
-                )
-                : nil
-        } catch {
-            throw ProviderResponseParseFailure(
-                underlyingError: error,
-                statusCode: response.response.statusCode,
-                responseShape: ProviderTestProtocol.responseShape(for: response.data),
-                usage: chargeableResponseUsage
-            )
-        }
-        guard let toolCall else {
-            let parsed: ProviderTestParsedResponse
-            do {
-                parsed = try ProviderTestProtocol.parseResponse(
-                    response.data,
-                    format: request.plan.bodyFormat,
-                    operation: request.operation
-                )
-            } catch {
-                throw ProviderResponseParseFailure(
-                    underlyingError: error,
-                    statusCode: response.response.statusCode,
-                    responseShape: ProviderTestProtocol.responseShape(for: response.data),
-                    usage: chargeableResponseUsage
-                )
-            }
-            let run = ProviderClassificationRun(
-                prompt: request.prompt,
-                content: parsed.content,
-                usage: parsed.usage,
-                statusCode: response.response.statusCode,
-                fallbackTokenCount: conservativeAggregateTokenFallback(
-                    body: request.body,
-                    requestedOutputTokens: effectiveMaximumOutputTokens
-                )
-            )
-            return try await schemaNormalizedRunIfNeeded(
-                run,
-                profile: profile,
-                configuration: configuration,
-                allowedTagIDs: allowedTagIDs,
-                remainingTokensBeforeRun: dailyTokensRemaining,
-                classifierTypeID: classifierTypeID,
-                sourceDurationMilliseconds: max(
-                    0,
-                    Int(Date().timeIntervalSince(initialRequestStartedAt) * 1_000)
-                )
-            )
-        }
-
-        let firstUsage: ProviderTestUsage
-        do {
-            firstUsage = try ProviderTestProtocol.usage(
-                from: response.data,
-                format: request.plan.bodyFormat
-            )
-        } catch {
-            throw ProviderResponseParseFailure(
-                underlyingError: error,
-                statusCode: response.response.statusCode,
-                responseShape: ProviderTestProtocol.responseShape(for: response.data),
-                usage: chargeableResponseUsage
-            )
-        }
-        let firstTokenCount = firstUsage.tokenCount ?? conservativeAggregateTokenFallback(
-            body: request.body,
-            requestedOutputTokens: effectiveMaximumOutputTokens
-        )
-        // This first turn has already consumed provider output, even when the
-        // subsequent search or continuation fails. Record it independently so
-        // the daily budget remains conservative and the request history does
-        // not pretend the model call never happened.
-        try? appendProviderTestRecord(.init(
-            profileID: profile.id,
-            provider: profile.type.rawValue,
-            model: configuration.modelIdentifier,
-            operation: "classify-creator-tool-call",
-            endpoint: ProviderTestProtocol.safeEndpoint(request.plan.url),
-            method: request.plan.method,
-            statusCode: response.response.statusCode,
-            durationMilliseconds: max(0, Int(Date().timeIntervalSince(initialRequestStartedAt) * 1_000)),
-            tokenCount: firstTokenCount,
-            classifierTypeID: classifierTypeID,
-            outcome: "succeeded"
-        ))
-        let continuationMaximumOutputTokens = min(
-            maximumOutputTokens,
-            dailyTokensRemaining - firstTokenCount
-        )
-        guard continuationMaximumOutputTokens > 0 else {
-            throw WebBridgeInputError.invalidChoice("daily token budget after the model's web-search call")
-        }
-
-        await waitForLLMClassificationPace(configuration: configuration)
-        recordLLMClassificationRequestStart()
-        let searchProfile = try rawWebSearchProfile(in: catalog, configuration: configuration)
-        let toolOutput: String
-        do {
-            toolOutput = try await performAttachedWebSearch(
-                query: toolCall.query,
-                profile: searchProfile,
-                classifierTypeID: classifierTypeID
-            )
-        } catch {
-            throw RawWebSearchFailure(underlyingError: error)
-        }
-
-        await waitForLLMClassificationPace(configuration: configuration)
-        recordLLMClassificationRequestStart()
-        let continuation = try ProviderClassificationProtocol.attachedWebSearchContinuation(
-            initialRequest: request,
-            firstResponse: response.data,
-            call: toolCall,
-            toolOutput: toolOutput,
-            maximumOutputTokens: continuationMaximumOutputTokens
-        )
-        let finalRequestStartedAt = Date()
-        let finalResponse = try await performProviderRequest(
-            plan: continuation.plan,
-            body: continuation.body,
-            credential: mainCredential,
-            timeout: 30
-        )
-        let finalUsage = (try? ProviderTestProtocol.usage(
-            from: finalResponse.data,
-            format: continuation.plan.bodyFormat
-        )) ?? .init(tokenCount: nil)
-        let chargeableFinalUsage = ProviderTestUsage(
-            tokenCount: finalUsage.tokenCount ?? conservativeAggregateTokenFallback(
-                body: continuation.body,
-                requestedOutputTokens: continuationMaximumOutputTokens
-            )
-        )
-        let parsed: ProviderTestParsedResponse
-        do {
-            if try ProviderClassificationProtocol.attachedWebSearchCall(
-                from: finalResponse.data,
-                format: continuation.plan.bodyFormat
-            ) != nil {
-                throw ProviderClassificationProtocolError.invalidResponse
-            }
-            parsed = try ProviderTestProtocol.parseResponse(
-                finalResponse.data,
-                format: continuation.plan.bodyFormat,
-                operation: continuation.operation
-            )
-        } catch {
-            throw ProviderResponseParseFailure(
-                underlyingError: error,
-                statusCode: finalResponse.response.statusCode,
-                responseShape: ProviderTestProtocol.responseShape(for: finalResponse.data),
-                usage: chargeableFinalUsage
-            )
-        }
-        let run = ProviderClassificationRun(
-            prompt: request.prompt,
-            content: parsed.content,
-            usage: parsed.usage,
-            statusCode: finalResponse.response.statusCode,
-            fallbackTokenCount: conservativeAggregateTokenFallback(
-                body: continuation.body,
-                requestedOutputTokens: continuationMaximumOutputTokens
-            )
-        )
-        return try await schemaNormalizedRunIfNeeded(
-            run,
-            profile: profile,
-            configuration: configuration,
-            allowedTagIDs: allowedTagIDs,
-            remainingTokensBeforeRun: dailyTokensRemaining - firstTokenCount,
-            classifierTypeID: classifierTypeID,
-            sourceDurationMilliseconds: max(
-                0,
-                Int(Date().timeIntervalSince(finalRequestStartedAt) * 1_000)
-            )
-        )
-    }
-
-    /// Attaches bounded official-platform evidence to a single creator entry
-    /// when a ready official API exists, mirroring the per-creator path but
-    /// callable ahead of a batched request. Throws only when neither official
-    /// evidence nor web search can supply the required evidence for the entry.
-    private func enrichedCreatorEntry(
-        _ entry: EntryEvidence,
-        configuration: LLMAssistConfiguration,
-        catalog: WorkspaceCatalog
-    ) async throws -> EntryEvidence {
-        guard let platform = CollectionPlatformRegistry.definition(for: entry.platform) else {
-            throw WebBridgeInputError.invalidChoice("creator platform")
-        }
-        var enrichedEntry = entry
-        var officialEvidenceAvailable = false
-        if platform.apiProviderType != nil,
-           let officialProfile = readyPlatformAPIProfile(in: catalog, platformID: entry.platform) {
-            do {
-                enrichedEntry = try await addingOfficialPlatformEvidence(
-                    to: entry,
-                    profile: officialProfile,
-                    officialContentEvidenceCount: configuration.officialContentEvidenceCount
-                )
-                officialEvidenceAvailable = true
-            } catch {
-                if configuration.webSearchMode == .off { throw error }
-            }
-        }
-        if !officialEvidenceAvailable, configuration.webSearchMode == .off {
-            let requirement = platform.apiProviderType == nil
-                ? "a ready web search capability"
-                : "a ready official \(entry.platform) API connection or web search"
-            throw WebBridgeInputError.invalidChoice(requirement)
-        }
-        return enrichedEntry
-    }
-
-    /// Classifies a whole batch of creator entries in a single provider request.
-    /// The caller enriches each entry first; this performs the one model call
-    /// whose prompt carries every target and whose response returns one label
-    /// set per index. Only single-turn grammars (search off or provider-native)
-    /// reach here — attached client-tool search stays on the per-creator path,
-    /// because its multi-turn continuation cannot batch.
-    private func runProviderClassificationBatch(
-        profile: APIKeyProviderProfile,
-        configuration: LLMAssistConfiguration,
-        entries: [EntryEvidence],
-        allowedTagIDs: Set<String>,
-        tagDefinitions: [String: ProviderClassificationTagDefinition],
-        maximumOutputTokens: Int,
-        dailyTokensRemaining: Int
-    ) async throws -> ProviderClassificationRun {
-        let mainCredential = try providerCredential(for: profile.id)
-        let effectiveMaximumOutputTokens = min(maximumOutputTokens, dailyTokensRemaining)
-        guard effectiveMaximumOutputTokens > 0 else {
-            throw WebBridgeInputError.invalidChoice("daily token budget")
-        }
-        let request = try ProviderClassificationProtocol.prepareBatch(
-            profile: profile,
-            configuration: configuration,
-            entries: entries,
-            allowedTagIDs: allowedTagIDs,
-            tagDefinitions: tagDefinitions,
-            maximumOutputTokens: effectiveMaximumOutputTokens
-        )
-        let response = try await performProviderRequest(
-            plan: request.plan,
-            body: request.body,
-            credential: mainCredential,
-            timeout: 60,
-            followAnthropicSearchPause: profile.type == .anthropic &&
-                configuration.webSearchMode == .providerNative
-        )
-        let fallbackTokenCount = conservativeAggregateTokenFallback(
-            body: request.body,
-            requestedOutputTokens: effectiveMaximumOutputTokens
-        )
-        let chargeableResponseUsage = ProviderTestUsage(
-            tokenCount: (try? ProviderTestProtocol.usage(
-                from: response.data,
-                format: request.plan.bodyFormat
-            ))?.tokenCount ?? fallbackTokenCount
-        )
-        let parsed: ProviderTestParsedResponse
-        do {
-            parsed = try ProviderTestProtocol.parseResponse(
-                response.data,
-                format: request.plan.bodyFormat,
-                operation: request.operation
-            )
-        } catch {
-            throw ProviderResponseParseFailure(
-                underlyingError: error,
-                statusCode: response.response.statusCode,
-                responseShape: ProviderTestProtocol.responseShape(for: response.data),
-                usage: chargeableResponseUsage
-            )
-        }
-        return ProviderClassificationRun(
-            prompt: request.prompt,
-            content: parsed.content,
-            usage: parsed.usage,
-            statusCode: response.response.statusCode,
-            fallbackTokenCount: fallbackTokenCount
-        )
-    }
-
-    private func parseBatchClassificationLabelIDs(
-        from run: ProviderClassificationRun,
-        count: Int,
-        allowedTagIDs: Set<String>,
-        maximumTagCount: Int
-    ) throws -> [Int: [String]] {
-        do {
-            return try ProviderClassificationProtocol.parseBatchLabelIDs(
-                run.content,
-                count: count,
-                allowedTagIDs: allowedTagIDs,
-                maximumTagCount: maximumTagCount
-            )
-        } catch {
-            throw ProviderResponseParseFailure(
-                underlyingError: error,
-                statusCode: run.statusCode,
-                responseShape: "generated text did not match the batch results contract",
-                usage: .init(tokenCount: run.usage.tokenCount ?? run.fallbackTokenCount)
-            )
-        }
-    }
-
-    private func rawWebSearchProfile(
-        in catalog: WorkspaceCatalog,
-        configuration: LLMAssistConfiguration
-    ) throws -> APIKeyProviderProfile {
-        guard let profileID = configuration.webSearchProviderProfileID,
-              let profile = catalog.providerProfiles.first(where: { $0.id == profileID }),
-              profile.type.supportsRawWebSearch,
-              (try? profile.validateForDispatch()) != nil else {
-            throw WebBridgeInputError.invalidChoice("a ready raw web search connection")
-        }
-        _ = try providerCredential(for: profile.id)
-        return profile
-    }
-
-    private func performAttachedWebSearch(
-        query: String,
-        profile: APIKeyProviderProfile,
-        classifierTypeID: String
-    ) async throws -> String {
-        let startedAt = Date()
-        var prepared: ProviderTestPreparedRequest?
-        var recorded = false
-        do {
-            let request = try RawWebSearchProtocol.prepare(profile: profile, query: query)
-            prepared = request
-            let credential = try providerCredential(for: profile.id)
-            let response = try await performProviderRequest(
-                plan: request.plan,
-                body: request.body,
-                credential: credential,
-                timeout: 30
-            )
-            let results: [RawWebSearchResult]
-            do {
-                results = try RawWebSearchProtocol.parseResults(response.data, format: request.plan.bodyFormat)
-            } catch {
-                throw ProviderResponseParseFailure(
-                    underlyingError: error,
-                    statusCode: response.response.statusCode,
-                    responseShape: ProviderTestProtocol.responseShape(for: response.data)
-                )
-            }
-            try appendProviderTestRecord(.init(
-                profileID: profile.id,
-                provider: profile.type.rawValue,
-                model: "",
-                operation: "search-creator-web",
-                endpoint: ProviderTestProtocol.safeEndpoint(request.plan.url),
-                method: request.plan.method,
-                statusCode: response.response.statusCode,
-                durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
-                tokenCount: nil,
-                classifierTypeID: classifierTypeID,
-                outcome: "succeeded"
-            ))
-            recorded = true
-            return try RawWebSearchProtocol.boundedEvidence(from: results)
-        } catch {
-            if let prepared, !recorded {
-                let failure = providerFailureMetadata(for: error)
-                try? appendProviderTestRecord(.init(
-                    profileID: profile.id,
-                    provider: profile.type.rawValue,
-                    model: "",
-                    operation: "search-creator-web",
-                    endpoint: ProviderTestProtocol.safeEndpoint(prepared.plan.url),
-                    method: prepared.plan.method,
-                    statusCode: failure.statusCode,
-                    responseShape: failure.responseShape,
-                    durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
-                    tokenCount: nil,
-                    classifierTypeID: classifierTypeID,
-                    outcome: "failed"
-                ))
-            }
-            throw error
-        }
-    }
-
-    /// Chooses the one newest usable API connection for this platform. The
-    /// selection is local and deterministic; the UI never exposes profile
-    /// selection for a classifier type.
-    private func readyPlatformAPIProfile(
-        in catalog: WorkspaceCatalog,
-        platformID: String
-    ) -> APIKeyProviderProfile? {
-        guard let expectedType = CollectionPlatformRegistry.definition(for: platformID)?.apiProviderType else {
-            return nil
-        }
-        return catalog.providerProfiles
-            .filter { $0.type == expectedType }
-            .sorted { lhs, rhs in
-                if lhs.updatedAtMilliseconds == rhs.updatedAtMilliseconds { return lhs.id < rhs.id }
-                return lhs.updatedAtMilliseconds > rhs.updatedAtMilliseconds
-            }
-            .first { profile in
-                let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
-                guard !descriptor.supportsLLMConfiguration,
-                      (try? profile.validateForDispatch()) != nil else {
-                    return false
-                }
-                return descriptor.credentialFields.isEmpty || (try? providerCredential(for: profile.id)) != nil
-            }
-    }
-
-    private func validateLLMCreatorEvidenceConfiguration(
-        in catalog: WorkspaceCatalog,
-        platformID: String,
-        profile: APIKeyProviderProfile,
-        configuration: LLMAssistConfiguration
-    ) throws {
-        guard let platform = CollectionPlatformRegistry.definition(for: platformID) else {
-            throw WebBridgeInputError.invalidChoice("creator platform")
-        }
-        if configuration.webSearchMode == .providerNative,
-           !profile.type.supportsProviderNativeWebSearch {
-            throw WebBridgeInputError.invalidChoice("a model provider with hosted web search")
-        }
-        let probedModel = providerModelCatalogEntry(
-            profileID: profile.id,
-            identifier: configuration.modelIdentifier
-        )
-        if configuration.webSearchMode == .providerNative,
-           probedModel?.supportsNativeWebSearch == false {
-            throw WebBridgeInputError.invalidChoice("a model with hosted web search")
-        }
-        if configuration.webSearchMode == .attached {
-            guard profile.type.supportsAttachedWebSearchTool else {
-                throw WebBridgeInputError.invalidChoice("a model provider with external tool support")
-            }
-            guard probedModel?.supportsTools != false else {
-                throw WebBridgeInputError.invalidChoice("a model with external tool support")
-            }
-            _ = try rawWebSearchProfile(in: catalog, configuration: configuration)
-        }
-        if readyPlatformAPIProfile(in: catalog, platformID: platformID) == nil,
-           configuration.webSearchMode == .off {
-            let requirement = platform.apiProviderType == nil
-                ? "a ready web search capability"
-                : "a ready official \(platformID) API connection or web search"
-            throw WebBridgeInputError.invalidChoice(requirement)
-        }
-    }
-
+    /// Sends a bounded provider request used by explicit connection tests and
+    /// model-catalog probes.
     private func performProviderRequest(
         plan: ProviderRequestPlan,
         body: Data?,
         credential: ProviderCredentialRecord,
-        timeout: TimeInterval,
-        followAnthropicSearchPause: Bool = false
+        timeout: TimeInterval
     ) async throws -> (data: Data, response: HTTPURLResponse) {
-        var nextBody = body
-        for continuationCount in 0...2 {
-            var request = URLRequest(url: plan.url)
-            request.httpMethod = plan.method
-            request.httpBody = nextBody
-            request.timeoutInterval = timeout
-            plan.headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
-            try apply(credential: credential, to: &request, plan: plan)
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else { throw ProviderTestProtocolError.invalidResponse }
-            guard (200..<300).contains(http.statusCode) else { throw ProviderTestHTTPError.status(http.statusCode) }
-            guard followAnthropicSearchPause,
-                  continuationCount < 2,
-                  let continuation = anthropicPausedSearchContinuationBody(
-                    requestBody: nextBody,
-                    responseData: data
-                  ) else {
-                return (data, http)
-            }
-            nextBody = continuation
-        }
-        throw ProviderTestProtocolError.invalidResponse
+        var request = URLRequest(url: plan.url)
+        request.httpMethod = plan.method
+        request.httpBody = body
+        request.timeoutInterval = timeout
+        plan.headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
+        try apply(credential: credential, to: &request, plan: plan)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw ProviderTestProtocolError.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else { throw ProviderTestHTTPError.status(http.statusCode) }
+        return (data, http)
     }
-
-    /// Anthropic's server-side search can pause a turn. Keep the returned
-    /// content only long enough to continue that same request; it never enters
-    /// the request ledger or workspace state.
-    private func anthropicPausedSearchContinuationBody(
-        requestBody: Data?,
-        responseData: Data
-    ) -> Data? {
-        guard let requestBody,
-              var request = (try? JSONSerialization.jsonObject(with: requestBody)) as? [String: Any],
-              let response = (try? JSONSerialization.jsonObject(with: responseData)) as? [String: Any],
-              response["stop_reason"] as? String == "pause_turn",
-              let content = response["content"] as? [Any],
-              var messages = request["messages"] as? [[String: Any]] else {
-            return nil
-        }
-        messages.append(["role": "assistant", "content": content])
-        request["messages"] = messages
-        return try? JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
-    }
-
-    private func addingOfficialPlatformEvidence(
-        to entry: EntryEvidence,
-        profile: APIKeyProviderProfile,
-        officialContentEvidenceCount: Int
-    ) async throws -> EntryEvidence {
-        let adapterContentLimit = profile.type == .tikTok
-            ? min(officialContentEvidenceCount, 20)
-            : officialContentEvidenceCount
-        let initialRequest = try OfficialPlatformEvidenceProtocol.prepare(
-            profile: profile,
-            entry: entry,
-            maximumResults: adapterContentLimit
-        )
-        let initialData = try await performOfficialPlatformEvidenceRequest(
-            profile: profile,
-            request: initialRequest
-        )
-        let officialEvidence: String
-        if profile.type == .youtubeData, initialRequest.target == .creator {
-            let uploadsRequest = try OfficialPlatformEvidenceProtocol.prepareYouTubeUploadsRequest(
-                profile: profile,
-                channelData: initialData,
-                maximumResults: officialContentEvidenceCount
-            )
-            let playlistData = try await performOfficialPlatformEvidenceRequest(
-                profile: profile,
-                request: uploadsRequest
-            )
-            let videosRequest = try OfficialPlatformEvidenceProtocol.prepareYouTubeVideoRecordsRequest(
-                profile: profile,
-                playlistData: playlistData,
-                maximumResults: officialContentEvidenceCount
-            )
-            let videoData: Data?
-            if let videosRequest {
-                videoData = try await performOfficialPlatformEvidenceRequest(
-                    profile: profile,
-                    request: videosRequest
-                )
-            } else {
-                videoData = nil
-            }
-            officialEvidence = try OfficialPlatformEvidenceProtocol.boundedYouTubeCreatorEvidence(
-                channelData: initialData,
-                playlistData: playlistData,
-                videoData: videoData,
-                maximumVideoCount: officialContentEvidenceCount
-            )
-        } else if initialRequest.target == .creator {
-            let contentRequest = try OfficialPlatformEvidenceProtocol.prepareCreatorContentRequest(
-                profile: profile,
-                creatorData: initialData,
-                maximumResults: officialContentEvidenceCount
-            )
-            let contentData: Data?
-            if let contentRequest {
-                contentData = try await performOfficialPlatformEvidenceRequest(
-                    profile: profile,
-                    request: contentRequest
-                )
-            } else {
-                contentData = nil
-            }
-            officialEvidence = try OfficialPlatformEvidenceProtocol.boundedCreatorEvidence(
-                creatorData: initialData,
-                contentData: contentData,
-                providerType: initialRequest.providerType,
-                maximumContentCount: officialContentEvidenceCount
-            )
-        } else {
-            officialEvidence = try OfficialPlatformEvidenceProtocol.boundedEvidence(
-                data: initialData,
-                providerType: initialRequest.providerType,
-                target: initialRequest.target,
-                maximumContentCount: adapterContentLimit
-            )
-        }
-        var enriched = entry
-        let priorSummary = entry.evidence.summary?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let officialSummary = "Official platform API evidence:\n\(officialEvidence)"
-        let combinedSummary = [priorSummary, officialSummary]
-            .compactMap { $0 }
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n\n")
-        // Preserve the complete bounded JSON object. Truncating the combined
-        // string could turn structured official evidence into invalid JSON.
-        enriched.evidence.summary = combinedSummary.count <= EntryEvidenceValidator.summaryLimit
-            ? combinedSummary
-            : officialSummary
-        try EntryEvidenceValidator().validate(enriched)
-        return enriched
-    }
-
-    private func performOfficialPlatformEvidenceRequest(
-        profile: APIKeyProviderProfile,
-        request: OfficialPlatformEvidencePreparedRequest
-    ) async throws -> Data {
-        let startedAt = Date()
-        var recorded = false
-        do {
-            let credential = try providerCredential(for: profile.id)
-            var urlRequest = URLRequest(url: request.plan.url)
-            urlRequest.httpMethod = request.plan.method
-            urlRequest.httpBody = request.body
-            urlRequest.timeoutInterval = 20
-            request.plan.headers.forEach { urlRequest.setValue($0.value, forHTTPHeaderField: $0.key) }
-            try apply(credential: credential, to: &urlRequest, plan: request.plan)
-            let (data, response) = try await URLSession.shared.data(for: urlRequest)
-            guard let http = response as? HTTPURLResponse else { throw ProviderTestProtocolError.invalidResponse }
-            recordPlatformAPIRequest(
-                profile: profile,
-                plan: request.plan,
-                statusCode: http.statusCode,
-                durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
-                outcome: (200..<300).contains(http.statusCode) ? "succeeded" : "failed"
-            )
-            recorded = true
-            guard (200..<300).contains(http.statusCode) else {
-                throw ProviderTestHTTPError.status(http.statusCode)
-            }
-            return data
-        } catch {
-            if !recorded {
-                recordPlatformAPIRequest(
-                    profile: profile,
-                    plan: request.plan,
-                    statusCode: nil,
-                    durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
-                    outcome: "failed"
-                )
-            }
-            throw error
-        }
-    }
-
     private func apply(credential: ProviderCredentialRecord, to request: inout URLRequest, plan: ProviderRequestPlan) throws {
         func value(_ preferred: ProviderCredentialField) throws -> String {
             guard let value = credential.values[preferred] ?? credential.values[.apiKey] ?? credential.values[.bearerToken] else {
@@ -2073,30 +928,6 @@ final class VaultClassifierViewModel: ObservableObject {
         }
         try coordinator?.updateWorkspaceCatalog(catalog)
         refreshLocalState()
-    }
-
-    /// Platform connections use request counts, not language-model tokens.
-    /// Store only bounded transport metadata so the compact profile panel can
-    /// show local API-call usage without retaining request or response bodies.
-    private func recordPlatformAPIRequest(
-        profile: APIKeyProviderProfile,
-        plan: ProviderRequestPlan,
-        statusCode: Int?,
-        durationMilliseconds: Int,
-        outcome: String
-    ) {
-        try? appendProviderTestRecord(.init(
-            profileID: profile.id,
-            provider: profile.type.rawValue,
-            model: "",
-            operation: ProviderOperation.readPublicContent.rawValue,
-            endpoint: ProviderTestProtocol.safeEndpoint(plan.url),
-            method: plan.method,
-            statusCode: statusCode,
-            durationMilliseconds: durationMilliseconds,
-            tokenCount: nil,
-            outcome: outcome
-        ))
     }
 
     /// Stores every compact provider connection field in the local workspace.
@@ -2184,7 +1015,6 @@ final class VaultClassifierViewModel: ObservableObject {
                     catalog.classifierTypes[index].llmAssistConfiguration = nil
                 } else if catalog.classifierTypes[index].llmAssistConfiguration?.webSearchProviderProfileID == profileID {
                     catalog.classifierTypes[index].llmAssistConfiguration?.webSearchProviderProfileID = nil
-                    catalog.classifierTypes[index].llmAssistConfiguration?.isActive = false
                 }
                 if catalog.classifierTypes[index].selectedLLMProviderProfileID == profileID {
                     catalog.classifierTypes[index].selectedLLMProviderProfileID = nil
@@ -2259,10 +1089,9 @@ final class VaultClassifierViewModel: ObservableObject {
         }
         let dataset = catalog.datasets.first(where: { $0.id == binding.datasetID })
         let entries = dataset?.collectedEntries.filter { $0.platformID == platformID }.count ?? 0
-        let classifications = dataset?.creatorClassifications.filter { $0.platformID == platformID }.count ?? 0
         presentNativeConfirmation(
             title: "Delete \(binding.name)?",
-            message: "This stops collection and removes \(entries) retained entries and \(classifications) creator classifications for this platform. Shared trees and classification data remain; models using this source are reset or removed.",
+            message: "This stops collection and removes \(entries) retained entries for this platform. Shared trees and classification data remain.",
             confirmTitle: "Delete platform"
         ) { [weak self] in
             self?.deleteCollectionPlatform(platformID: platformID)
@@ -2309,9 +1138,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 treeID: tree.id,
                 treeRevision: tree.revision,
                 datasetID: dataset.id,
-                datasetRevision: dataset.revision,
-                trainingPlatformID: platformID,
-                trainingPlatformIDs: [platformID]
+                datasetRevision: dataset.revision
             ))
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
@@ -2341,10 +1168,6 @@ final class VaultClassifierViewModel: ObservableObject {
                 throw WebBridgeInputError.invalidChoice("local model")
             }
             catalog.models.remove(at: modelIndex)
-            for bindingIndex in catalog.bindings.indices where catalog.bindings[bindingIndex].activeModelID == modelID {
-                catalog.bindings[bindingIndex].activeModelID = nil
-                catalog.bindings[bindingIndex].activeClassifierTypeID = nil
-            }
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
             issue = nil
@@ -2358,7 +1181,7 @@ final class VaultClassifierViewModel: ObservableObject {
         }
         presentNativeConfirmation(
             title: "Delete local model?",
-            message: "This removes the local model and clears any active platform binding. It cannot be undone.",
+            message: "This removes the local model configuration. It cannot be undone.",
             confirmTitle: "Delete model"
         ) { [weak self] in
             self?.deleteLocalModel(modelID: modelID)
@@ -2419,23 +1242,6 @@ final class VaultClassifierViewModel: ObservableObject {
         } catch { issue = error.localizedDescription }
     }
 
-    /// Locks a classifier type to its current platform (confirmed by the person
-    /// before the first action that binds data to it). After this the applicable
-    /// platform can no longer change.
-    func lockClassifierTypePlatform(typeID: String) {
-        do {
-            guard var catalog = localState?.workspaceCatalog,
-                  let index = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }),
-                  (catalog.classifierTypes[index].applicablePlatformID ?? "").isEmpty == false else {
-                throw WebBridgeInputError.invalidChoice("classifier type")
-            }
-            catalog.classifierTypes[index].platformLocked = true
-            try coordinator?.updateWorkspaceCatalog(catalog)
-            refreshLocalState()
-            issue = nil
-        } catch { issue = error.localizedDescription }
-    }
-
     func configureClassifierType(
         typeID: String,
         name: String,
@@ -2463,22 +1269,9 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             let existingClassifierType = catalog.classifierTypes[typeIndex]
             let existingLLMAssist = existingClassifierType.llmAssistConfiguration
-            let existingPlatformID = existingClassifierType.applicablePlatformID ?? ""
-            // Once the platform is locked (the person confirmed it before the first
-            // binding action), it can no longer change; ignore any incoming value.
-            let effectivePlatformID = existingClassifierType.platformLocked && !existingPlatformID.isEmpty
-                ? existingPlatformID
-                : applicablePlatformID
+            let effectivePlatformID = applicablePlatformID
             guard CollectionPlatformRegistry.definition(for: effectivePlatformID) != nil else {
                 throw WebBridgeInputError.invalidChoice("classifier type")
-            }
-            // Identity backstop: once this type owns an approved decision its
-            // platform is fixed, even if the lock flag was somehow bypassed.
-            if !existingPlatformID.isEmpty, existingPlatformID != effectivePlatformID,
-               catalog.datasets.contains(where: { dataset in
-                   dataset.creatorClassifications.contains { $0.classifierTypeID == typeID && $0.review == .approved }
-               }) {
-                throw WebBridgeInputError.invalidChoice("applicable platform")
             }
             let selectedBinding = try catalog.ensurePlatformBinding(effectivePlatformID)
             guard
@@ -2562,9 +1355,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     } else {
                         selectedWebSearchProviderID = nil
                     }
-                    let retainsSavedWebSearch = existingLLMAssist?.webSearchMode == selectedWebSearchMode &&
-                        existingLLMAssist?.webSearchProviderProfileID == selectedWebSearchProviderID
-                    var configuration = LLMAssistConfiguration(
+                    let configuration = LLMAssistConfiguration(
                         providerProfileID: cleanedLLMProviderID,
                         modelIdentifier: cleanedLLMModelIdentifier,
                         dailyTokenLimit: try providerPositiveInteger(
@@ -2600,25 +1391,9 @@ final class VaultClassifierViewModel: ObservableObject {
                         ),
                         restrictToLeafTags: llmRestrictToLeafTags,
                         webSearchMode: selectedWebSearchMode,
-                        webSearchProviderProfileID: selectedWebSearchProviderID,
-                        isActive: retainsSavedModel && retainsSavedWebSearch ? existingLLMAssist?.isActive ?? false : false
+                        webSearchProviderProfileID: selectedWebSearchProviderID
                     )
                     try configuration.validate()
-                    if configuration.isActive {
-                        do {
-                            try validateLLMCreatorEvidenceConfiguration(
-                                in: catalog,
-                                platformID: selectedBinding.id,
-                                profile: profile,
-                                configuration: configuration
-                            )
-                        } catch {
-                            // Retain a user's edited attachment, but never
-                            // leave it active after its last usable evidence
-                            // capability has been removed.
-                            configuration.isActive = false
-                        }
-                    }
                     selectedLLMAssist = configuration
                     selectedLLMAssistDraft = .init(
                         providerProfileID: configuration.providerProfileID,
@@ -2677,21 +1452,11 @@ final class VaultClassifierViewModel: ObservableObject {
                 selectedLLMProviderProfileID: selectedLLMProviderProfileID,
                 llmAssistDraftConfiguration: selectedLLMAssistDraft,
                 llmAssistConfiguration: selectedLLMAssist,
-                // Signal-fusion order is fixed at the sensible default
-                // (human > llmAssist > localModel, weights 3/2/1); the reorder
-                // UI was removed, so preserve whatever the type already carries.
-                decisionPriority: catalog.classifierTypes[typeIndex].decisionPriority,
-                // Preserve the type's position in the reorderable list and its
-                // platform-lock state.
-                order: catalog.classifierTypes[typeIndex].order,
-                platformLocked: catalog.classifierTypes[typeIndex].platformLocked
+                order: catalog.classifierTypes[typeIndex].order
             )
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
             issue = nil
-            if selectedLLMAssist?.isActive == true {
-                startActiveLLMClassification()
-            }
         } catch { issue = error.localizedDescription }
     }
 
@@ -2733,7 +1498,6 @@ final class VaultClassifierViewModel: ObservableObject {
             let normalizedTypeID = classifierTypeID?.trimmingCharacters(in: .whitespacesAndNewlines)
             guard let normalizedTypeID, !normalizedTypeID.isEmpty else {
                 catalog.bindings[bindingIndex].activeClassifierTypeID = nil
-                catalog.bindings[bindingIndex].activeModelID = nil
                 try coordinator?.updateWorkspaceCatalog(catalog)
                 refreshLocalState()
                 issue = nil
@@ -2756,10 +1520,6 @@ final class VaultClassifierViewModel: ObservableObject {
                    classifierType.llmAssistConfiguration == nil) else {
                 throw WebBridgeInputError.invalidChoice("manual-only platform classifier type")
             }
-            // The active model is the type's ready bound model, if it has trained
-            // one. A type with an untrained or stale model still activates and
-            // classifies through its remaining decision sources.
-            catalog.bindings[bindingIndex].activeModelID = catalog.readyLocalModel(for: classifierType)?.id
             catalog.bindings[bindingIndex].activeClassifierTypeID = normalizedTypeID
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
@@ -2810,7 +1570,7 @@ final class VaultClassifierViewModel: ObservableObject {
         }
         presentNativeConfirmation(
             title: "Delete classifier type?",
-            message: "This removes this local decision configuration and its creator classifications. Trees, models, other data, and provider profiles are retained.",
+            message: "This removes this local decision configuration and its local-model configuration. Other data and provider profiles are retained.",
             confirmTitle: "Delete classifier type"
         ) { [weak self] in
             self?.deleteClassifierType(typeID: typeID)
@@ -2856,31 +1616,6 @@ final class VaultClassifierViewModel: ObservableObject {
         } catch { issue = error.localizedDescription }
     }
 
-    /// Runs one incremental training pass, folding the type's newly approved
-    /// creator decisions into the model's persisted artifact. Training is
-    /// accumulate-once: each decision contributes a single time over the model's
-    /// life. A pass with nothing new to fold leaves the model unchanged.
-    func trainLocalModel(modelID: String) {
-        do {
-            guard var catalog = localState?.workspaceCatalog,
-                  let modelIndex = catalog.models.firstIndex(where: { $0.id == modelID }),
-                  let type = catalog.classifierTypes.first(where: { $0.id == catalog.models[modelIndex].classifierTypeID }),
-                  let tree = catalog.trees.first(where: { $0.id == type.treeID }),
-                  let dataset = catalog.datasets.first(where: { $0.id == type.datasetID }) else {
-                throw WebBridgeInputError.invalidChoice("local model")
-            }
-            catalog.models[modelIndex] = try LocalModelTrainer.accumulate(
-                catalog.models[modelIndex],
-                type: type,
-                tree: tree,
-                dataset: dataset
-            )
-            try coordinator?.updateWorkspaceCatalog(catalog)
-            refreshLocalState()
-            issue = nil
-        } catch { issue = error.localizedDescription }
-    }
-
     private func applyLocalModelBaseEmbedding(
         in catalog: inout WorkspaceCatalog,
         modelID: String,
@@ -2903,16 +1638,7 @@ final class VaultClassifierViewModel: ObservableObject {
         }
         guard catalog.models[modelIndex].baseEmbeddingID != baseEmbedding else { return }
         catalog.models[modelIndex].baseEmbeddingID = baseEmbedding
-        // A change of base embedding invalidates the trained artifact and its
-        // accumulate-once ledger; the model must be trained again from empty.
-        catalog.models[modelIndex].isReady = false
-        catalog.models[modelIndex].embeddedNeuralModel = nil
-        catalog.models[modelIndex].embeddedTrainingReport = nil
-        catalog.models[modelIndex].incorporatedDecisionIDs = []
-        catalog.models[modelIndex].trainedAtMilliseconds = nil
-        for bindingIndex in catalog.bindings.indices where catalog.bindings[bindingIndex].activeModelID == modelID {
-            catalog.bindings[bindingIndex].activeModelID = nil
-        }
+        catalog.models[modelIndex].version += 1
     }
 
     func renameTree(treeID: String, name: String, refreshState: Bool = true) {
@@ -3183,786 +1909,14 @@ final class VaultClassifierViewModel: ObservableObject {
     private func advanceTreeRevision(in catalog: inout WorkspaceCatalog, treeIndex: Int) {
         catalog.trees[treeIndex].revision += 1
         catalog.trees[treeIndex].updatedAtMilliseconds = WorkspaceCatalog.now()
-        let treeID = catalog.trees[treeIndex].id
-        for bindingIndex in catalog.bindings.indices where catalog.bindings[bindingIndex].treeID == treeID {
-            catalog.bindings[bindingIndex].activeModelID = nil
-            catalog.bindings[bindingIndex].activeClassifierTypeID = nil
-        }
     }
 
-    /// Saves the current creator-level source of truth for a classifier type.
-    /// The dataset revision advances because approved creator decisions are
-    /// explicit local-model training material through their collected entries.
-    func recordCreatorClassification(
-        typeID: String,
-        creatorKey: String,
-        tagIDs: [String],
-        negativeTagIDs: [String]
-    ) {
-        do {
-            guard var catalog = localState?.workspaceCatalog,
-                  let typeIndex = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }) else {
-                throw WebBridgeInputError.invalidChoice("classifier type")
-            }
-            let classifierType = catalog.classifierTypes[typeIndex]
-            guard let tree = catalog.trees.first(where: { $0.id == classifierType.treeID }),
-                  let datasetIndex = catalog.datasets.firstIndex(where: { $0.id == classifierType.datasetID }) else {
-                throw WebBridgeInputError.invalidChoice("creator decision")
-            }
-            let keyParts = creatorKey.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
-            guard keyParts.count == 2,
-                  !keyParts[0].isEmpty,
-                  !keyParts[1].isEmpty else {
-                throw WebBridgeInputError.invalidChoice("creator")
-            }
-            let platformID = String(keyParts[0])
-            let creatorID = String(keyParts[1])
-            guard classifierType.applicablePlatformID == platformID,
-                  CollectionPlatformRegistry.definition(for: platformID) != nil else {
-                throw WebBridgeInputError.invalidChoice("creator data source")
-            }
-            guard let creatorEntry = catalog.datasets[datasetIndex].collectedEntries.first(where: {
-                $0.platformID == platformID && $0.creatorID == creatorID
-            }) else {
-                throw WebBridgeInputError.invalidChoice("creator")
-            }
-            if tagIDs.isEmpty && negativeTagIDs.isEmpty {
-                if catalog.datasets[datasetIndex].removeCreatorClassification(
-                    classifierTypeID: classifierType.id,
-                    platformID: platformID,
-                    creatorID: creatorID,
-                    origin: .manual
-                ) {
-                    catalog.datasets[datasetIndex].revision += 1
-                    try coordinator?.updateWorkspaceCatalog(catalog)
-                }
-                refreshLocalState()
-                issue = nil
-                return
-            }
-            try storeCreatorClassification(
-                in: &catalog,
-                classifierType: classifierType,
-                tree: tree,
-                creatorID: creatorEntry.creatorID,
-                creatorName: creatorEntry.creatorName,
-                platformID: creatorEntry.platformID,
-                tagIDs: tagIDs,
-                negativeTagIDs: negativeTagIDs,
-                origin: .manual
-            )
-            try coordinator?.updateWorkspaceCatalog(catalog)
-            refreshLocalState()
-            issue = nil
-        } catch { issue = error.localizedDescription }
-    }
-
-    private struct LLMCreatorWorkItem {
-        let representative: CollectedPlatformEntry
-        let entry: EntryEvidence
-    }
-
-    /// An active model never receives a partial creator record. Collected
-    /// typed content records establish the local creator evidence; the run then
-    /// adds every bounded official field its platform can expose and keeps the
-    /// configured search capability available for remaining evidence gaps.
-    private func llmCreatorWorkItem(
-        platformID: String,
-        creatorID: String,
-        entries: [CollectedPlatformEntry]
-    ) -> LLMCreatorWorkItem? {
-        let creatorEntries = entries.filter {
-            $0.platformID == platformID && $0.creatorID == creatorID
-        }
-        guard !creatorEntries.isEmpty,
-              creatorEntries.allSatisfy({ entry in
-                  !entry.entryID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                  !entry.creatorID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                  !entry.creatorName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                  !entry.entryType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                  !entry.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-              }),
-              let representative = creatorEntries.max(by: { lhs, rhs in
-                  if lhs.lastObservedAtMilliseconds == rhs.lastObservedAtMilliseconds { return lhs.id < rhs.id }
-                  return lhs.lastObservedAtMilliseconds < rhs.lastObservedAtMilliseconds
-              }) else {
-            return nil
-        }
-        // One classification carries the same typed public-content shape for
-        // every platform. Sampling does not privilege a platform or only the
-        // newest content, and whole records are removed from the tail to stay
-        // within the evidence contract instead of truncating JSON mid-record.
-        let sampledEntries = creatorEntries
-            .shuffled()
-            .prefix(25)
-        var observedItems = sampledEntries.map { item -> [String: Any] in
-            var value: [String: Any] = [
-                "entryID": item.entryID,
-                "entryType": item.entryType,
-                "title": item.title,
-                "surface": item.surface.rawValue,
-                "firstObservedAtMilliseconds": item.firstObservedAtMilliseconds,
-                "lastObservedAtMilliseconds": item.lastObservedAtMilliseconds,
-                "observationCount": item.observationCount,
-            ]
-            if let text = item.text {
-                value["text"] = text
-            }
-            if let summary = item.summary {
-                value["summary"] = summary
-            }
-            if !item.suppliedTags.isEmpty {
-                value["suppliedTags"] = item.suppliedTags
-            }
-            if let canonicalURL = item.canonicalURL {
-                value["canonicalURL"] = canonicalURL
-            }
-            if !item.attributes.isEmpty {
-                value["attributes"] = item.attributes
-            }
-            return value
-        }
-        var observedData: Data?
-        while !observedItems.isEmpty {
-            if let candidate = try? JSONSerialization.data(withJSONObject: observedItems, options: [.sortedKeys]),
-               candidate.count <= EntryEvidenceValidator.textLimit {
-                observedData = candidate
-                break
-            }
-            observedItems.removeLast()
-        }
-        guard let observedData,
-              let observedText = String(data: observedData, encoding: .utf8) else {
-            return nil
-        }
-        return .init(
-            representative: representative,
-            entry: .init(
-                platform: platformID,
-                entryID: representative.entryID,
-                sourceID: creatorID,
-                surface: .page,
-                evidence: .init(
-                    title: String(representative.creatorName.prefix(EntryEvidenceValidator.titleLimit)),
-                    text: observedText,
-                    metadata: [
-                        "classificationTarget": .string("creator"),
-                        "creatorName": .string(String(representative.creatorName.prefix(EntryEvidenceValidator.metadataValueLengthLimit))),
-                        "classificationSourceKind": .string(
-                            CollectionPlatformRegistry.definition(for: platformID)?.sourceKind.rawValue
-                                ?? CollectionSourceKind.creator.rawValue
-                        ),
-                        "browserObservedContentFormat": .string("typed-json-v1"),
-                    ]
-                )
-            )
-        )
-    }
-
-    private func unclassifiedLLMCreatorWorkItems(
-        dataset: ClassificationDataset,
-        classifierType: ClassifierTypeAsset,
-        platformID: String
-    ) -> [LLMCreatorWorkItem] {
-        let classifiedCreatorIDs = Set(dataset.creatorClassifications.compactMap { record -> String? in
-            guard record.classifierTypeID == classifierType.id,
-                  record.platformID == platformID,
-                  record.origin == .llmAssist else { return nil }
-            return record.creatorID
-        })
-        let creatorIDs = Set(dataset.collectedEntries.compactMap { entry -> String? in
-            guard entry.platformID == platformID,
-                  !entry.creatorID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  !classifiedCreatorIDs.contains(entry.creatorID) else {
-                return nil
-            }
-            return entry.creatorID
-        })
-        var entriesByCreator: [String: [CollectedPlatformEntry]] = [:]
-        for entry in dataset.collectedEntries where entry.platformID == platformID {
-            entriesByCreator[entry.creatorID, default: []].append(entry)
-        }
-        return creatorIDs.compactMap {
-            llmCreatorWorkItem(platformID: platformID, creatorID: $0, entries: entriesByCreator[$0] ?? [])
-        }.sorted { lhs, rhs in
-            let comparison = lhs.representative.creatorName.localizedCaseInsensitiveCompare(rhs.representative.creatorName)
-            return comparison == .orderedSame
-                ? lhs.representative.creatorID < rhs.representative.creatorID
-                : comparison == .orderedAscending
-        }
-    }
-
-    /// Cheap O(entries) count of creators eligible for an activated run using
-    /// the same eligibility rules as `unclassifiedLLMCreatorWorkItems`, but
-    /// without building each creator's evidence. Safe to call on every render.
-    private func eligibleUnclassifiedCreatorCount(
-        dataset: ClassificationDataset,
-        classifierType: ClassifierTypeAsset,
-        platformID: String
-    ) -> Int {
-        let classifiedCreatorIDs = Set(dataset.creatorClassifications.compactMap { record -> String? in
-            guard record.classifierTypeID == classifierType.id,
-                  record.platformID == platformID,
-                  record.origin == .llmAssist else { return nil }
-            return record.creatorID
-        })
-        var entriesByCreator: [String: [CollectedPlatformEntry]] = [:]
-        for entry in dataset.collectedEntries where entry.platformID == platformID {
-            guard !entry.creatorID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  !classifiedCreatorIDs.contains(entry.creatorID) else { continue }
-            entriesByCreator[entry.creatorID, default: []].append(entry)
-        }
-        return entriesByCreator.values.reduce(0) { count, creatorEntries in
-            let valid = creatorEntries.allSatisfy { entry in
-                !entry.entryID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                !entry.creatorID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                !entry.creatorName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                !entry.entryType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                !entry.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            }
-            return count + (valid ? 1 : 0)
-        }
-    }
-
-    private func isLLMAssistActive(typeID: String) -> Bool {
-        localState?.workspaceCatalog.classifierTypes.first(where: { $0.id == typeID })?.llmAssistConfiguration?.isActive == true
-    }
-
-    private struct LLMClassificationStatus {
-        var queuedCreatorCount: Int
-        var completedToday: Int
-        var lastOutcome: String?
-    }
-
-    private func llmClassificationStatus(
-        in catalog: WorkspaceCatalog,
-        classifierType: ClassifierTypeAsset
-    ) -> LLMClassificationStatus {
-        let queuedCreatorCount: Int
-        if let dataset = catalog.datasets.first(where: { $0.id == classifierType.datasetID }),
-           let platformID = classifierType.applicablePlatformID {
-            queuedCreatorCount = eligibleUnclassifiedCreatorCount(
-                dataset: dataset,
-                classifierType: classifierType,
-                platformID: platformID
-            )
-        } else {
-            queuedCreatorCount = 0
-        }
-        let startOfDayMilliseconds = Int64(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970 * 1_000)
-        let records = catalog.providerRequestRecords.filter { $0.classifierTypeID == classifierType.id }
-        let completedToday = records.filter {
-            $0.operation.hasPrefix("classify-creator") &&
-                $0.operation != "classify-creator-tool-call" &&
-                $0.outcome == "succeeded" &&
-                $0.createdAtMilliseconds >= startOfDayMilliseconds
-        }.count
-        let lastOutcome = records.max { lhs, rhs in
-            lhs.createdAtMilliseconds < rhs.createdAtMilliseconds
-        }?.outcome
-        return .init(
-            queuedCreatorCount: queuedCreatorCount,
-            completedToday: completedToday,
-            lastOutcome: lastOutcome
-        )
-    }
-
-    func setLLMAssistActive(typeID: String, isActive: Bool) {
-        do {
-            guard var catalog = localState?.workspaceCatalog,
-                  let typeIndex = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }),
-                  var configuration = catalog.classifierTypes[typeIndex].llmAssistConfiguration,
-                  let profile = catalog.providerProfiles.first(where: { $0.id == configuration.providerProfileID }),
-                  catalog.classifierTypes[typeIndex].applicablePlatformID.flatMap(CollectionPlatformRegistry.definition(for:))?.supportsLLMAssist == true else {
-                throw WebBridgeInputError.invalidChoice("active LLM classifier type")
-            }
-            guard !configuration.modelIdentifier.isEmpty else {
-                throw WebBridgeInputError.invalidChoice("LLM model")
-            }
-            if isActive {
-                _ = try providerCredential(for: profile.id)
-                guard let platformID = catalog.classifierTypes[typeIndex].applicablePlatformID else {
-                    throw WebBridgeInputError.invalidChoice("creator platform")
-                }
-                try validateLLMCreatorEvidenceConfiguration(
-                    in: catalog,
-                    platformID: platformID,
-                    profile: profile,
-                    configuration: configuration
-                )
-            }
-            configuration.isActive = isActive
-            catalog.classifierTypes[typeIndex].llmAssistConfiguration = configuration
-            try coordinator?.updateWorkspaceCatalog(catalog)
-            refreshLocalState()
-            issue = nil
-            if isActive { startActiveLLMClassification() }
-        } catch {
-            issue = error.localizedDescription
-        }
-    }
-
-    private func startActiveLLMClassification(platformID: String? = nil) {
-        guard !providerClassificationRunning,
-              let catalog = localState?.workspaceCatalog else { return }
-        let activeTypes = catalog.classifierTypes
-            .filter {
-                $0.llmAssistConfiguration?.isActive == true &&
-                (platformID == nil || $0.applicablePlatformID == platformID)
-            }
-            .sorted { $0.id < $1.id }
-        for classifierType in activeTypes {
-            guard let dataset = catalog.datasets.first(where: { $0.id == classifierType.datasetID }),
-                  let activePlatformID = classifierType.applicablePlatformID,
-                  eligibleUnclassifiedCreatorCount(
-                      dataset: dataset,
-                      classifierType: classifierType,
-                      platformID: activePlatformID
-                  ) > 0 else {
-                continue
-            }
-            classifyCreatorBatchWithLLM(typeID: classifierType.id, activatedRun: true)
-            return
-        }
-    }
-
-    /// Persisting a creator decision advances the dataset revision and
-    /// reconciliation mirrors that revision onto the classifier type. That is
-    /// expected progress, not a mid-batch configuration edit. Every other
-    /// classifier-type field must remain identical for the queued snapshot.
-    static func llmBatchConfigurationIsUnchanged(
-        expected: ClassifierTypeAsset,
-        current: ClassifierTypeAsset
-    ) -> Bool {
-        var normalizedCurrent = current
-        normalizedCurrent.datasetRevision = expected.datasetRevision
-        return normalizedCurrent == expected
-    }
-
-    /// Runs eligible creators one at a time. An activated model processes the
-    /// full current queue, while the manual control keeps its configured batch
-    /// limit. A provider response without usage metadata consumes its
-    /// requested cap so the persisted daily budget stays safe and visible.
-    func classifyCreatorBatchWithLLM(typeID: String, activatedRun: Bool = false) {
-        guard !providerClassificationRunning else { return }
-        do {
-            guard let catalog = localState?.workspaceCatalog,
-                  let classifierType = catalog.classifierTypes.first(where: { $0.id == typeID }),
-                  let configuration = classifierType.llmAssistConfiguration,
-                  let profile = catalog.providerProfiles.first(where: { $0.id == configuration.providerProfileID }),
-                  let tree = catalog.trees.first(where: { $0.id == classifierType.treeID }),
-                  let dataset = catalog.datasets.first(where: { $0.id == classifierType.datasetID }),
-                  let platformID = classifierType.applicablePlatformID else {
-                throw WebBridgeInputError.invalidChoice("creator LLM classifier type")
-            }
-            try validateLLMCreatorEvidenceConfiguration(
-                in: catalog,
-                platformID: platformID,
-                profile: profile,
-                configuration: configuration
-            )
-            let workItems = unclassifiedLLMCreatorWorkItems(
-                dataset: dataset,
-                classifierType: classifierType,
-                platformID: platformID
-            )
-            // The activated run is the only caller; it sweeps the whole eligible
-            // queue in batches of batchSize. Every non-attached mode sends one
-            // batch as a single provider request whose prompt carries all of its
-            // creators; attached client-tool search cannot batch its multi-turn
-            // continuation, so it still sends one creator per request. Either
-            // way, pace gates request starts (the loop below applies both).
-            let queuedWorkItems = workItems
-            guard !queuedWorkItems.isEmpty else {
-                if activatedRun { return }
-                throw WebBridgeInputError.invalidChoice("unclassified creators")
-            }
-            let taxonomy = try tree.inferenceTaxonomy()
-            let allowedTagIDs = llmAllowedTagIDs(taxonomy: taxonomy, configuration: configuration)
-            let tagDefinitions = llmTagDefinitions(taxonomy: taxonomy, allowedTagIDs: allowedTagIDs)
-            var remainingTokens = configuration.dailyTokenLimit - tokensUsedToday(
-                in: catalog,
-                classifierTypeID: classifierType.id
-            )
-            guard remainingTokens > 0 else {
-                throw WebBridgeInputError.invalidChoice("daily token budget")
-            }
-            let batchSize = max(1, configuration.batchSize)
-            // Only batch when the provider structurally enforces the results
-            // schema. Without that, an all-or-nothing batch could waste every
-            // creator's tokens on one stray field, so those cases (attached
-            // search, JSON-object-only modes, prompt-only or searched-and-
-            // unschema'd endpoints) stay on the repairable per-creator path.
-            let canBatchRequest = ProviderClassificationProtocol.supportsBatchedClassification(
-                profile: profile,
-                configuration: configuration
-            )
-            providerClassificationRunning = true
-            issue = nil
-            Task { [weak self] in
-                guard let self else { return }
-                var successCount = 0
-                var firstFailure: Error?
-
-                @MainActor func configurationIsLive() -> Bool {
-                    guard let liveCatalog = self.localState?.workspaceCatalog,
-                          let liveClassifierType = liveCatalog.classifierTypes.first(where: { $0.id == typeID }),
-                          Self.llmBatchConfigurationIsUnchanged(
-                              expected: classifierType,
-                              current: liveClassifierType
-                          ),
-                          let liveProfile = liveCatalog.providerProfiles.first(where: { $0.id == profile.id }),
-                          liveProfile == profile else {
-                        return false
-                    }
-                    return true
-                }
-
-                var startIndex = 0
-                batchLoop: while startIndex < queuedWorkItems.count {
-                    let batch = Array(queuedWorkItems[startIndex ..< min(startIndex + batchSize, queuedWorkItems.count)])
-                    startIndex += batch.count
-
-                    if activatedRun && !self.isLLMAssistActive(typeID: typeID) { break }
-                    guard remainingTokens > 0 else { break }
-                    guard configurationIsLive() else {
-                        firstFailure = firstFailure ?? WebBridgeInputError.invalidChoice("LLM configuration changed; start a new batch")
-                        break
-                    }
-
-                    if canBatchRequest {
-                        // One provider request classifies the entire batch. Pace
-                        // gates the request start, so a batch begins at most once
-                        // per classification-pace interval; the effective
-                        // creators/minute ceiling is pace * batchSize.
-                        await self.waitForLLMClassificationPace(configuration: configuration)
-                        if activatedRun && !self.isLLMAssistActive(typeID: typeID) { break }
-                        guard configurationIsLive() else {
-                            firstFailure = firstFailure ?? WebBridgeInputError.invalidChoice("LLM configuration changed; start a new batch")
-                            break
-                        }
-                        self.recordLLMClassificationRequestStart()
-                        let outputTokenLimit = min(configuration.maximumOutputTokensPerRequest, remainingTokens)
-                        let startedAt = Date()
-                        var recordPlan: ProviderTestPreparedRequest?
-                        do {
-                            recordPlan = try ProviderClassificationProtocol.prepareBatch(
-                                profile: profile,
-                                configuration: configuration,
-                                entries: batch.map { $0.entry },
-                                allowedTagIDs: allowedTagIDs,
-                                tagDefinitions: tagDefinitions,
-                                maximumOutputTokens: outputTokenLimit
-                            )
-                            var enrichedEntries: [EntryEvidence] = []
-                            enrichedEntries.reserveCapacity(batch.count)
-                            for workItem in batch {
-                                enrichedEntries.append(try await self.enrichedCreatorEntry(
-                                    workItem.entry,
-                                    configuration: configuration,
-                                    catalog: catalog
-                                ))
-                            }
-                            let run = try await self.runProviderClassificationBatch(
-                                profile: profile,
-                                configuration: configuration,
-                                entries: enrichedEntries,
-                                allowedTagIDs: allowedTagIDs,
-                                tagDefinitions: tagDefinitions,
-                                maximumOutputTokens: outputTokenLimit,
-                                dailyTokensRemaining: remainingTokens
-                            )
-                            let labelMap = try self.parseBatchClassificationLabelIDs(
-                                from: run,
-                                count: batch.count,
-                                allowedTagIDs: allowedTagIDs,
-                                maximumTagCount: configuration.maximumTagCount
-                            )
-                            for (offset, workItem) in batch.enumerated() {
-                                try self.recordLLMCreatorClassification(
-                                    typeID: classifierType.id,
-                                    creatorID: workItem.representative.creatorID,
-                                    platformID: platformID,
-                                    creatorName: workItem.representative.creatorName,
-                                    labelIDs: labelMap[offset + 1] ?? []
-                                )
-                            }
-                            let recordedTokenCount = run.usage.tokenCount ?? run.fallbackTokenCount
-                            try self.appendProviderTestRecord(.init(
-                                profileID: profile.id,
-                                provider: profile.type.rawValue,
-                                model: configuration.modelIdentifier,
-                                operation: activatedRun ? "classify-creator-active" : "classify-creator-batch",
-                                endpoint: ProviderTestProtocol.safeEndpoint(recordPlan!.plan.url),
-                                method: recordPlan!.plan.method,
-                                statusCode: run.statusCode,
-                                durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
-                                tokenCount: recordedTokenCount,
-                                classifierTypeID: classifierType.id,
-                                outcome: "succeeded"
-                            ))
-                            if let currentCatalog = self.localState?.workspaceCatalog {
-                                remainingTokens = configuration.dailyTokenLimit - self.tokensUsedToday(
-                                    in: currentCatalog,
-                                    classifierTypeID: classifierType.id
-                                )
-                            }
-                            successCount += batch.count
-                            // Publish once per batch so decisions stream into the
-                            // UI one batch per classification-pace interval.
-                            self.refreshLocalState()
-                            self.onWebStateChange?()
-                        } catch {
-                            firstFailure = firstFailure ?? error
-                            if let recordPlan, !(error is RawWebSearchFailure) {
-                                let failure = self.providerFailureMetadata(for: error)
-                                try? self.appendProviderTestRecord(.init(
-                                    profileID: profile.id,
-                                    provider: profile.type.rawValue,
-                                    model: configuration.modelIdentifier,
-                                    operation: activatedRun ? "classify-creator-active" : "classify-creator-batch",
-                                    endpoint: ProviderTestProtocol.safeEndpoint(recordPlan.plan.url),
-                                    method: recordPlan.plan.method,
-                                    statusCode: failure.statusCode,
-                                    responseShape: failure.responseShape,
-                                    durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
-                                    tokenCount: failure.tokenCount,
-                                    classifierTypeID: classifierType.id,
-                                    outcome: "failed"
-                                ))
-                            }
-                            if let currentCatalog = self.localState?.workspaceCatalog {
-                                remainingTokens = configuration.dailyTokenLimit - self.tokensUsedToday(
-                                    in: currentCatalog,
-                                    classifierTypeID: classifierType.id
-                                )
-                            }
-                            if activatedRun { break }
-                        }
-                    } else {
-                        // Attached client-tool search runs one creator per
-                        // request because its multi-turn search continuation
-                        // cannot batch. Per-request pacing and history match the
-                        // single-target contract exactly.
-                        for workItem in batch {
-                            if activatedRun && !self.isLLMAssistActive(typeID: typeID) { break batchLoop }
-                            guard remainingTokens > 0 else { break batchLoop }
-                            guard configurationIsLive() else {
-                                firstFailure = firstFailure ?? WebBridgeInputError.invalidChoice("LLM configuration changed; start a new batch")
-                                break batchLoop
-                            }
-                            await self.waitForLLMClassificationPace(configuration: configuration)
-                            if activatedRun && !self.isLLMAssistActive(typeID: typeID) { break batchLoop }
-                            guard configurationIsLive() else {
-                                firstFailure = firstFailure ?? WebBridgeInputError.invalidChoice("LLM configuration changed; start a new batch")
-                                break batchLoop
-                            }
-                            self.recordLLMClassificationRequestStart()
-                            let representative = workItem.representative
-                            let entry = workItem.entry
-                            let outputTokenLimit = min(configuration.maximumOutputTokensPerRequest, remainingTokens)
-                            let startedAt = Date()
-                            var recordPlan: ProviderTestPreparedRequest?
-                            do {
-                                recordPlan = try ProviderClassificationProtocol.prepare(
-                                    profile: profile,
-                                    configuration: configuration,
-                                    entry: entry,
-                                    allowedTagIDs: allowedTagIDs,
-                                    tagDefinitions: tagDefinitions,
-                                    maximumOutputTokens: outputTokenLimit
-                                )
-                                let run = try await self.runProviderClassification(
-                                    profile: profile,
-                                    configuration: configuration,
-                                    entry: entry,
-                                    allowedTagIDs: allowedTagIDs,
-                                    tagDefinitions: tagDefinitions,
-                                    catalog: catalog,
-                                    maximumOutputTokens: outputTokenLimit,
-                                    dailyTokensRemaining: remainingTokens,
-                                    classifierTypeID: classifierType.id
-                                )
-                                let labelIDs = try self.parseClassificationLabelIDs(
-                                    from: run,
-                                    allowedTagIDs: allowedTagIDs,
-                                    maximumTagCount: configuration.maximumTagCount
-                                )
-                                try self.recordLLMCreatorClassification(
-                                    typeID: classifierType.id,
-                                    creatorID: representative.creatorID,
-                                    platformID: platformID,
-                                    creatorName: representative.creatorName,
-                                    labelIDs: labelIDs
-                                )
-                                let recordedTokenCount = run.usage.tokenCount ?? run.fallbackTokenCount
-                                try self.appendProviderTestRecord(.init(
-                                    profileID: profile.id,
-                                    provider: profile.type.rawValue,
-                                    model: configuration.modelIdentifier,
-                                    operation: activatedRun ? "classify-creator-active" : "classify-creator-batch",
-                                    endpoint: ProviderTestProtocol.safeEndpoint(recordPlan!.plan.url),
-                                    method: recordPlan!.plan.method,
-                                    statusCode: run.statusCode,
-                                    durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
-                                    tokenCount: recordedTokenCount,
-                                    classifierTypeID: classifierType.id,
-                                    outcome: "succeeded"
-                                ))
-                                if let currentCatalog = self.localState?.workspaceCatalog {
-                                    remainingTokens = configuration.dailyTokenLimit - self.tokensUsedToday(
-                                        in: currentCatalog,
-                                        classifierTypeID: classifierType.id
-                                    )
-                                }
-                                successCount += 1
-                            } catch {
-                                firstFailure = firstFailure ?? error
-                                if let recordPlan, !(error is RawWebSearchFailure) {
-                                    let failure = self.providerFailureMetadata(for: error)
-                                    try? self.appendProviderTestRecord(.init(
-                                        profileID: profile.id,
-                                        provider: profile.type.rawValue,
-                                        model: configuration.modelIdentifier,
-                                        operation: activatedRun ? "classify-creator-active" : "classify-creator-batch",
-                                        endpoint: ProviderTestProtocol.safeEndpoint(recordPlan.plan.url),
-                                        method: recordPlan.plan.method,
-                                        statusCode: failure.statusCode,
-                                        responseShape: failure.responseShape,
-                                        durationMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1_000)),
-                                        tokenCount: failure.tokenCount,
-                                        classifierTypeID: classifierType.id,
-                                        outcome: "failed"
-                                    ))
-                                }
-                                if let currentCatalog = self.localState?.workspaceCatalog {
-                                    remainingTokens = configuration.dailyTokenLimit - self.tokensUsedToday(
-                                        in: currentCatalog,
-                                        classifierTypeID: classifierType.id
-                                    )
-                                }
-                                if activatedRun { break batchLoop }
-                            }
-                        }
-                        // Publish once per attached batch, matching the batched
-                        // path's one-refresh-per-batch cadence.
-                        self.refreshLocalState()
-                        self.onWebStateChange?()
-                    }
-                }
-                self.providerClassificationRunning = false
-                self.issue = successCount == 0 ? firstFailure?.localizedDescription : nil
-                self.onWebStateChange?()
-                if activatedRun, firstFailure == nil, remainingTokens > 0 {
-                    self.startActiveLLMClassification()
-                }
-            }
-        } catch {
-            issue = error.localizedDescription
-        }
-    }
-
-    private func recordLLMCreatorClassification(
-        typeID: String,
-        creatorID: String,
-        platformID: String,
-        creatorName: String,
-        labelIDs: [String]
-    ) throws {
-        guard var catalog = localState?.workspaceCatalog,
-              let classifierType = catalog.classifierTypes.first(where: { $0.id == typeID }),
-              CollectionPlatformRegistry.definition(for: platformID)?.supportsLLMAssist == true,
-              let tree = catalog.trees.first(where: { $0.id == classifierType.treeID }) else {
-            throw WebBridgeInputError.invalidChoice("creator LLM classifier type")
-        }
-        try storeCreatorClassification(
-            in: &catalog,
-            classifierType: classifierType,
-            tree: tree,
-            creatorID: creatorID,
-            creatorName: creatorName,
-            platformID: platformID,
-            tagIDs: labelIDs,
-            origin: .llmAssist
-        )
-        try coordinator?.updateWorkspaceCatalog(catalog)
-        refreshLocalState()
-    }
-
-    /// Manual and LLM-assisted labels share this one creator-level persistence
-    /// path. Individual entry inspection results are intentionally transient;
-    /// retaining a label always identifies the creator whose collected entries
-    /// may later be used for a local training run.
-    private func storeCreatorClassification(
-        in catalog: inout WorkspaceCatalog,
-        classifierType: ClassifierTypeAsset,
-        tree: TagTreeAsset,
-        creatorID: String,
-        creatorName: String,
-        platformID: String,
-        tagIDs: [String],
-        negativeTagIDs: [String] = [],
-        origin: ClassificationRecordOrigin
-    ) throws {
-        guard classifierType.applicablePlatformID == platformID,
-              classifierType.treeID == tree.id,
-              classifierType.treeRevision == tree.revision,
-              let datasetIndex = catalog.datasets.firstIndex(where: { $0.id == classifierType.datasetID }) else {
-            throw WebBridgeInputError.invalidChoice("creator classification")
-        }
-        let cleanedCreatorID = creatorID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cleanedCreatorName = creatorName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let positiveLabels = Array(Set(tagIDs)).sorted()
-        let negativeLabels = Array(Set(negativeTagIDs)).sorted()
-        let taxonomy = try tree.inferenceTaxonomy()
-        let availableTagIDs: Set<String>
-        if origin == .llmAssist,
-           classifierType.llmAssistConfiguration?.restrictToLeafTags == false {
-            availableTagIDs = Set(taxonomy.nodes.values.filter(\.predictable).map(\.id))
-        } else {
-            availableTagIDs = taxonomy.predictableLeafIDs
-        }
-        let maximumTagCount = origin == .llmAssist
-            ? classifierType.llmAssistConfiguration?.maximumTagCount ?? CreatorClassificationRecord.maximumTagIDs
-            : CreatorClassificationRecord.maximumTagIDs
-        guard !cleanedCreatorID.isEmpty,
-              !cleanedCreatorName.isEmpty,
-              (!positiveLabels.isEmpty || !negativeLabels.isEmpty || origin == .llmAssist),
-              positiveLabels.count + negativeLabels.count <= maximumTagCount,
-              Set(positiveLabels).isDisjoint(with: negativeLabels),
-              positiveLabels.allSatisfy(availableTagIDs.contains),
-              negativeLabels.allSatisfy(availableTagIDs.contains) else {
-            throw WebBridgeInputError.invalidChoice("creator tag IDs")
-        }
-        _ = catalog.datasets[datasetIndex].upsertCreatorClassification(.init(
-            classifierTypeID: classifierType.id,
-            creatorID: cleanedCreatorID,
-            creatorName: cleanedCreatorName,
-            platformID: platformID,
-            treeID: tree.id,
-            treeRevision: tree.revision,
-            tagIDs: positiveLabels,
-            negativeTagIDs: negativeLabels,
-            origin: origin,
-            review: .approved
-        ))
-        catalog.datasets[datasetIndex].revision += 1
-    }
-
-    func applyResourceProfileDefaults() {
-        resourceCacheCapacity = profile.defaultCacheCapacity.formatted()
-        saveResourceSettings()
-    }
-
-    func saveResourceSettings() {
+    func savePackageSettings() {
         do {
             guard let coordinator else { return }
             let settings = ClassifierSettings(
-                resourceProfile: profile,
-                cacheCapacity: try positiveInteger(resourceCacheCapacity, label: "Local cache capacity"),
-                allowIdleWork: allowIdleWork,
-                allowBackgroundSync: allowBackgroundSync,
-                packageUpdateMode: packageUpdateMode
+                packageUpdateMode: packageUpdateMode,
+                localLLM: llmSettings
             )
             try coordinator.updateSettings(settings)
             refreshLocalState()
@@ -3972,40 +1926,24 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
-    func storeCurrentTrainingExample() {
+    /// Persists the local-model settings and rebuilds the engine so every knob
+    /// (model file, context, sampling, decline, thresholds) applies immediately.
+    func saveLocalLLMSettings(_ updated: LocalLLMSettings) {
+        guard let coordinator else { return }
         do {
-            guard let coordinator, result != nil else { throw AppInputError.noCurrentDecision }
-            let entry = currentManualEntry()
-            _ = try coordinator.recordLocalTrainingExample(
-                evidence: entry,
-                positiveLeafTagIDs: splitTagList(trainingPositiveTags),
-                negativeLeafTagIDs: splitTagList(trainingNegativeTags)
+            llmSettings = updated
+            let settings = ClassifierSettings(
+                packageUpdateMode: packageUpdateMode,
+                localLLM: updated
             )
+            try coordinator.updateSettings(settings)
+            coordinator.setClassificationOptions(maximumTags: updated.maximumTags, houseRules: updated.houseRules)
+            installLocalLLMEngine(coordinator: coordinator)
             refreshLocalState()
-            trainingNotice = "Local label stored. Retrain when you are ready to apply the retained corpus."
             issue = nil
         } catch {
-            trainingNotice = nil
             issue = error.localizedDescription
         }
-    }
-
-    func retrainLocalModel() {
-        do {
-            guard let coordinator else { return }
-            let epochs = try positiveInteger(trainingEpochs, label: "Training epochs")
-            let run = try coordinator.retrainLocalModel(epochs: epochs)
-            refreshLocalState()
-            trainingNotice = "Rebuilt the legacy correction layer from \(run.exampleCount) explicit label\(run.exampleCount == 1 ? "" : "s") in \(run.epochs) pass\(run.epochs == 1 ? "" : "es"). Train a workspace local model to update an active classifier type."
-            issue = nil
-        } catch {
-            trainingNotice = nil
-            issue = error.localizedDescription
-        }
-    }
-
-    func localTrainingFeatureCount() -> Int {
-        localState?.personalModel.state.values.reduce(0) { $0 + $1.count } ?? 0
     }
 
     func setBackupOwnerCode() {
@@ -4045,8 +1983,8 @@ final class VaultClassifierViewModel: ObservableObject {
             try coordinator?.updateLocalBackupConfiguration(configuration)
             refreshLocalState()
             backupNotice = backupEnabled
-                ? "Private local snapshots will be written after each successful model rebuild."
-                : "Automatic local backups are off. Existing snapshots were left untouched."
+                ? "Private local snapshots are enabled. Use Create backup now when you want a new snapshot."
+                : "Local backups are off. Existing snapshots were left untouched."
             issue = nil
         } catch {
             backupNotice = nil
@@ -4067,27 +2005,11 @@ final class VaultClassifierViewModel: ObservableObject {
     }
 
     private func loadResourceSettings(from settings: ClassifierSettings) {
-        profile = settings.resourceProfile
-        resourceCacheCapacity = settings.cacheCapacity.formatted()
-        allowIdleWork = settings.allowIdleWork
-        allowBackgroundSync = settings.allowBackgroundSync
         packageUpdateMode = settings.packageUpdateMode
-    }
-
-    private func currentManualEntry() -> EntryEvidence {
-        let source = sourceID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let material = "\(source)\u{1F}\(surface.rawValue)\u{1F}\(title)"
-        let digest = SHA256.hash(data: Data(material.utf8))
-            .prefix(16)
-            .map { String(format: "%02x", $0) }
-            .joined()
-        return .init(
-            platform: manualPlatformID,
-            entryID: "manual-\(digest)",
-            sourceID: source.isEmpty ? nil : source,
-            surface: surface,
-            evidence: .init(title: title),
-            policyIDs: policies.map(\.id)
+        llmSettings = settings.localLLM
+        coordinator?.setClassificationOptions(
+            maximumTags: settings.localLLM.maximumTags,
+            houseRules: settings.localLLM.houseRules
         )
     }
 
@@ -4197,32 +2119,11 @@ final class VaultClassifierViewModel: ObservableObject {
     /// stable identifiers stay in native storage.
     func webSnapshot() -> [String: Any] {
         let state = localState ?? coordinator?.snapshot()
-        let training = state?.trainingCorpus
         let backup = state?.backupConfiguration
         let notices: [String: Any] = [
-            "training": trainingNotice ?? NSNull(),
             "backup": backupNotice ?? NSNull(),
         ]
-        let inspectCatalog = state?.workspaceCatalog ?? .starter()
-        let manualBinding = inspectCatalog.bindings.first(where: { $0.id == manualPlatformID })
-        let manualClassifierType = manualBinding.flatMap { binding in
-            binding.activeClassifierTypeID.flatMap { typeID in
-                inspectCatalog.classifierTypes.first(where: { $0.id == typeID })
-            }
-        }
-        let manualLLMAvailable = CollectionPlatformRegistry.definition(for: manualPlatformID)?.supportsLLMAssist == true &&
-            manualClassifierType?.llmAssistConfiguration.flatMap { configuration in
-                inspectCatalog.providerProfiles.contains(where: { $0.id == configuration.providerProfileID })
-            } == true
-        let inspect: [String: Any] = [
-            "title": title,
-            "sourceID": sourceID,
-            "surface": surface.rawValue,
-            "platformID": manualPlatformID,
-            "llmAvailable": manualLLMAvailable,
-            "llmRunning": providerClassificationRunning,
-            "result": result.map(webResult) ?? NSNull(),
-        ]
+        let catalog = state?.workspaceCatalog ?? .starter()
         let policyItems: [[String: Any]] = policies.map { policy in
             [
                 "id": policy.id,
@@ -4244,48 +2145,23 @@ final class VaultClassifierViewModel: ObservableObject {
                 "pageAction": editingPageAction.rawValue,
             ] as [String: Any],
         ]
-        let recentLedgerEntries = state.map { Array($0.ledger.suffix(12).reversed()) } ?? []
-        let ledger: [[String: Any]] = recentLedgerEntries.map { entry in
-            [
-                "id": entry.id.uuidString,
-                "cacheKey": entry.cacheKey,
-                "modelVersion": entry.modelVersion,
-                "hasCorrection": entry.correction != nil,
-            ]
-        }
-        let activity: [String: Any] = [
-            "cacheCount": state?.cache.count ?? 0,
-            "cacheCapacity": state?.settings.cacheCapacity ?? 0,
-            "ledgerCount": state?.ledger.count ?? 0,
-            "correctionCount": state?.ledger.filter { $0.correction != nil }.count ?? 0,
-            "settings": [
-                "profile": profile.rawValue,
-                "cacheCapacity": resourceCacheCapacity,
-                "allowIdleWork": allowIdleWork,
-                "allowBackgroundSync": allowBackgroundSync,
-                "packageUpdateMode": packageUpdateMode.rawValue,
+        let settingsPayload: [String: Any] = [
+            "packageUpdateMode": packageUpdateMode.rawValue,
+            "localLLM": [
+                    "modelFileName": llmSettings.modelFileName ?? "",
+                    "engineEnabled": llmSettings.engineEnabled,
+                    "contextTokens": llmSettings.contextTokens,
+                    "batchTokens": llmSettings.batchTokens,
+                    "gpuOffload": llmSettings.gpuOffload,
+                    "maximumOutputTokens": llmSettings.maximumOutputTokens,
+                    "temperature": llmSettings.temperature,
+                    "allowDecline": llmSettings.allowDecline,
+                    "maximumTags": llmSettings.maximumTags,
+                    "confidenceThresholds": llmSettings.confidenceThresholds,
+                    "houseRules": llmSettings.houseRules,
+                    "engineStatus": llmEngineStatus,
+                    "availableModels": VaultLocalLLMEngine.availableModelFiles(),
             ] as [String: Any],
-            "ledger": ledger,
-        ]
-        let lastRun: Any
-        if let run = training?.lastRun {
-            lastRun = [
-                "exampleCount": run.exampleCount,
-                "labelUpdateCount": run.labelUpdateCount,
-                "epochs": run.epochs,
-                "taxonomyVersion": run.taxonomyVersion,
-            ] as [String: Any]
-        } else {
-            lastRun = NSNull()
-        }
-        let trainingPayload: [String: Any] = [
-            "labelCount": training?.examples.count ?? 0,
-            "capacity": state?.settings.cacheCapacity ?? 0,
-            "featureCount": localTrainingFeatureCount(),
-            "positiveTags": trainingPositiveTags,
-            "negativeTags": trainingNegativeTags,
-            "epochs": trainingEpochs,
-            "lastRun": lastRun,
         ]
         let backupPayload: [String: Any] = [
             "hasOwnerCode": hasBackupOwnerCode,
@@ -4294,7 +2170,6 @@ final class VaultClassifierViewModel: ObservableObject {
             "directory": backupDirectory,
             "savedEnabled": backup?.isEnabled ?? false,
         ]
-        let catalog = inspectCatalog
         var assets = [String: Any]()
         assets["trees"] = catalog.trees.map { tree in
                 ["id": tree.id, "name": tree.name, "revision": tree.revision, "nodes": tree.nodes.enumerated().map { index, node -> [String: Any] in
@@ -4307,29 +2182,11 @@ final class VaultClassifierViewModel: ObservableObject {
                     "id": dataset.id,
                     "name": dataset.name,
                     "revision": dataset.revision,
-                    "creatorClassifications": dataset.creatorClassifications.map { classification -> [String: Any] in
-                        [
-                            "id": classification.id,
-                            "classifierTypeID": classification.classifierTypeID,
-                            "creatorID": classification.creatorID,
-                            "creatorName": classification.creatorName,
-                            "platformID": classification.platformID,
-                            "treeID": classification.treeID,
-                            "treeRevision": classification.treeRevision,
-                            "tags": classification.tagIDs,
-                            "negativeTags": classification.negativeTagIDs,
-                            "origin": classification.origin.rawValue,
-                            "review": classification.review.rawValue,
-                            "updatedAtMilliseconds": classification.updatedAtMilliseconds,
-                        ] as [String: Any]
-                    },
                     "collectedCreators": webCollectedCreators(dataset.collectedEntries),
                 ] as [String: Any]
             }
         assets["models"] = catalog.models.map { model in
                 let owningType = catalog.classifierTypes.first(where: { $0.id == model.classifierTypeID })
-                let pendingCount = owningType.map { catalog.pendingLocalModelDecisions(for: $0).count } ?? 0
-                let needsTraining = owningType.map { catalog.localModelNeedsTraining(for: $0) } ?? true
                 return [
                     "id": model.id,
                     "name": model.name,
@@ -4338,36 +2195,16 @@ final class VaultClassifierViewModel: ObservableObject {
                     "treeRevision": model.treeRevision,
                     "datasetID": model.datasetID,
                     "datasetRevision": model.datasetRevision,
-                    "platformID": model.trainingPlatformID ?? NSNull(),
-                    "platformIDs": model.effectiveTrainingPlatformIDs,
+                    "platformID": owningType?.applicablePlatformID ?? NSNull(),
                     "baseEmbeddingID": model.baseEmbeddingID?.rawValue ?? NSNull(),
                     "version": model.version,
-                    "ready": model.isReady,
-                    "incorporatedDecisions": model.incorporatedDecisionIDs.count,
-                    "pendingDecisions": pendingCount,
-                    "needsTraining": needsTraining,
-                    "training": model.embeddedTrainingReport.map { report in
-                        [
-                            "examples": report.exampleCount,
-                            "updates": report.labelUpdateCount,
-                            "epochs": report.epochs,
-                            "loss": report.meanBinaryCrossEntropy,
-                            "decisionsFolded": report.decisionsFolded,
-                            "incorporatedDecisions": report.incorporatedDecisions,
-                        ] as [String: Any]
-                    } ?? NSNull(),
                 ] as [String: Any]
             }
         assets["classifierTypes"] = catalog.classifierTypes.map { classifierType in
-                let classificationStatus = llmClassificationStatus(
-                    in: catalog,
-                    classifierType: classifierType
-                )
                 return [
                     "id": classifierType.id,
                     "name": classifierType.name,
                     "order": classifierType.order,
-                    "platformLocked": classifierType.platformLocked,
                     "treeID": classifierType.treeID,
                     "treeRevision": classifierType.treeRevision,
                     "datasetID": classifierType.datasetID,
@@ -4377,8 +2214,6 @@ final class VaultClassifierViewModel: ObservableObject {
                         [
                             "id": model.id,
                             "name": model.name,
-                            "ready": catalog.readyLocalModel(for: classifierType) != nil,
-                            "needsTraining": catalog.localModelNeedsTraining(for: classifierType),
                         ] as [String: Any]
                     } ?? NSNull(),
                     "selectedLLMProviderProfileID": classifierType.selectedLLMProviderProfileID ?? NSNull(),
@@ -4404,18 +2239,13 @@ final class VaultClassifierViewModel: ObservableObject {
                             "dailyTokenLimit": configuration.dailyTokenLimit,
                             "maximumOutputTokensPerRequest": configuration.maximumOutputTokensPerRequest,
                             "extraDirection": configuration.extraDirection,
-                            "dailyTokensUsed": tokensUsedToday(in: catalog, classifierTypeID: classifierType.id),
                             "classificationRequestsPerMinute": configuration.classificationRequestsPerMinute,
-                            "queuedCreatorCount": classificationStatus.queuedCreatorCount,
-                            "completedToday": classificationStatus.completedToday,
-                            "lastClassificationOutcome": classificationStatus.lastOutcome ?? NSNull(),
                             "batchSize": configuration.batchSize,
                             "officialContentEvidenceCount": configuration.officialContentEvidenceCount,
                             "maximumTagCount": configuration.maximumTagCount,
                             "restrictToLeafTags": configuration.restrictToLeafTags,
                             "webSearchMode": configuration.webSearchMode.rawValue,
                             "webSearchProviderProfileID": configuration.webSearchProviderProfileID ?? NSNull(),
-                            "isActive": configuration.isActive,
                         ] as [String: Any]
                     } ?? NSNull(),
                 ] as [String: Any]
@@ -4483,7 +2313,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 })
         assets["bindings"] = catalog.bindings.map { binding in
                 let definition = CollectionPlatformRegistry.definition(for: binding.id)
-                return ["id": binding.id, "name": binding.name, "browser": binding.browser, "treeID": binding.treeID, "datasetID": binding.datasetID, "activeClassifierTypeID": binding.activeClassifierTypeID ?? NSNull(), "activeModelID": binding.activeModelID ?? NSNull(), "policyID": binding.policyID ?? NSNull(), "collectionEnabled": binding.collectionEnabled, "sourceKind": definition?.sourceKind.rawValue ?? CollectionSourceKind.creator.rawValue, "supportsLocalModel": definition?.supportsLocalModel ?? false, "supportsLLMAssist": definition?.supportsLLMAssist ?? false] as [String: Any]
+                return ["id": binding.id, "name": binding.name, "browser": binding.browser, "treeID": binding.treeID, "datasetID": binding.datasetID, "activeClassifierTypeID": binding.activeClassifierTypeID ?? NSNull(), "policyID": binding.policyID ?? NSNull(), "collectionEnabled": binding.collectionEnabled, "sourceKind": definition?.sourceKind.rawValue ?? CollectionSourceKind.creator.rawValue, "supportsLocalModel": definition?.supportsLocalModel ?? false, "supportsLLMAssist": definition?.supportsLLMAssist ?? false] as [String: Any]
             }
         assets["collectionPlatforms"] = CollectionPlatformRegistry.definitions.map { definition in
                 ["id": definition.id, "name": definition.name, "browser": definition.browser, "sourceKind": definition.sourceKind.rawValue, "collectorAvailable": definition.collectorAvailable, "supportsLocalModel": definition.supportsLocalModel, "supportsLLMAssist": definition.supportsLLMAssist, "apiProviderType": definition.apiProviderType?.rawValue ?? NSNull()] as [String: Any]
@@ -4510,13 +2340,11 @@ final class VaultClassifierViewModel: ObservableObject {
             "workspace": workspace.rawValue,
             "issue": issue ?? NSNull(),
             "notices": notices,
-            "inspect": inspect,
             "policies": policiesPayload,
-            "activity": activity,
-            "training": trainingPayload,
+            "settings": settingsPayload,
             "backup": backupPayload,
             "assets": assets,
-            "trash": inspectCatalog.trash.map { entry in
+            "trash": catalog.trash.map { entry in
                 [
                     "id": entry.id,
                     "kind": entry.kind.rawValue,
@@ -4578,8 +2406,6 @@ final class VaultClassifierViewModel: ObservableObject {
                 )
             case "reorderClassifierTypes":
                 reorderClassifierTypes(orderedIDs: try webStringArray(data, key: "orderedIDs", limit: 256, elementLimit: 256))
-            case "lockClassifierTypePlatform":
-                lockClassifierTypePlatform(typeID: try webString(data, key: "typeID", limit: 256))
             case "configureClassifierType":
                 configureClassifierType(
                     typeID: try webString(data, key: "typeID", limit: 256),
@@ -4625,11 +2451,6 @@ final class VaultClassifierViewModel: ObservableObject {
                 )
             case "probeProviderModelCatalog":
                 probeProviderModelCatalog(profileID: try webString(data, key: "profileID", limit: 128))
-            case "setLLMAssistActive":
-                setLLMAssistActive(
-                    typeID: try webString(data, key: "typeID", limit: 256),
-                    isActive: data["isActive"] as? Bool ?? false
-                )
             case "confirmDeleteProviderProfile":
                 confirmProviderProfileDeletion(profileID: try webString(data, key: "profileID", limit: 128))
             case "renameLocalModel":
@@ -4641,8 +2462,6 @@ final class VaultClassifierViewModel: ObservableObject {
                     modelID: try webString(data, key: "modelID", limit: 256),
                     baseEmbeddingID: try webOptionalString(data, key: "baseEmbeddingID", limit: 128)
                 )
-            case "trainLocalModel":
-                trainLocalModel(modelID: try webString(data, key: "modelID", limit: 256))
             case "renameTree":
                 renameTree(treeID: try webString(data, key: "treeID", limit: 256), name: try webString(data, key: "name", limit: 128))
             case "deleteTree":
@@ -4675,45 +2494,6 @@ final class VaultClassifierViewModel: ObservableObject {
                 disconnectTag(treeID: try webString(data, key: "treeID", limit: 256), nodeID: try webString(data, key: "nodeID", limit: 256))
             case "deleteTag":
                 deleteTag(treeID: try webString(data, key: "treeID", limit: 256), nodeID: try webString(data, key: "nodeID", limit: 256))
-            case "recordCreatorClassification":
-                recordCreatorClassification(
-                    typeID: try webString(data, key: "typeID", limit: 256),
-                    creatorKey: try webString(data, key: "creatorKey", limit: 768),
-                    tagIDs: try webStringArray(data, key: "tagIDs", limit: CreatorClassificationRecord.maximumTagIDs, elementLimit: 256),
-                    negativeTagIDs: try webStringArray(data, key: "negativeTagIDs", limit: CreatorClassificationRecord.maximumTagIDs, elementLimit: 256)
-                )
-                // The WebView already moved the single card optimistically. Re-pushing
-                // the whole snapshot would force a full re-render of the decision list,
-                // so persist without echoing; the next authoritative snapshot reconciles.
-                return false
-            case "classify":
-                title = try webString(data, key: "title", limit: 4_096)
-                sourceID = try webString(data, key: "sourceID", limit: 1_024)
-                let platformID = try webString(data, key: "platformID", limit: 64)
-                guard localState?.workspaceCatalog.bindings.contains(where: { $0.id == platformID }) == true else {
-                    throw WebBridgeInputError.invalidChoice("classification platform")
-                }
-                manualPlatformID = platformID
-                let surfaceValue = try webString(data, key: "surface", limit: 16)
-                guard let value = EntrySurface(rawValue: surfaceValue) else { throw WebBridgeInputError.invalidChoice("surface") }
-                surface = value
-                classify()
-            case "classifyWithLLM":
-                title = try webString(data, key: "title", limit: 4_096)
-                sourceID = try webString(data, key: "sourceID", limit: 1_024)
-                let platformID = try webString(data, key: "platformID", limit: 64)
-                guard localState?.workspaceCatalog.bindings.contains(where: { $0.id == platformID }) == true else {
-                    throw WebBridgeInputError.invalidChoice("classification platform")
-                }
-                manualPlatformID = platformID
-                let surfaceValue = try webString(data, key: "surface", limit: 16)
-                guard let value = EntrySurface(rawValue: surfaceValue) else { throw WebBridgeInputError.invalidChoice("surface") }
-                surface = value
-                classifyCurrentEntryWithLLM()
-            case "markCorrection":
-                let raw = try webString(data, key: "correction", limit: 32)
-                guard let correction = UserCorrection(rawValue: raw) else { throw WebBridgeInputError.invalidChoice("correction") }
-                markCurrentResult(correction)
             case "newPolicy":
                 startNewPolicy()
             case "selectPolicy":
@@ -4735,29 +2515,38 @@ final class VaultClassifierViewModel: ObservableObject {
                 savePolicy()
             case "deletePolicy":
                 deleteEditingPolicy()
-            case "clearCorrection":
-                let raw = try webString(data, key: "id", limit: 64)
-                guard let identifier = UUID(uuidString: raw) else { throw WebBridgeInputError.invalidChoice("decision") }
-                clearCorrection(identifier)
-            case "saveResourceSettings":
-                let rawProfile = try webString(data, key: "profile", limit: 32)
+            case "savePackageSettings":
                 let rawMode = try webString(data, key: "packageUpdateMode", limit: 32)
-                guard let selectedProfile = ResourceProfile(rawValue: rawProfile), let updateMode = PackageUpdateMode(rawValue: rawMode) else {
-                    throw WebBridgeInputError.invalidChoice("resource setting")
+                guard let updateMode = PackageUpdateMode(rawValue: rawMode) else {
+                    throw WebBridgeInputError.invalidChoice("package update mode")
                 }
-                profile = selectedProfile
-                resourceCacheCapacity = try webString(data, key: "cacheCapacity", limit: 16)
-                allowIdleWork = try webBool(data, key: "allowIdleWork")
-                allowBackgroundSync = try webBool(data, key: "allowBackgroundSync")
                 packageUpdateMode = updateMode
-                saveResourceSettings()
-            case "storeTraining":
-                trainingPositiveTags = try webString(data, key: "positiveTags", limit: 4_096)
-                trainingNegativeTags = try webString(data, key: "negativeTags", limit: 4_096)
-                storeCurrentTrainingExample()
-            case "retrain":
-                trainingEpochs = try webString(data, key: "epochs", limit: 16)
-                retrainLocalModel()
+                savePackageSettings()
+            case "saveLocalLLMSettings":
+                let thresholds = try ["confidenceBand2", "confidenceBand3", "confidenceBand4", "confidenceBand5"].map { key -> Double in
+                    let raw = try webString(data, key: key, limit: 16)
+                    guard let value = Double(raw), value > 0, value < 1 else {
+                        throw WebBridgeInputError.invalidChoice("confidence threshold")
+                    }
+                    return value
+                }
+                let rawTemperature = try webString(data, key: "temperature", limit: 16)
+                guard let temperature = Double(rawTemperature), temperature >= 0 else {
+                    throw WebBridgeInputError.invalidChoice("temperature")
+                }
+                saveLocalLLMSettings(LocalLLMSettings(
+                    modelFileName: try webString(data, key: "modelFileName", limit: 255),
+                    engineEnabled: try webBool(data, key: "engineEnabled"),
+                    contextTokens: try positiveInteger(try webString(data, key: "contextTokens", limit: 16), label: "Context tokens"),
+                    batchTokens: try positiveInteger(try webString(data, key: "batchTokens", limit: 16), label: "Batch tokens"),
+                    gpuOffload: try webBool(data, key: "gpuOffload"),
+                    maximumOutputTokens: try positiveInteger(try webString(data, key: "maximumOutputTokens", limit: 16), label: "Output tokens"),
+                    temperature: temperature,
+                    allowDecline: try webBool(data, key: "allowDecline"),
+                    maximumTags: try positiveInteger(try webString(data, key: "maximumTags", limit: 16), label: "Maximum tags"),
+                    confidenceThresholds: thresholds,
+                    houseRules: try webString(data, key: "houseRules", limit: 4_000)
+                ))
             case "setBackupOwnerCode":
                 backupOwnerCode = try webString(data, key: "ownerCode", limit: 512)
                 setBackupOwnerCode()
@@ -4777,25 +2566,6 @@ final class VaultClassifierViewModel: ObservableObject {
             issue = error.localizedDescription
         }
         return true
-    }
-
-    private func webResult(_ value: ClassificationResult) -> [String: Any] {
-        [
-            "strongestAction": value.strongestAction.rawValue,
-            "threshold": value.threshold,
-            "leafTags": value.selectedLeafTagIDs,
-            "ancestorTags": value.ancestorTagIDs,
-            "scores": Array(value.scores.prefix(4).map { score in
-                ["tag": score.tagID, "score": score.finalScore] as [String: Any]
-            }),
-            "decisions": value.decisions.map { decision in
-                [
-                    "policyID": decision.policyID,
-                    "action": decision.action.rawValue,
-                    "explanation": decision.explanation,
-                ] as [String: Any]
-            },
-        ]
     }
 
     /// The primary (creator-level) list carried in every snapshot: one row per
@@ -4976,13 +2746,11 @@ final class VaultClassifierViewModel: ObservableObject {
 
 private enum AppInputError: Error, LocalizedError {
     case invalidNumber(String)
-    case noCurrentDecision
     case backupLocked
 
     var errorDescription: String? {
         switch self {
         case .invalidNumber(let label): return "\(label) must be a positive whole number."
-        case .noCurrentDecision: return "Classify an entry before adding it to the local training corpus."
         case .backupLocked: return "Enter the local backup owner code before changing backup mode."
         }
     }

@@ -27,6 +27,7 @@ public actor VaultLocalLLMEngine: OnDeviceLLM {
     private let context: OpaquePointer
     private let vocab: OpaquePointer
     private let contextTokenLimit: Int
+    private let configuration: LocalLLMSettings
     private var cachedTokens: [llama_token] = []
 
     private static let backendReady: Void = llama_backend_init()
@@ -43,17 +44,17 @@ public actor VaultLocalLLMEngine: OnDeviceLLM {
         }
     }
 
-    public init(modelPath: String, contextTokens: UInt32 = 4_096) throws {
+    public init(modelPath: String, configuration: LocalLLMSettings = LocalLLMSettings()) throws {
         _ = Self.backendReady
         var modelParams = llama_model_default_params()
-        modelParams.n_gpu_layers = 999
+        modelParams.n_gpu_layers = configuration.gpuOffload ? 999 : 0
         guard FileManager.default.fileExists(atPath: modelPath),
               let model = llama_model_load_from_file(modelPath, modelParams) else {
             throw EngineError.modelLoadFailed(modelPath)
         }
         var contextParams = llama_context_default_params()
-        contextParams.n_ctx = contextTokens
-        contextParams.n_batch = 512
+        contextParams.n_ctx = UInt32(configuration.contextTokens)
+        contextParams.n_batch = UInt32(configuration.batchTokens)
         guard let context = llama_init_from_model(model, contextParams) else {
             llama_model_free(model)
             throw EngineError.contextCreationFailed
@@ -61,7 +62,8 @@ public actor VaultLocalLLMEngine: OnDeviceLLM {
         self.model = model
         self.context = context
         self.vocab = llama_model_get_vocab(model)
-        self.contextTokenLimit = Int(contextTokens)
+        self.contextTokenLimit = configuration.contextTokens
+        self.configuration = configuration
         self.modelVersion = "llamacpp/" + (modelPath as NSString).lastPathComponent
     }
 
@@ -71,7 +73,7 @@ public actor VaultLocalLLMEngine: OnDeviceLLM {
     }
 
     public func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult {
-        guard let grammar = Self.nameGrammar(allowed: request.allowedTagNames) else {
+        guard let grammar = Self.nameGrammar(allowed: request.allowedTagNames, allowDecline: configuration.allowDecline) else {
             // No usable tag names → definitively empty, matching the stub's shape.
             return LLMClassificationResult(tags: [], unknownTerms: [])
         }
@@ -111,20 +113,26 @@ public actor VaultLocalLLMEngine: OnDeviceLLM {
         let sampler = llama_sampler_chain_init(llama_sampler_chain_default_params())
         defer { llama_sampler_free(sampler) }
         llama_sampler_chain_add(sampler, llama_sampler_init_grammar(vocab, grammar, "root"))
-        llama_sampler_chain_add(sampler, llama_sampler_init_greedy())
+        if configuration.temperature > 0 {
+            llama_sampler_chain_add(sampler, llama_sampler_init_temp(Float(configuration.temperature)))
+            llama_sampler_chain_add(sampler, llama_sampler_init_dist(0xC1A5))
+        } else {
+            llama_sampler_chain_add(sampler, llama_sampler_init_greedy())
+        }
 
         // Confidence is measured among the legal first moves: the distinct
         // first tokens of the allowed names. Renormalizing over that set (not
         // the full vocabulary) is what separates "certain" from "guessing" —
         // full-vocabulary mass on structurally plausible but grammar-illegal
         // tokens would otherwise dilute every probability.
-        let candidateFirstTokens = Set(
-            (request.allowedTagNames + [Self.declineLiteral]).compactMap { try? tokenize($0, addSpecial: false).first }
-        )
+        let candidateNames = configuration.allowDecline
+            ? request.allowedTagNames + [Self.declineLiteral]
+            : request.allowedTagNames
+        let candidateFirstTokens = Set(candidateNames.compactMap { try? tokenize($0, addSpecial: false).first })
 
         var generated = ""
         var firstTokenProbability: Double?
-        for step in 0..<16 {
+        for step in 0..<configuration.maximumOutputTokens {
             let token = llama_sampler_sample(sampler, context, -1)
             if llama_vocab_is_eog(vocab, token) { break }
             if step == 0 { firstTokenProbability = probability(of: token, among: candidateFirstTokens) }
@@ -147,7 +155,7 @@ public actor VaultLocalLLMEngine: OnDeviceLLM {
             // output) resolves to a definitive empty classification.
             return LLMClassificationResult(tags: [], unknownTerms: [])
         }
-        let confidence = Self.confidence(fromProbability: firstTokenProbability ?? 0)
+        let confidence = Self.confidence(fromProbability: firstTokenProbability ?? 0, thresholds: configuration.confidenceThresholds)
         return LLMClassificationResult(tags: [LLMTagScore(name: name, confidence: confidence)], unknownTerms: [])
     }
 
@@ -159,10 +167,10 @@ public actor VaultLocalLLMEngine: OnDeviceLLM {
     /// legitimately contains a tag with this exact name, that tag wins.
     static let declineLiteral = "none"
 
-    /// GBNF grammar admitting exactly one of the allowed tag names, or the
-    /// decline literal. Names with embedded newlines cannot be expressed as a
-    /// GBNF literal and are skipped.
-    static func nameGrammar(allowed: [String]) -> String? {
+    /// GBNF grammar admitting exactly one of the allowed tag names, plus the
+    /// decline literal when enabled. Names with embedded newlines cannot be
+    /// expressed as a GBNF literal and are skipped.
+    static func nameGrammar(allowed: [String], allowDecline: Bool = true) -> String? {
         var literals = allowed
             .filter { !$0.isEmpty && !$0.contains("\n") && !$0.contains("\r") }
             .map { name in
@@ -171,22 +179,18 @@ public actor VaultLocalLLMEngine: OnDeviceLLM {
                     .replacingOccurrences(of: "\"", with: "\\\"") + "\""
             }
         guard !literals.isEmpty else { return nil }
-        if !allowed.contains(declineLiteral) {
+        if allowDecline, !allowed.contains(declineLiteral) {
             literals.append("\"\(declineLiteral)\"")
         }
         return "root ::= " + literals.joined(separator: " | ")
     }
 
-    /// Maps the first chosen token's raw softmax probability onto the discrete
-    /// 1–5 scale used by `ScoredTag`.
-    static func confidence(fromProbability p: Double) -> Int {
-        switch p {
-        case 0.85...: return 5
-        case 0.60..<0.85: return 4
-        case 0.40..<0.60: return 3
-        case 0.20..<0.40: return 2
-        default: return 1
-        }
+    /// Maps the first chosen token's renormalized softmax probability onto the
+    /// discrete 1–5 scale via the configured ascending thresholds (2, 3, 4, 5).
+    static func confidence(fromProbability p: Double, thresholds: [Double] = [0.20, 0.40, 0.60, 0.85]) -> Int {
+        var level = 1
+        for threshold in thresholds.sorted() where p >= threshold { level += 1 }
+        return min(5, level)
     }
 
     // MARK: - llama.cpp plumbing
@@ -226,23 +230,41 @@ public actor VaultLocalLLMEngine: OnDeviceLLM {
 
     // MARK: - Model discovery
 
-    /// The model file to load: `ADAMANCIA_VAULT_LLM_MODEL`, else the first
-    /// *.gguf (sorted) under `<app support>/<environment dir>/models/`.
+    /// The directory scanned for user-provided model files.
+    public nonisolated static func modelsDirectory() -> URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent(VaultRuntimeEnvironment.current.classifierSupportDirectoryName, isDirectory: true)
+            .appendingPathComponent("models", isDirectory: true)
+    }
+
+    /// Every *.gguf available for the settings picker, sorted by name.
+    public nonisolated static func availableModelFiles() -> [String] {
+        guard let directory = modelsDirectory(),
+              let entries = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else {
+            return []
+        }
+        return entries
+            .filter { $0.pathExtension.lowercased() == "gguf" }
+            .map(\.lastPathComponent)
+            .sorted()
+    }
+
+    /// The model file to load. A configured file name wins; then the
+    /// `ADAMANCIA_VAULT_LLM_MODEL` environment variable; then the first
+    /// available file under `<app support>/<environment dir>/models/`.
     public nonisolated static func defaultModelPath(
+        preferredFileName: String? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> String? {
+        if let preferredFileName, !preferredFileName.isEmpty, !preferredFileName.contains("/"),
+           let directory = modelsDirectory() {
+            let candidate = directory.appendingPathComponent(preferredFileName).path
+            if FileManager.default.fileExists(atPath: candidate) { return candidate }
+        }
         if let explicit = environment["ADAMANCIA_VAULT_LLM_MODEL"], !explicit.isEmpty {
             return FileManager.default.fileExists(atPath: explicit) ? explicit : nil
         }
-        guard let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            return nil
-        }
-        let modelsDirectory = support
-            .appendingPathComponent(VaultRuntimeEnvironment.current.classifierSupportDirectoryName, isDirectory: true)
-            .appendingPathComponent("models", isDirectory: true)
-        let candidates = (try? FileManager.default.contentsOfDirectory(at: modelsDirectory, includingPropertiesForKeys: nil))?
-            .filter { $0.pathExtension.lowercased() == "gguf" }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
-        return candidates?.first?.path
+        guard let first = availableModelFiles().first, let directory = modelsDirectory() else { return nil }
+        return directory.appendingPathComponent(first).path
     }
 }
