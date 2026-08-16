@@ -188,133 +188,100 @@ public enum PresentationAction: String, Codable, Sendable, CaseIterable, Compara
     public static func < (lhs: PresentationAction, rhs: PresentationAction) -> Bool { lhs.rank < rhs.rank }
 }
 
-public enum ClassificationEvidenceState: String, Codable, Equatable, Sendable {
-    case sufficient
-    case limited
-    case invalid
-}
+/// User-tunable configuration for the in-process on-device LLM (the final
+/// Phase-0 contract engine). Every knob is clamped into a safe range at init,
+/// so hand-edited or stale persisted values can never produce an unusable
+/// engine. Basic fields sit in the settings panel; the rest live behind the
+/// advanced disclosure.
+public struct LocalLLMSettings: Codable, Equatable, Sendable {
+    /// Selected model file inside `<support>/models/` (nil = automatic: the
+    /// first *.gguf alphabetically, or `ADAMANCIA_VAULT_LLM_MODEL`).
+    public var modelFileName: String?
+    /// Off = classification falls back to the deterministic stub (debugging).
+    public var engineEnabled: Bool
+    /// llama context window; bounds the static prefix + suffix + output.
+    public var contextTokens: Int
+    /// Logical batch size for prompt prefill.
+    public var batchTokens: Int
+    /// Whether to offload all layers to the GPU (off = CPU-only inference).
+    public var gpuOffload: Bool
+    /// Hard cap on generated tokens per decision (the contract needs ~2).
+    public var maximumOutputTokens: Int
+    /// 0 = greedy (the measured contract); >0 samples with this temperature.
+    public var temperature: Double
+    /// Whether the grammar includes the reserved "none" decline literal.
+    public var allowDecline: Bool
+    /// Most tags a single video may keep after mapping (pipeline cap).
+    public var maximumTags: Int
+    /// Ascending probability thresholds mapping the chosen token's renormalized
+    /// softmax onto confidence 2, 3, 4, 5 (below the first threshold = 1).
+    public var confidenceThresholds: [Double]
+    /// Free-text tagging preferences appended to the cached static prefix.
+    public var houseRules: String
 
-public struct TagScore: Codable, Equatable, Sendable, Identifiable {
-    public var tagID: String
-    public var directScore: Double
-    public var sourceScore: Double?
-    public var finalScore: Double
-
-    public var id: String { tagID }
-
-    public init(tagID: String, directScore: Double, sourceScore: Double?, finalScore: Double) {
-        self.tagID = tagID
-        self.directScore = directScore
-        self.sourceScore = sourceScore
-        self.finalScore = finalScore
-    }
-}
-
-public struct PolicyDecision: Codable, Equatable, Sendable, Identifiable {
-    public var policyID: String
-    public var action: PresentationAction
-    public var matchedTagIDs: [String]
-    public var explanation: String
-
-    public var id: String { policyID }
-
-    public init(policyID: String, action: PresentationAction, matchedTagIDs: [String], explanation: String) {
-        self.policyID = policyID
-        self.action = action
-        self.matchedTagIDs = matchedTagIDs
-        self.explanation = explanation
-    }
-}
-
-public struct ClassificationResult: Codable, Equatable, Sendable {
-    public var entryID: String?
-    public var sourceID: String?
-    public var surface: EntrySurface
-    public var evidenceState: ClassificationEvidenceState
-    public var threshold: Double
-    public var selectedLeafTagIDs: [String]
-    public var ancestorTagIDs: [String]
-    public var scores: [TagScore]
-    public var decisions: [PolicyDecision]
-    public var packageID: String
-    public var modelVersion: String
-
-    public init(entryID: String?, sourceID: String?, surface: EntrySurface, evidenceState: ClassificationEvidenceState, threshold: Double, selectedLeafTagIDs: [String], ancestorTagIDs: [String], scores: [TagScore], decisions: [PolicyDecision], packageID: String, modelVersion: String) {
-        self.entryID = entryID
-        self.sourceID = sourceID
-        self.surface = surface
-        self.evidenceState = evidenceState
-        self.threshold = threshold
-        self.selectedLeafTagIDs = selectedLeafTagIDs
-        self.ancestorTagIDs = ancestorTagIDs
-        self.scores = scores
-        self.decisions = decisions
-        self.packageID = packageID
-        self.modelVersion = modelVersion
-    }
-
-    public var strongestAction: PresentationAction { decisions.map(\.action).max() ?? .allow }
-
-}
-
-public enum ResourceProfile: String, Codable, Sendable, CaseIterable {
-    case light
-    case balanced
-    case aggressive
-
-    public var defaultCacheCapacity: Int {
-        switch self { case .light: return 10_000; case .balanced: return 50_000; case .aggressive: return 150_000 }
-    }
-
-    public var sourceObservationLimit: Int {
-        switch self { case .light: return 150; case .balanced: return 500; case .aggressive: return 1_000 }
+    public init(
+        modelFileName: String? = nil,
+        engineEnabled: Bool = true,
+        contextTokens: Int = 4_096,
+        batchTokens: Int = 512,
+        gpuOffload: Bool = true,
+        maximumOutputTokens: Int = 16,
+        temperature: Double = 0,
+        allowDecline: Bool = true,
+        maximumTags: Int = 3,
+        confidenceThresholds: [Double] = [0.20, 0.40, 0.60, 0.85],
+        houseRules: String = ""
+    ) {
+        self.modelFileName = modelFileName.flatMap { $0.isEmpty ? nil : String($0.prefix(255)) }
+        self.engineEnabled = engineEnabled
+        self.contextTokens = min(32_768, max(1_024, contextTokens))
+        self.batchTokens = min(2_048, max(64, batchTokens))
+        self.gpuOffload = gpuOffload
+        self.maximumOutputTokens = min(128, max(4, maximumOutputTokens))
+        self.temperature = min(2.0, max(0, temperature))
+        self.allowDecline = allowDecline
+        self.maximumTags = min(16, max(1, maximumTags))
+        let cleaned = confidenceThresholds
+            .map { min(0.999, max(0.001, $0)) }
+            .sorted()
+        self.confidenceThresholds = cleaned.count == 4 ? cleaned : [0.20, 0.40, 0.60, 0.85]
+        self.houseRules = String(houseRules.prefix(4_000))
     }
 }
 
 public struct ClassifierSettings: Codable, Equatable, Sendable {
-    public var resourceProfile: ResourceProfile
-    public var cacheCapacity: Int
-    public var allowIdleWork: Bool
-    public var allowBackgroundSync: Bool
     /// This is only a persisted local preference. A separately configured
     /// transport must still make every manifest request and activation.
     public var packageUpdateMode: PackageUpdateMode
+    public var localLLM: LocalLLMSettings
 
     public init(
-        resourceProfile: ResourceProfile = .balanced,
-        cacheCapacity: Int? = nil,
-        allowIdleWork: Bool = true,
-        allowBackgroundSync: Bool = true,
-        packageUpdateMode: PackageUpdateMode = .automatic
+        packageUpdateMode: PackageUpdateMode = .automatic,
+        localLLM: LocalLLMSettings = LocalLLMSettings()
     ) {
-        self.resourceProfile = resourceProfile
-        self.cacheCapacity = max(1, cacheCapacity ?? resourceProfile.defaultCacheCapacity)
-        self.allowIdleWork = allowIdleWork
-        self.allowBackgroundSync = allowBackgroundSync
         self.packageUpdateMode = packageUpdateMode
+        self.localLLM = localLLM
     }
 
     private enum CodingKeys: String, CodingKey {
-        case resourceProfile, cacheCapacity, allowIdleWork, allowBackgroundSync, packageUpdateMode
+        case packageUpdateMode, localLLM
     }
 
     private enum RetiredCodingKeys: String, CodingKey {
-        case allowLocalLLMAudit
+        // allowIdleWork / allowBackgroundSync gated the retired pre-LLM local
+        // training path; nothing consumes them since the per-video rework.
+        case resourceProfile, cacheCapacity, allowLocalLLMAudit, allowIdleWork, allowBackgroundSync
     }
 
     /// Local state predating package preferences must remain usable offline.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        // Read the retired key only to make old settings harmless. It is never
-        // retained or written again.
+        // Read the retired keys only to make old settings harmless. They are
+        // never retained or written again.
         _ = try decoder.container(keyedBy: RetiredCodingKeys.self)
-        let resourceProfile = try container.decodeIfPresent(ResourceProfile.self, forKey: .resourceProfile) ?? .balanced
         self.init(
-            resourceProfile: resourceProfile,
-            cacheCapacity: try container.decodeIfPresent(Int.self, forKey: .cacheCapacity),
-            allowIdleWork: try container.decodeIfPresent(Bool.self, forKey: .allowIdleWork) ?? true,
-            allowBackgroundSync: try container.decodeIfPresent(Bool.self, forKey: .allowBackgroundSync) ?? true,
-            packageUpdateMode: try container.decodeIfPresent(PackageUpdateMode.self, forKey: .packageUpdateMode) ?? .automatic
+            packageUpdateMode: try container.decodeIfPresent(PackageUpdateMode.self, forKey: .packageUpdateMode) ?? .automatic,
+            localLLM: try container.decodeIfPresent(LocalLLMSettings.self, forKey: .localLLM) ?? LocalLLMSettings()
         )
     }
 }

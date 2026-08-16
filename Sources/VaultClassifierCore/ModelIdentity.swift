@@ -79,10 +79,6 @@ public struct ActiveModelIdentity: Codable, Equatable, Hashable, Sendable {
         }
     }
 
-    public func matches(_ result: ClassificationResult) -> Bool {
-        packageID == result.packageID && modelVersion == result.modelVersion
-    }
-
     private static func isSHA256(_ value: String?) -> Bool {
         guard let value else { return false }
         return value.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil

@@ -2,7 +2,7 @@ import XCTest
 @testable import VaultClassifierCore
 
 final class TrashTests: XCTestCase {
-    func testTrashAndRestoreClassifierTypeCarriesItsDecisions() {
+    func testTrashAndRestoreClassifierType() {
         var catalog = WorkspaceCatalog.starter()
         let tree = catalog.trees[0]
         let dataset = catalog.datasets[0]
@@ -15,29 +15,14 @@ final class TrashTests: XCTestCase {
             datasetRevision: dataset.revision,
             applicablePlatformID: "youtube"
         )]
-        catalog.datasets[0].creatorClassifications = [CreatorClassificationRecord(
-            classifierTypeID: "type",
-            creatorID: "c",
-            creatorName: "C",
-            platformID: "youtube",
-            treeID: tree.id,
-            treeRevision: tree.revision,
-            tagIDs: [],
-            origin: .manual,
-            review: .approved
-        )]
-
         let entry = catalog.trashClassifierType("type")
         XCTAssertEqual(entry?.name, "My Type")
         XCTAssertEqual(entry?.kind, .classifierType)
-        XCTAssertEqual(entry?.creatorClassifications.count, 1)
         XCTAssertTrue(catalog.classifierTypes.isEmpty)
-        XCTAssertTrue(catalog.datasets[0].creatorClassifications.isEmpty)
         XCTAssertEqual(catalog.trash.count, 1)
 
         XCTAssertTrue(catalog.restoreTrashedEntry(entry!.id))
         XCTAssertEqual(catalog.classifierTypes.map(\.id), ["type"])
-        XCTAssertEqual(catalog.datasets[0].creatorClassifications.count, 1)
         XCTAssertTrue(catalog.trash.isEmpty)
     }
 
@@ -53,31 +38,16 @@ final class TrashTests: XCTestCase {
             entryType: "video",
             title: "T"
         )))
-        catalog.datasets[0].creatorClassifications = [CreatorClassificationRecord(
-            classifierTypeID: "type",
-            creatorID: "c",
-            creatorName: "C",
-            platformID: "youtube",
-            treeID: catalog.trees[0].id,
-            treeRevision: catalog.trees[0].revision,
-            tagIDs: [],
-            origin: .manual,
-            review: .approved
-        )]
-
         let entry = catalog.trashCollectionPlatform("youtube")
         XCTAssertEqual(entry?.kind, .collectionPlatform)
         XCTAssertEqual(entry?.collectedEntries.count, 1)
-        XCTAssertEqual(entry?.creatorClassifications.count, 1)
         // Other default platforms remain; only YouTube's binding is removed.
         XCTAssertFalse(catalog.bindings.contains(where: { $0.id == "youtube" }))
         XCTAssertTrue(catalog.datasets[0].collectedEntries.isEmpty)
-        XCTAssertTrue(catalog.datasets[0].creatorClassifications.isEmpty)
 
         XCTAssertTrue(catalog.restoreTrashedEntry(entry!.id))
         XCTAssertTrue(catalog.bindings.contains(where: { $0.id == "youtube" }))
         XCTAssertEqual(catalog.datasets[0].collectedEntries.count, 1)
-        XCTAssertEqual(catalog.datasets[0].creatorClassifications.count, 1)
         XCTAssertTrue(catalog.trash.isEmpty)
     }
 

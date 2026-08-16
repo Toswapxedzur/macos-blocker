@@ -30,6 +30,9 @@
   let state = null;
   let renderedPresentationRevision = 0;
   let activeTagPanel = null;
+  // Advanced local-model settings disclosure. Toggled without a re-render so
+  // the CSS grid transition can play; re-renders rebuild from this flag.
+  let advancedSettingsOpen = false;
   let tagDrag = null;
   let suppressTagClick = false;
   let connectionSource = null;
@@ -38,7 +41,6 @@
   const treeViewportPositions = new Map();
   const editorViewportPositions = new Map();
   const pendingTagRenames = new Map();
-  const selectedCreatorTagByType = new Map();
   const selectedLLMProfileByType = new Map();
   const collapsedCollectionCreatorLists = new Set();
   const selectedCollectionCreatorByPlatform = new Map();
@@ -52,15 +54,7 @@
   // the matching tag-tree tag's color. Rebuilt whenever the collection workspace
   // renders; the detail pane reads it during its targeted refreshes too.
   const suppliedTagNodeByPlatform = new Map();
-  // Optimistic manual-decision overlay: typeID -> (creatorKey -> {tagIDs, negativeTagIDs}).
-  // A tag/untag moves one card and records the decision here so it survives
-  // re-renders without a full round-trip; cleared when an authoritative snapshot
-  // arrives (receive()), which by then already reflects the persisted decision.
-  const manualDecisionOverlay = new Map();
   let pendingDeletion = null;
-  // Pending platform-lock confirmation: { typeID, replay } — replay runs the
-  // original action once the person confirms locking the type to its platform.
-  let pendingPlatformLock = null;
   let utilityPanel = null;
   // Which classifier type is open in the left-panel list (client-only UI state).
   let selectedTypeID = null;
@@ -73,7 +67,6 @@
   let navigationPanelWidth = navigationWidthRange.fallback;
   let navigationResize = null;
   const collectionRowHeight = 48;
-  const creatorTagRowHeight = 96;
   const workspaceNames = new Set(["tagTree", "localModel", "llmAssist", "browserBridge", "classificationData"]);
   const virtualLists = new Map();
   const virtualListScrollByKey = new Map();
@@ -339,13 +332,6 @@
         if (sizer) sizer.style.height = `${registry.items.length * registry.rowHeight}px`;
         container.scrollTop = 0;
         paintVirtualList(container);
-        const column = container.closest("[data-creator-tag-column]");
-        if (column) {
-          const count = column.querySelector("[data-creator-tag-count]");
-          if (count) count.textContent = registry.items.length;
-          const empty = column.querySelector("[data-creator-tag-empty]");
-          if (empty) empty.hidden = registry.items.length > 0;
-        }
       } else if (container.dataset.keyedList) {
         reconcileKeyedList(container, registry);
       }
@@ -390,68 +376,6 @@
       if (sizer) sizer.style.height = `${state.items.length * state.rowHeight}px`;
       paintVirtualList(container);
     });
-  }
-
-  // Targeted move of one creator card between the three tag-decision columns:
-  // updates the windowed lists, counts, and empty states in place — no full
-  // re-render — so recording a decision costs the same regardless of list size.
-  function moveCreatorBetweenTagColumns(typeID, creatorKey, newTagIDs, newNegativeTagIDs) {
-    const kinds = ["needsDecision", "tagged", "notTagged"];
-    const selectedTagID = selectedCreatorTagByType.get(typeID);
-    const cols = {};
-    root.querySelectorAll("[data-virtual-key]").forEach((container) => {
-      kinds.forEach((kind) => {
-        if (container.dataset.virtualKey === `creator-tag-col-${typeID}-${kind}`) {
-          cols[kind] = { container, state: virtualLists.get(container.dataset.virtualList) };
-        }
-      });
-    });
-    if (kinds.some((kind) => !cols[kind]?.state)) return false;
-    let record = null;
-    for (const kind of kinds) {
-      const items = cols[kind].state.items;
-      const idx = items.findIndex((creator) => creator.key === creatorKey);
-      if (idx >= 0) { record = items[idx]; items.splice(idx, 1); break; }
-    }
-    if (!record) return false;
-    record.tagIDs = newTagIDs;
-    record.negativeTagIDs = newNegativeTagIDs;
-    const targetKind = newTagIDs.includes(selectedTagID)
-      ? "tagged"
-      : newNegativeTagIDs.includes(selectedTagID) ? "notTagged" : "needsDecision";
-    const targetItems = cols[targetKind].state.items;
-    targetItems.push(record);
-    targetItems.sort((lhs, rhs) => lhs.name.localeCompare(rhs.name));
-    for (const kind of kinds) {
-      const { container, state } = cols[kind];
-      const sizer = container.querySelector(".virtual-list-sizer");
-      if (sizer) sizer.style.height = `${state.items.length * state.rowHeight}px`;
-      paintVirtualList(container);
-      const section = container.closest("[data-creator-tag-column]");
-      const count = section?.querySelector("[data-creator-tag-count]");
-      if (count) count.textContent = state.items.length;
-      const empty = section?.querySelector("[data-creator-tag-empty]");
-      if (empty) empty.hidden = state.items.length > 0;
-    }
-    return true;
-  }
-
-  // Keeps the "creator decisions" overview row for one creator in sync after a
-  // targeted manual decision — re-runs the keyed list's registered row renderer
-  // (which now reads the overlay) for just that row, no full re-render.
-  function syncManualDecisionRow(typeID, creatorKey) {
-    const reg = keyedListRegistry.get(`creator-decisions-${typeID}`);
-    if (!reg) return;
-    const item = reg.items.find((pair) => String(reg.keyOf(pair)) === creatorKey);
-    if (!item) return;
-    const container = [...root.querySelectorAll("[data-keyed-list]")]
-      .find((element) => element.dataset.keyedList === `creator-decisions-${typeID}`);
-    const row = container && [...container.querySelectorAll(":scope > [data-key]")]
-      .find((element) => element.dataset.key === creatorKey);
-    if (!row) return;
-    const html = reg.renderRow(item);
-    row.innerHTML = html;
-    keyedListRenderedRows.get(`creator-decisions-${typeID}`)?.set(creatorKey, html);
   }
 
   function paintVirtualList(container) {
@@ -523,10 +447,6 @@
 
   function toggle(labelKey, key, value) {
     return `<label class="toggle-row"><input type="checkbox" data-field="${esc(key)}"${checked(value)}><span>${tx(labelKey)}</span></label>`;
-  }
-
-  function metric(titleKey, value, tone = "navy") {
-    return `<div class="metric ${esc(tone)}"><div class="metric-title">${tx(titleKey)}</div><div class="metric-value">${esc(value)}</div></div>`;
   }
 
   function notice(text, tone = "navy") {
@@ -655,8 +575,39 @@
     if (!utilityPanel) return "";
     let content = "";
     if (utilityPanel === "settings") {
-      const settings = state.activity.settings;
-      content = `<section class="utility-panel utility-settings-modal" data-form-id="utility-settings-form"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body"><section class="utility-settings-section utility-resource-section"><h3 class="utility-settings-section-title">${tx("activity.resources")}</h3><div class="utility-settings-fields">${selectField("activity.profile", "activity.profileHint", "profile", settings.profile, [["light", "enum.profile.light"], ["balanced", "enum.profile.balanced"], ["aggressive", "enum.profile.aggressive"]])}${field("activity.cacheCapacity", "activity.uniqueEntries", "cacheCapacity", settings.cacheCapacity)}${selectField("activity.packageUpdates", "activity.preference", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div><div class="utility-toggles">${toggle("activity.idleWork", "allowIdleWork", settings.allowIdleWork)}${toggle("activity.backgroundSync", "allowBackgroundSync", settings.allowBackgroundSync)}</div></section></div><div class="utility-modal-actions"><button class="primary" data-action="saveResourceSettings" data-form="utility-settings-form">${tx("activity.save")}</button></div></section>`;
+      const settings = state.settings;
+      const llm = settings.localLLM || {};
+      const statusToneByState = { loaded: "cyan", loading: "navy", disabled: "navy", "no-model": "pink", failed: "red" };
+      const modelOptions = [["", tx("localModel.modelAuto")]].concat((llm.availableModels || []).map((name) => [name, name]));
+      const thresholds = Array.isArray(llm.confidenceThresholds) && llm.confidenceThresholds.length === 4
+        ? llm.confidenceThresholds
+        : [0.2, 0.4, 0.6, 0.85];
+      const advancedBody = `<div class="utility-settings-fields">${
+        valueSelectField("localModel.contextTokens", "localModel.contextTokensHint", "contextTokens", String(llm.contextTokens ?? 4096), [["1024", "1,024"], ["2048", "2,048"], ["4096", "4,096"], ["8192", "8,192"], ["16384", "16,384"]])
+      }${
+        valueSelectField("localModel.batchTokens", "localModel.batchTokensHint", "batchTokens", String(llm.batchTokens ?? 512), [["128", "128"], ["256", "256"], ["512", "512"], ["1024", "1,024"], ["2048", "2,048"]])
+      }${
+        field("localModel.maxOutputTokens", "localModel.maxOutputTokensHint", "maximumOutputTokens", llm.maximumOutputTokens ?? 16)
+      }${
+        field("localModel.maxTags", "localModel.maxTagsHint", "maximumTags", llm.maximumTags ?? 3)
+      }${
+        field("localModel.temperature", "localModel.temperatureHint", "temperature", llm.temperature ?? 0)
+      }</div><div class="utility-toggles">${
+        toggle("localModel.gpuOffload", "gpuOffload", llm.gpuOffload !== false)
+      }${
+        toggle("localModel.allowDecline", "allowDecline", llm.allowDecline !== false)
+      }</div><div class="field wide"><span class="field-label">${tx("localModel.confidence")}<span class="field-hint"> · ${tx("localModel.confidenceHint")}</span></span><div class="confidence-band-row">${
+        [2, 3, 4, 5].map((level, index) => `<label class="confidence-band"><span class="confidence-band-label">≥ ${level}</span><input type="text" data-field="confidenceBand${level}" value="${esc(String(thresholds[index]))}"></label>`).join("")
+      }</div></div>${
+        textareaField("localModel.houseRules", "localModel.houseRulesHint", "houseRules", llm.houseRules || "", 'rows="4"')
+      }`;
+      const llmSection = `<section class="utility-settings-section utility-llm-section" data-form-id="utility-llm-form"><h3 class="utility-settings-section-title">${tx("localModel.title")} ${statusPill(tx(`localModel.status.${llm.engineStatus || "loading"}`), statusToneByState[llm.engineStatus] || "navy")}</h3><p class="section-copy">${tx("localModel.copy")}</p><div class="utility-toggles">${
+        toggle("localModel.engineEnabled", "engineEnabled", llm.engineEnabled !== false)
+      }</div><div class="utility-settings-fields">${
+        valueSelectField("localModel.model", "localModel.modelHint", "modelFileName", llm.modelFileName || "", modelOptions)
+      }</div><div class="utility-advanced${advancedSettingsOpen ? " open" : ""}" data-advanced-settings><button type="button" class="secondary advanced-toggle" data-action="toggleAdvancedSettings" aria-expanded="${advancedSettingsOpen}"><span>${tx("localModel.advanced")}</span><span class="advanced-chevron" aria-hidden="true">⌄</span></button><div class="advanced-settings-body"><div class="advanced-settings-inner">${advancedBody}</div></div></div><div class="action-row"><button class="primary" data-action="saveLocalLLMSettings" data-form="utility-llm-form">${tx("localModel.save")}</button></div></section>`;
+      const packageSection = `<section class="utility-settings-section utility-resource-section" data-form-id="utility-package-form"><h3 class="utility-settings-section-title">${tx("settings.packageUpdates")}</h3><div class="utility-settings-fields">${selectField("settings.packageUpdates", "settings.packageUpdatesCopy", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div><div class="action-row"><button class="primary" data-action="savePackageSettings" data-form="utility-package-form">${tx("common.save")}</button></div></section>`;
+      content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${llmSection}${packageSection}</div></section>`;
     }
     if (!content) return "";
     return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}"></button><div class="utility-popover" role="dialog" aria-modal="true" aria-label="${esc(tx("utility.settings.title"))}">${content}</div></div>`;
@@ -730,43 +681,6 @@
     </div>`;
   }
 
-  function inspectWorkspace() {
-    const inspect = state.inspect;
-    const platformOptions = (state.assets.bindings || []).map((binding) => [binding.id, binding.name]);
-    const inspectBinding = (state.assets.bindings || []).find((binding) => binding.id === inspect.platformID);
-    const inspectTree = (state.assets.trees || []).find((tree) => tree.id === inspectBinding?.treeID);
-    const inspectTagByID = new Map((inspectTree?.nodes || []).map((node) => [node.id, node]));
-    const inspectTagPill = (tagID, className = "") => {
-      const node = inspectTagByID.get(tagID);
-      return node ? tagPill(node, className) : "";
-    };
-    const result = inspect.result;
-    let renderedResult = "";
-    if (result) {
-      const action = result.strongestAction;
-      const symbol = action === "allow" ? "✓" : action === "dim" ? "◒" : "!";
-      const scores = result.scores.length
-        ? `<div class="score-list">${result.scores.map((score) => `<div class="score"><span class="score-name">${inspectTagPill(score.tag, "compact")}</span><span class="bar"><span style="width:${Math.max(0, Math.min(100, Number(score.score) * 100))}%"></span></span><span class="score-value">${percent(score.score)}</span></div>`).join("")}</div>`
-        : `<p class="small-copy">${tx("inspect.noLeaf")}</p>`;
-      const decisions = result.decisions.length
-        ? `<div class="list">${result.decisions.map((decision) => `<div class="list-row"><span class="list-symbol">•</span><span class="list-copy"><span class="list-title">${esc(decision.policyID)} · ${esc(enumText("action", decision.action))}</span><span class="list-meta">${esc(decision.explanation)}</span></span></div>`).join("")}</div>`
-        : `<p class="small-copy">${tx("inspect.noPolicy")}</p>`;
-      const correction = action === "allow"
-        ? `<button class="secondary" data-action="markCorrection" data-correction="falseAllow">${tx("inspect.markFalseAllow")}</button>`
-        : `<button class="gold-action" data-action="markCorrection" data-correction="falseDim">${tx("inspect.markFalseDim")}</button><button class="danger" data-action="markCorrection" data-correction="falseBlock">${tx("inspect.markFalseBlock")}</button>`;
-      const predictedTags = result.leafTags.map((tagID) => inspectTagPill(tagID)).filter(Boolean);
-      const ancestorTags = result.ancestorTags.map((tagID) => inspectTagPill(tagID, "compact")).filter(Boolean);
-      renderedResult = `<section class="result-card ${esc(action)}"><div class="result-head"><span class="result-symbol">${symbol}</span><div><span class="eyebrow">${tx("inspect.policyDecision")}</span><div class="result-action">${esc(enumText("action", action))}</div></div><span class="spacer"></span><span class="small-copy">${tx("inspect.threshold", { value: percent(result.threshold) })}</span></div><div><span class="field-label">${tx("inspect.predictedLeaves")} · ${tx("inspect.ancestorsComputed")}</span><div class="tag-pill-rail">${predictedTags.length ? predictedTags.join("") : `<span class="small-copy">${tx("inspect.noLeaf")}</span>`}</div></div><div><span class="field-label">${tx("inspect.localScores")} · ${tx("inspect.sourcePrior")}</span>${scores}</div><div><span class="field-label">${tx("inspect.policyMatches")}</span>${decisions}</div>${ancestorTags.length ? `<div class="computed-tag-path"><span class="small-copy">${tx("inspect.computedPath", { path: "" })}</span><div class="tag-pill-rail">${ancestorTags.join("")}</div></div>` : ""}<div class="action-row">${correction}</div></section>`;
-    }
-    return `<div class="workspace">${header("inspect.title", "inspect.copy", t(inspect.surface === "feed" ? "inspect.feedDecision" : "inspect.pageDecision"), "cyan")}
-      <section class="section-card cyan" data-form-id="inspect-form"><div class="form-stack">
-        ${field("inspect.entryTitle", "inspect.required", "title", inspect.title)}
-        <div class="form-row">${field("inspect.sourceID", "inspect.optional", "sourceID", inspect.sourceID)}${platformOptions.length ? valueSelectField("inspect.platform", "inspect.platformCopy", "platformID", inspect.platformID, platformOptions) : ""}</div>
-        <div class="field"><span class="field-label">${tx("inspect.surface")} · ${tx("inspect.surfaceHint")}</span><div class="choice-row"><label><input type="radio" name="surface" data-field="surface" value="feed"${checked(inspect.surface === "feed")}><span>${tx("enum.surface.feed")}</span></label><label><input type="radio" name="surface" data-field="surface" value="page"${checked(inspect.surface === "page")}><span>${tx("enum.surface.page")}</span></label></div></div>
-        <div class="action-row"><button class="primary" data-action="classify" data-form="inspect-form"${disabled(!platformOptions.length)}>${tx("inspect.classify")}</button>${inspect.llmAvailable ? `<button class="gold-action" data-action="classifyWithLLM" data-form="inspect-form"${disabled(inspect.llmRunning)}>${tx(inspect.llmRunning ? "inspect.llmClassifying" : "inspect.classifyWithLLM")}</button>` : ""}<span class="small-copy">${tx(inspect.llmAvailable ? "inspect.llmExplicitOnly" : "inspect.localOnly")}</span></div>
-      </div></section>${renderedResult || `<div class="empty">${tx("inspect.noResult")}</div>`}${notice(state.issue, "red")}</div>`;
-  }
-
   function policyWorkspace() {
     const policies = state.policies;
     const editor = policies.editor;
@@ -776,33 +690,10 @@
       <section class="section-card navy" data-form-id="policy-form"><div class="section-header"><div><h3>${tx(editor.id ? "policies.edit" : "policies.create")}</h3><p class="section-copy">${tx("policies.editorCopy")}</p></div></div><div class="form-stack">
       <div class="form-row">${field("policies.id", "policies.idHint", "id", editor.id)}${field("policies.displayName", "policies.localOnly", "name", editor.name)}</div>
       ${field("policies.includeAny", "policies.exactIDs", "includeAny", editor.includeAny)}
-      ${field("policies.exclude", "inspect.optional", "exclude", editor.exclude)}
+      ${field("policies.exclude", "", "exclude", editor.exclude)}
       <div class="form-row">${selectField("policies.feedAction", "policies.feedHint", "feedAction", editor.feedAction, [["allow", "enum.action.allow"], ["dim", "enum.action.dim"], ["block", "enum.action.block"]])}${selectField("policies.pageAction", "policies.pageHint", "pageAction", editor.pageAction, [["allow", "enum.action.allow"], ["block", "enum.action.block"]])}</div>
       <div class="action-row"><button class="primary" data-action="savePolicy" data-form="policy-form">${tx("policies.save")}</button><button class="danger" data-action="deletePolicy"${disabled(!editor.id)}>${tx("common.delete")}</button></div>
       </div></section>${notice(state.issue, "red")}</div>`;
-  }
-
-  function activityWorkspace() {
-    const activity = state.activity;
-    const settings = activity.settings;
-    return `<div class="workspace">${header("activity.title", "activity.copy", t("activity.localOnly"), "cyan")}
-      <div class="metric-row">${metric("activity.cache", `${activity.cacheCount} / ${activity.cacheCapacity}`, "cyan")}${metric("activity.ledger", activity.ledgerCount, "cyan")}${metric("activity.corrections", activity.correctionCount, "cyan")}</div>
-      <section class="section-card cyan" data-form-id="resource-form"><div class="section-header"><div><h3>${tx("activity.resources")}</h3><p class="section-copy">${tx("activity.resourcesCopy")}</p></div></div><div class="form-stack">
-      <div class="form-row">${selectField("activity.profile", "activity.profileHint", "profile", settings.profile, [["light", "enum.profile.light"], ["balanced", "enum.profile.balanced"], ["aggressive", "enum.profile.aggressive"]])}${field("activity.cacheCapacity", "activity.uniqueEntries", "cacheCapacity", settings.cacheCapacity)}${selectField("activity.packageUpdates", "activity.preference", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div>
-      ${toggle("activity.idleWork", "allowIdleWork", settings.allowIdleWork)}${toggle("activity.backgroundSync", "allowBackgroundSync", settings.allowBackgroundSync)}
-      <div class="action-row"><button class="primary" data-action="saveResourceSettings" data-form="resource-form">${tx("activity.save")}</button></div>
-      </div></section>
-      <section class="section-card cyan"><div class="section-header"><div><h3>${tx("activity.recent")}</h3><p class="section-copy">${tx("activity.newest")}</p></div><button class="secondary" data-action="state">${tx("common.refresh")}</button></div>${activity.ledger.length ? `<div class="list">${activity.ledger.map((entry) => `<div class="list-row"><span class="list-symbol">${entry.hasCorrection ? "!" : "✓"}</span><span class="list-copy"><span class="list-title">${esc(entry.cacheKey)}</span><span class="list-meta">${esc(entry.modelVersion)}</span></span>${entry.hasCorrection ? `<button class="secondary" data-action="clearCorrection" data-id="${esc(entry.id)}">${tx("common.clear")}</button>` : ""}</div>`).join("")}</div>` : `<div class="empty">${tx("activity.empty")}</div>`}</section>${notice(state.issue, "red")}</div>`;
-  }
-
-  function trainingWorkspace() {
-    const training = state.training;
-    const run = training.lastRun;
-    return `<div class="workspace">${header("training.title", "training.copy", t(training.labelCount ? "training.localOnly" : "training.noLabels"), "pink")}
-      <div class="metric-row">${metric("training.labels", `${training.labelCount} / ${training.capacity}`, "pink")}${metric("training.features", training.featureCount, "pink")}${metric("training.lastRebuild", run ? t("training.labelCount", { count: run.exampleCount }) : t("training.notYet"), "pink")}</div>
-      <section class="section-card pink" data-form-id="training-form"><div class="section-header"><div><h3>${tx("training.currentLabel")}</h3><p class="section-copy">${tx("training.currentLabelCopy")}</p></div></div><div class="form-stack">${field("training.positive", "training.commaSeparated", "positiveTags", training.positiveTags)}${field("training.negative", "training.optionalCommaSeparated", "negativeTags", training.negativeTags)}<div class="action-row"><button class="pink-action" data-action="storeTraining" data-form="training-form">${tx("training.store")}</button><span class="small-copy">${tx("training.replace")}</span></div></div></section>
-      <section class="section-card pink" data-form-id="retrain-form"><div class="section-header"><div><h3>${tx("training.rebuild")}</h3><p class="section-copy">${tx("training.rebuildCopy")}</p></div></div><div class="form-row">${field("training.passes", "training.passesHint", "epochs", training.epochs)}<div class="field"><span class="field-label">${tx("training.localAction")}</span><button class="pink-action" data-action="retrain" data-form="retrain-form"${disabled(!training.labelCount)}>${tx("training.retrain")}</button></div></div></section>
-      ${run ? notice(t("training.lastRun", { labels: run.exampleCount, updates: run.labelUpdateCount, epochs: run.epochs, taxonomy: run.taxonomyVersion }), "pink") : ""}${notice(state.notices.training, "pink")}${notice(state.issue, "red")}</div>`;
   }
 
   function backupWorkspace() {
@@ -943,17 +834,7 @@
       const platformDef = platformDefs.get(model.platformID);
       const treeLabel = tree ? `${tree.name} · r${tree.revision}` : "—";
       const platformLabel = platformDef ? `${platformDef.name} · ${platformDef.browser}` : (model.platformID || "—");
-      const pending = Number(model.pendingDecisions) || 0;
-      const incorporated = Number(model.incorporatedDecisions) || 0;
-      const needsTraining = model.needsTraining === true;
-      const isReady = model.ready === true && !needsTraining;
-      const training = model.training;
-      const trainingStatus = training
-        ? `<div class="model-run pink">${tx("model.trainedRun", { folded: training.decisionsFolded, total: training.incorporatedDecisions, examples: training.examples })}</div>`
-        : `<div class="model-run muted">${tx("model.untrained")}</div>`;
-      const statusPillMarkup = isReady
-        ? statusPill(t("model.ready"), "pink")
-        : statusPill(t(model.ready ? "model.updatesPending" : "model.needsTraining"), "gold");
+      const statusPillMarkup = statusPill(t("bridge.configured"), "pink");
       return `<section class="model-panel" data-model-panel data-model-id="${esc(model.id)}" data-form-id="${esc(formID)}">
         <div class="model-panel-head">
           <div><span class="eyebrow">${tx("model.panel")}</span><h3>${esc(model.name)}</h3><p class="section-copy">${tx("model.boundType", { type: type ? type.name : "—" })}</p></div>
@@ -967,8 +848,6 @@
           </div>
           <div class="form-row model-setup-fields">${valueSelectField("model.baseLanguageModel", "model.baseCopy", "baseEmbeddingID", model.baseEmbeddingID || "", baseOptions, "data-local-model-setup")}</div>
         </div>
-        <div class="model-training-row"><div><span class="eyebrow">${tx("model.localTraining")}</span><p class="section-copy">${tx("model.trainingScope", { incorporated, pending })}</p></div><button class="pink-action" data-action="trainLocalModel" data-form="${esc(formID)}" data-model-id="${esc(model.id)}"${disabled(!needsTraining)}>${tx(model.ready ? "model.trainMore" : "model.train")}</button></div>
-        ${trainingStatus}
       </section>`;
     };
     // Scoped to one type: hide the shared-library header; the create box carries
@@ -1095,19 +974,12 @@
       const selectedTree = trees.find((tree) => tree.id === classifierType.treeID);
       const selectedDataset = datasets.find((dataset) => dataset.id === applicableBinding?.datasetID);
       const applicablePlatform = platformDefinitions.get(applicablePlatformID);
-      const sourceTerms = collectionSourceTerms(applicablePlatform?.sourceKind);
-      const dataSourcePlatforms = new Set(applicablePlatformID ? [applicablePlatformID] : []);
       const supportsLocalModel = applicablePlatform?.supportsLocalModel === true;
       const supportsLLMAssist = applicablePlatform?.supportsLLMAssist === true;
       const applicablePlatformOptions = [["", t("bridge.noApplicablePlatform")], ...(assets.collectionPlatforms || []).map((definition) => {
         const hasBinding = (assets.bindings || []).some((binding) => binding.id === definition.id);
-        return [definition.id, `${definition.name} · ${definition.browser}${hasBinding ? "" : ` · ${t("bridge.platformDataAutoCreate")}`}${!definition.supportsLocalModel ? ` · ${t("bridge.manualOnly")}` : ""}`];
+        return [definition.id, `${definition.name} · ${definition.browser}${hasBinding ? "" : ` · ${t("bridge.platformDataAutoCreate")}`}${!definition.supportsLocalModel ? ` · ${t("bridge.collectionOnly")}` : ""}`];
       })];
-      // Lock the platform once this type owns approved decisions: every
-      // decision is keyed to this platform + tree revision, so switching would
-      // orphan them (and break the local model's one-platform training set).
-      const approvedDecisionCount = datasets.reduce((count, dataset) => count + (dataset.creatorClassifications || []).filter((record) => record.classifierTypeID === classifierType.id && record.review === "approved").length, 0);
-      const applicablePlatformLocked = classifierType.platformLocked === true || (Boolean(applicablePlatformID) && approvedDecisionCount > 0);
       const platformAPIProfiles = applicablePlatform?.apiProviderType
         ? profiles.filter((profile) => profile.type === applicablePlatform.apiProviderType)
         : [];
@@ -1122,9 +994,6 @@
           : boundPlatformAPIProfile
             ? t("bridge.platformDataBound", { profile: boundPlatformAPIProfile.name })
             : t("bridge.platformDataMissingKey", { platform: applicablePlatform.name });
-      // A local model is bound to this type (owns-one) and resolved by the app.
-      // The type no longer selects a model; it reflects its own model's status.
-      const boundModel = classifierType.localModel || null;
       const llmAssist = classifierType.llmAssistConfiguration || null;
       const llmAssistDraft = classifierType.llmAssistDraftConfiguration || null;
       const savedLLMProfileID = classifierType.selectedLLMProviderProfileID || llmAssist?.providerProfileID || "";
@@ -1178,39 +1047,6 @@
         ...rawWebSearchProfiles.map((profile) => [profile.id, `${profile.name} · ${tx(providerTypeLabelKey(profile.type))}`]),
       ];
       const typeStatus = applicablePlatformID ? t("bridge.configured") : t("bridge.needsSource");
-      const leafTagOptions = (selectedTree?.nodes || [])
-        .filter((node) => !node.retired && !(selectedTree?.nodes || []).some((candidate) => candidate.parentID === node.id))
-        .sort((lhs, rhs) => lhs.name.localeCompare(rhs.name));
-      const currentDecisionByCreator = new Map((selectedDataset?.creatorClassifications || [])
-        .filter((classification) => classification.classifierTypeID === classifierType.id && classification.origin === "manual")
-        .map((classification) => [`${classification.platformID}|${classification.creatorID}`, classification]));
-      const sortedCreatorCandidates = (selectedDataset?.collectedCreators || [])
-        .filter((creator) => dataSourcePlatforms.has(creator.platformID) && creator.creatorID && creator.creatorName)
-        .map((creator) => [`${creator.platformID}|${creator.creatorID}`, creator])
-        .sort(([, lhs], [, rhs]) => lhs.creatorName.localeCompare(rhs.creatorName));
-      let selectedCreatorTagID = selectedCreatorTagByType.get(classifierType.id);
-      if (!leafTagOptions.some((node) => node.id === selectedCreatorTagID)) {
-        selectedCreatorTagID = leafTagOptions[0]?.id || "";
-        if (selectedCreatorTagID) selectedCreatorTagByType.set(classifierType.id, selectedCreatorTagID);
-        else selectedCreatorTagByType.delete(classifierType.id);
-      }
-      const selectedCreatorTagNode = leafTagOptions.find((node) => node.id === selectedCreatorTagID) || null;
-      const decisionOverlay = manualDecisionOverlay.get(classifierType.id);
-      const creatorRecords = sortedCreatorCandidates
-        .map(([key, creator]) => {
-          const classification = currentDecisionByCreator.get(key);
-          const override = decisionOverlay?.get(key);
-          return {
-            key,
-            platformName: platformDefinitions.get(creator.platformID)?.name || creator.platformID,
-            name: creator.creatorName,
-            subscriberCount: creator.subscriberCount || "",
-            avatarURL: typeof creator.cachedSourceIconURL === "string" ? creator.cachedSourceIconURL : "",
-            tagIDs: override?.tagIDs ?? classification?.tags ?? [],
-            negativeTagIDs: override?.negativeTagIDs ?? classification?.negativeTags ?? [],
-          };
-        })
-        .sort((lhs, rhs) => lhs.name.localeCompare(rhs.name));
       const nativeProviderWebSearchReady = Boolean(
         llmAssist?.providerProfileID === selectedLLMProfileID &&
         savedWebSearchMode === "providerNative" &&
@@ -1225,134 +1061,24 @@
         protocols[configuredWebSearchProfile.type]?.supportsRawWebSearch
       );
       const providerWebSearchReady = nativeProviderWebSearchReady || attachedProviderWebSearchReady;
-      const providerEvidenceReady = platformEvidenceReady ||
-        providerWebSearchReady;
       const platformDataStatus = providerWebSearchReady && !platformEvidenceReady
         ? t("bridge.platformDataSearchReady")
         : platformDataStatusWithoutSearch;
-      const creatorLLMEvidenceWarning = selectedLLMProfile && !providerEvidenceReady
-        ? `<p class="small-copy llm-evidence-warning">${tx("bridge.llmEvidenceRequired")}</p>`
-        : "";
-      const creatorLLMReady = Boolean(selectedLLMProfile &&
-        (!protocols[selectedLLMProfile.type]?.credentialRequired || selectedLLMProfile.hasCredential) &&
-        (!["openAICompatible", "custom"].includes(selectedLLMProfile.type) || Boolean(selectedLLMProfile.customEndpoint)) &&
-        providerEvidenceReady &&
-        (savedWebSearchMode === "off" || providerWebSearchReady)
-      );
-      const llmRunning = Boolean(state.inspect?.llmRunning);
-      const creatorClassification = creatorRecords.length && leafTagOptions.length
-        ? (() => {
-          const columnData = [
-            ["needsDecision", "bridge.creatorTagNeedDecision", creatorRecords.filter((creator) => !creator.tagIDs.includes(selectedCreatorTagID) && !creator.negativeTagIDs.includes(selectedCreatorTagID))],
-            ["tagged", "bridge.creatorTagTagged", creatorRecords.filter((creator) => creator.tagIDs.includes(selectedCreatorTagID))],
-            ["notTagged", "bridge.creatorTagNotTagged", creatorRecords.filter((creator) => creator.negativeTagIDs.includes(selectedCreatorTagID))],
-          ];
-          const creatorCardAction = (creator, labelKey, nextTagIDs, nextNegativeTagIDs, style) => `<button class="${style} creator-tag-card-action" data-action="recordCreatorClassification" data-type-id="${esc(classifierType.id)}" data-creator-key="${esc(creator.key)}" data-tag-ids="${esc(JSON.stringify(nextTagIDs))}" data-negative-tag-ids="${esc(JSON.stringify(nextNegativeTagIDs))}">${tagPhrase(labelKey, selectedCreatorTagNode)}</button>`;
-          const creatorCard = (creator, decision) => {
-            const positiveWithoutActive = creator.tagIDs.filter((tagID) => tagID !== selectedCreatorTagID);
-            const negativeWithoutActive = creator.negativeTagIDs.filter((tagID) => tagID !== selectedCreatorTagID);
-            const tagDecision = creatorCardAction(
-              creator,
-              "bridge.creatorTagTag",
-              [...new Set([...positiveWithoutActive, selectedCreatorTagID])].sort(),
-              negativeWithoutActive,
-              "primary"
-            );
-            const notTagDecision = creatorCardAction(
-              creator,
-              "bridge.creatorTagMarkNot",
-              positiveWithoutActive,
-              [...new Set([...negativeWithoutActive, selectedCreatorTagID])].sort(),
-              "secondary"
-            );
-            const clearDecision = creatorCardAction(
-              creator,
-              "bridge.creatorTagClear",
-              positiveWithoutActive,
-              negativeWithoutActive,
-              "secondary"
-            );
-            const actions = decision === "needsDecision"
-              ? `${tagDecision}${notTagDecision}`
-              : decision === "tagged"
-                ? `${notTagDecision}${clearDecision}`
-                : `${tagDecision}${clearDecision}`;
-            const avatar = creator.avatarURL
-              ? `<img class="creator-tag-card-avatar" src="${esc(creator.avatarURL)}" alt="" aria-hidden="true" loading="lazy" decoding="async">`
-              : `<span class="creator-tag-card-avatar creator-tag-card-avatar-fallback" aria-hidden="true">${esc(creator.name.slice(0, 1).toUpperCase())}</span>`;
-            return `<article class="creator-tag-card"><div class="creator-tag-card-profile">${avatar}<div><strong dir="auto">${esc(creator.name)}</strong><span>${esc(creator.platformName)}${creator.subscriberCount ? ` · ${tx("bridge.creatorSubscribers", { count: creator.subscriberCount })}` : ""}</span></div></div><div class="creator-tag-card-actions">${actions}</div></article>`;
-          };
-          const tagSearchGroup = `creator-tags-${classifierType.id}`;
-          const columns = columnData.map(([kind, titleKey, creators]) => `<section class="creator-tag-column" data-creator-tag-column="${esc(kind)}" data-type-id="${esc(classifierType.id)}"><div class="creator-tag-column-head"><h4>${kind === "needsDecision" ? tx(titleKey) : tagPhrase(titleKey, selectedCreatorTagNode)}</h4><span data-creator-tag-count>${creators.length}</span></div><div class="creator-tag-column-list">${virtualList(creators, creatorTagRowHeight, (creator) => creatorCard(creator, kind), { key: `creator-tag-col-${classifierType.id}-${kind}`, searchGroup: tagSearchGroup, searchOf: (creator) => `${creator.name || ""} ${creator.platformName || ""}` })}<p class="creator-tag-empty" data-creator-tag-empty${creators.length ? " hidden" : ""}>${esc(t("bridge.sourceTagEmpty", { sources: sourceTerms.plural }))}</p></div></section>`).join("");
-          return `<div class="creator-tag-browser"><nav class="creator-tag-navigation" aria-label="${tx("bridge.creatorTagNavigation")}" role="tablist">${leafTagOptions.map((node) => `<button class="creator-tag-tab tag-pill${selectedCreatorTagID === node.id ? " active" : ""}" style="${tagColorStyle(node)}" type="button" data-action="selectCreatorTag" data-type-id="${esc(classifierType.id)}" data-tag-id="${esc(node.id)}" role="tab" aria-selected="${selectedCreatorTagID === node.id}">${esc(node.name)}</button>`).join("")}</nav>${listSearchBox(tagSearchGroup, "bridge.searchSources")}<div class="creator-tag-columns">${columns}</div></div>`;
-        })()
-        : `<div class="empty compact-empty">${!creatorRecords.length ? esc(t("bridge.noSources", { sources: sourceTerms.plural })) : tx("bridge.noCreatorTags")}</div>`;
-      const tagNodeByID = new Map((selectedTree?.nodes || []).map((node) => [node.id, node]));
-      const decisionsByCreator = new Map();
-      (selectedDataset?.creatorClassifications || []).forEach((record) => {
-        if (record.classifierTypeID !== classifierType.id) return;
-        const key = `${record.platformID}|${record.creatorID}`;
-        const decisions = decisionsByCreator.get(key) || [];
-        decisions.push(record);
-        decisionsByCreator.set(key, decisions);
-      });
-      const creatorDecisionRows = sortedCreatorCandidates;
-      const creatorDecisionRow = ([key, entry]) => {
-        const decisions = decisionsByCreator.get(key) || [];
-        // Reflect an optimistic manual decision (from the 3-column view) so this
-        // overview stays in sync before the authoritative snapshot arrives. Read
-        // fresh each call so a targeted re-render of one row picks up the change.
-        // An empty override means the decision was cleared; native removes the
-        // record, so show no manual decision rather than an empty one.
-        const override = manualDecisionOverlay.get(classifierType.id)?.get(key);
-        const human = override
-          ? (override.tagIDs.length || override.negativeTagIDs.length
-              ? { origin: "manual", tags: override.tagIDs, negativeTags: override.negativeTagIDs }
-              : null)
-          : decisions.find((record) => record.origin === "manual");
-        const llm = decisions.find((record) => record.origin === "llmAssist");
-        const labelMarkup = (record) => {
-          if (!record) return `<span class="small-copy">${tx("bridge.noDecision")}</span>`;
-          const tags = [
-            ...record.tags.map((tagID) => tagPill(tagNodeByID.get(tagID))),
-            ...record.negativeTags.map((tagID) => {
-              const pill = tagPill(tagNodeByID.get(tagID), "compact");
-              return pill ? `<span class="tag-negative">${tx("bridge.notTag")} ${pill}</span>` : "";
-            }),
-          ].filter(Boolean);
-          return tags.length ? `<span class="tag-pill-rail">${tags.join("")}</span>` : `<span class="small-copy">${tx("bridge.noTags")}</span>`;
-        };
-        const avatarURL = typeof entry.cachedSourceIconURL === "string" ? entry.cachedSourceIconURL : "";
-        const avatar = avatarURL ? `<img class="creator-tag-card-avatar" src="${esc(avatarURL)}" alt="" aria-hidden="true" loading="lazy" decoding="async">` : `<span class="creator-tag-card-avatar creator-tag-card-avatar-fallback" aria-hidden="true">${esc(entry.creatorName.slice(0, 1).toUpperCase())}</span>`;
-        return `<article class="creator-tag-card"><div class="creator-tag-card-profile">${avatar}<div><strong dir="auto">${esc(entry.creatorName)}</strong><span>${esc(platformDefinitions.get(entry.platformID)?.name || entry.platformID)}</span></div></div><div class="creator-tag-card-actions"><span class="creator-decision-tags"><span class="small-copy">${tx("bridge.humanTags")}:</span>${labelMarkup(human)}</span><span class="creator-decision-tags"><span class="small-copy">${tx("bridge.llmTags")}:</span>${labelMarkup(llm)}</span></div></article>`;
-      };
-      const creatorDecisionList = `<section class="classifier-type-section creator-classification-section"><div class="section-header"><div><h3>${tx("bridge.sourceDecisionList", { source: sourceTerms.singular })}</h3><p class="section-copy">${tx("bridge.sourceDecisionListCopy", { sources: sourceTerms.plural })}</p></div></div>${listSearchBox(`creator-decisions-${classifierType.id}`, "bridge.searchSources")}${keyedList(`creator-decisions-${classifierType.id}`, creatorDecisionRows, ([key]) => key, creatorDecisionRow, { emptyMarkup: `<div class="empty compact-empty">${esc(t("bridge.noSources", { sources: sourceTerms.plural }))}</div>`, listClass: "creator-decision-list", searchGroup: `creator-decisions-${classifierType.id}`, searchOf: ([, creator]) => `${creator.creatorName || ""} ${creator.creatorID || ""}` })}</section>`;
       const llmModelControl = !selectedLLMProfile
         ? `<p class="small-copy">${tx("bridge.llmChooseProviderFirst")}</p>`
         : `<div class="field"><span class="field-label">${tx("bridge.llmModel")} · ${tx("bridge.llmModelCopy")}</span><select class="select-control" data-field="llmModelIdentifier"><option value="">${tx("bridge.llmChooseModel")}</option>${visibleModels.map((model) => `<option value="${esc(model)}"${selected(currentModel, model)}>${esc(model)}</option>`).join("")}</select><span class="action-row"><button type="button" class="secondary" data-action="probeProviderModelCatalog" data-profile-id="${esc(selectedLLMProfile.id)}"${disabled(loadingModelCatalogs.has(selectedLLMProfile.id))}>${tx(loadingModelCatalogs.has(selectedLLMProfile.id) ? "bridge.llmProbingModels" : "bridge.llmProbeModels")}</button><span class="small-copy">${esc(loadingModelCatalogs.has(selectedLLMProfile.id) ? tx("bridge.llmProbingModels") : modelCatalogErrors[selectedLLMProfile.id] || tx("bridge.llmProbeModelsCopy"))}</span></span></div>`;
-      const llmActivation = llmAssist
-        ? `<div class="action-row">${liveHTML(`llm-activation-status-${classifierType.id}`, tx(llmAssist.isActive ? (llmRunning ? "bridge.llmActivationRunning" : "bridge.llmActive") : "bridge.llmInactive"), { tag: "span", className: "small-copy" })}<button class="${llmAssist.isActive ? "secondary" : "gold-action"}" data-action="setLLMAssistActive" data-type-id="${esc(classifierType.id)}" data-is-active="${llmAssist.isActive ? "false" : "true"}"${disabled(!llmAssist.isActive && (!creatorLLMReady || llmRunning))}>${tx(llmAssist.isActive ? "bridge.llmDeactivate" : "bridge.llmActivate")}</button></div>`
-        : `<span class="small-copy">${tx("bridge.llmModelRequired")}</span>`;
-      const llmLastOutcome = llmAssist?.lastClassificationOutcome;
-      const llmClassificationStatus = llmAssist
-        ? `<div class="llm-classification-status"><div><span class="eyebrow">${tx("bridge.llmClassificationStatus")}</span>${liveHTML(`llm-status-${classifierType.id}`, tx(llmAssist.isActive ? (llmRunning ? "bridge.llmActivationRunning" : "bridge.llmActive") : "bridge.llmInactive"), { tag: "p", className: "small-copy" })}</div>${liveHTML(`llm-metrics-${classifierType.id}`, `<span>${tx("bridge.llmQueuedCreators", { count: llmAssist.queuedCreatorCount || 0 })}</span><span>${tx("bridge.llmCompletedToday", { count: llmAssist.completedToday || 0 })}</span>${llmLastOutcome ? `<span>${tx("bridge.llmLastResult", { result: tx(llmLastOutcome === "succeeded" ? "bridge.llmOutcomeSucceeded" : "bridge.llmOutcomeFailed") })}</span>` : ""}`, { tag: "div", className: "llm-classification-metrics" })}</div>`
-        : "";
       const webSearchControls = `${valueSelectField("bridge.llmWebSearchMode", "bridge.llmWebSearchModeCopy", "llmWebSearchMode", savedWebSearchMode, webSearchModeOptions)}<p class="small-copy" data-native-search-copy${savedWebSearchMode === "providerNative" ? "" : " hidden"}>${tx("bridge.llmNativeWebSearchCopy")}</p><div data-attached-search-controls${savedWebSearchMode === "attached" ? "" : " hidden"}>${valueSelectField("bridge.llmWebSearchProvider", "bridge.llmWebSearchProviderCopy", "llmWebSearchProviderProfileID", savedWebSearchProfileID, webSearchProviderOptions)}<p class="small-copy">${tx("bridge.llmAttachedWebSearchCopy")}</p></div>`;
       const officialContentEvidenceControl = field("bridge.llmOfficialContentEvidenceCount", "bridge.llmOfficialContentEvidenceCountCopy", "llmOfficialContentEvidenceCount", llmEditorSettings?.officialContentEvidenceCount || 25, "text", "inputmode=\"numeric\"");
-      // Activation (provider + model) is the common, up-front control; the many
-      // numeric knobs are the least-used detail and move to their own section.
-      const llmActivationBody = selectedLLMProfile
-        ? `${llmClassificationStatus}<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}${llmModelControl}</div>`
+      const llmConfigurationBody = selectedLLMProfile
+        ? `<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}${llmModelControl}</div>`
         : `<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}</div>`;
-      const llmAdvancedBody = `<div class="classifier-llm-config">${field("bridge.llmDailyTokenBudget", "bridge.llmDailyTokenBudgetCopy", "llmDailyTokenLimit", llmEditorSettings?.dailyTokenLimit || 10000, "text", "inputmode=\"numeric\"")}${llmAssist ? liveHTML(`llm-tokens-${classifierType.id}`, tx("bridge.llmDailyTokenUsage", { used: llmAssist.dailyTokensUsed || 0, limit: llmAssist.dailyTokenLimit || 10000 }), { tag: "p", className: "small-copy" }) : ""}${field("bridge.llmMaximumTokens", "bridge.llmMaximumTokensCopy", "llmMaximumOutputTokensPerRequest", llmEditorSettings?.maximumOutputTokensPerRequest || 4096, "text", "inputmode=\"numeric\"")}${textareaField("bridge.llmExtraDirection", "bridge.llmExtraDirectionCopy", "llmExtraDirection", llmEditorSettings?.extraDirection || "", "maxlength=\"4096\"")}${field("bridge.llmClassificationPace", "bridge.llmClassificationPaceCopy", "llmClassificationRequestsPerMinute", llmEditorSettings?.classificationRequestsPerMinute || 6, "text", "inputmode=\"numeric\"")}${field("bridge.llmBatchSize", "bridge.llmBatchSizeCopy", "llmBatchSize", llmEditorSettings?.batchSize || 5, "text", "inputmode=\"numeric\"")}${officialContentEvidenceControl}${field("bridge.llmMaximumTagCount", "bridge.llmMaximumTagCountCopy", "llmMaximumTagCount", llmEditorSettings?.maximumTagCount || 8, "text", "inputmode=\"numeric\"")}${toggle("bridge.llmLeafOnly", "llmRestrictToLeafTags", llmEditorSettings?.restrictToLeafTags ?? true)}<p class="small-copy">${tx("bridge.llmLeafOnlyCopy")}</p>${webSearchControls}</div>${creatorLLMEvidenceWarning}`;
+      const llmAdvancedBody = `<div class="classifier-llm-config">${field("bridge.llmDailyTokenBudget", "bridge.llmDailyTokenBudgetCopy", "llmDailyTokenLimit", llmEditorSettings?.dailyTokenLimit || 10000, "text", "inputmode=\"numeric\"")}${field("bridge.llmMaximumTokens", "bridge.llmMaximumTokensCopy", "llmMaximumOutputTokensPerRequest", llmEditorSettings?.maximumOutputTokensPerRequest || 4096, "text", "inputmode=\"numeric\"")}${textareaField("bridge.llmExtraDirection", "bridge.llmExtraDirectionCopy", "llmExtraDirection", llmEditorSettings?.extraDirection || "", "maxlength=\"4096\"")}${field("bridge.llmClassificationPace", "bridge.llmClassificationPaceCopy", "llmClassificationRequestsPerMinute", llmEditorSettings?.classificationRequestsPerMinute || 6, "text", "inputmode=\"numeric\"")}${field("bridge.llmBatchSize", "bridge.llmBatchSizeCopy", "llmBatchSize", llmEditorSettings?.batchSize || 5, "text", "inputmode=\"numeric\"")}${officialContentEvidenceControl}${field("bridge.llmMaximumTagCount", "bridge.llmMaximumTagCountCopy", "llmMaximumTagCount", llmEditorSettings?.maximumTagCount || 8, "text", "inputmode=\"numeric\"")}${toggle("bridge.llmLeafOnly", "llmRestrictToLeafTags", llmEditorSettings?.restrictToLeafTags ?? true)}<p class="small-copy">${tx("bridge.llmLeafOnlyCopy")}</p>${webSearchControls}</div>`;
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}">
         <div class="classifier-type-head"><div><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div>${statusPill(typeStatus, applicablePlatformID ? "navy" : "muted")}</div>
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}<button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("bridge.saveType")}</button><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}" data-name="${esc(classifierType.name)}">${tx("bridge.deleteType")}</button></div>
-        <section class="classifier-type-section classifier-applicable-platform-section"><div class="section-header"><div><h3>${tx("bridge.applicablePlatform")}</h3><p class="section-copy">${tx("bridge.assetSelectionCopy")}</p></div></div><div class="classifier-applicable-platform-row">${valueSelectField("bridge.applicablePlatform", "bridge.applicablePlatformCopy", "applicablePlatformID", applicablePlatformID, applicablePlatformOptions, applicablePlatformLocked ? "disabled" : "")}<div class="classifier-platform-data-status"><span class="eyebrow">${tx("bridge.platformData")}</span><p class="small-copy">${esc(platformDataStatus)}</p></div></div>${applicablePlatformLocked ? `<p class="small-copy classifier-platform-locked" data-platform-locked>${approvedDecisionCount > 0 ? tx("bridge.applicablePlatformLocked", { count: approvedDecisionCount }) : tx("bridge.platformLockedNote")}</p>` : ""}${applicablePlatform && !supportsLocalModel && !supportsLLMAssist ? `<p class="small-copy" data-manual-only-platform-note>${tx("bridge.manualOnlyCopy")}</p>` : ""}</section>
-        <section class="classifier-type-section creator-classification-section"><div class="section-header"><div><h3>${tx("bridge.manualSource", { source: sourceTerms.singular })}</h3><p class="section-copy">${tx("bridge.manualSourceCopy", { source: sourceTerms.singular })}</p></div><div class="action-row"><span class="small-copy">${tx("bridge.sourceCount", { count: creatorRecords.length, sources: sourceTerms.plural })}</span></div></div>${creatorClassification}</section>
-        <section class="classifier-type-section classifier-llm-section" data-llm-assist-section${supportsLLMAssist ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.llmAssist")}</h3><p class="section-copy">${tx("bridge.llmAssistCopy")}</p></div>${llmActivation}</div>${llmProfiles.length ? llmActivationBody : `<div class="empty compact-empty">${tx("bridge.noLLMProfiles")}</div>`}</section>
+        <section class="classifier-type-section classifier-applicable-platform-section"><div class="section-header"><div><h3>${tx("bridge.applicablePlatform")}</h3><p class="section-copy">${tx("bridge.assetSelectionCopy")}</p></div></div><div class="classifier-applicable-platform-row">${valueSelectField("bridge.applicablePlatform", "bridge.applicablePlatformCopy", "applicablePlatformID", applicablePlatformID, applicablePlatformOptions)}<div class="classifier-platform-data-status"><span class="eyebrow">${tx("bridge.platformData")}</span><p class="small-copy">${esc(platformDataStatus)}</p></div></div>${applicablePlatform && !supportsLocalModel && !supportsLLMAssist ? `<p class="small-copy" data-collection-only-platform-note>${tx("bridge.collectionOnlyCopy")}</p>` : ""}</section>
+        <section class="classifier-type-section classifier-llm-section" data-llm-assist-section${supportsLLMAssist ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.llmAssist")}</h3><p class="section-copy">${tx("bridge.llmAssistCopy")}</p></div></div>${llmProfiles.length ? llmConfigurationBody : `<div class="empty compact-empty">${tx("bridge.noLLMProfiles")}</div>`}</section>
         ${selectedLLMProfile && llmProfiles.length ? `<section class="classifier-type-section classifier-llm-advanced-section" data-llm-assist-section${supportsLLMAssist ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.llmAdvanced")}</h3><p class="section-copy">${tx("bridge.llmAdvancedCopy")}</p></div></div>${llmAdvancedBody}</section>` : ""}
-        ${creatorDecisionList}
       </section>`;
     };
     // A type now targets one platform at creation and owns a fresh tree. The
@@ -1448,10 +1174,7 @@
       const tree = treeByID.get(binding.treeID);
       const selectableTypes = classifierTypes.filter((classifierType) => {
         if (classifierType.applicablePlatformID !== binding.id || classifierType.treeID !== binding.treeID || classifierType.datasetID !== binding.datasetID || classifierType.treeRevision !== tree?.revision || classifierType.datasetRevision !== dataset?.revision) return false;
-        if (!definition?.supportsLLMAssist && classifierType.llmAssistConfiguration) return false;
-        // A type activates regardless of its local model's training state; an
-        // untrained or updating model simply contributes nothing yet.
-        return true;
+        return definition?.supportsLLMAssist || !classifierType.llmAssistConfiguration;
       });
       const typeOptions = [["", t("data.noClassifierType")], ...selectableTypes.map((classifierType) => [classifierType.id, classifierType.name])];
       const typeStatus = binding.activeClassifierTypeID ? "data.classifierTypeActive" : "data.classifierTypeNone";
@@ -1664,19 +1387,19 @@
       const platform = definitions.get(sourceControl.value);
       const supportsLocalModel = platform?.supportsLocalModel === true;
       const supportsLLMAssist = platform?.supportsLLMAssist === true;
-      const isManualOnlyPlatform = Boolean(platform && !supportsLocalModel && !supportsLLMAssist);
+      const isCollectionOnlyPlatform = Boolean(platform && !supportsLocalModel && !supportsLLMAssist);
       panel.querySelectorAll("[data-local-model-section]").forEach((section) => { section.hidden = !supportsLocalModel; });
       panel.querySelectorAll("[data-llm-assist-section]").forEach((section) => { section.hidden = !supportsLLMAssist; });
       panel.querySelectorAll("[data-decision-policy-section]").forEach((section) => { section.hidden = !supportsLocalModel && !supportsLLMAssist; });
-      let note = panel.querySelector("[data-manual-only-platform-note]");
+      let note = panel.querySelector("[data-collection-only-platform-note]");
       if (!note) {
         note = document.createElement("p");
         note.className = "small-copy";
-        note.dataset.manualOnlyPlatformNote = "";
-        note.textContent = t("bridge.manualOnlyCopy");
+        note.dataset.collectionOnlyPlatformNote = "";
+        note.textContent = t("bridge.collectionOnlyCopy");
         panel.querySelector(".classifier-applicable-platform-section")?.append(note);
       }
-      if (note) note.hidden = !isManualOnlyPlatform;
+      if (note) note.hidden = !isCollectionOnlyPlatform;
       // The local model is bound to the type and shown read-only; there is no
       // per-type model control to enable or disable here.
       panel.querySelectorAll('[data-field^="llm"], [data-field="creatorLLM"], [data-field="entryLLM"]').forEach((control) => {
@@ -1704,12 +1427,6 @@
   function deletionModal() {
     if (!pendingDeletion) return "";
     return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelPendingDeletion" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog" role="dialog" aria-modal="true"><h3>${tx("trash.confirmTitle")}</h3><p class="section-copy">${tx("trash.confirmCopy", { name: pendingDeletion.name })}</p><label class="field"><span class="field-label">${tx("trash.typeNameLabel")}</span><input type="text" data-deletion-name-input autocomplete="off" spellcheck="false"></label><div class="action-row"><button class="secondary" data-action="cancelPendingDeletion">${tx("common.cancel")}</button><button class="danger" data-action="confirmPendingDeletion" disabled>${tx("trash.confirmDelete")}</button></div></div></div>`;
-  }
-
-  // Confirmation shown before the first action that binds a type to its platform.
-  function platformLockModal() {
-    if (!pendingPlatformLock) return "";
-    return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelPlatformLock" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog" role="dialog" aria-modal="true"><h3>${tx("bridge.lockPlatformTitle")}</h3><p class="section-copy">${tx("bridge.lockPlatformCopy", { platform: pendingPlatformLock.platformName })}</p><div class="action-row"><button class="secondary" data-action="cancelPlatformLock">${tx("common.cancel")}</button><button class="primary" data-action="confirmPlatformLock">${tx("bridge.lockPlatformConfirm")}</button></div></div></div>`;
   }
 
   // Keyed list: rendered as an empty container in the shell (so its row data is
@@ -1793,7 +1510,7 @@
       return;
     }
     resetDeferredRendering();
-    const markup = shell(workspace()) + deletionModal() + platformLockModal();
+    const markup = shell(workspace()) + deletionModal();
     // Fast path: the signature (everything except keyed-list rows, live
     // regions, and windowed virtual-list rows) is unchanged, so only
     // reconcilable data differs. Update those in place and keep scroll. Virtual
@@ -1885,6 +1602,17 @@
     }
     if (button.disabled) return;
     const action = button.dataset.action;
+    if (action === "toggleAdvancedSettings") {
+      // Class toggle only — a full render would replace the node and kill the
+      // expand/collapse transition mid-flight.
+      advancedSettingsOpen = !advancedSettingsOpen;
+      const wrap = button.closest("[data-advanced-settings]");
+      if (wrap) {
+        wrap.classList.toggle("open", advancedSettingsOpen);
+        button.setAttribute("aria-expanded", String(advancedSettingsOpen));
+      }
+      return;
+    }
     if (action === "workspace") {
       const nextWorkspace = button.dataset.workspace;
       if (!state || !workspaceNames.has(nextWorkspace) || state.workspace === nextWorkspace) return;
@@ -1934,22 +1662,6 @@
       render();
       return;
     }
-    if (action === "confirmPlatformLock") {
-      const pending = pendingPlatformLock;
-      pendingPlatformLock = null;
-      if (pending) {
-        // Lock first, then the original action; the host processes them in order.
-        send("lockClassifierTypePlatform", { typeID: pending.typeID });
-        pending.replay();
-      }
-      render();
-      return;
-    }
-    if (action === "cancelPlatformLock") {
-      pendingPlatformLock = null;
-      render();
-      return;
-    }
     if (action === "confirmPendingDeletion") {
       const input = root.querySelector("[data-deletion-name-input]");
       if (!pendingDeletion || (input?.value || "").trim() !== pendingDeletion.name.trim()) return;
@@ -1959,51 +1671,9 @@
       send(pending.action, pending.payload);
       return;
     }
-    if (action === "recordCreatorClassification") {
-      const typeID = button.dataset.typeId;
-      const creatorKey = button.dataset.creatorKey;
-      if (!typeID || !creatorKey) return;
-      let newTagIDs, newNegativeTagIDs;
-      try {
-        newTagIDs = JSON.parse(button.dataset.tagIds || "[]");
-        newNegativeTagIDs = JSON.parse(button.dataset.negativeTagIds || "[]");
-      } catch (_) { return; }
-      if (!Array.isArray(newTagIDs) || !newTagIDs.every((id) => typeof id === "string")) return;
-      if (!Array.isArray(newNegativeTagIDs) || !newNegativeTagIDs.every((id) => typeof id === "string")) return;
-      // Lock gate: the first classification binds decisions to the type's
-      // platform. Confirm the lock first, then replay this record.
-      const lockType = (state.assets?.classifierTypes || []).find((type) => type.id === typeID);
-      if (lockType && lockType.platformLocked !== true && lockType.applicablePlatformID) {
-        const platform = (state.assets?.collectionPlatforms || []).find((definition) => definition.id === lockType.applicablePlatformID);
-        pendingPlatformLock = {
-          typeID,
-          platformName: platform ? platform.name : lockType.applicablePlatformID,
-          replay: () => {
-            let overlay = manualDecisionOverlay.get(typeID);
-            if (!overlay) { overlay = new Map(); manualDecisionOverlay.set(typeID, overlay); }
-            overlay.set(creatorKey, { tagIDs: newTagIDs, negativeTagIDs: newNegativeTagIDs });
-            send("recordCreatorClassification", { typeID, creatorKey, tagIDs: newTagIDs, negativeTagIDs: newNegativeTagIDs });
-          },
-        };
-        render();
-        return;
-      }
-      // Optimistic: record the decision locally, move just this card, then
-      // persist. Native does not re-push (returns false) so the whole list is
-      // never rebuilt; the overlay keeps the decision until an authoritative
-      // snapshot supersedes it.
-      let typeOverlay = manualDecisionOverlay.get(typeID);
-      if (!typeOverlay) { typeOverlay = new Map(); manualDecisionOverlay.set(typeID, typeOverlay); }
-      typeOverlay.set(creatorKey, { tagIDs: newTagIDs, negativeTagIDs: newNegativeTagIDs });
-      moveCreatorBetweenTagColumns(typeID, creatorKey, newTagIDs, newNegativeTagIDs);
-      syncManualDecisionRow(typeID, creatorKey);
-      send("recordCreatorClassification", { typeID, creatorKey, tagIDs: newTagIDs, negativeTagIDs: newNegativeTagIDs });
-      return;
-    }
     const data = button.dataset.form ? collect(button.dataset.form) : {};
     if (button.dataset.workspace) data.workspace = button.dataset.workspace;
     if (button.dataset.id) data.id = button.dataset.id;
-    if (button.dataset.correction) data.correction = button.dataset.correction;
     if (button.dataset.utilityPanel) data.utilityPanel = button.dataset.utilityPanel;
     if (button.dataset.policyId) data.policyID = button.dataset.policyId;
     if (button.dataset.modelId) data.modelID = button.dataset.modelId;
@@ -2013,35 +1683,7 @@
     if (button.dataset.parentId) data.parentID = button.dataset.parentId;
     if (button.dataset.platformId) data.platformID = button.dataset.platformId;
     if (button.dataset.typeId) data.typeID = button.dataset.typeId;
-    if (button.dataset.isActive) data.isActive = button.dataset.isActive === "true";
-    if (button.dataset.creatorKey) data.creatorKey = button.dataset.creatorKey;
-    if (button.dataset.tagIds) {
-      try {
-        const tagIDs = JSON.parse(button.dataset.tagIds);
-        if (!Array.isArray(tagIDs) || !tagIDs.every((tagID) => typeof tagID === "string")) return;
-        data.tagIDs = tagIDs;
-      } catch (_) {
-        return;
-      }
-    }
-    if (button.dataset.negativeTagIds) {
-      try {
-        const negativeTagIDs = JSON.parse(button.dataset.negativeTagIds);
-        if (!Array.isArray(negativeTagIDs) || !negativeTagIDs.every((tagID) => typeof tagID === "string")) return;
-        data.negativeTagIDs = negativeTagIDs;
-      } catch (_) {
-        return;
-      }
-    }
     if (action === "testProviderProfile") Object.assign(data, providerConnectionPayload(data, button.dataset.form));
-    if (action === "selectCreatorTag") {
-      const typeID = button.dataset.typeId;
-      const tagID = button.dataset.tagId;
-      if (!typeID || !tagID) return;
-      selectedCreatorTagByType.set(typeID, tagID);
-      render();
-      return;
-    }
     if (action === "selectCollectionCreator") {
       const platformID = button.dataset.platformId;
       const creatorID = button.dataset.creatorId;
@@ -2623,9 +2265,6 @@
         if (created) { selectedTypeID = created.id; state.workspace = "browserBridge"; }
         pendingSelectNewType = null;
       }
-      // An authoritative snapshot already reflects every persisted manual
-      // decision, so the optimistic overlay is no longer needed.
-      manualDecisionOverlay.clear();
       render();
     },
     // Targeted channel for one chosen creator's entries (see the native

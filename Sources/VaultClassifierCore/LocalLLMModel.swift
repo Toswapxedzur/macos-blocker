@@ -1,10 +1,6 @@
 import Foundation
 
-// Data model for the local-LLM-centered, per-video, grounded-search rework
-// (see REWORK-local-model-centered.md). These types are ADDITIVE — they live
-// alongside the existing creator-classification model so the build stays green
-// while the new pipeline is assembled. The old primary path is removed only in
-// the cleanup phase, once the new pipeline drives pills.
+// Data model for the local-LLM-centered, per-video pipeline.
 
 // MARK: - Scored tag (discrete 1–5 confidence)
 

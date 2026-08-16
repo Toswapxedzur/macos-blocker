@@ -13,7 +13,7 @@ public enum ProviderTestProtocol {
     public static func prepare(profile: APIKeyProviderProfile) throws -> ProviderTestPreparedRequest {
         let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
         if descriptor.requestFormats.contains(where: { $0.operation == .readPublicContent }) {
-            let request = try OfficialPlatformEvidenceProtocol.prepareConnectionTest(profile: profile)
+            let request = try OfficialPlatformConnectionTestProtocol.prepare(profile: profile)
             return .init(
                 plan: request.plan,
                 operation: .readPublicContent,

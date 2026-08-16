@@ -66,61 +66,7 @@ public struct NativeCollectionResponse: Codable, Equatable, Sendable {
     public init(accepted: Bool, inserted: Bool) { self.accepted = accepted; self.inserted = inserted }
 }
 
-public struct NativeSourceTagsRequest: Codable, Equatable, Sendable {
-    public var platformID: String
-    public var sourceID: String
-    /// Best-effort display names for cards that expose no creator link (YouTube
-    /// collaboration cards). Used only when `sourceID` resolves nothing.
-    public var creatorNames: [String]
-
-    public static let maximumCreatorNames = 4
-    public static let maximumCreatorNameLength = 120
-
-    public init(platformID: String, sourceID: String, creatorNames: [String] = []) {
-        self.platformID = platformID
-        self.sourceID = sourceID
-        self.creatorNames = creatorNames
-    }
-
-    private enum CodingKeys: String, CodingKey { case platformID, sourceID, creatorNames }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        platformID = try container.decode(String.self, forKey: .platformID)
-        sourceID = try container.decode(String.self, forKey: .sourceID)
-        // Crash-guard for payloads from an older extension that omit the field.
-        creatorNames = (try container.decodeIfPresent([String].self, forKey: .creatorNames)) ?? []
-    }
-
-    public func validate() throws {
-        guard Self.isValidPlatformID(platformID) else {
-            throw NativeSourceTagsError.invalidPlatform
-        }
-        guard !sourceID.isEmpty,
-              sourceID.count <= 256,
-              sourceID.hasPrefix("\(platformID):"),
-              sourceID == sourceID.trimmingCharacters(in: .whitespacesAndNewlines),
-              sourceID.unicodeScalars.allSatisfy({
-                  $0.value >= 0x21 && $0.value != 0x7f
-              }) else {
-            throw NativeSourceTagsError.invalidSource
-        }
-        guard creatorNames.count <= Self.maximumCreatorNames,
-              creatorNames.allSatisfy({ !$0.isEmpty && $0.count <= Self.maximumCreatorNameLength }) else {
-            throw NativeSourceTagsError.invalidSource
-        }
-    }
-
-    static func isValidPlatformID(_ value: String) -> Bool {
-        !value.isEmpty && value.count <= 64 && value.unicodeScalars.allSatisfy {
-            ($0.value >= 0x61 && $0.value <= 0x7a) ||
-            ($0.value >= 0x30 && $0.value <= 0x39) ||
-            $0.value == 0x2d
-        }
-    }
-}
-
-// MARK: - Per-video tags (local-LLM rework)
+// MARK: - Per-video tags
 
 /// A request for one video's tags, keyed by the video's durable `entryID` and
 /// carrying the evidence the on-device LLM classifies (the creator is only a
@@ -158,25 +104,33 @@ public struct NativeVideoTagsRequest: Codable, Equatable, Sendable {
     }
 
     public func validate() throws {
-        guard NativeSourceTagsRequest.isValidPlatformID(platformID) else {
-            throw NativeSourceTagsError.invalidPlatform
+        guard NativeVideoTagsRequest.isValidPlatformID(platformID) else {
+            throw NativeVideoTagsError.invalidPlatform
         }
         guard !entryID.isEmpty, entryID.count <= 256,
               entryID.hasPrefix("\(platformID):"),
               entryID == entryID.trimmingCharacters(in: .whitespacesAndNewlines) else {
-            throw NativeSourceTagsError.invalidSource
+            throw NativeVideoTagsError.invalidEvidence
         }
         guard !creatorID.isEmpty, creatorID.count <= 256,
               creatorID.hasPrefix("\(platformID):") else {
-            throw NativeSourceTagsError.invalidSource
+            throw NativeVideoTagsError.invalidEvidence
         }
         guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               title.count <= Self.maximumTitleLength else {
-            throw NativeSourceTagsError.invalidSource
+            throw NativeVideoTagsError.invalidEvidence
         }
         guard (summary?.count ?? 0) <= Self.maximumEvidenceLength,
               (text?.count ?? 0) <= Self.maximumEvidenceLength else {
-            throw NativeSourceTagsError.invalidSource
+            throw NativeVideoTagsError.invalidEvidence
+        }
+    }
+
+    static func isValidPlatformID(_ value: String) -> Bool {
+        !value.isEmpty && value.count <= 64 && value.unicodeScalars.allSatisfy {
+            ($0.value >= 0x61 && $0.value <= 0x7a) ||
+            ($0.value >= 0x30 && $0.value <= 0x39) ||
+            $0.value == 0x2d
         }
     }
 }
@@ -184,16 +138,16 @@ public struct NativeVideoTagsRequest: Codable, Equatable, Sendable {
 public struct NativeVideoTagsResponse: Codable, Equatable, Sendable {
     public var platformID: String
     public var entryID: String
-    public var tags: [NativeSourceTag]
+    public var tags: [NativeVideoTag]
     public var predicted: Bool
     /// True when the video is not yet classified: classification was queued and
     /// the caller should re-request shortly (the pill fills in on the next pass).
     public var pending: Bool
 
-    public init(platformID: String, entryID: String, tags: [NativeSourceTag], predicted: Bool = false, pending: Bool = false) {
+    public init(platformID: String, entryID: String, tags: [NativeVideoTag], predicted: Bool = false, pending: Bool = false) {
         self.platformID = platformID
         self.entryID = entryID
-        self.tags = NativeSourceTagsResponse.acceptedTags(tags)
+        self.tags = NativeVideoTag.accepted(tags)
         self.predicted = predicted
         self.pending = pending
     }
@@ -204,7 +158,7 @@ public struct NativeVideoTagsResponse: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         platformID = try container.decode(String.self, forKey: .platformID)
         entryID = try container.decode(String.self, forKey: .entryID)
-        tags = NativeSourceTagsResponse.acceptedTags(try container.decode([NativeSourceTag].self, forKey: .tags))
+        tags = NativeVideoTag.accepted(try container.decode([NativeVideoTag].self, forKey: .tags))
         predicted = try container.decodeIfPresent(Bool.self, forKey: .predicted) ?? false
         pending = try container.decodeIfPresent(Bool.self, forKey: .pending) ?? false
     }
@@ -265,10 +219,10 @@ public struct NativeVideoTagsBatchRequest: Codable, Equatable, Sendable {
     }
 
     public func validate() throws {
-        guard NativeSourceTagsRequest.isValidPlatformID(platformID) else {
-            throw NativeSourceTagsError.invalidPlatform
+        guard NativeVideoTagsRequest.isValidPlatformID(platformID) else {
+            throw NativeVideoTagsError.invalidPlatform
         }
-        guard items.count <= Self.maximumItems else { throw NativeSourceTagsError.invalidSource }
+        guard items.count <= Self.maximumItems else { throw NativeVideoTagsError.invalidEvidence }
         for item in items {
             try NativeVideoTagsRequest(
                 platformID: platformID, entryID: item.entryID, creatorID: item.creatorID,
@@ -280,13 +234,13 @@ public struct NativeVideoTagsBatchRequest: Codable, Equatable, Sendable {
 
 public struct NativeVideoTagsBatchResponseItem: Codable, Equatable, Sendable {
     public var entryID: String
-    public var tags: [NativeSourceTag]
+    public var tags: [NativeVideoTag]
     public var predicted: Bool
     public var pending: Bool
 
-    public init(entryID: String, tags: [NativeSourceTag], predicted: Bool = false, pending: Bool = false) {
+    public init(entryID: String, tags: [NativeVideoTag], predicted: Bool = false, pending: Bool = false) {
         self.entryID = entryID
-        self.tags = NativeSourceTagsResponse.acceptedTags(tags)
+        self.tags = NativeVideoTag.accepted(tags)
         self.predicted = predicted
         self.pending = pending
     }
@@ -296,7 +250,7 @@ public struct NativeVideoTagsBatchResponseItem: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         entryID = try container.decode(String.self, forKey: .entryID)
-        tags = NativeSourceTagsResponse.acceptedTags(try container.decode([NativeSourceTag].self, forKey: .tags))
+        tags = NativeVideoTag.accepted(try container.decode([NativeVideoTag].self, forKey: .tags))
         predicted = try container.decodeIfPresent(Bool.self, forKey: .predicted) ?? false
         pending = try container.decodeIfPresent(Bool.self, forKey: .pending) ?? false
     }
@@ -343,7 +297,7 @@ public struct NativeDevLogRequest: Codable, Equatable, Sendable {
               !event.isEmpty, event.count <= 200,
               fields.count <= Self.maximumFields,
               fields.allSatisfy({ $0.key.count <= 64 && $0.value.count <= Self.maximumValueLength }) else {
-            throw NativeSourceTagsError.invalidSource
+            throw NativeBridgePayloadError.invalidPayload
         }
     }
 }
@@ -353,7 +307,7 @@ public struct NativeDevLogResponse: Codable, Equatable, Sendable {
     public init(accepted: Bool) { self.accepted = accepted }
 }
 
-public struct NativeSourceTag: Codable, Equatable, Sendable {
+public struct NativeVideoTag: Codable, Equatable, Sendable {
     public var id: String
     public var name: String
     public var lightColorHex: String
@@ -365,37 +319,8 @@ public struct NativeSourceTag: Codable, Equatable, Sendable {
         self.lightColorHex = TagColorAssignment.normalizedHex(lightColorHex) ?? ""
         self.darkColorHex = TagColorAssignment.normalizedHex(darkColorHex) ?? ""
     }
-}
 
-public struct NativeSourceTagsResponse: Codable, Equatable, Sendable {
-    public var platformID: String
-    public var sourceID: String
-    public var tags: [NativeSourceTag]
-    /// True when `tags` are the local model's fallback prediction (no approved
-    /// human/LLM decision), so the browser can render them as a distinct pill.
-    public var predicted: Bool
-
-    public init(platformID: String, sourceID: String, tags: [NativeSourceTag], predicted: Bool = false) {
-        self.platformID = platformID
-        self.sourceID = sourceID
-        self.tags = NativeSourceTagsResponse.acceptedTags(tags)
-        self.predicted = predicted
-    }
-
-    private enum CodingKeys: String, CodingKey { case platformID, sourceID, tags, predicted }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        platformID = try container.decode(String.self, forKey: .platformID)
-        sourceID = try container.decode(String.self, forKey: .sourceID)
-        tags = NativeSourceTagsResponse.acceptedTags(try container.decode([NativeSourceTag].self, forKey: .tags))
-        predicted = try container.decodeIfPresent(Bool.self, forKey: .predicted) ?? false
-    }
-
-    /// Keeps only tags whose light/dark colors form a valid theme pair, capped at
-    /// the persisted tag-count limit. Shared by the single and batch responses so
-    /// both apply the identical outbound color/size gate.
-    static func acceptedTags(_ tags: [NativeSourceTag]) -> [NativeSourceTag] {
+    static func accepted(_ tags: [NativeVideoTag]) -> [NativeVideoTag] {
         Array(
             tags
                 .filter {
@@ -404,92 +329,8 @@ public struct NativeSourceTagsResponse: Codable, Equatable, Sendable {
                         darkHex: $0.darkColorHex
                     )
                 }
-                .prefix(CreatorClassificationRecord.maximumTagIDs)
+                .prefix(16)
         )
-    }
-}
-
-/// One source's tags inside a batched request. `platformID` is carried once on
-/// the batch envelope; per item only the sourceID and optional collaboration
-/// display names travel.
-public struct NativeSourceTagsBatchItem: Codable, Equatable, Sendable {
-    public var sourceID: String
-    public var creatorNames: [String]
-
-    public init(sourceID: String, creatorNames: [String] = []) {
-        self.sourceID = sourceID
-        self.creatorNames = creatorNames
-    }
-
-    private enum CodingKeys: String, CodingKey { case sourceID, creatorNames }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        sourceID = try container.decode(String.self, forKey: .sourceID)
-        creatorNames = (try container.decodeIfPresent([String].self, forKey: .creatorNames)) ?? []
-    }
-}
-
-public struct NativeSourceTagsBatchRequest: Codable, Equatable, Sendable {
-    public var platformID: String
-    public var items: [NativeSourceTagsBatchItem]
-
-    public static let maximumItems = 64
-
-    public init(platformID: String, items: [NativeSourceTagsBatchItem]) {
-        self.platformID = platformID
-        self.items = items
-    }
-
-    public func validate() throws {
-        guard NativeSourceTagsRequest.isValidPlatformID(platformID) else {
-            throw NativeSourceTagsError.invalidPlatform
-        }
-        guard !items.isEmpty, items.count <= Self.maximumItems else {
-            throw NativeSourceTagsError.invalidSource
-        }
-        // Reuse the single-request validator per item so a batch can never admit
-        // a sourceID or creator-name set the single path would reject.
-        for item in items {
-            try NativeSourceTagsRequest(
-                platformID: platformID,
-                sourceID: item.sourceID,
-                creatorNames: item.creatorNames
-            ).validate()
-        }
-    }
-}
-
-public struct NativeSourceTagsBatchResponseItem: Codable, Equatable, Sendable {
-    public var sourceID: String
-    public var tags: [NativeSourceTag]
-    /// True when `tags` are the local model's fallback prediction rather than an
-    /// approved human/LLM decision. See `NativeSourceTagsResponse.predicted`.
-    public var predicted: Bool
-
-    public init(sourceID: String, tags: [NativeSourceTag], predicted: Bool = false) {
-        self.sourceID = sourceID
-        self.tags = NativeSourceTagsResponse.acceptedTags(tags)
-        self.predicted = predicted
-    }
-
-    private enum CodingKeys: String, CodingKey { case sourceID, tags, predicted }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        sourceID = try container.decode(String.self, forKey: .sourceID)
-        tags = NativeSourceTagsResponse.acceptedTags(try container.decode([NativeSourceTag].self, forKey: .tags))
-        predicted = try container.decodeIfPresent(Bool.self, forKey: .predicted) ?? false
-    }
-}
-
-public struct NativeSourceTagsBatchResponse: Codable, Equatable, Sendable {
-    public var platformID: String
-    public var items: [NativeSourceTagsBatchResponseItem]
-
-    public init(platformID: String, items: [NativeSourceTagsBatchResponseItem]) {
-        self.platformID = platformID
-        self.items = items
     }
 }
 
@@ -548,28 +389,6 @@ public struct NativeCollectionDiagnosticResponse: Codable, Equatable, Sendable {
     public init(accepted: Bool) { self.accepted = accepted }
 }
 
-public struct NativeClassificationRequest: Codable, Equatable, Sendable {
-    public var entry: EntryEvidence
-    public init(entry: EntryEvidence) { self.entry = entry }
-}
-
-public struct NativeClassificationResponse: Codable, Equatable, Sendable {
-    public var result: ClassificationResult
-    public var ledgerID: UUID?
-    public init(result: ClassificationResult, ledgerID: UUID? = nil) { self.result = result; self.ledgerID = ledgerID }
-}
-
-public struct NativeCorrectionRequest: Codable, Equatable, Sendable {
-    public var ledgerID: UUID
-    public var correction: UserCorrection?
-    public init(ledgerID: UUID, correction: UserCorrection?) { self.ledgerID = ledgerID; self.correction = correction }
-}
-
-public struct NativeCorrectionResponse: Codable, Equatable, Sendable {
-    public var accepted: Bool
-    public init(accepted: Bool) { self.accepted = accepted }
-}
-
 public enum NativeCollectionDiagnosticError: Error, LocalizedError, Sendable {
     case invalidPlatform
 
@@ -580,14 +399,20 @@ public enum NativeCollectionDiagnosticError: Error, LocalizedError, Sendable {
     }
 }
 
-public enum NativeSourceTagsError: Error, LocalizedError, Sendable {
+public enum NativeVideoTagsError: Error, LocalizedError, Sendable {
     case invalidPlatform
-    case invalidSource
+    case invalidEvidence
 
     public var errorDescription: String? {
         switch self {
-        case .invalidPlatform: return "The source-tag platform is invalid."
-        case .invalidSource: return "The source-tag identity is invalid."
+        case .invalidPlatform: return "The video-tag platform is invalid."
+        case .invalidEvidence: return "The video-tag evidence is invalid."
         }
     }
+}
+
+public enum NativeBridgePayloadError: Error, LocalizedError, Sendable {
+    case invalidPayload
+
+    public var errorDescription: String? { "The bridge payload is invalid." }
 }
