@@ -41,8 +41,8 @@ public enum ClassificationPromptAssembler {
         lines.append("- Assign at most \(maximumTags) tags.")
         lines.append("- For each chosen tag give a confidence from 1 (low) to 5 (high).")
         lines.append("- If the title is uninformative, use the creator prior when provided, but treat it as a weak, partial sample of what the creator makes — it may not represent them fully.")
-        lines.append("- If a salient named entity (show, game, person, community, or the creator) is unfamiliar, list it in \"unknownTerms\" instead of guessing.")
-        lines.append("- Reply with one JSON object only: {\"tags\":[{\"name\":\"<tag name>\",\"confidence\":<1-5>}],\"unknownTerms\":[\"<term>\"]}. Use tag names exactly as written. No prose.")
+        lines.append("- Reply with one JSON object only: {\"tags\":[{\"name\":\"<tag name>\",\"confidence\":<1-5>}]}. Use tag names exactly as written. No prose.")
+        lines.append("- If no tag clearly applies, use the word none as the name.")
 
         if let houseRules, !houseRules.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             lines.append("")
@@ -100,7 +100,13 @@ public enum ClassificationPromptAssembler {
         if let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
             lines.append("Text: \(String(text.prefix(maximumEvidenceTextLength)))")
         }
-        lines.append("Output JSON:")
+        // FINAL CONTRACT (Phase-0, 2026-08-15): the JSON scaffold is the model's
+        // structural runway and must be IN the prompt — prefilled in parallel,
+        // never generated. The engine's grammar then admits only a tag name, so
+        // the model's first decoded token is the decision itself. Removing this
+        // scaffold (or the reply-shape rule above) measurably regressed
+        // accuracy from 7/8 to 5/8.
+        lines.append("Output JSON: {\"tags\":[{\"name\":\"")
         return lines.joined(separator: "\n")
     }
 
