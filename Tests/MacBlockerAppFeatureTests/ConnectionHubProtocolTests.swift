@@ -92,11 +92,11 @@ final class ConnectionHubProtocolTests: XCTestCase {
             "body": ["entry": ["platform": "youtube"]]
         ]))
         XCTAssertNil(ConnectionHub.classifierRequestRejectionReason([
-            "requestID": "classifier-source-tags-1",
-            "operation": "source-tags",
+            "requestID": "classifier-video-tags-1",
+            "operation": "video-tags",
             "body": [
                 "platformID": "youtube",
-                "sourceID": "youtube:channel:UC123"
+                "entryID": "youtube:video:abc123"
             ]
         ]))
         XCTAssertEqual(
@@ -110,7 +110,7 @@ final class ConnectionHubProtocolTests: XCTestCase {
         XCTAssertEqual(
             ConnectionHub.classifierRequestRejectionReason([
                 "requestID": "classifier-request-3",
-                "operation": "classify",
+                "operation": "video-tags-batch",
                 "body": ["payload": String(repeating: "x", count: 90_000)]
             ]),
             "invalid-classifier-request"
