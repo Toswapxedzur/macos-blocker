@@ -44,7 +44,7 @@ public enum VaultRuntimeEnvironment: String, Codable, Sendable {
         case .production:
             return "chrome-extension://mcbmcmephdaapjepopobikobjmfdeamm/"
         case .development:
-            return "chrome-extension://opjogfpcmllpgplgofionfejkjeanhkc/"
+            return "chrome-extension://fjichnkbaoilbfbjcjkggllmbicmeegk/"
         }
     }
 
