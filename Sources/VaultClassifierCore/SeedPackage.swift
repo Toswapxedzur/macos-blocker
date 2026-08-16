@@ -6,24 +6,29 @@ public struct SeedModelPackage: Codable, Equatable, Sendable {
     public var taxonomyVersion: String
     public var modelVersion: String
     public var taxonomy: [TagNode]
-    public var model: SparseLinearModel
-    public var pageThreshold: Double
-    public var feedThresholdOffset: Double
-    public var sourcePrior: SourcePriorSettings
 
-    public init(packageID: String, taxonomyVersion: String, modelVersion: String, taxonomy: [TagNode], model: SparseLinearModel, pageThreshold: Double, feedThresholdOffset: Double = 0.05, sourcePrior: SourcePriorSettings = .init()) {
+    public init(packageID: String, taxonomyVersion: String, modelVersion: String, taxonomy: [TagNode]) {
         self.packageID = packageID
         self.taxonomyVersion = taxonomyVersion
         self.modelVersion = modelVersion
         self.taxonomy = taxonomy
-        self.model = model
-        self.pageThreshold = pageThreshold
-        self.feedThresholdOffset = feedThresholdOffset
-        self.sourcePrior = sourcePrior
     }
 
-    public func threshold(for surface: EntrySurface) -> Double {
-        min(1, max(0, pageThreshold + (surface == .feed ? feedThresholdOffset : 0)))
+    private enum CodingKeys: String, CodingKey {
+        case packageID, taxonomyVersion, modelVersion, taxonomy
+    }
+
+    private enum RetiredCodingKeys: String, CodingKey {
+        case model, pageThreshold, feedThresholdOffset, sourcePrior
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        _ = try decoder.container(keyedBy: RetiredCodingKeys.self)
+        packageID = try container.decode(String.self, forKey: .packageID)
+        taxonomyVersion = try container.decode(String.self, forKey: .taxonomyVersion)
+        modelVersion = try container.decode(String.self, forKey: .modelVersion)
+        taxonomy = try container.decode([TagNode].self, forKey: .taxonomy)
     }
 }
 

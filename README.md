@@ -12,37 +12,21 @@ description.
 
 ## Current capabilities
 
-- Local tag trees, datasets, classifier types, creator decisions, local models,
-  policy evaluation, a bounded cache, and a decision ledger. A matched policy
-  carries a single **suppress** decision whose presentation is fixed by surface,
-  not a per-policy choice: list and feed cards are **dimmed**, and only the
-  watch/playback page is **blocked**. A new workspace starts with a blank tree
-  and dataset but no chosen platform, local model, provider, or Gemini/search
-  default.
-- A reusable **LLM Assist** connection library. Provider profiles contain
-  non-secret connection configuration plus a visible local credential field.
-  A classifier type explicitly selects one provider/model and owns its budget,
-  request pace, tag constraints, and explicit web-search mode. Each
-  creator LLM classification composes independent evidence layers: typed
-  browser-observed content, bounded matching creator and recent-content
-  evidence from the applicable official API when an adapter exists, plus
-  optional web search on every eligible platform. An official API contributes
-  the safe public fields returned by its reviewed routes; search fills evidence
-  gaps instead of giving a platform a smaller classifier contract. OpenAI,
-  Gemini, and Anthropic can use their native hosted-search tool when unsure.
-  Standard tool-capable models can instead call one app-defined `web_search`
-  function backed by an independent Serper or You.com Search profile. The app returns
-  bounded transient results to that same model conversation before requiring
-  final label JSON. There is no unconditional search prefetch, static
-  creator-page fallback, or second research model.
-- Twitch, Reddit, and Discord classification is intentionally manual-only.
-  Their collected sources and human tags remain available, but Local Model and
-  LLM Assist are not offered for those classifier types.
+- Per-video classification through an in-process llama.cpp engine, with a
+  bounded stub for tests and explicit debugging. Results are cached by video;
+  creator histograms are derived only from those per-video rows.
+- Local tag trees, collection datasets, classifier types, configuration-only
+  local model assets, and Named Policies using allow/dim/block presentation.
+- A reusable **LLM Assist** connection library. Provider profiles retain their
+  connection settings and visible local credential field; explicit Tests and
+  model Probes never receive collected content. Classifier types may retain
+  provider/model configuration, but no cloud creator-classification runner or
+  provider decision store remains.
 - An authenticated v4 local browser hub at `ws://127.0.0.1:8787`. Mac Vault
   or Vault Classifier hosts it; unavailable peers, invalid frames, and
   timeouts fail open.
 - Local backups and signed-package lifecycle foundations. They are explicit,
-  local operations; no scheduler or automatic package activation is attached.
+  local operations.
 
 ## Architecture contracts
 
