@@ -53,12 +53,25 @@ public struct LLMClassificationRequest: Sendable, Equatable {
     public let dynamicSuffix: String
     public let allowedTagNames: [String]
     public let maximumTags: Int
+    /// Nil falls back to the app-wide engine configuration.
+    public let allowDecline: Bool?
+    /// Nil falls back to the app-wide engine configuration.
+    public let confidenceThresholds: [Double]?
 
-    public init(staticPrefix: String, dynamicSuffix: String, allowedTagNames: [String], maximumTags: Int) {
+    public init(
+        staticPrefix: String,
+        dynamicSuffix: String,
+        allowedTagNames: [String],
+        maximumTags: Int,
+        allowDecline: Bool? = nil,
+        confidenceThresholds: [Double]? = nil
+    ) {
         self.staticPrefix = staticPrefix
         self.dynamicSuffix = dynamicSuffix
         self.allowedTagNames = allowedTagNames
         self.maximumTags = maximumTags
+        self.allowDecline = allowDecline
+        self.confidenceThresholds = confidenceThresholds
     }
 }
 
@@ -76,11 +89,27 @@ public protocol OnDeviceLLM: Sendable {
     func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult
 }
 
+/// Rare-path, local-only second decode used after an explicit classification
+/// decline. It is deliberately separate from the single-name hot-path request.
+public struct LLMResearchSubjectRequest: Sendable, Equatable {
+    public let title: String
+    public let summary: String?
+
+    public init(title: String, summary: String? = nil) {
+        self.title = title
+        self.summary = summary
+    }
+}
+
+public protocol OnDeviceResearchSubjectExtracting: Sendable {
+    func extractResearchSubject(_ request: LLMResearchSubjectRequest) async throws -> ResearchSubject?
+}
+
 /// A deterministic stand-in used before a real MLX model is wired, and in tests.
 /// It "classifies" by selecting allowed tag names that appear (case-insensitive)
 /// in the dynamic suffix — enough to exercise the whole pipeline end-to-end and
 /// keep the build green, with no intelligence claimed.
-public struct StubOnDeviceLLM: OnDeviceLLM {
+public struct StubOnDeviceLLM: OnDeviceLLM, OnDeviceResearchSubjectExtracting {
     public let modelVersion: String
     public let defaultConfidence: Int
 
@@ -96,5 +125,9 @@ public struct StubOnDeviceLLM: OnDeviceLLM {
             .prefix(request.maximumTags)
             .map { LLMTagScore(name: $0, confidence: defaultConfidence) }
         return LLMClassificationResult(tags: Array(chosen), unknownTerms: [])
+    }
+
+    public func extractResearchSubject(_ request: LLMResearchSubjectRequest) async throws -> ResearchSubject? {
+        nil
     }
 }

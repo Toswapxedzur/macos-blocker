@@ -33,6 +33,9 @@
   // Advanced local-model settings disclosure. Toggled without a re-render so
   // the CSS grid transition can play; re-renders rebuild from this flag.
   let advancedSettingsOpen = false;
+  // Per-type local-model request overrides have their own disclosure state;
+  // they must not expand/collapse the app-wide engine settings modal.
+  let localModelAdvancedOpen = false;
   let tagDrag = null;
   let suppressTagClick = false;
   let connectionSource = null;
@@ -524,9 +527,21 @@
       : "";
     const attributesMarkup = attributes ? `<span class="collection-entry-attributes">${attributes}</span>` : "";
     const entryMeta = `${esc(entry.surface || "feed")} · ${esc(entry.entryType)} · ${collectionObservedAt(entry.lastObservedAtMilliseconds)}`;
+    const correctionMarkup = (entry.correctionForms || []).map((form) => {
+      const formID = `correction-${entry.id}-${form.typeID}`;
+      const options = (form.tagOptions || []).map((tag) => [tag.id, tag.name]);
+      return `<div class="collection-correction-form" data-form-id="${esc(formID)}"><span class="collection-correction-type">${esc(form.typeName)} ${form.corrected ? statusPill(tx("data.corrected"), "cyan") : ""}</span><div class="collection-correction-fields">${
+        multiValueSelectField("data.correctTags", "data.correctTagsHint", "correctTagIDs", form.correctTagIDs || [], options, 'size="3"')
+      }${
+        field("data.correctionNote", "data.correctionNoteHint", "note", form.note || "", "text", 'maxlength="500"')
+      }</div><div class="action-row"><button class="secondary" data-action="submitCorrection" data-form="${esc(formID)}" data-type-id="${esc(form.typeID)}" data-platform-id="${esc(entry.platformID)}" data-entry-id="${esc(entry.entryID)}">${tx("data.saveCorrection")}</button></div></div>`;
+    }).join("");
+    const correctionEditor = correctionMarkup
+      ? `<details class="collection-correction"><summary>${tx("data.correctClassification")}</summary><p class="small-copy">${tx("data.correctionCopy")}</p>${correctionMarkup}</details>`
+      : "";
     // Tags render above the evidence text so the fixed-height card never clips
-    // them (long evidence/attributes may still be clamped below).
-    return `<div class="collection-detail-entry" title="${esc(entry.title)}"><span class="collection-entry-title" dir="auto">${esc(entry.title)}</span><span class="collection-entry-meta">${entryMeta}</span>${tags}${summary}${text}${attributesMarkup}${canonicalURL}</div>`;
+    // them (long evidence/attributes remain clamped below).
+    return `<div class="collection-detail-entry" title="${esc(entry.title)}"><span class="collection-entry-title" dir="auto">${esc(entry.title)}</span><span class="collection-entry-meta">${entryMeta}</span>${tags}${summary}${text}${attributesMarkup}${canonicalURL}${correctionEditor}</div>`;
   }
 
   function creatorEntriesKey(datasetID, platformID, creatorID) {
@@ -577,6 +592,10 @@
     if (utilityPanel === "settings") {
       const settings = state.settings;
       const llm = settings.localLLM || {};
+      const research = settings.research || {};
+      const assets = state.assets || {};
+      const profiles = assets.providerProfiles || [];
+      const protocols = assets.providerProtocols || {};
       const statusToneByState = { loaded: "cyan", loading: "navy", disabled: "navy", "no-model": "pink", failed: "red" };
       const modelOptions = [["", tx("localModel.modelAuto")]].concat((llm.availableModels || []).map((name) => [name, name]));
       const thresholds = Array.isArray(llm.confidenceThresholds) && llm.confidenceThresholds.length === 4
@@ -606,8 +625,27 @@
       }</div><div class="utility-settings-fields">${
         valueSelectField("localModel.model", "localModel.modelHint", "modelFileName", llm.modelFileName || "", modelOptions)
       }</div><div class="utility-advanced${advancedSettingsOpen ? " open" : ""}" data-advanced-settings><button type="button" class="secondary advanced-toggle" data-action="toggleAdvancedSettings" aria-expanded="${advancedSettingsOpen}"><span>${tx("localModel.advanced")}</span><span class="advanced-chevron" aria-hidden="true">⌄</span></button><div class="advanced-settings-body"><div class="advanced-settings-inner">${advancedBody}</div></div></div><div class="action-row"><button class="primary" data-action="saveLocalLLMSettings" data-form="utility-llm-form">${tx("localModel.save")}</button></div></section>`;
+      const generationProfiles = profiles.filter((profile) => protocols[profile.type]?.supportsGenerateText === true);
+      const searchProfiles = profiles.filter((profile) => protocols[profile.type]?.supportsRawWebSearch === true);
+      const profileOptions = (items) => [["", "Choose a provider"]].concat(items.map((profile) => [profile.id, profile.name]));
+      const modelSuggestions = assets.providerModelCatalogs?.[research.llmProviderProfileID] || [];
+      const researchSection = `<section class="utility-settings-section utility-research-section" data-form-id="utility-research-form"><h3 class="utility-settings-section-title">${tx("research.title")} ${statusPill(tx(research.enabled ? "research.status.on" : "research.status.off"), research.enabled ? "cyan" : "muted")}</h3><p class="section-copy">${tx("research.copy")}</p><div class="notice navy research-data-flow">${tx("research.disclosure")}</div><div class="utility-toggles">${
+        toggle("research.consent", "enabled", research.enabled === true)
+      }</div><div class="utility-settings-fields">${
+        valueSelectField("research.llmProvider", "research.llmProviderHint", "llmProviderProfileID", research.llmProviderProfileID || "", profileOptions(generationProfiles))
+      }${
+        valueSelectField("research.searchProvider", "research.searchProviderHint", "webSearchProviderProfileID", research.webSearchProviderProfileID || "", profileOptions(searchProfiles))
+      }${
+        field("research.model", "research.modelHint", "llmModelIdentifier", research.llmModelIdentifier || "", "text", 'list="research-model-suggestions" maxlength="256"')
+      }<datalist id="research-model-suggestions">${modelSuggestions.map((model) => `<option value="${esc(model)}"></option>`).join("")}</datalist>${
+        field("research.requestsPerMinute", "research.requestsPerMinuteHint", "requestsPerMinute", research.requestsPerMinute ?? 6, "number", 'min="1" max="120"')
+      }${
+        field("research.dailyTokenLimit", "research.dailyTokenLimitHint", "dailyTokenLimit", research.dailyTokenLimit ?? 10000, "number", 'min="1" max="10000000"')
+      }${
+        field("research.maxSubjects", "research.maxSubjectsHint", "maxSubjectsPerVideo", research.maxSubjectsPerVideo ?? 3, "number", 'min="1" max="3"')
+      }</div><p class="small-copy">${tx("research.usageToday", { used: research.tokensUsedToday ?? 0 })}</p><div class="action-row"><button class="primary" data-action="saveResearchSettings" data-form="utility-research-form">${tx("research.save")}</button></div></section>`;
       const packageSection = `<section class="utility-settings-section utility-resource-section" data-form-id="utility-package-form"><h3 class="utility-settings-section-title">${tx("settings.packageUpdates")}</h3><div class="utility-settings-fields">${selectField("settings.packageUpdates", "settings.packageUpdatesCopy", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div><div class="action-row"><button class="primary" data-action="savePackageSettings" data-form="utility-package-form">${tx("common.save")}</button></div></section>`;
-      content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${llmSection}${packageSection}</div></section>`;
+      content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${llmSection}${researchSection}${packageSection}</div></section>`;
     }
     if (!content) return "";
     return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}"></button><div class="utility-popover" role="dialog" aria-modal="true" aria-label="${esc(tx("utility.settings.title"))}">${content}</div></div>`;
@@ -668,7 +706,7 @@
     return `<div class="popup">
       <header class="hero">
         <div class="hero-copy"><span class="hero-mark" aria-hidden="true">V</span><div><h1>${tx("app.title")}</h1></div></div>
-        <div class="hero-controls"><span class="settings-popover-anchor"><button class="header-tool" data-action="openUtilityPanel" data-utility-panel="settings" aria-haspopup="dialog" aria-expanded="${utilityPanel ? "true" : "false"}">${tx("utility.settings.button")}</button>${utilityPanelContent()}</span>${languageSelection()}<div class="hero-status"><span class="status-dot"></span>${tx("hero.offline")}</div></div>
+        <div class="hero-controls"><span class="settings-popover-anchor"><button class="header-tool" data-action="openUtilityPanel" data-utility-panel="settings" aria-haspopup="dialog" aria-expanded="${utilityPanel ? "true" : "false"}">${tx("utility.settings.button")}</button>${utilityPanelContent()}</span>${languageSelection()}<div class="hero-status"><span class="status-dot"></span>${tx(state.settings?.research?.enabled ? "hero.researchEnabled" : "hero.offline")}</div></div>
       </header>
       <div class="layout">
         <aside class="navigation-panel" aria-label="${tx("navigation.aria")}">
@@ -1073,12 +1111,20 @@
         ? `<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}${llmModelControl}</div>`
         : `<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}</div>`;
       const llmAdvancedBody = `<div class="classifier-llm-config">${field("bridge.llmDailyTokenBudget", "bridge.llmDailyTokenBudgetCopy", "llmDailyTokenLimit", llmEditorSettings?.dailyTokenLimit || 10000, "text", "inputmode=\"numeric\"")}${field("bridge.llmMaximumTokens", "bridge.llmMaximumTokensCopy", "llmMaximumOutputTokensPerRequest", llmEditorSettings?.maximumOutputTokensPerRequest || 4096, "text", "inputmode=\"numeric\"")}${textareaField("bridge.llmExtraDirection", "bridge.llmExtraDirectionCopy", "llmExtraDirection", llmEditorSettings?.extraDirection || "", "maxlength=\"4096\"")}${field("bridge.llmClassificationPace", "bridge.llmClassificationPaceCopy", "llmClassificationRequestsPerMinute", llmEditorSettings?.classificationRequestsPerMinute || 6, "text", "inputmode=\"numeric\"")}${field("bridge.llmBatchSize", "bridge.llmBatchSizeCopy", "llmBatchSize", llmEditorSettings?.batchSize || 5, "text", "inputmode=\"numeric\"")}${officialContentEvidenceControl}${field("bridge.llmMaximumTagCount", "bridge.llmMaximumTagCountCopy", "llmMaximumTagCount", llmEditorSettings?.maximumTagCount || 8, "text", "inputmode=\"numeric\"")}${toggle("bridge.llmLeafOnly", "llmRestrictToLeafTags", llmEditorSettings?.restrictToLeafTags ?? true)}<p class="small-copy">${tx("bridge.llmLeafOnlyCopy")}</p>${webSearchControls}</div>`;
+      const localOverrides = classifierType.localModelOverrides || null;
+      const localOverrideThresholds = Array.isArray(localOverrides?.confidenceThresholds) && localOverrides.confidenceThresholds.length === 4
+        ? localOverrides.confidenceThresholds
+        : [0.2, 0.4, 0.6, 0.85];
+      const localModelFormID = `classifier-local-model-form-${classifierType.id}`;
+      const localModelOverrideBody = `<div class="utility-toggles">${toggle("bridge.localModelAllowDecline", "allowDecline", localOverrides?.allowDecline ?? true)}</div><div class="field wide"><span class="field-label">${tx("localModel.confidence")}<span class="field-hint"> · ${tx("localModel.confidenceHint")}</span></span><div class="confidence-band-row">${[2, 3, 4, 5].map((level, index) => `<label class="confidence-band"><span class="confidence-band-label">≥ ${level}</span><input type="text" data-field="confidenceBand${level}" value="${esc(String(localOverrideThresholds[index]))}"></label>`).join("")}</div></div>${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", localOverrides?.houseRules ?? "", 'rows="4"')}`;
+      const localModelOverrideSection = supportsLocalModel ? `<section class="classifier-type-section classifier-local-model-overrides" data-local-model-section><div class="section-header"><div><h3>${tx("bridge.localModelOverrides")}</h3><p class="section-copy">${tx("bridge.localModelOverridesCopy")}</p></div></div><div data-form-id="${esc(localModelFormID)}">${toggle("bridge.localModelOverrideEnabled", "overrideEnabled", Boolean(localOverrides))}<div class="utility-advanced${localModelAdvancedOpen ? " open" : ""}" data-local-model-advanced><button type="button" class="secondary advanced-toggle" data-action="toggleLocalModelAdvanced" aria-expanded="${localModelAdvancedOpen}"><span>${tx("bridge.localModelOverrideControls")}</span><span class="advanced-chevron" aria-hidden="true">⌄</span></button><div class="advanced-settings-body"><div class="advanced-settings-inner">${localModelOverrideBody}</div></div></div><div class="action-row"><button type="button" class="primary" data-action="saveClassifierTypeLocalModel" data-form="${esc(localModelFormID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div></div></section>` : "";
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}">
         <div class="classifier-type-head"><div><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div>${statusPill(typeStatus, applicablePlatformID ? "navy" : "muted")}</div>
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}<button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("bridge.saveType")}</button><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}" data-name="${esc(classifierType.name)}">${tx("bridge.deleteType")}</button></div>
         <section class="classifier-type-section classifier-applicable-platform-section"><div class="section-header"><div><h3>${tx("bridge.applicablePlatform")}</h3><p class="section-copy">${tx("bridge.assetSelectionCopy")}</p></div></div><div class="classifier-applicable-platform-row">${valueSelectField("bridge.applicablePlatform", "bridge.applicablePlatformCopy", "applicablePlatformID", applicablePlatformID, applicablePlatformOptions)}<div class="classifier-platform-data-status"><span class="eyebrow">${tx("bridge.platformData")}</span><p class="small-copy">${esc(platformDataStatus)}</p></div></div>${applicablePlatform && !supportsLocalModel && !supportsLLMAssist ? `<p class="small-copy" data-collection-only-platform-note>${tx("bridge.collectionOnlyCopy")}</p>` : ""}</section>
         <section class="classifier-type-section classifier-llm-section" data-llm-assist-section${supportsLLMAssist ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.llmAssist")}</h3><p class="section-copy">${tx("bridge.llmAssistCopy")}</p></div></div>${llmProfiles.length ? llmConfigurationBody : `<div class="empty compact-empty">${tx("bridge.noLLMProfiles")}</div>`}</section>
         ${selectedLLMProfile && llmProfiles.length ? `<section class="classifier-type-section classifier-llm-advanced-section" data-llm-assist-section${supportsLLMAssist ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.llmAdvanced")}</h3><p class="section-copy">${tx("bridge.llmAdvancedCopy")}</p></div></div>${llmAdvancedBody}</section>` : ""}
+        ${localModelOverrideSection}
       </section>`;
     };
     // A type now targets one platform at creation and owns a fresh tree. The
@@ -1613,6 +1659,15 @@
       }
       return;
     }
+    if (action === "toggleLocalModelAdvanced") {
+      localModelAdvancedOpen = !localModelAdvancedOpen;
+      const wrap = button.closest("[data-local-model-advanced]");
+      if (wrap) {
+        wrap.classList.toggle("open", localModelAdvancedOpen);
+        button.setAttribute("aria-expanded", String(localModelAdvancedOpen));
+      }
+      return;
+    }
     if (action === "workspace") {
       const nextWorkspace = button.dataset.workspace;
       if (!state || !workspaceNames.has(nextWorkspace) || state.workspace === nextWorkspace) return;
@@ -1683,6 +1738,19 @@
     if (button.dataset.parentId) data.parentID = button.dataset.parentId;
     if (button.dataset.platformId) data.platformID = button.dataset.platformId;
     if (button.dataset.typeId) data.typeID = button.dataset.typeId;
+    if (button.dataset.entryId) data.entryID = button.dataset.entryId;
+    if (action === "submitCorrection") {
+      loadedCreatorEntries.forEach((entries) => {
+        const entry = entries.find((candidate) => candidate.platformID === data.platformID && candidate.entryID === data.entryID);
+        const form = entry?.correctionForms?.find((candidate) => candidate.typeID === data.typeID);
+        if (!form) return;
+        form.correctTagIDs = Array.isArray(data.correctTagIDs) ? data.correctTagIDs : [];
+        form.note = data.note || "";
+        form.corrected = true;
+      });
+      send(action, data);
+      return;
+    }
     if (action === "testProviderProfile") Object.assign(data, providerConnectionPayload(data, button.dataset.form));
     if (action === "selectCollectionCreator") {
       const platformID = button.dataset.platformId;

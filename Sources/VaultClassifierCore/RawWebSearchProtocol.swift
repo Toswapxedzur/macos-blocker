@@ -12,8 +12,9 @@ public struct RawWebSearchResult: Equatable, Sendable {
     }
 }
 
-/// Builds and parses only the fixed health request used to test a raw-search
-/// provider profile. It never incorporates collected content.
+/// Builds and parses bounded requests for an explicitly configured raw-search
+/// provider. Callers are responsible for supplying a consented, sanitized
+/// query; this layer never accepts an entire collected entry.
 public enum RawWebSearchProtocol {
     public static let maximumResults = 5
     public static let maximumQueryCharacters = 512
@@ -23,6 +24,14 @@ public enum RawWebSearchProtocol {
         profile: APIKeyProviderProfile
     ) throws -> ProviderTestPreparedRequest {
         try prepare(profile: profile, query: connectionTestQuery, resultCount: 1)
+    }
+
+    public static func prepareSearch(
+        profile: APIKeyProviderProfile,
+        query: String,
+        resultCount: Int = maximumResults
+    ) throws -> ProviderTestPreparedRequest {
+        try prepare(profile: profile, query: query, resultCount: resultCount)
     }
 
     public static func parseResults(

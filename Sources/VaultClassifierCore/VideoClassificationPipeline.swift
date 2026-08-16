@@ -8,8 +8,8 @@ import Foundation
 
 public struct VideoClassificationPipeline: Sendable {
     public let llm: any OnDeviceLLM
-    /// Default cap; a classifier type may override per its user-configurable tag
-    /// policy (Fork A) once that setting is surfaced.
+    /// App-wide cap. The shipping grammar emits one name, so this is deliberately
+    /// not exposed as a per-type override.
     public let maximumTags: Int
     public let promptVersion: String
 
@@ -29,7 +29,9 @@ public struct VideoClassificationPipeline: Sendable {
         classifierType: ClassifierTypeAsset,
         tree: TagTreeAsset,
         catalog: WorkspaceCatalog,
-        houseRules: String? = nil
+        houseRules: String? = nil,
+        allowDecline: Bool? = nil,
+        confidenceThresholds: [Double]? = nil
     ) async throws -> VideoClassification {
         let nameByID = Dictionary(tree.nodes.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
 
@@ -60,7 +62,9 @@ public struct VideoClassificationPipeline: Sendable {
             staticPrefix: parts.staticPrefix,
             dynamicSuffix: parts.dynamicSuffix,
             allowedTagNames: parts.allowedTagNames,
-            maximumTags: maximumTags
+            maximumTags: maximumTags,
+            allowDecline: allowDecline,
+            confidenceThresholds: confidenceThresholds
         ))
 
         // Map readable names back to tag ids; silently drop any name not in the

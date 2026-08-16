@@ -20,7 +20,7 @@ import Cllama
 // The model file is user-provided (catalog/loader phase pending): the
 // `ADAMANCIA_VAULT_LLM_MODEL` environment variable, or the first *.gguf under
 // `<app support>/<environment dir>/models/`.
-public actor VaultLocalLLMEngine: OnDeviceLLM {
+public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting {
     public nonisolated let modelVersion: String
 
     private let model: OpaquePointer
@@ -73,7 +73,9 @@ public actor VaultLocalLLMEngine: OnDeviceLLM {
     }
 
     public func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult {
-        guard let grammar = Self.nameGrammar(allowed: request.allowedTagNames, allowDecline: configuration.allowDecline) else {
+        let effectiveAllowDecline = request.allowDecline ?? configuration.allowDecline
+        let effectiveThresholds = request.confidenceThresholds ?? configuration.confidenceThresholds
+        guard let grammar = Self.nameGrammar(allowed: request.allowedTagNames, allowDecline: effectiveAllowDecline) else {
             // No usable tag names → definitively empty, matching the stub's shape.
             return LLMClassificationResult(tags: [], unknownTerms: [])
         }
@@ -125,7 +127,7 @@ public actor VaultLocalLLMEngine: OnDeviceLLM {
         // the full vocabulary) is what separates "certain" from "guessing" —
         // full-vocabulary mass on structurally plausible but grammar-illegal
         // tokens would otherwise dilute every probability.
-        let candidateNames = configuration.allowDecline
+        let candidateNames = effectiveAllowDecline
             ? request.allowedTagNames + [Self.declineLiteral]
             : request.allowedTagNames
         let candidateFirstTokens = Set(candidateNames.compactMap { try? tokenize($0, addSpecial: false).first })
@@ -155,8 +157,78 @@ public actor VaultLocalLLMEngine: OnDeviceLLM {
             // output) resolves to a definitive empty classification.
             return LLMClassificationResult(tags: [], unknownTerms: [])
         }
-        let confidence = Self.confidence(fromProbability: firstTokenProbability ?? 0, thresholds: configuration.confidenceThresholds)
+        let confidence = Self.confidence(fromProbability: firstTokenProbability ?? 0, thresholds: effectiveThresholds)
         return LLMClassificationResult(tags: [LLMTagScore(name: name, confidence: confidence)], unknownTerms: [])
+    }
+
+    /// A separate tiny constrained decode used only after the name grammar
+    /// returned `none`. It copies one salient named noun phrase from the local
+    /// title/summary; the common classification loop above is untouched.
+    public func extractResearchSubject(
+        _ request: LLMResearchSubjectRequest
+    ) async throws -> ResearchSubject? {
+        let summary = request.summary?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let prompt = """
+        Extract one short named entity or salient noun phrase that would be useful to research before classifying this video. Copy the phrase exactly from the title or summary. Prefer a creator handle, quoted show/game/work name, organization, person, or product. Return \"none\" if no such phrase exists. Return only one quoted phrase or none.
+
+        Title: \(request.title)
+        Summary: \(summary)
+        Answer:
+        """
+        let tokens = try tokenize(prompt)
+        guard tokens.count + 32 <= contextTokenLimit else {
+            throw OnDeviceLLMError.inference("research-subject-prompt-exceeds-context (\(tokens.count) tokens)")
+        }
+
+        var common = 0
+        while common < min(tokens.count, cachedTokens.count), tokens[common] == cachedTokens[common] {
+            common += 1
+        }
+        if common == tokens.count { common = max(0, common - 1) }
+        llama_memory_seq_rm(llama_get_memory(context), 0, llama_pos(common), -1)
+        cachedTokens = Array(tokens.prefix(common))
+
+        var index = common
+        while index < tokens.count {
+            let end = min(index + 512, tokens.count)
+            var chunk = Array(tokens[index..<end])
+            let status = chunk.withUnsafeMutableBufferPointer { buffer in
+                llama_decode(context, llama_batch_get_one(buffer.baseAddress, Int32(buffer.count)))
+            }
+            guard status == 0 else {
+                cachedTokens = []
+                llama_memory_seq_rm(llama_get_memory(context), 0, 0, -1)
+                throw OnDeviceLLMError.inference("research-subject-prompt-decode-failed (\(status))")
+            }
+            cachedTokens.append(contentsOf: tokens[index..<end])
+            index = end
+        }
+
+        let sampler = llama_sampler_chain_init(llama_sampler_chain_default_params())
+        defer { llama_sampler_free(sampler) }
+        llama_sampler_chain_add(sampler, llama_sampler_init_grammar(vocab, Self.researchSubjectGrammar, "root"))
+        llama_sampler_chain_add(sampler, llama_sampler_init_greedy())
+
+        var generated = ""
+        for _ in 0..<24 {
+            let token = llama_sampler_sample(sampler, context, -1)
+            if llama_vocab_is_eog(vocab, token) { break }
+            generated += piece(for: token)
+            var single = [token]
+            let status = single.withUnsafeMutableBufferPointer { buffer in
+                llama_decode(context, llama_batch_get_one(buffer.baseAddress, 1))
+            }
+            guard status == 0 else {
+                cachedTokens = []
+                llama_memory_seq_rm(llama_get_memory(context), 0, 0, -1)
+                throw OnDeviceLLMError.inference("research-subject-generation-decode-failed (\(status))")
+            }
+            cachedTokens.append(token)
+        }
+
+        let value = generated.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value != Self.declineLiteral else { return nil }
+        return ResearchSubject(kind: .term, subject: value)
     }
 
     // MARK: - Contract pieces
@@ -166,6 +238,14 @@ public actor VaultLocalLLMEngine: OnDeviceLLM {
     /// renormalized confidence would degenerate to certainty. If the taxonomy
     /// legitimately contains a tag with this exact name, that tag wins.
     static let declineLiteral = "none"
+
+    /// Quoted non-newline text or `none`; `ResearchSubject` applies the final
+    /// entity-only word/character bounds before anything can be queued.
+    static let researchSubjectGrammar = #"""
+    root ::= "none" | "\"" subject "\""
+    subject ::= character+ (" " character+)*
+    character ::= [^"\\\r\n\t ]
+    """#
 
     /// GBNF grammar admitting exactly one of the allowed tag names, plus the
     /// decline literal when enabled. Names with embedded newlines cannot be
