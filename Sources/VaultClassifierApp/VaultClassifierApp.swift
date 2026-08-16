@@ -2,6 +2,7 @@ import CryptoKit
 import AppKit
 import Combine
 import VaultClassifierCore
+import VaultClassifierLLM
 
 @main
 private enum VaultClassifierAppMain {
@@ -172,6 +173,7 @@ final class VaultClassifierViewModel: ObservableObject {
             self.hasBackupOwnerCode = LocalBackupOwnerCodeStore.hasOwnerCode
             let sharedHubClient = SharedHubClient()
             self.sharedHubClient = sharedHubClient
+            VaultDevLog.shared.log("app", "launch", ["hub": SharedBrowserBridgeProtocol.address])
             sharedHubClient.onRequest = { [weak self] request in
                 self?.handleSharedHubRequest(request) ?? .failure("classifier-unavailable")
             }
@@ -189,8 +191,29 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             sharedHubClient.connect()
             startActiveLLMClassification()
+            installLocalLLMEngine(coordinator: coordinator)
         } catch {
             issue = error.localizedDescription
+        }
+    }
+
+    /// Loads the in-process llama.cpp engine (final Phase-0 contract) and
+    /// installs it as the coordinator's on-device LLM, replacing the stub.
+    /// Loading is a ~1–2 s mmap, done off the main actor; until it completes
+    /// (or if no model file is present) classification stays on the stub.
+    private func installLocalLLMEngine(coordinator: LocalClassifierCoordinator) {
+        guard let modelPath = VaultLocalLLMEngine.defaultModelPath() else {
+            VaultDevLog.shared.log("llm", "engine-skipped", ["reason": "no-model-file"])
+            return
+        }
+        Task.detached(priority: .userInitiated) {
+            do {
+                let engine = try VaultLocalLLMEngine(modelPath: modelPath)
+                coordinator.setOnDeviceLLM(engine)
+                VaultDevLog.shared.log("llm", "engine-loaded", ["model": (modelPath as NSString).lastPathComponent])
+            } catch {
+                VaultDevLog.shared.log("llm", "engine-load-failed", ["error": String(describing: error)])
+            }
         }
     }
 
@@ -236,14 +259,16 @@ final class VaultClassifierViewModel: ObservableObject {
         handleSharedHubRequestBody(request)
     }
 
-    // TEMPORARY perf instrumentation (dev only). Logs to stderr so a repro of the
-    // "tag injection slow after a while" report shows which hub op costs time and
-    // whether it grows with the collected-entry count. Remove after diagnosing.
-    private static let perfEnabled = ProcessInfo.processInfo.environment["ADAMANCIA_VAULT_ENVIRONMENT"] == "development"
+    // Dev-only instrumentation, routed into the unified VaultDevLog file.
+    private static let perfEnabled = VaultDevLog.shared.isEnabled
     private func perfLog(_ message: @autoclosure () -> String) {
         guard Self.perfEnabled else { return }
         let collected = localState?.workspaceCatalog.datasets.reduce(0) { $0 + $1.collectedEntries.count } ?? -1
-        FileHandle.standardError.write(Data("[VaultPerf] \(message()) collected=\(collected)\n".utf8))
+        VaultDevLog.shared.log("perf", message(), ["collected": "\(collected)"])
+    }
+    /// Structured native-side event into the unified dev log.
+    private func devLog(_ event: String, _ fields: [String: String] = [:]) {
+        VaultDevLog.shared.log("native", event, fields)
     }
     private func perfMS(_ start: DispatchTime, _ end: DispatchTime = DispatchTime.now()) -> String {
         String(format: "%.1f", Double(end.uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000)
@@ -268,9 +293,91 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
+    /// Classifications currently running, keyed by platform + entryID. Repeated
+    /// pending requests for a video already on the serial LLM queue must not
+    /// enqueue duplicate work — without this, every provisional re-request
+    /// multiplied the queue and starved the tail of the viewport.
+    private var inFlightVideoClassifications = Set<String>()
+
+    private static func inFlightKey(_ platformID: String, _ entryID: String) -> String {
+        "\(platformID)\u{1F}\(entryID)"
+    }
+
+    /// Queue background classification for videos with no cached decision,
+    /// skipping any already in flight. Each completed video is broadcast through
+    /// the hub so provisional pills resolve the moment the result exists,
+    /// instead of waiting for the extension's next poll.
+    private func queueVideoClassification(platformID: String, items: [NativeVideoTagsBatchItem]) {
+        let fresh = items.filter {
+            inFlightVideoClassifications.insert(Self.inFlightKey(platformID, $0.entryID)).inserted
+        }
+        guard !fresh.isEmpty else { return }
+        Task { @MainActor [weak self] in
+            for item in fresh {
+                defer { self?.inFlightVideoClassifications.remove(Self.inFlightKey(platformID, item.entryID)) }
+                guard let coordinator = self?.coordinator else { continue }
+                guard let projection = try? await coordinator.classifyVideo(
+                    platformID: platformID, entryID: item.entryID, creatorID: item.creatorID,
+                    title: item.title, summary: item.summary, text: item.text) else { continue }
+                self?.broadcastResolvedVideoTags(platformID: platformID, entryID: item.entryID, projection: projection)
+            }
+            self?.onWebStateChange?()
+        }
+    }
+
+    private func broadcastResolvedVideoTags(platformID: String, entryID: String, projection: SourceTagsProjection) {
+        let broadcast = NativeVideoTagsBroadcast(platformID: platformID, items: [NativeVideoTagsBatchResponseItem(
+            entryID: entryID, tags: Self.nativeSourceTags(from: projection.tags),
+            predicted: projection.predicted, pending: false)])
+        guard let encoded = try? JSONEncoder().encode(broadcast),
+              let object = try? JSONSerialization.jsonObject(with: encoded) as? [String: Any] else { return }
+        sharedHubClient?.broadcast(operation: "video-tags-updated", body: object)
+        devLog("video-tags-updated", ["platform": platformID, "entry": entryID, "tags": "\(projection.tags.count)"])
+    }
+
+    /// Dev-only pipeline test mode (`ADAMANCIA_VAULT_TAG_TEST=creator-echo`):
+    /// every video-tags request is answered instantly with one tag named after
+    /// the video's creator, bypassing the decision cache and LLM classification
+    /// entirely. This isolates the extension→hub→app→pill path from model
+    /// latency and never activates outside the development environment.
+    private static let creatorEchoTestMode = VaultRuntimeEnvironment.current == .development
+        && ProcessInfo.processInfo.environment["ADAMANCIA_VAULT_TAG_TEST"] == "creator-echo"
+
+    /// `acceptedTags` silently drops any tag whose colors fail the OKLab
+    /// theme-pair validation, so hardcoded hexes would render as a "None" pill.
+    /// Search neutral greys with the real validator instead: near-achromatic
+    /// pairs skip the hue check, so a grey pair inside the lightness-inversion
+    /// window is guaranteed to survive `acceptedTags`. Computed once, lazily.
+    private static let creatorEchoColors: (light: String, dark: String) = {
+        for dark in stride(from: 20, through: 140, by: 2) {
+            let darkHex = String(format: "#%02X%02X%02X", dark, dark, dark)
+            for light in 150...250 {
+                let lightHex = String(format: "#%02X%02X%02X", light, light, light)
+                if TagColorAssignment.isValidThemePair(lightHex: lightHex, darkHex: darkHex) {
+                    return (lightHex, darkHex)
+                }
+            }
+        }
+        return ("#E5E7EB", "#3F3F46")
+    }()
+
+    private static func creatorEchoTag(creatorID: String) -> NativeSourceTag {
+        // "youtube:handle:@name" → "@name"; fall back to the whole identifier.
+        let name = creatorID.split(separator: ":").last.map(String.init) ?? creatorID
+        return NativeSourceTag(
+            id: "vault:test:\(name)",
+            name: name,
+            lightColorHex: Self.creatorEchoColors.light,
+            darkColorHex: Self.creatorEchoColors.dark
+        )
+    }
+
     private func handleSharedHubRequestBody(_ request: SharedHubClient.Request) -> SharedHubClient.Reply {
         do {
             guard let coordinator else { return .failure("classifier-unavailable") }
+            if request.operation != .collect && request.operation != .diagnostic {
+                devLog("hub-op", ["op": request.operation.rawValue])
+            }
             switch request.operation {
             case .bridgeInfo:
                 _ = try JSONDecoder().decode(NativeBridgeInfoRequest.self, from: request.bodyData)
@@ -280,7 +387,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 return try sharedHubReply(response)
             case .collectionInfo:
                 _ = try JSONDecoder().decode(NativeCollectionInfoRequest.self, from: request.bodyData)
-                let response = NativeCollectionInfoResponse(enabledPlatformIDs: coordinator.enabledCollectionPlatformIDs())
+                let response = NativeCollectionInfoResponse(enabledPlatformIDs: coordinator.enabledCollectionPlatformIDs(), developmentMode: VaultDevLog.shared.isEnabled)
                 collectionDiagnostics?.record(event: "collection-info-served", outcome: response.enabledPlatformIDs.isEmpty ? "disabled" : "enabled")
                 return try sharedHubReply(response)
             case .diagnostic:
@@ -359,23 +466,75 @@ final class VaultClassifierViewModel: ObservableObject {
             case .videoTags:
                 let videoTags = try JSONDecoder().decode(NativeVideoTagsRequest.self, from: request.bodyData)
                 try videoTags.validate()
+                if Self.creatorEchoTestMode {
+                    devLog("video-tags", ["platform": videoTags.platformID, "entry": videoTags.entryID, "outcome": "creator-echo"])
+                    return try sharedHubReply(NativeVideoTagsResponse(
+                        platformID: videoTags.platformID, entryID: videoTags.entryID,
+                        tags: [Self.creatorEchoTag(creatorID: videoTags.creatorID)], predicted: false, pending: false))
+                }
                 if let cached = coordinator.cachedVideoTags(platformID: videoTags.platformID, entryID: videoTags.entryID) {
+                    devLog("video-tags", ["platform": videoTags.platformID, "entry": videoTags.entryID, "outcome": "cached", "tags": "\(cached.tags.count)"])
                     return try sharedHubReply(NativeVideoTagsResponse(
                         platformID: videoTags.platformID, entryID: videoTags.entryID,
                         tags: Self.nativeSourceTags(from: cached.tags), predicted: cached.predicted, pending: false))
                 }
-                // Not classified yet: queue background classification (the LLM call
-                // runs off the main actor) and report pending; the extension
-                // re-requests and the pill fills in once the result is cached.
-                Task { @MainActor [weak self] in
-                    guard let coordinator = self?.coordinator else { return }
-                    _ = try? await coordinator.classifyVideo(
-                        platformID: videoTags.platformID, entryID: videoTags.entryID, creatorID: videoTags.creatorID,
-                        title: videoTags.title, summary: videoTags.summary, text: videoTags.text)
-                    self?.onWebStateChange?()
+                // No classifier type targets this platform → definitively empty, not
+                // pending (avoids a stuck "Tagging" pill that re-requests forever).
+                guard coordinator.hasClassifierTypes(platformID: videoTags.platformID) else {
+                    devLog("video-tags", ["platform": videoTags.platformID, "entry": videoTags.entryID, "outcome": "empty-no-types"])
+                    return try sharedHubReply(NativeVideoTagsResponse(
+                        platformID: videoTags.platformID, entryID: videoTags.entryID, tags: [], predicted: false, pending: false))
                 }
+                devLog("video-tags", ["platform": videoTags.platformID, "entry": videoTags.entryID, "outcome": "queued-pending"])
+                // Not classified yet: queue background classification and report
+                // pending. The completed result is pushed to the browsers over the
+                // hub, so the pill resolves without polling.
+                queueVideoClassification(platformID: videoTags.platformID, items: [NativeVideoTagsBatchItem(
+                    entryID: videoTags.entryID, creatorID: videoTags.creatorID,
+                    title: videoTags.title, summary: videoTags.summary, text: videoTags.text)])
                 return try sharedHubReply(NativeVideoTagsResponse(
                     platformID: videoTags.platformID, entryID: videoTags.entryID, tags: [], predicted: false, pending: true))
+            case .videoTagsBatch:
+                let batch = try JSONDecoder().decode(NativeVideoTagsBatchRequest.self, from: request.bodyData)
+                try batch.validate()
+                if Self.creatorEchoTestMode {
+                    devLog("video-tags-batch", ["platform": batch.platformID, "items": "\(batch.items.count)", "outcome": "creator-echo"])
+                    return try sharedHubReply(NativeVideoTagsBatchResponse(
+                        platformID: batch.platformID,
+                        items: batch.items.map { item in
+                            NativeVideoTagsBatchResponseItem(
+                                entryID: item.entryID,
+                                tags: [Self.creatorEchoTag(creatorID: item.creatorID)],
+                                predicted: false, pending: false)
+                        }))
+                }
+                let platformHasTypes = coordinator.hasClassifierTypes(platformID: batch.platformID)
+                var responses: [NativeVideoTagsBatchResponseItem] = []
+                var pendingItems: [NativeVideoTagsBatchItem] = []
+                var cachedCount = 0
+                for item in batch.items {
+                    if let cached = coordinator.cachedVideoTags(platformID: batch.platformID, entryID: item.entryID) {
+                        cachedCount += 1
+                        responses.append(NativeVideoTagsBatchResponseItem(
+                            entryID: item.entryID, tags: Self.nativeSourceTags(from: cached.tags), predicted: cached.predicted, pending: false))
+                    } else if !platformHasTypes {
+                        // No classifier type for this platform → definitively empty.
+                        responses.append(NativeVideoTagsBatchResponseItem(entryID: item.entryID, tags: [], predicted: false, pending: false))
+                    } else {
+                        responses.append(NativeVideoTagsBatchResponseItem(entryID: item.entryID, tags: [], predicted: false, pending: true))
+                        pendingItems.append(item)
+                    }
+                }
+                devLog("video-tags-batch", ["platform": batch.platformID, "items": "\(batch.items.count)", "cached": "\(cachedCount)", "pending": "\(pendingItems.count)", "hasTypes": platformHasTypes ? "1" : "0"])
+                if !pendingItems.isEmpty {
+                    queueVideoClassification(platformID: batch.platformID, items: pendingItems)
+                }
+                return try sharedHubReply(NativeVideoTagsBatchResponse(platformID: batch.platformID, items: responses))
+            case .devLog:
+                let entry = try JSONDecoder().decode(NativeDevLogRequest.self, from: request.bodyData)
+                try entry.validate()
+                VaultDevLog.shared.log(entry.layer, entry.event, entry.fields)
+                return try sharedHubReply(NativeDevLogResponse(accepted: true))
             case .classify:
                 let classification = try JSONDecoder().decode(NativeClassificationRequest.self, from: request.bodyData)
                 let output = try coordinator.classifyWithLedger(classification.entry)
