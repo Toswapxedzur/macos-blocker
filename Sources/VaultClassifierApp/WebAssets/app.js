@@ -1122,8 +1122,6 @@
         <div class="classifier-type-head"><div><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div>${statusPill(typeStatus, applicablePlatformID ? "navy" : "muted")}</div>
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}<button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("bridge.saveType")}</button><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}" data-name="${esc(classifierType.name)}">${tx("bridge.deleteType")}</button></div>
         <section class="classifier-type-section classifier-applicable-platform-section"><div class="section-header"><div><h3>${tx("bridge.applicablePlatform")}</h3><p class="section-copy">${tx("bridge.assetSelectionCopy")}</p></div></div><div class="classifier-applicable-platform-row">${valueSelectField("bridge.applicablePlatform", "bridge.applicablePlatformCopy", "applicablePlatformID", applicablePlatformID, applicablePlatformOptions)}<div class="classifier-platform-data-status"><span class="eyebrow">${tx("bridge.platformData")}</span><p class="small-copy">${esc(platformDataStatus)}</p></div></div>${applicablePlatform && !supportsLocalModel && !supportsLLMAssist ? `<p class="small-copy" data-collection-only-platform-note>${tx("bridge.collectionOnlyCopy")}</p>` : ""}</section>
-        <section class="classifier-type-section classifier-llm-section" data-llm-assist-section${supportsLLMAssist ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.llmAssist")}</h3><p class="section-copy">${tx("bridge.llmAssistCopy")}</p></div></div>${llmProfiles.length ? llmConfigurationBody : `<div class="empty compact-empty">${tx("bridge.noLLMProfiles")}</div>`}</section>
-        ${selectedLLMProfile && llmProfiles.length ? `<section class="classifier-type-section classifier-llm-advanced-section" data-llm-assist-section${supportsLLMAssist ? "" : " hidden"}><div class="section-header"><div><h3>${tx("bridge.llmAdvanced")}</h3><p class="section-copy">${tx("bridge.llmAdvancedCopy")}</p></div></div>${llmAdvancedBody}</section>` : ""}
         ${localModelOverrideSection}
       </section>`;
     };
@@ -1140,7 +1138,6 @@
         <div class="type-detail-body">
           ${section("bridge.tabConfig", typeForm(selectedType))}
           ${section("bridge.tabTree", tagTreeWorkspace(selectedType.treeID))}
-          ${section("bridge.tabModel", localModelWorkspace(selectedType.id))}
         </div></div>`;
     }
     // Nothing selected: '+ New type' creates directly and the sidebar lists the
