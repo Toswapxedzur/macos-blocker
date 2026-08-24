@@ -137,8 +137,11 @@ final class VaultClassifierViewModel: ObservableObject {
     private var providerModelCatalogs = [String: [ProviderModelCatalogEntry]]()
     private var providerModelCatalogErrors = [String: String]()
     private var loadingProviderModelProfileIDs = Set<String>()
+    private let modelDownloadManager: ModelDownloadManager
+    private var modelDownloadFractions: [String: Double] = [:]
 
-    init() {
+    init(modelDownloadManager: ModelDownloadManager = ModelDownloadManager()) {
+        self.modelDownloadManager = modelDownloadManager
         do {
             let vaultDirectory = try VaultDevelopmentEnvironmentMigration.prepareClassifierDirectory()
             RetiredCredentialCleanup.removePersonalAuditCredential()
@@ -1760,6 +1763,88 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
+    func downloadModel(id: String) {
+        guard let entry = LocalModelCatalog.entry(id: id) else {
+            issue = "The selected model is not in the local catalog."
+            return
+        }
+        guard !VaultLocalLLMEngine.availableModelFiles().contains(entry.ggufFileName) else {
+            modelDownloadFractions.removeValue(forKey: id)
+            issue = nil
+            return
+        }
+        guard modelDownloadFractions[id] == nil else { return }
+        modelDownloadFractions[id] = 0
+        issue = nil
+        let manager = modelDownloadManager
+        let reportProgress: ModelDownloadManager.ProgressHandler = { [weak self] progress in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.modelDownloadFractions[id] = progress.fraction
+                self.onWebStateChange?()
+            }
+        }
+        Task { [weak self] in
+            do {
+                _ = try await manager.download(entry, progress: reportProgress)
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.modelDownloadFractions.removeValue(forKey: id)
+                    self.issue = nil
+                    self.onWebStateChange?()
+                }
+            } catch is CancellationError {
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.modelDownloadFractions.removeValue(forKey: id)
+                    self.onWebStateChange?()
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.modelDownloadFractions.removeValue(forKey: id)
+                    self.issue = error.localizedDescription
+                    self.onWebStateChange?()
+                }
+            }
+        }
+    }
+
+    func cancelModelDownload(id: String) {
+        guard LocalModelCatalog.entry(id: id) != nil else {
+            issue = "The selected model is not in the local catalog."
+            return
+        }
+        modelDownloadFractions.removeValue(forKey: id)
+        let manager = modelDownloadManager
+        Task { [weak self] in
+            await manager.cancel(id: id)
+            await MainActor.run { [weak self] in
+                self?.onWebStateChange?()
+            }
+        }
+    }
+
+    func deleteModelFile(fileName: String) {
+        let manager = modelDownloadManager
+        Task { [weak self] in
+            do {
+                try await manager.deleteModelFile(fileName: fileName)
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.issue = nil
+                    self.onWebStateChange?()
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.issue = error.localizedDescription
+                    self.onWebStateChange?()
+                }
+            }
+        }
+    }
+
     func saveResearchSettings(_ updated: ResearchSettings) {
         guard let coordinator else { return }
         do {
@@ -2097,6 +2182,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 "pageAction": editingPageAction.rawValue,
             ] as [String: Any],
         ]
+        let availableModelFiles = VaultLocalLLMEngine.availableModelFiles()
         let settingsPayload: [String: Any] = [
             "packageUpdateMode": packageUpdateMode.rawValue,
             "localLLM": [
@@ -2113,7 +2199,12 @@ final class VaultClassifierViewModel: ObservableObject {
                     "houseRules": llmSettings.houseRules,
                     "maxResidentModels": llmSettings.maxResidentModels,
                     "engineStatus": llmEngineStatus,
-                    "availableModels": VaultLocalLLMEngine.availableModelFiles(),
+                    "availableModels": availableModelFiles,
+                    "modelLibrary": Self.modelLibraryPayload(
+                        availableModelFiles: availableModelFiles,
+                        downloadFractions: modelDownloadFractions,
+                        systemRAMGB: HardwareProfile.physicalRAMGB()
+                    ),
             ] as [String: Any],
             "research": [
                 "enabled": researchSettings.enabled,
@@ -2298,6 +2389,51 @@ final class VaultClassifierViewModel: ObservableObject {
         ]
     }
 
+    static func modelLibraryPayload(
+        availableModelFiles: [String],
+        downloadFractions: [String: Double],
+        systemRAMGB: Int
+    ) -> [[String: Any]] {
+        let downloaded = Set(availableModelFiles)
+        let recommendedID = LocalModelCatalog.recommended(systemRAMGB: systemRAMGB)?.id
+        return LocalModelCatalog.curated
+            .sorted { lhs, rhs in
+                lhs.downloadSizeBytes == rhs.downloadSizeBytes
+                    ? lhs.displayName < rhs.displayName
+                    : lhs.downloadSizeBytes < rhs.downloadSizeBytes
+            }
+            .map { entry in
+                let state: [String: Any]
+                if let fraction = downloadFractions[entry.id] {
+                    state = [
+                        "kind": "downloading",
+                        "fraction": min(1, max(0, fraction)),
+                    ]
+                } else if downloaded.contains(entry.ggufFileName) {
+                    state = ["kind": "downloaded"]
+                } else {
+                    state = ["kind": "available"]
+                }
+                return [
+                    "id": entry.id,
+                    "displayName": entry.displayName,
+                    "family": entry.family,
+                    "paramsB": entry.paramsB,
+                    "repo": entry.repo,
+                    "ggufFileName": entry.ggufFileName,
+                    "downloadSizeBytes": entry.downloadSizeBytes,
+                    "minimumRAMGB": entry.minimumRAMGB,
+                    "downloadURL": (try? entry.downloadURL.absoluteString) ?? "",
+                    // Latency is deliberately nil until this exact artifact is
+                    // benchmarked on the current Mac. Model size is not a
+                    // substitute for a measured decision time.
+                    "latencyBand": NSNull(),
+                    "recommended": entry.id == recommendedID,
+                    "state": state,
+                ] as [String: Any]
+            }
+    }
+
     /// The web renderer is a bundled local asset, but its messages are still
     /// treated as untrusted UI input. Keep the surface small and bounded so it
     /// cannot become another native IPC or provider-control path.
@@ -2463,6 +2599,12 @@ final class VaultClassifierViewModel: ObservableObject {
                         label: "Resident models"
                     )
                 ))
+            case "downloadModel":
+                downloadModel(id: try webString(data, key: "id", limit: 128))
+            case "cancelModelDownload":
+                cancelModelDownload(id: try webString(data, key: "id", limit: 128))
+            case "deleteModelFile":
+                deleteModelFile(fileName: try webString(data, key: "fileName", limit: 255))
             case "saveResearchSettings":
                 saveResearchSettings(ResearchSettings(
                     enabled: try webBool(data, key: "enabled"),

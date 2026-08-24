@@ -4,6 +4,25 @@ import VaultClassifierCore
 
 @MainActor
 final class ClassifierTypeLocalModelWebInputTests: XCTestCase {
+    func testModelLibraryPayloadMarksDownloadedCatalogFileAndProgress() throws {
+        let downloadedEntry = try XCTUnwrap(LocalModelCatalog.curated.first)
+        let downloadingEntry = try XCTUnwrap(LocalModelCatalog.curated.dropFirst().first)
+        let payload = VaultClassifierViewModel.modelLibraryPayload(
+            availableModelFiles: ["manual.gguf", downloadedEntry.ggufFileName],
+            downloadFractions: [downloadingEntry.id: 0.4],
+            systemRAMGB: 16
+        )
+
+        let downloaded = try XCTUnwrap(payload.first { ($0["id"] as? String) == downloadedEntry.id })
+        XCTAssertEqual((downloaded["state"] as? [String: Any])?["kind"] as? String, "downloaded")
+        let downloading = try XCTUnwrap(payload.first { ($0["id"] as? String) == downloadingEntry.id })
+        XCTAssertEqual((downloading["state"] as? [String: Any])?["kind"] as? String, "downloading")
+        XCTAssertEqual((downloading["state"] as? [String: Any])?["fraction"] as? Double, 0.4)
+        XCTAssertTrue(downloaded["latencyBand"] is NSNull)
+        XCTAssertTrue(downloading["latencyBand"] is NSNull)
+        XCTAssertEqual(payload.filter { ($0["recommended"] as? Bool) == true }.count, 1)
+    }
+
     func testDisabledOverrideDoesNotParseHiddenOrEmptyFields() throws {
         let input = try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
             "typeID": "type",
