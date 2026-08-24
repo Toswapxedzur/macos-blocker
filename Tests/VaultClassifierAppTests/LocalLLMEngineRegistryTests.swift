@@ -3,6 +3,36 @@ import VaultClassifierCore
 @testable import VaultClassifierLLM
 
 final class LocalLLMEngineRegistryTests: XCTestCase {
+    func testPickerListsManualAndDownloadedCatalogGGUFFiles() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let catalogFile = try XCTUnwrap(LocalModelCatalog.curated.first?.ggufFileName)
+        XCTAssertTrue(FileManager.default.createFile(
+            atPath: directory.appendingPathComponent(catalogFile).path,
+            contents: Data()
+        ))
+        XCTAssertTrue(FileManager.default.createFile(
+            atPath: directory.appendingPathComponent("manual.gguf").path,
+            contents: Data()
+        ))
+        XCTAssertTrue(FileManager.default.createFile(
+            atPath: directory.appendingPathComponent("not-a-model.bin").path,
+            contents: Data()
+        ))
+        try FileManager.default.createDirectory(
+            at: directory.appendingPathComponent("not-a-file.gguf", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+
+        XCTAssertEqual(
+            VaultLocalLLMEngine.availableModelFiles(in: directory),
+            [catalogFile, "manual.gguf"].sorted()
+        )
+    }
+
     func testResidencyIndexTracksDeterministicLRUOrder() {
         var index = LocalLLMEngineRegistry.ResidencyIndex()
         index.touch("a.gguf")

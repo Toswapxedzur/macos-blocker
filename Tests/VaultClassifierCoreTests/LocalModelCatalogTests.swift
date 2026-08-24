@@ -2,7 +2,6 @@ import XCTest
 @testable import VaultClassifierCore
 
 final class LocalModelCatalogTests: XCTestCase {
-
     func testLatencyBandBoundaries() {
         XCTAssertEqual(LatencyBand.classify(medianMilliseconds: 120), .green)
         XCTAssertEqual(LatencyBand.classify(medianMilliseconds: 499), .green)
@@ -11,10 +10,55 @@ final class LocalModelCatalogTests: XCTestCase {
         XCTAssertEqual(LatencyBand.classify(medianMilliseconds: 1_001), .reject)
     }
 
-    func testAllCuratedEntriesMeetCapabilityGates() {
-        XCTAssertFalse(LocalModelCatalog.curated.isEmpty)
-        XCTAssertEqual(LocalModelCatalog.eligible.count, LocalModelCatalog.curated.count,
-                       "curated list should only contain capability-passing models")
+    func testCuratedCatalogContainsOnlyValidatedQ4KMGGUFURLs() throws {
+        XCTAssertEqual(LocalModelCatalog.curated.count, 8)
+        XCTAssertGreaterThanOrEqual(Set(LocalModelCatalog.curated.map(\.family)).count, 5)
+        XCTAssertEqual(Set(LocalModelCatalog.curated.map(\.id)).count, LocalModelCatalog.curated.count)
+        XCTAssertEqual(Set(LocalModelCatalog.curated.map(\.ggufFileName)).count, LocalModelCatalog.curated.count)
+
+        for entry in LocalModelCatalog.curated {
+            let url = try entry.downloadURL
+            XCTAssertEqual(url.scheme, "https")
+            XCTAssertEqual(url.host, "huggingface.co")
+            XCTAssertEqual(
+                url.absoluteString,
+                "https://huggingface.co/\(entry.repo)/resolve/main/\(entry.ggufFileName)"
+            )
+            XCTAssertTrue(entry.ggufFileName.hasSuffix("Q4_K_M.gguf"))
+            XCTAssertGreaterThan(entry.downloadSizeBytes, 0)
+            XCTAssertGreaterThan(entry.minimumRAMGB, 0)
+        }
+    }
+
+    func testDownloadURLValidationRejectsTraversalAndAlternateRoutes() {
+        let invalidRepositories = [
+            "bartowski/../private",
+            "https://example.com/model",
+            "bartowski%2Fother/model",
+            "bartowski/model/extra",
+            "/bartowski/model",
+        ]
+        for repo in invalidRepositories {
+            XCTAssertThrowsError(
+                try LocalModelCatalog.validatedDownloadURL(repo: repo, ggufFileName: "safe-Q4_K_M.gguf")
+            )
+        }
+
+        let invalidFileNames = [
+            "../model.gguf",
+            "folder/model.gguf",
+            "folder\\model.gguf",
+            "%2e%2e%2fmodel.gguf",
+            "model.bin",
+        ]
+        for fileName in invalidFileNames {
+            XCTAssertThrowsError(
+                try LocalModelCatalog.validatedDownloadURL(
+                    repo: "bartowski/Safe-GGUF",
+                    ggufFileName: fileName
+                )
+            )
+        }
     }
 
     func testRecommendedScalesWithRAM() {
@@ -24,27 +68,21 @@ final class LocalModelCatalogTests: XCTestCase {
         XCTAssertNotNil(low)
         XCTAssertNotNil(mid)
         XCTAssertNotNil(high)
-        // More RAM never recommends a smaller model.
-        XCTAssertLessThanOrEqual(low!.parameterBillions, mid!.parameterBillions)
-        XCTAssertLessThanOrEqual(mid!.parameterBillions, high!.parameterBillions)
-        // 8 GB machine gets a ~1–1.5B model; 24 GB+ unlocks the 7B.
-        XCTAssertLessThan(low!.parameterBillions, 2.0)
-        XCTAssertGreaterThan(high!.parameterBillions, 3.5)
-    }
-
-    func testRecommendedNeverExceedsRAMFloorWhenAvoidable() {
-        let mid = LocalModelCatalog.recommended(systemRAMGB: 16)
+        XCTAssertLessThanOrEqual(low!.paramsB, mid!.paramsB)
+        XCTAssertLessThanOrEqual(mid!.paramsB, high!.paramsB)
+        XCTAssertLessThan(low!.paramsB, 2.0)
+        XCTAssertGreaterThan(high!.paramsB, 7.0)
         XCTAssertLessThanOrEqual(mid!.minimumRAMGB, 16)
     }
 
-    func testUnderpoweredMachineStillGetsSmallestModel() {
-        let entry = LocalModelCatalog.recommended(systemRAMGB: 4) // below every floor
+    func testUnderpoweredMachineStillGetsSmallestRAMClass() {
+        let entry = LocalModelCatalog.recommended(systemRAMGB: 4)
         XCTAssertNotNil(entry)
-        XCTAssertEqual(entry?.minimumRAMGB, LocalModelCatalog.eligible.map(\.minimumRAMGB).min())
+        XCTAssertEqual(entry?.minimumRAMGB, LocalModelCatalog.curated.map(\.minimumRAMGB).min())
     }
 
     func testEntryLookupAndCatalogCodable() throws {
-        let entry = try XCTUnwrap(LocalModelCatalog.entry(id: "mlx-community/Llama-3.2-3B-Instruct-4bit"))
+        let entry = try XCTUnwrap(LocalModelCatalog.entry(id: "llama-3.2-3b-instruct-q4-k-m"))
         let data = try JSONEncoder().encode(entry)
         let decoded = try JSONDecoder().decode(LocalModelCatalogEntry.self, from: data)
         XCTAssertEqual(decoded, entry)

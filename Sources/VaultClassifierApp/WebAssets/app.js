@@ -160,6 +160,10 @@
 
   const tx = (key, values = {}) => esc(t(key, values));
   const percent = (value) => `${Math.round(Number(value || 0) * 100)}%`;
+  const modelSizeGB = (bytes) => {
+    const gigabytes = Math.max(0, Number(bytes) || 0) / 1_000_000_000;
+    return gigabytes < 1 ? gigabytes.toFixed(2) : gigabytes.toFixed(1);
+  };
   const selected = (value, expected) => value === expected ? " selected" : "";
   const checked = (value) => value ? " checked" : "";
   const disabled = (value) => value ? " disabled" : "";
@@ -587,6 +591,41 @@
     return `<label class="header-language"><span class="visually-hidden">${tx("language.label")}</span><select class="select-control" data-language-selection aria-label="${tx("language.label")}">${languageChoices.map(([identifier, nameKey]) => `<option value="${esc(identifier)}"${selected(selectedLanguage, identifier)}>${tx(nameKey)}</option>`).join("")}</select></label>`;
   }
 
+  function localModelOptions(availableNames, selectedName, emptyLabel) {
+    const names = [...new Set((availableNames || []).filter((name) => typeof name === "string" && name))].sort();
+    const options = [["", emptyLabel], ...names.map((name) => [name, name])];
+    if (selectedName && !names.includes(selectedName)) {
+      options.splice(1, 0, [selectedName, t("localModel.modelMissing", { file: selectedName })]);
+    }
+    return options;
+  }
+
+  function modelLibraryContent(entries) {
+    const groups = [
+      ["small", (entry) => Number(entry.downloadSizeBytes) < 1_500_000_000],
+      ["medium", (entry) => Number(entry.downloadSizeBytes) >= 1_500_000_000 && Number(entry.downloadSizeBytes) < 3_000_000_000],
+      ["large", (entry) => Number(entry.downloadSizeBytes) >= 3_000_000_000],
+    ];
+    const latencyBands = new Set(["green", "danger", "reject"]);
+    const row = (entry) => {
+      const stateKind = entry.state?.kind || "available";
+      const fraction = Math.min(1, Math.max(0, Number(entry.state?.fraction) || 0));
+      let controls = `<button class="primary" data-action="downloadModel" data-id="${esc(entry.id)}">${tx("modelLibrary.download")}</button>`;
+      if (stateKind === "downloading") {
+        controls = `<div class="model-download-state"><span class="model-download-label">${tx("modelLibrary.downloading", { progress: percent(fraction) })}</span><div class="model-download-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(fraction * 100)}"><span style="width:${Math.round(fraction * 100)}%"></span></div></div><button class="secondary" data-action="cancelModelDownload" data-id="${esc(entry.id)}">${tx("modelLibrary.cancel")}</button>`;
+      } else if (stateKind === "downloaded") {
+        controls = `${statusPill(t("modelLibrary.downloaded"), "cyan")}<button class="danger" data-action="deleteModelFile" data-file-name="${esc(entry.ggufFileName)}">${tx("modelLibrary.delete")}</button>`;
+      }
+      const latencyBand = latencyBands.has(entry.latencyBand) ? entry.latencyBand : "unmeasured";
+      return `<article class="model-library-row"><div class="model-library-copy"><div class="model-library-title"><strong>${esc(entry.displayName)}</strong><span>${esc(entry.family)}</span>${entry.recommended ? `<span class="model-recommended-badge">${tx("modelLibrary.recommended")}</span>` : ""}</div><div class="model-library-meta"><span>${tx("modelLibrary.params", { params: Number(entry.paramsB).toLocaleString(undefined, { maximumFractionDigits: 2 }) })}</span><span>${tx("modelLibrary.size", { size: modelSizeGB(entry.downloadSizeBytes) })}</span><span>${tx("modelLibrary.minimumRAM", { ram: entry.minimumRAMGB })}</span>${statusPill(t(`modelLibrary.latency.${latencyBand}`), latencyBand === "unmeasured" ? "muted" : latencyBand)}</div></div><div class="model-library-controls">${controls}</div></article>`;
+    };
+    return groups.map(([group, includes]) => {
+      const models = entries.filter(includes).sort((lhs, rhs) => Number(lhs.downloadSizeBytes) - Number(rhs.downloadSizeBytes));
+      if (!models.length) return "";
+      return `<section class="model-library-group"><h4>${tx(`modelLibrary.group.${group}`)}</h4><div class="model-library-rows">${models.map(row).join("")}</div></section>`;
+    }).join("");
+  }
+
   function utilityPanelContent() {
     if (!utilityPanel) return "";
     let content = "";
@@ -598,7 +637,11 @@
       const profiles = assets.providerProfiles || [];
       const protocols = assets.providerProtocols || {};
       const statusToneByState = { loaded: "cyan", loading: "navy", disabled: "navy", "no-model": "pink", failed: "red" };
-      const modelOptions = [["", tx("localModel.modelAuto")]].concat((llm.availableModels || []).map((name) => [name, name]));
+      const modelOptions = localModelOptions(
+        llm.availableModels,
+        llm.modelFileName || "",
+        t("localModel.modelAuto")
+      );
       const thresholds = Array.isArray(llm.confidenceThresholds) && llm.confidenceThresholds.length === 4
         ? llm.confidenceThresholds
         : [0.2, 0.4, 0.6, 0.85];
@@ -628,6 +671,7 @@
       }</div><div class="utility-settings-fields">${
         valueSelectField("localModel.model", "localModel.modelHint", "modelFileName", llm.modelFileName || "", modelOptions)
       }</div><div class="utility-advanced${advancedSettingsOpen ? " open" : ""}" data-advanced-settings><button type="button" class="secondary advanced-toggle" data-action="toggleAdvancedSettings" aria-expanded="${advancedSettingsOpen}"><span>${tx("localModel.advanced")}</span><span class="advanced-chevron" aria-hidden="true">⌄</span></button><div class="advanced-settings-body"><div class="advanced-settings-inner">${advancedBody}</div></div></div><div class="action-row"><button class="primary" data-action="saveLocalLLMSettings" data-form="utility-llm-form">${tx("localModel.save")}</button></div></section>`;
+      const modelLibrarySection = `<section class="utility-settings-section utility-model-library-section"><div><h3 class="utility-settings-section-title">${tx("modelLibrary.title")}</h3><p class="section-copy">${tx("modelLibrary.copy")}</p></div><p class="model-library-source-note">${tx("modelLibrary.sourceNote")}</p><div class="model-library-groups">${modelLibraryContent(llm.modelLibrary || [])}</div></section>`;
       const generationProfiles = profiles.filter((profile) => protocols[profile.type]?.supportsGenerateText === true);
       const searchProfiles = profiles.filter((profile) => protocols[profile.type]?.supportsRawWebSearch === true);
       const profileOptions = (items) => [["", tx("research.chooseProvider")]].concat(items.map((profile) => [profile.id, profile.name]));
@@ -662,7 +706,7 @@
         field("research.maxKnowledgePerVideo", "research.maxKnowledgePerVideoHint", "maxKnowledgePerVideo", research.maxKnowledgePerVideo ?? 8, "number", 'min="1" max="32"')
       }</div></section></div><p class="small-copy">${tx("research.usageToday", { used: research.tokensUsedToday ?? 0 })}</p><div class="action-row"><button class="primary" data-action="saveResearchSettings" data-form="utility-research-form">${tx("research.save")}</button></div></section>`;
       const packageSection = `<section class="utility-settings-section utility-resource-section" data-form-id="utility-package-form"><h3 class="utility-settings-section-title">${tx("settings.packageUpdates")}</h3><div class="utility-settings-fields">${selectField("settings.packageUpdates", "settings.packageUpdatesCopy", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div><div class="action-row"><button class="primary" data-action="savePackageSettings" data-form="utility-package-form">${tx("common.save")}</button></div></section>`;
-      content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${llmSection}${researchSection}${packageSection}</div></section>`;
+      content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${llmSection}${modelLibrarySection}${researchSection}${packageSection}</div></section>`;
     }
     if (!content) return "";
     return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}"></button><div class="utility-popover" role="dialog" aria-modal="true" aria-label="${esc(tx("utility.settings.title"))}">${content}</div></div>`;
@@ -984,8 +1028,10 @@
         ? localOverrides.confidenceThresholds
         : [0.2, 0.4, 0.6, 0.85];
       const localModelFormID = `classifier-local-model-form-${classifierType.id}`;
-      const typeModelOptions = [["", tx("bridge.localModelInheritGlobal")]].concat(
-        (state.settings?.localLLM?.availableModels || []).map((name) => [name, name])
+      const typeModelOptions = localModelOptions(
+        state.settings?.localLLM?.availableModels,
+        classifierType.modelFileName || "",
+        t("bridge.localModelInheritGlobal")
       );
       const localModelOverrideBody = `<div class="utility-toggles">${toggle("bridge.localModelAllowDecline", "allowDecline", localOverrides?.allowDecline ?? true)}</div><div class="field wide"><span class="field-label">${tx("localModel.confidence")}<span class="field-hint"> · ${tx("localModel.confidenceHint")}</span></span><div class="confidence-band-row">${[2, 3, 4, 5].map((level, index) => `<label class="confidence-band"><span class="confidence-band-label">≥ ${level}</span><input type="text" data-field="confidenceBand${level}" value="${esc(String(localOverrideThresholds[index]))}"></label>`).join("")}</div></div>${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", localOverrides?.houseRules ?? "", 'rows="4"')}`;
       const localModelOverrideSection = supportsLocalModel ? `<section class="classifier-type-section classifier-local-model-overrides" data-local-model-section><div class="section-header"><div><h3>${tx("bridge.localModelOverrides")}</h3><p class="section-copy">${tx("bridge.localModelOverridesCopy")}</p></div></div><div data-form-id="${esc(localModelFormID)}"><div class="utility-settings-fields">${valueSelectField("bridge.localModelFile", "bridge.localModelFileCopy", "modelFileName", classifierType.modelFileName || "", typeModelOptions)}</div><p class="small-copy resident-model-note">${tx("bridge.localModelResidentNote", { count: state.settings?.localLLM?.maxResidentModels ?? 2 })}</p>${toggle("bridge.localModelOverrideEnabled", "overrideEnabled", Boolean(localOverrides))}<div class="utility-advanced${localModelAdvancedOpen ? " open" : ""}" data-local-model-advanced><button type="button" class="secondary advanced-toggle" data-action="toggleLocalModelAdvanced" aria-expanded="${localModelAdvancedOpen}"><span>${tx("bridge.localModelOverrideControls")}</span><span class="advanced-chevron" aria-hidden="true">⌄</span></button><div class="advanced-settings-body"><div class="advanced-settings-inner">${localModelOverrideBody}</div></div></div><div class="action-row"><button type="button" class="primary" data-action="saveClassifierTypeLocalModel" data-form="${esc(localModelFormID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div></div></section>` : "";
@@ -1631,6 +1677,7 @@
     if (button.dataset.platformId) data.platformID = button.dataset.platformId;
     if (button.dataset.typeId) data.typeID = button.dataset.typeId;
     if (button.dataset.entryId) data.entryID = button.dataset.entryId;
+    if (button.dataset.fileName) data.fileName = button.dataset.fileName;
     if (action === "submitCorrection") {
       loadedCreatorEntries.forEach((entries) => {
         const entry = entries.find((candidate) => candidate.platformID === data.platformID && candidate.entryID === data.entryID);
