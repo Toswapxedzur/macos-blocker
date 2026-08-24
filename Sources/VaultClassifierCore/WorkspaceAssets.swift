@@ -388,9 +388,16 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     /// One platform binding supplies this type's tree and collected local
     /// classification data. A type cannot combine platform sources.
     public var applicablePlatformID: String?
-    /// Optional request-time overrides for this type. Runtime/model/context
-    /// controls stay global because the llama context is shared app-wide.
+    /// Optional request-time overrides for this type. Context/runtime controls
+    /// stay global and apply to every resident model engine.
     public var localModelOverrides: LocalModelOverrides?
+    /// Nil inherits the app-wide model choice. A file name selects a resident
+    /// per-type GGUF engine while retaining global runtime controls.
+    public var modelFileName: String?
+    /// Optional grounded-research defaults for this type. The app-wide
+    /// research consent remains the master gate even when this value enables
+    /// research for the type.
+    public var researchOverrides: ResearchSettings?
     /// Position in the reorderable classifier-type list. Types targeting the
     /// same platform apply in ascending order; a card unions their tags in this
     /// order.
@@ -406,6 +413,8 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         datasetRevision: Int,
         applicablePlatformID: String? = nil,
         localModelOverrides: LocalModelOverrides? = nil,
+        modelFileName: String? = nil,
+        researchOverrides: ResearchSettings? = nil,
         order: Int = 0,
         updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
     ) {
@@ -418,13 +427,16 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         let cleanedPlatformID = applicablePlatformID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.applicablePlatformID = cleanedPlatformID.isEmpty ? nil : cleanedPlatformID
         self.localModelOverrides = localModelOverrides?.isEmpty == false ? localModelOverrides : nil
+        let cleanedModelFileName = modelFileName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.modelFileName = cleanedModelFileName.isEmpty ? nil : String(cleanedModelFileName.prefix(255))
+        self.researchOverrides = researchOverrides
         self.order = order
         self.updatedAtMilliseconds = updatedAtMilliseconds
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, treeID, treeRevision, datasetID, datasetRevision, applicablePlatformID,
-             localModelOverrides, order, updatedAtMilliseconds
+             localModelOverrides, modelFileName, researchOverrides, order, updatedAtMilliseconds
     }
 
     private enum RetiredCodingKeys: String, CodingKey {
@@ -465,6 +477,10 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         _ = retired.contains(.platformLocked)
         let decodedOverrides = try container.decodeIfPresent(LocalModelOverrides.self, forKey: .localModelOverrides)
         localModelOverrides = decodedOverrides?.isEmpty == false ? decodedOverrides : nil
+        let decodedModelFileName = try container.decodeIfPresent(String.self, forKey: .modelFileName)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        modelFileName = decodedModelFileName.isEmpty ? nil : String(decodedModelFileName.prefix(255))
+        researchOverrides = try container.decodeIfPresent(ResearchSettings.self, forKey: .researchOverrides)
         order = try container.decodeIfPresent(Int.self, forKey: .order) ?? 0
         updatedAtMilliseconds = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMilliseconds)
             ?? WorkspaceCatalog.now()
@@ -480,6 +496,8 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         try container.encode(datasetRevision, forKey: .datasetRevision)
         try container.encodeIfPresent(applicablePlatformID, forKey: .applicablePlatformID)
         try container.encodeIfPresent(localModelOverrides, forKey: .localModelOverrides)
+        try container.encodeIfPresent(modelFileName, forKey: .modelFileName)
+        try container.encodeIfPresent(researchOverrides, forKey: .researchOverrides)
         try container.encode(order, forKey: .order)
         try container.encode(updatedAtMilliseconds, forKey: .updatedAtMilliseconds)
     }
@@ -616,19 +634,23 @@ public struct TokenUsageRecord: Codable, Equatable, Sendable, Identifiable {
     public var model: String
     public var tokenCount: Int
     public var status: String
+    /// Grounded-research budgets are independent for each classifier type.
+    /// Nil identifies legacy/global records and remains readable.
+    public var classifierTypeID: String?
     public var createdAtMilliseconds: Int64
 
-    public init(id: String = UUID().uuidString, provider: String, model: String, tokenCount: Int, status: String, createdAtMilliseconds: Int64 = WorkspaceCatalog.now()) {
+    public init(id: String = UUID().uuidString, provider: String, model: String, tokenCount: Int, status: String, classifierTypeID: String? = nil, createdAtMilliseconds: Int64 = WorkspaceCatalog.now()) {
         self.id = id
         self.provider = provider
         self.model = model
         self.tokenCount = max(0, tokenCount)
         self.status = status
+        self.classifierTypeID = classifierTypeID
         self.createdAtMilliseconds = createdAtMilliseconds
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, provider, model, tokenCount, status, createdAtMilliseconds
+        case id, provider, model, tokenCount, status, classifierTypeID, createdAtMilliseconds
         case inputTokens, outputTokens
     }
 
@@ -646,6 +668,7 @@ public struct TokenUsageRecord: Codable, Equatable, Sendable, Identifiable {
             )
         }
         status = try container.decode(String.self, forKey: .status)
+        classifierTypeID = try container.decodeIfPresent(String.self, forKey: .classifierTypeID)
         createdAtMilliseconds = try container.decode(Int64.self, forKey: .createdAtMilliseconds)
     }
 
@@ -656,6 +679,7 @@ public struct TokenUsageRecord: Codable, Equatable, Sendable, Identifiable {
         try container.encode(model, forKey: .model)
         try container.encode(tokenCount, forKey: .tokenCount)
         try container.encode(status, forKey: .status)
+        try container.encodeIfPresent(classifierTypeID, forKey: .classifierTypeID)
         try container.encode(createdAtMilliseconds, forKey: .createdAtMilliseconds)
     }
 }

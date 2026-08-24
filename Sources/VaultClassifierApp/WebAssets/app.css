@@ -637,6 +637,24 @@ h3 { font-size: 13px; }
 
 .utility-settings-fields .field:last-child { grid-column: 1 / -1; }
 
+.research-settings-groups { display: grid; gap: 12px; }
+.research-settings-group {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(248, 250, 252, .58);
+}
+.research-settings-group h4 {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .055em;
+  text-transform: uppercase;
+}
+
 .utility-toggles {
   display: grid;
   gap: 0;
@@ -703,6 +721,11 @@ h3 { font-size: 13px; }
 .classifier-type-section { padding: 14px 14px 14px 18px; border-bottom: 1px solid var(--line); }
 .classifier-type-section:last-child { border-bottom: 0; }
 .classifier-type-section .section-header { margin-bottom: 10px; }
+.classifier-research-overrides .research-master-note {
+  margin: 10px 0 0;
+  color: #0e7490;
+}
+.resident-model-note { margin: 8px 0 12px; color: var(--ink-muted); }
 .classifier-applicable-platform-row { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr); gap: 14px; align-items: end; }
 .classifier-platform-data-status { border: 0; box-shadow: inset 0 0 0 1px var(--line); border-radius: 10px; background: var(--cream); padding: 9px 11px; min-height: 56px; }
 .classifier-platform-data-status .small-copy { margin: 4px 0 0; }
