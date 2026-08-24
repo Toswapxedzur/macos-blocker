@@ -74,17 +74,20 @@ public struct ResearchSubject: Equatable, Sendable {
 public struct ResearchTask: Equatable, Sendable {
     public static let maximumSubjects = 3
 
+    public let classifierTypeID: String
     public let platformID: String
     public let entryID: String
     public let creatorID: String
     public let subjects: [ResearchSubject]
 
     public init(
+        classifierTypeID: String,
         platformID: String,
         entryID: String,
         creatorID: String,
         subjects: [ResearchSubject]
     ) {
+        self.classifierTypeID = String(classifierTypeID.prefix(256))
         self.platformID = platformID
         self.entryID = entryID
         self.creatorID = creatorID
@@ -100,6 +103,8 @@ public struct GroundedResearchProviderConfiguration: Sendable {
     public var webSearchProfile: APIKeyProviderProfile
     public var webSearchCredential: ProviderCredentialRecord
     public var maximumOutputTokens: Int
+    public var searchResultCount: Int
+    public var snippetContextChars: Int
 
     public init(
         llmProfile: APIKeyProviderProfile,
@@ -107,7 +112,9 @@ public struct GroundedResearchProviderConfiguration: Sendable {
         llmModelIdentifier: String,
         webSearchProfile: APIKeyProviderProfile,
         webSearchCredential: ProviderCredentialRecord,
-        maximumOutputTokens: Int = 512
+        maximumOutputTokens: Int = 512,
+        searchResultCount: Int = ResearchSettings.defaultSearchResultCount,
+        snippetContextChars: Int = ResearchSettings.defaultSnippetContextChars
     ) {
         self.llmProfile = llmProfile
         self.llmCredential = llmCredential
@@ -117,6 +124,14 @@ public struct GroundedResearchProviderConfiguration: Sendable {
         self.maximumOutputTokens = min(
             ProviderGenerationProtocol.maximumOutputTokens,
             max(1, maximumOutputTokens)
+        )
+        self.searchResultCount = min(
+            ResearchSettings.maximumSearchResultCount,
+            max(1, searchResultCount)
+        )
+        self.snippetContextChars = min(
+            ResearchSettings.maximumSnippetContextChars,
+            max(ResearchSettings.minimumSnippetContextChars, snippetContextChars)
         )
     }
 }
@@ -155,7 +170,7 @@ public struct GroundedResearchExecutor: Sendable {
         let search = try RawWebSearchProtocol.prepareSearch(
             profile: configuration.webSearchProfile,
             query: sanitized.subject,
-            resultCount: RawWebSearchProtocol.maximumResults
+            resultCount: configuration.searchResultCount
         )
         let searchResponse = try await http.send(
             plan: search.plan,
@@ -163,14 +178,15 @@ public struct GroundedResearchExecutor: Sendable {
             credential: configuration.webSearchCredential,
             timeout: Self.requestTimeout
         )
-        let results = try RawWebSearchProtocol.parseResults(
+        let results = Array(try RawWebSearchProtocol.parseResults(
             searchResponse.data,
             format: search.plan.bodyFormat
-        )
+        ).prefix(configuration.searchResultCount))
 
-        let evidence = results.enumerated().map { index, result in
+        let unboundedEvidence = results.enumerated().map { index, result in
             "[\(index + 1)] \(result.title)\n\(result.url)\n\(result.snippet)"
         }.joined(separator: "\n\n")
+        let evidence = String(unboundedEvidence.prefix(configuration.snippetContextChars))
         let generation = try ProviderGenerationProtocol.prepareGenerateText(
             profile: configuration.llmProfile,
             modelIdentifier: configuration.llmModelIdentifier,
@@ -220,12 +236,21 @@ public enum GroundedResearchError: Error, Equatable, LocalizedError, Sendable {
 /// Durable negative-cache entry. Successful subjects are deduplicated by the
 /// knowledge map; failures need their own persisted cooldown across launches.
 public struct ResearchAttemptRecord: Codable, Equatable, Sendable, Identifiable {
-    public var id: String { subjectKey }
+    public var id: String {
+        classifierTypeID.map { "\($0)\u{1F}\(subjectKey)" } ?? subjectKey
+    }
+    public var classifierTypeID: String?
     public var subjectKey: String
     public var lastAttemptAtMilliseconds: Int64
     public var retryAfterMilliseconds: Int64
 
-    public init(subjectKey: String, lastAttemptAtMilliseconds: Int64, retryAfterMilliseconds: Int64) {
+    public init(
+        classifierTypeID: String? = nil,
+        subjectKey: String,
+        lastAttemptAtMilliseconds: Int64,
+        retryAfterMilliseconds: Int64
+    ) {
+        self.classifierTypeID = classifierTypeID.map { String($0.prefix(256)) }
         self.subjectKey = String(subjectKey.prefix(ResearchSubject.maximumCharacters + 16))
         self.lastAttemptAtMilliseconds = max(0, lastAttemptAtMilliseconds)
         self.retryAfterMilliseconds = max(self.lastAttemptAtMilliseconds, retryAfterMilliseconds)
@@ -242,14 +267,14 @@ public struct GroundedResearchQueueConfiguration: Sendable {
         providers: GroundedResearchProviderConfiguration,
         requestsPerMinute: Int,
         dailyTokenLimit: Int,
-        failureCooldownMilliseconds: Int64 = 24 * 60 * 60 * 1_000
+        failureCooldownMilliseconds: Int64 = Int64(ResearchSettings.defaultCooldownHours) * 60 * 60 * 1_000
     ) {
         self.providers = providers
         self.requestsPerMinute = min(120, max(1, requestsPerMinute))
         self.dailyTokenLimit = min(10_000_000, max(1, dailyTokenLimit))
         self.failureCooldownMilliseconds = min(
-            30 * 24 * 60 * 60 * 1_000,
-            max(60_000, failureCooldownMilliseconds)
+            Int64(ResearchSettings.maximumCooldownHours) * 60 * 60 * 1_000,
+            max(60 * 60 * 1_000, failureCooldownMilliseconds)
         )
     }
 }
@@ -281,8 +306,8 @@ public actor GroundedResearchQueue {
     public static let maximumPendingSubjects = 32
     public static let researchUsageStatus = "grounded-research"
 
-    public typealias ConfigurationProvider = @Sendable () -> GroundedResearchQueueConfiguration?
-    public typealias SnapshotProvider = @Sendable () -> GroundedResearchQueueSnapshot
+    public typealias ConfigurationProvider = @Sendable (ResearchTask) -> GroundedResearchQueueConfiguration?
+    public typealias SnapshotProvider = @Sendable (ResearchTask) -> GroundedResearchQueueSnapshot
     public typealias MutationWriter = @Sendable (GroundedResearchQueueMutation) async -> Void
     public typealias Researcher = @Sendable (
         ResearchSubject,
@@ -346,8 +371,9 @@ public actor GroundedResearchQueue {
     public func enqueue(_ task: ResearchTask) -> Bool {
         var accepted = false
         for subject in task.subjects {
+            let pendingKey = "\(task.classifierTypeID)\u{1F}\(subject.key)"
             guard pendingKeys.count < Self.maximumPendingSubjects,
-                  pendingKeys.insert(subject.key).inserted else { continue }
+                  pendingKeys.insert(pendingKey).inserted else { continue }
             pending.append(Pending(task: task, subject: subject))
             accepted = true
         }
@@ -369,18 +395,25 @@ public actor GroundedResearchQueue {
     private func drain() async {
         while !pending.isEmpty {
             let item = pending.removeFirst()
-            defer { pendingKeys.remove(item.subject.key) }
-            guard var configuration = configurationProvider() else { continue }
-            let snapshot = snapshotProvider()
+            let pendingKey = "\(item.task.classifierTypeID)\u{1F}\(item.subject.key)"
+            defer { pendingKeys.remove(pendingKey) }
+            guard var configuration = configurationProvider(item.task) else { continue }
+            let snapshot = snapshotProvider(item.task)
             let nowDate = now()
             let nowMilliseconds = Int64(nowDate.timeIntervalSince1970 * 1_000)
 
             guard !snapshot.existingKnowledgeKeys.contains(item.subject.key),
                   !snapshot.failedAttempts.contains(where: {
-                      $0.subjectKey == item.subject.key && $0.retryAfterMilliseconds > nowMilliseconds
+                      $0.classifierTypeID == item.task.classifierTypeID &&
+                          $0.subjectKey == item.subject.key &&
+                          $0.retryAfterMilliseconds > nowMilliseconds
                   }) else { continue }
 
-            let usedToday = Self.usedResearchTokens(in: snapshot.tokenUsage, at: nowDate)
+            let usedToday = Self.usedResearchTokens(
+                in: snapshot.tokenUsage,
+                at: nowDate,
+                classifierTypeID: item.task.classifierTypeID
+            )
             let remaining = configuration.dailyTokenLimit - usedToday
             guard remaining > 0 else { continue }
             configuration.providers.maximumOutputTokens = min(configuration.providers.maximumOutputTokens, remaining)
@@ -408,6 +441,7 @@ public actor GroundedResearchQueue {
                     // persisted daily gate conservative on subsequent drains.
                     tokenCount: result.chargedTokenCount,
                     status: Self.researchUsageStatus,
+                    classifierTypeID: item.task.classifierTypeID,
                     createdAtMilliseconds: Int64(requestStart.timeIntervalSince1970 * 1_000)
                 )
                 await mutationWriter(.succeeded(task: item.task, result: result, usage: usage))
@@ -417,6 +451,7 @@ public actor GroundedResearchQueue {
                 await mutationWriter(.failed(
                     task: item.task,
                     attempt: .init(
+                        classifierTypeID: item.task.classifierTypeID,
                         subjectKey: item.subject.key,
                         lastAttemptAtMilliseconds: attemptedAt,
                         retryAfterMilliseconds: retry.overflow ? Int64.max : retry.partialValue
@@ -430,12 +465,14 @@ public actor GroundedResearchQueue {
     public static func usedResearchTokens(
         in records: [TokenUsageRecord],
         at date: Date,
+        classifierTypeID: String? = nil,
         calendar: Calendar = .current
     ) -> Int {
         let start = Int64(calendar.startOfDay(for: date).timeIntervalSince1970 * 1_000)
         var total = 0
-        for record in records where
-            record.status == researchUsageStatus && record.createdAtMilliseconds >= start {
+        for record in records where record.status == researchUsageStatus &&
+            record.createdAtMilliseconds >= start &&
+            (classifierTypeID == nil || record.classifierTypeID == classifierTypeID) {
             let addition = total.addingReportingOverflow(record.tokenCount)
             total = addition.overflow ? Int.max : addition.partialValue
         }

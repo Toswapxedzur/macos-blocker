@@ -36,6 +36,8 @@
   // Per-type local-model request overrides have their own disclosure state;
   // they must not expand/collapse the app-wide engine settings modal.
   let localModelAdvancedOpen = false;
+  // Per-type research defaults have a separate disclosure for the same reason.
+  let researchAdvancedOpen = false;
   let tagDrag = null;
   let suppressTagClick = false;
   let connectionSource = null;
@@ -610,6 +612,8 @@
         field("localModel.maxTags", "localModel.maxTagsHint", "maximumTags", llm.maximumTags ?? 3)
       }${
         field("localModel.temperature", "localModel.temperatureHint", "temperature", llm.temperature ?? 0)
+      }${
+        field("localModel.maxResidentModels", "localModel.maxResidentModelsHint", "maxResidentModels", llm.maxResidentModels ?? 2, "number", 'min="1" max="4"')
       }</div><div class="utility-toggles">${
         toggle("localModel.gpuOffload", "gpuOffload", llm.gpuOffload !== false)
       }${
@@ -626,23 +630,37 @@
       }</div><div class="utility-advanced${advancedSettingsOpen ? " open" : ""}" data-advanced-settings><button type="button" class="secondary advanced-toggle" data-action="toggleAdvancedSettings" aria-expanded="${advancedSettingsOpen}"><span>${tx("localModel.advanced")}</span><span class="advanced-chevron" aria-hidden="true">⌄</span></button><div class="advanced-settings-body"><div class="advanced-settings-inner">${advancedBody}</div></div></div><div class="action-row"><button class="primary" data-action="saveLocalLLMSettings" data-form="utility-llm-form">${tx("localModel.save")}</button></div></section>`;
       const generationProfiles = profiles.filter((profile) => protocols[profile.type]?.supportsGenerateText === true);
       const searchProfiles = profiles.filter((profile) => protocols[profile.type]?.supportsRawWebSearch === true);
-      const profileOptions = (items) => [["", "Choose a provider"]].concat(items.map((profile) => [profile.id, profile.name]));
+      const profileOptions = (items) => [["", tx("research.chooseProvider")]].concat(items.map((profile) => [profile.id, profile.name]));
       const modelSuggestions = assets.providerModelCatalogs?.[research.llmProviderProfileID] || [];
       const researchSection = `<section class="utility-settings-section utility-research-section" data-form-id="utility-research-form"><h3 class="utility-settings-section-title">${tx("research.title")} ${statusPill(tx(research.enabled ? "research.status.on" : "research.status.off"), research.enabled ? "cyan" : "muted")}</h3><p class="section-copy">${tx("research.copy")}</p><div class="notice navy research-data-flow">${tx("research.disclosure")}</div><div class="utility-toggles">${
         toggle("research.consent", "enabled", research.enabled === true)
-      }</div><div class="utility-settings-fields">${
+      }</div><div class="research-settings-groups"><section class="research-settings-group"><h4>${tx("research.group.providers")}</h4><div class="utility-settings-fields">${
         valueSelectField("research.llmProvider", "research.llmProviderHint", "llmProviderProfileID", research.llmProviderProfileID || "", profileOptions(generationProfiles))
       }${
         valueSelectField("research.searchProvider", "research.searchProviderHint", "webSearchProviderProfileID", research.webSearchProviderProfileID || "", profileOptions(searchProfiles))
       }${
         field("research.model", "research.modelHint", "llmModelIdentifier", research.llmModelIdentifier || "", "text", 'list="research-model-suggestions" maxlength="256"')
-      }<datalist id="research-model-suggestions">${modelSuggestions.map((model) => `<option value="${esc(model)}"></option>`).join("")}</datalist>${
+      }<datalist id="research-model-suggestions">${modelSuggestions.map((model) => `<option value="${esc(model)}"></option>`).join("")}</datalist></div></section><section class="research-settings-group"><h4>${tx("research.group.frequency")}</h4><div class="utility-settings-fields">${
         field("research.requestsPerMinute", "research.requestsPerMinuteHint", "requestsPerMinute", research.requestsPerMinute ?? 6, "number", 'min="1" max="120"')
       }${
         field("research.dailyTokenLimit", "research.dailyTokenLimitHint", "dailyTokenLimit", research.dailyTokenLimit ?? 10000, "number", 'min="1" max="10000000"')
       }${
         field("research.maxSubjects", "research.maxSubjectsHint", "maxSubjectsPerVideo", research.maxSubjectsPerVideo ?? 3, "number", 'min="1" max="3"')
-      }</div><p class="small-copy">${tx("research.usageToday", { used: research.tokensUsedToday ?? 0 })}</p><div class="action-row"><button class="primary" data-action="saveResearchSettings" data-form="utility-research-form">${tx("research.save")}</button></div></section>`;
+      }${
+        field("research.cooldownHours", "research.cooldownHoursHint", "cooldownHours", research.cooldownHours ?? 24, "number", 'min="1" max="720"')
+      }</div></section><section class="research-settings-group"><h4>${tx("research.group.trigger")}</h4><div class="utility-settings-fields">${
+        selectField("research.trigger", "research.triggerHint", "trigger", research.trigger || "declineOnly", [["declineOnly", "research.trigger.declineOnly"], ["declineAndLowConfidence", "research.trigger.declineAndLowConfidence"], ["correctionsOnly", "research.trigger.correctionsOnly"], ["all", "research.trigger.all"]])
+      }${
+        field("research.confidenceTriggerLevel", "research.confidenceTriggerLevelHint", "confidenceTriggerLevel", research.confidenceTriggerLevel ?? 2, "number", 'min="1" max="5"')
+      }</div></section><section class="research-settings-group"><h4>${tx("research.group.search")}</h4><div class="utility-settings-fields">${
+        field("research.searchResultCount", "research.searchResultCountHint", "searchResultCount", research.searchResultCount ?? 5, "number", 'min="1" max="5"')
+      }${
+        field("research.snippetContextChars", "research.snippetContextCharsHint", "snippetContextChars", research.snippetContextChars ?? 16000, "number", 'min="512" max="19000"')
+      }${
+        field("research.knowledgeTTLDays", "research.knowledgeTTLDaysHint", "knowledgeTTLDays", research.knowledgeTTLDays ?? 0, "number", 'min="0" max="3650"')
+      }${
+        field("research.maxKnowledgePerVideo", "research.maxKnowledgePerVideoHint", "maxKnowledgePerVideo", research.maxKnowledgePerVideo ?? 8, "number", 'min="1" max="32"')
+      }</div></section></div><p class="small-copy">${tx("research.usageToday", { used: research.tokensUsedToday ?? 0 })}</p><div class="action-row"><button class="primary" data-action="saveResearchSettings" data-form="utility-research-form">${tx("research.save")}</button></div></section>`;
       const packageSection = `<section class="utility-settings-section utility-resource-section" data-form-id="utility-package-form"><h3 class="utility-settings-section-title">${tx("settings.packageUpdates")}</h3><div class="utility-settings-fields">${selectField("settings.packageUpdates", "settings.packageUpdatesCopy", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div><div class="action-row"><button class="primary" data-action="savePackageSettings" data-form="utility-package-form">${tx("common.save")}</button></div></section>`;
       content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${llmSection}${researchSection}${packageSection}</div></section>`;
     }
@@ -966,13 +984,53 @@
         ? localOverrides.confidenceThresholds
         : [0.2, 0.4, 0.6, 0.85];
       const localModelFormID = `classifier-local-model-form-${classifierType.id}`;
+      const typeModelOptions = [["", tx("bridge.localModelInheritGlobal")]].concat(
+        (state.settings?.localLLM?.availableModels || []).map((name) => [name, name])
+      );
       const localModelOverrideBody = `<div class="utility-toggles">${toggle("bridge.localModelAllowDecline", "allowDecline", localOverrides?.allowDecline ?? true)}</div><div class="field wide"><span class="field-label">${tx("localModel.confidence")}<span class="field-hint"> · ${tx("localModel.confidenceHint")}</span></span><div class="confidence-band-row">${[2, 3, 4, 5].map((level, index) => `<label class="confidence-band"><span class="confidence-band-label">≥ ${level}</span><input type="text" data-field="confidenceBand${level}" value="${esc(String(localOverrideThresholds[index]))}"></label>`).join("")}</div></div>${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", localOverrides?.houseRules ?? "", 'rows="4"')}`;
-      const localModelOverrideSection = supportsLocalModel ? `<section class="classifier-type-section classifier-local-model-overrides" data-local-model-section><div class="section-header"><div><h3>${tx("bridge.localModelOverrides")}</h3><p class="section-copy">${tx("bridge.localModelOverridesCopy")}</p></div></div><div data-form-id="${esc(localModelFormID)}">${toggle("bridge.localModelOverrideEnabled", "overrideEnabled", Boolean(localOverrides))}<div class="utility-advanced${localModelAdvancedOpen ? " open" : ""}" data-local-model-advanced><button type="button" class="secondary advanced-toggle" data-action="toggleLocalModelAdvanced" aria-expanded="${localModelAdvancedOpen}"><span>${tx("bridge.localModelOverrideControls")}</span><span class="advanced-chevron" aria-hidden="true">⌄</span></button><div class="advanced-settings-body"><div class="advanced-settings-inner">${localModelOverrideBody}</div></div></div><div class="action-row"><button type="button" class="primary" data-action="saveClassifierTypeLocalModel" data-form="${esc(localModelFormID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div></div></section>` : "";
+      const localModelOverrideSection = supportsLocalModel ? `<section class="classifier-type-section classifier-local-model-overrides" data-local-model-section><div class="section-header"><div><h3>${tx("bridge.localModelOverrides")}</h3><p class="section-copy">${tx("bridge.localModelOverridesCopy")}</p></div></div><div data-form-id="${esc(localModelFormID)}"><div class="utility-settings-fields">${valueSelectField("bridge.localModelFile", "bridge.localModelFileCopy", "modelFileName", classifierType.modelFileName || "", typeModelOptions)}</div><p class="small-copy resident-model-note">${tx("bridge.localModelResidentNote", { count: state.settings?.localLLM?.maxResidentModels ?? 2 })}</p>${toggle("bridge.localModelOverrideEnabled", "overrideEnabled", Boolean(localOverrides))}<div class="utility-advanced${localModelAdvancedOpen ? " open" : ""}" data-local-model-advanced><button type="button" class="secondary advanced-toggle" data-action="toggleLocalModelAdvanced" aria-expanded="${localModelAdvancedOpen}"><span>${tx("bridge.localModelOverrideControls")}</span><span class="advanced-chevron" aria-hidden="true">⌄</span></button><div class="advanced-settings-body"><div class="advanced-settings-inner">${localModelOverrideBody}</div></div></div><div class="action-row"><button type="button" class="primary" data-action="saveClassifierTypeLocalModel" data-form="${esc(localModelFormID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div></div></section>` : "";
+      const researchOverrides = classifierType.researchOverrides || null;
+      const researchDefaults = researchOverrides || state.settings?.research || {};
+      const researchFormID = `classifier-research-form-${classifierType.id}`;
+      const generationProfiles = profiles.filter((profile) => assets.providerProtocols?.[profile.type]?.supportsGenerateText === true);
+      const searchProfiles = profiles.filter((profile) => assets.providerProtocols?.[profile.type]?.supportsRawWebSearch === true);
+      const researchProfileOptions = (items) => [["", tx("research.chooseProvider")]].concat(items.map((profile) => [profile.id, profile.name]));
+      const typeModelSuggestions = assets.providerModelCatalogs?.[researchDefaults.llmProviderProfileID] || [];
+      const typeResearchModelListID = `research-model-suggestions-${classifierType.id}`;
+      const researchOverrideBody = `<div class="utility-toggles">${toggle("bridge.researchEnabled", "enabled", researchDefaults.enabled === true)}</div><div class="research-settings-groups"><section class="research-settings-group"><h4>${tx("research.group.providers")}</h4><div class="utility-settings-fields">${
+        valueSelectField("research.llmProvider", "research.llmProviderHint", "llmProviderProfileID", researchDefaults.llmProviderProfileID || "", researchProfileOptions(generationProfiles))
+      }${
+        valueSelectField("research.searchProvider", "research.searchProviderHint", "webSearchProviderProfileID", researchDefaults.webSearchProviderProfileID || "", researchProfileOptions(searchProfiles))
+      }${
+        field("research.model", "research.modelHint", "llmModelIdentifier", researchDefaults.llmModelIdentifier || "", "text", `list="${esc(typeResearchModelListID)}" maxlength="256"`)
+      }<datalist id="${esc(typeResearchModelListID)}">${typeModelSuggestions.map((model) => `<option value="${esc(model)}"></option>`).join("")}</datalist></div></section><section class="research-settings-group"><h4>${tx("research.group.frequency")}</h4><div class="utility-settings-fields">${
+        field("research.requestsPerMinute", "research.requestsPerMinuteHint", "requestsPerMinute", researchDefaults.requestsPerMinute ?? 6, "number", 'min="1" max="120"')
+      }${
+        field("research.dailyTokenLimit", "research.dailyTokenLimitHint", "dailyTokenLimit", researchDefaults.dailyTokenLimit ?? 10000, "number", 'min="1" max="10000000"')
+      }${
+        field("research.maxSubjects", "research.maxSubjectsHint", "maxSubjectsPerVideo", researchDefaults.maxSubjectsPerVideo ?? 3, "number", 'min="1" max="3"')
+      }${
+        field("research.cooldownHours", "research.cooldownHoursHint", "cooldownHours", researchDefaults.cooldownHours ?? 24, "number", 'min="1" max="720"')
+      }</div></section><section class="research-settings-group"><h4>${tx("research.group.trigger")}</h4><div class="utility-settings-fields">${
+        selectField("research.trigger", "research.triggerHint", "trigger", researchDefaults.trigger || "declineOnly", [["declineOnly", "research.trigger.declineOnly"], ["declineAndLowConfidence", "research.trigger.declineAndLowConfidence"], ["correctionsOnly", "research.trigger.correctionsOnly"], ["all", "research.trigger.all"]])
+      }${
+        field("research.confidenceTriggerLevel", "research.confidenceTriggerLevelHint", "confidenceTriggerLevel", researchDefaults.confidenceTriggerLevel ?? 2, "number", 'min="1" max="5"')
+      }</div></section><section class="research-settings-group"><h4>${tx("research.group.search")}</h4><div class="utility-settings-fields">${
+        field("research.searchResultCount", "research.searchResultCountHint", "searchResultCount", researchDefaults.searchResultCount ?? 5, "number", 'min="1" max="5"')
+      }${
+        field("research.snippetContextChars", "research.snippetContextCharsHint", "snippetContextChars", researchDefaults.snippetContextChars ?? 16000, "number", 'min="512" max="19000"')
+      }${
+        field("research.knowledgeTTLDays", "research.knowledgeTTLDaysHint", "knowledgeTTLDays", researchDefaults.knowledgeTTLDays ?? 0, "number", 'min="0" max="3650"')
+      }${
+        field("research.maxKnowledgePerVideo", "research.maxKnowledgePerVideoHint", "maxKnowledgePerVideo", researchDefaults.maxKnowledgePerVideo ?? 8, "number", 'min="1" max="32"')
+      }</div></section></div>`;
+      const researchOverrideSection = supportsLocalModel ? `<section class="classifier-type-section classifier-research-overrides"><div class="section-header"><div><h3>${tx("bridge.researchOverrides")}</h3><p class="section-copy">${tx("bridge.researchOverridesCopy")}</p></div></div><div data-form-id="${esc(researchFormID)}">${toggle("bridge.researchOverrideEnabled", "overrideEnabled", Boolean(researchOverrides))}<div class="utility-advanced${researchAdvancedOpen ? " open" : ""}" data-research-advanced><button type="button" class="secondary advanced-toggle" data-action="toggleResearchAdvanced" aria-expanded="${researchAdvancedOpen}"><span>${tx("bridge.researchOverrideControls")}</span><span class="advanced-chevron" aria-hidden="true">⌄</span></button><div class="advanced-settings-body"><div class="advanced-settings-inner">${researchOverrideBody}</div></div></div><p class="small-copy research-master-note">${tx("bridge.researchMasterGate")}</p><div class="action-row"><button type="button" class="primary" data-action="saveClassifierTypeResearch" data-form="${esc(researchFormID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div></div></section>` : "";
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}">
         <div class="classifier-type-head"><div><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div>${statusPill(typeStatus, applicablePlatformID ? "navy" : "muted")}</div>
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}<button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("bridge.saveType")}</button><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}" data-name="${esc(classifierType.name)}">${tx("bridge.deleteType")}</button></div>
         <section class="classifier-type-section classifier-applicable-platform-section"><div class="section-header"><div><h3>${tx("bridge.applicablePlatform")}</h3><p class="section-copy">${tx("bridge.assetSelectionCopy")}</p></div></div><div class="classifier-applicable-platform-row">${valueSelectField("bridge.applicablePlatform", "bridge.applicablePlatformCopy", "applicablePlatformID", applicablePlatformID, applicablePlatformOptions)}<div class="classifier-platform-data-status"><span class="eyebrow">${tx("bridge.platformData")}</span><p class="small-copy">${esc(platformDataStatus)}</p></div></div>${applicablePlatform && !supportsLocalModel ? `<p class="small-copy" data-collection-only-platform-note>${tx("bridge.collectionOnlyCopy")}</p>` : ""}</section>
         ${localModelOverrideSection}
+        ${researchOverrideSection}
       </section>`;
     };
     // A type now targets one platform at creation and owns a fresh tree. The
@@ -1491,6 +1549,15 @@
       if (wrap) {
         wrap.classList.toggle("open", localModelAdvancedOpen);
         button.setAttribute("aria-expanded", String(localModelAdvancedOpen));
+      }
+      return;
+    }
+    if (action === "toggleResearchAdvanced") {
+      researchAdvancedOpen = !researchAdvancedOpen;
+      const wrap = button.closest("[data-research-advanced]");
+      if (wrap) {
+        wrap.classList.toggle("open", researchAdvancedOpen);
+        button.setAttribute("aria-expanded", String(researchAdvancedOpen));
       }
       return;
     }

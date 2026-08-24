@@ -61,6 +61,8 @@ final class WorkspaceAssetsTests: XCTestCase {
         let legacy = Data(#"{"id":"type","name":"Type","treeID":"tree","treeRevision":1,"datasetID":"dataset","datasetRevision":1,"applicablePlatformID":"youtube","order":0}"#.utf8)
         let decodedLegacy = try JSONDecoder().decode(ClassifierTypeAsset.self, from: legacy)
         XCTAssertNil(decodedLegacy.localModelOverrides)
+        XCTAssertNil(decodedLegacy.modelFileName)
+        XCTAssertNil(decodedLegacy.researchOverrides)
 
         let value = ClassifierTypeAsset(
             id: "type", name: "Type", treeID: "tree", treeRevision: 1,
@@ -69,10 +71,22 @@ final class WorkspaceAssetsTests: XCTestCase {
                 houseRules: "Prefer documentaries.",
                 allowDecline: false,
                 confidenceThresholds: [0.1, 0.3, 0.6, 0.9]
+            ),
+            modelFileName: "type-model.gguf",
+            researchOverrides: .init(
+                enabled: true,
+                llmProviderProfileID: "llm",
+                llmModelIdentifier: "model",
+                webSearchProviderProfileID: "search",
+                requestsPerMinute: 12,
+                dailyTokenLimit: 42_000,
+                maxSubjectsPerVideo: 2
             )
         )
         let roundTrip = try JSONDecoder().decode(ClassifierTypeAsset.self, from: JSONEncoder().encode(value))
         XCTAssertEqual(roundTrip.localModelOverrides, value.localModelOverrides)
+        XCTAssertEqual(roundTrip.modelFileName, "type-model.gguf")
+        XCTAssertEqual(roundTrip.researchOverrides, value.researchOverrides)
     }
 
     func testCatalogAndBindingDiscardRetiredTrainableModelFields() throws {

@@ -31,7 +31,9 @@ public struct VideoClassificationPipeline: Sendable {
         catalog: WorkspaceCatalog,
         houseRules: String? = nil,
         allowDecline: Bool? = nil,
-        confidenceThresholds: [Double]? = nil
+        confidenceThresholds: [Double]? = nil,
+        knowledgeTTLDays: Int = ResearchSettings.defaultKnowledgeTTLDays,
+        maxKnowledgePerVideo: Int = ResearchSettings.defaultMaxKnowledgePerVideo
     ) async throws -> VideoClassification {
         let nameByID = Dictionary(tree.nodes.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
 
@@ -45,7 +47,12 @@ public struct VideoClassificationPipeline: Sendable {
             creatorPrior = []
         }
 
-        let knowledge = catalog.matchedKnowledge(title: title, creatorID: creatorID)
+        let knowledge = catalog.matchedKnowledge(
+            title: title,
+            creatorID: creatorID,
+            limit: maxKnowledgePerVideo,
+            ttlDays: knowledgeTTLDays
+        )
 
         let parts = ClassificationPromptAssembler.assemble(
             tree: tree,

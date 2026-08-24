@@ -61,7 +61,7 @@ let package = Package(
         ),
         .testTarget(
             name: "VaultClassifierAppTests",
-            dependencies: ["VaultClassifierApp", "VaultClassifierCore"],
+            dependencies: ["VaultClassifierApp", "VaultClassifierCore", "VaultClassifierLLM"],
             swiftSettings: cllamaIncludeFlags,
             linkerSettings: cllamaLinkFlags
         ),

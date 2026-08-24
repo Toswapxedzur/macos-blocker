@@ -194,6 +194,9 @@ public enum PresentationAction: String, Codable, Sendable, CaseIterable, Compara
 /// engine. Basic fields sit in the settings panel; the rest live behind the
 /// advanced disclosure.
 public struct LocalLLMSettings: Codable, Equatable, Sendable {
+    public static let defaultMaxResidentModels = 2
+    public static let maximumResidentModels = 4
+
     /// Selected model file inside `<support>/models/` (nil = automatic: the
     /// first *.gguf alphabetically, or `ADAMANCIA_VAULT_LLM_MODEL`).
     public var modelFileName: String?
@@ -218,6 +221,8 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
     public var confidenceThresholds: [Double]
     /// Free-text tagging preferences appended to the cached static prefix.
     public var houseRules: String
+    /// Bound for distinct GGUF engines kept warm by the per-type registry.
+    public var maxResidentModels: Int
 
     public init(
         modelFileName: String? = nil,
@@ -230,7 +235,8 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
         allowDecline: Bool = true,
         maximumTags: Int = 3,
         confidenceThresholds: [Double] = [0.20, 0.40, 0.60, 0.85],
-        houseRules: String = ""
+        houseRules: String = "",
+        maxResidentModels: Int = Self.defaultMaxResidentModels
     ) {
         self.modelFileName = modelFileName.flatMap { $0.isEmpty ? nil : String($0.prefix(255)) }
         self.engineEnabled = engineEnabled
@@ -246,12 +252,39 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
             .sorted()
         self.confidenceThresholds = cleaned.count == 4 ? cleaned : [0.20, 0.40, 0.60, 0.85]
         self.houseRules = String(houseRules.prefix(4_000))
+        self.maxResidentModels = min(Self.maximumResidentModels, max(1, maxResidentModels))
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case modelFileName, engineEnabled, contextTokens, batchTokens, gpuOffload
+        case maximumOutputTokens, temperature, allowDecline, maximumTags
+        case confidenceThresholds, houseRules, maxResidentModels
+    }
+
+    /// Existing installations gain the residency cap without invalidating
+    /// their hand-authored local-model settings.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            modelFileName: try container.decodeIfPresent(String.self, forKey: .modelFileName),
+            engineEnabled: try container.decodeIfPresent(Bool.self, forKey: .engineEnabled) ?? true,
+            contextTokens: try container.decodeIfPresent(Int.self, forKey: .contextTokens) ?? 4_096,
+            batchTokens: try container.decodeIfPresent(Int.self, forKey: .batchTokens) ?? 512,
+            gpuOffload: try container.decodeIfPresent(Bool.self, forKey: .gpuOffload) ?? true,
+            maximumOutputTokens: try container.decodeIfPresent(Int.self, forKey: .maximumOutputTokens) ?? 16,
+            temperature: try container.decodeIfPresent(Double.self, forKey: .temperature) ?? 0,
+            allowDecline: try container.decodeIfPresent(Bool.self, forKey: .allowDecline) ?? true,
+            maximumTags: try container.decodeIfPresent(Int.self, forKey: .maximumTags) ?? 3,
+            confidenceThresholds: try container.decodeIfPresent([Double].self, forKey: .confidenceThresholds) ?? [0.20, 0.40, 0.60, 0.85],
+            houseRules: try container.decodeIfPresent(String.self, forKey: .houseRules) ?? "",
+            maxResidentModels: try container.decodeIfPresent(Int.self, forKey: .maxResidentModels) ?? Self.defaultMaxResidentModels
+        )
     }
 }
 
 /// The effective per-request local-model controls a classifier type may
-/// override. Model/context/runtime knobs remain app-wide because they belong to
-/// the shared llama model and context.
+/// override. The GGUF choice lives separately on `ClassifierTypeAsset`, while
+/// context/runtime knobs remain app-wide for every resident engine.
 public struct LocalModelOverrides: Codable, Equatable, Sendable {
     public var houseRules: String?
     public var allowDecline: Bool?
@@ -280,10 +313,41 @@ public struct LocalModelOverrides: Codable, Equatable, Sendable {
     }
 }
 
+public enum ResearchTrigger: String, Codable, Equatable, Sendable, CaseIterable {
+    case declineOnly
+    case declineAndLowConfidence
+    case correctionsOnly
+    case all
+
+    public var includesLiveClassification: Bool {
+        self == .declineOnly || self == .declineAndLowConfidence || self == .all
+    }
+
+    public var includesLowConfidence: Bool {
+        self == .declineAndLowConfidence || self == .all
+    }
+
+    public var includesCorrections: Bool {
+        self == .correctionsOnly || self == .all
+    }
+}
+
 public struct ResearchSettings: Codable, Equatable, Sendable {
     public static let maximumRequestsPerMinute = 120
     public static let maximumDailyTokenLimit = 10_000_000
     public static let maximumSubjectsPerVideo = ResearchTask.maximumSubjects
+    public static let defaultCooldownHours = 24
+    public static let maximumCooldownHours = 720
+    public static let defaultConfidenceTriggerLevel = 2
+    public static let defaultSearchResultCount = 5
+    public static let maximumSearchResultCount = 5
+    public static let defaultSnippetContextChars = 16_000
+    public static let minimumSnippetContextChars = 512
+    public static let maximumSnippetContextChars = 19_000
+    public static let defaultKnowledgeTTLDays = 0
+    public static let maximumKnowledgeTTLDays = 3_650
+    public static let defaultMaxKnowledgePerVideo = 8
+    public static let maximumKnowledgePerVideo = 32
 
     /// Explicit opt-in. When false, classification performs no extra decode,
     /// queue work, credential lookup, or network request.
@@ -294,6 +358,13 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
     public var requestsPerMinute: Int
     public var dailyTokenLimit: Int
     public var maxSubjectsPerVideo: Int
+    public var cooldownHours: Int
+    public var trigger: ResearchTrigger
+    public var confidenceTriggerLevel: Int
+    public var searchResultCount: Int
+    public var snippetContextChars: Int
+    public var knowledgeTTLDays: Int
+    public var maxKnowledgePerVideo: Int
 
     public init(
         enabled: Bool = false,
@@ -302,7 +373,14 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
         webSearchProviderProfileID: String? = nil,
         requestsPerMinute: Int = 6,
         dailyTokenLimit: Int = 10_000,
-        maxSubjectsPerVideo: Int = 3
+        maxSubjectsPerVideo: Int = 3,
+        cooldownHours: Int = Self.defaultCooldownHours,
+        trigger: ResearchTrigger = .declineOnly,
+        confidenceTriggerLevel: Int = Self.defaultConfidenceTriggerLevel,
+        searchResultCount: Int = Self.defaultSearchResultCount,
+        snippetContextChars: Int = Self.defaultSnippetContextChars,
+        knowledgeTTLDays: Int = Self.defaultKnowledgeTTLDays,
+        maxKnowledgePerVideo: Int = Self.defaultMaxKnowledgePerVideo
     ) {
         self.enabled = enabled
         self.llmProviderProfileID = Self.optionalIdentifier(llmProviderProfileID)
@@ -311,6 +389,45 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
         self.requestsPerMinute = min(Self.maximumRequestsPerMinute, max(1, requestsPerMinute))
         self.dailyTokenLimit = min(Self.maximumDailyTokenLimit, max(1, dailyTokenLimit))
         self.maxSubjectsPerVideo = min(Self.maximumSubjectsPerVideo, max(1, maxSubjectsPerVideo))
+        self.cooldownHours = min(Self.maximumCooldownHours, max(1, cooldownHours))
+        self.trigger = trigger
+        self.confidenceTriggerLevel = min(5, max(1, confidenceTriggerLevel))
+        self.searchResultCount = min(Self.maximumSearchResultCount, max(1, searchResultCount))
+        self.snippetContextChars = min(
+            Self.maximumSnippetContextChars,
+            max(Self.minimumSnippetContextChars, snippetContextChars)
+        )
+        self.knowledgeTTLDays = min(Self.maximumKnowledgeTTLDays, max(0, knowledgeTTLDays))
+        self.maxKnowledgePerVideo = min(Self.maximumKnowledgePerVideo, max(1, maxKnowledgePerVideo))
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled, llmProviderProfileID, llmModelIdentifier, webSearchProviderProfileID
+        case requestsPerMinute, dailyTokenLimit, maxSubjectsPerVideo, cooldownHours
+        case trigger, confidenceTriggerLevel, searchResultCount, snippetContextChars
+        case knowledgeTTLDays, maxKnowledgePerVideo
+    }
+
+    /// Settings persisted before granular research controls inherit the exact
+    /// defaults that reproduce the former queue and prompt behavior.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false,
+            llmProviderProfileID: try container.decodeIfPresent(String.self, forKey: .llmProviderProfileID),
+            llmModelIdentifier: try container.decodeIfPresent(String.self, forKey: .llmModelIdentifier),
+            webSearchProviderProfileID: try container.decodeIfPresent(String.self, forKey: .webSearchProviderProfileID),
+            requestsPerMinute: try container.decodeIfPresent(Int.self, forKey: .requestsPerMinute) ?? 6,
+            dailyTokenLimit: try container.decodeIfPresent(Int.self, forKey: .dailyTokenLimit) ?? 10_000,
+            maxSubjectsPerVideo: try container.decodeIfPresent(Int.self, forKey: .maxSubjectsPerVideo) ?? 3,
+            cooldownHours: try container.decodeIfPresent(Int.self, forKey: .cooldownHours) ?? Self.defaultCooldownHours,
+            trigger: try container.decodeIfPresent(ResearchTrigger.self, forKey: .trigger) ?? .declineOnly,
+            confidenceTriggerLevel: try container.decodeIfPresent(Int.self, forKey: .confidenceTriggerLevel) ?? Self.defaultConfidenceTriggerLevel,
+            searchResultCount: try container.decodeIfPresent(Int.self, forKey: .searchResultCount) ?? Self.defaultSearchResultCount,
+            snippetContextChars: try container.decodeIfPresent(Int.self, forKey: .snippetContextChars) ?? Self.defaultSnippetContextChars,
+            knowledgeTTLDays: try container.decodeIfPresent(Int.self, forKey: .knowledgeTTLDays) ?? Self.defaultKnowledgeTTLDays,
+            maxKnowledgePerVideo: try container.decodeIfPresent(Int.self, forKey: .maxKnowledgePerVideo) ?? Self.defaultMaxKnowledgePerVideo
+        )
     }
 
     private static func optionalIdentifier(_ value: String?) -> String? {

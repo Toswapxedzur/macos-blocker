@@ -87,4 +87,35 @@ final class GroundedResearchTests: XCTestCase {
         )
         XCTAssertEqual(result.chargedTokenCount, 77)
     }
+
+    func testExecutorHonorsSearchCountAndSnippetContextBudget() async throws {
+        let longSnippet = String(repeating: "x", count: 700) + "OUTSIDE-CONTEXT"
+        let searchObject: [String: Any] = ["organic": [
+            ["title": "First", "link": "https://example.test/first", "snippet": longSnippet],
+            ["title": "SECOND-RESULT", "link": "https://example.test/second", "snippet": "unused"],
+        ]]
+        let search = try JSONSerialization.data(withJSONObject: searchObject)
+        let completion = Data(#"{"choices":[{"message":{"content":"Grounded."}}]}"#.utf8)
+        let http = ScriptedResearchHTTPClient(responses: [search, completion])
+        let configuration = GroundedResearchProviderConfiguration(
+            llmProfile: .init(type: .deepSeek, credential: "llm-key"),
+            llmCredential: .init(values: [.apiKey: "llm-key"]),
+            llmModelIdentifier: "model",
+            webSearchProfile: .init(type: .serper, credential: "search-key"),
+            webSearchCredential: .init(values: [.apiKey: "search-key"]),
+            searchResultCount: 1,
+            snippetContextChars: 512
+        )
+
+        _ = try await GroundedResearchExecutor(http: http).research(
+            XCTUnwrap(ResearchSubject(kind: .term, subject: "Subject")),
+            using: configuration
+        )
+
+        let requests = http.capturedRequests
+        XCTAssertTrue(String(decoding: try XCTUnwrap(requests.first?.httpBody), as: UTF8.self).contains(#""num":1"#))
+        let generationBody = String(decoding: try XCTUnwrap(requests.last?.httpBody), as: UTF8.self)
+        XCTAssertFalse(generationBody.contains("SECOND-RESULT"))
+        XCTAssertFalse(generationBody.contains("OUTSIDE-CONTEXT"))
+    }
 }

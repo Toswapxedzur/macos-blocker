@@ -87,7 +87,83 @@ private struct ImmediateSubjectLLM: OnDeviceLLM, OnDeviceResearchSubjectExtracti
     }
 }
 
+private actor CountingEngineResolver: OnDeviceLLMEngineResolving {
+    private(set) var requestedFiles: [String] = []
+    let engine: any OnDeviceLLM
+
+    init(engine: any OnDeviceLLM) { self.engine = engine }
+
+    func resolveEngine(
+        forModel fileName: String,
+        configuration: LocalLLMSettings
+    ) async throws -> any OnDeviceLLM {
+        requestedFiles.append(fileName)
+        return engine
+    }
+}
+
 final class VideoClassificationCoordinatorTests: XCTestCase {
+    func testInheritedModelFastPathAvoidsResolverAndExplicitModelUsesIt() async throws {
+        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let selectedRecorder = CoordinatorRequestRecorder()
+        let resolver = CountingEngineResolver(engine: CoordinatorRecordingLLM(recorder: selectedRecorder))
+        coordinator.setOnDeviceLLMEngineResolver(resolver)
+
+        _ = try await coordinator.classifyVideo(
+            platformID: "youtube", entryID: "inherited", creatorID: "creator", title: "Title"
+        )
+        let inheritedRequests = await resolver.requestedFiles
+        XCTAssertEqual(inheritedRequests, [])
+
+        var catalog = coordinator.snapshot().workspaceCatalog
+        let index = try XCTUnwrap(catalog.classifierTypes.firstIndex(where: { $0.applicablePlatformID == "youtube" }))
+        catalog.classifierTypes[index].modelFileName = "selected.gguf"
+        catalog.classifierTypes[index].localModelOverrides = .init(
+            allowDecline: false,
+            confidenceThresholds: [0.1, 0.3, 0.6, 0.9]
+        )
+        try coordinator.updateWorkspaceCatalog(catalog)
+
+        _ = try await coordinator.classifyVideo(
+            platformID: "youtube", entryID: "selected", creatorID: "creator", title: "Title"
+        )
+        let selectedRequests = await resolver.requestedFiles
+        XCTAssertEqual(selectedRequests, ["selected.gguf"])
+        XCTAssertEqual(selectedRecorder.requests.count, 1)
+        XCTAssertEqual(selectedRecorder.requests.first?.allowDecline, false)
+        XCTAssertEqual(selectedRecorder.requests.first?.confidenceThresholds, [0.1, 0.3, 0.6, 0.9])
+    }
+
+    func testExplicitTypeModelAlsoPerformsResearchSubjectExtraction() async throws {
+        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaultProbe = ImmediateSubjectProbe()
+        let selectedProbe = ImmediateSubjectProbe()
+        coordinator.setOnDeviceLLM(ImmediateSubjectLLM(probe: defaultProbe))
+        coordinator.setOnDeviceLLMEngineResolver(CountingEngineResolver(
+            engine: ImmediateSubjectLLM(probe: selectedProbe)
+        ))
+        try coordinator.updateSettings(.init(research: .init(enabled: true)))
+        coordinator.setGroundedResearchQueue(GroundedResearchQueue(
+            configurationProvider: { _ in nil },
+            snapshotProvider: { _ in .init() },
+            mutationWriter: { _ in },
+            researcher: { _, _ in throw GroundedResearchError.invalidConfiguration }
+        ))
+        var catalog = coordinator.snapshot().workspaceCatalog
+        let index = try XCTUnwrap(catalog.classifierTypes.firstIndex(where: { $0.applicablePlatformID == "youtube" }))
+        catalog.classifierTypes[index].modelFileName = "selected.gguf"
+        try coordinator.updateWorkspaceCatalog(catalog)
+
+        _ = try await coordinator.classifyVideo(
+            platformID: "youtube", entryID: "selected", creatorID: "creator", title: "Unclear"
+        )
+        for _ in 0..<100 where selectedProbe.count == 0 { await Task.yield() }
+
+        XCTAssertEqual(selectedProbe.count, 1)
+        XCTAssertEqual(defaultProbe.count, 0)
+    }
 
     private func temporaryStateFile() -> (root: URL, file: LocalStateFile) {
         let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -232,6 +308,92 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertFalse(LocalClassifierCoordinator.hasExplicitModelDecline([knowledgeDecline]))
     }
 
+    func testGranularResearchTriggerModesAndConfidenceLevel() {
+        let decline = VideoClassification(
+            classifierTypeID: "type", platformID: "youtube", entryID: "v", creatorID: "c",
+            treeID: "tree", treeRevision: 1, tags: [], source: .model, modelVersion: "m"
+        )
+        var low = decline
+        low.tags = [.init(tagID: "tag", confidence: 3)]
+        var grounded = low
+        grounded.source = .modelKnowledge
+
+        XCTAssertTrue(LocalClassifierCoordinator.shouldTriggerResearch(
+            for: decline,
+            settings: .init(trigger: .declineOnly)
+        ))
+        XCTAssertFalse(LocalClassifierCoordinator.shouldTriggerResearch(
+            for: low,
+            settings: .init(trigger: .declineOnly, confidenceTriggerLevel: 3)
+        ))
+        XCTAssertTrue(LocalClassifierCoordinator.shouldTriggerResearch(
+            for: low,
+            settings: .init(trigger: .declineAndLowConfidence, confidenceTriggerLevel: 3)
+        ))
+        XCTAssertFalse(LocalClassifierCoordinator.shouldTriggerResearch(
+            for: low,
+            settings: .init(trigger: .declineAndLowConfidence, confidenceTriggerLevel: 2)
+        ))
+        XCTAssertFalse(LocalClassifierCoordinator.shouldTriggerResearch(
+            for: decline,
+            settings: .init(trigger: .correctionsOnly)
+        ))
+        XCTAssertFalse(LocalClassifierCoordinator.shouldTriggerResearch(
+            for: grounded,
+            settings: .init(trigger: .all, confidenceTriggerLevel: 5)
+        ))
+    }
+
+    func testEffectiveResearchSettingsInheritOverrideAndRespectMasterGate() {
+        let global = ResearchSettings(
+            enabled: true,
+            llmProviderProfileID: "global-llm",
+            llmModelIdentifier: "global-model",
+            webSearchProviderProfileID: "global-search",
+            requestsPerMinute: 6,
+            dailyTokenLimit: 10_000,
+            maxSubjectsPerVideo: 3
+        )
+        let inherited = ClassifierTypeAsset(
+            id: "inherit", name: "Inherit", treeID: "tree", treeRevision: 1,
+            datasetID: "dataset", datasetRevision: 1
+        )
+        XCTAssertEqual(
+            LocalClassifierCoordinator.effectiveResearchSettings(global: global, for: inherited),
+            global
+        )
+
+        let override = ResearchSettings(
+            enabled: true,
+            llmProviderProfileID: "type-llm",
+            llmModelIdentifier: "type-model",
+            webSearchProviderProfileID: "type-search",
+            requestsPerMinute: 15,
+            dailyTokenLimit: 20_000,
+            maxSubjectsPerVideo: 1
+        )
+        let overridden = ClassifierTypeAsset(
+            id: "override", name: "Override", treeID: "tree", treeRevision: 1,
+            datasetID: "dataset", datasetRevision: 1, researchOverrides: override
+        )
+        XCTAssertEqual(
+            LocalClassifierCoordinator.effectiveResearchSettings(global: global, for: overridden),
+            override
+        )
+
+        var masterOff = global
+        masterOff.enabled = false
+        XCTAssertNil(LocalClassifierCoordinator.effectiveResearchSettings(global: masterOff, for: overridden))
+
+        var typeOff = override
+        typeOff.enabled = false
+        let optedOut = ClassifierTypeAsset(
+            id: "off", name: "Off", treeID: "tree", treeRevision: 1,
+            datasetID: "dataset", datasetRevision: 1, researchOverrides: typeOff
+        )
+        XCTAssertNil(LocalClassifierCoordinator.effectiveResearchSettings(global: global, for: optedOut))
+    }
+
     func testResearchDisabledDoesNoSecondDecode() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -249,8 +411,8 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         try coordinator.updateSettings(.init(research: .init(enabled: true)))
         let queue = GroundedResearchQueue(
-            configurationProvider: { nil },
-            snapshotProvider: { .init() },
+            configurationProvider: { _ in nil },
+            snapshotProvider: { _ in .init() },
             mutationWriter: { _ in },
             researcher: { _, _ in throw GroundedResearchError.invalidConfiguration }
         )
@@ -291,6 +453,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             .init(kind: .term, subject: "HermitCraft", meaning: "A Minecraft Games series."),
             usage: .init(provider: "llm", model: "model", tokenCount: 25, status: GroundedResearchQueue.researchUsageStatus),
             triggeringTask: .init(
+                classifierTypeID: "type",
                 platformID: "youtube", entryID: "v", creatorID: "c",
                 subjects: [ResearchSubject(kind: .term, subject: "HermitCraft")!]
             )
@@ -366,7 +529,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertTrue(recorder.requests[0].staticPrefix.contains("Learned preferences"))
     }
 
-    func testCorrectionAlsoTriggersSanitizedSecondDecodeWhenResearchEnabled() async throws {
+    func testCorrectionTriggersSanitizedSecondDecodeWhenConfigured() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
         defer { try? FileManager.default.removeItem(at: root) }
         var catalog = coordinator.snapshot().workspaceCatalog
@@ -378,10 +541,13 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             creatorName: "Creator", entryType: "video", title: "HermitCraft episode"
         ))
         try coordinator.updateWorkspaceCatalog(catalog)
-        try coordinator.updateSettings(.init(research: .init(enabled: true)))
+        try coordinator.updateSettings(.init(research: .init(
+            enabled: true,
+            trigger: .correctionsOnly
+        )))
         let queue = GroundedResearchQueue(
-            configurationProvider: { nil },
-            snapshotProvider: { .init() },
+            configurationProvider: { _ in nil },
+            snapshotProvider: { _ in .init() },
             mutationWriter: { _ in },
             researcher: { _, _ in throw GroundedResearchError.invalidConfiguration }
         )
@@ -420,9 +586,12 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             ))
         }
         try coordinator.updateWorkspaceCatalog(catalog)
-        try coordinator.updateSettings(.init(research: .init(enabled: true)))
+        try coordinator.updateSettings(.init(research: .init(
+            enabled: true,
+            trigger: .declineAndLowConfidence
+        )))
         let queue = GroundedResearchQueue(
-            configurationProvider: { nil }, snapshotProvider: { .init() },
+            configurationProvider: { _ in nil }, snapshotProvider: { _ in .init() },
             mutationWriter: { _ in },
             researcher: { _, _ in throw GroundedResearchError.invalidConfiguration }
         )

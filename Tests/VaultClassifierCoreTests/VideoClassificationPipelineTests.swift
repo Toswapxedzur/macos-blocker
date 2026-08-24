@@ -161,4 +161,36 @@ final class VideoClassificationPipelineTests: XCTestCase {
         XCTAssertEqual(recorder.last?.confidenceThresholds, [0.1, 0.3, 0.6, 0.9])
         XCTAssertTrue(recorder.last?.staticPrefix.contains("Prefer Politics.") == true)
     }
+
+    func testGranularResearchDefaultsLeaveClassificationRequestByteIdentical() async throws {
+        let recorder = RequestRecorder()
+        let pipeline = VideoClassificationPipeline(llm: ScriptedOnDeviceLLM(
+            modelVersion: "s/1",
+            result: .init(tags: []),
+            recorder: recorder
+        ))
+        var catalog = WorkspaceCatalog()
+        catalog.upsertKnowledgeEntry(.init(
+            kind: .term,
+            subject: "HermitCraft",
+            meaning: "A Minecraft SMP."
+        ))
+
+        let inherited = try await pipeline.classify(
+            title: "HermitCraft finale", entryID: "v", creatorID: "c", platformID: "youtube",
+            classifierType: makeType(), tree: makeTree(), catalog: catalog
+        )
+        let inheritedRequest = try XCTUnwrap(recorder.last)
+        let defaults = ResearchSettings()
+        let explicit = try await pipeline.classify(
+            title: "HermitCraft finale", entryID: "v", creatorID: "c", platformID: "youtube",
+            classifierType: makeType(), tree: makeTree(), catalog: catalog,
+            knowledgeTTLDays: defaults.knowledgeTTLDays,
+            maxKnowledgePerVideo: defaults.maxKnowledgePerVideo
+        )
+
+        XCTAssertEqual(recorder.last, inheritedRequest)
+        XCTAssertEqual(explicit.knowledgeRefs, inherited.knowledgeRefs)
+        XCTAssertEqual(explicit.source, inherited.source)
+    }
 }

@@ -89,6 +89,16 @@ public protocol OnDeviceLLM: Sendable {
     func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult
 }
 
+/// Runtime-neutral bridge to the native resident-engine registry. Core keeps
+/// the default engine as its zero-overhead path and consults this resolver only
+/// for classifier types with an explicit model selection.
+public protocol OnDeviceLLMEngineResolving: Sendable {
+    func resolveEngine(
+        forModel fileName: String,
+        configuration: LocalLLMSettings
+    ) async throws -> any OnDeviceLLM
+}
+
 /// Rare-path, local-only second decode used after an explicit classification
 /// decline. It is deliberately separate from the single-name hot-path request.
 public struct LLMResearchSubjectRequest: Sendable, Equatable {
