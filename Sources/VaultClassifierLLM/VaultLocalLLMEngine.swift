@@ -319,12 +319,25 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
 
     /// Every *.gguf available for the settings picker, sorted by name.
     public nonisolated static func availableModelFiles() -> [String] {
-        guard let directory = modelsDirectory(),
-              let entries = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else {
+        availableModelFiles(in: modelsDirectory())
+    }
+
+    /// Directory-injected variant used by the model library and its tests.
+    /// Catalog downloads and manually copied GGUF files intentionally share
+    /// one picker inventory.
+    public nonisolated static func availableModelFiles(in directory: URL?) -> [String] {
+        guard let directory,
+              let entries = try? FileManager.default.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [.isRegularFileKey]
+              ) else {
             return []
         }
         return entries
-            .filter { $0.pathExtension.lowercased() == "gguf" }
+            .filter {
+                $0.pathExtension.lowercased() == "gguf" &&
+                    (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+            }
             .map(\.lastPathComponent)
             .sorted()
     }

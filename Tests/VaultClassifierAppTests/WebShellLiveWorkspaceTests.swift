@@ -87,6 +87,24 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         XCTAssertTrue(strings.contains("global Research consent in Settings is the master gate"))
     }
 
+    func testSettingsModelLibraryExposesUserInitiatedDownloadControls() throws {
+        let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
+        let stringsURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "strings", extension: "js"))
+        let script = try String(contentsOf: appURL, encoding: .utf8)
+        let strings = try String(contentsOf: stringsURL, encoding: .utf8)
+
+        XCTAssertTrue(script.contains("modelLibraryContent"))
+        XCTAssertTrue(script.contains("downloadModel"))
+        XCTAssertTrue(script.contains("cancelModelDownload"))
+        XCTAssertTrue(script.contains("deleteModelFile"))
+        XCTAssertTrue(script.contains("role=\"progressbar\""))
+        XCTAssertTrue(script.contains("localModelOptions"))
+        XCTAssertTrue(script.contains("localModel.modelMissing"))
+        XCTAssertTrue(strings.contains("Models download from Hugging Face only when you press Download."))
+        XCTAssertTrue(strings.contains("LATENCY NOT MEASURED"))
+        XCTAssertTrue(strings.contains("missing — re-download"))
+    }
+
     func testCollectionEntriesExposeCorrectionEditorWithoutANewHubOperation() throws {
         let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
