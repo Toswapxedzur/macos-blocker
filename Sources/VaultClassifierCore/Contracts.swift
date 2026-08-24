@@ -332,6 +332,16 @@ public enum ResearchTrigger: String, Codable, Equatable, Sendable, CaseIterable 
     }
 }
 
+/// How the grounded-research step obtains public web evidence.
+public enum ResearchSearchMode: String, Codable, Equatable, Sendable, CaseIterable {
+    /// A separate raw-search provider (Serper/You.com) supplies snippets, which
+    /// a language-model provider then distills. Needs two provider profiles.
+    case rawSearchProvider
+    /// The language-model provider searches natively (e.g. Gemini google_search)
+    /// and distills in one call. Needs only the grounding-capable LLM provider.
+    case providerGrounding
+}
+
 public struct ResearchSettings: Codable, Equatable, Sendable {
     public static let maximumRequestsPerMinute = 120
     public static let maximumDailyTokenLimit = 10_000_000
@@ -352,6 +362,7 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
     /// Explicit opt-in. When false, classification performs no extra decode,
     /// queue work, credential lookup, or network request.
     public var enabled: Bool
+    public var searchMode: ResearchSearchMode
     public var llmProviderProfileID: String?
     public var llmModelIdentifier: String?
     public var webSearchProviderProfileID: String?
@@ -368,6 +379,7 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
 
     public init(
         enabled: Bool = false,
+        searchMode: ResearchSearchMode = .rawSearchProvider,
         llmProviderProfileID: String? = nil,
         llmModelIdentifier: String? = nil,
         webSearchProviderProfileID: String? = nil,
@@ -383,6 +395,7 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
         maxKnowledgePerVideo: Int = Self.defaultMaxKnowledgePerVideo
     ) {
         self.enabled = enabled
+        self.searchMode = searchMode
         self.llmProviderProfileID = Self.optionalIdentifier(llmProviderProfileID)
         self.llmModelIdentifier = Self.optionalIdentifier(llmModelIdentifier)
         self.webSearchProviderProfileID = Self.optionalIdentifier(webSearchProviderProfileID)
@@ -402,7 +415,7 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case enabled, llmProviderProfileID, llmModelIdentifier, webSearchProviderProfileID
+        case enabled, searchMode, llmProviderProfileID, llmModelIdentifier, webSearchProviderProfileID
         case requestsPerMinute, dailyTokenLimit, maxSubjectsPerVideo, cooldownHours
         case trigger, confidenceTriggerLevel, searchResultCount, snippetContextChars
         case knowledgeTTLDays, maxKnowledgePerVideo
@@ -414,6 +427,7 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false,
+            searchMode: try container.decodeIfPresent(ResearchSearchMode.self, forKey: .searchMode) ?? .rawSearchProvider,
             llmProviderProfileID: try container.decodeIfPresent(String.self, forKey: .llmProviderProfileID),
             llmModelIdentifier: try container.decodeIfPresent(String.self, forKey: .llmModelIdentifier),
             webSearchProviderProfileID: try container.decodeIfPresent(String.self, forKey: .webSearchProviderProfileID),

@@ -97,25 +97,30 @@ public struct ResearchTask: Equatable, Sendable {
 }
 
 public struct GroundedResearchProviderConfiguration: Sendable {
+    public var searchMode: ResearchSearchMode
     public var llmProfile: APIKeyProviderProfile
     public var llmCredential: ProviderCredentialRecord
     public var llmModelIdentifier: String
-    public var webSearchProfile: APIKeyProviderProfile
-    public var webSearchCredential: ProviderCredentialRecord
+    /// Required only for `.rawSearchProvider`. In `.providerGrounding` the LLM
+    /// provider searches natively, so no separate search provider is used.
+    public var webSearchProfile: APIKeyProviderProfile?
+    public var webSearchCredential: ProviderCredentialRecord?
     public var maximumOutputTokens: Int
     public var searchResultCount: Int
     public var snippetContextChars: Int
 
     public init(
+        searchMode: ResearchSearchMode = .rawSearchProvider,
         llmProfile: APIKeyProviderProfile,
         llmCredential: ProviderCredentialRecord,
         llmModelIdentifier: String,
-        webSearchProfile: APIKeyProviderProfile,
-        webSearchCredential: ProviderCredentialRecord,
+        webSearchProfile: APIKeyProviderProfile? = nil,
+        webSearchCredential: ProviderCredentialRecord? = nil,
         maximumOutputTokens: Int = 512,
         searchResultCount: Int = ResearchSettings.defaultSearchResultCount,
         snippetContextChars: Int = ResearchSettings.defaultSnippetContextChars
     ) {
+        self.searchMode = searchMode
         self.llmProfile = llmProfile
         self.llmCredential = llmCredential
         self.llmModelIdentifier = llmModelIdentifier
@@ -161,21 +166,80 @@ public struct GroundedResearchExecutor: Sendable {
     ) async throws -> GroundedResearchResult {
         guard let sanitized = ResearchSubject(kind: subject.kind, subject: subject.subject),
               sanitized == subject,
-              configuration.llmProfile.type.supportsLLMConfiguration,
-              configuration.webSearchProfile.type.supportsRawWebSearch
+              configuration.llmProfile.type.supportsLLMConfiguration
+        else {
+            throw GroundedResearchError.invalidConfiguration
+        }
+        switch configuration.searchMode {
+        case .providerGrounding:
+            return try await researchViaProviderGrounding(sanitized, using: configuration)
+        case .rawSearchProvider:
+            return try await researchViaRawSearch(sanitized, using: configuration)
+        }
+    }
+
+    /// Provider-grounding mode: the LLM provider searches natively (Gemini
+    /// google_search, OpenAI/Anthropic web_search) and distills in one call.
+    private func researchViaProviderGrounding(
+        _ sanitized: ResearchSubject,
+        using configuration: GroundedResearchProviderConfiguration
+    ) async throws -> GroundedResearchResult {
+        guard GroundedGenerationProtocol.supportsProviderGrounding(profile: configuration.llmProfile) else {
+            throw GroundedResearchError.invalidConfiguration
+        }
+        let request = try GroundedGenerationProtocol.prepareGroundedGenerate(
+            profile: configuration.llmProfile,
+            modelIdentifier: configuration.llmModelIdentifier,
+            subject: sanitized.subject,
+            maximumOutputTokens: configuration.maximumOutputTokens
+        )
+        let response = try await http.send(
+            plan: request.plan,
+            body: request.body,
+            credential: configuration.llmCredential,
+            timeout: Self.requestTimeout
+        )
+        let parsed = try GroundedGenerationProtocol.parseGroundedGeneration(
+            response.data,
+            format: request.plan.bodyFormat
+        )
+        let meaning = parsed.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !meaning.isEmpty else { throw GroundedResearchError.emptyMeaning }
+        let knowledge = KnowledgeEntry(
+            kind: sanitized.kind,
+            subject: sanitized.subject,
+            meaning: meaning,
+            contextTagHints: [],
+            sourceURLs: parsed.sourceURLs
+        )
+        return GroundedResearchResult(
+            knowledge: knowledge,
+            chargedTokenCount: parsed.usage.tokenCount ?? configuration.maximumOutputTokens
+        )
+    }
+
+    /// Raw-search mode: a separate search provider supplies snippets, then the
+    /// LLM provider distills them.
+    private func researchViaRawSearch(
+        _ sanitized: ResearchSubject,
+        using configuration: GroundedResearchProviderConfiguration
+    ) async throws -> GroundedResearchResult {
+        guard let webSearchProfile = configuration.webSearchProfile,
+              let webSearchCredential = configuration.webSearchCredential,
+              webSearchProfile.type.supportsRawWebSearch
         else {
             throw GroundedResearchError.invalidConfiguration
         }
 
         let search = try RawWebSearchProtocol.prepareSearch(
-            profile: configuration.webSearchProfile,
+            profile: webSearchProfile,
             query: sanitized.subject,
             resultCount: configuration.searchResultCount
         )
         let searchResponse = try await http.send(
             plan: search.plan,
             body: search.body,
-            credential: configuration.webSearchCredential,
+            credential: webSearchCredential,
             timeout: Self.requestTimeout
         )
         let results = Array(try RawWebSearchProtocol.parseResults(
