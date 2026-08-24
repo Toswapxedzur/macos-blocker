@@ -74,7 +74,7 @@ final class ProviderModelCatalogStore {
             let models = rawModels.compactMap { rawModel -> ProviderModelCatalogEntry? in
                 let model = rawModel.identifier.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !model.isEmpty,
-                      model.count <= LLMAssistConfiguration.maximumModelIdentifierLength,
+                      model.count <= ProviderModelCatalogProtocol.maximumModelIdentifierLength,
                       seen.insert(model).inserted else {
                     return nil
                 }

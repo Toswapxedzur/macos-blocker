@@ -7,13 +7,15 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
 
-        for liveWorkspace in ["tagTree", "localModel", "llmAssist", "browserBridge", "classificationData"] {
+        for liveWorkspace in ["tagTree", "llmAssist", "browserBridge", "classificationData"] {
             XCTAssertTrue(script.contains(liveWorkspace))
         }
         for retired in [
             "recordCreatorClassification", "classifyWithLLM", "markCorrection",
             "clearCorrection", "storeTraining", "retrain", "activityWorkspace",
-            "inspectWorkspace", "trainingWorkspace",
+            "inspectWorkspace", "trainingWorkspace", "localModelWorkspace",
+            "model-panel", "llmAssistConfiguration", "createLocalModel",
+            "configureLocalModel", "selectLLMProvider",
         ] {
             XCTAssertFalse(script.contains(retired), "Retired web action or workspace remains: \(retired)")
         }

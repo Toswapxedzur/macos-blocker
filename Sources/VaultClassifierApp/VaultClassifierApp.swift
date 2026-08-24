@@ -87,7 +87,6 @@ final class VaultClassifierViewModel: ObservableObject {
     }
     enum Workspace: String, CaseIterable, Identifiable, Hashable {
         case tagTree
-        case localModel
         case llmAssist
         case browserBridge
         case classificationData
@@ -881,13 +880,6 @@ final class VaultClassifierViewModel: ObservableObject {
         return resolved
     }
 
-    private func providerModelCatalogEntry(
-        profileID: String,
-        identifier: String
-    ) -> ProviderModelCatalogEntry? {
-        providerModelCatalogs[profileID]?.first { $0.identifier == identifier }
-    }
-
     func probeProviderModelCatalog(profileID: String) {
         guard let profile = localState?.workspaceCatalog.providerProfiles.first(where: { $0.id == profileID }),
               profile.type.supportsLLMConfiguration else {
@@ -1098,16 +1090,6 @@ final class VaultClassifierViewModel: ObservableObject {
                 throw WebBridgeInputError.invalidChoice("provider profile")
             }
             catalog.providerProfiles.removeAll(where: { $0.id == profileID })
-            for index in catalog.classifierTypes.indices {
-                if catalog.classifierTypes[index].llmAssistConfiguration?.providerProfileID == profileID {
-                    catalog.classifierTypes[index].llmAssistConfiguration = nil
-                } else if catalog.classifierTypes[index].llmAssistConfiguration?.webSearchProviderProfileID == profileID {
-                    catalog.classifierTypes[index].llmAssistConfiguration?.webSearchProviderProfileID = nil
-                }
-                if catalog.classifierTypes[index].selectedLLMProviderProfileID == profileID {
-                    catalog.classifierTypes[index].selectedLLMProviderProfileID = nil
-                }
-            }
             catalog.providerRequestRecords.removeAll(where: { $0.profileID == profileID })
             successfulProviderTestProfileIDs.remove(profileID)
             try coordinator?.updateWorkspaceCatalog(catalog)
@@ -1235,78 +1217,6 @@ final class VaultClassifierViewModel: ObservableObject {
         onWebStateChange?()
     }
 
-    func createLocalModel(name: String, classifierTypeID: String) {
-        do {
-            let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !cleaned.isEmpty else { throw WebBridgeInputError.invalidChoice("local model name") }
-            guard var catalog = localState?.workspaceCatalog,
-                  let type = catalog.classifierTypes.first(where: { $0.id == classifierTypeID }),
-                  let platformID = type.applicablePlatformID,
-                  CollectionPlatformRegistry.definition(for: platformID)?.supportsLocalModel == true,
-                  let tree = catalog.trees.first(where: { $0.id == type.treeID }),
-                  let dataset = catalog.datasets.first(where: { $0.id == type.datasetID }) else {
-                throw WebBridgeInputError.invalidChoice("classifier type")
-            }
-            // A classifier type owns at most one local model.
-            guard catalog.localModel(for: type.id) == nil else {
-                throw WebBridgeInputError.invalidChoice("existing local model")
-            }
-            catalog.models.append(.init(
-                name: cleaned,
-                classifierTypeID: type.id,
-                treeID: tree.id,
-                treeRevision: tree.revision,
-                datasetID: dataset.id,
-                datasetRevision: dataset.revision
-            ))
-            try coordinator?.updateWorkspaceCatalog(catalog)
-            refreshLocalState()
-            issue = nil
-        } catch { issue = error.localizedDescription }
-    }
-
-    func renameLocalModel(modelID: String, name: String) {
-        do {
-            let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !cleaned.isEmpty,
-                  var catalog = localState?.workspaceCatalog,
-                  let modelIndex = catalog.models.firstIndex(where: { $0.id == modelID }) else {
-                throw WebBridgeInputError.invalidChoice("local model")
-            }
-            catalog.models[modelIndex].name = cleaned
-            try coordinator?.updateWorkspaceCatalog(catalog)
-            refreshLocalState()
-            issue = nil
-        } catch { issue = error.localizedDescription }
-    }
-
-    func deleteLocalModel(modelID: String) {
-        do {
-            guard var catalog = localState?.workspaceCatalog,
-                  let modelIndex = catalog.models.firstIndex(where: { $0.id == modelID }) else {
-                throw WebBridgeInputError.invalidChoice("local model")
-            }
-            catalog.models.remove(at: modelIndex)
-            try coordinator?.updateWorkspaceCatalog(catalog)
-            refreshLocalState()
-            issue = nil
-        } catch { issue = error.localizedDescription }
-    }
-
-    func confirmLocalModelDeletion(modelID: String) {
-        guard localState?.workspaceCatalog.models.contains(where: { $0.id == modelID }) == true else {
-            issue = WebBridgeInputError.invalidChoice("local model").localizedDescription
-            return
-        }
-        presentNativeConfirmation(
-            title: "Delete local model?",
-            message: "This removes the local model configuration. It cannot be undone.",
-            confirmTitle: "Delete model"
-        ) { [weak self] in
-            self?.deleteLocalModel(modelID: modelID)
-        }
-    }
-
     func createClassifierType(name: String, platformID: String) {
         do {
             let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1364,19 +1274,7 @@ final class VaultClassifierViewModel: ObservableObject {
     func configureClassifierType(
         typeID: String,
         name: String,
-        applicablePlatformID: String,
-        llmProviderProfileID: String?,
-        llmModelIdentifier: String?,
-        llmDailyTokenLimit: String?,
-        llmMaximumOutputTokensPerRequest: String?,
-        llmExtraDirection: String?,
-        llmClassificationRequestsPerMinute: String?,
-        llmBatchSize: String?,
-        llmOfficialContentEvidenceCount: String?,
-        llmMaximumTagCount: String?,
-        llmRestrictToLeafTags: Bool,
-        llmWebSearchMode: String?,
-        llmWebSearchProviderProfileID: String?
+        applicablePlatformID: String
     ) {
         do {
             let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1387,179 +1285,17 @@ final class VaultClassifierViewModel: ObservableObject {
                 throw WebBridgeInputError.invalidChoice("classifier type")
             }
             let existingClassifierType = catalog.classifierTypes[typeIndex]
-            let existingLLMAssist = existingClassifierType.llmAssistConfiguration
-            let effectivePlatformID = applicablePlatformID
-            guard CollectionPlatformRegistry.definition(for: effectivePlatformID) != nil else {
+            guard CollectionPlatformRegistry.definition(for: applicablePlatformID) != nil else {
                 throw WebBridgeInputError.invalidChoice("classifier type")
             }
-            let selectedBinding = try catalog.ensurePlatformBinding(effectivePlatformID)
+            let selectedBinding = try catalog.ensurePlatformBinding(applicablePlatformID)
             guard
                   // A type owns its own tree; the binding only supplies the shared
                   // dataset and the platform.
                   let tree = catalog.trees.first(where: { $0.id == existingClassifierType.treeID }),
-                  let dataset = catalog.datasets.first(where: { $0.id == selectedBinding.datasetID }),
-                  let selectedDefinition = CollectionPlatformRegistry.definition(for: selectedBinding.id) else {
+                  let dataset = catalog.datasets.first(where: { $0.id == selectedBinding.datasetID }) else {
                 throw WebBridgeInputError.invalidChoice("classifier type")
             }
-            let supportsLLMAssist = selectedDefinition.supportsLLMAssist
-            let selectedLLMAssist: LLMAssistConfiguration?
-            let selectedLLMAssistDraft: LLMAssistDraftConfiguration?
-            let selectedLLMProviderProfileID: String?
-            let cleanedLLMProviderID = llmProviderProfileID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if supportsLLMAssist, !cleanedLLMProviderID.isEmpty {
-                guard catalog.providerProfiles.contains(where: {
-                    $0.id == cleanedLLMProviderID && $0.type.supportsLLMConfiguration
-                }), let profile = catalog.providerProfiles.first(where: { $0.id == cleanedLLMProviderID }) else {
-                    throw WebBridgeInputError.invalidChoice("LLM assist")
-                }
-                selectedLLMProviderProfileID = profile.id
-                if let llmModelIdentifier,
-                   let llmDailyTokenLimit,
-                   let llmMaximumOutputTokensPerRequest,
-                   let llmClassificationRequestsPerMinute,
-                   let llmBatchSize,
-                   let llmOfficialContentEvidenceCount,
-                   let llmMaximumTagCount,
-                   !llmModelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    let cleanedLLMModelIdentifier = llmModelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let retainsSavedModel = existingLLMAssist?.providerProfileID == cleanedLLMProviderID &&
-                        existingLLMAssist?.modelIdentifier == cleanedLLMModelIdentifier
-                    let probedModel = providerModelCatalogEntry(
-                        profileID: profile.id,
-                        identifier: cleanedLLMModelIdentifier
-                    )
-                    guard probedModel != nil || retainsSavedModel else {
-                        throw WebBridgeInputError.invalidChoice("a model fetched from this provider")
-                    }
-                    guard let selectedWebSearchMode = LLMWebSearchMode(
-                        rawValue: llmWebSearchMode?.trimmingCharacters(in: .whitespacesAndNewlines) ?? LLMWebSearchMode.off.rawValue
-                    ) else {
-                        throw WebBridgeInputError.invalidChoice("LLM web search mode")
-                    }
-                    if selectedWebSearchMode == .providerNative,
-                       !profile.type.supportsProviderNativeWebSearch {
-                        throw WebBridgeInputError.invalidChoice("provider-native web search")
-                    }
-                    if selectedWebSearchMode == .providerNative,
-                       probedModel?.supportsNativeWebSearch == false {
-                        throw WebBridgeInputError.invalidChoice("a model with provider-native web search")
-                    }
-                    if selectedWebSearchMode == .attached,
-                       !profile.type.supportsAttachedWebSearchTool {
-                        throw WebBridgeInputError.invalidChoice("external tool calling")
-                    }
-                    if selectedWebSearchMode == .attached,
-                       probedModel?.supportsTools == false {
-                        throw WebBridgeInputError.invalidChoice("a model with external tool calling")
-                    }
-                    if selectedWebSearchMode != .off,
-                       probedModel == nil,
-                       existingLLMAssist?.webSearchMode != selectedWebSearchMode {
-                        throw WebBridgeInputError.invalidChoice("Probe this model's web-search or tool support")
-                    }
-                    let cleanedWebSearchProviderID = llmWebSearchProviderProfileID?
-                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    let selectedWebSearchProviderID: String?
-                    if selectedWebSearchMode == .attached {
-                        if cleanedWebSearchProviderID.isEmpty {
-                            selectedWebSearchProviderID = nil
-                        } else {
-                            guard let searchProfile = catalog.providerProfiles.first(where: {
-                                $0.id == cleanedWebSearchProviderID && $0.type.supportsRawWebSearch
-                            }) else {
-                                throw WebBridgeInputError.invalidChoice("a raw web search connection")
-                            }
-                            selectedWebSearchProviderID = searchProfile.id
-                        }
-                    } else {
-                        selectedWebSearchProviderID = nil
-                    }
-                    let configuration = LLMAssistConfiguration(
-                        providerProfileID: cleanedLLMProviderID,
-                        modelIdentifier: cleanedLLMModelIdentifier,
-                        dailyTokenLimit: try providerPositiveInteger(
-                            llmDailyTokenLimit,
-                            maximum: LLMAssistConfiguration.maximumDailyTokenLimit,
-                            label: "LLM daily token limit"
-                        ),
-                        maximumOutputTokensPerRequest: try providerPositiveInteger(
-                            llmMaximumOutputTokensPerRequest,
-                            maximum: LLMAssistConfiguration.maximumOutputTokensPerRequest,
-                            label: "LLM maximum output tokens per request"
-                        ),
-                        extraDirection: llmExtraDirection ?? "",
-                        classificationRequestsPerMinute: try providerPositiveInteger(
-                            llmClassificationRequestsPerMinute,
-                            maximum: LLMAssistConfiguration.maximumClassificationRequestsPerMinute,
-                            label: "LLM classification requests per minute"
-                        ),
-                        batchSize: try providerPositiveInteger(
-                            llmBatchSize,
-                            maximum: LLMAssistConfiguration.maximumBatchSize,
-                            label: "LLM batch size"
-                        ),
-                        officialContentEvidenceCount: try providerPositiveInteger(
-                            llmOfficialContentEvidenceCount,
-                            maximum: LLMAssistConfiguration.maximumOfficialContentEvidenceCount,
-                            label: "official content evidence count"
-                        ),
-                        maximumTagCount: try providerPositiveInteger(
-                            llmMaximumTagCount,
-                            maximum: EntryEvidenceValidator.tagLimit,
-                            label: "LLM maximum tag count"
-                        ),
-                        restrictToLeafTags: llmRestrictToLeafTags,
-                        webSearchMode: selectedWebSearchMode,
-                        webSearchProviderProfileID: selectedWebSearchProviderID
-                    )
-                    try configuration.validate()
-                    selectedLLMAssist = configuration
-                    selectedLLMAssistDraft = .init(
-                        providerProfileID: configuration.providerProfileID,
-                        dailyTokenLimit: configuration.dailyTokenLimit,
-                        maximumOutputTokensPerRequest: configuration.maximumOutputTokensPerRequest,
-                        extraDirection: configuration.extraDirection,
-                        classificationRequestsPerMinute: configuration.classificationRequestsPerMinute,
-                        batchSize: configuration.batchSize,
-                        officialContentEvidenceCount: configuration.officialContentEvidenceCount,
-                        maximumTagCount: configuration.maximumTagCount,
-                        restrictToLeafTags: configuration.restrictToLeafTags,
-                        webSearchMode: configuration.webSearchMode,
-                        webSearchProviderProfileID: configuration.webSearchProviderProfileID
-                    )
-                } else {
-                    selectedLLMAssist = existingLLMAssist
-                    if let llmDailyTokenLimit,
-                       let llmMaximumOutputTokensPerRequest,
-                       let llmClassificationRequestsPerMinute,
-                       let llmBatchSize,
-                       let llmOfficialContentEvidenceCount,
-                       let llmMaximumTagCount {
-                        selectedLLMAssistDraft = try llmAssistDraftConfiguration(
-                            provider: profile,
-                            catalog: catalog,
-                            dailyTokenLimit: llmDailyTokenLimit,
-                            maximumOutputTokensPerRequest: llmMaximumOutputTokensPerRequest,
-                            extraDirection: llmExtraDirection,
-                            classificationRequestsPerMinute: llmClassificationRequestsPerMinute,
-                            batchSize: llmBatchSize,
-                            officialContentEvidenceCount: llmOfficialContentEvidenceCount,
-                            maximumTagCount: llmMaximumTagCount,
-                            restrictToLeafTags: llmRestrictToLeafTags,
-                            webSearchMode: llmWebSearchMode,
-                            webSearchProviderProfileID: llmWebSearchProviderProfileID
-                        )
-                    } else {
-                        selectedLLMAssistDraft = existingClassifierType.llmAssistDraftConfiguration
-                    }
-                }
-            } else {
-                selectedLLMAssist = nil
-                selectedLLMAssistDraft = nil
-                selectedLLMProviderProfileID = nil
-            }
-            // A local model is bound to its type (owns-one) and resolved by
-            // reverse lookup; there is no model selection to persist on the type.
             catalog.classifierTypes[typeIndex] = .init(
                 id: catalog.classifierTypes[typeIndex].id,
                 name: cleanedName,
@@ -1568,9 +1304,6 @@ final class VaultClassifierViewModel: ObservableObject {
                 datasetID: dataset.id,
                 datasetRevision: dataset.revision,
                 applicablePlatformID: selectedBinding.id,
-                selectedLLMProviderProfileID: selectedLLMProviderProfileID,
-                llmAssistDraftConfiguration: selectedLLMAssistDraft,
-                llmAssistConfiguration: selectedLLMAssist,
                 localModelOverrides: existingClassifierType.localModelOverrides,
                 order: catalog.classifierTypes[typeIndex].order
             )
@@ -1578,33 +1311,6 @@ final class VaultClassifierViewModel: ObservableObject {
             refreshLocalState()
             issue = nil
         } catch { issue = error.localizedDescription }
-    }
-
-    func selectLLMProvider(typeID: String, profileID: String?) {
-        do {
-            guard var catalog = localState?.workspaceCatalog,
-                  let typeIndex = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }),
-                  catalog.classifierTypes[typeIndex].applicablePlatformID.flatMap(CollectionPlatformRegistry.definition(for:))?.supportsLLMAssist == true else {
-                throw WebBridgeInputError.invalidChoice("LLM provider profile")
-            }
-            let cleanedProfileID = profileID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if cleanedProfileID.isEmpty {
-                catalog.classifierTypes[typeIndex].selectedLLMProviderProfileID = nil
-            } else {
-                guard catalog.providerProfiles.contains(where: {
-                    $0.id == cleanedProfileID && $0.type.supportsLLMConfiguration
-                }) else {
-                    throw WebBridgeInputError.invalidChoice("LLM provider profile")
-                }
-                catalog.classifierTypes[typeIndex].selectedLLMProviderProfileID = cleanedProfileID
-            }
-            catalog.classifierTypes[typeIndex].updatedAtMilliseconds = WorkspaceCatalog.now()
-            try coordinator?.updateWorkspaceCatalog(catalog)
-            refreshLocalState()
-            issue = nil
-        } catch {
-            issue = error.localizedDescription
-        }
     }
 
     func setActiveClassifierType(platformID: String, classifierTypeID: String?) {
@@ -1630,15 +1336,6 @@ final class VaultClassifierViewModel: ObservableObject {
                   classifierType.datasetRevision == dataset.revision,
                   classifierType.applicablePlatformID == platformID else {
                 throw WebBridgeInputError.invalidChoice("classifier type")
-            }
-            guard let platform = CollectionPlatformRegistry.definition(for: platformID) else {
-                throw WebBridgeInputError.invalidChoice("collection platform")
-            }
-            guard (platform.supportsLocalModel ||
-                   catalog.localModel(for: classifierType.id) == nil),
-                  (platform.supportsLLMAssist ||
-                   classifierType.llmAssistConfiguration == nil) else {
-                throw WebBridgeInputError.invalidChoice("manual-only platform classifier type")
             }
             catalog.bindings[bindingIndex].activeClassifierTypeID = normalizedTypeID
             try coordinator?.updateWorkspaceCatalog(catalog)
@@ -1690,7 +1387,7 @@ final class VaultClassifierViewModel: ObservableObject {
         }
         presentNativeConfirmation(
             title: "Delete classifier type?",
-            message: "This removes this local decision configuration and its local-model configuration. Other data and provider profiles are retained.",
+            message: "This removes this local decision configuration. Other data and provider profiles are retained.",
             confirmTitle: "Delete classifier type"
         ) { [weak self] in
             self?.deleteClassifierType(typeID: typeID)
@@ -1721,44 +1418,6 @@ final class VaultClassifierViewModel: ObservableObject {
                 self.onWebStateChange?()
             }
         }
-    }
-
-    /// A local model inherits its tree, dataset, and platform from its bound
-    /// classifier type. The only per-model setting is the base language model,
-    /// so configuration is limited to that choice.
-    func configureLocalModel(modelID: String, baseEmbeddingID: String?) {
-        do {
-            guard var catalog = localState?.workspaceCatalog else { return }
-            try applyLocalModelBaseEmbedding(in: &catalog, modelID: modelID, baseEmbeddingID: baseEmbeddingID)
-            try coordinator?.updateWorkspaceCatalog(catalog)
-            refreshLocalState()
-            issue = nil
-        } catch { issue = error.localizedDescription }
-    }
-
-    private func applyLocalModelBaseEmbedding(
-        in catalog: inout WorkspaceCatalog,
-        modelID: String,
-        baseEmbeddingID: String?
-    ) throws {
-        guard let modelIndex = catalog.models.firstIndex(where: { $0.id == modelID }) else {
-            throw WebBridgeInputError.invalidChoice("local model")
-        }
-        let normalizedBaseEmbeddingID = baseEmbeddingID?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let baseEmbedding = normalizedBaseEmbeddingID?.isEmpty == false
-            ? LocalBaseEmbedding(rawValue: normalizedBaseEmbeddingID!)
-            : nil
-        if normalizedBaseEmbeddingID?.isEmpty == false, baseEmbedding == nil {
-            throw WebBridgeInputError.invalidChoice("base embedding")
-        }
-        // Downloadable base embeddings are sealed off: only the native on-device
-        // embedding (nil) or a currently-selectable package may be chosen.
-        if let baseEmbedding, !LocalBaseEmbedding.selectableCases.contains(baseEmbedding) {
-            throw WebBridgeInputError.invalidChoice("base embedding")
-        }
-        guard catalog.models[modelIndex].baseEmbeddingID != baseEmbedding else { return }
-        catalog.models[modelIndex].baseEmbeddingID = baseEmbedding
-        catalog.models[modelIndex].version += 1
     }
 
     func renameTree(treeID: String, name: String, refreshState: Bool = true) {
@@ -2271,93 +1930,6 @@ final class VaultClassifierViewModel: ObservableObject {
         return value
     }
 
-    private func providerPositiveInteger(_ raw: String, maximum: Int, label: String) throws -> Int {
-        let value = try positiveInteger(raw, label: label)
-        guard value <= maximum else { throw WebBridgeInputError.invalidChoice(label) }
-        return value
-    }
-
-    private func llmAssistDraftConfiguration(
-        provider: APIKeyProviderProfile,
-        catalog: WorkspaceCatalog,
-        dailyTokenLimit: String,
-        maximumOutputTokensPerRequest: String,
-        extraDirection: String?,
-        classificationRequestsPerMinute: String,
-        batchSize: String,
-        officialContentEvidenceCount: String,
-        maximumTagCount: String,
-        restrictToLeafTags: Bool,
-        webSearchMode: String?,
-        webSearchProviderProfileID: String?
-    ) throws -> LLMAssistDraftConfiguration {
-        guard let selectedWebSearchMode = LLMWebSearchMode(
-            rawValue: webSearchMode?.trimmingCharacters(in: .whitespacesAndNewlines) ?? LLMWebSearchMode.off.rawValue
-        ) else {
-            throw WebBridgeInputError.invalidChoice("LLM web search mode")
-        }
-        if selectedWebSearchMode == .providerNative,
-           !provider.type.supportsProviderNativeWebSearch {
-            throw WebBridgeInputError.invalidChoice("provider-native web search")
-        }
-        if selectedWebSearchMode == .attached,
-           !provider.type.supportsAttachedWebSearchTool {
-            throw WebBridgeInputError.invalidChoice("external tool calling")
-        }
-        let cleanedSearchProviderID = webSearchProviderProfileID?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let selectedSearchProviderID: String?
-        if selectedWebSearchMode == .attached {
-            guard let searchProfile = catalog.providerProfiles.first(where: {
-                $0.id == cleanedSearchProviderID && $0.type.supportsRawWebSearch
-            }) else {
-                throw WebBridgeInputError.invalidChoice("a raw web search connection")
-            }
-            selectedSearchProviderID = searchProfile.id
-        } else {
-            selectedSearchProviderID = nil
-        }
-        let draft = LLMAssistDraftConfiguration(
-            providerProfileID: provider.id,
-            dailyTokenLimit: try providerPositiveInteger(
-                dailyTokenLimit,
-                maximum: LLMAssistConfiguration.maximumDailyTokenLimit,
-                label: "LLM daily token limit"
-            ),
-            maximumOutputTokensPerRequest: try providerPositiveInteger(
-                maximumOutputTokensPerRequest,
-                maximum: LLMAssistConfiguration.maximumOutputTokensPerRequest,
-                label: "LLM maximum output tokens per request"
-            ),
-            extraDirection: extraDirection ?? "",
-            classificationRequestsPerMinute: try providerPositiveInteger(
-                classificationRequestsPerMinute,
-                maximum: LLMAssistConfiguration.maximumClassificationRequestsPerMinute,
-                label: "LLM classification requests per minute"
-            ),
-            batchSize: try providerPositiveInteger(
-                batchSize,
-                maximum: LLMAssistConfiguration.maximumBatchSize,
-                label: "LLM batch size"
-            ),
-            officialContentEvidenceCount: try providerPositiveInteger(
-                officialContentEvidenceCount,
-                maximum: LLMAssistConfiguration.maximumOfficialContentEvidenceCount,
-                label: "official content evidence count"
-            ),
-            maximumTagCount: try providerPositiveInteger(
-                maximumTagCount,
-                maximum: EntryEvidenceValidator.tagLimit,
-                label: "LLM maximum tag count"
-            ),
-            restrictToLeafTags: restrictToLeafTags,
-            webSearchMode: selectedWebSearchMode,
-            webSearchProviderProfileID: selectedSearchProviderID
-        )
-        try draft.validate()
-        return draft
-    }
-
     /// The WKWebView receives only the bounded local state necessary to render
     /// this development shell. Browser evidence, API keys, pairing material,
     /// stable identifiers stay in native storage.
@@ -2440,21 +2012,6 @@ final class VaultClassifierViewModel: ObservableObject {
                     "collectedCreators": webCollectedCreators(dataset.collectedEntries),
                 ] as [String: Any]
             }
-        assets["models"] = catalog.models.map { model in
-                let owningType = catalog.classifierTypes.first(where: { $0.id == model.classifierTypeID })
-                return [
-                    "id": model.id,
-                    "name": model.name,
-                    "classifierTypeID": model.classifierTypeID,
-                    "treeID": model.treeID,
-                    "treeRevision": model.treeRevision,
-                    "datasetID": model.datasetID,
-                    "datasetRevision": model.datasetRevision,
-                    "platformID": owningType?.applicablePlatformID ?? NSNull(),
-                    "baseEmbeddingID": model.baseEmbeddingID?.rawValue ?? NSNull(),
-                    "version": model.version,
-                ] as [String: Any]
-            }
         assets["classifierTypes"] = catalog.classifierTypes.map { classifierType in
                 return [
                     "id": classifierType.id,
@@ -2465,12 +2022,6 @@ final class VaultClassifierViewModel: ObservableObject {
                     "datasetID": classifierType.datasetID,
                     "datasetRevision": classifierType.datasetRevision,
                     "applicablePlatformID": classifierType.applicablePlatformID ?? NSNull(),
-                    "localModel": catalog.localModel(for: classifierType.id).map { model in
-                        [
-                            "id": model.id,
-                            "name": model.name,
-                        ] as [String: Any]
-                    } ?? NSNull(),
                     "localModelOverrides": classifierType.localModelOverrides.map { overrides in
                         [
                             "houseRules": overrides.houseRules ?? NSNull(),
@@ -2478,43 +2029,8 @@ final class VaultClassifierViewModel: ObservableObject {
                             "confidenceThresholds": overrides.confidenceThresholds ?? NSNull(),
                         ] as [String: Any]
                     } ?? NSNull(),
-                    "selectedLLMProviderProfileID": classifierType.selectedLLMProviderProfileID ?? NSNull(),
-                    "llmAssistDraftConfiguration": classifierType.llmAssistDraftConfiguration.map { draft in
-                        [
-                            "providerProfileID": draft.providerProfileID,
-                            "dailyTokenLimit": draft.dailyTokenLimit,
-                            "maximumOutputTokensPerRequest": draft.maximumOutputTokensPerRequest,
-                            "extraDirection": draft.extraDirection,
-                            "classificationRequestsPerMinute": draft.classificationRequestsPerMinute,
-                            "batchSize": draft.batchSize,
-                            "officialContentEvidenceCount": draft.officialContentEvidenceCount,
-                            "maximumTagCount": draft.maximumTagCount,
-                            "restrictToLeafTags": draft.restrictToLeafTags,
-                            "webSearchMode": draft.webSearchMode.rawValue,
-                            "webSearchProviderProfileID": draft.webSearchProviderProfileID ?? NSNull(),
-                        ] as [String: Any]
-                    } ?? NSNull(),
-                    "llmAssistConfiguration": classifierType.llmAssistConfiguration.map { configuration in
-                        [
-                            "providerProfileID": configuration.providerProfileID,
-                            "modelIdentifier": configuration.modelIdentifier,
-                            "dailyTokenLimit": configuration.dailyTokenLimit,
-                            "maximumOutputTokensPerRequest": configuration.maximumOutputTokensPerRequest,
-                            "extraDirection": configuration.extraDirection,
-                            "classificationRequestsPerMinute": configuration.classificationRequestsPerMinute,
-                            "batchSize": configuration.batchSize,
-                            "officialContentEvidenceCount": configuration.officialContentEvidenceCount,
-                            "maximumTagCount": configuration.maximumTagCount,
-                            "restrictToLeafTags": configuration.restrictToLeafTags,
-                            "webSearchMode": configuration.webSearchMode.rawValue,
-                            "webSearchProviderProfileID": configuration.webSearchProviderProfileID ?? NSNull(),
-                        ] as [String: Any]
-                    } ?? NSNull(),
                 ] as [String: Any]
             }
-        // Only currently-selectable base embeddings are offered. Downloadable
-        // packages are sealed off, leaving the native on-device embedding.
-        assets["baseEmbeddings"] = LocalBaseEmbedding.selectableCases.map(\.rawValue)
         assets["providerProfiles"] = catalog.providerProfiles.map { profile in
                 let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
                 return [
@@ -2578,10 +2094,10 @@ final class VaultClassifierViewModel: ObservableObject {
                 })
         assets["bindings"] = catalog.bindings.map { binding in
                 let definition = CollectionPlatformRegistry.definition(for: binding.id)
-                return ["id": binding.id, "name": binding.name, "browser": binding.browser, "treeID": binding.treeID, "datasetID": binding.datasetID, "activeClassifierTypeID": binding.activeClassifierTypeID ?? NSNull(), "policyID": binding.policyID ?? NSNull(), "collectionEnabled": binding.collectionEnabled, "sourceKind": definition?.sourceKind.rawValue ?? CollectionSourceKind.creator.rawValue, "supportsLocalModel": definition?.supportsLocalModel ?? false, "supportsLLMAssist": definition?.supportsLLMAssist ?? false] as [String: Any]
+                return ["id": binding.id, "name": binding.name, "browser": binding.browser, "treeID": binding.treeID, "datasetID": binding.datasetID, "activeClassifierTypeID": binding.activeClassifierTypeID ?? NSNull(), "policyID": binding.policyID ?? NSNull(), "collectionEnabled": binding.collectionEnabled, "sourceKind": definition?.sourceKind.rawValue ?? CollectionSourceKind.creator.rawValue, "supportsLocalModel": definition?.supportsLocalModel ?? false] as [String: Any]
             }
         assets["collectionPlatforms"] = CollectionPlatformRegistry.definitions.map { definition in
-                ["id": definition.id, "name": definition.name, "browser": definition.browser, "sourceKind": definition.sourceKind.rawValue, "collectorAvailable": definition.collectorAvailable, "supportsLocalModel": definition.supportsLocalModel, "supportsLLMAssist": definition.supportsLLMAssist, "apiProviderType": definition.apiProviderType?.rawValue ?? NSNull()] as [String: Any]
+                ["id": definition.id, "name": definition.name, "browser": definition.browser, "sourceKind": definition.sourceKind.rawValue, "collectorAvailable": definition.collectorAvailable, "supportsLocalModel": definition.supportsLocalModel, "apiProviderType": definition.apiProviderType?.rawValue ?? NSNull()] as [String: Any]
             }
         assets["providerModelCatalogs"] = providerModelCatalogs.mapValues { $0.map(\.identifier) }
         assets["providerModelCapabilities"] = providerModelCatalogs.mapValues { entries in
@@ -2659,11 +2175,6 @@ final class VaultClassifierViewModel: ObservableObject {
                     platformID: try webString(data, key: "platformID", limit: 64),
                     classifierTypeID: try webOptionalString(data, key: "classifierTypeID", limit: 256)
                 )
-            case "createLocalModel":
-                createLocalModel(
-                    name: try webString(data, key: "name", limit: 128),
-                    classifierTypeID: try webString(data, key: "classifierTypeID", limit: 256)
-                )
             case "createClassifierType":
                 createClassifierType(
                     name: try webString(data, key: "name", limit: ClassifierTypeAsset.maximumNameLength),
@@ -2675,24 +2186,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 configureClassifierType(
                     typeID: try webString(data, key: "typeID", limit: 256),
                     name: try webString(data, key: "name", limit: ClassifierTypeAsset.maximumNameLength),
-                    applicablePlatformID: try webString(data, key: "applicablePlatformID", limit: 64),
-                    llmProviderProfileID: try webOptionalString(data, key: "llmProviderProfileID", limit: 128),
-                    llmModelIdentifier: try webOptionalString(data, key: "llmModelIdentifier", limit: LLMAssistConfiguration.maximumModelIdentifierLength),
-                    llmDailyTokenLimit: try webOptionalString(data, key: "llmDailyTokenLimit", limit: 16),
-                    llmMaximumOutputTokensPerRequest: try webOptionalString(data, key: "llmMaximumOutputTokensPerRequest", limit: 16),
-                    llmExtraDirection: try webOptionalString(data, key: "llmExtraDirection", limit: LLMAssistConfiguration.maximumExtraDirectionLength),
-                    llmClassificationRequestsPerMinute: try webOptionalString(data, key: "llmClassificationRequestsPerMinute", limit: 3),
-                    llmBatchSize: try webOptionalString(data, key: "llmBatchSize", limit: 4),
-                    llmOfficialContentEvidenceCount: try webOptionalString(data, key: "llmOfficialContentEvidenceCount", limit: 2),
-                    llmMaximumTagCount: try webOptionalString(data, key: "llmMaximumTagCount", limit: 4),
-                    llmRestrictToLeafTags: data["llmRestrictToLeafTags"] as? Bool ?? false,
-                    llmWebSearchMode: try webOptionalString(data, key: "llmWebSearchMode", limit: 32),
-                    llmWebSearchProviderProfileID: try webOptionalString(data, key: "llmWebSearchProviderProfileID", limit: 128)
-                )
-            case "selectLLMProvider":
-                selectLLMProvider(
-                    typeID: try webString(data, key: "typeID", limit: 256),
-                    profileID: try webOptionalString(data, key: "profileID", limit: 128)
+                    applicablePlatformID: try webString(data, key: "applicablePlatformID", limit: 64)
                 )
             case "confirmDeleteClassifierType":
                 deleteClassifierType(typeID: try webString(data, key: "typeID", limit: 256))
@@ -2718,15 +2212,6 @@ final class VaultClassifierViewModel: ObservableObject {
                 probeProviderModelCatalog(profileID: try webString(data, key: "profileID", limit: 128))
             case "confirmDeleteProviderProfile":
                 confirmProviderProfileDeletion(profileID: try webString(data, key: "profileID", limit: 128))
-            case "renameLocalModel":
-                renameLocalModel(modelID: try webString(data, key: "modelID", limit: 256), name: try webString(data, key: "name", limit: 128))
-            case "confirmDeleteLocalModel":
-                confirmLocalModelDeletion(modelID: try webString(data, key: "modelID", limit: 256))
-            case "configureLocalModel":
-                configureLocalModel(
-                    modelID: try webString(data, key: "modelID", limit: 256),
-                    baseEmbeddingID: try webOptionalString(data, key: "baseEmbeddingID", limit: 128)
-                )
             case "renameTree":
                 renameTree(treeID: try webString(data, key: "treeID", limit: 256), name: try webString(data, key: "name", limit: 128))
             case "deleteTree":
