@@ -286,22 +286,37 @@ final class VaultClassifierViewModel: ObservableObject {
         let profiles = state.workspaceCatalog.providerProfiles
         guard let llmProfileID = settings.llmProviderProfileID,
               let modelIdentifier = settings.llmModelIdentifier,
-              let searchProfileID = settings.webSearchProviderProfileID,
               let llmProfile = profiles.first(where: { $0.id == llmProfileID }),
-              let searchProfile = profiles.first(where: { $0.id == searchProfileID }),
               ProviderGenerationProtocol.supportsGeneration(profile: llmProfile),
-              searchProfile.type.supportsRawWebSearch,
-              let llmCredential = try? researchCredential(for: llmProfile),
-              let searchCredential = try? researchCredential(for: searchProfile)
+              let llmCredential = try? researchCredential(for: llmProfile)
         else { return nil }
+
+        // In providerGrounding mode the LLM provider searches natively — no
+        // separate search provider is needed. In rawSearchProvider mode a valid
+        // raw-search provider + credential is required.
+        var webSearchProfile: APIKeyProviderProfile?
+        var webSearchCredential: ProviderCredentialRecord?
+        switch settings.searchMode {
+        case .providerGrounding:
+            guard GroundedGenerationProtocol.supportsProviderGrounding(profile: llmProfile) else { return nil }
+        case .rawSearchProvider:
+            guard let searchProfileID = settings.webSearchProviderProfileID,
+                  let searchProfile = profiles.first(where: { $0.id == searchProfileID }),
+                  searchProfile.type.supportsRawWebSearch,
+                  let searchCredential = try? researchCredential(for: searchProfile)
+            else { return nil }
+            webSearchProfile = searchProfile
+            webSearchCredential = searchCredential
+        }
 
         return .init(
             providers: .init(
+                searchMode: settings.searchMode,
                 llmProfile: llmProfile,
                 llmCredential: llmCredential,
                 llmModelIdentifier: modelIdentifier,
-                webSearchProfile: searchProfile,
-                webSearchCredential: searchCredential,
+                webSearchProfile: webSearchProfile,
+                webSearchCredential: webSearchCredential,
                 searchResultCount: settings.searchResultCount,
                 snippetContextChars: settings.snippetContextChars
             ),
@@ -1870,17 +1885,27 @@ final class VaultClassifierViewModel: ObservableObject {
     ) throws {
         guard settings.enabled else { return }
         guard let llmProfileID = settings.llmProviderProfileID,
-              let searchProfileID = settings.webSearchProviderProfileID,
               let modelIdentifier = settings.llmModelIdentifier,
               !modelIdentifier.isEmpty,
               let llmProfile = catalog.providerProfiles.first(where: { $0.id == llmProfileID }),
-              let searchProfile = catalog.providerProfiles.first(where: { $0.id == searchProfileID }),
-              ProviderGenerationProtocol.supportsGeneration(profile: llmProfile),
-              searchProfile.type.supportsRawWebSearch else {
+              ProviderGenerationProtocol.supportsGeneration(profile: llmProfile) else {
             throw WebBridgeInputError.invalidChoice("research providers and model")
         }
         _ = try researchCredential(for: llmProfile)
-        _ = try researchCredential(for: searchProfile)
+
+        switch settings.searchMode {
+        case .providerGrounding:
+            guard GroundedGenerationProtocol.supportsProviderGrounding(profile: llmProfile) else {
+                throw WebBridgeInputError.invalidChoice("grounding-capable provider")
+            }
+        case .rawSearchProvider:
+            guard let searchProfileID = settings.webSearchProviderProfileID,
+                  let searchProfile = catalog.providerProfiles.first(where: { $0.id == searchProfileID }),
+                  searchProfile.type.supportsRawWebSearch else {
+                throw WebBridgeInputError.invalidChoice("research providers and model")
+            }
+            _ = try researchCredential(for: searchProfile)
+        }
     }
 
     func saveClassifierTypeResearch(
@@ -2046,6 +2071,8 @@ final class VaultClassifierViewModel: ObservableObject {
             overrideEnabled: true,
             settings: ResearchSettings(
                 enabled: data["enabled"] as? Bool ?? defaults.enabled,
+                searchMode: (data["searchMode"] as? String)
+                    .flatMap(ResearchSearchMode.init(rawValue:)) ?? defaults.searchMode,
                 llmProviderProfileID: optionalString("llmProviderProfileID"),
                 llmModelIdentifier: optionalString("llmModelIdentifier"),
                 webSearchProviderProfileID: optionalString("webSearchProviderProfileID"),
@@ -2208,6 +2235,7 @@ final class VaultClassifierViewModel: ObservableObject {
             ] as [String: Any],
             "research": [
                 "enabled": researchSettings.enabled,
+                "searchMode": researchSettings.searchMode.rawValue,
                 "llmProviderProfileID": researchSettings.llmProviderProfileID ?? "",
                 "llmModelIdentifier": researchSettings.llmModelIdentifier ?? "",
                 "webSearchProviderProfileID": researchSettings.webSearchProviderProfileID ?? "",
@@ -2267,6 +2295,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     "researchOverrides": classifierType.researchOverrides.map { research in
                         [
                             "enabled": research.enabled,
+                            "searchMode": research.searchMode.rawValue,
                             "llmProviderProfileID": research.llmProviderProfileID ?? "",
                             "llmModelIdentifier": research.llmModelIdentifier ?? "",
                             "webSearchProviderProfileID": research.webSearchProviderProfileID ?? "",
@@ -2608,6 +2637,13 @@ final class VaultClassifierViewModel: ObservableObject {
             case "saveResearchSettings":
                 saveResearchSettings(ResearchSettings(
                     enabled: try webBool(data, key: "enabled"),
+                    searchMode: try {
+                        let raw = try webString(data, key: "searchMode", limit: 64)
+                        guard let value = ResearchSearchMode(rawValue: raw) else {
+                            throw WebBridgeInputError.invalidChoice("research search mode")
+                        }
+                        return value
+                    }(),
                     llmProviderProfileID: try webOptionalString(data, key: "llmProviderProfileID", limit: 256),
                     llmModelIdentifier: try webOptionalString(data, key: "llmModelIdentifier", limit: 256),
                     webSearchProviderProfileID: try webOptionalString(data, key: "webSearchProviderProfileID", limit: 256),
