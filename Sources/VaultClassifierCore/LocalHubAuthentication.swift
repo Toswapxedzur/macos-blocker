@@ -10,8 +10,6 @@ public enum LocalHubAuthentication {
     public static let browserPrograms: Set<String> = ["chrome", "edge"]
     public static let desktopPrograms: Set<String> = ["classifier", "macapp"]
 
-    private static let productionService = "com.adamancia.vault.local-hub"
-    private static let account = "protocol-v4-challenge-secret"
     private static let secretLength = 32
     private static let challengeLength = 43
 
@@ -100,44 +98,59 @@ public enum LocalHubAuthentication {
         do {
             try storeSecret(secret, environment: environment)
             return secret
-        } catch LocalHubAuthenticationError.keychain(let status) where status == errSecDuplicateItem {
+        } catch LocalHubAuthenticationError.secretAlreadyExists {
             if let concurrentSecret = loadSecret(environment: environment), concurrentSecret.count == secretLength {
                 return concurrentSecret
             }
-            throw LocalHubAuthenticationError.keychain(status)
+            throw LocalHubAuthenticationError.fileSystem
         }
     }
 
-    private static func storeSecret(_ secret: Data, environment: VaultRuntimeEnvironment) throws {
-        var item: [CFString: Any] = identity(environment: environment)
-        item[kSecValueData] = secret
-        item[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        let status = SecItemAdd(item as CFDictionary, nil)
-        if status == errSecSuccess { return }
-        if status == errSecDuplicateItem,
-           loadSecret(environment: environment) == secret { return }
-        throw LocalHubAuthenticationError.keychain(status)
+    // MARK: - On-device secret storage
+    //
+    // The hub secret is a 32-byte HMAC key that authenticates browser↔app hub
+    // connections. It lives in the app's own support directory (file mode
+    // 0600) rather than the login keychain. This keeps it entirely on this Mac
+    // — it is never uploaded — and avoids the per-launch keychain-access prompt
+    // that an unsigned or development build otherwise triggers on every start.
+    // The app and the browser's native-messaging host resolve the same path,
+    // so they agree on the secret without needing a shared keychain item.
+    private static let secretFileName = "local-hub-secret-v4"
+
+    private static func secretFileURL(environment: VaultRuntimeEnvironment) throws -> URL {
+        try environment.classifierSupportDirectoryURL()
+            .appendingPathComponent(secretFileName, isDirectory: false)
     }
 
-    private static func identity(environment: VaultRuntimeEnvironment) -> [CFString: Any] {
-        [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: environment.keychainService(productionService),
-            kSecAttrAccount: account,
-        ]
+    private static func storeSecret(_ secret: Data, environment: VaultRuntimeEnvironment) throws {
+        let url: URL
+        do {
+            url = try secretFileURL(environment: environment)
+        } catch {
+            throw LocalHubAuthenticationError.fileSystem
+        }
+        do {
+            // Exclusive create: if another process wrote first, surface a
+            // duplicate so the caller reads the winner's secret instead.
+            try secret.write(to: url, options: [.withoutOverwriting])
+        } catch let error as CocoaError where error.code == .fileWriteFileExists {
+            if loadSecret(environment: environment) == secret { return }
+            throw LocalHubAuthenticationError.secretAlreadyExists
+        } catch {
+            throw LocalHubAuthenticationError.fileSystem
+        }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
     private static func loadSecret(environment: VaultRuntimeEnvironment) -> Data? {
-        var query = identity(environment: environment)
-        query[kSecReturnData] = true
-        query[kSecMatchLimit] = kSecMatchLimitOne
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else { return nil }
-        return result as? Data
+        guard let url = try? secretFileURL(environment: environment),
+              let data = try? Data(contentsOf: url) else { return nil }
+        return data
     }
 
     private static func deleteSecret(environment: VaultRuntimeEnvironment) {
-        SecItemDelete(identity(environment: environment) as CFDictionary)
+        guard let url = try? secretFileURL(environment: environment) else { return }
+        try? FileManager.default.removeItem(at: url)
     }
 
     private static func canonicalString(program: String, challenge: String) -> String {
@@ -186,7 +199,8 @@ public enum LocalHubAuthentication {
 public enum LocalHubAuthenticationError: Error, LocalizedError, Sendable {
     case randomness
     case invalidInput
-    case keychain(OSStatus)
+    case fileSystem
+    case secretAlreadyExists
     case environmentConflict
     case environmentMigration
 
@@ -194,7 +208,8 @@ public enum LocalHubAuthenticationError: Error, LocalizedError, Sendable {
         switch self {
         case .randomness: return "Could not create local hub authentication material."
         case .invalidInput: return "The local hub authentication request is invalid."
-        case .keychain: return "Could not store local hub authentication material."
+        case .fileSystem: return "Could not store local hub authentication material on this Mac."
+        case .secretAlreadyExists: return "Local hub authentication material already exists."
         case .environmentConflict: return "Development and production local-hub authentication material conflict."
         case .environmentMigration: return "Could not move local-hub authentication material into development."
         }
