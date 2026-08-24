@@ -198,6 +198,18 @@ public struct KnowledgeEntry: Codable, Equatable, Sendable, Identifiable {
         return title.lowercased().contains(needle)
     }
 
+    /// A TTL of zero means knowledge never expires. Expired entries stay in
+    /// the durable map but are excluded from prompts and research deduping.
+    public func isActive(
+        ttlDays: Int,
+        nowMilliseconds: Int64 = WorkspaceCatalog.now()
+    ) -> Bool {
+        let clampedDays = min(ResearchSettings.maximumKnowledgeTTLDays, max(0, ttlDays))
+        guard clampedDays > 0 else { return true }
+        let lifetime = Int64(clampedDays) * 24 * 60 * 60 * 1_000
+        return updatedAtMilliseconds >= nowMilliseconds - lifetime
+    }
+
     private enum CodingKeys: String, CodingKey {
         case id, kind, subject, meaning, contextTagHints, sourceURLs,
              createdAtMilliseconds, updatedAtMilliseconds
@@ -453,14 +465,24 @@ public extension WorkspaceCatalog {
     /// plus any term entries whose subject appears in the title. This is the
     /// classify-time RAG lookup — only matched entries are injected, so a large
     /// map does not affect per-video cost.
-    func matchedKnowledge(title: String, creatorID: String) -> [KnowledgeEntry] {
+    func matchedKnowledge(
+        title: String,
+        creatorID: String,
+        limit requestedLimit: Int = Self.maximumMatchedKnowledgeEntries,
+        ttlDays: Int = 0,
+        nowMilliseconds: Int64 = WorkspaceCatalog.now()
+    ) -> [KnowledgeEntry] {
+        let limit = min(ResearchSettings.maximumKnowledgePerVideo, max(1, requestedLimit))
+        let activeEntries = knowledgeEntries.filter {
+            $0.isActive(ttlDays: ttlDays, nowMilliseconds: nowMilliseconds)
+        }
         var matched: [KnowledgeEntry] = []
         let creatorKey = KnowledgeEntry.key(kind: .creator, subject: creatorID)
-        if let creatorEntry = knowledgeEntries.first(where: { $0.id == creatorKey }) {
+        if let creatorEntry = activeEntries.first(where: { $0.id == creatorKey }) {
             matched.append(creatorEntry)
         }
-        let remaining = max(0, Self.maximumMatchedKnowledgeEntries - matched.count)
-        let terms = knowledgeEntries
+        let remaining = max(0, limit - matched.count)
+        let terms = activeEntries
             .filter { $0.kind == .term && $0.matches(title: title) }
             .sorted { lhs, rhs in
                 if lhs.subject.count != rhs.subject.count { return lhs.subject.count > rhs.subject.count }
@@ -488,15 +510,19 @@ public extension WorkspaceCatalog {
     }
 
     mutating func upsertResearchAttempt(_ attempt: ResearchAttemptRecord) {
-        researchAttempts.removeAll { $0.subjectKey == attempt.subjectKey }
+        researchAttempts.removeAll {
+            $0.classifierTypeID == attempt.classifierTypeID && $0.subjectKey == attempt.subjectKey
+        }
         researchAttempts.insert(attempt, at: 0)
         if researchAttempts.count > Self.maximumResearchAttempts {
             researchAttempts = Array(researchAttempts.prefix(Self.maximumResearchAttempts))
         }
     }
 
-    mutating func removeResearchAttempt(subjectKey: String) {
-        researchAttempts.removeAll { $0.subjectKey == subjectKey }
+    mutating func removeResearchAttempt(subjectKey: String, classifierTypeID: String? = nil) {
+        researchAttempts.removeAll {
+            $0.classifierTypeID == classifierTypeID && $0.subjectKey == subjectKey
+        }
     }
 
     /// Stores one authoritative correction per classifier type/platform/video.

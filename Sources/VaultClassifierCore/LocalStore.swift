@@ -181,6 +181,7 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
     private var activeVerifiedPackage: VerifiedSeedPackage
     private var state: LocalClassifierState
     private var onDeviceLLM: any OnDeviceLLM = StubOnDeviceLLM()
+    private var onDeviceLLMEngineResolver: (any OnDeviceLLMEngineResolving)?
     private var classificationMaximumTags: Int
     private var classificationHouseRules: String?
     private var groundedResearchQueue: GroundedResearchQueue?
@@ -321,6 +322,12 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         onDeviceLLM = llm
     }
 
+    public func setOnDeviceLLMEngineResolver(
+        _ resolver: (any OnDeviceLLMEngineResolving)?
+    ) {
+        lock.withLock { onDeviceLLMEngineResolver = resolver }
+    }
+
     public func setClassificationOptions(maximumTags: Int, houseRules: String?) {
         lock.lock()
         defer { lock.unlock() }
@@ -339,10 +346,15 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         lock.withLock { onVideoReclassifiedCallback = callback }
     }
 
-    public func groundedResearchQueueSnapshot() -> GroundedResearchQueueSnapshot {
+    public func groundedResearchQueueSnapshot(for task: ResearchTask) -> GroundedResearchQueueSnapshot {
         lock.withLock {
-            .init(
-                existingKnowledgeKeys: Set(state.workspaceCatalog.knowledgeEntries.map(\.id)),
+            let settings = state.workspaceCatalog.classifierTypes.first(where: {
+                $0.id == task.classifierTypeID
+            }).map { $0.researchOverrides ?? state.settings.research } ?? state.settings.research
+            return .init(
+                existingKnowledgeKeys: Set(state.workspaceCatalog.knowledgeEntries.filter {
+                    $0.isActive(ttlDays: settings.knowledgeTTLDays)
+                }.map(\.id)),
                 failedAttempts: state.workspaceCatalog.researchAttempts,
                 tokenUsage: state.workspaceCatalog.tokenUsage
             )
@@ -373,13 +385,18 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
             (
                 state.workspaceCatalog,
                 onDeviceLLM,
+                onDeviceLLMEngineResolver,
+                state.settings.localLLM,
                 classificationMaximumTags,
                 classificationHouseRules,
                 state.settings.research,
                 groundedResearchQueue
             )
         }
-        let (catalog, llm, maximumTags, houseRules, researchSettings, researchQueue) = snapshot
+        let (
+            catalog, defaultLLM, engineResolver, localLLMSettings,
+            maximumTags, houseRules, globalResearchSettings, researchQueue
+        ) = snapshot
 
         guard let binding = catalog.bindings.first(where: { $0.id == platformID }), binding.collectionEnabled else {
             throw PlatformCollectionError.disabled(platformID)
@@ -387,8 +404,13 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         let types = Self.orderedTypes(for: platformID, in: catalog)
         guard !types.isEmpty else { return VideoTagsProjection(tags: [], predicted: false) }
 
-        let pipeline = VideoClassificationPipeline(llm: llm, maximumTags: maximumTags)
         var classifications: [VideoClassification] = []
+        var researchCandidates: [(
+            ClassifierTypeAsset,
+            VideoClassification,
+            ResearchSettings,
+            any OnDeviceLLM
+        )] = []
         for type in types {
             guard let tree = catalog.trees.first(where: { $0.id == type.treeID }),
                   type.treeRevision == tree.revision else { continue }
@@ -406,7 +428,15 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                 continue
             }
             let overrides = type.localModelOverrides
-            classifications.append(try await pipeline.classify(
+            let knowledgeSettings = type.researchOverrides ?? globalResearchSettings
+            let llm = await Self.resolvedLLM(
+                for: type,
+                defaultLLM: defaultLLM,
+                resolver: engineResolver,
+                configuration: localLLMSettings
+            )
+            let pipeline = VideoClassificationPipeline(llm: llm, maximumTags: maximumTags)
+            let classification = try await pipeline.classify(
                 title: title,
                 summary: summary,
                 text: text,
@@ -421,8 +451,17 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                     perType: overrides?.houseRules
                 ),
                 allowDecline: overrides?.allowDecline,
-                confidenceThresholds: overrides?.confidenceThresholds
-            ))
+                confidenceThresholds: overrides?.confidenceThresholds,
+                knowledgeTTLDays: knowledgeSettings.knowledgeTTLDays,
+                maxKnowledgePerVideo: knowledgeSettings.maxKnowledgePerVideo
+            )
+            classifications.append(classification)
+            if let effectiveResearch = Self.effectiveResearchSettings(
+                global: globalResearchSettings,
+                for: type
+            ) {
+                researchCandidates.append((type, classification, effectiveResearch, llm))
+            }
         }
 
         let saved = try lock.withLock {
@@ -440,29 +479,66 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
             "classified": "\(classifications.count)",
             "tags": "\(projection.tags.count)"
         ])
-        if researchSettings.enabled,
-           let researchQueue,
-           Self.hasExplicitModelDecline(classifications) {
-            let hasWeakCreatorPrior = !types.contains { type in
-                catalog.creatorHistogram(
+        if let researchQueue {
+            for (type, classification, settings, llm) in researchCandidates
+            where Self.shouldTriggerResearch(for: classification, settings: settings) {
+                let hasWeakCreatorPrior = catalog.creatorHistogram(
                     classifierTypeID: type.id,
                     platformID: platformID,
                     creatorID: creatorID
-                ) != nil
+                ) == nil
+                Self.scheduleResearchSubjectExtraction(
+                    llm: llm,
+                    queue: researchQueue,
+                    settings: settings,
+                    classifierTypeID: type.id,
+                    platformID: platformID,
+                    entryID: entryID,
+                    creatorID: creatorID,
+                    title: title,
+                    summary: summary,
+                    includeCreator: hasWeakCreatorPrior
+                )
             }
-            Self.scheduleResearchSubjectExtraction(
-                llm: llm,
-                queue: researchQueue,
-                settings: researchSettings,
-                platformID: platformID,
-                entryID: entryID,
-                creatorID: creatorID,
-                title: title,
-                summary: summary,
-                includeCreator: hasWeakCreatorPrior
-            )
         }
         return projection
+    }
+
+    private static func resolvedLLM(
+        for classifierType: ClassifierTypeAsset,
+        defaultLLM: any OnDeviceLLM,
+        resolver: (any OnDeviceLLMEngineResolving)?,
+        configuration: LocalLLMSettings
+    ) async -> any OnDeviceLLM {
+        // The overwhelmingly common inherited-model route deliberately avoids
+        // even an actor hop, preserving the pre-registry live pill path.
+        guard let fileName = classifierType.modelFileName,
+              let resolver else { return defaultLLM }
+        do {
+            return try await resolver.resolveEngine(
+                forModel: fileName,
+                configuration: configuration
+            )
+        } catch {
+            VaultDevLog.shared.log("llm", "type-model-fallback", [
+                "type": classifierType.id,
+                "requested": fileName,
+                "error": String(describing: error),
+            ])
+            return defaultLLM
+        }
+    }
+
+    /// Resolves the type-level defaults without weakening the app-wide consent
+    /// switch. A type may opt itself out, but it can never opt itself in while
+    /// the global master gate is off.
+    public static func effectiveResearchSettings(
+        global: ResearchSettings,
+        for classifierType: ClassifierTypeAsset
+    ) -> ResearchSettings? {
+        guard global.enabled else { return nil }
+        let effective = classifierType.researchOverrides ?? global
+        return effective.enabled ? effective : nil
     }
 
     private static func effectiveHouseRules(global: String?, perType: String?) -> String? {
@@ -481,10 +557,25 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         classifications.contains { $0.source == .model && $0.tags.isEmpty }
     }
 
+    public static func shouldTriggerResearch(
+        for classification: VideoClassification,
+        settings: ResearchSettings
+    ) -> Bool {
+        guard classification.source == .model,
+              settings.trigger.includesLiveClassification else { return false }
+        if classification.tags.isEmpty { return true }
+        guard settings.trigger.includesLowConfidence else { return false }
+        return (classification.tags.map(\.confidence).max() ?? 0) <= settings.confidenceTriggerLevel
+    }
+
     private static func scheduleResearchSubjectExtraction(
         llm: any OnDeviceLLM,
+        resolver: (any OnDeviceLLMEngineResolving)? = nil,
+        localLLMSettings: LocalLLMSettings = LocalLLMSettings(),
+        classifierType: ClassifierTypeAsset? = nil,
         queue: GroundedResearchQueue,
         settings: ResearchSettings,
+        classifierTypeID: String,
         platformID: String,
         entryID: String,
         creatorID: String,
@@ -493,7 +584,18 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         includeCreator: Bool
     ) {
         Task.detached(priority: .utility) {
-            guard let extractor = llm as? any OnDeviceResearchSubjectExtracting else { return }
+            let extractionLLM: any OnDeviceLLM
+            if let classifierType {
+                extractionLLM = await Self.resolvedLLM(
+                    for: classifierType,
+                    defaultLLM: llm,
+                    resolver: resolver,
+                    configuration: localLLMSettings
+                )
+            } else {
+                extractionLLM = llm
+            }
+            guard let extractor = extractionLLM as? any OnDeviceResearchSubjectExtracting else { return }
             var subjects: [ResearchSubject] = []
             if let subject = try? await extractor.extractResearchSubject(
                 .init(title: title, summary: summary)
@@ -507,6 +609,7 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
             }
             guard !subjects.isEmpty else { return }
             _ = await queue.enqueue(.init(
+                classifierTypeID: classifierTypeID,
                 platformID: platformID,
                 entryID: entryID,
                 creatorID: creatorID,
@@ -559,7 +662,10 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                 storedEntry = entry
             }
             state.workspaceCatalog.upsertKnowledgeEntry(storedEntry)
-            state.workspaceCatalog.removeResearchAttempt(subjectKey: entry.id)
+            state.workspaceCatalog.removeResearchAttempt(
+                subjectKey: entry.id,
+                classifierTypeID: triggeringTask.classifierTypeID
+            )
             state.workspaceCatalog.tokenUsage.insert(usage, at: 0)
             Self.pruneTokenUsage(&state.workspaceCatalog.tokenUsage)
             let affected = Self.affectedEntries(
@@ -594,33 +700,50 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                 state.workspaceCatalog,
                 state.settings.research,
                 groundedResearchQueue,
-                onDeviceLLM
+                onDeviceLLM,
+                onDeviceLLMEngineResolver,
+                state.settings.localLLM
             )
         }
-        let (catalog, settings, queue, llm) = snapshot
-        guard settings.enabled, let queue,
-              let extractor = llm as? any OnDeviceResearchSubjectExtracting else { return }
+        let (catalog, globalSettings, queue, defaultLLM, resolver, localLLMSettings) = snapshot
+        guard globalSettings.enabled, let queue else { return }
         let limit = min(32, max(1, requestedLimit))
         let eligible = catalog.videoClassifications
-            .filter { classification in
-                guard classification.source == .model else { return false }
-                return classification.tags.isEmpty ||
-                    (classification.tags.map(\.confidence).max() ?? 0) <= 2
-            }
+            .filter { $0.source == .model }
             .sorted { $0.updatedAtMilliseconds < $1.updatedAtMilliseconds }
         var seen = Set<String>()
-        let candidates = eligible.compactMap { classification -> CollectedPlatformEntry? in
-            let key = "\(classification.platformID)\u{1F}\(classification.entryID)"
+        let candidates = eligible.compactMap { classification -> (
+            entry: CollectedPlatformEntry,
+            classifierType: ClassifierTypeAsset,
+            settings: ResearchSettings
+        )? in
+            guard let classifierType = catalog.classifierTypes.first(where: {
+                $0.id == classification.classifierTypeID
+            }), let settings = Self.effectiveResearchSettings(
+                global: globalSettings,
+                for: classifierType
+            ), Self.shouldTriggerResearch(for: classification, settings: settings) else { return nil }
+            let key = "\(classification.classifierTypeID)\u{1F}\(classification.platformID)\u{1F}\(classification.entryID)"
             guard seen.insert(key).inserted else { return nil }
-            return Self.collectedEntry(
+            guard let entry = Self.collectedEntry(
                 platformID: classification.platformID,
                 entryID: classification.entryID,
                 catalog: catalog
-            )
+            ) else { return nil }
+            return (entry, classifierType, settings)
         }.prefix(limit)
 
         Task.detached(priority: .utility) {
-            for entry in candidates {
+            for candidate in candidates {
+                let entry = candidate.entry
+                let settings = candidate.settings
+                let llm = await Self.resolvedLLM(
+                    for: candidate.classifierType,
+                    defaultLLM: defaultLLM,
+                    resolver: resolver,
+                    configuration: localLLMSettings
+                )
+                guard let extractor = llm as? any OnDeviceResearchSubjectExtracting else { continue }
                 var subjects: [ResearchSubject] = []
                 if let subject = try? await extractor.extractResearchSubject(
                     .init(title: entry.title, summary: entry.summary)
@@ -633,6 +756,7 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                 }
                 guard !subjects.isEmpty else { continue }
                 _ = await queue.enqueue(.init(
+                    classifierTypeID: candidate.classifierType.id,
                     platformID: entry.platformID,
                     entryID: entry.entryID,
                     creatorID: entry.creatorID,
@@ -644,8 +768,8 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
 
     /// Stores an authoritative human correction, periodically refreshes the
     /// type's learned rule block, updates the cached projection, and—when the
-    /// user has opted in—schedules the same sanitized second-decode research
-    /// path used by explicit model declines.
+    /// user has opted in and the type's trigger includes corrections—schedules
+    /// the same sanitized second-decode research path used by model triggers.
     @discardableResult
     public func submitCorrection(
         classifierTypeID: String,
@@ -658,8 +782,11 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
             projection: VideoTagsProjection,
             entry: CollectedPlatformEntry,
             llm: any OnDeviceLLM,
+            resolver: (any OnDeviceLLMEngineResolving)?,
+            localLLMSettings: LocalLLMSettings,
             queue: GroundedResearchQueue?,
-            settings: ResearchSettings,
+            settings: ResearchSettings?,
+            classifierType: ClassifierTypeAsset,
             callback: (@Sendable (String, String, VideoTagsProjection) -> Void)?
         ) in
             guard let typeIndex = state.workspaceCatalog.classifierTypes.firstIndex(where: {
@@ -750,18 +877,27 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                 ),
                 entry,
                 onDeviceLLM,
+                onDeviceLLMEngineResolver,
+                state.settings.localLLM,
                 groundedResearchQueue,
-                state.settings.research,
+                Self.effectiveResearchSettings(global: state.settings.research, for: type),
+                type,
                 onVideoReclassifiedCallback
             )
         }
 
         saved.callback?(platformID, entryID, saved.projection)
-        if saved.settings.enabled, let queue = saved.queue {
+        if let settings = saved.settings,
+           settings.trigger.includesCorrections,
+           let queue = saved.queue {
             Self.scheduleResearchSubjectExtraction(
                 llm: saved.llm,
+                resolver: saved.resolver,
+                localLLMSettings: saved.localLLMSettings,
+                classifierType: saved.classifierType,
                 queue: queue,
-                settings: saved.settings,
+                settings: settings,
+                classifierTypeID: saved.classifierType.id,
                 platformID: platformID,
                 entryID: entryID,
                 creatorID: saved.entry.creatorID,

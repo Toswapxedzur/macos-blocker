@@ -36,7 +36,10 @@ private final class ResearchQueueHarness: @unchecked Sendable {
                 storedSnapshot.existingKnowledgeKeys.insert(result.knowledge.id)
                 storedSnapshot.tokenUsage.append(usage)
             case .failed(_, let attempt):
-                storedSnapshot.failedAttempts.removeAll { $0.subjectKey == attempt.subjectKey }
+                storedSnapshot.failedAttempts.removeAll {
+                    $0.classifierTypeID == attempt.classifierTypeID &&
+                        $0.subjectKey == attempt.subjectKey
+                }
                 storedSnapshot.failedAttempts.append(attempt)
             }
         }
@@ -97,8 +100,9 @@ final class GroundedResearchQueueTests: XCTestCase {
         )
     }
 
-    private func task(_ name: String, entryID: String = "entry") -> ResearchTask {
+    private func task(_ name: String, entryID: String = "entry", typeID: String = "type") -> ResearchTask {
         .init(
+            classifierTypeID: typeID,
             platformID: "youtube",
             entryID: entryID,
             creatorID: "creator",
@@ -109,8 +113,8 @@ final class GroundedResearchQueueTests: XCTestCase {
     func testQueueDeduplicatesAndPersistsSuccessfulUsage() async {
         let harness = ResearchQueueHarness(now: Date(timeIntervalSince1970: 1_700_000_000))
         let queue = GroundedResearchQueue(
-            configurationProvider: { .init(providers: self.providers(), requestsPerMinute: 120, dailyTokenLimit: 1_000) },
-            snapshotProvider: { harness.snapshot },
+            configurationProvider: { _ in .init(providers: self.providers(), requestsPerMinute: 120, dailyTokenLimit: 1_000) },
+            snapshotProvider: { _ in harness.snapshot },
             mutationWriter: { harness.write($0) },
             researcher: { subject, _ in
                 harness.recordResearch()
@@ -140,14 +144,15 @@ final class GroundedResearchQueueTests: XCTestCase {
         let harness = ResearchQueueHarness(now: now)
         harness.snapshot = .init(failedAttempts: [
             .init(
+                classifierTypeID: "type",
                 subjectKey: "term:hermitcraft",
                 lastAttemptAtMilliseconds: Int64(now.timeIntervalSince1970 * 1_000),
                 retryAfterMilliseconds: Int64(now.addingTimeInterval(3_600).timeIntervalSince1970 * 1_000)
             )
         ])
         let queue = GroundedResearchQueue(
-            configurationProvider: { .init(providers: self.providers(), requestsPerMinute: 6, dailyTokenLimit: 1_000) },
-            snapshotProvider: { harness.snapshot },
+            configurationProvider: { _ in .init(providers: self.providers(), requestsPerMinute: 6, dailyTokenLimit: 1_000) },
+            snapshotProvider: { _ in harness.snapshot },
             mutationWriter: { harness.write($0) },
             researcher: { _, _ in
                 harness.recordResearch()
@@ -166,11 +171,11 @@ final class GroundedResearchQueueTests: XCTestCase {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let harness = ResearchQueueHarness(now: now)
         harness.snapshot = .init(tokenUsage: [
-            .init(provider: "llm", model: "model", tokenCount: 100, status: GroundedResearchQueue.researchUsageStatus, createdAtMilliseconds: Int64(now.timeIntervalSince1970 * 1_000))
+            .init(provider: "llm", model: "model", tokenCount: 100, status: GroundedResearchQueue.researchUsageStatus, classifierTypeID: "type", createdAtMilliseconds: Int64(now.timeIntervalSince1970 * 1_000))
         ])
         let blocked = GroundedResearchQueue(
-            configurationProvider: { .init(providers: self.providers(), requestsPerMinute: 6, dailyTokenLimit: 100) },
-            snapshotProvider: { harness.snapshot },
+            configurationProvider: { _ in .init(providers: self.providers(), requestsPerMinute: 6, dailyTokenLimit: 100) },
+            snapshotProvider: { _ in harness.snapshot },
             mutationWriter: { harness.write($0) },
             researcher: { _, _ in
                 harness.recordResearch()
@@ -186,8 +191,8 @@ final class GroundedResearchQueueTests: XCTestCase {
 
         harness.snapshot = .init()
         let spaced = GroundedResearchQueue(
-            configurationProvider: { .init(providers: self.providers(), requestsPerMinute: 6, dailyTokenLimit: 1_000) },
-            snapshotProvider: { harness.snapshot },
+            configurationProvider: { _ in .init(providers: self.providers(), requestsPerMinute: 6, dailyTokenLimit: 1_000) },
+            snapshotProvider: { _ in harness.snapshot },
             mutationWriter: { harness.write($0) },
             researcher: { subject, _ in
                 harness.recordResearch()
@@ -209,11 +214,11 @@ final class GroundedResearchQueueTests: XCTestCase {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let harness = ResearchQueueHarness(now: now)
         harness.snapshot = .init(tokenUsage: [
-            .init(provider: "llm", model: "model", tokenCount: 90, status: GroundedResearchQueue.researchUsageStatus, createdAtMilliseconds: Int64(now.timeIntervalSince1970 * 1_000))
+            .init(provider: "llm", model: "model", tokenCount: 90, status: GroundedResearchQueue.researchUsageStatus, classifierTypeID: "type", createdAtMilliseconds: Int64(now.timeIntervalSince1970 * 1_000))
         ])
         let queue = GroundedResearchQueue(
-            configurationProvider: { .init(providers: self.providers(outputTokens: 100), requestsPerMinute: 120, dailyTokenLimit: 100) },
-            snapshotProvider: { harness.snapshot },
+            configurationProvider: { _ in .init(providers: self.providers(outputTokens: 100), requestsPerMinute: 120, dailyTokenLimit: 100) },
+            snapshotProvider: { _ in harness.snapshot },
             mutationWriter: { harness.write($0) },
             researcher: { subject, configuration in
                 XCTAssertEqual(configuration.maximumOutputTokens, 10)
@@ -237,12 +242,60 @@ final class GroundedResearchQueueTests: XCTestCase {
         XCTAssertEqual(harness.snapshot.tokenUsage.last?.tokenCount, 25)
     }
 
+    func testDailyBudgetAndFailureCooldownAreIndependentPerClassifierType() async {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let milliseconds = Int64(now.timeIntervalSince1970 * 1_000)
+        let harness = ResearchQueueHarness(now: now)
+        harness.snapshot = .init(
+            failedAttempts: [
+                .init(
+                    classifierTypeID: "type-a",
+                    subjectKey: "term:shared",
+                    lastAttemptAtMilliseconds: milliseconds,
+                    retryAfterMilliseconds: milliseconds + 3_600_000
+                ),
+            ],
+            tokenUsage: [
+                .init(
+                    provider: "llm", model: "model", tokenCount: 100,
+                    status: GroundedResearchQueue.researchUsageStatus,
+                    classifierTypeID: "type-a", createdAtMilliseconds: milliseconds
+                ),
+            ]
+        )
+        let queue = GroundedResearchQueue(
+            configurationProvider: { _ in
+                .init(providers: self.providers(), requestsPerMinute: 120, dailyTokenLimit: 100)
+            },
+            snapshotProvider: { _ in harness.snapshot },
+            mutationWriter: { harness.write($0) },
+            researcher: { subject, _ in
+                harness.recordResearch()
+                return .init(
+                    knowledge: .init(kind: subject.kind, subject: subject.subject, meaning: "meaning"),
+                    chargedTokenCount: 1
+                )
+            },
+            now: { harness.now },
+            sleeper: { harness.sleep($0) }
+        )
+
+        let acceptedA = await queue.enqueue(task("Shared", entryID: "a", typeID: "type-a"))
+        let acceptedB = await queue.enqueue(task("Shared", entryID: "b", typeID: "type-b"))
+        XCTAssertTrue(acceptedA)
+        XCTAssertTrue(acceptedB)
+        await queue.waitUntilIdle()
+
+        XCTAssertEqual(harness.researchCount, 1)
+        XCTAssertEqual(harness.snapshot.tokenUsage.last?.classifierTypeID, "type-b")
+    }
+
     func testQueueDropsSubjectsBeyondCapacity() async {
         let harness = ResearchQueueHarness(now: Date(timeIntervalSince1970: 1_700_000_000))
         let gate = FirstResearchGate()
         let queue = GroundedResearchQueue(
-            configurationProvider: { .init(providers: self.providers(), requestsPerMinute: 120, dailyTokenLimit: 10_000) },
-            snapshotProvider: { harness.snapshot },
+            configurationProvider: { _ in .init(providers: self.providers(), requestsPerMinute: 120, dailyTokenLimit: 10_000) },
+            snapshotProvider: { _ in harness.snapshot },
             mutationWriter: { harness.write($0) },
             researcher: { subject, _ in await gate.run(subject) },
             now: { harness.now },

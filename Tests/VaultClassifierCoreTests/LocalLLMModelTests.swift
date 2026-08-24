@@ -150,6 +150,38 @@ final class LocalLLMModelTests: XCTestCase {
         XCTAssertEqual(matched.dropFirst().first?.subject, subjects.last)
     }
 
+    func testMatchedKnowledgeHonorsPerRequestLimitAndTTL() {
+        var catalog = WorkspaceCatalog()
+        let day: Int64 = 24 * 60 * 60 * 1_000
+        catalog.upsertKnowledgeEntry(.init(
+            kind: .creator,
+            subject: "creator",
+            meaning: "stale",
+            updatedAtMilliseconds: day
+        ))
+        catalog.upsertKnowledgeEntry(.init(
+            kind: .term,
+            subject: "Current",
+            meaning: "fresh",
+            updatedAtMilliseconds: 10 * day
+        ))
+        catalog.upsertKnowledgeEntry(.init(
+            kind: .term,
+            subject: "Second",
+            meaning: "fresh too",
+            updatedAtMilliseconds: 10 * day
+        ))
+
+        let matched = catalog.matchedKnowledge(
+            title: "Current Second",
+            creatorID: "creator",
+            limit: 1,
+            ttlDays: 2,
+            nowMilliseconds: 10 * day
+        )
+        XCTAssertEqual(matched.map(\.subject), ["Current"])
+    }
+
     func testUpsertKnowledgeEntryDedupsByKey() {
         var catalog = WorkspaceCatalog()
         catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .term, subject: "HermitCraft", meaning: "old"))

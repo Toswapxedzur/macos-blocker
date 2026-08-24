@@ -83,7 +83,13 @@ final class VaultClassifierViewModel: ObservableObject {
     struct ClassifierTypeLocalModelWebInput: Equatable {
         var typeID: String
         var overrideEnabled: Bool
+        var modelFileName: String?
         var overrides: LocalModelOverrides?
+    }
+    struct ClassifierTypeResearchWebInput: Equatable {
+        var typeID: String
+        var overrideEnabled: Bool
+        var settings: ResearchSettings?
     }
     enum Workspace: String, CaseIterable, Identifiable, Hashable {
         case tagTree
@@ -189,6 +195,7 @@ final class VaultClassifierViewModel: ObservableObject {
     /// stays on the stub.
     private func installLocalLLMEngine(coordinator: LocalClassifierCoordinator) {
         let configuration = llmSettings
+        coordinator.setOnDeviceLLMEngineResolver(nil)
         guard configuration.engineEnabled else {
             coordinator.setOnDeviceLLM(StubOnDeviceLLM())
             llmEngineStatus = "disabled"
@@ -196,15 +203,18 @@ final class VaultClassifierViewModel: ObservableObject {
             return
         }
         guard let modelPath = VaultLocalLLMEngine.defaultModelPath(preferredFileName: configuration.modelFileName) else {
+            coordinator.setOnDeviceLLM(StubOnDeviceLLM())
             llmEngineStatus = "no-model"
             VaultDevLog.shared.log("llm", "engine-skipped", ["reason": "no-model-file"])
             return
         }
         llmEngineStatus = "loading"
+        let registry = LocalLLMEngineRegistry()
         Task.detached(priority: .userInitiated) {
             do {
-                let engine = try VaultLocalLLMEngine(modelPath: modelPath, configuration: configuration)
+                let engine = try await registry.engine(forModel: nil, configuration: configuration)
                 coordinator.setOnDeviceLLM(engine)
+                coordinator.setOnDeviceLLMEngineResolver(registry)
                 VaultDevLog.shared.log("llm", "engine-loaded", ["model": (modelPath as NSString).lastPathComponent])
                 await MainActor.run { [weak self] in
                     self?.llmEngineStatus = "loaded"
@@ -212,6 +222,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     self?.onWebStateChange?()
                 }
             } catch {
+                coordinator.setOnDeviceLLMEngineResolver(nil)
                 VaultDevLog.shared.log("llm", "engine-load-failed", ["error": String(describing: error)])
                 await MainActor.run { [weak self] in
                     self?.llmEngineStatus = "failed"
@@ -228,12 +239,15 @@ final class VaultClassifierViewModel: ObservableObject {
         let executor = GroundedResearchExecutor(http: URLSessionProviderHTTPClient())
         let queue = GroundedResearchQueue(
             executor: executor,
-            configurationProvider: { [weak coordinator] in
+            configurationProvider: { [weak coordinator] task in
                 guard let coordinator else { return nil }
-                return Self.groundedResearchConfiguration(from: coordinator.snapshot())
+                return Self.groundedResearchConfiguration(
+                    from: coordinator.snapshot(),
+                    classifierTypeID: task.classifierTypeID
+                )
             },
-            snapshotProvider: { [weak coordinator] in
-                coordinator?.groundedResearchQueueSnapshot() ?? .init()
+            snapshotProvider: { [weak coordinator] task in
+                coordinator?.groundedResearchQueueSnapshot(for: task) ?? .init()
             },
             mutationWriter: { [weak coordinator] mutation in
                 await coordinator?.recordResearchMutation(mutation)
@@ -256,12 +270,18 @@ final class VaultClassifierViewModel: ObservableObject {
     }
 
     nonisolated private static func groundedResearchConfiguration(
-        from state: LocalClassifierState
+        from state: LocalClassifierState,
+        classifierTypeID: String
     ) -> GroundedResearchQueueConfiguration? {
-        let settings = state.settings.research
+        let globalSettings = state.settings.research
+        guard let classifierType = state.workspaceCatalog.classifierTypes.first(where: {
+            $0.id == classifierTypeID
+        }), let settings = LocalClassifierCoordinator.effectiveResearchSettings(
+            global: globalSettings,
+            for: classifierType
+        ) else { return nil }
         let profiles = state.workspaceCatalog.providerProfiles
-        guard settings.enabled,
-              let llmProfileID = settings.llmProviderProfileID,
+        guard let llmProfileID = settings.llmProviderProfileID,
               let modelIdentifier = settings.llmModelIdentifier,
               let searchProfileID = settings.webSearchProviderProfileID,
               let llmProfile = profiles.first(where: { $0.id == llmProfileID }),
@@ -278,10 +298,13 @@ final class VaultClassifierViewModel: ObservableObject {
                 llmCredential: llmCredential,
                 llmModelIdentifier: modelIdentifier,
                 webSearchProfile: searchProfile,
-                webSearchCredential: searchCredential
+                webSearchCredential: searchCredential,
+                searchResultCount: settings.searchResultCount,
+                snippetContextChars: settings.snippetContextChars
             ),
             requestsPerMinute: settings.requestsPerMinute,
-            dailyTokenLimit: settings.dailyTokenLimit
+            dailyTokenLimit: settings.dailyTokenLimit,
+            failureCooldownMilliseconds: Int64(settings.cooldownHours) * 60 * 60 * 1_000
         )
     }
 
@@ -1091,6 +1114,14 @@ final class VaultClassifierViewModel: ObservableObject {
             }
             catalog.providerProfiles.removeAll(where: { $0.id == profileID })
             catalog.providerRequestRecords.removeAll(where: { $0.profileID == profileID })
+            for index in catalog.classifierTypes.indices {
+                guard let current = catalog.classifierTypes[index].researchOverrides else { continue }
+                let updated = Self.researchSettings(current, removingProviderID: profileID)
+                if updated != current {
+                    catalog.classifierTypes[index].researchOverrides = updated
+                    catalog.classifierTypes[index].updatedAtMilliseconds = WorkspaceCatalog.now()
+                }
+            }
             successfulProviderTestProfileIDs.remove(profileID)
             try coordinator?.updateWorkspaceCatalog(catalog)
             if let currentSettings = localState?.settings {
@@ -1305,6 +1336,8 @@ final class VaultClassifierViewModel: ObservableObject {
                 datasetRevision: dataset.revision,
                 applicablePlatformID: selectedBinding.id,
                 localModelOverrides: existingClassifierType.localModelOverrides,
+                modelFileName: existingClassifierType.modelFileName,
+                researchOverrides: existingClassifierType.researchOverrides,
                 order: catalog.classifierTypes[typeIndex].order
             )
             try coordinator?.updateWorkspaceCatalog(catalog)
@@ -1730,21 +1763,8 @@ final class VaultClassifierViewModel: ObservableObject {
     func saveResearchSettings(_ updated: ResearchSettings) {
         guard let coordinator else { return }
         do {
-            if updated.enabled {
-                guard let llmProfileID = updated.llmProviderProfileID,
-                      let searchProfileID = updated.webSearchProviderProfileID,
-                      let modelIdentifier = updated.llmModelIdentifier,
-                      !modelIdentifier.isEmpty,
-                      let catalog = localState?.workspaceCatalog,
-                      let llmProfile = catalog.providerProfiles.first(where: { $0.id == llmProfileID }),
-                      let searchProfile = catalog.providerProfiles.first(where: { $0.id == searchProfileID }),
-                      ProviderGenerationProtocol.supportsGeneration(profile: llmProfile),
-                      searchProfile.type.supportsRawWebSearch else {
-                    throw WebBridgeInputError.invalidChoice("research providers and model")
-                }
-                _ = try Self.researchCredential(for: llmProfile)
-                _ = try Self.researchCredential(for: searchProfile)
-            }
+            guard let catalog = localState?.workspaceCatalog else { return }
+            try Self.validateResearchSettingsForEnable(updated, catalog: catalog)
             let current = localState?.settings ?? .init()
             try coordinator.updateSettings(.init(
                 packageUpdateMode: current.packageUpdateMode,
@@ -1759,9 +1779,59 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
+    nonisolated private static func validateResearchSettingsForEnable(
+        _ settings: ResearchSettings,
+        catalog: WorkspaceCatalog
+    ) throws {
+        guard settings.enabled else { return }
+        guard let llmProfileID = settings.llmProviderProfileID,
+              let searchProfileID = settings.webSearchProviderProfileID,
+              let modelIdentifier = settings.llmModelIdentifier,
+              !modelIdentifier.isEmpty,
+              let llmProfile = catalog.providerProfiles.first(where: { $0.id == llmProfileID }),
+              let searchProfile = catalog.providerProfiles.first(where: { $0.id == searchProfileID }),
+              ProviderGenerationProtocol.supportsGeneration(profile: llmProfile),
+              searchProfile.type.supportsRawWebSearch else {
+            throw WebBridgeInputError.invalidChoice("research providers and model")
+        }
+        _ = try researchCredential(for: llmProfile)
+        _ = try researchCredential(for: searchProfile)
+    }
+
+    func saveClassifierTypeResearch(
+        typeID: String,
+        overrideEnabled: Bool,
+        settings: ResearchSettings?
+    ) {
+        do {
+            guard var catalog = localState?.workspaceCatalog,
+                  let index = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }),
+                  catalog.classifierTypes[index].applicablePlatformID
+                    .flatMap(CollectionPlatformRegistry.definition(for:))?.supportsLocalModel == true else {
+                throw WebBridgeInputError.invalidChoice("classifier type research")
+            }
+            let overrideSettings = overrideEnabled ? settings : nil
+            if let overrideSettings {
+                try Self.validateResearchSettingsForEnable(overrideSettings, catalog: catalog)
+            }
+            catalog.classifierTypes[index].researchOverrides = overrideSettings
+            catalog.classifierTypes[index].updatedAtMilliseconds = WorkspaceCatalog.now()
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+            if overrideSettings?.enabled == true,
+               localState?.settings.research.enabled == true {
+                coordinator?.startResearchBackfill()
+            }
+            issue = nil
+        } catch {
+            issue = error.localizedDescription
+        }
+    }
+
     func saveClassifierTypeLocalModel(
         typeID: String,
         overrideEnabled: Bool,
+        modelFileName: String?,
         houseRules: String?,
         allowDecline: Bool?,
         confidenceThresholds: [Double]?
@@ -1779,6 +1849,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 confidenceThresholds: confidenceThresholds
             ) : nil
             catalog.classifierTypes[index].localModelOverrides = overrides?.isEmpty == false ? overrides : nil
+            catalog.classifierTypes[index].modelFileName = modelFileName
             catalog.classifierTypes[index].updatedAtMilliseconds = WorkspaceCatalog.now()
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
@@ -1819,8 +1890,23 @@ final class VaultClassifierViewModel: ObservableObject {
         guard let overrideEnabled = data["overrideEnabled"] as? Bool else {
             throw WebBridgeInputError.missingValue("overrideEnabled")
         }
+        let modelFileName: String?
+        if let rawModelFileName = data["modelFileName"] as? String {
+            guard rawModelFileName.count <= 255 else {
+                throw WebBridgeInputError.exceedsLimit("modelFileName", 255)
+            }
+            let cleaned = rawModelFileName.trimmingCharacters(in: .whitespacesAndNewlines)
+            modelFileName = cleaned.isEmpty ? nil : cleaned
+        } else {
+            modelFileName = nil
+        }
         guard overrideEnabled else {
-            return .init(typeID: typeID, overrideEnabled: false, overrides: nil)
+            return .init(
+                typeID: typeID,
+                overrideEnabled: false,
+                modelFileName: modelFileName,
+                overrides: nil
+            )
         }
 
         let houseRules: String?
@@ -1845,7 +1931,50 @@ final class VaultClassifierViewModel: ObservableObject {
         return .init(
             typeID: typeID,
             overrideEnabled: true,
+            modelFileName: modelFileName,
             overrides: overrides.isEmpty ? nil : overrides
+        )
+    }
+
+    static func parseClassifierTypeResearchWebInput(
+        _ data: [String: Any]
+    ) throws -> ClassifierTypeResearchWebInput {
+        guard let typeID = data["typeID"] as? String, !typeID.isEmpty, typeID.count <= 256 else {
+            throw WebBridgeInputError.missingValue("typeID")
+        }
+        guard let overrideEnabled = data["overrideEnabled"] as? Bool else {
+            throw WebBridgeInputError.missingValue("overrideEnabled")
+        }
+        guard overrideEnabled else {
+            return .init(typeID: typeID, overrideEnabled: false, settings: nil)
+        }
+
+        let defaults = ResearchSettings()
+        func optionalString(_ key: String) -> String? { data[key] as? String }
+        func optionalInteger(_ key: String) -> Int? {
+            guard let raw = data[key] as? String else { return nil }
+            return Int(raw.replacingOccurrences(of: ",", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        return .init(
+            typeID: typeID,
+            overrideEnabled: true,
+            settings: ResearchSettings(
+                enabled: data["enabled"] as? Bool ?? defaults.enabled,
+                llmProviderProfileID: optionalString("llmProviderProfileID"),
+                llmModelIdentifier: optionalString("llmModelIdentifier"),
+                webSearchProviderProfileID: optionalString("webSearchProviderProfileID"),
+                requestsPerMinute: optionalInteger("requestsPerMinute") ?? defaults.requestsPerMinute,
+                dailyTokenLimit: optionalInteger("dailyTokenLimit") ?? defaults.dailyTokenLimit,
+                maxSubjectsPerVideo: optionalInteger("maxSubjectsPerVideo") ?? defaults.maxSubjectsPerVideo,
+                cooldownHours: optionalInteger("cooldownHours") ?? defaults.cooldownHours,
+                trigger: (data["trigger"] as? String).flatMap(ResearchTrigger.init(rawValue:)) ?? defaults.trigger,
+                confidenceTriggerLevel: optionalInteger("confidenceTriggerLevel") ?? defaults.confidenceTriggerLevel,
+                searchResultCount: optionalInteger("searchResultCount") ?? defaults.searchResultCount,
+                snippetContextChars: optionalInteger("snippetContextChars") ?? defaults.snippetContextChars,
+                knowledgeTTLDays: optionalInteger("knowledgeTTLDays") ?? defaults.knowledgeTTLDays,
+                maxKnowledgePerVideo: optionalInteger("maxKnowledgePerVideo") ?? defaults.maxKnowledgePerVideo
+            )
         )
     }
 
@@ -1930,6 +2059,12 @@ final class VaultClassifierViewModel: ObservableObject {
         return value
     }
 
+    private func nonnegativeInteger(_ raw: String, label: String) throws -> Int {
+        let digits = raw.replacingOccurrences(of: ",", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let value = Int(digits), value >= 0 else { throw AppInputError.invalidNumber(label) }
+        return value
+    }
+
     /// The WKWebView receives only the bounded local state necessary to render
     /// this development shell. Browser evidence, API keys, pairing material,
     /// stable identifiers stay in native storage.
@@ -1976,6 +2111,7 @@ final class VaultClassifierViewModel: ObservableObject {
                     "maximumTags": llmSettings.maximumTags,
                     "confidenceThresholds": llmSettings.confidenceThresholds,
                     "houseRules": llmSettings.houseRules,
+                    "maxResidentModels": llmSettings.maxResidentModels,
                     "engineStatus": llmEngineStatus,
                     "availableModels": VaultLocalLLMEngine.availableModelFiles(),
             ] as [String: Any],
@@ -1987,6 +2123,13 @@ final class VaultClassifierViewModel: ObservableObject {
                 "requestsPerMinute": researchSettings.requestsPerMinute,
                 "dailyTokenLimit": researchSettings.dailyTokenLimit,
                 "maxSubjectsPerVideo": researchSettings.maxSubjectsPerVideo,
+                "cooldownHours": researchSettings.cooldownHours,
+                "trigger": researchSettings.trigger.rawValue,
+                "confidenceTriggerLevel": researchSettings.confidenceTriggerLevel,
+                "searchResultCount": researchSettings.searchResultCount,
+                "snippetContextChars": researchSettings.snippetContextChars,
+                "knowledgeTTLDays": researchSettings.knowledgeTTLDays,
+                "maxKnowledgePerVideo": researchSettings.maxKnowledgePerVideo,
                 "tokensUsedToday": GroundedResearchQueue.usedResearchTokens(in: catalog.tokenUsage, at: Date()),
             ] as [String: Any],
         ]
@@ -2027,6 +2170,25 @@ final class VaultClassifierViewModel: ObservableObject {
                             "houseRules": overrides.houseRules ?? NSNull(),
                             "allowDecline": overrides.allowDecline ?? NSNull(),
                             "confidenceThresholds": overrides.confidenceThresholds ?? NSNull(),
+                        ] as [String: Any]
+                    } ?? NSNull(),
+                    "modelFileName": classifierType.modelFileName ?? "",
+                    "researchOverrides": classifierType.researchOverrides.map { research in
+                        [
+                            "enabled": research.enabled,
+                            "llmProviderProfileID": research.llmProviderProfileID ?? "",
+                            "llmModelIdentifier": research.llmModelIdentifier ?? "",
+                            "webSearchProviderProfileID": research.webSearchProviderProfileID ?? "",
+                            "requestsPerMinute": research.requestsPerMinute,
+                            "dailyTokenLimit": research.dailyTokenLimit,
+                            "maxSubjectsPerVideo": research.maxSubjectsPerVideo,
+                            "cooldownHours": research.cooldownHours,
+                            "trigger": research.trigger.rawValue,
+                            "confidenceTriggerLevel": research.confidenceTriggerLevel,
+                            "searchResultCount": research.searchResultCount,
+                            "snippetContextChars": research.snippetContextChars,
+                            "knowledgeTTLDays": research.knowledgeTTLDays,
+                            "maxKnowledgePerVideo": research.maxKnowledgePerVideo,
                         ] as [String: Any]
                     } ?? NSNull(),
                 ] as [String: Any]
@@ -2295,7 +2457,11 @@ final class VaultClassifierViewModel: ObservableObject {
                     allowDecline: try webBool(data, key: "allowDecline"),
                     maximumTags: try positiveInteger(try webString(data, key: "maximumTags", limit: 16), label: "Maximum tags"),
                     confidenceThresholds: thresholds,
-                    houseRules: try webString(data, key: "houseRules", limit: 4_000)
+                    houseRules: try webString(data, key: "houseRules", limit: 4_000),
+                    maxResidentModels: try positiveInteger(
+                        try webString(data, key: "maxResidentModels", limit: 16),
+                        label: "Resident models"
+                    )
                 ))
             case "saveResearchSettings":
                 saveResearchSettings(ResearchSettings(
@@ -2314,6 +2480,37 @@ final class VaultClassifierViewModel: ObservableObject {
                     maxSubjectsPerVideo: try positiveInteger(
                         try webString(data, key: "maxSubjectsPerVideo", limit: 16),
                         label: "Research subjects per video"
+                    ),
+                    cooldownHours: try positiveInteger(
+                        try webString(data, key: "cooldownHours", limit: 16),
+                        label: "Research cooldown hours"
+                    ),
+                    trigger: try {
+                        let raw = try webString(data, key: "trigger", limit: 64)
+                        guard let value = ResearchTrigger(rawValue: raw) else {
+                            throw WebBridgeInputError.invalidChoice("research trigger")
+                        }
+                        return value
+                    }(),
+                    confidenceTriggerLevel: try positiveInteger(
+                        try webString(data, key: "confidenceTriggerLevel", limit: 16),
+                        label: "Research confidence trigger"
+                    ),
+                    searchResultCount: try positiveInteger(
+                        try webString(data, key: "searchResultCount", limit: 16),
+                        label: "Research search results"
+                    ),
+                    snippetContextChars: try positiveInteger(
+                        try webString(data, key: "snippetContextChars", limit: 16),
+                        label: "Research snippet context"
+                    ),
+                    knowledgeTTLDays: try nonnegativeInteger(
+                        try webString(data, key: "knowledgeTTLDays", limit: 16),
+                        label: "Research knowledge TTL"
+                    ),
+                    maxKnowledgePerVideo: try positiveInteger(
+                        try webString(data, key: "maxKnowledgePerVideo", limit: 16),
+                        label: "Research knowledge per video"
                     )
                 ))
             case "submitCorrection":
@@ -2334,9 +2531,17 @@ final class VaultClassifierViewModel: ObservableObject {
                 saveClassifierTypeLocalModel(
                     typeID: input.typeID,
                     overrideEnabled: input.overrideEnabled,
+                    modelFileName: input.modelFileName,
                     houseRules: input.overrides?.houseRules,
                     allowDecline: input.overrides?.allowDecline,
                     confidenceThresholds: input.overrides?.confidenceThresholds
+                )
+            case "saveClassifierTypeResearch":
+                let input = try Self.parseClassifierTypeResearchWebInput(data)
+                saveClassifierTypeResearch(
+                    typeID: input.typeID,
+                    overrideEnabled: input.overrideEnabled,
+                    settings: input.settings
                 )
             case "setBackupOwnerCode":
                 backupOwnerCode = try webString(data, key: "ownerCode", limit: 512)
