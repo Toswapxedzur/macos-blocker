@@ -87,6 +87,13 @@ private struct ImmediateSubjectLLM: OnDeviceLLM, OnDeviceResearchSubjectExtracti
     }
 }
 
+private final class ResearchSubjectRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [ResearchSubject] = []
+    func append(_ subject: ResearchSubject) { lock.withLock { stored.append(subject) } }
+    var subjects: [ResearchSubject] { lock.withLock { stored } }
+}
+
 private actor CountingEngineResolver: OnDeviceLLMEngineResolving {
     private(set) var requestedFiles: [String] = []
     let engine: any OnDeviceLLM
@@ -563,6 +570,107 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         probe.release()
         for _ in 0..<20 { await Task.yield() }
         await queue.waitUntilIdle()
+    }
+
+    /// End-to-end: a fake, unrecognized title is declined by the model, which
+    /// triggers grounded research — and only the *sanitized* subjects (the
+    /// extracted term and the @handle) ever reach the research queue. The raw
+    /// title text and the raw `youtube:handle:` creator ID never leave.
+    func testFakeDecliningTitleTriggersResearchAndOnlySanitizedSubjectsLeave() async throws {
+        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try coordinator.updateSettings(.init(research: .init(enabled: true, trigger: .declineOnly)))
+        let recorder = ResearchSubjectRecorder()
+        let queue = GroundedResearchQueue(
+            configurationProvider: { _ in
+                .init(
+                    providers: .init(
+                        searchMode: .providerGrounding,
+                        llmProfile: .init(id: "llm", type: .gemini, credential: "k"),
+                        llmCredential: .init(values: [.apiKey: "k"]),
+                        llmModelIdentifier: "gemini-2.0-flash"
+                    ),
+                    requestsPerMinute: 600,
+                    dailyTokenLimit: 1_000_000
+                )
+            },
+            snapshotProvider: { _ in .init() },
+            mutationWriter: { _ in },
+            researcher: { subject, _ in
+                recorder.append(subject)
+                return .init(
+                    knowledge: .init(kind: subject.kind, subject: subject.subject, meaning: "meaning"),
+                    chargedTokenCount: 1
+                )
+            }
+        )
+        coordinator.setGroundedResearchQueue(queue)
+        // Declines every title, then extracts "HermitCraft" as the subject.
+        coordinator.setOnDeviceLLM(ImmediateSubjectLLM(probe: ImmediateSubjectProbe()))
+
+        let projection = try await coordinator.classifyVideo(
+            platformID: "youtube", entryID: "youtube:video:fake",
+            creatorID: "youtube:handle:@creator",
+            title: "Totally unrecognized nonsense zzzqqq"
+        )
+        XCTAssertTrue(projection.tags.isEmpty, "an unrecognized title should be declined by the model")
+
+        // The second decode is fire-and-forget: wait for it to extract, enqueue,
+        // and drain (the term subject plus the sanitized creator handle).
+        for _ in 0..<200 where recorder.subjects.count < 2 {
+            try? await Task<Never, Never>.sleep(nanoseconds: 2_000_000)
+        }
+        await queue.waitUntilIdle()
+        let leaked = recorder.subjects.map(\.subject)
+        XCTAssertTrue(leaked.contains("HermitCraft"), "the extracted term subject should trigger research")
+        XCTAssertTrue(leaked.contains("@creator"), "the creator ID should be sanitized to its @handle")
+        for subject in leaked {
+            XCTAssertFalse(subject.lowercased().contains("nonsense"), "raw title text must never leave the device")
+            XCTAssertFalse(subject.contains("youtube:"), "raw creator/channel IDs must never leave the device")
+        }
+    }
+
+    /// The contrast case: a title the model classifies confidently is not a
+    /// decline, so under the default declineOnly policy it triggers no research.
+    func testConfidentlyTaggedTitleDoesNotTriggerResearch() async throws {
+        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try coordinator.updateSettings(.init(research: .init(enabled: true, trigger: .declineOnly)))
+        let recorder = ResearchSubjectRecorder()
+        let queue = GroundedResearchQueue(
+            configurationProvider: { _ in
+                .init(
+                    providers: .init(
+                        llmProfile: .init(id: "llm", type: .gemini, credential: "k"),
+                        llmCredential: .init(values: [.apiKey: "k"]),
+                        llmModelIdentifier: "gemini-2.0-flash"
+                    ),
+                    requestsPerMinute: 600,
+                    dailyTokenLimit: 1_000_000
+                )
+            },
+            snapshotProvider: { _ in .init() },
+            mutationWriter: { _ in },
+            researcher: { subject, _ in
+                recorder.append(subject)
+                return .init(
+                    knowledge: .init(kind: subject.kind, subject: subject.subject, meaning: "m"),
+                    chargedTokenCount: 1
+                )
+            }
+        )
+        coordinator.setGroundedResearchQueue(queue)
+        // Default stub selects allowed tag names present in the title ("Games").
+
+        let projection = try await coordinator.classifyVideo(
+            platformID: "youtube", entryID: "youtube:video:games",
+            creatorID: "c1", title: "A great Games montage"
+        )
+        XCTAssertEqual(projection.tags.map(\.id), ["g"], "a clear title should classify, not decline")
+
+        for _ in 0..<50 { await Task.yield() }
+        await queue.waitUntilIdle()
+        XCTAssertTrue(recorder.subjects.isEmpty, "a confident classification must not trigger research")
     }
 
     func testResearchBackfillSweepsPersistedLowConfidenceRowsWithinBound() async throws {
