@@ -37,11 +37,8 @@ final class SharedHubBrokerTests: XCTestCase {
         XCTAssertEqual(restored["title"] as? String, title)
     }
 
-    func testWebBridgeAcceptsTheCompleteClassifierTypeForm() {
-        // Name, platform/model selections, twelve LLM controls, and three
-        // decision-priority controls currently produce 18 bounded fields.
-        XCTAssertGreaterThanOrEqual(VaultClassifierWebShell.maximumWebActionDataFields, 18)
-        XCTAssertLessThanOrEqual(VaultClassifierWebShell.maximumWebActionDataFields, 24)
+    func testWebBridgeKeepsActionPayloadsBounded() {
+        XCTAssertEqual(VaultClassifierWebShell.maximumWebActionDataFields, 24)
     }
 
     func testWebStateDeliveryPreservesCollectedMetadataAcrossScripts() throws {

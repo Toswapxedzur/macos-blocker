@@ -91,7 +91,7 @@ public struct TagTreeAsset: Codable, Equatable, Sendable, Identifiable {
     public var revision: Int
     public var nodes: [TagTreeNode]
     /// Persisted separately from semantic tree revision so a presentation-only
-    /// color migration runs exactly once without invalidating trained models.
+    /// color migration runs exactly once without invalidating semantic revisions.
     public var colorAlgorithmVersion: Int
     public var updatedAtMilliseconds: Int64
 
@@ -362,7 +362,9 @@ public struct ClassificationDataset: Codable, Equatable, Sendable, Identifiable 
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        _ = try decoder.container(keyedBy: RetiredCodingKeys.self)
+        let retired = try decoder.container(keyedBy: RetiredCodingKeys.self)
+        _ = retired.contains(.records)
+        _ = retired.contains(.creatorClassifications)
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         collectedEntries = Array(
@@ -372,392 +374,8 @@ public struct ClassificationDataset: Codable, Equatable, Sendable, Identifiable 
         revision = try container.decodeIfPresent(Int.self, forKey: .revision) ?? 1
     }
 }
-public enum LocalBaseEmbedding: String, Codable, Sendable, CaseIterable {
-    case allMiniLML6V2 = "all-MiniLM-L6-v2"
-    case allMPNetBaseV2 = "all-mpnet-base-v2"
-    case multilingualE5Small = "multilingual-e5-small"
-    case multilingualE5Base = "multilingual-e5-base"
-    case multilingualE5Large = "multilingual-e5-large"
-    case bgeM3 = "bge-m3"
-
-    /// Downloadable base embeddings are sealed off for now: a local model uses
-    /// only the native on-device embedding. The cases above and their loading,
-    /// storage, and label machinery are intentionally retained, not deleted —
-    /// re-enable a package simply by listing it here again.
-    public static var selectableCases: [LocalBaseEmbedding] { [] }
-}
-
-public struct LocalModelAsset: Codable, Equatable, Sendable, Identifiable {
-    public var id: String
-    public var name: String
-    public var classifierTypeID: String
-    public var treeID: String
-    public var treeRevision: Int
-    public var datasetID: String
-    public var datasetRevision: Int
-    public var version: Int
-    public var baseEmbeddingID: LocalBaseEmbedding?
-
-    public init(
-        id: String = UUID().uuidString,
-        name: String,
-        classifierTypeID: String,
-        treeID: String,
-        treeRevision: Int,
-        datasetID: String,
-        datasetRevision: Int,
-        version: Int = 1,
-        baseEmbeddingID: LocalBaseEmbedding? = nil
-    ) {
-        self.id = id
-        self.name = name
-        self.classifierTypeID = classifierTypeID
-        self.treeID = treeID
-        self.treeRevision = treeRevision
-        self.datasetID = datasetID
-        self.datasetRevision = datasetRevision
-        self.version = version
-        self.baseEmbeddingID = baseEmbeddingID
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case id, name, classifierTypeID, treeID, treeRevision, datasetID, datasetRevision, version, baseEmbeddingID
-    }
-
-    private enum RetiredCodingKeys: String, CodingKey {
-        case isReady, trainingPlatformID, trainingPlatformIDs, incorporatedDecisionIDs
-        case embeddedNeuralModel, embeddedTrainingReport, trainedAtMilliseconds
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        _ = try decoder.container(keyedBy: RetiredCodingKeys.self)
-        id = try container.decode(String.self, forKey: .id)
-        name = try container.decode(String.self, forKey: .name)
-        classifierTypeID = try container.decodeIfPresent(String.self, forKey: .classifierTypeID) ?? ""
-        treeID = try container.decode(String.self, forKey: .treeID)
-        treeRevision = try container.decode(Int.self, forKey: .treeRevision)
-        datasetID = try container.decode(String.self, forKey: .datasetID)
-        datasetRevision = try container.decode(Int.self, forKey: .datasetRevision)
-        version = try container.decodeIfPresent(Int.self, forKey: .version) ?? 1
-        baseEmbeddingID = try container.decodeIfPresent(LocalBaseEmbedding.self, forKey: .baseEmbeddingID)
-    }
-}
-/// Web search is either executed by the model provider or exposed to the
-/// classifier model as one app-owned external function. The attached mode is
-/// deliberately not a prefetch: the model decides whether to call it.
-public enum LLMWebSearchMode: String, Codable, Sendable, CaseIterable {
-    case off
-    case providerNative
-    case attached
-}
-
-/// The one explicit LLM decision configuration a classifier type may use.
-/// It contains no credential material: `providerProfileID` refers to a
-/// separate local profile. The credential is not duplicated into this
-/// classifier configuration.
-public struct LLMAssistConfiguration: Codable, Equatable, Sendable {
-    public static let maximumModelIdentifierLength = 256
-    public static let defaultDailyTokenLimit = 10_000
-    public static let maximumDailyTokenLimit = 1_000_000
-    public static let defaultMaximumOutputTokensPerRequest = 4_096
-    public static let maximumOutputTokensPerRequest = 1_000_000
-    public static let maximumExtraDirectionLength = 4_096
-    /// The conservative default leaves ten seconds between provider requests.
-    public static let defaultClassificationRequestsPerMinute = 6
-    public static let maximumClassificationRequestsPerMinute = 120
-    public static let defaultBatchSize = 5
-    public static let maximumBatchSize = 32
-    /// The maximum official recent-content records requested by any platform
-    /// adapter. An adapter may return fewer when its documented API has a lower
-    /// limit, but no platform receives a smaller app-owned evidence setting.
-    public static let defaultOfficialContentEvidenceCount = 25
-    public static let maximumOfficialContentEvidenceCount = 50
-    public static let defaultMaximumTagCount = 8
-
-    public var providerProfileID: String
-    public var modelIdentifier: String
-    /// A per-classifier-type daily ceiling. Individual provider requests are
-    /// also capped by the remaining allowance and the user's per-request cap.
-    public var dailyTokenLimit: Int
-    /// The maximum output-token allowance sent for one model request. The
-    /// remaining daily allowance can lower the effective request cap.
-    public var maximumOutputTokensPerRequest: Int
-    /// Optional owner-authored classification context appended before the
-    /// fixed output contract. It cannot expand the accepted response schema.
-    public var extraDirection: String
-    /// The maximum rate at which the app starts model-classification requests.
-    /// Provider response time may make completed classifications slower.
-    public var classificationRequestsPerMinute: Int
-    /// The number of creators an explicit batch action may classify in order.
-    public var batchSize: Int
-    /// The maximum number of recent official content records requested by the
-    /// applicable platform adapter for one creator prompt.
-    public var officialContentEvidenceCount: Int
-    /// A bounded response may contain no more than this many tag IDs.
-    public var maximumTagCount: Int
-    /// When enabled, only active leaf tags are included in the model prompt.
-    /// When disabled, active parent tags are also available as generic labels.
-    public var restrictToLeafTags: Bool
-    /// Selects either provider-hosted search or one app-owned external search
-    /// function. Off means no search capability is sent to the model.
-    public var webSearchMode: LLMWebSearchMode
-    /// The Serper or You.com Search connection executed only after the same
-    /// classifier model calls the attached `web_search` function.
-    public var webSearchProviderProfileID: String?
-    public init(
-        providerProfileID: String,
-        modelIdentifier: String,
-        dailyTokenLimit: Int = Self.defaultDailyTokenLimit,
-        maximumOutputTokensPerRequest: Int = Self.defaultMaximumOutputTokensPerRequest,
-        extraDirection: String = "",
-        classificationRequestsPerMinute: Int = Self.defaultClassificationRequestsPerMinute,
-        batchSize: Int = Self.defaultBatchSize,
-        officialContentEvidenceCount: Int = Self.defaultOfficialContentEvidenceCount,
-        maximumTagCount: Int = Self.defaultMaximumTagCount,
-        restrictToLeafTags: Bool = true,
-        webSearchMode: LLMWebSearchMode = .off,
-        webSearchProviderProfileID: String? = nil
-    ) {
-        self.providerProfileID = providerProfileID
-        self.modelIdentifier = modelIdentifier
-        self.dailyTokenLimit = dailyTokenLimit
-        self.maximumOutputTokensPerRequest = maximumOutputTokensPerRequest
-        self.extraDirection = String(extraDirection.trimmingCharacters(in: .whitespacesAndNewlines).prefix(Self.maximumExtraDirectionLength))
-        self.classificationRequestsPerMinute = classificationRequestsPerMinute
-        self.batchSize = batchSize
-        self.officialContentEvidenceCount = officialContentEvidenceCount
-        self.maximumTagCount = maximumTagCount
-        self.restrictToLeafTags = restrictToLeafTags
-        self.webSearchMode = webSearchMode
-        let cleanedSearchProfileID = webSearchProviderProfileID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        self.webSearchProviderProfileID = webSearchMode == .attached && !cleanedSearchProfileID.isEmpty
-            ? cleanedSearchProfileID
-            : nil
-    }
-
-    public func validate() throws {
-        let cleanedProviderProfileID = providerProfileID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cleanedModelIdentifier = modelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cleanedSearchProfileID = webSearchProviderProfileID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !cleanedProviderProfileID.isEmpty, cleanedProviderProfileID.count <= 128,
-              !cleanedModelIdentifier.isEmpty, cleanedModelIdentifier.count <= Self.maximumModelIdentifierLength,
-              dailyTokenLimit > 0, dailyTokenLimit <= Self.maximumDailyTokenLimit,
-              maximumOutputTokensPerRequest > 0, maximumOutputTokensPerRequest <= Self.maximumOutputTokensPerRequest,
-              extraDirection.count <= Self.maximumExtraDirectionLength,
-              classificationRequestsPerMinute > 0,
-              classificationRequestsPerMinute <= Self.maximumClassificationRequestsPerMinute,
-              batchSize > 0, batchSize <= Self.maximumBatchSize,
-              officialContentEvidenceCount > 0,
-              officialContentEvidenceCount <= Self.maximumOfficialContentEvidenceCount,
-              maximumTagCount > 0, maximumTagCount <= EntryEvidenceValidator.tagLimit,
-              cleanedSearchProfileID.count <= 128,
-              (webSearchMode == .attached) == !cleanedSearchProfileID.isEmpty else {
-            throw LLMAssistConfigurationError.invalidConfiguration
-        }
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case providerProfileID, modelIdentifier, dailyTokenLimit, maximumOutputTokensPerRequest, extraDirection, classificationRequestsPerMinute, batchSize,
-             officialContentEvidenceCount, maximumTagCount, restrictToLeafTags, webSearchMode, webSearchEnabled, webSearchProviderProfileID, isActive,
-             dailyOutputTokenLimit, youtubeVideoEvidenceCount,
-             webResearchProviderProfileID, webResearchModelIdentifier,
-             externalToolEnabled, usePlatformAPIKeyFallback,
-             maximumTokens, externalToolProfileID
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        providerProfileID = try container.decode(String.self, forKey: .providerProfileID)
-        modelIdentifier = try container.decode(String.self, forKey: .modelIdentifier)
-        // Previous per-request token caps and hand-picked tool profile IDs are
-        // retired. Decode them only as ignored keys so existing local state
-        // opens safely; never restore their old behaviour.
-        dailyTokenLimit = try container.decodeIfPresent(Int.self, forKey: .dailyTokenLimit)
-            ?? container.decodeIfPresent(Int.self, forKey: .dailyOutputTokenLimit)
-            ?? Self.defaultDailyTokenLimit
-        maximumOutputTokensPerRequest = try container.decodeIfPresent(Int.self, forKey: .maximumOutputTokensPerRequest)
-            ?? Self.defaultMaximumOutputTokensPerRequest
-        extraDirection = String((try container.decodeIfPresent(String.self, forKey: .extraDirection) ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .prefix(Self.maximumExtraDirectionLength))
-        classificationRequestsPerMinute = try container.decodeIfPresent(Int.self, forKey: .classificationRequestsPerMinute)
-            ?? Self.defaultClassificationRequestsPerMinute
-        batchSize = try container.decodeIfPresent(Int.self, forKey: .batchSize) ?? Self.defaultBatchSize
-        officialContentEvidenceCount = try container.decodeIfPresent(Int.self, forKey: .officialContentEvidenceCount)
-            ?? container.decodeIfPresent(Int.self, forKey: .youtubeVideoEvidenceCount)
-            ?? Self.defaultOfficialContentEvidenceCount
-        maximumTagCount = try container.decodeIfPresent(Int.self, forKey: .maximumTagCount)
-            ?? Self.defaultMaximumTagCount
-        restrictToLeafTags = try container.decodeIfPresent(Bool.self, forKey: .restrictToLeafTags) ?? true
-        let decodedSearchProfileID = (try container.decodeIfPresent(String.self, forKey: .webSearchProviderProfileID)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
-        if let decodedMode = try container.decodeIfPresent(LLMWebSearchMode.self, forKey: .webSearchMode) {
-            webSearchMode = decodedMode
-        } else if try container.decodeIfPresent(Bool.self, forKey: .webSearchEnabled) == true {
-            webSearchMode = decodedSearchProfileID.isEmpty ? .providerNative : .attached
-        } else {
-            webSearchMode = .off
-        }
-        webSearchProviderProfileID = webSearchMode == .attached && !decodedSearchProfileID.isEmpty
-            ? decodedSearchProfileID
-            : nil
-        // The retired two-model research selection is intentionally discarded.
-        // It is decoded only so existing local state opens without a crash.
-        _ = try container.decodeIfPresent(String.self, forKey: .webResearchProviderProfileID)
-        _ = try container.decodeIfPresent(String.self, forKey: .webResearchModelIdentifier)
-        // These retired toggles are read only to let existing local state open
-        // safely. Creator evidence now follows the platform's fixed strategy;
-        // public creator-page scraping has no replacement path.
-        _ = try container.decodeIfPresent(Bool.self, forKey: .externalToolEnabled)
-        _ = try container.decodeIfPresent(Bool.self, forKey: .usePlatformAPIKeyFallback)
-        _ = try container.decodeIfPresent(Bool.self, forKey: .isActive)
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(providerProfileID, forKey: .providerProfileID)
-        try container.encode(modelIdentifier, forKey: .modelIdentifier)
-        try container.encode(dailyTokenLimit, forKey: .dailyTokenLimit)
-        try container.encode(maximumOutputTokensPerRequest, forKey: .maximumOutputTokensPerRequest)
-        try container.encode(extraDirection, forKey: .extraDirection)
-        try container.encode(classificationRequestsPerMinute, forKey: .classificationRequestsPerMinute)
-        try container.encode(batchSize, forKey: .batchSize)
-        try container.encode(officialContentEvidenceCount, forKey: .officialContentEvidenceCount)
-        try container.encode(maximumTagCount, forKey: .maximumTagCount)
-        try container.encode(restrictToLeafTags, forKey: .restrictToLeafTags)
-        try container.encode(webSearchMode, forKey: .webSearchMode)
-        try container.encodeIfPresent(webSearchProviderProfileID, forKey: .webSearchProviderProfileID)
-    }
-}
-
-public enum LLMAssistConfigurationError: Error, Equatable, LocalizedError, Sendable {
-    case invalidConfiguration
-
-    public var errorDescription: String? {
-        "The LLM-assist configuration is invalid."
-    }
-}
-
-/// Durable form state for a selected provider before it has one fetched model
-/// attached. Keeping this separate from `LLMAssistConfiguration` means a
-/// rerender or relaunch cannot discard edits simply because model selection is
-/// the last step of configuration.
-public struct LLMAssistDraftConfiguration: Codable, Equatable, Sendable {
-    public var providerProfileID: String
-    public var dailyTokenLimit: Int
-    public var maximumOutputTokensPerRequest: Int
-    public var extraDirection: String
-    public var classificationRequestsPerMinute: Int
-    public var batchSize: Int
-    public var officialContentEvidenceCount: Int
-    public var maximumTagCount: Int
-    public var restrictToLeafTags: Bool
-    public var webSearchMode: LLMWebSearchMode
-    public var webSearchProviderProfileID: String?
-
-    public init(
-        providerProfileID: String,
-        dailyTokenLimit: Int = LLMAssistConfiguration.defaultDailyTokenLimit,
-        maximumOutputTokensPerRequest: Int = LLMAssistConfiguration.defaultMaximumOutputTokensPerRequest,
-        extraDirection: String = "",
-        classificationRequestsPerMinute: Int = LLMAssistConfiguration.defaultClassificationRequestsPerMinute,
-        batchSize: Int = LLMAssistConfiguration.defaultBatchSize,
-        officialContentEvidenceCount: Int = LLMAssistConfiguration.defaultOfficialContentEvidenceCount,
-        maximumTagCount: Int = LLMAssistConfiguration.defaultMaximumTagCount,
-        restrictToLeafTags: Bool = true,
-        webSearchMode: LLMWebSearchMode = .off,
-        webSearchProviderProfileID: String? = nil
-    ) {
-        self.providerProfileID = providerProfileID.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.dailyTokenLimit = dailyTokenLimit
-        self.maximumOutputTokensPerRequest = maximumOutputTokensPerRequest
-        self.extraDirection = String(extraDirection.trimmingCharacters(in: .whitespacesAndNewlines).prefix(LLMAssistConfiguration.maximumExtraDirectionLength))
-        self.classificationRequestsPerMinute = classificationRequestsPerMinute
-        self.batchSize = batchSize
-        self.officialContentEvidenceCount = officialContentEvidenceCount
-        self.maximumTagCount = maximumTagCount
-        self.restrictToLeafTags = restrictToLeafTags
-        self.webSearchMode = webSearchMode
-        let cleanedSearchProfileID = webSearchProviderProfileID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        self.webSearchProviderProfileID = webSearchMode == .attached && !cleanedSearchProfileID.isEmpty
-            ? cleanedSearchProfileID
-            : nil
-    }
-
-    public func validate() throws {
-        try configuration(modelIdentifier: "draft-model").validate()
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case providerProfileID, dailyTokenLimit, maximumOutputTokensPerRequest,
-             extraDirection, classificationRequestsPerMinute, batchSize,
-             officialContentEvidenceCount, maximumTagCount, restrictToLeafTags,
-             webSearchMode, webSearchProviderProfileID,
-             dailyOutputTokenLimit, youtubeVideoEvidenceCount
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.init(
-            providerProfileID: try container.decode(String.self, forKey: .providerProfileID),
-            dailyTokenLimit: try container.decodeIfPresent(Int.self, forKey: .dailyTokenLimit)
-                ?? container.decodeIfPresent(Int.self, forKey: .dailyOutputTokenLimit)
-                ?? LLMAssistConfiguration.defaultDailyTokenLimit,
-            maximumOutputTokensPerRequest: try container.decodeIfPresent(Int.self, forKey: .maximumOutputTokensPerRequest)
-                ?? LLMAssistConfiguration.defaultMaximumOutputTokensPerRequest,
-            extraDirection: try container.decodeIfPresent(String.self, forKey: .extraDirection) ?? "",
-            classificationRequestsPerMinute: try container.decodeIfPresent(Int.self, forKey: .classificationRequestsPerMinute)
-                ?? LLMAssistConfiguration.defaultClassificationRequestsPerMinute,
-            batchSize: try container.decodeIfPresent(Int.self, forKey: .batchSize)
-                ?? LLMAssistConfiguration.defaultBatchSize,
-            officialContentEvidenceCount: try container.decodeIfPresent(Int.self, forKey: .officialContentEvidenceCount)
-                ?? container.decodeIfPresent(Int.self, forKey: .youtubeVideoEvidenceCount)
-                ?? LLMAssistConfiguration.defaultOfficialContentEvidenceCount,
-            maximumTagCount: try container.decodeIfPresent(Int.self, forKey: .maximumTagCount)
-                ?? LLMAssistConfiguration.defaultMaximumTagCount,
-            restrictToLeafTags: try container.decodeIfPresent(Bool.self, forKey: .restrictToLeafTags) ?? true,
-            webSearchMode: try container.decodeIfPresent(LLMWebSearchMode.self, forKey: .webSearchMode) ?? .off,
-            webSearchProviderProfileID: try container.decodeIfPresent(String.self, forKey: .webSearchProviderProfileID)
-        )
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(providerProfileID, forKey: .providerProfileID)
-        try container.encode(dailyTokenLimit, forKey: .dailyTokenLimit)
-        try container.encode(maximumOutputTokensPerRequest, forKey: .maximumOutputTokensPerRequest)
-        try container.encode(extraDirection, forKey: .extraDirection)
-        try container.encode(classificationRequestsPerMinute, forKey: .classificationRequestsPerMinute)
-        try container.encode(batchSize, forKey: .batchSize)
-        try container.encode(officialContentEvidenceCount, forKey: .officialContentEvidenceCount)
-        try container.encode(maximumTagCount, forKey: .maximumTagCount)
-        try container.encode(restrictToLeafTags, forKey: .restrictToLeafTags)
-        try container.encode(webSearchMode, forKey: .webSearchMode)
-        try container.encodeIfPresent(webSearchProviderProfileID, forKey: .webSearchProviderProfileID)
-    }
-
-    public func configuration(modelIdentifier: String) -> LLMAssistConfiguration {
-        .init(
-            providerProfileID: providerProfileID,
-            modelIdentifier: modelIdentifier,
-            dailyTokenLimit: dailyTokenLimit,
-            maximumOutputTokensPerRequest: maximumOutputTokensPerRequest,
-            extraDirection: extraDirection,
-            classificationRequestsPerMinute: classificationRequestsPerMinute,
-            batchSize: batchSize,
-            officialContentEvidenceCount: officialContentEvidenceCount,
-            maximumTagCount: maximumTagCount,
-            restrictToLeafTags: restrictToLeafTags,
-            webSearchMode: webSearchMode,
-            webSearchProviderProfileID: webSearchProviderProfileID
-        )
-    }
-}
-
-/// A reusable decision brain. It deliberately binds immutable revisions of a
-/// tree and data asset, so a model trained against an older revision cannot be
-/// selected silently after an edit.
+/// A reusable per-video decision configuration bound to exact tree and data
+/// revisions.
 public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     public static let maximumNameLength = 128
 
@@ -770,22 +388,6 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     /// One platform binding supplies this type's tree and collected local
     /// classification data. A type cannot combine platform sources.
     public var applicablePlatformID: String?
-    /// Legacy pointer to a formerly user-selected model. A local model is now
-    /// bound to its classifier type (owns-one) and resolved by reverse lookup,
-    /// not selected here. This is retained only so `WorkspaceCatalog` migration
-    /// can rebind the model to its type; it is never part of the authored API
-    /// and is never re-encoded.
-    public internal(set) var legacyLocalModelID: String?
-    /// The provider shown in the LLM Assist editor. This is a persistent
-    /// pre-attachment choice, so a user can Probe and choose a provider before
-    /// selecting a model. It cannot authorize or activate provider work.
-    public var selectedLLMProviderProfileID: String?
-    /// Edits made before a fetched model is chosen. This is not executable
-    /// configuration and cannot activate or dispatch LLM work.
-    public var llmAssistDraftConfiguration: LLMAssistDraftConfiguration?
-    /// One configured model may be attached for explicit runs. Its credential
-    /// connection stays separate from this classification policy.
-    public var llmAssistConfiguration: LLMAssistConfiguration?
     /// Optional request-time overrides for this type. Runtime/model/context
     /// controls stay global because the llama context is shared app-wide.
     public var localModelOverrides: LocalModelOverrides?
@@ -803,9 +405,6 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         datasetID: String,
         datasetRevision: Int,
         applicablePlatformID: String? = nil,
-        selectedLLMProviderProfileID: String? = nil,
-        llmAssistDraftConfiguration: LLMAssistDraftConfiguration? = nil,
-        llmAssistConfiguration: LLMAssistConfiguration? = nil,
         localModelOverrides: LocalModelOverrides? = nil,
         order: Int = 0,
         updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
@@ -818,26 +417,25 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         self.datasetRevision = datasetRevision
         let cleanedPlatformID = applicablePlatformID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.applicablePlatformID = cleanedPlatformID.isEmpty ? nil : cleanedPlatformID
-        self.legacyLocalModelID = nil
-        let cleanedLLMProviderID = selectedLLMProviderProfileID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        self.selectedLLMProviderProfileID = cleanedLLMProviderID.isEmpty
-            ? llmAssistConfiguration?.providerProfileID
-            : cleanedLLMProviderID
-        self.llmAssistDraftConfiguration = llmAssistDraftConfiguration
-        self.llmAssistConfiguration = llmAssistConfiguration
         self.localModelOverrides = localModelOverrides?.isEmpty == false ? localModelOverrides : nil
         self.order = order
         self.updatedAtMilliseconds = updatedAtMilliseconds
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, treeID, treeRevision, datasetID, datasetRevision, applicablePlatformID, dataSourcePlatformIDs, localModelID,
-             selectedLLMProviderProfileID,
-             llmAssistDraftConfiguration, llmAssistConfiguration, localModelOverrides, llmProfileIDs, decisionPriority, order, platformLocked, updatedAtMilliseconds
+        case id, name, treeID, treeRevision, datasetID, datasetRevision, applicablePlatformID,
+             localModelOverrides, order, updatedAtMilliseconds
+    }
+
+    private enum RetiredCodingKeys: String, CodingKey {
+        case dataSourcePlatformIDs, localModelID, selectedLLMProviderProfileID,
+             llmAssistDraftConfiguration, llmAssistConfiguration, llmProfileIDs,
+             decisionPriority, platformLocked
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let retired = try decoder.container(keyedBy: RetiredCodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         treeID = try container.decode(String.self, forKey: .treeID)
@@ -851,28 +449,23 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
             // The retired multi-source field is read only as a bounded crash
             // guard. It can be preserved only when it already described one
             // platform; a combined legacy type must be configured again.
-            let legacyPlatformIDs = Array(Set(try container.decodeIfPresent([String].self, forKey: .dataSourcePlatformIDs) ?? []))
+            let legacyPlatformIDs = Array(Set(try retired.decodeIfPresent([String].self, forKey: .dataSourcePlatformIDs) ?? []))
                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             applicablePlatformID = legacyPlatformIDs.count == 1 ? legacyPlatformIDs[0] : nil
         }
-        // Read the retired selection only so catalog migration can rebind the
-        // model to this type. It is not re-encoded and never selected again.
-        legacyLocalModelID = try container.decodeIfPresent(String.self, forKey: .localModelID)
-        // The former multi-profile selection had no model-specific policy. It
-        // is intentionally ignored rather than recreated as an implicit LLM
-        // attachment; users configure one explicit model again.
-        llmAssistConfiguration = try container.decodeIfPresent(LLMAssistConfiguration.self, forKey: .llmAssistConfiguration)
-        let decodedSelectedLLMProviderID = (try container.decodeIfPresent(String.self, forKey: .selectedLLMProviderProfileID)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
-        selectedLLMProviderProfileID = decodedSelectedLLMProviderID.isEmpty
-            ? llmAssistConfiguration?.providerProfileID
-            : decodedSelectedLLMProviderID
-        llmAssistDraftConfiguration = try container.decodeIfPresent(LLMAssistDraftConfiguration.self, forKey: .llmAssistDraftConfiguration)
+        // Removed trainable-model and per-type provider-assist fields are
+        // accepted only as retired keys so old state opens safely. Their values
+        // are deliberately discarded and are never re-encoded.
+        _ = retired.contains(.localModelID)
+        _ = retired.contains(.selectedLLMProviderProfileID)
+        _ = retired.contains(.llmAssistDraftConfiguration)
+        _ = retired.contains(.llmAssistConfiguration)
+        _ = retired.contains(.llmProfileIDs)
+        _ = retired.contains(.decisionPriority)
+        _ = retired.contains(.platformLocked)
         let decodedOverrides = try container.decodeIfPresent(LocalModelOverrides.self, forKey: .localModelOverrides)
         localModelOverrides = decodedOverrides?.isEmpty == false ? decodedOverrides : nil
-        _ = container.contains(.decisionPriority)
         order = try container.decodeIfPresent(Int.self, forKey: .order) ?? 0
-        _ = try container.decodeIfPresent(Bool.self, forKey: .platformLocked)
         updatedAtMilliseconds = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMilliseconds)
             ?? WorkspaceCatalog.now()
     }
@@ -886,9 +479,6 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         try container.encode(datasetID, forKey: .datasetID)
         try container.encode(datasetRevision, forKey: .datasetRevision)
         try container.encodeIfPresent(applicablePlatformID, forKey: .applicablePlatformID)
-        try container.encodeIfPresent(selectedLLMProviderProfileID, forKey: .selectedLLMProviderProfileID)
-        try container.encodeIfPresent(llmAssistDraftConfiguration, forKey: .llmAssistDraftConfiguration)
-        try container.encodeIfPresent(llmAssistConfiguration, forKey: .llmAssistConfiguration)
         try container.encodeIfPresent(localModelOverrides, forKey: .localModelOverrides)
         try container.encode(order, forKey: .order)
         try container.encode(updatedAtMilliseconds, forKey: .updatedAtMilliseconds)
@@ -915,11 +505,8 @@ public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
     /// local tree/dataset binding exists before an adapter is added.
     public var collectorAvailable: Bool
     /// A manual-only platform can retain public entries and human tags, but
-    /// never contributes training examples to a local model.
+    /// cannot use the on-device video classifier.
     public var supportsLocalModel: Bool
-    /// A manual-only platform can retain public entries and human tags, but
-    /// must never be sent through an LLM-assist classification path.
-    public var supportsLLMAssist: Bool
     /// The optional local public-data API profile that belongs to this
     /// platform. A missing value means the platform keeps local collected data
     /// only; it never causes a generic provider profile to be selected.
@@ -943,8 +530,7 @@ public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
         browser: String = "Chrome and Edge",
         sourceKind: CollectionSourceKind = .creator,
         collectorAvailable: Bool = false,
-        supportsLocalModel: Bool = true,
-        supportsLLMAssist: Bool = true
+        supportsLocalModel: Bool = true
     ) {
         self.id = id
         self.name = name
@@ -952,7 +538,6 @@ public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
         self.sourceKind = sourceKind
         self.collectorAvailable = collectorAvailable
         self.supportsLocalModel = supportsLocalModel
-        self.supportsLLMAssist = supportsLLMAssist
     }
 }
 
@@ -962,9 +547,9 @@ public enum CollectionPlatformRegistry {
         .init(id: "tiktok", name: "TikTok", collectorAvailable: true),
         .init(id: "facebook", name: "Facebook", collectorAvailable: true),
         .init(id: "instagram", name: "Instagram", collectorAvailable: true),
-        .init(id: "twitch", name: "Twitch", collectorAvailable: true, supportsLocalModel: false, supportsLLMAssist: false),
-        .init(id: "reddit", name: "Reddit", sourceKind: .subreddit, collectorAvailable: true, supportsLocalModel: false, supportsLLMAssist: false),
-        .init(id: "discord", name: "Discord", sourceKind: .server, collectorAvailable: true, supportsLocalModel: false, supportsLLMAssist: false),
+        .init(id: "twitch", name: "Twitch", collectorAvailable: true, supportsLocalModel: false),
+        .init(id: "reddit", name: "Reddit", sourceKind: .subreddit, collectorAvailable: true, supportsLocalModel: false),
+        .init(id: "discord", name: "Discord", sourceKind: .server, collectorAvailable: true, supportsLocalModel: false),
         .init(id: "twitter", name: "Twitter / X", sourceKind: .account, collectorAvailable: true),
         .init(id: "bilibili", name: "Bilibili", collectorAvailable: true),
     ]
@@ -1007,7 +592,8 @@ public struct PlatformBinding: Codable, Equatable, Sendable, Identifiable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        _ = try decoder.container(keyedBy: RetiredCodingKeys.self)
+        let retired = try decoder.container(keyedBy: RetiredCodingKeys.self)
+        _ = retired.contains(.activeModelID)
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         browser = try container.decodeIfPresent(String.self, forKey: .browser) ?? "Chrome and Edge"
@@ -1491,7 +1077,6 @@ public enum WorkspaceCatalogError: Error, Equatable, LocalizedError, Sendable {
     case incompatibleActiveClassifierType(String)
     case unsupportedCollectionPlatform(String)
     case invalidCollectedEntry(String)
-    case invalidLocalModel(String)
     case invalidProviderProfile(String)
     case invalidClassifierType(String)
     case treeInUse(String)
@@ -1505,7 +1090,6 @@ public enum WorkspaceCatalogError: Error, Equatable, LocalizedError, Sendable {
         case .incompatibleActiveClassifierType(let value): return "The active classifier type is not compatible with the platform tree and dataset: \(value)."
         case .unsupportedCollectionPlatform(let value): return "The collection platform is not supported: \(value)."
         case .invalidCollectedEntry(let value): return "The collected platform entry is invalid: \(value)."
-        case .invalidLocalModel(let value): return "The local model configuration is incompatible with its classifier type: \(value)."
         case .invalidProviderProfile(let value): return "The API provider profile is invalid: \(value)."
         case .invalidClassifierType(let value): return "The classifier type has incompatible local assets: \(value)."
         case .treeInUse(let value): return "The tag tree is still used by a classifier type or platform: \(value)."
@@ -1533,7 +1117,6 @@ public struct TrashedEntry: Codable, Equatable, Sendable, Identifiable {
     public var tree: TagTreeAsset?
     public var datasetID: String?
     public var collectedEntries: [CollectedPlatformEntry]
-    public var models: [LocalModelAsset]
 
     public init(
         id: String = UUID().uuidString,
@@ -1544,8 +1127,7 @@ public struct TrashedEntry: Codable, Equatable, Sendable, Identifiable {
         binding: PlatformBinding? = nil,
         tree: TagTreeAsset? = nil,
         datasetID: String? = nil,
-        collectedEntries: [CollectedPlatformEntry] = [],
-        models: [LocalModelAsset] = []
+        collectedEntries: [CollectedPlatformEntry] = []
     ) {
         self.id = id
         self.kind = kind
@@ -1556,19 +1138,20 @@ public struct TrashedEntry: Codable, Equatable, Sendable, Identifiable {
         self.tree = tree
         self.datasetID = datasetID
         self.collectedEntries = collectedEntries
-        self.models = models
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, kind, name, deletedAtMilliseconds, classifierType, binding, tree
-        case datasetID, collectedEntries, models
+        case datasetID, collectedEntries
     }
 
-    private enum RetiredCodingKeys: String, CodingKey { case creatorClassifications }
+    private enum RetiredCodingKeys: String, CodingKey { case creatorClassifications, models }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        _ = try decoder.container(keyedBy: RetiredCodingKeys.self)
+        let retired = try decoder.container(keyedBy: RetiredCodingKeys.self)
+        _ = retired.contains(.creatorClassifications)
+        _ = retired.contains(.models)
         id = try container.decode(String.self, forKey: .id)
         kind = try container.decode(TrashedEntryKind.self, forKey: .kind)
         name = try container.decode(String.self, forKey: .name)
@@ -1578,7 +1161,6 @@ public struct TrashedEntry: Codable, Equatable, Sendable, Identifiable {
         tree = try container.decodeIfPresent(TagTreeAsset.self, forKey: .tree)
         datasetID = try container.decodeIfPresent(String.self, forKey: .datasetID)
         collectedEntries = try container.decodeIfPresent([CollectedPlatformEntry].self, forKey: .collectedEntries) ?? []
-        models = try container.decodeIfPresent([LocalModelAsset].self, forKey: .models) ?? []
     }
 
     /// Default 24-hour trash lifetime, expressed in milliseconds.
@@ -1588,7 +1170,6 @@ public struct TrashedEntry: Codable, Equatable, Sendable, Identifiable {
 public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     public var trees: [TagTreeAsset]
     public var datasets: [ClassificationDataset]
-    public var models: [LocalModelAsset]
     public var bindings: [PlatformBinding]
     /// Reusable decision brains. A platform may later select one explicitly;
     /// the asset itself does not grant a browser or provider permission.
@@ -1610,10 +1191,9 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     public var correctionExamples: [CorrectionExample]
     public var creatorHistograms: [CreatorTagHistogram]
 
-    public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], models: [LocalModelAsset] = [], bindings: [PlatformBinding] = [], classifierTypes: [ClassifierTypeAsset] = [], tokenUsage: [TokenUsageRecord] = [], providerRequestRecords: [ProviderRequestRecord] = [], providerProfiles: [APIKeyProviderProfile] = [], trash: [TrashedEntry] = [], videoClassifications: [VideoClassification] = [], knowledgeEntries: [KnowledgeEntry] = [], researchAttempts: [ResearchAttemptRecord] = [], correctionExamples: [CorrectionExample] = [], creatorHistograms: [CreatorTagHistogram] = []) {
+    public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], bindings: [PlatformBinding] = [], classifierTypes: [ClassifierTypeAsset] = [], tokenUsage: [TokenUsageRecord] = [], providerRequestRecords: [ProviderRequestRecord] = [], providerProfiles: [APIKeyProviderProfile] = [], trash: [TrashedEntry] = [], videoClassifications: [VideoClassification] = [], knowledgeEntries: [KnowledgeEntry] = [], researchAttempts: [ResearchAttemptRecord] = [], correctionExamples: [CorrectionExample] = [], creatorHistograms: [CreatorTagHistogram] = []) {
         self.trees = trees
         self.datasets = datasets
-        self.models = models
         self.bindings = bindings
         self.classifierTypes = classifierTypes
         self.tokenUsage = tokenUsage
@@ -1652,7 +1232,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     }
 
     public func validate() throws {
-        try unique(trees.map(\.id) + datasets.map(\.id) + models.map(\.id) + bindings.map(\.id) + classifierTypes.map(\.id) + providerProfiles.map(\.id))
+        try unique(trees.map(\.id) + datasets.map(\.id) + bindings.map(\.id) + classifierTypes.map(\.id) + providerProfiles.map(\.id))
         try validateLocalLLMStores()
         for binding in bindings {
             guard CollectionPlatformRegistry.definition(for: binding.id) != nil else {
@@ -1662,19 +1242,6 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             guard let dataset = datasets.first(where: { $0.id == binding.datasetID }) else { throw WorkspaceCatalogError.missingDataset(binding.datasetID) }
             _ = tree
             _ = dataset
-        }
-        for model in models {
-            // A model is bound to exactly one classifier type and inherits that
-            // type's tree, dataset, and single platform.
-            guard let owningType = classifierTypes.first(where: { $0.id == model.classifierTypeID }) else {
-                throw WorkspaceCatalogError.invalidLocalModel(model.id)
-            }
-            guard model.treeID == owningType.treeID,
-                  model.datasetID == owningType.datasetID,
-                  model.treeRevision == owningType.treeRevision,
-                  model.datasetRevision == owningType.datasetRevision else {
-                throw WorkspaceCatalogError.invalidLocalModel(model.id)
-            }
         }
         for dataset in datasets {
             guard dataset.collectedEntries.count <= CollectedPlatformEntry.maximumRetainedEntries else {
@@ -1729,75 +1296,6 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                   })) else {
                 throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
             }
-            if let llmAssist = classifierType.llmAssistConfiguration {
-                do {
-                    try llmAssist.validate()
-                } catch {
-                    throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
-                }
-                guard let classifierProfile = providerProfiles.first(where: {
-                    $0.id == llmAssist.providerProfileID && $0.type.supportsLLMConfiguration
-                }) else {
-                    throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
-                }
-                if llmAssist.webSearchMode == .providerNative,
-                   !classifierProfile.type.supportsProviderNativeWebSearch {
-                    throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
-                }
-                if llmAssist.webSearchMode == .attached {
-                    guard classifierProfile.type.supportsAttachedWebSearchTool,
-                          let searchProfileID = llmAssist.webSearchProviderProfileID else {
-                        throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
-                    }
-                    guard providerProfiles.contains(where: {
-                        $0.id == searchProfileID && $0.type.supportsRawWebSearch
-                    }) else {
-                        throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
-                    }
-                }
-            }
-            if let draft = classifierType.llmAssistDraftConfiguration {
-                do {
-                    try draft.validate()
-                } catch {
-                    throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
-                }
-                guard let classifierProfile = providerProfiles.first(where: {
-                    $0.id == draft.providerProfileID && $0.type.supportsLLMConfiguration
-                }) else {
-                    throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
-                }
-                if draft.webSearchMode == .providerNative,
-                   !classifierProfile.type.supportsProviderNativeWebSearch {
-                    throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
-                }
-                if draft.webSearchMode == .attached {
-                    guard classifierProfile.type.supportsAttachedWebSearchTool,
-                          let searchProfileID = draft.webSearchProviderProfileID,
-                          providerProfiles.contains(where: {
-                              $0.id == searchProfileID && $0.type.supportsRawWebSearch
-                          }) else {
-                        throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
-                    }
-                }
-            }
-            if let selectedLLMProviderProfileID = classifierType.selectedLLMProviderProfileID {
-                guard !selectedLLMProviderProfileID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      selectedLLMProviderProfileID.count <= 128,
-                      providerProfiles.contains(where: {
-                          $0.id == selectedLLMProviderProfileID && $0.type.supportsLLMConfiguration
-                      }) else {
-                    throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
-                }
-            }
-            // The bound model configuration, if any, is validated above.
-            let usesLocalModel = localModel(for: classifierType.id) != nil
-            let usesLLMAssist = classifierType.llmAssistConfiguration != nil
-            let applicablePlatform = classifierType.applicablePlatformID.flatMap(CollectionPlatformRegistry.definition(for:))
-            guard (!usesLocalModel || applicablePlatform?.supportsLocalModel == true),
-                  (!usesLLMAssist || applicablePlatform?.supportsLLMAssist == true) else {
-                throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
-            }
         }
         for binding in bindings {
             guard let classifierTypeID = binding.activeClassifierTypeID else { continue }
@@ -1809,15 +1307,8 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                   classifierType.applicablePlatformID == binding.id,
                   let tree = trees.first(where: { $0.id == binding.treeID }),
                   let dataset = datasets.first(where: { $0.id == binding.datasetID }),
-                  let platform = CollectionPlatformRegistry.definition(for: binding.id),
                   classifierType.treeRevision == tree.revision,
                   classifierType.datasetRevision == dataset.revision else {
-                throw WorkspaceCatalogError.incompatibleActiveClassifierType(classifierTypeID)
-            }
-            guard (platform.supportsLocalModel ||
-                   localModel(for: classifierType.id) == nil),
-                  (platform.supportsLLMAssist ||
-                   classifierType.llmAssistConfiguration == nil) else {
                 throw WorkspaceCatalogError.incompatibleActiveClassifierType(classifierTypeID)
             }
         }
@@ -1837,15 +1328,18 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case trees, datasets, models, bindings, classifierTypes, tokenUsage, providerRequestRecords, providerProfiles, trash,
+        case trees, datasets, bindings, classifierTypes, tokenUsage, providerRequestRecords, providerProfiles, trash,
              videoClassifications, knowledgeEntries, researchAttempts, correctionExamples, creatorHistograms
     }
 
+    private enum RetiredCodingKeys: String, CodingKey { case models }
+
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let retired = try decoder.container(keyedBy: RetiredCodingKeys.self)
+        _ = retired.contains(.models)
         trees = try container.decodeIfPresent([TagTreeAsset].self, forKey: .trees) ?? []
         datasets = try container.decodeIfPresent([ClassificationDataset].self, forKey: .datasets) ?? []
-        models = try container.decodeIfPresent([LocalModelAsset].self, forKey: .models) ?? []
         bindings = try container.decodeIfPresent([PlatformBinding].self, forKey: .bindings) ?? []
         classifierTypes = try container.decodeIfPresent([ClassifierTypeAsset].self, forKey: .classifierTypes) ?? []
         tokenUsage = try container.decodeIfPresent([TokenUsageRecord].self, forKey: .tokenUsage) ?? []
@@ -1857,30 +1351,6 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         researchAttempts = try container.decodeIfPresent([ResearchAttemptRecord].self, forKey: .researchAttempts) ?? []
         correctionExamples = try container.decodeIfPresent([CorrectionExample].self, forKey: .correctionExamples) ?? []
         creatorHistograms = try container.decodeIfPresent([CreatorTagHistogram].self, forKey: .creatorHistograms) ?? []
-        migrateLegacyLocalModelBindings()
-    }
-
-    // MARK: - Local model binding
-
-    /// The local model bound to a classifier type, if one exists. A type owns at
-    /// most one model, resolved by reverse lookup rather than user selection.
-    public func localModel(for classifierTypeID: String) -> LocalModelAsset? {
-        models.first { $0.classifierTypeID == classifierTypeID }
-    }
-
-    /// One-time migration for state written before a local-model configuration
-    /// was bound to its classifier type.
-    private mutating func migrateLegacyLocalModelBindings() {
-        for typeIndex in classifierTypes.indices {
-            guard let legacyModelID = classifierTypes[typeIndex].legacyLocalModelID else { continue }
-            classifierTypes[typeIndex].legacyLocalModelID = nil
-            guard let modelIndex = models.firstIndex(where: { $0.id == legacyModelID }),
-                  models[modelIndex].classifierTypeID.isEmpty else { continue }
-            models[modelIndex].classifierTypeID = classifierTypes[typeIndex].id
-        }
-        models.removeAll { model in
-            model.classifierTypeID.isEmpty || !classifierTypes.contains(where: { $0.id == model.classifierTypeID })
-        }
     }
 
     private func unique(_ identifiers: [String]) throws {
@@ -1919,7 +1389,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     }
 
     /// Removes one local platform binding and its collected public entries.
-    /// Shared tree, dataset, and local-model configuration assets are retained.
+    /// Shared tree and dataset assets are retained.
     @discardableResult
     public mutating func removePlatformBinding(_ platformID: String) -> Bool {
         guard let bindingIndex = bindings.firstIndex(where: { $0.id == platformID }) else {
@@ -1936,17 +1406,11 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
 
     // MARK: - Trash (soft delete)
 
-    /// Moves a classifier type and its local-model configuration into trash.
+    /// Moves a classifier type into trash.
     @discardableResult
     public mutating func trashClassifierType(_ typeID: String) -> TrashedEntry? {
         guard let index = classifierTypes.firstIndex(where: { $0.id == typeID }) else { return nil }
         let type = classifierTypes.remove(at: index)
-        // A model is owned by exactly one type, so trashing the type captures
-        // and removes its bound model with it.
-        var capturedModels: [LocalModelAsset] = []
-        if let modelIndex = models.firstIndex(where: { $0.classifierTypeID == typeID }) {
-            capturedModels.append(models.remove(at: modelIndex))
-        }
         for bindingIndex in bindings.indices where bindings[bindingIndex].activeClassifierTypeID == typeID {
             bindings[bindingIndex].activeClassifierTypeID = nil
         }
@@ -1954,8 +1418,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             kind: .classifierType,
             name: type.name,
             classifierType: type,
-            datasetID: type.datasetID,
-            models: capturedModels
+            datasetID: type.datasetID
         )
         trash.append(entry)
         reconcileClassifierTypes()
@@ -2004,7 +1467,6 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         case .classifierType:
             guard let type = entry.classifierType, !classifierTypes.contains(where: { $0.id == type.id }) else { break }
             classifierTypes.append(type)
-            models.append(contentsOf: entry.models.filter { candidate in !models.contains(where: { $0.id == candidate.id }) })
         case .collectionPlatform:
             guard let binding = entry.binding else { break }
             if !bindings.contains(where: { $0.id == binding.id }) { bindings.append(binding) }
@@ -2038,11 +1500,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         return before - trash.count
     }
 
-    /// Tree/data revisions are immutable model boundaries. Edits therefore
-    /// retain the classifier type but move it to the new selected revision and
-    /// remove only dependencies that are no longer compatible. This keeps the
-    /// user-visible brain editable while never letting an old model decide for
-    /// a changed tree or dataset.
+    /// Keep classifier types aligned with their current tree and data revisions.
     public mutating func reconcileClassifierTypes() {
         for index in trees.indices {
             TagColorAssignment.reconcileColors(in: &trees[index])
@@ -2065,79 +1523,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                 })
             }
             reconciled.applicablePlatformID = applicableBinding?.id
-            let applicablePlatform = reconciled.applicablePlatformID.flatMap(CollectionPlatformRegistry.definition(for:))
-            let supportsLLMAssist = applicablePlatform?.supportsLLMAssist == true
-            if let llmAssist = reconciled.llmAssistConfiguration,
-               supportsLLMAssist,
-               providerProfiles.contains(where: { $0.id == llmAssist.providerProfileID && $0.type.supportsLLMConfiguration }),
-               (try? llmAssist.validate()) != nil {
-                var retainedLLMAssist = llmAssist
-                let classifierProfile = providerProfiles.first(where: {
-                    $0.id == retainedLLMAssist.providerProfileID && $0.type.supportsLLMConfiguration
-                })
-                let nativeModeInvalid = retainedLLMAssist.webSearchMode == .providerNative &&
-                    classifierProfile?.type.supportsProviderNativeWebSearch != true
-                let attachedModeInvalid = retainedLLMAssist.webSearchMode == .attached && (
-                    classifierProfile?.type.supportsAttachedWebSearchTool != true ||
-                    retainedLLMAssist.webSearchProviderProfileID == nil ||
-                    !providerProfiles.contains(where: {
-                        $0.id == retainedLLMAssist.webSearchProviderProfileID && $0.type.supportsRawWebSearch
-                    })
-                )
-                if nativeModeInvalid || attachedModeInvalid {
-                    retainedLLMAssist.webSearchMode = .off
-                    retainedLLMAssist.webSearchProviderProfileID = nil
-                }
-                reconciled.llmAssistConfiguration = retainedLLMAssist
-            } else {
-                reconciled.llmAssistConfiguration = nil
-            }
-            if let draft = reconciled.llmAssistDraftConfiguration,
-               supportsLLMAssist,
-               providerProfiles.contains(where: { $0.id == draft.providerProfileID && $0.type.supportsLLMConfiguration }),
-               (try? draft.validate()) != nil {
-                var retainedDraft = draft
-                let classifierProfile = providerProfiles.first(where: {
-                    $0.id == retainedDraft.providerProfileID && $0.type.supportsLLMConfiguration
-                })
-                let nativeModeInvalid = retainedDraft.webSearchMode == .providerNative &&
-                    classifierProfile?.type.supportsProviderNativeWebSearch != true
-                let attachedModeInvalid = retainedDraft.webSearchMode == .attached && (
-                    classifierProfile?.type.supportsAttachedWebSearchTool != true ||
-                    retainedDraft.webSearchProviderProfileID == nil ||
-                    !providerProfiles.contains(where: {
-                        $0.id == retainedDraft.webSearchProviderProfileID && $0.type.supportsRawWebSearch
-                    })
-                )
-                if nativeModeInvalid || attachedModeInvalid {
-                    retainedDraft.webSearchMode = .off
-                    retainedDraft.webSearchProviderProfileID = nil
-                }
-                reconciled.llmAssistDraftConfiguration = retainedDraft
-            } else {
-                reconciled.llmAssistDraftConfiguration = nil
-            }
-            if let selectedProviderID = reconciled.selectedLLMProviderProfileID,
-               supportsLLMAssist,
-               providerProfiles.contains(where: { $0.id == selectedProviderID && $0.type.supportsLLMConfiguration }) {
-                reconciled.selectedLLMProviderProfileID = selectedProviderID
-            } else {
-                reconciled.selectedLLMProviderProfileID = reconciled.llmAssistConfiguration?.providerProfileID
-            }
             reconciled.updatedAtMilliseconds = WorkspaceCatalog.now()
-            return reconciled
-        }
-        // Drop configuration assets orphaned by a removed or ineligible type,
-        // and keep each retained asset aligned with its owning revisions.
-        models = models.compactMap { model in
-            guard let owningType = classifierTypes.first(where: { $0.id == model.classifierTypeID }) else { return nil }
-            let platform = owningType.applicablePlatformID.flatMap(CollectionPlatformRegistry.definition(for:))
-            guard platform?.supportsLocalModel == true else { return nil }
-            var reconciled = model
-            reconciled.treeID = owningType.treeID
-            reconciled.treeRevision = owningType.treeRevision
-            reconciled.datasetID = owningType.datasetID
-            reconciled.datasetRevision = owningType.datasetRevision
             return reconciled
         }
         for index in bindings.indices {
@@ -2146,8 +1532,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             // the owner.
             if bindings[index].activeClassifierTypeID == nil,
                let tree = trees.first(where: { $0.id == bindings[index].treeID }),
-               let dataset = datasets.first(where: { $0.id == bindings[index].datasetID }),
-               let platform = CollectionPlatformRegistry.definition(for: bindings[index].id) {
+               let dataset = datasets.first(where: { $0.id == bindings[index].datasetID }) {
                 let compatible = classifierTypes.filter { candidate in
                     guard candidate.applicablePlatformID == bindings[index].id,
                           candidate.treeID == tree.id,
@@ -2156,8 +1541,6 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                           candidate.datasetRevision == dataset.revision else {
                         return false
                     }
-                    if !platform.supportsLocalModel, localModel(for: candidate.id) != nil { return false }
-                    if !platform.supportsLLMAssist, candidate.llmAssistConfiguration != nil { return false }
                     return true
                 }
                 if compatible.count == 1 {
@@ -2168,19 +1551,11 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             guard let classifierType = classifierTypes.first(where: { $0.id == classifierTypeID }),
                   let tree = trees.first(where: { $0.id == bindings[index].treeID }),
                   let dataset = datasets.first(where: { $0.id == bindings[index].datasetID }),
-                  let platform = CollectionPlatformRegistry.definition(for: bindings[index].id),
                   classifierType.treeID == tree.id,
                   classifierType.treeRevision == tree.revision,
                   classifierType.datasetID == dataset.id,
                   classifierType.datasetRevision == dataset.revision,
                   classifierType.applicablePlatformID == bindings[index].id else {
-                bindings[index].activeClassifierTypeID = nil
-                continue
-            }
-            if (!platform.supportsLocalModel &&
-                localModel(for: classifierType.id) != nil) ||
-                (!platform.supportsLLMAssist &&
-                classifierType.llmAssistConfiguration != nil) {
                 bindings[index].activeClassifierTypeID = nil
                 continue
             }

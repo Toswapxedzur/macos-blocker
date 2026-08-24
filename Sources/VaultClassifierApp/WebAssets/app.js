@@ -44,7 +44,6 @@
   const treeViewportPositions = new Map();
   const editorViewportPositions = new Map();
   const pendingTagRenames = new Map();
-  const selectedLLMProfileByType = new Map();
   const collapsedCollectionCreatorLists = new Set();
   const selectedCollectionCreatorByPlatform = new Map();
   // The snapshot carries only the creator-level primary list. A chosen
@@ -70,7 +69,7 @@
   let navigationPanelWidth = navigationWidthRange.fallback;
   let navigationResize = null;
   const collectionRowHeight = 48;
-  const workspaceNames = new Set(["tagTree", "localModel", "llmAssist", "browserBridge", "classificationData"]);
+  const workspaceNames = new Set(["tagTree", "llmAssist", "browserBridge", "classificationData"]);
   const virtualLists = new Map();
   const virtualListScrollByKey = new Map();
   let virtualListSequence = 0;
@@ -836,71 +835,6 @@
       <section class="tree-create" data-form-id="new-tree-form">${field("tree.treeName", "", "name", "")}<button class="primary" data-action="createTree" data-form="new-tree-form">${tx("tree.create")}</button><span class="small-copy">${tx("tree.multiplePanels")}</span></section><div class="tree-panels">${assets.trees.map(panel).join("")}</div>${notice(state.issue, "red")}</div>`;
   }
 
-  function baseEmbeddingLabelKey(identifier) {
-    const keys = {
-      "all-MiniLM-L6-v2": "model.base.allMiniLML6V2",
-      "all-mpnet-base-v2": "model.base.allMPNetBaseV2",
-      "multilingual-e5-small": "model.base.multilingualE5Small",
-      "multilingual-e5-base": "model.base.multilingualE5Base",
-      "multilingual-e5-large": "model.base.multilingualE5Large",
-      "bge-m3": "model.base.bgeM3",
-    };
-    return keys[identifier] || "model.base.none";
-  }
-
-  function localModelWorkspace(scopeTypeID = null) {
-    const assets = state.assets;
-    const allModels = assets.models || [];
-    const models = scopeTypeID ? allModels.filter((model) => model.classifierTypeID === scopeTypeID) : allModels;
-    const classifierTypes = assets.classifierTypes || [];
-    const platformDefs = new Map((assets.collectionPlatforms || []).map((platform) => [platform.id, platform]));
-    const typeByID = new Map(classifierTypes.map((type) => [type.id, type]));
-    // A model is bounded by a classifier type (owns-one). Eligible types for a
-    // new model support a local model and do not already have one.
-    const modeledTypeIDs = new Set(allModels.map((model) => model.classifierTypeID));
-    const creatableTypeOptions = classifierTypes
-      .filter((type) => type.applicablePlatformID
-        && (!scopeTypeID || type.id === scopeTypeID)
-        && platformDefs.get(type.applicablePlatformID)?.supportsLocalModel === true
-        && !modeledTypeIDs.has(type.id))
-      .map((type) => [type.id, type.name]);
-    const baseOptions = [["", t("model.base.none")], ...(assets.baseEmbeddings || []).map((identifier) => [identifier, t(baseEmbeddingLabelKey(identifier))])];
-    const panel = (model) => {
-      const formID = `local-model-${model.id}`;
-      const type = typeByID.get(model.classifierTypeID);
-      const tree = assets.trees.find((candidate) => candidate.id === model.treeID);
-      const platformDef = platformDefs.get(model.platformID);
-      const treeLabel = tree ? `${tree.name} · r${tree.revision}` : "—";
-      const platformLabel = platformDef ? `${platformDef.name} · ${platformDef.browser}` : (model.platformID || "—");
-      const statusPillMarkup = statusPill(t("bridge.configured"), "pink");
-      return `<section class="model-panel" data-model-panel data-model-id="${esc(model.id)}" data-form-id="${esc(formID)}">
-        <div class="model-panel-head">
-          <div><span class="eyebrow">${tx("model.panel")}</span><h3>${esc(model.name)}</h3><p class="section-copy">${tx("model.boundType", { type: type ? type.name : "—" })}</p></div>
-          <div class="model-panel-status">${statusPillMarkup}${statusPill(t("model.version", { value: model.version }), "navy")}</div>
-        </div>
-        <div class="model-name-row">${field("model.modelName", "", "name", model.name)}<div class="model-name-actions"><button class="secondary" data-action="renameLocalModel" data-form="${esc(formID)}" data-model-id="${esc(model.id)}">${tx("model.rename")}</button><button class="danger" data-action="deleteLocalModel" data-model-id="${esc(model.id)}">${tx("model.delete")}</button></div></div>
-        <div class="model-setup"><div class="section-header"><div><h3>${tx("model.setup")}</h3><p class="section-copy">${tx("model.setupCopy")}</p></div></div>
-          <div class="model-bound-context">
-            <div class="model-bound-item"><span class="eyebrow">${tx("model.boundTree")}</span><p class="small-copy">${esc(treeLabel)}</p></div>
-            <div class="model-bound-item"><span class="eyebrow">${tx("model.boundPlatform")}</span><p class="small-copy">${esc(platformLabel)}</p></div>
-          </div>
-          <div class="form-row model-setup-fields">${valueSelectField("model.baseLanguageModel", "model.baseCopy", "baseEmbeddingID", model.baseEmbeddingID || "", baseOptions, "data-local-model-setup")}</div>
-        </div>
-      </section>`;
-    };
-    // Scoped to one type: hide the shared-library header; the create box carries
-    // the single eligible type (hidden if the model already exists).
-    const createModel = creatableTypeOptions.length
-      ? `<section class="model-create" data-form-id="new-local-model-form">${field("model.modelName", "", "name", "")}${scopeTypeID ? `<input type="hidden" data-field="classifierTypeID" value="${esc(scopeTypeID)}">` : valueSelectField("model.forClassifierType", "", "classifierTypeID", "", creatableTypeOptions)}<button class="pink-action" data-action="createLocalModel" data-form="new-local-model-form">${tx("model.create")}</button><span class="small-copy">${tx("model.multiplePanels")}</span></section>`
-      : (scopeTypeID ? "" : `<section class="model-create"><span class="small-copy">${tx("model.noEligibleTypes")}</span></section>`);
-    if (scopeTypeID) {
-      return `<div class="workspace model-workspace model-workspace-scoped">${models.length ? "" : createModel}<div class="model-panels">${models.length ? models.map(panel).join("") : `<div class="empty">${tx("model.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
-    }
-    return `<div class="workspace model-workspace">${header("model.title", "model.copy", t("model.sharedLibrary"), "pink")}
-      ${createModel}
-      <div class="model-panels">${models.length ? models.map(panel).join("") : `<div class="empty">${tx("model.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
-  }
-
   function providerTypeLabelKey(type) {
     const keys = {
       openAI: "llm.provider.openAI",
@@ -998,12 +932,8 @@
     const classifierTypes = assets.classifierTypes || [];
     const trees = assets.trees || [];
     const datasets = assets.datasets || [];
-    const models = assets.models || [];
     const profiles = assets.providerProfiles || [];
     const platformDefinitions = new Map((assets.collectionPlatforms || []).map((platform) => [platform.id, platform]));
-    const protocols = assets.providerProtocols || {};
-    const llmProfiles = profiles.filter((profile) => protocols[profile.type]?.supportsLLMConfiguration);
-    const rawWebSearchProfiles = profiles.filter((profile) => protocols[profile.type]?.supportsRawWebSearch);
     const typeForm = (classifierType) => {
       const formID = `classifier-type-${classifierType.id}`;
       const applicablePlatformID = typeof classifierType.applicablePlatformID === "string" ? classifierType.applicablePlatformID : "";
@@ -1013,7 +943,6 @@
       const selectedDataset = datasets.find((dataset) => dataset.id === applicableBinding?.datasetID);
       const applicablePlatform = platformDefinitions.get(applicablePlatformID);
       const supportsLocalModel = applicablePlatform?.supportsLocalModel === true;
-      const supportsLLMAssist = applicablePlatform?.supportsLLMAssist === true;
       const applicablePlatformOptions = [["", t("bridge.noApplicablePlatform")], ...(assets.collectionPlatforms || []).map((definition) => {
         const hasBinding = (assets.bindings || []).some((binding) => binding.id === definition.id);
         return [definition.id, `${definition.name} · ${definition.browser}${hasBinding ? "" : ` · ${t("bridge.platformDataAutoCreate")}`}${!definition.supportsLocalModel ? ` · ${t("bridge.collectionOnly")}` : ""}`];
@@ -1022,8 +951,7 @@
         ? profiles.filter((profile) => profile.type === applicablePlatform.apiProviderType)
         : [];
       const boundPlatformAPIProfile = platformAPIProfiles.find((profile) => profile.hasCredential);
-      const platformEvidenceReady = Boolean(applicablePlatform && boundPlatformAPIProfile);
-      const platformDataStatusWithoutSearch = !applicablePlatform
+      const platformDataStatus = !applicablePlatform
         ? t("bridge.platformDataChoose")
         : !applicableBinding
           ? t("bridge.platformDataWillCreate", { platform: applicablePlatform.name })
@@ -1032,85 +960,7 @@
           : boundPlatformAPIProfile
             ? t("bridge.platformDataBound", { profile: boundPlatformAPIProfile.name })
             : t("bridge.platformDataMissingKey", { platform: applicablePlatform.name });
-      const llmAssist = classifierType.llmAssistConfiguration || null;
-      const llmAssistDraft = classifierType.llmAssistDraftConfiguration || null;
-      const savedLLMProfileID = classifierType.selectedLLMProviderProfileID || llmAssist?.providerProfileID || "";
-      const selectedLLMProfileID = selectedLLMProfileByType.has(classifierType.id)
-        ? selectedLLMProfileByType.get(classifierType.id)
-        : savedLLMProfileID;
-      const selectedLLMProfile = llmProfiles.find((profile) => profile.id === selectedLLMProfileID) || null;
-      const llmProviderOptions = [["", t("bridge.noLLMModel")], ...llmProfiles.map((profile) => [profile.id, `${profile.name} · ${tx(providerTypeLabelKey(profile.type))}`])];
-      const llmModelIdentifier = llmAssist?.providerProfileID === selectedLLMProfileID
-        ? llmAssist.modelIdentifier
-        : "";
-      const llmEditorSettings = llmAssist?.providerProfileID === selectedLLMProfileID
-        ? llmAssist
-        : llmAssistDraft?.providerProfileID === selectedLLMProfileID
-          ? llmAssistDraft
-          : null;
-      const modelCatalogs = assets.providerModelCatalogs || {};
-      const modelCapabilities = assets.providerModelCapabilities || {};
-      const modelCatalogErrors = assets.providerModelCatalogErrors || {};
-      const loadingModelCatalogs = new Set(assets.loadingProviderModelProfileIDs || []);
-      const fetchedModels = selectedLLMProfile ? (modelCatalogs[selectedLLMProfile.id] || []) : [];
-      // The fetched list is deliberately session-only, but the classifier
-      // type's chosen model is durable. Keep that saved value visible before a
-      // Probe (or after a failed Probe) so a relaunch cannot make the form
-      // look as though its LLM settings were lost.
-      const visibleModels = llmModelIdentifier && !fetchedModels.includes(llmModelIdentifier)
-        ? [llmModelIdentifier, ...fetchedModels]
-        : fetchedModels;
-      const currentModel = llmModelIdentifier;
-      const currentModelCapabilities = selectedLLMProfile && currentModel
-        ? modelCapabilities[selectedLLMProfile.id]?.[currentModel] || null
-        : null;
-      const classifierSupportsNativeWebSearch =
-        protocols[selectedLLMProfile?.type]?.supportsNativeWebSearch === true &&
-        currentModelCapabilities?.supportsNativeWebSearch !== false;
-      const classifierSupportsAttachedWebSearch =
-        protocols[selectedLLMProfile?.type]?.supportsAttachedWebSearchTool === true &&
-        currentModelCapabilities?.supportsTools !== false;
-      const savedWebSearchMode = llmEditorSettings?.webSearchMode || "off";
-      const webSearchModeOptions = [
-        ["off", t("bridge.llmWebSearchOff")],
-        ...(classifierSupportsNativeWebSearch ? [["providerNative", t("bridge.llmWebSearchNative")]] : []),
-        ...(classifierSupportsAttachedWebSearch ? [["attached", t("bridge.llmWebSearchAttached")]] : []),
-      ];
-      const savedWebSearchProfileID = typeof llmEditorSettings?.webSearchProviderProfileID === "string"
-        ? llmEditorSettings.webSearchProviderProfileID
-        : "";
-      const configuredWebSearchProfile = rawWebSearchProfiles.find((profile) => profile.id === savedWebSearchProfileID) || null;
-      const webSearchProviderOptions = [
-        ["", t("bridge.llmChooseSearchProvider")],
-        ...rawWebSearchProfiles.map((profile) => [profile.id, `${profile.name} · ${tx(providerTypeLabelKey(profile.type))}`]),
-      ];
       const typeStatus = applicablePlatformID ? t("bridge.configured") : t("bridge.needsSource");
-      const nativeProviderWebSearchReady = Boolean(
-        llmAssist?.providerProfileID === selectedLLMProfileID &&
-        savedWebSearchMode === "providerNative" &&
-        classifierSupportsNativeWebSearch
-      );
-      const attachedProviderWebSearchReady = Boolean(
-        llmAssist?.providerProfileID === selectedLLMProfileID &&
-        savedWebSearchMode === "attached" &&
-        classifierSupportsAttachedWebSearch &&
-        configuredWebSearchProfile &&
-        configuredWebSearchProfile.hasCredential &&
-        protocols[configuredWebSearchProfile.type]?.supportsRawWebSearch
-      );
-      const providerWebSearchReady = nativeProviderWebSearchReady || attachedProviderWebSearchReady;
-      const platformDataStatus = providerWebSearchReady && !platformEvidenceReady
-        ? t("bridge.platformDataSearchReady")
-        : platformDataStatusWithoutSearch;
-      const llmModelControl = !selectedLLMProfile
-        ? `<p class="small-copy">${tx("bridge.llmChooseProviderFirst")}</p>`
-        : `<div class="field"><span class="field-label">${tx("bridge.llmModel")} · ${tx("bridge.llmModelCopy")}</span><select class="select-control" data-field="llmModelIdentifier"><option value="">${tx("bridge.llmChooseModel")}</option>${visibleModels.map((model) => `<option value="${esc(model)}"${selected(currentModel, model)}>${esc(model)}</option>`).join("")}</select><span class="action-row"><button type="button" class="secondary" data-action="probeProviderModelCatalog" data-profile-id="${esc(selectedLLMProfile.id)}"${disabled(loadingModelCatalogs.has(selectedLLMProfile.id))}>${tx(loadingModelCatalogs.has(selectedLLMProfile.id) ? "bridge.llmProbingModels" : "bridge.llmProbeModels")}</button><span class="small-copy">${esc(loadingModelCatalogs.has(selectedLLMProfile.id) ? tx("bridge.llmProbingModels") : modelCatalogErrors[selectedLLMProfile.id] || tx("bridge.llmProbeModelsCopy"))}</span></span></div>`;
-      const webSearchControls = `${valueSelectField("bridge.llmWebSearchMode", "bridge.llmWebSearchModeCopy", "llmWebSearchMode", savedWebSearchMode, webSearchModeOptions)}<p class="small-copy" data-native-search-copy${savedWebSearchMode === "providerNative" ? "" : " hidden"}>${tx("bridge.llmNativeWebSearchCopy")}</p><div data-attached-search-controls${savedWebSearchMode === "attached" ? "" : " hidden"}>${valueSelectField("bridge.llmWebSearchProvider", "bridge.llmWebSearchProviderCopy", "llmWebSearchProviderProfileID", savedWebSearchProfileID, webSearchProviderOptions)}<p class="small-copy">${tx("bridge.llmAttachedWebSearchCopy")}</p></div>`;
-      const officialContentEvidenceControl = field("bridge.llmOfficialContentEvidenceCount", "bridge.llmOfficialContentEvidenceCountCopy", "llmOfficialContentEvidenceCount", llmEditorSettings?.officialContentEvidenceCount || 25, "text", "inputmode=\"numeric\"");
-      const llmConfigurationBody = selectedLLMProfile
-        ? `<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}${llmModelControl}</div>`
-        : `<div class="classifier-llm-config">${valueSelectField("bridge.llmProvider", "bridge.llmProviderCopy", "llmProviderProfileID", selectedLLMProfileID, llmProviderOptions)}</div>`;
-      const llmAdvancedBody = `<div class="classifier-llm-config">${field("bridge.llmDailyTokenBudget", "bridge.llmDailyTokenBudgetCopy", "llmDailyTokenLimit", llmEditorSettings?.dailyTokenLimit || 10000, "text", "inputmode=\"numeric\"")}${field("bridge.llmMaximumTokens", "bridge.llmMaximumTokensCopy", "llmMaximumOutputTokensPerRequest", llmEditorSettings?.maximumOutputTokensPerRequest || 4096, "text", "inputmode=\"numeric\"")}${textareaField("bridge.llmExtraDirection", "bridge.llmExtraDirectionCopy", "llmExtraDirection", llmEditorSettings?.extraDirection || "", "maxlength=\"4096\"")}${field("bridge.llmClassificationPace", "bridge.llmClassificationPaceCopy", "llmClassificationRequestsPerMinute", llmEditorSettings?.classificationRequestsPerMinute || 6, "text", "inputmode=\"numeric\"")}${field("bridge.llmBatchSize", "bridge.llmBatchSizeCopy", "llmBatchSize", llmEditorSettings?.batchSize || 5, "text", "inputmode=\"numeric\"")}${officialContentEvidenceControl}${field("bridge.llmMaximumTagCount", "bridge.llmMaximumTagCountCopy", "llmMaximumTagCount", llmEditorSettings?.maximumTagCount || 8, "text", "inputmode=\"numeric\"")}${toggle("bridge.llmLeafOnly", "llmRestrictToLeafTags", llmEditorSettings?.restrictToLeafTags ?? true)}<p class="small-copy">${tx("bridge.llmLeafOnlyCopy")}</p>${webSearchControls}</div>`;
       const localOverrides = classifierType.localModelOverrides || null;
       const localOverrideThresholds = Array.isArray(localOverrides?.confidenceThresholds) && localOverrides.confidenceThresholds.length === 4
         ? localOverrides.confidenceThresholds
@@ -1121,17 +971,17 @@
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}">
         <div class="classifier-type-head"><div><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div>${statusPill(typeStatus, applicablePlatformID ? "navy" : "muted")}</div>
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}<button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("bridge.saveType")}</button><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}" data-name="${esc(classifierType.name)}">${tx("bridge.deleteType")}</button></div>
-        <section class="classifier-type-section classifier-applicable-platform-section"><div class="section-header"><div><h3>${tx("bridge.applicablePlatform")}</h3><p class="section-copy">${tx("bridge.assetSelectionCopy")}</p></div></div><div class="classifier-applicable-platform-row">${valueSelectField("bridge.applicablePlatform", "bridge.applicablePlatformCopy", "applicablePlatformID", applicablePlatformID, applicablePlatformOptions)}<div class="classifier-platform-data-status"><span class="eyebrow">${tx("bridge.platformData")}</span><p class="small-copy">${esc(platformDataStatus)}</p></div></div>${applicablePlatform && !supportsLocalModel && !supportsLLMAssist ? `<p class="small-copy" data-collection-only-platform-note>${tx("bridge.collectionOnlyCopy")}</p>` : ""}</section>
+        <section class="classifier-type-section classifier-applicable-platform-section"><div class="section-header"><div><h3>${tx("bridge.applicablePlatform")}</h3><p class="section-copy">${tx("bridge.assetSelectionCopy")}</p></div></div><div class="classifier-applicable-platform-row">${valueSelectField("bridge.applicablePlatform", "bridge.applicablePlatformCopy", "applicablePlatformID", applicablePlatformID, applicablePlatformOptions)}<div class="classifier-platform-data-status"><span class="eyebrow">${tx("bridge.platformData")}</span><p class="small-copy">${esc(platformDataStatus)}</p></div></div>${applicablePlatform && !supportsLocalModel ? `<p class="small-copy" data-collection-only-platform-note>${tx("bridge.collectionOnlyCopy")}</p>` : ""}</section>
         ${localModelOverrideSection}
       </section>`;
     };
     // A type now targets one platform at creation and owns a fresh tree. The
-    // left panel selects which type is open; a selected type shows Config / Tree
-    // / Model sub-tabs, so its tree and model live inside the type.
+    // left panel selects which type is open; a selected type shows its config
+    // and owned tree together.
     const selectedType = selectedTypeID ? classifierTypes.find((type) => type.id === selectedTypeID) : null;
     if (selectedType) {
       const platformDef = (assets.collectionPlatforms || []).find((definition) => definition.id === selectedType.applicablePlatformID);
-      // Config, Tag tree, and Local model stacked in one continuous scroll.
+      // Config and Tag tree are stacked in one continuous scroll.
       const section = (labelKey, inner) => `<section class="type-section"><h3 class="type-section-title">${tx(labelKey)}</h3>${inner}</section>`;
       return `<div class="workspace classifier-type-workspace">
         <div class="type-detail-head"><div><span class="eyebrow">${tx("bridge.typeLibrary")}</span><h2>${esc(selectedType.name)}</h2><p class="section-copy">${esc(platformDef ? platformDef.name : tx("bridge.noApplicablePlatform"))}</p></div></div>
@@ -1171,7 +1021,6 @@
     });
     const totalCollectedEntries = datasets.reduce((sum, dataset) => sum + (dataset.collectedCreators || []).reduce((inner, creator) => inner + (Number(creator.entryCount) || 0), 0), 0);
     const classifierTypes = assets.classifierTypes || [];
-    const models = assets.models || [];
     const availablePlatforms = definitions.filter((definition) => !bindings.some((binding) => binding.id === definition.id));
     const bindingPanel = (binding) => {
       const definition = definitions.find((candidate) => candidate.id === binding.id);
@@ -1216,8 +1065,11 @@
       const availability = definition?.collectorAvailable ? "data.collectorAvailable" : "data.collectorPlanned";
       const tree = treeByID.get(binding.treeID);
       const selectableTypes = classifierTypes.filter((classifierType) => {
-        if (classifierType.applicablePlatformID !== binding.id || classifierType.treeID !== binding.treeID || classifierType.datasetID !== binding.datasetID || classifierType.treeRevision !== tree?.revision || classifierType.datasetRevision !== dataset?.revision) return false;
-        return definition?.supportsLLMAssist || !classifierType.llmAssistConfiguration;
+        return classifierType.applicablePlatformID === binding.id
+          && classifierType.treeID === binding.treeID
+          && classifierType.datasetID === binding.datasetID
+          && classifierType.treeRevision === tree?.revision
+          && classifierType.datasetRevision === dataset?.revision;
       });
       const typeOptions = [["", t("data.noClassifierType")], ...selectableTypes.map((classifierType) => [classifierType.id, classifierType.name])];
       const typeStatus = binding.activeClassifierTypeID ? "data.classifierTypeActive" : "data.classifierTypeNone";
@@ -1232,7 +1084,6 @@
 
   function workspace() {
     switch (state.workspace) {
-      case "localModel": return localModelWorkspace();
       case "llmAssist": return llmAssistWorkspace();
       case "browserBridge": return browserBridgeWorkspace();
       case "classificationData": return classificationDataWorkspace();
@@ -1429,11 +1280,8 @@
       if (!sourceControl) return;
       const platform = definitions.get(sourceControl.value);
       const supportsLocalModel = platform?.supportsLocalModel === true;
-      const supportsLLMAssist = platform?.supportsLLMAssist === true;
-      const isCollectionOnlyPlatform = Boolean(platform && !supportsLocalModel && !supportsLLMAssist);
+      const isCollectionOnlyPlatform = Boolean(platform && !supportsLocalModel);
       panel.querySelectorAll("[data-local-model-section]").forEach((section) => { section.hidden = !supportsLocalModel; });
-      panel.querySelectorAll("[data-llm-assist-section]").forEach((section) => { section.hidden = !supportsLLMAssist; });
-      panel.querySelectorAll("[data-decision-policy-section]").forEach((section) => { section.hidden = !supportsLocalModel && !supportsLLMAssist; });
       let note = panel.querySelector("[data-collection-only-platform-note]");
       if (!note) {
         note = document.createElement("p");
@@ -1443,13 +1291,6 @@
         panel.querySelector(".classifier-applicable-platform-section")?.append(note);
       }
       if (note) note.hidden = !isCollectionOnlyPlatform;
-      // The local model is bound to the type and shown read-only; there is no
-      // per-type model control to enable or disable here.
-      panel.querySelectorAll('[data-field^="llm"], [data-field="creatorLLM"], [data-field="entryLLM"]').forEach((control) => {
-        control.disabled = !supportsLLMAssist;
-        if (!supportsLLMAssist && control.type === "checkbox") control.checked = false;
-        if (!supportsLLMAssist && control.type !== "checkbox") control.value = "";
-      });
     });
   }
 
@@ -1618,18 +1459,6 @@
     });
   }
 
-  function saveLLMClassifierTypeFields(panel) {
-    const formID = panel?.dataset.formId;
-    const typeID = panel?.dataset.typeId;
-    if (!formID || !typeID) return;
-    const data = collect(formID);
-    // A provider alone is not an executable attachment, but its complete form
-    // state is durable so choosing a model last cannot discard prior edits.
-    if (!data.llmProviderProfileID) return;
-    data.typeID = typeID;
-    send("configureClassifierType", data);
-  }
-
   document.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-action]");
     if (!button) {
@@ -1728,7 +1557,6 @@
     if (button.dataset.id) data.id = button.dataset.id;
     if (button.dataset.utilityPanel) data.utilityPanel = button.dataset.utilityPanel;
     if (button.dataset.policyId) data.policyID = button.dataset.policyId;
-    if (button.dataset.modelId) data.modelID = button.dataset.modelId;
     if (button.dataset.profileId) data.profileID = button.dataset.profileId;
     if (button.dataset.treeId) data.treeID = button.dataset.treeId;
     if (button.dataset.nodeId) data.nodeID = button.dataset.nodeId;
@@ -1870,10 +1698,6 @@
       send("deleteTree", { treeID: button.dataset.treeId });
       return;
     }
-    if (action === "deleteLocalModel") {
-      send("confirmDeleteLocalModel", data);
-      return;
-    }
     if (action === "deleteProviderProfile") {
       send("confirmDeleteProviderProfile", data);
       return;
@@ -1929,41 +1753,6 @@
       applyApplicablePlatformCapabilities();
       return;
     }
-    const llmProviderControl = event.target.closest('[data-field="llmProviderProfileID"]');
-    if (llmProviderControl) {
-      const panel = llmProviderControl.closest(".classifier-type-panel");
-      const typeID = panel?.querySelector("[data-type-id]")?.dataset.typeId;
-      if (typeID) selectedLLMProfileByType.set(typeID, llmProviderControl.value);
-      if (typeID) send("selectLLMProvider", { typeID, profileID: llmProviderControl.value });
-      render();
-      return;
-    }
-    const llmField = event.target.closest('[data-field^="llm"]');
-    if (llmField) {
-      const panel = llmField.closest(".classifier-type-panel");
-      if (llmField.dataset.field === "llmWebSearchMode") {
-        panel?.querySelectorAll("[data-native-search-copy]").forEach((copy) => {
-          copy.hidden = llmField.value !== "providerNative";
-        });
-        panel?.querySelectorAll("[data-attached-search-controls]").forEach((controls) => {
-          controls.hidden = llmField.value !== "attached";
-        });
-        if (llmField.value === "attached" &&
-            !panel?.querySelector('[data-field="llmWebSearchProviderProfileID"]')?.value) return;
-      }
-      saveLLMClassifierTypeFields(panel);
-      return;
-    }
-    const control = event.target.closest("[data-local-model-setup]");
-    if (!control) return;
-    const panel = control.closest("[data-model-panel]");
-    const formID = panel?.dataset.formId;
-    const modelID = panel?.dataset.modelId;
-    if (!formID || !modelID) return;
-    const data = collect(formID);
-    // A model inherits tree/dataset/platform from its type; the only per-model
-    // setting is the base language model.
-    send("configureLocalModel", { modelID, baseEmbeddingID: data.baseEmbeddingID });
   });
 
   document.addEventListener("pointerdown", (event) => {
@@ -2320,10 +2109,8 @@
       if (selectedTypeID && !typeIDs.has(selectedTypeID)) selectedTypeID = null;
       // Close the trash panel if that entry was restored or purged.
       if (selectedTrashID && !(Array.isArray(state.trash) ? state.trash : []).some((entry) => entry.id === selectedTrashID)) selectedTrashID = null;
-      // Tag tree and local model are folded into a type now (rendered only inside
-      // the type's sub-tabs), so they are no longer top-level pages. Land on the
-      // classifier-type area instead.
-      if (state.workspace === "tagTree" || state.workspace === "localModel") state.workspace = "browserBridge";
+      // Tag trees are rendered inside their owning type, not as a top-level page.
+      if (state.workspace === "tagTree") state.workspace = "browserBridge";
       // Open a just-created type: the one id absent before "New type" was clicked.
       if (pendingSelectNewType) {
         const created = (state.assets?.classifierTypes || []).find((type) => !pendingSelectNewType.has(type.id));
