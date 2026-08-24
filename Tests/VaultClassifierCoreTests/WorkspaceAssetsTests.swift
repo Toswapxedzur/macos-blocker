@@ -40,12 +40,21 @@ final class WorkspaceAssetsTests: XCTestCase {
             "id": "type", "name": "Type", "treeID": tree.id,
             "treeRevision": tree.revision, "datasetID": dataset.id,
             "datasetRevision": dataset.revision, "applicablePlatformID": "youtube",
+            "localModelID": "retired-model",
+            "selectedLLMProviderProfileID": "retired-provider",
+            "llmAssistDraftConfiguration": ["retired": true],
+            "llmAssistConfiguration": ["retired": true],
+            "llmProfileIDs": ["retired-provider"],
             "platformLocked": true, "decisionPriority": "humanFirst", "order": 0,
         ]
         let type = try JSONDecoder().decode(ClassifierTypeAsset.self, from: JSONSerialization.data(withJSONObject: legacy))
         let encoded = String(decoding: try JSONEncoder().encode(type), as: UTF8.self)
-        XCTAssertFalse(encoded.contains("platformLocked"))
-        XCTAssertFalse(encoded.contains("decisionPriority"))
+        for retiredKey in [
+            "localModelID", "selectedLLMProviderProfileID", "llmAssistDraftConfiguration",
+            "llmAssistConfiguration", "llmProfileIDs", "platformLocked", "decisionPriority",
+        ] {
+            XCTAssertFalse(encoded.contains(retiredKey), "Retired key was re-encoded: \(retiredKey)")
+        }
     }
 
     func testClassifierTypeLocalModelOverridesLegacyAndRoundTrip() throws {
@@ -66,12 +75,15 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertEqual(roundTrip.localModelOverrides, value.localModelOverrides)
     }
 
-    func testLLMAssistConfigurationDiscardsRetiredActivationFlag() throws {
-        let legacy = Data(#"{"providerProfileID":"provider","modelIdentifier":"model","isActive":true}"#.utf8)
-        let configuration = try JSONDecoder().decode(LLMAssistConfiguration.self, from: legacy)
-        XCTAssertEqual(configuration.providerProfileID, "provider")
-        XCTAssertEqual(configuration.modelIdentifier, "model")
-        XCTAssertFalse(String(decoding: try JSONEncoder().encode(configuration), as: UTF8.self).contains("isActive"))
+    func testCatalogAndBindingDiscardRetiredTrainableModelFields() throws {
+        let legacyCatalog = Data(#"{"models":[{"id":"retired-model","name":"Retired"}]}"#.utf8)
+        let catalog = try JSONDecoder().decode(WorkspaceCatalog.self, from: legacyCatalog)
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(catalog), as: UTF8.self).contains(#""models""#))
+
+        let legacyBinding = Data(#"{"id":"youtube","name":"YouTube","treeID":"tree","datasetID":"dataset","activeModelID":"retired-model"}"#.utf8)
+        let binding = try JSONDecoder().decode(PlatformBinding.self, from: legacyBinding)
+        XCTAssertNil(binding.activeClassifierTypeID)
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(binding), as: UTF8.self).contains("activeModelID"))
     }
 
     func testWorkspaceCatalogRetainsPerVideoLLMStores() throws {

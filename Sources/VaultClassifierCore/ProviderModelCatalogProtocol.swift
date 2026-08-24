@@ -25,6 +25,7 @@ public struct ProviderModelCatalogEntry: Codable, Equatable, Sendable, Identifia
 /// local credential immediately before sending it to that provider.
 public enum ProviderModelCatalogProtocol {
     public static let maximumModels = 256
+    public static let maximumModelIdentifierLength = 256
     public static let maximumResponseBytes = 2 * 1_024 * 1_024
 
     public static func prepare(profile: APIKeyProviderProfile) throws -> ProviderRequestPlan {
@@ -103,7 +104,7 @@ public enum ProviderModelCatalogProtocol {
                 identifier.removeFirst("models/".count)
             }
             guard !identifier.isEmpty,
-                  identifier.count <= LLMAssistConfiguration.maximumModelIdentifierLength,
+                  identifier.count <= maximumModelIdentifierLength,
                   seen.insert(identifier).inserted else {
                 return nil
             }
@@ -133,7 +134,7 @@ public enum ProviderModelCatalogProtocol {
     ) throws -> ProviderTestPreparedRequest {
         guard profile.type == .ollama,
               !modelIdentifier.isEmpty,
-              modelIdentifier.count <= LLMAssistConfiguration.maximumModelIdentifierLength else {
+              modelIdentifier.count <= maximumModelIdentifierLength else {
             throw ProviderModelCatalogProtocolError.invalidConfiguration
         }
         let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
