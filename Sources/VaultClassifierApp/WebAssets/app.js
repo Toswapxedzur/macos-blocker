@@ -674,15 +674,19 @@
       const modelLibrarySection = `<section class="utility-settings-section utility-model-library-section"><div><h3 class="utility-settings-section-title">${tx("modelLibrary.title")}</h3><p class="section-copy">${tx("modelLibrary.copy")}</p></div><p class="model-library-source-note">${tx("modelLibrary.sourceNote")}</p><div class="model-library-groups">${modelLibraryContent(llm.modelLibrary || [])}</div></section>`;
       const generationProfiles = profiles.filter((profile) => protocols[profile.type]?.supportsGenerateText === true);
       const searchProfiles = profiles.filter((profile) => protocols[profile.type]?.supportsRawWebSearch === true);
+      const isGroundingCapable = (profile) => protocols[profile.type]?.supportsGenerateText === true && protocols[profile.type]?.supportsNativeWebSearch === true;
       const profileOptions = (items) => [["", tx("research.chooseProvider")]].concat(items.map((profile) => [profile.id, profile.name]));
+      const llmProviderOptions = [["", tx("research.chooseProvider")]].concat(generationProfiles.map((profile) => [profile.id, isGroundingCapable(profile) ? `${profile.name} · ${tx("research.groundingBadge")}` : profile.name]));
       const modelSuggestions = assets.providerModelCatalogs?.[research.llmProviderProfileID] || [];
       const researchSection = `<section class="utility-settings-section utility-research-section" data-form-id="utility-research-form"><h3 class="utility-settings-section-title">${tx("research.title")} ${statusPill(tx(research.enabled ? "research.status.on" : "research.status.off"), research.enabled ? "cyan" : "muted")}</h3><p class="section-copy">${tx("research.copy")}</p><div class="notice navy research-data-flow">${tx("research.disclosure")}</div><div class="utility-toggles">${
         toggle("research.consent", "enabled", research.enabled === true)
       }</div><div class="research-settings-groups"><section class="research-settings-group"><h4>${tx("research.group.providers")}</h4><div class="utility-settings-fields">${
-        valueSelectField("research.llmProvider", "research.llmProviderHint", "llmProviderProfileID", research.llmProviderProfileID || "", profileOptions(generationProfiles))
+        selectField("research.searchMode", "research.searchModeHint", "searchMode", research.searchMode || "rawSearchProvider", [["rawSearchProvider", "research.searchMode.raw"], ["providerGrounding", "research.searchMode.grounding"]])
       }${
+        valueSelectField("research.llmProvider", "research.llmProviderHint", "llmProviderProfileID", research.llmProviderProfileID || "", llmProviderOptions)
+      }<div class="research-search-provider-field" data-search-provider-field${research.searchMode === "providerGrounding" ? " hidden" : ""}>${
         valueSelectField("research.searchProvider", "research.searchProviderHint", "webSearchProviderProfileID", research.webSearchProviderProfileID || "", profileOptions(searchProfiles))
-      }${
+      }</div>${
         field("research.model", "research.modelHint", "llmModelIdentifier", research.llmModelIdentifier || "", "text", 'list="research-model-suggestions" maxlength="256"')
       }<datalist id="research-model-suggestions">${modelSuggestions.map((model) => `<option value="${esc(model)}"></option>`).join("")}</datalist></div></section><section class="research-settings-group"><h4>${tx("research.group.frequency")}</h4><div class="utility-settings-fields">${
         field("research.requestsPerMinute", "research.requestsPerMinuteHint", "requestsPerMinute", research.requestsPerMinute ?? 6, "number", 'min="1" max="120"')
@@ -1040,14 +1044,18 @@
       const researchFormID = `classifier-research-form-${classifierType.id}`;
       const generationProfiles = profiles.filter((profile) => assets.providerProtocols?.[profile.type]?.supportsGenerateText === true);
       const searchProfiles = profiles.filter((profile) => assets.providerProtocols?.[profile.type]?.supportsRawWebSearch === true);
+      const typeIsGroundingCapable = (profile) => assets.providerProtocols?.[profile.type]?.supportsGenerateText === true && assets.providerProtocols?.[profile.type]?.supportsNativeWebSearch === true;
       const researchProfileOptions = (items) => [["", tx("research.chooseProvider")]].concat(items.map((profile) => [profile.id, profile.name]));
+      const typeLLMProviderOptions = [["", tx("research.chooseProvider")]].concat(generationProfiles.map((profile) => [profile.id, typeIsGroundingCapable(profile) ? `${profile.name} · ${tx("research.groundingBadge")}` : profile.name]));
       const typeModelSuggestions = assets.providerModelCatalogs?.[researchDefaults.llmProviderProfileID] || [];
       const typeResearchModelListID = `research-model-suggestions-${classifierType.id}`;
       const researchOverrideBody = `<div class="utility-toggles">${toggle("bridge.researchEnabled", "enabled", researchDefaults.enabled === true)}</div><div class="research-settings-groups"><section class="research-settings-group"><h4>${tx("research.group.providers")}</h4><div class="utility-settings-fields">${
-        valueSelectField("research.llmProvider", "research.llmProviderHint", "llmProviderProfileID", researchDefaults.llmProviderProfileID || "", researchProfileOptions(generationProfiles))
+        selectField("research.searchMode", "research.searchModeHint", "searchMode", researchDefaults.searchMode || "rawSearchProvider", [["rawSearchProvider", "research.searchMode.raw"], ["providerGrounding", "research.searchMode.grounding"]])
       }${
+        valueSelectField("research.llmProvider", "research.llmProviderHint", "llmProviderProfileID", researchDefaults.llmProviderProfileID || "", typeLLMProviderOptions)
+      }<div class="research-search-provider-field" data-search-provider-field${researchDefaults.searchMode === "providerGrounding" ? " hidden" : ""}>${
         valueSelectField("research.searchProvider", "research.searchProviderHint", "webSearchProviderProfileID", researchDefaults.webSearchProviderProfileID || "", researchProfileOptions(searchProfiles))
-      }${
+      }</div>${
         field("research.model", "research.modelHint", "llmModelIdentifier", researchDefaults.llmModelIdentifier || "", "text", `list="${esc(typeResearchModelListID)}" maxlength="256"`)
       }<datalist id="${esc(typeResearchModelListID)}">${typeModelSuggestions.map((model) => `<option value="${esc(model)}"></option>`).join("")}</datalist></div></section><section class="research-settings-group"><h4>${tx("research.group.frequency")}</h4><div class="utility-settings-fields">${
         field("research.requestsPerMinute", "research.requestsPerMinuteHint", "requestsPerMinute", researchDefaults.requestsPerMinute ?? 6, "number", 'min="1" max="120"')
@@ -1865,6 +1873,13 @@
     }
     if (event.target.closest('[data-field="applicablePlatformID"]')) {
       applyApplicablePlatformCapabilities();
+      return;
+    }
+    const searchModeControl = event.target.closest('[data-field="searchMode"]');
+    if (searchModeControl) {
+      const scope = searchModeControl.closest("[data-form-id]") || document;
+      const providerField = scope.querySelector("[data-search-provider-field]");
+      if (providerField) providerField.hidden = searchModeControl.value === "providerGrounding";
       return;
     }
   });
