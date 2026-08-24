@@ -60,6 +60,56 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         }
     }
 
+    func testProviderWorkspaceDisclosesLocalOnlyCredentialStorage() throws {
+        let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
+        let stringsURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "strings", extension: "js"))
+        let script = try String(contentsOf: appURL, encoding: .utf8)
+        let strings = try String(contentsOf: stringsURL, encoding: .utf8)
+
+        // The API-keys workspace renders the local-only disclosure.
+        XCTAssertTrue(script.contains("llm.localOnlyDisclosure"))
+        XCTAssertTrue(script.contains("provider-local-only"))
+        // The copy explicitly states keys stay on this Mac and are never uploaded.
+        XCTAssertTrue(strings.contains("stored locally on this Mac"))
+        XCTAssertTrue(strings.contains("never upload your keys"))
+        XCTAssertTrue(strings.contains("never in the system keychain"))
+    }
+
+    func testShellExposesResearchSearchModeSelectorGloballyAndPerType() throws {
+        let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
+        let stringsURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "strings", extension: "js"))
+        let script = try String(contentsOf: appURL, encoding: .utf8)
+        let strings = try String(contentsOf: stringsURL, encoding: .utf8)
+
+        // The search-mode selector, the two modes, and the grounding badge are
+        // rendered in both the global settings panel and the per-type override
+        // body (each token should appear at least twice — once per surface).
+        for token in [
+            "\"searchMode\"", "research.searchMode.raw", "research.searchMode.grounding",
+            "research.groundingBadge", "data-search-provider-field",
+        ] {
+            XCTAssertGreaterThanOrEqual(
+                script.components(separatedBy: token).count - 1, 2,
+                "Expected \(token) in both global and per-type research UI"
+            )
+        }
+        // The live change handler that hides the raw-search provider in grounding mode.
+        XCTAssertTrue(script.contains("[data-field=\"searchMode\"]"))
+        XCTAssertTrue(script.contains("providerGrounding"))
+        // Only grounding-capable providers are marked, using the native-search capability.
+        XCTAssertTrue(script.contains("supportsNativeWebSearch"))
+
+        // Strings for the selector and the mode labels exist.
+        for key in [
+            "\"research.searchMode\"", "\"research.searchMode.raw\"",
+            "\"research.searchMode.grounding\"", "\"research.groundingBadge\"",
+        ] {
+            XCTAssertTrue(strings.contains(key), "Missing string \(key)")
+        }
+        // The disclosure copy now covers provider-grounding mode explicitly.
+        XCTAssertTrue(strings.contains("provider-grounding mode the sanitized subject is sent to a single grounding-capable provider"))
+    }
+
     func testShellDisclosesOptInResearchDataFlow() throws {
         let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
         let stringsURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "strings", extension: "js"))

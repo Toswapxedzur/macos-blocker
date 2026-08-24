@@ -294,6 +294,7 @@ window.VaultClassifierStrings = Object.freeze({
   "tree.create": "Create tree",
   "llm.title": "LLM assist",
   "llm.copy": "Create local language-model, blockable-platform data, or raw web-search profiles.",
+  "llm.localOnlyDisclosure": "Your API keys are stored locally on this Mac, inside this app's own support folder — never in the system keychain. They are used only to call the provider you entered them for. We never upload your keys anywhere.",
   "llm.keyLibrary": "Key library",
   "llm.providerType": "Provider type",
   "llm.chooseProviderType": "Choose a provider type",

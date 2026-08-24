@@ -61,4 +61,30 @@ public enum VaultRuntimeEnvironment: String, Codable, Sendable {
         case .development: return productionService + ".development"
         }
     }
+
+    /// The app's own local support directory (`~/Library/Application
+    /// Support/VaultClassifier[-Development]`), created 0700 if missing. Both
+    /// the app and the browser's native-messaging host resolve the same path,
+    /// so it is a stable place for on-device state that must be shared between
+    /// them without a keychain item. Everything here stays on this Mac.
+    public func classifierSupportDirectoryURL(fileManager: FileManager = .default) throws -> URL {
+        let appSupport = try fileManager.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let directory = appSupport.appendingPathComponent(
+            classifierSupportDirectoryName,
+            isDirectory: true
+        )
+        if !fileManager.fileExists(atPath: directory.path) {
+            try fileManager.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+        }
+        return directory
+    }
 }
