@@ -26,10 +26,18 @@ final class LocalLLMEngineRegistryTests: XCTestCase {
             at: directory.appendingPathComponent("not-a-file.gguf", isDirectory: true),
             withIntermediateDirectories: true
         )
+        // A symlinked model (e.g. into the Hugging Face cache) must be listed:
+        // its target is a regular file.
+        let linkTarget = directory.appendingPathComponent("target-store.gguf")
+        XCTAssertTrue(FileManager.default.createFile(atPath: linkTarget.path, contents: Data()))
+        try FileManager.default.createSymbolicLink(
+            at: directory.appendingPathComponent("linked.gguf"),
+            withDestinationURL: linkTarget
+        )
 
         XCTAssertEqual(
             VaultLocalLLMEngine.availableModelFiles(in: directory),
-            [catalogFile, "manual.gguf"].sorted()
+            [catalogFile, "manual.gguf", "target-store.gguf", "linked.gguf"].sorted()
         )
     }
 
