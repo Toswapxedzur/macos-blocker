@@ -71,7 +71,7 @@
   let navigationPanelWidth = navigationWidthRange.fallback;
   let navigationResize = null;
   const collectionRowHeight = 48;
-  const workspaceNames = new Set(["tagTree", "llmAssist", "browserBridge", "classificationData"]);
+  const workspaceNames = new Set(["tagTree", "llmAssist", "browserBridge", "classificationData", "knowledge"]);
   const virtualLists = new Map();
   const virtualListScrollByKey = new Map();
   let virtualListSequence = 0;
