@@ -30,7 +30,27 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
     private let configuration: LocalLLMSettings
     private var cachedTokens: [llama_token] = []
 
-    private static let backendReady: Void = llama_backend_init()
+    private static let backendReady: Void = {
+        // In a packaged .app the ggml backends (Metal/CPU/BLAS) are bundled in
+        // Contents/Frameworks; load them explicitly so we never depend on
+        // ggml's compiled-in Homebrew libexec path. In dev/CLI builds that
+        // directory doesn't exist, so ggml's own auto-discovery (via
+        // llama_backend_init) handles it.
+        if let backendDirectory = bundledBackendDirectory() {
+            ggml_backend_load_all_from_path(backendDirectory)
+        }
+        llama_backend_init()
+    }()
+
+    /// `<App>.app/Contents/Frameworks` when running from a bundle, else nil.
+    private static func bundledBackendDirectory() -> String? {
+        let frameworks = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Frameworks", isDirectory: true)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: frameworks.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else { return nil }
+        return frameworks.path
+    }
 
     public enum EngineError: Error, CustomStringConvertible {
         case modelLoadFailed(String)
