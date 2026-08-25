@@ -830,7 +830,8 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
             queue: GroundedResearchQueue?,
             settings: ResearchSettings?,
             classifierType: ClassifierTypeAsset,
-            callback: (@Sendable (String, String, VideoTagsProjection) -> Void)?
+            callback: (@Sendable (String, String, VideoTagsProjection) -> Void)?,
+            didDistill: Bool
         ) in
             guard let typeIndex = state.workspaceCatalog.classifierTypes.firstIndex(where: {
                 $0.id == classifierTypeID && $0.applicablePlatformID == platformID
@@ -869,7 +870,9 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
             let distilledCount = CorrectionDistiller.distilledCorrectionCount(
                 in: existingOverrides?.houseRules
             )
+            var didDistill = false
             if typeCorrections.count >= distilledCount + CorrectionDistiller.batchSize {
+                didDistill = true
                 let learned = CorrectionDistiller.distill(
                     corrections: typeCorrections,
                     tree: tree,
@@ -925,11 +928,20 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                 groundedResearchQueue,
                 Self.effectiveResearchSettings(global: state.settings.research, for: type),
                 type,
-                onVideoReclassifiedCallback
+                onVideoReclassifiedCallback,
+                didDistill
             )
         }
 
         saved.callback?(platformID, entryID, saved.projection)
+        // A crossed batch boundary refreshed the deterministic learned rules; ask
+        // the local model to re-summarize them into natural-language guidance
+        // (fire-and-forget; used on the next classification, falls back silently).
+        if saved.didDistill {
+            Task.detached(priority: .utility) { [weak self] in
+                await self?.refineCorrectionSummary(classifierTypeID: classifierTypeID)
+            }
+        }
         if let settings = saved.settings,
            settings.trigger.includesCorrections,
            let queue = saved.queue {
@@ -950,6 +962,80 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
             )
         }
         return saved.projection
+    }
+
+    /// Asks the on-device model to re-summarize this type's stored corrections
+    /// into a natural-language "Learned preferences" block, replacing the
+    /// deterministic fallback. Local-only; used on the next classification. A
+    /// silent no-op when the model can't summarize (stub, no engine, or error).
+    public func refineCorrectionSummary(classifierTypeID: String) async {
+        let snapshot = lock.withLock { () -> (
+            corrections: [CorrectionExample],
+            tree: TagTreeAsset?,
+            llm: any OnDeviceLLM,
+            resolver: (any OnDeviceLLMEngineResolving)?,
+            localLLMSettings: LocalLLMSettings,
+            modelFileName: String?
+        ) in
+            guard let type = state.workspaceCatalog.classifierTypes.first(where: { $0.id == classifierTypeID }) else {
+                return ([], nil, onDeviceLLM, onDeviceLLMEngineResolver, state.settings.localLLM, nil)
+            }
+            let tree = state.workspaceCatalog.trees.first { $0.id == type.treeID && $0.revision == type.treeRevision }
+            let corrections = state.workspaceCatalog.correctionExamples.filter { $0.classifierTypeID == classifierTypeID }
+            return (corrections, tree, onDeviceLLM, onDeviceLLMEngineResolver, state.settings.localLLM, type.modelFileName)
+        }
+        guard let tree = snapshot.tree, !snapshot.corrections.isEmpty else { return }
+
+        // Resolve the type's effective engine (its own model, else the default).
+        let engine: any OnDeviceLLM
+        if let fileName = snapshot.modelFileName, let resolver = snapshot.resolver,
+           let resolved = try? await resolver.resolveEngine(forModel: fileName, configuration: snapshot.localLLMSettings) {
+            engine = resolved
+        } else {
+            engine = snapshot.llm
+        }
+        guard let summarizer = engine as? any OnDeviceCorrectionSummarizing else { return }
+
+        let taxonomy = try? tree.inferenceTaxonomy()
+        let nameByID = Dictionary(uniqueKeysWithValues: tree.nodes.map { ($0.id, $0.name) })
+        let items = snapshot.corrections
+            .sorted { $0.createdAtMilliseconds > $1.createdAtMilliseconds }
+            .prefix(24)
+            .map { correction in
+                LLMCorrectionSummaryRequest.Item(
+                    title: correction.title,
+                    tagNames: correction.correctTagIDs.compactMap { nameByID[$0] },
+                    note: correction.note
+                )
+            }
+        let allowedNames = (taxonomy?.predictableLeafIDs.compactMap { taxonomy?.nodes[$0]?.name }) ?? []
+        guard let summary = try? await summarizer.summarizeCorrections(
+            LLMCorrectionSummaryRequest(items: Array(items), allowedTagNames: allowedNames)
+        ), !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        do {
+            try lock.withLock {
+                guard let index = state.workspaceCatalog.classifierTypes.firstIndex(where: { $0.id == classifierTypeID }) else { return }
+                let existing = state.workspaceCatalog.classifierTypes[index].localModelOverrides
+                let count = state.workspaceCatalog.correctionExamples.filter { $0.classifierTypeID == classifierTypeID }.count
+                let houseRules = CorrectionDistiller.combinedHouseRules(
+                    manualHouseRules: existing?.houseRules,
+                    learnedRules: summary,
+                    correctionCount: count
+                )
+                let overrides = LocalModelOverrides(
+                    houseRules: houseRules,
+                    allowDecline: existing?.allowDecline,
+                    confidenceThresholds: existing?.confidenceThresholds
+                )
+                state.workspaceCatalog.classifierTypes[index].localModelOverrides = overrides.isEmpty ? nil : overrides
+                state.workspaceCatalog.classifierTypes[index].updatedAtMilliseconds = WorkspaceCatalog.now()
+                try stateFile.save(state)
+            }
+            VaultDevLog.shared.log("correction", "summary-refined", ["type": classifierTypeID, "chars": "\(summary.count)"])
+        } catch {
+            VaultDevLog.shared.log("correction", "summary-persist-failed", ["error": String(describing: error)])
+        }
     }
 
     private static func collectedEntry(
