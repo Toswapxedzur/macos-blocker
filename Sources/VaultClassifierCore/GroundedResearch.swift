@@ -518,6 +518,10 @@ public actor GroundedResearchQueue {
                 )
                 await mutationWriter(.succeeded(task: item.task, result: result, usage: usage))
             } catch {
+                VaultDevLog.shared.log("research", "failed", [
+                    "subject": item.subject.key,
+                    "error": String(describing: error),
+                ])
                 let attemptedAt = Int64(requestStart.timeIntervalSince1970 * 1_000)
                 let retry = attemptedAt.addingReportingOverflow(configuration.failureCooldownMilliseconds)
                 await mutationWriter(.failed(
