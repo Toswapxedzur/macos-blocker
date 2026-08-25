@@ -96,6 +96,7 @@ final class VaultClassifierViewModel: ObservableObject {
         case llmAssist
         case browserBridge
         case classificationData
+        case knowledge
 
         var id: String { rawValue }
     }
@@ -1860,6 +1861,28 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
+    func deleteKnowledgeEntry(id: String) {
+        guard let coordinator else { return }
+        do {
+            try coordinator.deleteKnowledgeEntry(id: id)
+            refreshLocalState()
+            issue = nil
+        } catch {
+            issue = error.localizedDescription
+        }
+    }
+
+    func editKnowledgeEntry(id: String, meaning: String) {
+        guard let coordinator else { return }
+        do {
+            try coordinator.updateKnowledgeEntryMeaning(id: id, meaning: meaning)
+            refreshLocalState()
+            issue = nil
+        } catch {
+            issue = error.localizedDescription
+        }
+    }
+
     func saveResearchSettings(_ updated: ResearchSettings) {
         guard let coordinator else { return }
         do {
@@ -2274,6 +2297,23 @@ final class VaultClassifierViewModel: ObservableObject {
                     "collectedCreators": webCollectedCreators(dataset.collectedEntries),
                 ] as [String: Any]
             }
+        let knowledgePayload: ([KnowledgeEntry]) -> [[String: Any]] = { entries in
+            entries
+                .sorted { $0.updatedAtMilliseconds > $1.updatedAtMilliseconds }
+                .map { entry in
+                    [
+                        "id": entry.id,
+                        "subject": entry.subject,
+                        "meaning": entry.meaning,
+                        "sourceURLs": entry.sourceURLs,
+                        "updatedAtMilliseconds": entry.updatedAtMilliseconds,
+                    ] as [String: Any]
+                }
+        }
+        assets["knowledge"] = [
+            "creators": knowledgePayload(catalog.creatorKnowledge),
+            "terms": knowledgePayload(catalog.knowledgeEntries),
+        ]
         assets["classifierTypes"] = catalog.classifierTypes.map { classifierType in
                 return [
                     "id": classifierType.id,
@@ -2634,6 +2674,13 @@ final class VaultClassifierViewModel: ObservableObject {
                 cancelModelDownload(id: try webString(data, key: "id", limit: 128))
             case "deleteModelFile":
                 deleteModelFile(fileName: try webString(data, key: "fileName", limit: 255))
+            case "deleteKnowledgeEntry":
+                deleteKnowledgeEntry(id: try webString(data, key: "id", limit: 512))
+            case "editKnowledgeEntry":
+                editKnowledgeEntry(
+                    id: try webString(data, key: "id", limit: 512),
+                    meaning: try webString(data, key: "meaning", limit: KnowledgeEntry.maximumMeaningLength)
+                )
             case "saveResearchSettings":
                 saveResearchSettings(ResearchSettings(
                     enabled: try webBool(data, key: "enabled"),

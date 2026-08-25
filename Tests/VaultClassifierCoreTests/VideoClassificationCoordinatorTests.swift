@@ -673,6 +673,34 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertTrue(recorder.subjects.isEmpty, "a confident classification must not trigger research")
     }
 
+    func testEditAndDeleteKnowledgeEntryMutateTheCorrectMap() throws {
+        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var catalog = coordinator.snapshot().workspaceCatalog
+        catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .creator, subject: "c1", meaning: "old creator desc"))
+        catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .term, subject: "HermitCraft", meaning: "smp"))
+        try coordinator.updateWorkspaceCatalog(catalog)
+
+        // Editing a creator description keeps the id/kind and updates the text.
+        XCTAssertTrue(try coordinator.updateKnowledgeEntryMeaning(id: "creator:c1", meaning: "new creator desc"))
+        XCTAssertEqual(
+            coordinator.snapshot().workspaceCatalog.creatorKnowledgeEntry(for: "c1")?.meaning,
+            "new creator desc"
+        )
+        // Editing an unknown id is a no-op.
+        XCTAssertFalse(try coordinator.updateKnowledgeEntryMeaning(id: "term:missing", meaning: "x"))
+
+        // Deleting the term forgets it; the creator is untouched.
+        try coordinator.deleteKnowledgeEntry(id: "term:hermitcraft")
+        let afterTerm = coordinator.snapshot().workspaceCatalog
+        XCTAssertTrue(afterTerm.knowledgeEntries.isEmpty)
+        XCTAssertEqual(afterTerm.creatorKnowledge.count, 1)
+
+        // Deleting the creator forgets it (allowing a fresh re-research).
+        try coordinator.deleteKnowledgeEntry(id: "creator:c1")
+        XCTAssertTrue(coordinator.snapshot().workspaceCatalog.creatorKnowledge.isEmpty)
+    }
+
     func testResearchBackfillSweepsPersistedLowConfidenceRowsWithinBound() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
         defer { try? FileManager.default.removeItem(at: root) }

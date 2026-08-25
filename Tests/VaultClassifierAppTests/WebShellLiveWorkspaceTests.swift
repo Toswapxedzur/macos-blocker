@@ -60,6 +60,26 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         }
     }
 
+    func testKnowledgeWorkspaceExposesCreatorAndTermManagement() throws {
+        let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
+        let stringsURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "strings", extension: "js"))
+        let script = try String(contentsOf: appURL, encoding: .utf8)
+        let strings = try String(contentsOf: stringsURL, encoding: .utf8)
+
+        // A dedicated Knowledge workspace, reachable from the sidebar.
+        XCTAssertTrue(script.contains("knowledgeWorkspace"))
+        XCTAssertTrue(script.contains("navButton(\"knowledge\""))
+        XCTAssertTrue(script.contains("case \"knowledge\":"))
+        // Both maps rendered, each entry editable and deletable.
+        XCTAssertTrue(script.contains("knowledge.creators"))
+        XCTAssertTrue(script.contains("knowledge.terms"))
+        XCTAssertTrue(script.contains("editKnowledgeEntry"))
+        XCTAssertTrue(script.contains("deleteKnowledgeEntry"))
+        // Strings for the workspace.
+        XCTAssertTrue(strings.contains("Known creators"))
+        XCTAssertTrue(strings.contains("Known terms"))
+    }
+
     func testProviderWorkspaceDisclosesLocalOnlyCredentialStorage() throws {
         let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
         let stringsURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "strings", extension: "js"))
