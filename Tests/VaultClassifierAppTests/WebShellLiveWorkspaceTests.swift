@@ -70,6 +70,13 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         XCTAssertTrue(script.contains("knowledgeWorkspace"))
         XCTAssertTrue(script.contains("navButton(\"knowledge\""))
         XCTAssertTrue(script.contains("case \"knowledge\":"))
+        // The client-side nav allowlist must accept it, or the click is a no-op.
+        let allowlist = try XCTUnwrap(script.range(of: "const workspaceNames = new Set(["))
+        let lineEnd = try XCTUnwrap(script.range(of: "]", range: allowlist.upperBound..<script.endIndex))
+        XCTAssertTrue(
+            script[allowlist.upperBound..<lineEnd.lowerBound].contains("\"knowledge\""),
+            "knowledge must be in workspaceNames or the sidebar button does nothing"
+        )
         // Both maps rendered, each entry editable and deletable.
         XCTAssertTrue(script.contains("knowledge.creators"))
         XCTAssertTrue(script.contains("knowledge.terms"))
