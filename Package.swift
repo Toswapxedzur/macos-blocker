@@ -1,12 +1,26 @@
 // swift-tools-version: 5.9
 import PackageDescription
+import Foundation
+
+// Homebrew prefix, resolved at manifest-eval time so the package builds on
+// Apple Silicon (/opt/homebrew), Intel (/usr/local), or a custom install
+// (HOMEBREW_PREFIX) — never a hardcoded path.
+let brewPrefix: String = {
+    if let override = ProcessInfo.processInfo.environment["HOMEBREW_PREFIX"], !override.isEmpty {
+        return override
+    }
+    for candidate in ["/opt/homebrew", "/usr/local"] where FileManager.default.fileExists(atPath: candidate + "/include") {
+        return candidate
+    }
+    return "/opt/homebrew"
+}()
 
 // llama.h includes "ggml.h", which lives in the separate Homebrew ggml keg;
 // llama.pc only carries llama.cpp's own include dir, so every target that
 // (transitively) imports Cllama needs the shared Homebrew include root too.
-let cllamaIncludeFlags: [SwiftSetting] = [.unsafeFlags(["-Xcc", "-I/opt/homebrew/include"])]
+let cllamaIncludeFlags: [SwiftSetting] = [.unsafeFlags(["-Xcc", "-I\(brewPrefix)/include"])]
 // libggml* live in the ggml keg; llama.pc's -L only covers llama.cpp's own keg.
-let cllamaLinkFlags: [LinkerSetting] = [.unsafeFlags(["-L/opt/homebrew/lib"])]
+let cllamaLinkFlags: [LinkerSetting] = [.unsafeFlags(["-L\(brewPrefix)/lib"])]
 
 let package = Package(
     name: "VaultClassifier",
