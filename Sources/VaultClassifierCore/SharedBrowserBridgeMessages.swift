@@ -320,7 +320,7 @@ public struct NativeVideoTag: Codable, Equatable, Sendable {
         self.darkColorHex = TagColorAssignment.normalizedHex(darkColorHex) ?? ""
     }
 
-    static func accepted(_ tags: [NativeVideoTag]) -> [NativeVideoTag] {
+    public static func accepted(_ tags: [NativeVideoTag]) -> [NativeVideoTag] {
         Array(
             tags
                 .filter {
@@ -331,6 +331,81 @@ public struct NativeVideoTag: Codable, Equatable, Sendable {
                 }
                 .prefix(16)
         )
+    }
+}
+
+// MARK: - In-page tag correction (classifier-taxonomy + submit-correction)
+
+/// The predictable tag choices the in-page pill UI offers for one platform.
+public struct NativeClassifierTaxonomyRequest: Codable, Equatable, Sendable {
+    public var platformID: String
+    public init(platformID: String) { self.platformID = platformID }
+    public func validate() throws {
+        guard NativeVideoTagsRequest.isValidPlatformID(platformID) else {
+            throw NativeVideoTagsError.invalidPlatform
+        }
+    }
+}
+
+public struct NativeClassifierTypeTaxonomy: Codable, Equatable, Sendable {
+    public var typeID: String
+    public var name: String
+    public var tags: [NativeVideoTag]
+    public init(typeID: String, name: String, tags: [NativeVideoTag]) {
+        self.typeID = typeID
+        self.name = name
+        self.tags = tags
+    }
+}
+
+public struct NativeClassifierTaxonomyResponse: Codable, Equatable, Sendable {
+    public var platformID: String
+    public var types: [NativeClassifierTypeTaxonomy]
+    public init(platformID: String, types: [NativeClassifierTypeTaxonomy]) {
+        self.platformID = platformID
+        self.types = types
+    }
+}
+
+/// A user correction from the in-page pill UI: the authoritative tag set for one
+/// video under one classifier type.
+public struct NativeSubmitCorrectionRequest: Codable, Equatable, Sendable {
+    public var platformID: String
+    public var entryID: String
+    public var creatorID: String
+    public var typeID: String
+    public var correctTagIDs: [String]
+
+    public init(platformID: String, entryID: String, creatorID: String, typeID: String, correctTagIDs: [String]) {
+        self.platformID = platformID
+        self.entryID = entryID
+        self.creatorID = creatorID
+        self.typeID = typeID
+        self.correctTagIDs = correctTagIDs
+    }
+
+    public func validate() throws {
+        guard NativeVideoTagsRequest.isValidPlatformID(platformID) else {
+            throw NativeVideoTagsError.invalidPlatform
+        }
+        guard !entryID.isEmpty, entryID.count <= 256, entryID.hasPrefix("\(platformID):"),
+              !creatorID.isEmpty, creatorID.count <= 256, creatorID.hasPrefix("\(platformID):"),
+              !typeID.isEmpty, typeID.count <= 256,
+              correctTagIDs.count <= CorrectionExample.maximumTagIDs,
+              correctTagIDs.allSatisfy({ !$0.isEmpty && $0.count <= 256 }) else {
+            throw NativeVideoTagsError.invalidEvidence
+        }
+    }
+}
+
+public struct NativeSubmitCorrectionResponse: Codable, Equatable, Sendable {
+    public var platformID: String
+    public var entryID: String
+    public var tags: [NativeVideoTag]
+    public init(platformID: String, entryID: String, tags: [NativeVideoTag]) {
+        self.platformID = platformID
+        self.entryID = entryID
+        self.tags = tags
     }
 }
 

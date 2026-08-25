@@ -617,6 +617,42 @@ final class VaultClassifierViewModel: ObservableObject {
                     queueVideoClassification(platformID: batch.platformID, items: pendingItems)
                 }
                 return try sharedHubReply(NativeVideoTagsBatchResponse(platformID: batch.platformID, items: responses))
+            case .classifierTaxonomy:
+                let taxonomyRequest = try JSONDecoder().decode(NativeClassifierTaxonomyRequest.self, from: request.bodyData)
+                try taxonomyRequest.validate()
+                let catalog = coordinator.snapshot().workspaceCatalog
+                let types = catalog.classifierTypes
+                    .filter { $0.applicablePlatformID == taxonomyRequest.platformID }
+                    .sorted { ($0.order, $0.id) < ($1.order, $1.id) }
+                    .compactMap { type -> NativeClassifierTypeTaxonomy? in
+                        guard let tree = catalog.trees.first(where: {
+                            $0.id == type.treeID && $0.revision == type.treeRevision
+                        }), let taxonomy = try? tree.inferenceTaxonomy() else { return nil }
+                        let tagNodes = taxonomy.predictableLeafIDs
+                            .compactMap { taxonomy.nodes[$0] }
+                            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+                        let tags = NativeVideoTag.accepted(Self.nativeVideoTags(from: tagNodes))
+                        guard !tags.isEmpty else { return nil }
+                        return NativeClassifierTypeTaxonomy(typeID: type.id, name: type.name, tags: tags)
+                    }
+                return try sharedHubReply(NativeClassifierTaxonomyResponse(platformID: taxonomyRequest.platformID, types: types))
+            case .submitCorrection:
+                let correction = try JSONDecoder().decode(NativeSubmitCorrectionRequest.self, from: request.bodyData)
+                try correction.validate()
+                // The corrected set becomes authoritative; the reclassify callback
+                // broadcasts the update to every connected browser's pill.
+                let projection = try coordinator.submitCorrection(
+                    classifierTypeID: correction.typeID,
+                    platformID: correction.platformID,
+                    entryID: correction.entryID,
+                    correctTagIDs: correction.correctTagIDs
+                )
+                devLog("submit-correction", ["platform": correction.platformID, "entry": correction.entryID, "type": correction.typeID, "tags": "\(correction.correctTagIDs.count)"])
+                refreshLocalState()
+                onWebStateChange?()
+                return try sharedHubReply(NativeSubmitCorrectionResponse(
+                    platformID: correction.platformID, entryID: correction.entryID,
+                    tags: Self.nativeVideoTags(from: projection.tags)))
             case .devLog:
                 let entry = try JSONDecoder().decode(NativeDevLogRequest.self, from: request.bodyData)
                 try entry.validate()
