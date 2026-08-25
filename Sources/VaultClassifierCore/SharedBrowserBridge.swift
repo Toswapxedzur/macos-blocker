@@ -9,6 +9,12 @@ public enum SharedBrowserBridgeOperation: String, CaseIterable, Codable, Sendabl
     case collect
     case videoTags = "video-tags"
     case videoTagsBatch = "video-tags-batch"
+    // The predictable tag taxonomy for a platform's classifier types — used by
+    // the in-page pill UI to offer add-a-tag choices. Read-only.
+    case classifierTaxonomy = "classifier-taxonomy"
+    // A user correction from the in-page pill UI: the authoritative tag set for
+    // one video under one classifier type.
+    case submitCorrection = "submit-correction"
     // Dev-only: extension layers forward structured log lines into the unified
     // VaultDevLog file (blockerGroup/misc/dev.log). No-op unless the app is in
     // the development environment.
