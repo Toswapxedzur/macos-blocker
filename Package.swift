@@ -16,6 +16,7 @@ let package = Package(
         .executable(name: "VaultClassifierApp", targets: ["VaultClassifierApp"]),
         .executable(name: "VaultLocalHubNativeHost", targets: ["VaultLocalHubNativeHost"]),
         .executable(name: "VaultLLMEngineSmoke", targets: ["VaultLLMEngineSmoke"]),
+        .executable(name: "VaultGroundingSmoke", targets: ["VaultGroundingSmoke"]),
     ],
     targets: [
         .target(
@@ -46,6 +47,11 @@ let package = Package(
         ),
         .executableTarget(
             name: "VaultLocalHubNativeHost",
+            dependencies: ["VaultClassifierCore"]
+        ),
+        // Live smoke test for provider-native search grounding (one real call).
+        .executableTarget(
+            name: "VaultGroundingSmoke",
             dependencies: ["VaultClassifierCore"]
         ),
         // Runs the Phase-0 title benchmark through the real in-process engine.
