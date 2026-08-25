@@ -763,6 +763,7 @@
       <button class="sidebar-add" type="button" data-action="newType"><span aria-hidden="true">＋</span> ${tx("navigation.newType")}</button>
       <div class="sidebar-divider" role="separator"></div>
       ${navButton("classificationData", "▤", "navigation.classificationData", "navigation.classificationDataMeta")}
+      ${navButton("knowledge", "✦", "navigation.knowledge", "navigation.knowledgeMeta")}
       ${navButton("llmAssist", "◌", "navigation.apiKeys", "navigation.apiKeysMeta")}
       ${trashSection}`;
   }
@@ -1108,6 +1109,26 @@
       <div class="empty">${tx(classifierTypes.length ? "bridge.selectType" : "bridge.emptyTypes")}</div>${notice(state.issue, "red")}</div>`;
   }
 
+  function knowledgeWorkspace() {
+    const knowledge = state.assets?.knowledge || { creators: [], terms: [] };
+    const creators = knowledge.creators || [];
+    const terms = knowledge.terms || [];
+
+    const entryCard = (entry, kind, index) => {
+      const formID = `knowledge-edit-${kind}-${index}`;
+      const sources = Array.isArray(entry.sourceURLs) ? entry.sourceURLs : [];
+      const sourceLine = sources.length
+        ? `<div class="knowledge-sources">${sources.map((url) => `<a href="${esc(url)}" target="_blank" rel="noreferrer noopener">${esc(url)}</a>`).join("")}</div>`
+        : "";
+      const badge = kind === "creator" ? statusPill(tx("knowledge.permanent"), "cyan") : "";
+      return `<article class="knowledge-card" data-form-id="${formID}"><div class="knowledge-card-head"><span class="knowledge-subject" dir="auto">${esc(entry.subject)}</span>${badge}</div><label class="field wide"><span class="field-label">${tx("knowledge.description")}</span><textarea data-field="meaning" rows="3" maxlength="2000">${esc(entry.meaning || "")}</textarea></label>${sourceLine}<div class="action-row"><button class="primary" data-action="editKnowledgeEntry" data-form="${formID}" data-id="${esc(entry.id)}">${tx("common.save")}</button><button class="danger" data-action="deleteKnowledgeEntry" data-id="${esc(entry.id)}">${tx("knowledge.delete")}</button></div></article>`;
+    };
+
+    const group = (titleKey, hintKey, items, kind) => `<section class="knowledge-group"><div class="section-header"><div><h3>${tx(titleKey)} <span class="knowledge-count">${items.length}</span></h3><p class="section-copy">${tx(hintKey)}</p></div></div>${items.length ? `<div class="knowledge-list">${items.map((entry, index) => entryCard(entry, kind, index)).join("")}</div>` : `<div class="empty">${tx("knowledge.empty")}</div>`}</section>`;
+
+    return `<div class="workspace knowledge-workspace">${header("knowledge.title", "knowledge.copy", tx("knowledge.badge"), "gold")}<div class="notice navy">${tx("knowledge.disclosure")}</div>${group("knowledge.creators", "knowledge.creatorsHint", creators, "creator")}${group("knowledge.terms", "knowledge.termsHint", terms, "term")}${notice(state.issue, "red")}</div>`;
+  }
+
   function classificationDataWorkspace() {
     const assets = state.assets;
     const bindings = assets.bindings || [];
@@ -1199,6 +1220,7 @@
       case "llmAssist": return llmAssistWorkspace();
       case "browserBridge": return browserBridgeWorkspace();
       case "classificationData": return classificationDataWorkspace();
+      case "knowledge": return knowledgeWorkspace();
       default: return tagTreeWorkspace();
     }
   }
