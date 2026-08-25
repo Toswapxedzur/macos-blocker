@@ -225,7 +225,7 @@ final class LocalClassifierHub {
         guard let requestID = frame["requestID"] as? String,
               requestID.count > 0, requestID.count <= 128,
               let operation = frame["operation"] as? String,
-              ["bridge-info", "collection-info", "diagnostic", "collect", "video-tags", "video-tags-batch", "dev-log"].contains(operation),
+              ["bridge-info", "collection-info", "diagnostic", "collect", "video-tags", "video-tags-batch", "classifier-taxonomy", "submit-correction", "dev-log"].contains(operation),
               let body = frame["body"] as? [String: Any], JSONSerialization.isValidJSONObject(body) else { return }
         lock.lock()
         guard let source = peers[key], LocalHubAuthentication.isBrowserProgram(source.program),
