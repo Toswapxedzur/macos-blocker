@@ -111,15 +111,22 @@ final class LocalLLMModelTests: XCTestCase {
         XCTAssertFalse(creator.matches(title: "anything"), "creators match by key, not title")
     }
 
-    func testMatchedKnowledgeReturnsCreatorEntryPlusTitleTermMatches() {
+    func testMatchedKnowledgeReturnsOnlyTitleTermMatchesAndCreatorLivesApart() {
         var catalog = WorkspaceCatalog()
         catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .term, subject: "HermitCraft", meaning: "A Minecraft SMP."))
         catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .term, subject: "Bedrock", meaning: "A Minecraft edition."))
         catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .creator, subject: "youtube:handle:c1", meaning: "A gaming channel."))
 
+        // Creator entries are routed to the separate creator map, not the term map.
+        XCTAssertTrue(catalog.knowledgeEntries.allSatisfy { $0.kind == .term })
+        XCTAssertEqual(catalog.creatorKnowledge.map(\.id), ["creator:youtube:handle:c1"])
+        XCTAssertEqual(catalog.creatorKnowledgeEntry(for: "youtube:handle:c1")?.meaning, "A gaming channel.")
+
+        // matchedKnowledge is term-only now; the creator description is a
+        // separate low-confidence fallback, never injected into the primary decode.
         let matched = catalog.matchedKnowledge(title: "HermitCraft finale", creatorID: "youtube:handle:c1")
         let ids = Set(matched.map(\.id))
-        XCTAssertTrue(ids.contains("creator:youtube:handle:c1"))
+        XCTAssertFalse(ids.contains("creator:youtube:handle:c1"))
         XCTAssertTrue(ids.contains("term:hermitcraft"))
         XCTAssertFalse(ids.contains("term:bedrock"))
 
@@ -127,7 +134,7 @@ final class LocalLLMModelTests: XCTestCase {
         XCTAssertTrue(catalog.matchedKnowledge(title: "unrelated title", creatorID: "youtube:handle:unknown").isEmpty)
     }
 
-    func testMatchedKnowledgeIsBoundedAndRetainsCreatorContext() {
+    func testMatchedKnowledgeIsTermOnlyAndBounded() {
         var catalog = WorkspaceCatalog()
         let creatorID = "youtube:handle:c1"
         catalog.upsertKnowledgeEntry(.init(kind: .creator, subject: creatorID, meaning: "Creator context"))
@@ -145,9 +152,12 @@ final class LocalLLMModelTests: XCTestCase {
             title: subjects.joined(separator: " "),
             creatorID: creatorID
         )
+        // Only terms are returned, bounded, longest-subject first — the creator
+        // is retrievable apart via creatorKnowledgeEntry.
         XCTAssertEqual(matched.count, WorkspaceCatalog.maximumMatchedKnowledgeEntries)
-        XCTAssertEqual(matched.first?.id, KnowledgeEntry.key(kind: .creator, subject: creatorID))
-        XCTAssertEqual(matched.dropFirst().first?.subject, subjects.last)
+        XCTAssertTrue(matched.allSatisfy { $0.kind == .term })
+        XCTAssertEqual(matched.first?.subject, subjects.last)
+        XCTAssertNotNil(catalog.creatorKnowledgeEntry(for: creatorID))
     }
 
     func testMatchedKnowledgeHonorsPerRequestLimitAndTTL() {
@@ -180,6 +190,43 @@ final class LocalLLMModelTests: XCTestCase {
             nowMilliseconds: 10 * day
         )
         XCTAssertEqual(matched.map(\.subject), ["Current"])
+    }
+
+    func testCreatorKnowledgeIsKeyedForeverRegardlessOfTTL() {
+        let day: Int64 = 24 * 60 * 60 * 1_000
+        let ancientCreator = KnowledgeEntry(
+            kind: .creator, subject: "c1", meaning: "desc", updatedAtMilliseconds: day
+        )
+        let ancientTerm = KnowledgeEntry(
+            kind: .term, subject: "Thing", meaning: "desc", updatedAtMilliseconds: day
+        )
+        // Even with a short TTL and a far-future clock, the creator stays active;
+        // the term expires.
+        XCTAssertTrue(ancientCreator.isActive(ttlDays: 1, nowMilliseconds: 1_000 * day))
+        XCTAssertFalse(ancientTerm.isActive(ttlDays: 1, nowMilliseconds: 1_000 * day))
+    }
+
+    func testLegacyCombinedKnowledgeMigratesCreatorsIntoSeparateMap() throws {
+        // A pre-split state stored terms and creators together under knowledgeEntries.
+        let legacy = Data(#"""
+        {"knowledgeEntries":[
+          {"id":"creator:youtube:handle:c1","kind":"creator","subject":"youtube:handle:c1","meaning":"A gaming channel.","contextTagHints":[],"sourceURLs":[],"createdAtMilliseconds":1,"updatedAtMilliseconds":1},
+          {"id":"term:hermitcraft","kind":"term","subject":"HermitCraft","meaning":"A Minecraft SMP.","contextTagHints":[],"sourceURLs":[],"createdAtMilliseconds":1,"updatedAtMilliseconds":1}
+        ]}
+        """#.utf8)
+        let decoded = try JSONDecoder().decode(WorkspaceCatalog.self, from: legacy)
+        XCTAssertEqual(decoded.knowledgeEntries.map(\.id), ["term:hermitcraft"])
+        XCTAssertEqual(decoded.creatorKnowledge.map(\.id), ["creator:youtube:handle:c1"])
+        XCTAssertEqual(decoded.creatorKnowledgeEntry(for: "youtube:handle:c1")?.meaning, "A gaming channel.")
+    }
+
+    func testCreatorAndTermKnowledgeRoundTripInSeparateMaps() throws {
+        var catalog = WorkspaceCatalog()
+        catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .term, subject: "HermitCraft", meaning: "SMP"))
+        catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .creator, subject: "c1", meaning: "A gaming channel."))
+        let decoded = try JSONDecoder().decode(WorkspaceCatalog.self, from: JSONEncoder().encode(catalog))
+        XCTAssertEqual(decoded.knowledgeEntries, catalog.knowledgeEntries)
+        XCTAssertEqual(decoded.creatorKnowledge, catalog.creatorKnowledge)
     }
 
     func testUpsertKnowledgeEntryDedupsByKey() {

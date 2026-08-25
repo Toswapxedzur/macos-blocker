@@ -191,6 +191,7 @@ public struct GroundedResearchExecutor: Sendable {
             profile: configuration.llmProfile,
             modelIdentifier: configuration.llmModelIdentifier,
             subject: sanitized.subject,
+            kind: sanitized.kind,
             maximumOutputTokens: configuration.maximumOutputTokens
         )
         let response = try await http.send(
@@ -251,10 +252,17 @@ public struct GroundedResearchExecutor: Sendable {
             "[\(index + 1)] \(result.title)\n\(result.url)\n\(result.snippet)"
         }.joined(separator: "\n\n")
         let evidence = String(unboundedEvidence.prefix(configuration.snippetContextChars))
+        let distillPrompt: String
+        switch sanitized.kind {
+        case .creator:
+            distillPrompt = "Distill a short factual description of the named creator or channel from the supplied public web results: who they are and the kinds of topics, genres, or content they are known for. Never assign, suggest, or mention classification tags. Do not infer facts absent from the evidence. Return plain text only."
+        case .term:
+            distillPrompt = "Distill a short factual description of the named subject from the supplied public web results. Never assign, suggest, or mention classification tags. Do not infer facts absent from the evidence. Return plain text only."
+        }
         let generation = try ProviderGenerationProtocol.prepareGenerateText(
             profile: configuration.llmProfile,
             modelIdentifier: configuration.llmModelIdentifier,
-            systemPrompt: "Distill a short factual description of the named subject from the supplied public web results. Never assign, suggest, or mention classification tags. Do not infer facts absent from the evidence. Return plain text only.",
+            systemPrompt: distillPrompt,
             userPrompt: "Subject: \(sanitized.subject)\n\nPublic web results:\n\(evidence)",
             maximumOutputTokens: configuration.maximumOutputTokens
         )

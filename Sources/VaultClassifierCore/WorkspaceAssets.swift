@@ -1210,12 +1210,19 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     // labels, the grounded-research knowledge map, user corrections, and the derived
     // creator priors. Empty until the new pipeline populates them.
     public var videoClassifications: [VideoClassification]
+    /// Term knowledge only. Creator descriptions live in `creatorKnowledge`, a
+    /// deliberately separate, permanent map (creator identities are keyed
+    /// forever and are used as a low-confidence classification fallback rather
+    /// than injected into every decode).
     public var knowledgeEntries: [KnowledgeEntry]
+    /// Creator descriptions, keyed by creator id — permanent and stored apart
+    /// from term knowledge.
+    public var creatorKnowledge: [KnowledgeEntry]
     public var researchAttempts: [ResearchAttemptRecord]
     public var correctionExamples: [CorrectionExample]
     public var creatorHistograms: [CreatorTagHistogram]
 
-    public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], bindings: [PlatformBinding] = [], classifierTypes: [ClassifierTypeAsset] = [], tokenUsage: [TokenUsageRecord] = [], providerRequestRecords: [ProviderRequestRecord] = [], providerProfiles: [APIKeyProviderProfile] = [], trash: [TrashedEntry] = [], videoClassifications: [VideoClassification] = [], knowledgeEntries: [KnowledgeEntry] = [], researchAttempts: [ResearchAttemptRecord] = [], correctionExamples: [CorrectionExample] = [], creatorHistograms: [CreatorTagHistogram] = []) {
+    public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], bindings: [PlatformBinding] = [], classifierTypes: [ClassifierTypeAsset] = [], tokenUsage: [TokenUsageRecord] = [], providerRequestRecords: [ProviderRequestRecord] = [], providerProfiles: [APIKeyProviderProfile] = [], trash: [TrashedEntry] = [], videoClassifications: [VideoClassification] = [], knowledgeEntries: [KnowledgeEntry] = [], creatorKnowledge: [KnowledgeEntry] = [], researchAttempts: [ResearchAttemptRecord] = [], correctionExamples: [CorrectionExample] = [], creatorHistograms: [CreatorTagHistogram] = []) {
         self.trees = trees
         self.datasets = datasets
         self.bindings = bindings
@@ -1226,6 +1233,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         self.trash = trash
         self.videoClassifications = videoClassifications
         self.knowledgeEntries = knowledgeEntries
+        self.creatorKnowledge = creatorKnowledge
         self.researchAttempts = researchAttempts
         self.correctionExamples = correctionExamples
         self.creatorHistograms = creatorHistograms
@@ -1353,7 +1361,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case trees, datasets, bindings, classifierTypes, tokenUsage, providerRequestRecords, providerProfiles, trash,
-             videoClassifications, knowledgeEntries, researchAttempts, correctionExamples, creatorHistograms
+             videoClassifications, knowledgeEntries, creatorKnowledge, researchAttempts, correctionExamples, creatorHistograms
     }
 
     private enum RetiredCodingKeys: String, CodingKey { case models }
@@ -1371,7 +1379,18 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         providerProfiles = try container.decodeIfPresent([APIKeyProviderProfile].self, forKey: .providerProfiles) ?? []
         trash = try container.decodeIfPresent([TrashedEntry].self, forKey: .trash) ?? []
         videoClassifications = try container.decodeIfPresent([VideoClassification].self, forKey: .videoClassifications) ?? []
-        knowledgeEntries = try container.decodeIfPresent([KnowledgeEntry].self, forKey: .knowledgeEntries) ?? []
+        // Migration: older states stored terms and creators together in
+        // `knowledgeEntries`. Keep terms there and move any creator entries into
+        // the dedicated `creatorKnowledge` map. New states already write both.
+        let decodedKnowledge = try container.decodeIfPresent([KnowledgeEntry].self, forKey: .knowledgeEntries) ?? []
+        let decodedCreatorKnowledge = try container.decodeIfPresent([KnowledgeEntry].self, forKey: .creatorKnowledge) ?? []
+        knowledgeEntries = decodedKnowledge.filter { $0.kind == .term }
+        var creators = decodedCreatorKnowledge.filter { $0.kind == .creator }
+        var creatorKeys = Set(creators.map(\.id))
+        for entry in decodedKnowledge where entry.kind == .creator && creatorKeys.insert(entry.id).inserted {
+            creators.append(entry)
+        }
+        creatorKnowledge = creators
         researchAttempts = try container.decodeIfPresent([ResearchAttemptRecord].self, forKey: .researchAttempts) ?? []
         correctionExamples = try container.decodeIfPresent([CorrectionExample].self, forKey: .correctionExamples) ?? []
         creatorHistograms = try container.decodeIfPresent([CreatorTagHistogram].self, forKey: .creatorHistograms) ?? []
