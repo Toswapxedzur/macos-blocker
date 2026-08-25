@@ -104,6 +104,31 @@ final class GroundedGenerationProtocolTests: XCTestCase {
         XCTAssertTrue(body.contains("HermitCraft"))
     }
 
+    func testGroundedPromptIsCreatorAwareForCreatorSubjects() throws {
+        let creatorRequest = try GroundedGenerationProtocol.prepareGroundedGenerate(
+            profile: .init(type: .gemini, credential: "key"),
+            modelIdentifier: "gemini-2.0-flash",
+            subject: "@hermitcraft",
+            kind: .creator,
+            maximumOutputTokens: 128
+        )
+        let creatorBody = String(decoding: try XCTUnwrap(creatorRequest.body), as: UTF8.self)
+        XCTAssertTrue(creatorBody.contains("creator or channel"))
+        XCTAssertTrue(creatorBody.contains("content they are known for"))
+        XCTAssertTrue(creatorBody.contains("@hermitcraft"))
+
+        let termRequest = try GroundedGenerationProtocol.prepareGroundedGenerate(
+            profile: .init(type: .gemini, credential: "key"),
+            modelIdentifier: "gemini-2.0-flash",
+            subject: "HermitCraft",
+            kind: .term,
+            maximumOutputTokens: 128
+        )
+        let termBody = String(decoding: try XCTUnwrap(termRequest.body), as: UTF8.self)
+        XCTAssertFalse(termBody.contains("creator or channel"))
+        XCTAssertTrue(termBody.contains("what or who it is"))
+    }
+
     func testUnsupportedProviderCannotBuildGroundedRequest() {
         XCTAssertThrowsError(try GroundedGenerationProtocol.prepareGroundedGenerate(
             profile: .init(type: .serper, credential: "key"),

@@ -162,6 +162,51 @@ final class VideoClassificationPipelineTests: XCTestCase {
         XCTAssertTrue(recorder.last?.staticPrefix.contains("Prefer Politics.") == true)
     }
 
+    func testLowConfidenceCreatorGroundingInfersTagFromCreatorDescription() async throws {
+        var catalog = WorkspaceCatalog()
+        // Creator keyed with a description that names an allowed tag.
+        catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .creator, subject: "c1", meaning: "A Politics news channel."))
+        let pipeline = VideoClassificationPipeline(llm: StubOnDeviceLLM())
+
+        // Title carries no allowed tag name -> the content-only primary decode
+        // declines. Because the creator is keyed, the pipeline runs a second
+        // decode grounded on the creator description and infers "Politics".
+        let result = try await pipeline.classify(
+            title: "weekly roundup", entryID: "v1", creatorID: "c1", platformID: "youtube",
+            classifierType: makeType(), tree: makeTree(), catalog: catalog
+        )
+        XCTAssertEqual(result.tags.map(\.tagID), ["p"])
+        XCTAssertEqual(result.source, .modelKnowledge)
+        XCTAssertEqual(result.knowledgeRefs, ["creator:c1"])
+    }
+
+    func testConfidentPrimaryDoesNotUseCreatorGrounding() async throws {
+        var catalog = WorkspaceCatalog()
+        catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .creator, subject: "c1", meaning: "A Politics channel."))
+        let pipeline = VideoClassificationPipeline(llm: StubOnDeviceLLM())
+
+        // Title names "Games" -> the primary decode tags it confidently, so the
+        // creator description is never consulted.
+        let result = try await pipeline.classify(
+            title: "Games highlights", entryID: "v1", creatorID: "c1", platformID: "youtube",
+            classifierType: makeType(), tree: makeTree(), catalog: catalog
+        )
+        XCTAssertEqual(result.tags.map(\.tagID), ["g"])
+        XCTAssertEqual(result.source, .model)
+        XCTAssertTrue(result.knowledgeRefs.isEmpty)
+    }
+
+    func testCreatorGroundingSkippedWhenCreatorNotKeyed() async throws {
+        let catalog = WorkspaceCatalog()   // no creator description
+        let pipeline = VideoClassificationPipeline(llm: StubOnDeviceLLM())
+        let result = try await pipeline.classify(
+            title: "weekly roundup", entryID: "v1", creatorID: "c1", platformID: "youtube",
+            classifierType: makeType(), tree: makeTree(), catalog: catalog
+        )
+        XCTAssertTrue(result.tags.isEmpty)       // declines, no fallback available
+        XCTAssertEqual(result.source, .model)
+    }
+
     func testGranularResearchDefaultsLeaveClassificationRequestByteIdentical() async throws {
         let recorder = RequestRecorder()
         let pipeline = VideoClassificationPipeline(llm: ScriptedOnDeviceLLM(

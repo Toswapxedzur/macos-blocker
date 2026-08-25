@@ -200,10 +200,14 @@ public struct KnowledgeEntry: Codable, Equatable, Sendable, Identifiable {
 
     /// A TTL of zero means knowledge never expires. Expired entries stay in
     /// the durable map but are excluded from prompts and research deduping.
+    ///
+    /// Creator descriptions are keyed forever: a creator's grounded identity is
+    /// stable, so it is never expired by TTL regardless of the setting.
     public func isActive(
         ttlDays: Int,
         nowMilliseconds: Int64 = WorkspaceCatalog.now()
     ) -> Bool {
+        guard kind == .term else { return true }
         let clampedDays = min(ResearchSettings.maximumKnowledgeTTLDays, max(0, ttlDays))
         guard clampedDays > 0 else { return true }
         let lifetime = Int64(clampedDays) * 24 * 60 * 60 * 1_000
@@ -461,10 +465,11 @@ public extension WorkspaceCatalog {
         creatorHistograms = Array(byKey.values)
     }
 
-    /// Knowledge entries relevant to one video: the creator's own entry (by key)
-    /// plus any term entries whose subject appears in the title. This is the
-    /// classify-time RAG lookup — only matched entries are injected, so a large
-    /// map does not affect per-video cost.
+    /// Term knowledge relevant to one video: term entries whose subject appears
+    /// in the title. This is the classify-time RAG lookup for the primary
+    /// (content-based) decode — creator descriptions are looked up separately
+    /// via `creatorKnowledgeEntry(for:)` and used only as a low-confidence
+    /// fallback, so they are deliberately not returned here.
     func matchedKnowledge(
         title: String,
         creatorID: String,
@@ -473,17 +478,12 @@ public extension WorkspaceCatalog {
         nowMilliseconds: Int64 = WorkspaceCatalog.now()
     ) -> [KnowledgeEntry] {
         let limit = min(ResearchSettings.maximumKnowledgePerVideo, max(1, requestedLimit))
-        let activeEntries = knowledgeEntries.filter {
-            $0.isActive(ttlDays: ttlDays, nowMilliseconds: nowMilliseconds)
-        }
-        var matched: [KnowledgeEntry] = []
-        let creatorKey = KnowledgeEntry.key(kind: .creator, subject: creatorID)
-        if let creatorEntry = activeEntries.first(where: { $0.id == creatorKey }) {
-            matched.append(creatorEntry)
-        }
-        let remaining = max(0, limit - matched.count)
-        let terms = activeEntries
-            .filter { $0.kind == .term && $0.matches(title: title) }
+        let terms = knowledgeEntries
+            .filter {
+                $0.kind == .term
+                    && $0.isActive(ttlDays: ttlDays, nowMilliseconds: nowMilliseconds)
+                    && $0.matches(title: title)
+            }
             .sorted { lhs, rhs in
                 if lhs.subject.count != rhs.subject.count { return lhs.subject.count > rhs.subject.count }
                 if lhs.updatedAtMilliseconds != rhs.updatedAtMilliseconds {
@@ -491,20 +491,38 @@ public extension WorkspaceCatalog {
                 }
                 return lhs.id < rhs.id
             }
-        matched.append(contentsOf: terms.prefix(remaining))
-        return matched
+        return Array(terms.prefix(limit))
     }
 
-    /// Insert or update a knowledge entry (dedup by key). Bounded by trimming the
-    /// oldest when over the cap.
+    /// The stored, permanent description for a creator (or nil if not keyed yet).
+    func creatorKnowledgeEntry(for creatorID: String) -> KnowledgeEntry? {
+        let creatorKey = KnowledgeEntry.key(kind: .creator, subject: creatorID)
+        return creatorKnowledge.first(where: { $0.id == creatorKey })
+    }
+
+    /// Insert or update a knowledge entry (dedup by key), routed to the term or
+    /// creator map by kind. Bounded by trimming the oldest when over the cap.
     mutating func upsertKnowledgeEntry(_ entry: KnowledgeEntry) {
-        if let index = knowledgeEntries.firstIndex(where: { $0.id == entry.id }) {
-            knowledgeEntries[index] = entry
-        } else {
-            knowledgeEntries.append(entry)
-            if knowledgeEntries.count > Self.maximumKnowledgeEntries {
-                knowledgeEntries.sort { $0.updatedAtMilliseconds > $1.updatedAtMilliseconds }
-                knowledgeEntries = Array(knowledgeEntries.prefix(Self.maximumKnowledgeEntries))
+        switch entry.kind {
+        case .creator:
+            if let index = creatorKnowledge.firstIndex(where: { $0.id == entry.id }) {
+                creatorKnowledge[index] = entry
+            } else {
+                creatorKnowledge.append(entry)
+                if creatorKnowledge.count > Self.maximumKnowledgeEntries {
+                    creatorKnowledge.sort { $0.updatedAtMilliseconds > $1.updatedAtMilliseconds }
+                    creatorKnowledge = Array(creatorKnowledge.prefix(Self.maximumKnowledgeEntries))
+                }
+            }
+        case .term:
+            if let index = knowledgeEntries.firstIndex(where: { $0.id == entry.id }) {
+                knowledgeEntries[index] = entry
+            } else {
+                knowledgeEntries.append(entry)
+                if knowledgeEntries.count > Self.maximumKnowledgeEntries {
+                    knowledgeEntries.sort { $0.updatedAtMilliseconds > $1.updatedAtMilliseconds }
+                    knowledgeEntries = Array(knowledgeEntries.prefix(Self.maximumKnowledgeEntries))
+                }
             }
         }
     }
@@ -557,12 +575,14 @@ public extension WorkspaceCatalog {
             throw WorkspaceCatalogError.invalidCollectedEntry("videoClassifications")
         }
         guard knowledgeEntries.count <= Self.maximumKnowledgeEntries,
+              creatorKnowledge.count <= Self.maximumKnowledgeEntries,
               researchAttempts.count <= Self.maximumResearchAttempts,
               correctionExamples.count <= Self.maximumCorrectionExamples else {
             throw WorkspaceCatalogError.invalidCollectedEntry("localLLMStores")
         }
         try llmUniqueIDs(videoClassifications.map(\.id))
         try llmUniqueIDs(knowledgeEntries.map(\.id))
+        try llmUniqueIDs(creatorKnowledge.map(\.id))
         try llmUniqueIDs(researchAttempts.map(\.id))
         try llmUniqueIDs(correctionExamples.map(\.id))
         try llmUniqueIDs(creatorHistograms.map(\.id))
