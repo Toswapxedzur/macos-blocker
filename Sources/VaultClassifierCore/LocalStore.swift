@@ -351,10 +351,14 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
             let settings = state.workspaceCatalog.classifierTypes.first(where: {
                 $0.id == task.classifierTypeID
             }).map { $0.researchOverrides ?? state.settings.research } ?? state.settings.research
+            // Dedup research against both maps: keyed creators (permanent) and
+            // active term knowledge. A creator already keyed is never re-fetched.
+            let knownKeys = (state.workspaceCatalog.knowledgeEntries
+                + state.workspaceCatalog.creatorKnowledge)
+                .filter { $0.isActive(ttlDays: settings.knowledgeTTLDays) }
+                .map(\.id)
             return .init(
-                existingKnowledgeKeys: Set(state.workspaceCatalog.knowledgeEntries.filter {
-                    $0.isActive(ttlDays: settings.knowledgeTTLDays)
-                }.map(\.id)),
+                existingKnowledgeKeys: Set(knownKeys),
                 failedAttempts: state.workspaceCatalog.researchAttempts,
                 tokenUsage: state.workspaceCatalog.tokenUsage
             )
@@ -453,7 +457,8 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                 allowDecline: overrides?.allowDecline,
                 confidenceThresholds: overrides?.confidenceThresholds,
                 knowledgeTTLDays: knowledgeSettings.knowledgeTTLDays,
-                maxKnowledgePerVideo: knowledgeSettings.maxKnowledgePerVideo
+                maxKnowledgePerVideo: knowledgeSettings.maxKnowledgePerVideo,
+                creatorGroundingConfidenceFloor: knowledgeSettings.confidenceTriggerLevel
             )
             classifications.append(classification)
             if let effectiveResearch = Self.effectiveResearchSettings(

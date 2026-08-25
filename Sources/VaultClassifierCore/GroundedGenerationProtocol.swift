@@ -14,17 +14,25 @@ public enum GroundedGenerationProtocol {
             && ProviderGenerationProtocol.supportsGeneration(profile: profile)
     }
 
-    /// The grounding instruction. It never sends anything but the sanitized
-    /// subject and forbids the model from assigning classification tags.
-    static func systemPrompt() -> String {
-        "Search the public web for the named subject and return a short, factual description of what or who it is. "
-            + "Never assign, suggest, or mention classification tags. Do not state anything you cannot ground in public sources. Return plain text only."
+    /// The grounding instruction, tailored by subject kind. It never sends
+    /// anything but the sanitized subject and forbids the model from assigning
+    /// classification tags.
+    static func systemPrompt(for kind: KnowledgeEntryKind) -> String {
+        switch kind {
+        case .creator:
+            return "Search the public web for the named creator or channel and return a short, factual description of who they are and the kinds of topics, genres, or content they are known for. "
+                + "Never assign, suggest, or mention classification tags. Do not state anything you cannot ground in public sources. Return plain text only."
+        case .term:
+            return "Search the public web for the named subject and return a short, factual description of what or who it is. "
+                + "Never assign, suggest, or mention classification tags. Do not state anything you cannot ground in public sources. Return plain text only."
+        }
     }
 
     public static func prepareGroundedGenerate(
         profile: APIKeyProviderProfile,
         modelIdentifier: String,
         subject: String,
+        kind: KnowledgeEntryKind = .term,
         maximumOutputTokens: Int
     ) throws -> ProviderTestPreparedRequest {
         let model = modelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -49,7 +57,7 @@ public enum GroundedGenerationProtocol {
         let body = try groundedBody(
             format: plan.bodyFormat,
             modelIdentifier: model,
-            systemPrompt: systemPrompt(),
+            systemPrompt: systemPrompt(for: kind),
             userPrompt: userPrompt,
             maximumOutputTokens: maximumOutputTokens
         )
