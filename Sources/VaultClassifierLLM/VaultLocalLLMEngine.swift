@@ -20,7 +20,7 @@ import Cllama
 // The model file is user-provided (catalog/loader phase pending): the
 // `ADAMANCIA_VAULT_LLM_MODEL` environment variable, or the first *.gguf under
 // `<app support>/<environment dir>/models/`.
-public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting {
+public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting, OnDeviceCorrectionSummarizing {
     public nonisolated let modelVersion: String
 
     private let model: OpaquePointer
@@ -249,6 +249,86 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
         let value = generated.trimmingCharacters(in: .whitespacesAndNewlines)
         guard value != Self.declineLiteral else { return nil }
         return ResearchSubject(kind: .term, subject: value)
+    }
+
+    /// Distills the user's own corrections into a short natural-language guidance
+    /// block. Local-only free-text generation; returns "" if there is nothing to
+    /// summarize (the caller then keeps the deterministic fallback).
+    public func summarizeCorrections(_ request: LLMCorrectionSummaryRequest) async throws -> String {
+        guard !request.items.isEmpty else { return "" }
+        let allowed = request.allowedTagNames.prefix(40).joined(separator: ", ")
+        let corrections = request.items.prefix(24).map { item -> String in
+            let tags = item.tagNames.isEmpty ? "no tag" : item.tagNames.joined(separator: ", ")
+            let note = (item.note?.isEmpty == false) ? " — note: \(item.note!)" : ""
+            return "- \"\(item.title)\" -> \(tags)\(note)"
+        }.joined(separator: "\n")
+        let prompt = """
+        You refine a video-tagging assistant's guidance from a user's past corrections. From the corrections below, write 2 to 5 short imperative rules that capture how this user wants videos tagged so future videos match. Be concise and specific, use only the allowed tags, and do not restate every example.
+
+        Allowed tags: \(allowed)
+
+        Corrections:
+        \(corrections)
+
+        Rules:
+        """
+        return try generateFreeText(prompt: prompt, maximumTokens: 200)
+    }
+
+    /// Free-form (ungrammared) greedy generation with a repetition penalty,
+    /// reusing the same KV-cache prefix handling as the constrained decodes.
+    private func generateFreeText(prompt: String, maximumTokens: Int) throws -> String {
+        let tokens = try tokenize(prompt)
+        guard tokens.count + maximumTokens <= contextTokenLimit else {
+            throw OnDeviceLLMError.inference("summary-prompt-exceeds-context (\(tokens.count) tokens)")
+        }
+        var common = 0
+        while common < min(tokens.count, cachedTokens.count), tokens[common] == cachedTokens[common] {
+            common += 1
+        }
+        if common == tokens.count { common = max(0, common - 1) }
+        llama_memory_seq_rm(llama_get_memory(context), 0, llama_pos(common), -1)
+        cachedTokens = Array(tokens.prefix(common))
+
+        var index = common
+        while index < tokens.count {
+            let end = min(index + 512, tokens.count)
+            var chunk = Array(tokens[index..<end])
+            let status = chunk.withUnsafeMutableBufferPointer { buffer in
+                llama_decode(context, llama_batch_get_one(buffer.baseAddress, Int32(buffer.count)))
+            }
+            guard status == 0 else {
+                cachedTokens = []
+                llama_memory_seq_rm(llama_get_memory(context), 0, 0, -1)
+                throw OnDeviceLLMError.inference("summary-prompt-decode-failed (\(status))")
+            }
+            cachedTokens.append(contentsOf: tokens[index..<end])
+            index = end
+        }
+
+        let sampler = llama_sampler_chain_init(llama_sampler_chain_default_params())
+        defer { llama_sampler_free(sampler) }
+        llama_sampler_chain_add(sampler, llama_sampler_init_penalties(llama_vocab_n_tokens(vocab), 64, 1.15, 0, 0))
+        llama_sampler_chain_add(sampler, llama_sampler_init_greedy())
+
+        var generated = ""
+        for _ in 0..<maximumTokens {
+            let token = llama_sampler_sample(sampler, context, -1)
+            if llama_vocab_is_eog(vocab, token) { break }
+            generated += piece(for: token)
+            if generated.contains("\n\n\n") { break }
+            var single = [token]
+            let status = single.withUnsafeMutableBufferPointer { buffer in
+                llama_decode(context, llama_batch_get_one(buffer.baseAddress, 1))
+            }
+            guard status == 0 else {
+                cachedTokens = []
+                llama_memory_seq_rm(llama_get_memory(context), 0, 0, -1)
+                throw OnDeviceLLMError.inference("summary-generation-decode-failed (\(status))")
+            }
+            cachedTokens.append(token)
+        }
+        return generated.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: - Contract pieces
