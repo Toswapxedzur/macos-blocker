@@ -335,8 +335,13 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
         }
         return entries
             .filter {
-                $0.pathExtension.lowercased() == "gguf" &&
-                    (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+                guard $0.pathExtension.lowercased() == "gguf" else { return false }
+                // Follow symlinks: a manually-symlinked model (e.g. into the
+                // Hugging Face cache) resolves to a regular file and is valid.
+                let resolved = $0.resolvingSymlinksInPath()
+                var isDirectory: ObjCBool = false
+                return FileManager.default.fileExists(atPath: resolved.path, isDirectory: &isDirectory)
+                    && !isDirectory.boolValue
             }
             .map(\.lastPathComponent)
             .sorted()
