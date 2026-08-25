@@ -17,6 +17,7 @@ let package = Package(
         .executable(name: "VaultLocalHubNativeHost", targets: ["VaultLocalHubNativeHost"]),
         .executable(name: "VaultLLMEngineSmoke", targets: ["VaultLLMEngineSmoke"]),
         .executable(name: "VaultGroundingSmoke", targets: ["VaultGroundingSmoke"]),
+        .executable(name: "VaultFullLoopSmoke", targets: ["VaultFullLoopSmoke"]),
     ],
     targets: [
         .target(
@@ -53,6 +54,13 @@ let package = Package(
         .executableTarget(
             name: "VaultGroundingSmoke",
             dependencies: ["VaultClassifierCore"]
+        ),
+        // End-to-end loop: real engine + real Gemini grounding + coordinator.
+        .executableTarget(
+            name: "VaultFullLoopSmoke",
+            dependencies: ["VaultClassifierCore", "VaultClassifierLLM"],
+            swiftSettings: cllamaIncludeFlags,
+            linkerSettings: cllamaLinkFlags
         ),
         // Runs the Phase-0 title benchmark through the real in-process engine.
         .executableTarget(
