@@ -24,13 +24,37 @@ func fail(_ message: String, code: Int32) -> Never {
 let env = ProcessInfo.processInfo.environment
 let args = Array(CommandLine.arguments.dropFirst())
 
-guard let apiKey = env["GEMINI_API_KEY"], !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-    fail("error: set GEMINI_API_KEY in the environment (it is never read from argv).", code: 2)
+// Resolve the Gemini key without ever printing it. Prefer GEMINI_API_KEY from
+// the environment; otherwise read the Gemini provider the user already saved in
+// the app's own local state (the same on-device store the app uses). The raw
+// key value is never logged — only its source is reported.
+func resolveGeminiKey() -> (key: String, source: String)? {
+    if let envKey = env["GEMINI_API_KEY"],
+       !envKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        return (envKey, "environment")
+    }
+    guard let directory = try? VaultRuntimeEnvironment.current.classifierSupportDirectoryURL() else {
+        return nil
+    }
+    let stateURL = directory.appendingPathComponent("state.json", isDirectory: false)
+    guard let state = try? LocalStateFile(url: stateURL).load() else { return nil }
+    guard let profile = state.workspaceCatalog.providerProfiles.first(where: {
+        $0.type == .gemini && !($0.credential ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }), let credential = profile.credential else {
+        return nil
+    }
+    return (credential, "app state provider \"\(profile.name)\"")
 }
+
+guard let resolved = resolveGeminiKey() else {
+    fail("error: no Gemini key found — set GEMINI_API_KEY, or save a Gemini provider in the app first.", code: 2)
+}
+let apiKey = resolved.key
+print("• using Gemini key from: \(resolved.source)")
 
 let rawSubject = args.first ?? "HermitCraft"
 let kind: KnowledgeEntryKind = (args.count > 1 && args[1].lowercased() == "creator") ? .creator : .term
-let model = args.count > 2 ? args[2] : (env["GEMINI_MODEL"] ?? "gemini-2.0-flash")
+let model = args.count > 2 ? args[2] : (env["GEMINI_MODEL"] ?? APIKeyProviderType.gemini.defaultModelIdentifier)
 
 guard let subject = ResearchSubject(kind: kind, subject: rawSubject) else {
     fail("error: subject failed sanitization for kind \(kind.rawValue): \(rawSubject)", code: 2)
@@ -55,7 +79,8 @@ let configuration = GroundedResearchProviderConfiguration(
 print("→ grounding \(kind.rawValue) subject: \"\(subject.subject)\"  via Gemini google_search (model \(model))")
 print("  (only this sanitized subject leaves the device)\n")
 
-let executor = GroundedResearchExecutor(http: URLSessionProviderHTTPClient())
+let http = URLSessionProviderHTTPClient()
+let executor = GroundedResearchExecutor(http: http)
 
 do {
     let result = try await executor.research(subject, using: configuration)
@@ -69,5 +94,27 @@ do {
     print("\ntokens charged: \(result.chargedTokenCount)")
     print("stored key:    \(result.knowledge.id)")
 } catch {
-    fail("✗ grounding failed: \(error)", code: 1)
+    // Surface the provider's raw response so a failure is diagnosable
+    // (e.g. rate-limit vs hard quota vs malformed request). send() drops the
+    // body on non-2xx, so re-issue through a capturing transport.
+    print("✗ grounding failed via executor: \(error)")
+    final class Capture: @unchecked Sendable { var body = Data(); var status = 0 }
+    let capture = Capture()
+    let capturingHTTP = URLSessionProviderHTTPClient(transport: { request in
+        let (data, response) = try await URLSession.shared.data(for: request)
+        capture.body = data
+        capture.status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        return (data, response)
+    })
+    if let request = try? GroundedGenerationProtocol.prepareGroundedGenerate(
+        profile: profile, modelIdentifier: model, subject: subject.subject,
+        kind: subject.kind, maximumOutputTokens: configuration.maximumOutputTokens
+    ) {
+        _ = try? await capturingHTTP.send(
+            plan: request.plan, body: request.body, credential: credential, timeout: 30
+        )
+        print("\nHTTP \(capture.status) — raw response (first 1400 chars):")
+        print(String(String(decoding: capture.body, as: UTF8.self).prefix(1400)))
+    }
+    exit(1)
 }
