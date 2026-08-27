@@ -32,6 +32,7 @@ let package = Package(
         .executable(name: "VaultLLMEngineSmoke", targets: ["VaultLLMEngineSmoke"]),
         .executable(name: "VaultGroundingSmoke", targets: ["VaultGroundingSmoke"]),
         .executable(name: "VaultFullLoopSmoke", targets: ["VaultFullLoopSmoke"]),
+        .executable(name: "VaultClassifierEval", targets: ["VaultClassifierEval"]),
     ],
     targets: [
         .target(
@@ -72,6 +73,13 @@ let package = Package(
         // End-to-end loop: real engine + real Gemini grounding + coordinator.
         .executableTarget(
             name: "VaultFullLoopSmoke",
+            dependencies: ["VaultClassifierCore", "VaultClassifierLLM"],
+            swiftSettings: cllamaIncludeFlags,
+            linkerSettings: cllamaLinkFlags
+        ),
+        // Classification accuracy eval harness (sample → label → score).
+        .executableTarget(
+            name: "VaultClassifierEval",
             dependencies: ["VaultClassifierCore", "VaultClassifierLLM"],
             swiftSettings: cllamaIncludeFlags,
             linkerSettings: cllamaLinkFlags
