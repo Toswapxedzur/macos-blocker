@@ -415,6 +415,27 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         return Self.videoTagsProjection(entryID: entryID, platformID: platformID, types: types, catalog: catalog)
     }
 
+    /// Resolve the content-block verdict for one classified entry: find the
+    /// policy bound to the platform (`PlatformBinding.policyID`), evaluate it
+    /// against the projection's tags + confidences, and return the surface
+    /// actions. `.allow`/`.allow` when no policy is bound. This is the seam that
+    /// turns content tags into a block decision — replacing the old creator match.
+    public func contentBlockActions(
+        platformID: String,
+        projection: VideoTagsProjection
+    ) -> (feed: PresentationAction, page: PresentationAction) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let binding = state.workspaceCatalog.bindings.first(where: { $0.id == platformID }),
+              let policyID = binding.policyID,
+              let policy = state.policies.first(where: { $0.id == policyID })
+        else { return (.allow, .allow) }
+        let observations = projection.tags.map { node in
+            NamedPolicy.TagObservation(tagID: node.id, confidence: projection.confidenceByTagID[node.id] ?? 5)
+        }
+        return policy.resolveActions(for: observations)
+    }
+
     public func classifyVideo(
         platformID: String,
         entryID: String,
@@ -1111,6 +1132,7 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         catalog: WorkspaceCatalog
     ) -> VideoTagsProjection {
         var tags: [TagNode] = []
+        var confidenceByTagID: [String: Int] = [:]
         var seen = Set<String>()
         for type in types {
             guard let classification = catalog.videoClassification(
@@ -1122,9 +1144,10 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
             for scored in classification.tags {
                 guard let node = taxonomy.nodes[scored.tagID], seen.insert(node.id).inserted else { continue }
                 tags.append(node)
+                confidenceByTagID[node.id] = scored.confidence
             }
         }
-        return VideoTagsProjection(tags: tags, predicted: false)
+        return VideoTagsProjection(tags: tags, predicted: false, confidenceByTagID: confidenceByTagID)
     }
 
     @discardableResult

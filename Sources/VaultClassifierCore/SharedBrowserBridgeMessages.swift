@@ -143,16 +143,25 @@ public struct NativeVideoTagsResponse: Codable, Equatable, Sendable {
     /// True when the video is not yet classified: classification was queued and
     /// the caller should re-request shortly (the pill fills in on the next pass).
     public var pending: Bool
+    /// Content-block verdict the bound platform policy resolved for this entry,
+    /// as PresentationAction raw values ("allow"/"dim"/"block"). Split by surface:
+    /// `feedAction` applies to a feed card, `pageAction` to the watch/detail page.
+    /// "allow" when no policy is bound. The blocker prefers DIM over hide so a
+    /// wrong verdict stays visible and correctable.
+    public var feedAction: String
+    public var pageAction: String
 
-    public init(platformID: String, entryID: String, tags: [NativeVideoTag], predicted: Bool = false, pending: Bool = false) {
+    public init(platformID: String, entryID: String, tags: [NativeVideoTag], predicted: Bool = false, pending: Bool = false, feedAction: PresentationAction = .allow, pageAction: PresentationAction = .allow) {
         self.platformID = platformID
         self.entryID = entryID
         self.tags = NativeVideoTag.accepted(tags)
         self.predicted = predicted
         self.pending = pending
+        self.feedAction = feedAction.rawValue
+        self.pageAction = pageAction.rawValue
     }
 
-    private enum CodingKeys: String, CodingKey { case platformID, entryID, tags, predicted, pending }
+    private enum CodingKeys: String, CodingKey { case platformID, entryID, tags, predicted, pending, feedAction, pageAction }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -161,6 +170,8 @@ public struct NativeVideoTagsResponse: Codable, Equatable, Sendable {
         tags = NativeVideoTag.accepted(try container.decode([NativeVideoTag].self, forKey: .tags))
         predicted = try container.decodeIfPresent(Bool.self, forKey: .predicted) ?? false
         pending = try container.decodeIfPresent(Bool.self, forKey: .pending) ?? false
+        feedAction = try container.decodeIfPresent(String.self, forKey: .feedAction) ?? PresentationAction.allow.rawValue
+        pageAction = try container.decodeIfPresent(String.self, forKey: .pageAction) ?? PresentationAction.allow.rawValue
     }
 }
 
@@ -237,15 +248,21 @@ public struct NativeVideoTagsBatchResponseItem: Codable, Equatable, Sendable {
     public var tags: [NativeVideoTag]
     public var predicted: Bool
     public var pending: Bool
+    /// Per-entry content-block verdict from the bound platform policy — same
+    /// meaning as `NativeVideoTagsResponse.feedAction`/`pageAction`.
+    public var feedAction: String
+    public var pageAction: String
 
-    public init(entryID: String, tags: [NativeVideoTag], predicted: Bool = false, pending: Bool = false) {
+    public init(entryID: String, tags: [NativeVideoTag], predicted: Bool = false, pending: Bool = false, feedAction: PresentationAction = .allow, pageAction: PresentationAction = .allow) {
         self.entryID = entryID
         self.tags = NativeVideoTag.accepted(tags)
         self.predicted = predicted
         self.pending = pending
+        self.feedAction = feedAction.rawValue
+        self.pageAction = pageAction.rawValue
     }
 
-    private enum CodingKeys: String, CodingKey { case entryID, tags, predicted, pending }
+    private enum CodingKeys: String, CodingKey { case entryID, tags, predicted, pending, feedAction, pageAction }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -253,6 +270,8 @@ public struct NativeVideoTagsBatchResponseItem: Codable, Equatable, Sendable {
         tags = NativeVideoTag.accepted(try container.decode([NativeVideoTag].self, forKey: .tags))
         predicted = try container.decodeIfPresent(Bool.self, forKey: .predicted) ?? false
         pending = try container.decodeIfPresent(Bool.self, forKey: .pending) ?? false
+        feedAction = try container.decodeIfPresent(String.self, forKey: .feedAction) ?? PresentationAction.allow.rawValue
+        pageAction = try container.decodeIfPresent(String.self, forKey: .pageAction) ?? PresentationAction.allow.rawValue
     }
 }
 
@@ -312,12 +331,29 @@ public struct NativeVideoTag: Codable, Equatable, Sendable {
     public var name: String
     public var lightColorHex: String
     public var darkColorHex: String
+    /// Model confidence 1...5 (0 = unknown, e.g. a hand-built tag). Carried so
+    /// custom content-block rules can gate on confidence in the extension.
+    public var confidence: Int
 
-    public init(id: String, name: String, lightColorHex: String, darkColorHex: String) {
+    public init(id: String, name: String, lightColorHex: String, darkColorHex: String, confidence: Int = 0) {
         self.id = id
         self.name = name
         self.lightColorHex = TagColorAssignment.normalizedHex(lightColorHex) ?? ""
         self.darkColorHex = TagColorAssignment.normalizedHex(darkColorHex) ?? ""
+        self.confidence = max(0, min(5, confidence))
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, name, lightColorHex, darkColorHex, confidence }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try c.decode(String.self, forKey: .id),
+            name: try c.decode(String.self, forKey: .name),
+            lightColorHex: try c.decode(String.self, forKey: .lightColorHex),
+            darkColorHex: try c.decode(String.self, forKey: .darkColorHex),
+            confidence: try c.decodeIfPresent(Int.self, forKey: .confidence) ?? 0
+        )
     }
 
     public static func accepted(_ tags: [NativeVideoTag]) -> [NativeVideoTag] {

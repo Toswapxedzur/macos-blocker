@@ -21,10 +21,15 @@ public extension TagTreeAsset {
 public struct VideoTagsProjection: Sendable, Equatable {
     public var tags: [TagNode]
     public var predicted: Bool
+    /// Model confidence (1...5) per tag id, preserved from the stored
+    /// `ScoredTag`s so tag-based block policy can gate on a confidence floor.
+    /// A tag id absent here (e.g. a hand-built projection) is treated as max.
+    public var confidenceByTagID: [String: Int]
 
-    public init(tags: [TagNode], predicted: Bool) {
+    public init(tags: [TagNode], predicted: Bool, confidenceByTagID: [String: Int] = [:]) {
         self.tags = tags
         self.predicted = predicted
+        self.confidenceByTagID = confidenceByTagID
     }
 }
 
