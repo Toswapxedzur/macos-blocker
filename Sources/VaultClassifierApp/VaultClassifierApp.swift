@@ -111,6 +111,8 @@ final class VaultClassifierViewModel: ObservableObject {
     @Published var editingPolicyExcludeTag = ""
     @Published var editingFeedAction: PresentationAction = .dim
     @Published var editingPageAction: PresentationAction = .block
+    @Published var editingConfidenceFloor: Int = NamedPolicy.defaultConfidenceFloor
+    @Published var editingUntaggedAction: PresentationAction = .allow
     @Published var packageUpdateMode: PackageUpdateMode = .automatic
     // Local-model settings, mirrored from ClassifierSettings.localLLM.
     @Published var llmSettings = LocalLLMSettings()
@@ -711,7 +713,9 @@ final class VaultClassifierViewModel: ObservableObject {
                 includeAnyTagIDs: splitTagList(editingPolicyIncludeTag),
                 excludeTagIDs: splitTagList(editingPolicyExcludeTag),
                 feedAction: editingFeedAction,
-                pageAction: editingPageAction
+                pageAction: editingPageAction,
+                confidenceFloor: editingConfidenceFloor,
+                untaggedAction: editingUntaggedAction
             )
             var replacement = policies.filter { $0.id != policy.id }
             replacement.append(policy)
@@ -732,6 +736,8 @@ final class VaultClassifierViewModel: ObservableObject {
         editingPolicyExcludeTag = policy.excludeTagIDs.joined(separator: ", ")
         editingFeedAction = policy.feedAction
         editingPageAction = policy.pageAction
+        editingConfidenceFloor = policy.confidenceFloor
+        editingUntaggedAction = policy.untaggedAction
     }
 
     func startNewPolicy() {
@@ -741,6 +747,8 @@ final class VaultClassifierViewModel: ObservableObject {
         editingPolicyExcludeTag = ""
         editingFeedAction = .dim
         editingPageAction = .block
+        editingConfidenceFloor = NamedPolicy.defaultConfidenceFloor
+        editingUntaggedAction = .allow
     }
 
     func deleteEditingPolicy() {
@@ -2267,6 +2275,8 @@ final class VaultClassifierViewModel: ObservableObject {
                 "exclude": policy.excludeTagIDs,
                 "feedAction": policy.feedAction.rawValue,
                 "pageAction": policy.pageAction.rawValue,
+                "confidenceFloor": policy.confidenceFloor,
+                "untaggedAction": policy.untaggedAction.rawValue,
             ]
         }
         let policiesPayload: [String: Any] = [
@@ -2278,6 +2288,8 @@ final class VaultClassifierViewModel: ObservableObject {
                 "exclude": editingPolicyExcludeTag,
                 "feedAction": editingFeedAction.rawValue,
                 "pageAction": editingPageAction.rawValue,
+                "confidenceFloor": editingConfidenceFloor,
+                "untaggedAction": editingUntaggedAction.rawValue,
             ] as [String: Any],
         ]
         let availableModelFiles = VaultLocalLLMEngine.availableModelFiles()
@@ -2677,6 +2689,15 @@ final class VaultClassifierViewModel: ObservableObject {
                 }
                 editingFeedAction = feedAction
                 editingPageAction = pageAction
+                // Confidence floor: accept a JSON number or a numeric string; the
+                // NamedPolicy init clamps it to 1...5, so any out-of-range value is safe.
+                let rawFloor = (data["confidenceFloor"] as? Int) ?? Int((data["confidenceFloor"] as? String) ?? "") ?? NamedPolicy.defaultConfidenceFloor
+                editingConfidenceFloor = min(5, max(1, rawFloor))
+                let untagged = try webString(data, key: "untaggedAction", limit: 16)
+                guard let untaggedAction = PresentationAction(rawValue: untagged) else {
+                    throw WebBridgeInputError.invalidChoice("untagged action")
+                }
+                editingUntaggedAction = untaggedAction
                 savePolicy()
             case "deletePolicy":
                 deleteEditingPolicy()
