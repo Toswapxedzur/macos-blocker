@@ -18,7 +18,7 @@ public enum PolicyValidationError: Error, Equatable, LocalizedError, Sendable {
         case .invalidID(let id): return "Policy identifier \(id) is not valid."
         case .duplicateID(let id): return "Policy identifier \(id) is duplicated."
         case .emptyName: return "A policy needs a name."
-        case .missingPositiveCriterion(let id): return "Policy \(id) must include at least one positive tag criterion."
+        case .missingPositiveCriterion(let id): return "Policy \(id) must include at least one tag criterion (include or exclude)."
         case .unknownTag(let policyID, let tagID): return "Policy \(policyID) refers to unknown tag \(tagID)."
         }
     }
@@ -29,9 +29,15 @@ public struct PolicyCatalog: Sendable {
     public static let nameLimit = 160
     public static let criteriaLimit = 128
     public let taxonomy: Taxonomy
+    /// Every tag id a policy may reference. The seed taxonomy alone is not
+    /// enough: content-block policies act on the tags the *classifier* emits,
+    /// which come from the user's own tree(s) (UUID ids), so those must be
+    /// accepted too — otherwise a working disallow policy can never be saved.
+    private let validTagIDs: Set<String>
 
-    public init(taxonomy: Taxonomy) {
+    public init(taxonomy: Taxonomy, additionalValidTagIDs: Set<String> = []) {
         self.taxonomy = taxonomy
+        self.validTagIDs = Set(taxonomy.nodes.keys).union(additionalValidTagIDs)
     }
 
     public func validate(_ policies: [NamedPolicy]) throws {
@@ -65,10 +71,12 @@ public struct PolicyCatalog: Sendable {
         guard criteria.count <= Self.criteriaLimit else {
             throw PolicyValidationError.invalidID(policy.id)
         }
-        guard !policy.includeAnyTagIDs.isEmpty || !policy.includeAllTagIDs.isEmpty else {
+        // At least one criterion — include (allow-only) OR exclude (disallow).
+        // A pure disallow ("dim anything tagged Comedy & Memes") is valid.
+        guard !policy.includeAnyTagIDs.isEmpty || !policy.includeAllTagIDs.isEmpty || !policy.excludeTagIDs.isEmpty else {
             throw PolicyValidationError.missingPositiveCriterion(policy.id)
         }
-        for tagID in criteria where taxonomy.nodes[tagID] == nil {
+        for tagID in criteria where !validTagIDs.contains(tagID) {
             throw PolicyValidationError.unknownTag(policyID: policy.id, tagID: tagID)
         }
     }
