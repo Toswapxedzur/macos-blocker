@@ -796,6 +796,7 @@
       ${field("policies.includeAny", "policies.exactIDs", "includeAny", editor.includeAny)}
       ${field("policies.exclude", "", "exclude", editor.exclude)}
       <div class="form-row">${selectField("policies.feedAction", "policies.feedHint", "feedAction", editor.feedAction, [["allow", "enum.action.allow"], ["dim", "enum.action.dim"], ["block", "enum.action.block"]])}${selectField("policies.pageAction", "policies.pageHint", "pageAction", editor.pageAction, [["allow", "enum.action.allow"], ["block", "enum.action.block"]])}</div>
+      <div class="form-row">${valueSelectField("policies.confidenceFloor", "policies.confidenceFloorHint", "confidenceFloor", String(editor.confidenceFloor ?? 4), [["1", tx("policies.floor1")], ["2", "≥ 2"], ["3", "≥ 3"], ["4", "≥ 4"], ["5", tx("policies.floor5")]])}${selectField("policies.untaggedAction", "policies.untaggedHint", "untaggedAction", editor.untaggedAction || "allow", [["allow", "enum.action.allow"], ["dim", "enum.action.dim"], ["block", "enum.action.block"]])}</div>
       <div class="action-row"><button class="primary" data-action="savePolicy" data-form="policy-form">${tx("policies.save")}</button><button class="danger" data-action="deletePolicy"${disabled(!editor.id)}>${tx("common.delete")}</button></div>
       </div></section>${notice(state.issue, "red")}</div>`;
   }
