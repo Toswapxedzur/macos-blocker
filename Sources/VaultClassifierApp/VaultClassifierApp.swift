@@ -468,7 +468,7 @@ final class VaultClassifierViewModel: ObservableObject {
         guard let encoded = try? JSONEncoder().encode(broadcast),
               let object = try? JSONSerialization.jsonObject(with: encoded) as? [String: Any] else { return }
         sharedHubClient?.broadcast(operation: "video-tags-updated", body: object)
-        devLog("video-tags-updated", ["platform": platformID, "entry": entryID, "tags": "\(projection.tags.count)"])
+        devLog("video-tags-updated", ["platform": platformID, "entry": entryID, "tags": "\(projection.tags.count)", "feed": actions.feed.rawValue, "page": actions.page.rawValue])
     }
 
     /// Dev-only pipeline test mode (`ADAMANCIA_VAULT_TAG_TEST=creator-echo`):

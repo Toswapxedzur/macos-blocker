@@ -250,7 +250,7 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         if loaded.policies.isEmpty { loaded.policies = defaultPolicies }
         loaded.workspaceCatalog.reconcileClassifierTypes()
         try loaded.workspaceCatalog.validate()
-        try PolicyCatalog(taxonomy: verifiedPackage.taxonomy).validate(loaded.policies)
+        try PolicyCatalog(taxonomy: verifiedPackage.taxonomy, additionalValidTagIDs: Self.treeTagIDs(loaded.workspaceCatalog)).validate(loaded.policies)
         loaded.activeModelIdentity = identity
 
         if let activeManifest {
@@ -413,6 +413,13 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
             catalog.videoClassification(classifierTypeID: $0.id, platformID: platformID, entryID: entryID) != nil
         }) else { return nil }
         return Self.videoTagsProjection(entryID: entryID, platformID: platformID, types: types, catalog: catalog)
+    }
+
+    /// Every tag id defined across the user's classifier trees — the id space a
+    /// content-block policy actually acts on (the classifier emits these), so
+    /// policy validation must accept them alongside the seed taxonomy.
+    static func treeTagIDs(_ catalog: WorkspaceCatalog) -> Set<String> {
+        Set(catalog.trees.flatMap { $0.nodes.map(\.id) })
     }
 
     /// Resolve the content-block verdict for one classified entry: find the
@@ -1269,7 +1276,7 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
     public func replacePolicies(_ policies: [NamedPolicy]) throws {
         lock.lock()
         defer { lock.unlock() }
-        try PolicyCatalog(taxonomy: activeVerifiedPackage.taxonomy).validate(policies)
+        try PolicyCatalog(taxonomy: activeVerifiedPackage.taxonomy, additionalValidTagIDs: Self.treeTagIDs(state.workspaceCatalog)).validate(policies)
         state.policies = policies
         try stateFile.save(state)
     }
@@ -1290,7 +1297,7 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
     ) throws {
         lock.lock()
         defer { lock.unlock() }
-        try PolicyCatalog(taxonomy: verifiedPackage.seedPackage.taxonomy).validate(state.policies)
+        try PolicyCatalog(taxonomy: verifiedPackage.seedPackage.taxonomy, additionalValidTagIDs: Self.treeTagIDs(state.workspaceCatalog)).validate(state.policies)
         let manifest = verifiedPackage.manifest
         let identity = ActiveModelIdentity(
             kind: .signedPackage,
