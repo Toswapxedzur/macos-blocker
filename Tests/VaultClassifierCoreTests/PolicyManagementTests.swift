@@ -92,4 +92,49 @@ final class PolicyManagementTests: XCTestCase {
         XCTAssertThrowsError(try coordinator.activateVerifiedModelPackage(replacement))
         XCTAssertEqual(coordinator.policies(), [original])
     }
+
+    // MARK: - Content-block verdict resolution (creator → content rewire)
+
+    private func obs(_ id: String, _ c: Int) -> NamedPolicy.TagObservation {
+        NamedPolicy.TagObservation(tagID: id, confidence: c)
+    }
+
+    func testExcludePolicyDisallowsMatchingTagAboveFloor() {
+        let policy = NamedPolicy(id: "no-gaming", name: "No gaming", excludeTagIDs: ["gaming"],
+                                 feedAction: .dim, pageAction: .block, confidenceFloor: 4)
+        // Gaming at conf5 → disallowed → dim on feed, block on page.
+        let hit = policy.resolveActions(for: [obs("gaming", 5)])
+        XCTAssertEqual(hit.feed, .dim)
+        XCTAssertEqual(hit.page, .block)
+        // Same tag but below the floor → ignored → allowed.
+        let weak = policy.resolveActions(for: [obs("gaming", 3)])
+        XCTAssertEqual(weak.feed, .allow)
+        XCTAssertEqual(weak.page, .allow)
+    }
+
+    func testIncludeOnlyPolicyDisallowsNonMatchingContent() {
+        let policy = NamedPolicy(id: "only-cr", name: "Only Clash Royale",
+                                 includeAnyTagIDs: ["clash-royale"], feedAction: .dim, pageAction: .block,
+                                 confidenceFloor: 4)
+        XCTAssertEqual(policy.resolveActions(for: [obs("clash-royale", 5)]).feed, .allow)   // wanted → shown
+        XCTAssertEqual(policy.resolveActions(for: [obs("gaming", 5)]).feed, .dim)           // not wanted → dimmed
+    }
+
+    func testUntaggedFollowsUntaggedAction() {
+        // Default: never hide what we couldn't confidently classify.
+        let lenient = NamedPolicy(id: "p", name: "p", excludeTagIDs: ["gaming"], untaggedAction: .allow)
+        XCTAssertEqual(lenient.resolveActions(for: []).feed, .allow)
+        XCTAssertEqual(lenient.resolveActions(for: [obs("gaming", 2)]).feed, .allow)   // all below floor = untagged
+        // Strict allow-only mode can opt into hiding the unclassifiable.
+        let strict = NamedPolicy(id: "q", name: "q", includeAnyTagIDs: ["clash-royale"], untaggedAction: .dim)
+        XCTAssertEqual(strict.resolveActions(for: []).feed, .dim)
+    }
+
+    func testPolicyDecodesWithoutNewFieldsUsingDefaults() throws {
+        // A policy persisted before the rewire (no confidenceFloor / untaggedAction).
+        let legacy = #"{"id":"p","name":"p","includeAnyTagIDs":["clash-royale"],"includeAllTagIDs":[],"excludeTagIDs":[],"feedAction":"dim","pageAction":"block"}"#
+        let decoded = try JSONDecoder().decode(NamedPolicy.self, from: Data(legacy.utf8))
+        XCTAssertEqual(decoded.confidenceFloor, NamedPolicy.defaultConfidenceFloor)
+        XCTAssertEqual(decoded.untaggedAction, .allow)
+    }
 }

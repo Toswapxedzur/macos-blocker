@@ -404,7 +404,7 @@ final class VaultClassifierViewModel: ObservableObject {
     /// not normalize. The response struct additionally gates on a valid theme
     /// pair; keeping this mapping shared means the single and batch paths emit
     /// identical tags.
-    private static func nativeVideoTags(from tags: [TagNode]) -> [NativeVideoTag] {
+    private static func nativeVideoTags(from tags: [TagNode], confidenceByTagID: [String: Int] = [:]) -> [NativeVideoTag] {
         tags.compactMap { tag in
             guard let lightColorHex = TagColorAssignment.normalizedHex(tag.lightColorHex),
                   let darkColorHex = TagColorAssignment.normalizedHex(tag.darkColorHex) else {
@@ -414,9 +414,15 @@ final class VaultClassifierViewModel: ObservableObject {
                 id: tag.id,
                 name: tag.name,
                 lightColorHex: lightColorHex,
-                darkColorHex: darkColorHex
+                darkColorHex: darkColorHex,
+                confidence: confidenceByTagID[tag.id] ?? 0
             )
         }
+    }
+
+    /// Shorthand: map a projection to wire tags carrying their confidence.
+    private static func nativeVideoTags(from projection: VideoTagsProjection) -> [NativeVideoTag] {
+        nativeVideoTags(from: projection.tags, confidenceByTagID: projection.confidenceByTagID)
     }
 
     /// Classifications currently running, keyed by platform + entryID. Repeated
@@ -452,9 +458,11 @@ final class VaultClassifierViewModel: ObservableObject {
     }
 
     private func broadcastResolvedVideoTags(platformID: String, entryID: String, projection: VideoTagsProjection) {
+        let actions = coordinator?.contentBlockActions(platformID: platformID, projection: projection) ?? (.allow, .allow)
         let broadcast = NativeVideoTagsBroadcast(platformID: platformID, items: [NativeVideoTagsBatchResponseItem(
-            entryID: entryID, tags: Self.nativeVideoTags(from: projection.tags),
-            predicted: projection.predicted, pending: false)])
+            entryID: entryID, tags: Self.nativeVideoTags(from: projection),
+            predicted: projection.predicted, pending: false,
+            feedAction: actions.feed, pageAction: actions.page)])
         guard let encoded = try? JSONEncoder().encode(broadcast),
               let object = try? JSONSerialization.jsonObject(with: encoded) as? [String: Any] else { return }
         sharedHubClient?.broadcast(operation: "video-tags-updated", body: object)
@@ -560,10 +568,12 @@ final class VaultClassifierViewModel: ObservableObject {
                         tags: [Self.creatorEchoTag(creatorID: videoTags.creatorID)], predicted: false, pending: false))
                 }
                 if let cached = coordinator.cachedVideoTags(platformID: videoTags.platformID, entryID: videoTags.entryID) {
-                    devLog("video-tags", ["platform": videoTags.platformID, "entry": videoTags.entryID, "outcome": "cached", "tags": "\(cached.tags.count)"])
+                    let actions = coordinator.contentBlockActions(platformID: videoTags.platformID, projection: cached)
+                    devLog("video-tags", ["platform": videoTags.platformID, "entry": videoTags.entryID, "outcome": "cached", "tags": "\(cached.tags.count)", "feed": actions.feed.rawValue, "page": actions.page.rawValue])
                     return try sharedHubReply(NativeVideoTagsResponse(
                         platformID: videoTags.platformID, entryID: videoTags.entryID,
-                        tags: Self.nativeVideoTags(from: cached.tags), predicted: cached.predicted, pending: false))
+                        tags: Self.nativeVideoTags(from: cached), predicted: cached.predicted, pending: false,
+                        feedAction: actions.feed, pageAction: actions.page))
                 }
                 // No classifier type targets this platform → definitively empty, not
                 // pending (avoids a stuck "Tagging" pill that re-requests forever).
@@ -602,8 +612,10 @@ final class VaultClassifierViewModel: ObservableObject {
                 for item in batch.items {
                     if let cached = coordinator.cachedVideoTags(platformID: batch.platformID, entryID: item.entryID) {
                         cachedCount += 1
+                        let actions = coordinator.contentBlockActions(platformID: batch.platformID, projection: cached)
                         responses.append(NativeVideoTagsBatchResponseItem(
-                            entryID: item.entryID, tags: Self.nativeVideoTags(from: cached.tags), predicted: cached.predicted, pending: false))
+                            entryID: item.entryID, tags: Self.nativeVideoTags(from: cached), predicted: cached.predicted, pending: false,
+                            feedAction: actions.feed, pageAction: actions.page))
                     } else if !platformHasTypes {
                         // No classifier type for this platform → definitively empty.
                         responses.append(NativeVideoTagsBatchResponseItem(entryID: item.entryID, tags: [], predicted: false, pending: false))
