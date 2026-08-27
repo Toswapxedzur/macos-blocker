@@ -71,12 +71,16 @@ case "sample":
     print("  (leave [] when no tag applies). Then: VaultClassifierEval score \(out)")
 
 case "score":
+    let verbose = args.contains("-v") || args.contains("--dump")
+    let leafOnly = args.contains("--leaf-only")
+    let maxOverride = args.compactMap { $0.hasPrefix("--max=") ? Int($0.dropFirst(6)) : nil }.first
     guard args.count > 1, let data = try? Data(contentsOf: URL(fileURLWithPath: args[1])),
           let set = try? JSONDecoder().decode(EvalSet.self, from: data) else { die("could not read eval set") }
     let labeled = set.items.filter { !$0.trueTags.isEmpty || $0.trueTags.isEmpty }  // all; empty = declined truth
     guard labeled.contains(where: { !$0.trueTags.isEmpty }) else { die("no items labeled yet — fill in trueTags") }
 
-    guard let modelPath = VaultLocalLLMEngine.defaultModelPath(preferredFileName: state.settings.localLLM.modelFileName) else {
+    let modelOverride = args.compactMap { $0.hasPrefix("--model=") ? String($0.dropFirst(8)) : nil }.first
+    guard let modelPath = modelOverride ?? VaultLocalLLMEngine.defaultModelPath(preferredFileName: state.settings.localLLM.modelFileName) else {
         die("no .gguf model found for this environment")
     }
     let engine: VaultLocalLLMEngine
@@ -86,7 +90,17 @@ case "score":
     let settings = state.settings.localLLM
     let research = state.settings.research
     let overrides = type.localModelOverrides
-    let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: settings.maximumTags)
+    let maxTags = maxOverride ?? settings.maximumTags
+    let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: maxTags)
+
+    // Optional leaf-only tree: drop every node that has children, so the grammar
+    // can never emit a broad parent bucket (Gaming/Technology/Entertainment/Lifestyle).
+    var evalTree = tree
+    if leafOnly {
+        let parentIDs = Set(tree.nodes.compactMap(\.parentID))
+        evalTree.nodes = tree.nodes.filter { !parentIDs.contains($0.id) }
+    }
+    print("• config: leafOnly=\(leafOnly)  maxTags=\(maxTags)  allowedTags=\(evalTree.nodes.filter { !$0.isRetired }.count)\n")
 
     var tp: [String: Int] = [:], fp: [String: Int] = [:], fn: [String: Int] = [:]
     var exact = 0, declineTrue = 0, declineRight = 0
@@ -97,7 +111,7 @@ case "score":
         let truth = Set(item.trueTags.compactMap { tagIDByName[$0.lowercased()] })
         let result = try await pipeline.classify(
             title: item.title, entryID: item.entryID, creatorID: item.creatorID, platformID: "youtube",
-            classifierType: type, tree: tree, catalog: catalog,
+            classifierType: type, tree: evalTree, catalog: catalog,
             houseRules: overrides?.houseRules ?? settings.houseRules,
             allowDecline: overrides?.allowDecline ?? settings.allowDecline,
             confidenceThresholds: overrides?.confidenceThresholds ?? settings.confidenceThresholds,
@@ -107,6 +121,14 @@ case "score":
         )
         let predicted = Set(result.tags.map(\.tagID))
         for tag in result.tags { predConfByID[tag.tagID] = tag.confidence }
+
+        if verbose {
+            let predStr = result.tags.isEmpty ? "— (declined)"
+                : result.tags.map { "\(tagNameByID[$0.tagID] ?? $0.tagID)·c\($0.confidence)" }.joined(separator: ", ")
+            let truthStr = item.trueTags.isEmpty ? "[]" : item.trueTags.joined(separator: "/")
+            let mark = predicted == truth ? "✓" : "✗"
+            print(String(format: "%@ %-52@ pred: %-34@ truth: %@", mark, String(item.title.prefix(52)) as NSString, predStr as NSString, truthStr))
+        }
 
         if truth.isEmpty { declineTrue += 1; if predicted.isEmpty { declineRight += 1 } }
         if predicted == truth { exact += 1 }
