@@ -450,6 +450,13 @@ final class VaultClassifierViewModel: ObservableObject {
         // platform opts in (default on). Local Vision OCR; the per-type gate that
         // decides whether a type actually consumes the text lives in classifyVideo.
         let ocrEnabled = coordinator?.ocrEvidencePlatformIDs().contains(platformID) ?? false
+        // Fetch+OCR the whole batch's thumbnails concurrently up front (fetch is
+        // network-bound) so they overlap each other and the serial LLM decodes;
+        // the per-item recognizedText below then hits the warm cache / shared task.
+        if ocrEnabled {
+            let entryIDs = fresh.map(\.entryID)
+            Task.detached { await ThumbnailOCR.shared.prewarm(entryIDs: entryIDs) }
+        }
         Task { @MainActor [weak self] in
             for item in fresh {
                 defer { self?.inFlightVideoClassifications.remove(Self.inFlightKey(platformID, item.entryID)) }
