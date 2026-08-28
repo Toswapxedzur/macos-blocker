@@ -446,13 +446,18 @@ final class VaultClassifierViewModel: ObservableObject {
             inFlightVideoClassifications.insert(Self.inFlightKey(platformID, $0.entryID)).inserted
         }
         guard !fresh.isEmpty else { return }
+        // OCR the thumbnail as evidence only when a classifier type for this
+        // platform opts in (default on). Local Vision OCR; the per-type gate that
+        // decides whether a type actually consumes the text lives in classifyVideo.
+        let ocrEnabled = coordinator?.ocrEvidencePlatformIDs().contains(platformID) ?? false
         Task { @MainActor [weak self] in
             for item in fresh {
                 defer { self?.inFlightVideoClassifications.remove(Self.inFlightKey(platformID, item.entryID)) }
                 guard let coordinator = self?.coordinator else { continue }
+                let thumbnailText = ocrEnabled ? await ThumbnailOCR.shared.recognizedText(forEntryID: item.entryID) : nil
                 guard let projection = try? await coordinator.classifyVideo(
                     platformID: platformID, entryID: item.entryID, creatorID: item.creatorID,
-                    title: item.title, summary: item.summary, text: item.text) else { continue }
+                    title: item.title, summary: item.summary, text: thumbnailText ?? item.text) else { continue }
                 self?.broadcastResolvedVideoTags(platformID: platformID, entryID: item.entryID, projection: projection)
             }
             self?.onWebStateChange?()
