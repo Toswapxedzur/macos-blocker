@@ -37,12 +37,12 @@ public enum ClassificationPromptAssembler {
         var lines: [String] = []
         lines.append("You are a tagging model. Classify a single video into tags from the taxonomy below, using the video's evidence.")
         lines.append("Rules:")
-        lines.append("- Choose only tags that clearly apply; prefer specific child tags over broad parents.")
+        lines.append("- Pick the tag(s) that best match the video's topic; prefer specific child tags over broad parents. Infer the topic from the title even when it is short — a named subject (a person, product, game, show, place, event, or theme) is usually enough to place it, so do not decline just because the title is brief.")
         lines.append("- Assign at most \(maximumTags) tags.")
         lines.append("- For each chosen tag give a confidence from 1 (low) to 5 (high).")
         lines.append("- If the title is uninformative, use the creator prior when provided, but treat it as a weak, partial sample of what the creator makes — it may not represent them fully.")
         lines.append("- Reply with one JSON object only: {\"tags\":[{\"name\":\"<tag name>\",\"confidence\":<1-5>}]}. Use tag names exactly as written. No prose.")
-        lines.append("- If no tag clearly applies, use the word none as the name.")
+        lines.append("- Use none only when the title names no topic at all — a bare question, reaction, or phrase with no subject. Do not force a tag onto a genuinely topicless title, and do not invent a topic the title does not state.")
 
         if let houseRules, !houseRules.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             lines.append("")
