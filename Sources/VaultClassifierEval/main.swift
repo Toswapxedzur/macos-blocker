@@ -1,6 +1,30 @@
 import Foundation
 import VaultClassifierCore
 import VaultClassifierLLM
+import Vision
+import AppKit
+
+// On-device Vision OCR of a YouTube thumbnail (hqdefault), so `score --ocr`
+// measures the thumbnail-text-evidence path the same way the app runs it.
+func ocrThumbnail(entryID: String) -> String? {
+    let parts = entryID.split(separator: ":", omittingEmptySubsequences: false)
+    guard parts.count == 3, parts[0] == "youtube", parts[1] == "video" else { return nil }
+    guard let url = URL(string: "https://i.ytimg.com/vi/\(parts[2])/hqdefault.jpg"),
+          let data = try? Data(contentsOf: url), let img = NSImage(data: data),
+          let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+    var out: String?
+    let sem = DispatchSemaphore(value: 0)
+    let req = VNRecognizeTextRequest { r, _ in
+        let lines = (r.results as? [VNRecognizedTextObservation])?.compactMap { $0.topCandidates(1).first?.string } ?? []
+        out = lines.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        sem.signal()
+    }
+    req.recognitionLevel = .accurate
+    req.usesLanguageCorrection = true
+    do { try VNImageRequestHandler(cgImage: cg, options: [:]).perform([req]) } catch { sem.signal() }
+    sem.wait()
+    return (out?.isEmpty == false) ? String(out!.prefix(800)) : nil
+}
 
 // Classification accuracy eval harness.
 //
@@ -72,6 +96,7 @@ case "sample":
 
 case "score":
     let verbose = args.contains("-v") || args.contains("--dump")
+    let useOcr = args.contains("--ocr")
     let leafOnly = args.contains("--leaf-only")
     let maxOverride = args.compactMap { $0.hasPrefix("--max=") ? Int($0.dropFirst(6)) : nil }.first
     guard args.count > 1, let data = try? Data(contentsOf: URL(fileURLWithPath: args[1])),
@@ -109,8 +134,10 @@ case "score":
 
     for item in labeled {
         let truth = Set(item.trueTags.compactMap { tagIDByName[$0.lowercased()] })
+        let ocrText = useOcr ? ocrThumbnail(entryID: item.entryID) : nil
+        if useOcr && verbose { FileHandle.standardError.write(Data("[ocr] \(item.entryID): \(ocrText?.prefix(60) ?? "nil")\n".utf8)) }
         let result = try await pipeline.classify(
-            title: item.title, entryID: item.entryID, creatorID: item.creatorID, platformID: "youtube",
+            title: item.title, text: ocrText, entryID: item.entryID, creatorID: item.creatorID, platformID: "youtube",
             classifierType: type, tree: evalTree, catalog: catalog,
             houseRules: overrides?.houseRules ?? settings.houseRules,
             allowDecline: overrides?.allowDecline ?? settings.allowDecline,

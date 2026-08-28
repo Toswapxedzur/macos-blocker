@@ -524,10 +524,12 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                 configuration: localLLMSettings
             )
             let pipeline = VideoClassificationPipeline(llm: llm, maximumTags: maximumTags)
+            // `text` carries the thumbnail-OCR evidence; honor the per-type opt-out.
+            let typeText = (overrides?.effectiveThumbnailOcrEvidence ?? LocalModelOverrides.defaultThumbnailOcrEvidence) ? text : nil
             let classification = try await pipeline.classify(
                 title: title,
                 summary: summary,
-                text: text,
+                text: typeText,
                 entryID: entryID,
                 creatorID: creatorID,
                 platformID: platformID,
