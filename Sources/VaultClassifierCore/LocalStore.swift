@@ -354,6 +354,24 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         return state.workspaceCatalog.classifierTypes.contains { $0.applicablePlatformID == platformID }
     }
 
+    /// Collection-enabled platforms whose active classifier type(s) want
+    /// thumbnail-OCR evidence (default ON per type). The extension OCRs
+    /// thumbnails and sends their text only for these platforms.
+    public func ocrEvidencePlatformIDs() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        let catalog = state.workspaceCatalog
+        let enabled = Set(catalog.bindings.filter(\.collectionEnabled).map(\.id))
+        var platforms = Set<String>()
+        for type in catalog.classifierTypes {
+            guard let platformID = type.applicablePlatformID, enabled.contains(platformID) else { continue }
+            if type.localModelOverrides?.effectiveThumbnailOcrEvidence ?? LocalModelOverrides.defaultThumbnailOcrEvidence {
+                platforms.insert(platformID)
+            }
+        }
+        return platforms.sorted()
+    }
+
     public func setOnDeviceLLM(_ llm: any OnDeviceLLM) {
         lock.lock()
         defer { lock.unlock() }

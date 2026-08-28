@@ -286,14 +286,21 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
 /// override. The GGUF choice lives separately on `ClassifierTypeAsset`, while
 /// context/runtime knobs remain app-wide for every resident engine.
 public struct LocalModelOverrides: Codable, Equatable, Sendable {
+    /// Default when a type does not override it: thumbnail OCR evidence is ON.
+    public static let defaultThumbnailOcrEvidence = true
+
     public var houseRules: String?
     public var allowDecline: Bool?
     public var confidenceThresholds: [Double]?
+    /// Per-type: whether the browser extension OCRs the thumbnail and sends its
+    /// text as classification evidence. nil = inherit the default (ON).
+    public var thumbnailOcrEvidence: Bool?
 
     public init(
         houseRules: String? = nil,
         allowDecline: Bool? = nil,
-        confidenceThresholds: [Double]? = nil
+        confidenceThresholds: [Double]? = nil,
+        thumbnailOcrEvidence: Bool? = nil
     ) {
         self.houseRules = houseRules.map { String($0.prefix(4_000)) }
         self.allowDecline = allowDecline
@@ -306,10 +313,16 @@ public struct LocalModelOverrides: Codable, Equatable, Sendable {
         } else {
             self.confidenceThresholds = nil
         }
+        self.thumbnailOcrEvidence = thumbnailOcrEvidence
+    }
+
+    /// Effective value with the default applied.
+    public var effectiveThumbnailOcrEvidence: Bool {
+        thumbnailOcrEvidence ?? Self.defaultThumbnailOcrEvidence
     }
 
     public var isEmpty: Bool {
-        houseRules == nil && allowDecline == nil && confidenceThresholds == nil
+        houseRules == nil && allowDecline == nil && confidenceThresholds == nil && thumbnailOcrEvidence == nil
     }
 }
 

@@ -137,4 +137,20 @@ final class PolicyManagementTests: XCTestCase {
         XCTAssertEqual(decoded.confidenceFloor, NamedPolicy.defaultConfidenceFloor)
         XCTAssertEqual(decoded.untaggedAction, .allow)
     }
+
+    // MARK: - Per-type thumbnail-OCR evidence setting
+
+    func testThumbnailOcrEvidenceDefaultsOnAndDecodesBackCompat() throws {
+        // Unset → default ON.
+        XCTAssertTrue(LocalModelOverrides().effectiveThumbnailOcrEvidence)
+        XCTAssertTrue(LocalModelOverrides(thumbnailOcrEvidence: nil).effectiveThumbnailOcrEvidence)
+        XCTAssertFalse(LocalModelOverrides(thumbnailOcrEvidence: false).effectiveThumbnailOcrEvidence)
+        // An override that only sets OCR is not "empty" (must persist).
+        XCTAssertFalse(LocalModelOverrides(thumbnailOcrEvidence: false).isEmpty)
+        // A pre-existing override JSON without the field still defaults ON.
+        let legacy = #"{"houseRules":"x","allowDecline":true}"#
+        let decoded = try JSONDecoder().decode(LocalModelOverrides.self, from: Data(legacy.utf8))
+        XCTAssertNil(decoded.thumbnailOcrEvidence)
+        XCTAssertTrue(decoded.effectiveThumbnailOcrEvidence)
+    }
 }
