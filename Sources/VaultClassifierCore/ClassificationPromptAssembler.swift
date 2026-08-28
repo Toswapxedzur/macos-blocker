@@ -16,6 +16,9 @@ public struct ClassificationPromptParts: Sendable, Equatable {
 
 public enum ClassificationPromptAssembler {
     public static let maximumEvidenceTextLength = 1_000
+    /// Minimum videos before a consistent creator counts as a STRONG prior — a
+    /// tiny sample (e.g. one 100% video) is not proof of a habit.
+    public static let creatorPriorStrongMinimumVideos = 5
 
     /// Non-retired tags as readable options, with their parent name for context.
     public static func tagOptions(from tree: TagTreeAsset) -> [LLMTagOption] {
@@ -71,7 +74,8 @@ public enum ClassificationPromptAssembler {
         title: String,
         summary: String?,
         text: String?,
-        creatorPrior: [(tagName: String, averageConfidence: Double)],
+        creatorPrior: [(tagName: String, share: Double, count: Int)],
+        creatorVideoCount: Int,
         knowledge: [KnowledgeEntry]
     ) -> String {
         var lines: [String] = []
@@ -84,10 +88,20 @@ public enum ClassificationPromptAssembler {
             lines.append("")
         }
 
-        if !creatorPrior.isEmpty {
-            lines.append("Creator prior — tags from videos you've seen from this creator. This is a partial, possibly biased sample of their content (your view history), NOT their full range; weight it lightly:")
+        if !creatorPrior.isEmpty, creatorVideoCount > 0 {
+            let topShare = creatorPrior.first?.share ?? 0
+            // Emphasize the creator correlation: a consistent creator is a strong
+            // prior when the title is uninformative — but the title/thumbnail
+            // override it when they clearly point elsewhere.
+            // Strong prior only when consistent AND backed by enough videos — a
+            // 1-video "100%" is not evidence of a habit.
+            if topShare >= 0.6, creatorVideoCount >= Self.creatorPriorStrongMinimumVideos, let top = creatorPrior.first {
+                lines.append("This creator is highly consistent: \(Int((top.share * 100).rounded()))% of the \(creatorVideoCount) videos seen from them are \"\(top.tagName)\". Treat \"\(top.tagName)\" as the STRONG default for a new upload — unless the title or thumbnail text clearly indicates a different topic. The creator's full tag mix:")
+            } else {
+                lines.append("This creator's history is limited or varied (\(creatorVideoCount) video(s) seen); use it only as a weak hint — the title and thumbnail decide:")
+            }
             for item in creatorPrior {
-                lines.append("- \(item.tagName): average confidence \(String(format: "%.1f", item.averageConfidence))")
+                lines.append("- \(item.tagName): \(item.count) of \(creatorVideoCount) videos (\(Int((item.share * 100).rounded()))%)")
             }
             lines.append("")
         }
@@ -118,7 +132,8 @@ public enum ClassificationPromptAssembler {
         title: String,
         summary: String?,
         text: String?,
-        creatorPrior: [(tagName: String, averageConfidence: Double)],
+        creatorPrior: [(tagName: String, share: Double, count: Int)],
+        creatorVideoCount: Int,
         knowledge: [KnowledgeEntry]
     ) -> ClassificationPromptParts {
         let taxonomy = tagOptions(from: tree)
@@ -132,7 +147,7 @@ public enum ClassificationPromptAssembler {
         }
         return ClassificationPromptParts(
             staticPrefix: staticPrefix(taxonomy: taxonomy, houseRules: houseRules, maximumTags: maximumTags),
-            dynamicSuffix: dynamicSuffix(title: title, summary: summary, text: text, creatorPrior: creatorPrior, knowledge: knowledge),
+            dynamicSuffix: dynamicSuffix(title: title, summary: summary, text: text, creatorPrior: creatorPrior, creatorVideoCount: creatorVideoCount, knowledge: knowledge),
             allowedTagNames: allowedTagNames,
             nameToTagID: nameToTagID
         )
