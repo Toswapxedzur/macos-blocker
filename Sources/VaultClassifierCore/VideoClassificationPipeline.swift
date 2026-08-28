@@ -38,14 +38,19 @@ public struct VideoClassificationPipeline: Sendable {
     ) async throws -> VideoClassification {
         let nameByID = Dictionary(tree.nodes.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
 
-        // Derived creator prior (id → readable name), for the weak view-history prior.
-        let creatorPrior: [(tagName: String, averageConfidence: Double)]
-        if let histogram = catalog.creatorHistogram(classifierTypeID: classifierType.id, platformID: platformID, creatorID: creatorID) {
-            creatorPrior = histogram.averagedTags().compactMap { entry in
-                nameByID[entry.tagID].map { (tagName: $0, averageConfidence: entry.averageConfidence) }
-            }
-        } else {
-            creatorPrior = []
+        // Derived creator prior: how often THIS creator's already-classified
+        // videos carry each tag (share of videoCount). A consistent creator is a
+        // strong prior for an otherwise-ambiguous title; the assembler frames it.
+        var creatorPrior: [(tagName: String, share: Double, count: Int)] = []
+        var creatorVideoCount = 0
+        if let histogram = catalog.creatorHistogram(classifierTypeID: classifierType.id, platformID: platformID, creatorID: creatorID), histogram.videoCount > 0 {
+            creatorVideoCount = histogram.videoCount
+            creatorPrior = histogram.stats
+                .compactMap { tagID, stat -> (tagName: String, share: Double, count: Int)? in
+                    guard let name = nameByID[tagID] else { return nil }
+                    return (tagName: name, share: Double(stat.count) / Double(histogram.videoCount), count: stat.count)
+                }
+                .sorted { $0.share == $1.share ? $0.tagName < $1.tagName : $0.share > $1.share }
         }
 
         // Primary decode: the video's own content plus any matched term
@@ -58,7 +63,7 @@ public struct VideoClassificationPipeline: Sendable {
         )
         let primary = try await decode(
             tree: tree, houseRules: houseRules, title: title, summary: summary, text: text,
-            creatorPrior: creatorPrior, knowledge: termKnowledge,
+            creatorPrior: creatorPrior, creatorVideoCount: creatorVideoCount, knowledge: termKnowledge,
             allowDecline: allowDecline, confidenceThresholds: confidenceThresholds
         )
 
@@ -71,7 +76,7 @@ public struct VideoClassificationPipeline: Sendable {
             let groundedKnowledge = termKnowledge + [creatorEntry]
             let grounded = try await decode(
                 tree: tree, houseRules: houseRules, title: title, summary: summary, text: text,
-                creatorPrior: creatorPrior, knowledge: groundedKnowledge,
+                creatorPrior: creatorPrior, creatorVideoCount: creatorVideoCount, knowledge: groundedKnowledge,
                 allowDecline: allowDecline, confidenceThresholds: confidenceThresholds
             )
             // Only adopt the creator-grounded result if it actually produced a
@@ -117,7 +122,8 @@ public struct VideoClassificationPipeline: Sendable {
         title: String,
         summary: String?,
         text: String?,
-        creatorPrior: [(tagName: String, averageConfidence: Double)],
+        creatorPrior: [(tagName: String, share: Double, count: Int)],
+        creatorVideoCount: Int,
         knowledge: [KnowledgeEntry],
         allowDecline: Bool?,
         confidenceThresholds: [Double]?
@@ -130,6 +136,7 @@ public struct VideoClassificationPipeline: Sendable {
             summary: summary,
             text: text,
             creatorPrior: creatorPrior,
+            creatorVideoCount: creatorVideoCount,
             knowledge: knowledge
         )
         let result = try await llm.classify(LLMClassificationRequest(
