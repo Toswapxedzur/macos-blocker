@@ -27,17 +27,22 @@ public struct NativeCollectionInfoResponse: Codable, Equatable, Sendable {
     /// True when the native app runs in the development environment. Lets the
     /// extension auto-enable dev logging without a manual toggle.
     public var developmentMode: Bool
-    public init(enabledPlatformIDs: [String], developmentMode: Bool = false) {
+    /// Platforms whose active classifier type(s) want thumbnail-OCR evidence. The
+    /// extension OCRs thumbnails and sends their text as evidence only for these.
+    public var ocrPlatformIDs: [String]
+    public init(enabledPlatformIDs: [String], developmentMode: Bool = false, ocrPlatformIDs: [String] = []) {
         self.enabledPlatformIDs = enabledPlatformIDs.sorted()
         self.developmentMode = developmentMode
+        self.ocrPlatformIDs = ocrPlatformIDs.sorted()
     }
 
-    private enum CodingKeys: String, CodingKey { case enabledPlatformIDs, developmentMode }
+    private enum CodingKeys: String, CodingKey { case enabledPlatformIDs, developmentMode, ocrPlatformIDs }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         enabledPlatformIDs = (try container.decodeIfPresent([String].self, forKey: .enabledPlatformIDs) ?? []).sorted()
         developmentMode = try container.decodeIfPresent(Bool.self, forKey: .developmentMode) ?? false
+        ocrPlatformIDs = (try container.decodeIfPresent([String].self, forKey: .ocrPlatformIDs) ?? []).sorted()
     }
 }
 
