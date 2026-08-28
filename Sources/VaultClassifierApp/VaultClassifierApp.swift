@@ -523,7 +523,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 return try sharedHubReply(response)
             case .collectionInfo:
                 _ = try JSONDecoder().decode(NativeCollectionInfoRequest.self, from: request.bodyData)
-                let response = NativeCollectionInfoResponse(enabledPlatformIDs: coordinator.enabledCollectionPlatformIDs(), developmentMode: VaultDevLog.shared.isEnabled)
+                let response = NativeCollectionInfoResponse(enabledPlatformIDs: coordinator.enabledCollectionPlatformIDs(), developmentMode: VaultDevLog.shared.isEnabled, ocrPlatformIDs: coordinator.ocrEvidencePlatformIDs())
                 collectionDiagnostics?.record(event: "collection-info-served", outcome: response.enabledPlatformIDs.isEmpty ? "disabled" : "enabled")
                 return try sharedHubReply(response)
             case .diagnostic:
@@ -2023,7 +2023,8 @@ final class VaultClassifierViewModel: ObservableObject {
         modelFileName: String?,
         houseRules: String?,
         allowDecline: Bool?,
-        confidenceThresholds: [Double]?
+        confidenceThresholds: [Double]?,
+        thumbnailOcrEvidence: Bool?
     ) {
         do {
             guard var catalog = localState?.workspaceCatalog,
@@ -2035,7 +2036,8 @@ final class VaultClassifierViewModel: ObservableObject {
             let overrides = overrideEnabled ? LocalModelOverrides(
                 houseRules: houseRules,
                 allowDecline: allowDecline,
-                confidenceThresholds: confidenceThresholds
+                confidenceThresholds: confidenceThresholds,
+                thumbnailOcrEvidence: thumbnailOcrEvidence
             ) : nil
             catalog.classifierTypes[index].localModelOverrides = overrides?.isEmpty == false ? overrides : nil
             catalog.classifierTypes[index].modelFileName = modelFileName
@@ -2115,7 +2117,8 @@ final class VaultClassifierViewModel: ObservableObject {
         let overrides = LocalModelOverrides(
             houseRules: houseRules,
             allowDecline: data["allowDecline"] as? Bool,
-            confidenceThresholds: rawThresholds.isEmpty ? nil : rawThresholds
+            confidenceThresholds: rawThresholds.isEmpty ? nil : rawThresholds,
+            thumbnailOcrEvidence: data["thumbnailOcrEvidence"] as? Bool
         )
         return .init(
             typeID: typeID,
@@ -2389,6 +2392,7 @@ final class VaultClassifierViewModel: ObservableObject {
                             "houseRules": overrides.houseRules ?? NSNull(),
                             "allowDecline": overrides.allowDecline ?? NSNull(),
                             "confidenceThresholds": overrides.confidenceThresholds ?? NSNull(),
+                            "thumbnailOcrEvidence": overrides.thumbnailOcrEvidence ?? NSNull(),
                         ] as [String: Any]
                     } ?? NSNull(),
                     "modelFileName": classifierType.modelFileName ?? "",
@@ -2828,7 +2832,8 @@ final class VaultClassifierViewModel: ObservableObject {
                     modelFileName: input.modelFileName,
                     houseRules: input.overrides?.houseRules,
                     allowDecline: input.overrides?.allowDecline,
-                    confidenceThresholds: input.overrides?.confidenceThresholds
+                    confidenceThresholds: input.overrides?.confidenceThresholds,
+                    thumbnailOcrEvidence: input.overrides?.thumbnailOcrEvidence
                 )
             case "saveClassifierTypeResearch":
                 let input = try Self.parseClassifierTypeResearchWebInput(data)
