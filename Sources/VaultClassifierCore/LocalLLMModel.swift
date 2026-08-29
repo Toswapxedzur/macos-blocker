@@ -302,14 +302,37 @@ public struct CorrectionExample: Codable, Equatable, Sendable, Identifiable {
 public struct CreatorTagStat: Codable, Equatable, Sendable {
     public var count: Int
     public var confidenceSum: Int
+    /// Sum of confidence² — lets us report a stdev without storing every value.
+    /// Absent on histograms built before this field (defaults 0); stdev then
+    /// reads 0 until the creator's next video re-accumulates it.
+    public var confidenceSumOfSquares: Int
 
-    public init(count: Int = 0, confidenceSum: Int = 0) {
+    public init(count: Int = 0, confidenceSum: Int = 0, confidenceSumOfSquares: Int = 0) {
         self.count = count
         self.confidenceSum = confidenceSum
+        self.confidenceSumOfSquares = confidenceSumOfSquares
+    }
+
+    private enum CodingKeys: String, CodingKey { case count, confidenceSum, confidenceSumOfSquares }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        count = try c.decode(Int.self, forKey: .count)
+        confidenceSum = try c.decode(Int.self, forKey: .confidenceSum)
+        confidenceSumOfSquares = try c.decodeIfPresent(Int.self, forKey: .confidenceSumOfSquares) ?? 0
     }
 
     public var averageConfidence: Double {
         count > 0 ? Double(confidenceSum) / Double(count) : 0
+    }
+
+    /// Population stdev of the 1–5 confidences (0 when count < 2 or on legacy
+    /// data lacking the sum-of-squares); variance clamped non-negative.
+    public var confidenceStdev: Double {
+        guard count > 1, confidenceSumOfSquares > 0 else { return 0 }
+        let mean = averageConfidence
+        let variance = Double(confidenceSumOfSquares) / Double(count) - mean * mean
+        return variance > 0 ? variance.squareRoot() : 0
     }
 }
 
@@ -349,6 +372,7 @@ public struct CreatorTagHistogram: Codable, Equatable, Sendable, Identifiable {
             var stat = stats[tag.tagID] ?? CreatorTagStat()
             stat.count += 1
             stat.confidenceSum += tag.confidence
+            stat.confidenceSumOfSquares += tag.confidence * tag.confidence
             stats[tag.tagID] = stat
         }
         videoCount += 1

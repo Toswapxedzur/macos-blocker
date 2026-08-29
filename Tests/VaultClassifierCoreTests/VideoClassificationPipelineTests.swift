@@ -53,32 +53,21 @@ final class VideoClassificationPipelineTests: XCTestCase {
         XCTAssertTrue(a.contains("- Minecraft (under Games)"))
     }
 
-    func testDynamicSuffixEmphasizesConsistentCreatorWithFrequencyAndTitle() {
+    func testDynamicSuffixFeedsCreatorStatsAsDataWithoutFraming() {
         let knowledge = [KnowledgeEntry(kind: .term, subject: "HermitCraft", meaning: "A Minecraft SMP.")]
-        // A highly-consistent creator (17/20 Games) → strong-default framing + frequency.
         let suffix = ClassificationPromptAssembler.dynamicSuffix(
             title: "HermitCraft finale", summary: nil, text: nil,
-            creatorPrior: [(tagName: "Games", share: 17.0 / 20.0, count: 17)],
+            creatorPrior: [CreatorPriorTag(tagName: "Games", count: 17, share: 17.0 / 20.0, averageConfidence: 4.2, confidenceStdev: 0.6)],
             creatorVideoCount: 20,
             knowledge: knowledge
         )
         XCTAssertTrue(suffix.contains("HermitCraft: A Minecraft SMP."))
-        XCTAssertTrue(suffix.contains("highly consistent"))
-        XCTAssertTrue(suffix.contains("STRONG default"))
-        XCTAssertTrue(suffix.contains("Games: 17 of 20 videos (85%)"))
+        // Total classified count + per-tag share + confidence mean±stdev; no framing.
+        XCTAssertTrue(suffix.contains("Creator's tag history (20 of their videos classified):"))
+        XCTAssertTrue(suffix.contains("Games: 17/20 (85%), confidence 4.2±0.6"))
         XCTAssertTrue(suffix.contains("Title: HermitCraft finale"))
         XCTAssertFalse(suffix.contains("weight it lightly"))
-    }
-
-    func testDynamicSuffixTreatsMixedCreatorAsWeakHint() {
-        let suffix = ClassificationPromptAssembler.dynamicSuffix(
-            title: "something", summary: nil, text: nil,
-            creatorPrior: [(tagName: "Games", share: 0.4, count: 4), (tagName: "Music", share: 0.4, count: 4)],
-            creatorVideoCount: 10,
-            knowledge: []
-        )
-        XCTAssertTrue(suffix.contains("limited or varied"))
-        XCTAssertTrue(suffix.contains("weak hint"))
+        XCTAssertFalse(suffix.contains("STRONG default"))
     }
 
     // MARK: - Pipeline
@@ -154,9 +143,8 @@ final class VideoClassificationPipelineTests: XCTestCase {
             classifierType: makeType(), tree: makeTree(), catalog: catalog
         )
         let suffix = try XCTUnwrap(recorder.last?.dynamicSuffix)
-        // 1 video → weak-hint framing (not a strong prior), with the frequency line.
-        XCTAssertTrue(suffix.contains("Games: 1 of 1 videos (100%)"))
-        XCTAssertTrue(suffix.contains("limited or varied"))
+        XCTAssertTrue(suffix.contains("Creator's tag history (1 of their videos classified):"))
+        XCTAssertTrue(suffix.contains("Games: 1/1 (100%), confidence 5.0±0.0"))
     }
 
     func testPipelineCarriesPerTypeRequestOverrides() async throws {
