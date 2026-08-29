@@ -41,14 +41,15 @@ public struct VideoClassificationPipeline: Sendable {
         // Derived creator prior: how often THIS creator's already-classified
         // videos carry each tag (share of videoCount). A consistent creator is a
         // strong prior for an otherwise-ambiguous title; the assembler frames it.
-        var creatorPrior: [(tagName: String, share: Double, count: Int)] = []
+        var creatorPrior: [CreatorPriorTag] = []
         var creatorVideoCount = 0
         if let histogram = catalog.creatorHistogram(classifierTypeID: classifierType.id, platformID: platformID, creatorID: creatorID), histogram.videoCount > 0 {
             creatorVideoCount = histogram.videoCount
             creatorPrior = histogram.stats
-                .compactMap { tagID, stat -> (tagName: String, share: Double, count: Int)? in
+                .compactMap { tagID, stat -> CreatorPriorTag? in
                     guard let name = nameByID[tagID] else { return nil }
-                    return (tagName: name, share: Double(stat.count) / Double(histogram.videoCount), count: stat.count)
+                    return CreatorPriorTag(tagName: name, count: stat.count, share: Double(stat.count) / Double(histogram.videoCount),
+                                           averageConfidence: stat.averageConfidence, confidenceStdev: stat.confidenceStdev)
                 }
                 .sorted { $0.share == $1.share ? $0.tagName < $1.tagName : $0.share > $1.share }
         }
@@ -122,7 +123,7 @@ public struct VideoClassificationPipeline: Sendable {
         title: String,
         summary: String?,
         text: String?,
-        creatorPrior: [(tagName: String, share: Double, count: Int)],
+        creatorPrior: [CreatorPriorTag],
         creatorVideoCount: Int,
         knowledge: [KnowledgeEntry],
         allowDecline: Bool?,
