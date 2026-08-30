@@ -73,6 +73,8 @@ final class LocalModelCatalogTests: XCTestCase {
         XCTAssertLessThan(low!.paramsB, 2.0)
         XCTAssertGreaterThan(high!.paramsB, 7.0)
         XCTAssertLessThanOrEqual(mid!.minimumRAMGB, 16)
+        // Requirement: a 16 GB Mac is recommended Qwen2.5-7B (verified to run there).
+        XCTAssertEqual(mid?.id, "qwen2.5-7b-instruct-q4-k-m")
     }
 
     func testUnderpoweredMachineStillGetsSmallestRAMClass() {
