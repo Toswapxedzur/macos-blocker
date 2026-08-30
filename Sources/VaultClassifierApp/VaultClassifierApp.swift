@@ -1875,6 +1875,14 @@ final class VaultClassifierViewModel: ObservableObject {
                     guard let self else { return }
                     self.modelDownloadFractions.removeValue(forKey: id)
                     self.issue = nil
+                    // No silent default exists anymore, so the FIRST model the user
+                    // downloads becomes the active one (loads the engine); a later
+                    // download never overrides an already-chosen model.
+                    if (self.llmSettings.modelFileName ?? "").isEmpty {
+                        var updated = self.llmSettings
+                        updated.modelFileName = entry.ggufFileName
+                        self.saveLocalLLMSettings(updated)
+                    }
                     self.onWebStateChange?()
                 }
             } catch is CancellationError {
