@@ -167,7 +167,9 @@ public enum LocalModelCatalog {
             repo: "bartowski/Qwen2.5-7B-Instruct-GGUF",
             ggufFileName: "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
             downloadSizeBytes: 4_683_074_240,
-            minimumRAMGB: 24
+            // ~4.7 GB Q4 runs comfortably on a 16 GB Mac alongside a browser
+            // (verified on an M1 Pro / 16 GB) — so it's the recommendation there.
+            minimumRAMGB: 16
         ),
     ]
 

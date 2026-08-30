@@ -462,7 +462,10 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
         if let explicit = environment["ADAMANCIA_VAULT_LLM_MODEL"], !explicit.isEmpty {
             return FileManager.default.fileExists(atPath: explicit) ? explicit : nil
         }
-        guard let first = availableModelFiles().first, let directory = modelsDirectory() else { return nil }
-        return directory.appendingPathComponent(first).path
+        // No silent default: the user picks a model (the app suggests one for
+        // their RAM, e.g. Qwen2.5-7B on a 16 GB Mac) and downloads it. Nothing is
+        // bundled or auto-selected, so a fresh install classifies nothing until
+        // the user chooses — never a surprise model.
+        return nil
     }
 }
