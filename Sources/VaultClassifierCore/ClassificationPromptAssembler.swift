@@ -91,7 +91,8 @@ public enum ClassificationPromptAssembler {
         text: String?,
         creatorPrior: [CreatorPriorTag],
         creatorVideoCount: Int,
-        knowledge: [KnowledgeEntry]
+        knowledge: [KnowledgeEntry],
+        correctionExemplars: [CorrectionExemplar] = []
     ) -> String {
         var lines: [String] = []
 
@@ -99,6 +100,27 @@ public enum ClassificationPromptAssembler {
             lines.append("Known context (grounded facts):")
             for entry in knowledge {
                 lines.append("- \(entry.subject): \(entry.meaning)")
+            }
+            lines.append("")
+        }
+
+        // Grounded generalization: the user's own past corrections most similar
+        // to THIS video (see CorrectionRetriever). Real title → chosen tag pairs,
+        // on-taxonomy — the model generalizes from these concrete decisions, not
+        // from an invented rule. Presented as labeled data (the user's authored
+        // corrections on related videos); the model judges how closely they apply
+        // rather than being commanded to copy them.
+        if !correctionExemplars.isEmpty {
+            lines.append("The user's own past corrections on related videos (title → the tag they chose):")
+            for exemplar in correctionExemplars {
+                let decision = exemplar.tagNames.isEmpty
+                    ? "no tag"
+                    : exemplar.tagNames.joined(separator: ", ")
+                var line = "- \"\(String(exemplar.title.prefix(160)))\" → \(decision)"
+                if let note = exemplar.note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+                    line += " (\(String(note.prefix(120))))"
+                }
+                lines.append(line)
             }
             lines.append("")
         }
@@ -141,7 +163,8 @@ public enum ClassificationPromptAssembler {
         text: String?,
         creatorPrior: [CreatorPriorTag],
         creatorVideoCount: Int,
-        knowledge: [KnowledgeEntry]
+        knowledge: [KnowledgeEntry],
+        correctionExemplars: [CorrectionExemplar] = []
     ) -> ClassificationPromptParts {
         let taxonomy = tagOptions(from: tree)
         // De-duplicate names for the allowed set + mapping (a tree with duplicate
@@ -154,7 +177,7 @@ public enum ClassificationPromptAssembler {
         }
         return ClassificationPromptParts(
             staticPrefix: staticPrefix(taxonomy: taxonomy, houseRules: houseRules, maximumTags: maximumTags),
-            dynamicSuffix: dynamicSuffix(title: title, summary: summary, text: text, creatorPrior: creatorPrior, creatorVideoCount: creatorVideoCount, knowledge: knowledge),
+            dynamicSuffix: dynamicSuffix(title: title, summary: summary, text: text, creatorPrior: creatorPrior, creatorVideoCount: creatorVideoCount, knowledge: knowledge, correctionExemplars: correctionExemplars),
             allowedTagNames: allowedTagNames,
             nameToTagID: nameToTagID
         )

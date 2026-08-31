@@ -54,6 +54,18 @@ public struct VideoClassificationPipeline: Sendable {
                 .sorted { $0.share == $1.share ? $0.tagName < $1.tagName : $0.share > $1.share }
         }
 
+        // Grounded generalization: the user's own past corrections most similar
+        // to THIS video, as concrete few-shot exemplars (see CorrectionRetriever).
+        // Relevance-ranked per video, not a static recency block — so the model
+        // generalizes from the corrections that actually bear on this title.
+        let correctionExemplars = CorrectionRetriever.retrieve(
+            title: title,
+            creatorID: creatorID,
+            excludingEntryID: entryID,
+            from: catalog.correctionExamples.filter { $0.classifierTypeID == classifierType.id },
+            tree: tree
+        )
+
         // Primary decode: the video's own content plus any matched term
         // knowledge. The creator description is deliberately withheld here.
         let termKnowledge = catalog.matchedKnowledge(
@@ -65,6 +77,7 @@ public struct VideoClassificationPipeline: Sendable {
         let primary = try await decode(
             tree: tree, houseRules: houseRules, title: title, summary: summary, text: text,
             creatorPrior: creatorPrior, creatorVideoCount: creatorVideoCount, knowledge: termKnowledge,
+            correctionExemplars: correctionExemplars,
             allowDecline: allowDecline, confidenceThresholds: confidenceThresholds
         )
 
@@ -78,6 +91,7 @@ public struct VideoClassificationPipeline: Sendable {
             let grounded = try await decode(
                 tree: tree, houseRules: houseRules, title: title, summary: summary, text: text,
                 creatorPrior: creatorPrior, creatorVideoCount: creatorVideoCount, knowledge: groundedKnowledge,
+                correctionExemplars: correctionExemplars,
                 allowDecline: allowDecline, confidenceThresholds: confidenceThresholds
             )
             // Only adopt the creator-grounded result if it actually produced a
@@ -126,6 +140,7 @@ public struct VideoClassificationPipeline: Sendable {
         creatorPrior: [CreatorPriorTag],
         creatorVideoCount: Int,
         knowledge: [KnowledgeEntry],
+        correctionExemplars: [CorrectionExemplar],
         allowDecline: Bool?,
         confidenceThresholds: [Double]?
     ) async throws -> (tags: [ScoredTag], unknownTerms: [String]) {
@@ -138,7 +153,8 @@ public struct VideoClassificationPipeline: Sendable {
             text: text,
             creatorPrior: creatorPrior,
             creatorVideoCount: creatorVideoCount,
-            knowledge: knowledge
+            knowledge: knowledge,
+            correctionExemplars: correctionExemplars
         )
         let result = try await llm.classify(LLMClassificationRequest(
             staticPrefix: parts.staticPrefix,
