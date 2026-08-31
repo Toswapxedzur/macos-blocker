@@ -207,7 +207,8 @@ case "abtest":
     let research = state.settings.research
     let overrides = type.localModelOverrides
     let maxTags = args.compactMap { $0.hasPrefix("--max=") ? Int($0.dropFirst(6)) : nil }.first ?? settings.maximumTags
-    let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: maxTags)
+    let floor = args.compactMap { $0.hasPrefix("--floor=") ? Double($0.dropFirst(8)) : nil }.first ?? CorrectionRetriever.defaultMinimumSimilarity
+    let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: maxTags, correctionSimilarityFloor: floor)
     let evalTree = tree
 
     // The correction pool: every labeled item as an on-taxonomy correction.
@@ -220,7 +221,7 @@ case "abtest":
             creatorID: item.creatorID, title: item.title, correctTagIDs: ids
         )
     }
-    print("• model: \((modelPath as NSString).lastPathComponent)  •  \(labeled.count) items  •  pool \(pool.count) corrections  •  type \"\(type.name)\"\n")
+    print("• model: \((modelPath as NSString).lastPathComponent)  •  \(labeled.count) items  •  pool \(pool.count) corrections  •  floor \(String(format: "%.3f", floor))  •  type \"\(type.name)\"\n")
 
     func classifyItem(_ item: EvalItem, corrections: [CorrectionExample]) async throws -> Set<String> {
         var c = catalog
@@ -246,7 +247,7 @@ case "abtest":
         let truth = Set(item.trueTags.compactMap { tagIDByName[$0.lowercased()] })
         let fired = CorrectionRetriever.retrieve(
             title: item.title, creatorID: item.creatorID, excludingEntryID: item.entryID,
-            from: pool, tree: evalTree
+            from: pool, tree: evalTree, minimumSimilarity: floor
         )
         let base = try await classifyItem(item, corrections: [])
         let grounded = try await classifyItem(item, corrections: pool)
