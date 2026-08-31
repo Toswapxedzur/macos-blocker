@@ -28,6 +28,20 @@ public struct CorrectionExemplar: Sendable, Equatable {
 public enum CorrectionRetriever {
     public static let defaultLimit = 6
 
+    /// Minimum lexical (Jaccard) title similarity for a DIFFERENT-creator
+    /// correction to be eligible. Same-creator corrections ignore this floor (the
+    /// creator is itself a strong relevance signal). 0 disables it.
+    ///
+    /// Tuned by the dev A/B sweep (`VaultClassifierEval abtest --floor=…`, 120
+    /// items): this is deliberately LOW. Raising it to actually remove the two
+    /// observed regressions (0.08–0.10) cost more wins than it saved (14W/2R at
+    /// ≤0.06 → 12W/1R at 0.08 → 11W/1R at 0.10) — the regressions ride the SAME
+    /// 0.07–0.11 similarity band as real wins, so magnitude can't separate them
+    /// (their real signature is exemplar DISAGREEMENT, not weakness). 0.06 is
+    /// measured-neutral here (identical 14W/2R to no floor) and exists only to
+    /// drop near-zero coincidental single-token overlaps for robustness.
+    public static let defaultMinimumSimilarity = 0.06
+
     /// Tokens shorter than this (after normalization) are dropped as noise.
     private static let minimumTokenLength = 2
 
@@ -50,7 +64,8 @@ public enum CorrectionRetriever {
         excludingEntryID: String?,
         from corrections: [CorrectionExample],
         tree: TagTreeAsset,
-        limit: Int = defaultLimit
+        limit: Int = defaultLimit,
+        minimumSimilarity: Double = defaultMinimumSimilarity
     ) -> [CorrectionExemplar] {
         guard limit > 0, !corrections.isEmpty else { return [] }
         let nameByID = Dictionary(tree.nodes.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
@@ -68,8 +83,11 @@ public enum CorrectionRetriever {
             if let excludingEntryID, correction.entryID == excludingEntryID { continue }
             let sameCreator = !creatorID.isEmpty && correction.creatorID == creatorID
             let overlap = jaccard(queryTokens, tokens(from: correction.title))
-            // Eligibility: any real topical overlap, or the same creator.
-            guard overlap > 0 || sameCreator else { continue }
+            // Eligibility: the same creator (always), or a DIFFERENT-creator
+            // correction whose title overlap clears the similarity floor. The
+            // floor keeps weak, coincidental cross-creator matches (a shared
+            // stopword-adjacent token) from dragging a video off its real topic.
+            guard sameCreator || (overlap > 0 && overlap >= minimumSimilarity) else { continue }
             // Same-creator dominates lexical overlap (a full unit) but overlap
             // still orders corrections within each creator bucket.
             let score = overlap + (sameCreator ? 1.0 : 0.0)
