@@ -633,13 +633,14 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
     }
 
     private static func effectiveHouseRules(global: String?, perType: String?) -> String? {
-        guard CorrectionDistiller.containsLearnedPreferences(perType) else {
-            return perType ?? global
-        }
-        return [global, perType]
-            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n\n")
+        // A type's own house rules REPLACE the global rules (intentional override).
+        // `perType` may still carry a legacy distilled "Learned preferences" block
+        // from before corrections moved to per-video retrieval; keep only its
+        // manual portion so stale distillations never leak back into the prompt.
+        let manualPerType = CorrectionDistiller.manualRules(from: perType)
+        if !manualPerType.isEmpty { return manualPerType }
+        let trimmedGlobal = global?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (trimmedGlobal?.isEmpty == false) ? trimmedGlobal : nil
     }
 
     public static func hasExplicitModelDecline(
@@ -878,8 +879,7 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
             queue: GroundedResearchQueue?,
             settings: ResearchSettings?,
             classifierType: ClassifierTypeAsset,
-            callback: (@Sendable (String, String, VideoTagsProjection) -> Void)?,
-            didDistill: Bool
+            callback: (@Sendable (String, String, VideoTagsProjection) -> Void)?
         ) in
             guard let typeIndex = state.workspaceCatalog.classifierTypes.firstIndex(where: {
                 $0.id == classifierTypeID && $0.applicablePlatformID == platformID
@@ -910,35 +910,12 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                 note: note
             )
             state.workspaceCatalog.appendCorrectionExample(example)
-
-            let typeCorrections = state.workspaceCatalog.correctionExamples.filter {
-                $0.classifierTypeID == classifierTypeID
-            }
-            let existingOverrides = state.workspaceCatalog.classifierTypes[typeIndex].localModelOverrides
-            let distilledCount = CorrectionDistiller.distilledCorrectionCount(
-                in: existingOverrides?.houseRules
-            )
-            var didDistill = false
-            if typeCorrections.count >= distilledCount + CorrectionDistiller.batchSize {
-                didDistill = true
-                let learned = CorrectionDistiller.distill(
-                    corrections: typeCorrections,
-                    tree: tree,
-                    limit: CorrectionDistiller.maximumLearnedRulesCharacters
-                )
-                let houseRules = CorrectionDistiller.combinedHouseRules(
-                    manualHouseRules: existingOverrides?.houseRules,
-                    learnedRules: learned,
-                    correctionCount: typeCorrections.count
-                )
-                let overrides = LocalModelOverrides(
-                    houseRules: houseRules,
-                    allowDecline: existingOverrides?.allowDecline,
-                    confidenceThresholds: existingOverrides?.confidenceThresholds
-                )
-                state.workspaceCatalog.classifierTypes[typeIndex].localModelOverrides = overrides.isEmpty ? nil : overrides
-                state.workspaceCatalog.classifierTypes[typeIndex].updatedAtMilliseconds = WorkspaceCatalog.now()
-            }
+            // The correction is now stored. It is NOT distilled into a static
+            // per-type house-rules block anymore: corrections drive classification
+            // through per-video retrieval (CorrectionRetriever) instead, so each
+            // video sees the corrections most relevant to IT rather than a
+            // recency-ordered block shared across every video. Manual house rules
+            // (the user's typed preferences) remain untouched in localModelOverrides.
 
             let previous = state.workspaceCatalog.videoClassification(
                 classifierTypeID: classifierTypeID,
@@ -976,19 +953,17 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                 groundedResearchQueue,
                 Self.effectiveResearchSettings(global: state.settings.research, for: type),
                 type,
-                onVideoReclassifiedCallback,
-                didDistill
+                onVideoReclassifiedCallback
             )
         }
 
         saved.callback?(platformID, entryID, saved.projection)
-        // The learned-preferences block is the deterministic, grounded distillation
-        // of the user's actual corrections (verbatim, on-taxonomy). We intentionally
-        // do NOT run a local-LLM free-text "re-summary" over it: a small model asked
-        // to generalize a handful of corrections fabricates spurious rules
-        // (e.g. "tag Samsung as Sports") that then poison every future
-        // classification. Grounded data beats invented framing — see the creator
-        // prior for the same lesson.
+        // Corrections are surfaced to the classifier by per-video retrieval
+        // (CorrectionRetriever), not a static distilled block, and never by a
+        // local-LLM free-text "re-summary" — a small model asked to generalize a
+        // handful of corrections fabricates spurious rules ("tag Samsung as
+        // Sports") that poison classification. Grounded exemplars beat invented
+        // framing; see the creator prior for the same lesson.
         if let settings = saved.settings,
            settings.trigger.includesCorrections,
            let queue = saved.queue {
