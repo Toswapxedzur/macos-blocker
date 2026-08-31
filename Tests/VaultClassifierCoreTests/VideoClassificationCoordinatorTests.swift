@@ -94,16 +94,6 @@ private final class ResearchSubjectRecorder: @unchecked Sendable {
     var subjects: [ResearchSubject] { lock.withLock { stored } }
 }
 
-private struct SummarizingStubLLM: OnDeviceLLM, OnDeviceCorrectionSummarizing {
-    let modelVersion = "summ/v1"
-    func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult { .init(tags: []) }
-    func summarizeCorrections(_ request: LLMCorrectionSummaryRequest) async throws -> String {
-        // Echoes the received input so the test verifies the real correction data
-        // (titles, chosen tags, allowed taxonomy) reached the summarizer.
-        "PREFER Games for gaming clips (\(request.items.count) corrections; tags: \(request.allowedTagNames.sorted().joined(separator: ",")))"
-    }
-}
-
 private actor CountingEngineResolver: OnDeviceLLMEngineResolving {
     private(set) var requestedFiles: [String] = []
     let engine: any OnDeviceLLM
@@ -683,7 +673,12 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertTrue(recorder.subjects.isEmpty, "a confident classification must not trigger research")
     }
 
-    func testCorrectionSummaryRefinementReplacesLearnedBlockViaLLM() async throws {
+    func testCorrectionLearnedBlockIsGroundedAndNotLLMGeneralized() async throws {
+        // The learned-preferences block must be the deterministic, verbatim,
+        // on-taxonomy distillation of the user's real corrections — never an
+        // LLM free-text generalization. A small model asked to "generalize" a
+        // handful of corrections fabricates spurious rules (Samsung→Sports) that
+        // poison classification, so that path was removed entirely.
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
         defer { try? FileManager.default.removeItem(at: root) }
         var catalog = coordinator.snapshot().workspaceCatalog
@@ -697,27 +692,24 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             ))
         }
         try coordinator.updateWorkspaceCatalog(catalog)
-        coordinator.setOnDeviceLLM(SummarizingStubLLM())
 
-        // Submitting a full batch installs the deterministic mechanical block.
+        // Submitting a full batch installs the deterministic grounded block.
         for index in 0..<CorrectionDistiller.batchSize {
             _ = try coordinator.submitCorrection(
                 classifierTypeID: "type", platformID: "youtube", entryID: "v\(index)", correctTagIDs: ["g"]
             )
         }
-        let mechanical = coordinator.snapshot().workspaceCatalog.classifierTypes
+        let learned = coordinator.snapshot().workspaceCatalog.classifierTypes
             .first(where: { $0.id == "type" })?.localModelOverrides?.houseRules
-        XCTAssertTrue(CorrectionDistiller.containsLearnedPreferences(mechanical))
-        XCTAssertTrue(mechanical?.contains("For content like") == true, "mechanical fallback present first")
-
-        // The LLM summary replaces the mechanical block, keeping the markers.
-        await coordinator.refineCorrectionSummary(classifierTypeID: "type")
-        let refined = coordinator.snapshot().workspaceCatalog.classifierTypes
+        XCTAssertTrue(CorrectionDistiller.containsLearnedPreferences(learned))
+        // Grounded: verbatim correction bullets, referencing the real titles.
+        XCTAssertTrue(learned?.contains("For content like") == true, "grounded distillation present")
+        XCTAssertTrue(learned?.contains("Gaming clip") == true, "the real correction titles are the learned data")
+        // It persists as-is: nothing generalizes or rewrites it after the fact.
+        for _ in 0..<50 { await Task.yield() }
+        let after = coordinator.snapshot().workspaceCatalog.classifierTypes
             .first(where: { $0.id == "type" })?.localModelOverrides?.houseRules
-        XCTAssertTrue(refined?.contains("PREFER Games for gaming clips") == true, "LLM summary is now the learned block")
-        XCTAssertTrue(refined?.contains("tags: Games,Politics") == true, "the type's taxonomy reached the summarizer")
-        XCTAssertFalse(refined?.contains("For content like") == true, "the mechanical bullets were replaced")
-        XCTAssertTrue(CorrectionDistiller.containsLearnedPreferences(refined))
+        XCTAssertEqual(after, learned, "the grounded block is never replaced by an LLM generalization")
     }
 
     func testEditAndDeleteKnowledgeEntryMutateTheCorrectMap() throws {

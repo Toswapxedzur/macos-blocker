@@ -20,7 +20,7 @@ import Cllama
 // The model file is user-provided (catalog/loader phase pending): the
 // `ADAMANCIA_VAULT_LLM_MODEL` environment variable, or the first *.gguf under
 // `<app support>/<environment dir>/models/`.
-public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting, OnDeviceCorrectionSummarizing {
+public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting {
     public nonisolated let modelVersion: String
 
     private let model: OpaquePointer
@@ -251,32 +251,12 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
         return ResearchSubject(kind: .term, subject: value)
     }
 
-    /// Distills the user's own corrections into a short natural-language guidance
-    /// block. Local-only free-text generation; returns "" if there is nothing to
-    /// summarize (the caller then keeps the deterministic fallback).
-    public func summarizeCorrections(_ request: LLMCorrectionSummaryRequest) async throws -> String {
-        guard !request.items.isEmpty else { return "" }
-        let allowed = request.allowedTagNames.prefix(40).joined(separator: ", ")
-        let corrections = request.items.prefix(24).map { item -> String in
-            let tags = item.tagNames.isEmpty ? "no tag" : item.tagNames.joined(separator: ", ")
-            let note = (item.note?.isEmpty == false) ? " — note: \(item.note!)" : ""
-            return "- \"\(item.title)\" -> \(tags)\(note)"
-        }.joined(separator: "\n")
-        let prompt = """
-        You refine a video-tagging assistant's guidance from a user's past corrections. From the corrections below, write 2 to 5 short imperative rules that capture how this user wants videos tagged so future videos match. Be concise and specific, use only the allowed tags, and do not restate every example.
-
-        Allowed tags: \(allowed)
-
-        Corrections:
-        \(corrections)
-
-        Rules:
-        """
-        return try generateFreeText(prompt: prompt, maximumTokens: 200)
-    }
-
     /// Free-form (ungrammared) greedy generation with a repetition penalty,
     /// reusing the same KV-cache prefix handling as the constrained decodes.
+    /// Currently unused: the correction "summary" path that generalized sparse
+    /// corrections into free-text rules was removed (a small model fabricated
+    /// spurious rules that poisoned classification). Retained for a possible
+    /// future grounded free-text need; delete if none materializes.
     private func generateFreeText(prompt: String, maximumTokens: Int) throws -> String {
         let tokens = try tokenize(prompt)
         guard tokens.count + maximumTokens <= contextTokenLimit else {
