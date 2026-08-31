@@ -115,42 +115,11 @@ public protocol OnDeviceResearchSubjectExtracting: Sendable {
     func extractResearchSubject(_ request: LLMResearchSubjectRequest) async throws -> ResearchSubject?
 }
 
-/// Local-only distillation of the user's own corrections into a short natural-
-/// language guidance block that is injected into the classification prompt on
-/// future videos. All inputs are local (correction titles, chosen tags, notes)
-/// and never leave the device.
-public struct LLMCorrectionSummaryRequest: Sendable, Equatable {
-    public struct Item: Sendable, Equatable {
-        public let title: String
-        /// The tags the user chose (empty means the user chose "no tag").
-        public let tagNames: [String]
-        public let note: String?
-        public init(title: String, tagNames: [String], note: String?) {
-            self.title = title
-            self.tagNames = tagNames
-            self.note = note
-        }
-    }
-    public let items: [Item]
-    /// The type's assignable tag names, so the summary stays on-taxonomy.
-    public let allowedTagNames: [String]
-    public init(items: [Item], allowedTagNames: [String]) {
-        self.items = items
-        self.allowedTagNames = allowedTagNames
-    }
-}
-
-public protocol OnDeviceCorrectionSummarizing: Sendable {
-    /// Returns concise guidance (a few imperative rules) capturing the user's
-    /// tagging preferences, or an empty string if it cannot summarize.
-    func summarizeCorrections(_ request: LLMCorrectionSummaryRequest) async throws -> String
-}
-
 /// A deterministic stand-in used before a real MLX model is wired, and in tests.
 /// It "classifies" by selecting allowed tag names that appear (case-insensitive)
 /// in the dynamic suffix — enough to exercise the whole pipeline end-to-end and
 /// keep the build green, with no intelligence claimed.
-public struct StubOnDeviceLLM: OnDeviceLLM, OnDeviceResearchSubjectExtracting, OnDeviceCorrectionSummarizing {
+public struct StubOnDeviceLLM: OnDeviceLLM, OnDeviceResearchSubjectExtracting {
     public let modelVersion: String
     public let defaultConfidence: Int
 
@@ -170,9 +139,5 @@ public struct StubOnDeviceLLM: OnDeviceLLM, OnDeviceResearchSubjectExtracting, O
 
     public func extractResearchSubject(_ request: LLMResearchSubjectRequest) async throws -> ResearchSubject? {
         nil
-    }
-
-    public func summarizeCorrections(_ request: LLMCorrectionSummaryRequest) async throws -> String {
-        ""
     }
 }
