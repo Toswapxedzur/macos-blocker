@@ -12,11 +12,21 @@ public struct VideoClassificationPipeline: Sendable {
     /// not exposed as a per-type override.
     public let maximumTags: Int
     public let promptVersion: String
+    /// Minimum cross-creator title similarity for a correction to be retrieved as
+    /// a per-video exemplar (see CorrectionRetriever). Exposed so the eval A/B can
+    /// sweep it; production uses the retriever's tuned default.
+    public let correctionSimilarityFloor: Double
 
-    public init(llm: any OnDeviceLLM, maximumTags: Int = 5, promptVersion: String = "p1") {
+    public init(
+        llm: any OnDeviceLLM,
+        maximumTags: Int = 5,
+        promptVersion: String = "p1",
+        correctionSimilarityFloor: Double = CorrectionRetriever.defaultMinimumSimilarity
+    ) {
         self.llm = llm
         self.maximumTags = maximumTags
         self.promptVersion = promptVersion
+        self.correctionSimilarityFloor = correctionSimilarityFloor
     }
 
     public func classify(
@@ -63,7 +73,8 @@ public struct VideoClassificationPipeline: Sendable {
             creatorID: creatorID,
             excludingEntryID: entryID,
             from: catalog.correctionExamples.filter { $0.classifierTypeID == classifierType.id },
-            tree: tree
+            tree: tree,
+            minimumSimilarity: correctionSimilarityFloor
         )
 
         // Primary decode: the video's own content plus any matched term
