@@ -473,7 +473,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertEqual(saved.tokenUsage.first?.tokenCount, 25)
     }
 
-    func testCorrectionsAreAuthoritativeAndDistillOnlyAtBatchBoundary() async throws {
+    func testCorrectionsAreAuthoritativeAndRetrievedPerVideoNotDistilledIntoHouseRules() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
         defer { try? FileManager.default.removeItem(at: root) }
         var catalog = coordinator.snapshot().workspaceCatalog
@@ -482,7 +482,8 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         }))
         let typeIndex = try XCTUnwrap(catalog.classifierTypes.firstIndex(where: { $0.id == "type" }))
         catalog.classifierTypes[typeIndex].localModelOverrides = .init(houseRules: "Manual type rule.")
-        for index in 0..<CorrectionDistiller.batchSize {
+        let correctionCount = 5
+        for index in 0..<correctionCount {
             _ = catalog.datasets[datasetIndex].upsertCollectedEntry(.init(
                 id: "row-\(index)", platformID: "youtube", entryID: "v\(index)",
                 creatorID: "youtube:handle:@creator", creatorName: "Creator",
@@ -492,7 +493,9 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         try coordinator.updateWorkspaceCatalog(catalog)
         coordinator.setClassificationOptions(maximumTags: 3, houseRules: "Global manual rule.")
 
-        for index in 0..<(CorrectionDistiller.batchSize - 1) {
+        // Submitting corrections NEVER mutates the type's house rules — the manual
+        // rule stays exactly as authored, at every step (no distilled block).
+        for index in 0..<correctionCount {
             let projection = try coordinator.submitCorrection(
                 classifierTypeID: "type", platformID: "youtube", entryID: "v\(index)",
                 correctTagIDs: ["g"], note: "Keep games together."
@@ -501,39 +504,45 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             XCTAssertEqual(
                 coordinator.snapshot().workspaceCatalog.classifierTypes[typeIndex]
                     .localModelOverrides?.houseRules,
-                "Manual type rule."
+                "Manual type rule.",
+                "corrections must not auto-write the house-rules block"
             )
         }
-        _ = try coordinator.submitCorrection(
-            classifierTypeID: "type", platformID: "youtube",
-            entryID: "v\(CorrectionDistiller.batchSize - 1)", correctTagIDs: ["g"]
-        )
 
         let saved = coordinator.snapshot().workspaceCatalog
         let rules = saved.classifierTypes[typeIndex].localModelOverrides?.houseRules
-        XCTAssertTrue(rules?.contains("Manual type rule.") == true)
-        XCTAssertTrue(CorrectionDistiller.containsLearnedPreferences(rules))
-        XCTAssertEqual(CorrectionDistiller.distilledCorrectionCount(in: rules), CorrectionDistiller.batchSize)
+        XCTAssertEqual(rules, "Manual type rule.")
+        XCTAssertFalse(CorrectionDistiller.containsLearnedPreferences(rules), "no distilled learned block is written")
         XCTAssertEqual(saved.videoClassification(
-            classifierTypeID: "type", platformID: "youtube",
-            entryID: "v\(CorrectionDistiller.batchSize - 1)"
+            classifierTypeID: "type", platformID: "youtube", entryID: "v\(correctionCount - 1)"
         )?.source, .humanCorrected)
 
         let recorder = CoordinatorRequestRecorder()
         coordinator.setOnDeviceLLM(CoordinatorRecordingLLM(recorder: recorder))
+
+        // A corrected row is authoritative: re-classifying it never hits the model.
         let correctedProjection = try await coordinator.classifyVideo(
-            platformID: "youtube", entryID: "v\(CorrectionDistiller.batchSize - 1)",
+            platformID: "youtube", entryID: "v\(correctionCount - 1)",
             creatorID: "youtube:handle:@creator", title: "Games episode"
         )
         XCTAssertEqual(correctedProjection.tags.map(\.id), ["g"])
         XCTAssertTrue(recorder.requests.isEmpty, "live and research refreshes preserve human-corrected rows")
 
+        // Classifying a FRESH, related video (same creator) surfaces the user's
+        // corrections as grounded per-video exemplars in the DYNAMIC suffix, while
+        // the manual type house rule stays in the cached static prefix (it
+        // intentionally overrides the global rule), and no distilled "Learned
+        // preferences" block exists anywhere.
         _ = try await coordinator.classifyVideo(
-            platformID: "youtube", entryID: "fresh", creatorID: "creator", title: "Fresh title"
+            platformID: "youtube", entryID: "fresh",
+            creatorID: "youtube:handle:@creator", title: "Games episode preview"
         )
-        XCTAssertTrue(recorder.requests[0].staticPrefix.contains("Global manual rule."))
-        XCTAssertTrue(recorder.requests[0].staticPrefix.contains("Manual type rule."))
-        XCTAssertTrue(recorder.requests[0].staticPrefix.contains("Learned preferences"))
+        let request = try XCTUnwrap(recorder.requests.first)
+        XCTAssertTrue(request.staticPrefix.contains("Manual type rule."), "manual house rule reaches the cached prefix")
+        XCTAssertFalse(request.staticPrefix.contains("Learned preferences"))
+        XCTAssertFalse(request.dynamicSuffix.contains("Learned preferences"))
+        XCTAssertTrue(request.dynamicSuffix.contains("past corrections"), "grounded exemplars present per video")
+        XCTAssertTrue(request.dynamicSuffix.contains("Games episode"), "the real corrected titles are the exemplars")
     }
 
     func testCorrectionTriggersSanitizedSecondDecodeWhenConfigured() async throws {
@@ -671,45 +680,6 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         for _ in 0..<50 { await Task.yield() }
         await queue.waitUntilIdle()
         XCTAssertTrue(recorder.subjects.isEmpty, "a confident classification must not trigger research")
-    }
-
-    func testCorrectionLearnedBlockIsGroundedAndNotLLMGeneralized() async throws {
-        // The learned-preferences block must be the deterministic, verbatim,
-        // on-taxonomy distillation of the user's real corrections — never an
-        // LLM free-text generalization. A small model asked to "generalize" a
-        // handful of corrections fabricates spurious rules (Samsung→Sports) that
-        // poison classification, so that path was removed entirely.
-        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { try? FileManager.default.removeItem(at: root) }
-        var catalog = coordinator.snapshot().workspaceCatalog
-        let datasetIndex = try XCTUnwrap(catalog.datasets.firstIndex(where: {
-            $0.id == catalog.bindings.first(where: { $0.id == "youtube" })?.datasetID
-        }))
-        for index in 0..<CorrectionDistiller.batchSize {
-            _ = catalog.datasets[datasetIndex].upsertCollectedEntry(.init(
-                id: "row-\(index)", platformID: "youtube", entryID: "v\(index)", creatorID: "c",
-                creatorName: "Creator", entryType: "video", title: "Gaming clip \(index)"
-            ))
-        }
-        try coordinator.updateWorkspaceCatalog(catalog)
-
-        // Submitting a full batch installs the deterministic grounded block.
-        for index in 0..<CorrectionDistiller.batchSize {
-            _ = try coordinator.submitCorrection(
-                classifierTypeID: "type", platformID: "youtube", entryID: "v\(index)", correctTagIDs: ["g"]
-            )
-        }
-        let learned = coordinator.snapshot().workspaceCatalog.classifierTypes
-            .first(where: { $0.id == "type" })?.localModelOverrides?.houseRules
-        XCTAssertTrue(CorrectionDistiller.containsLearnedPreferences(learned))
-        // Grounded: verbatim correction bullets, referencing the real titles.
-        XCTAssertTrue(learned?.contains("For content like") == true, "grounded distillation present")
-        XCTAssertTrue(learned?.contains("Gaming clip") == true, "the real correction titles are the learned data")
-        // It persists as-is: nothing generalizes or rewrites it after the fact.
-        for _ in 0..<50 { await Task.yield() }
-        let after = coordinator.snapshot().workspaceCatalog.classifierTypes
-            .first(where: { $0.id == "type" })?.localModelOverrides?.houseRules
-        XCTAssertEqual(after, learned, "the grounded block is never replaced by an LLM generalization")
     }
 
     func testEditAndDeleteKnowledgeEntryMutateTheCorrectMap() throws {
