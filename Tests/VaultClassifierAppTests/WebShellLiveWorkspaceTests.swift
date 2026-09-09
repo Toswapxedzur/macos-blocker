@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import VaultClassifierCore
 @testable import VaultClassifierApp
 
 final class WebShellLiveWorkspaceTests: XCTestCase {
@@ -73,6 +74,29 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         }
         for group in ["research.group.frequency", "research.group.trigger", "research.group.search"] {
             XCTAssertGreaterThanOrEqual(script.components(separatedBy: group).count - 1, 2)
+        }
+    }
+
+    func testShellSurfacesResearchLaneStatusAndRetryAction() throws {
+        let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
+        let script = try String(contentsOf: appURL, encoding: .utf8)
+        let stringsURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "strings", extension: "js"))
+        let strings = try String(contentsOf: stringsURL, encoding: .utf8)
+        // Research failures must be visible (queue/cooldown/last failure) and
+        // recoverable (retry-now) from the settings panel; every key rendered
+        // must exist in the catalog so no raw key can leak into the UI.
+        for token in [
+            "research.status.queue", "research.status.lastFailure", "research.status.noFailures",
+            "research.status.retryNow", "data-action=\"retryFailedResearch\"", "data-research-status",
+        ] {
+            XCTAssertTrue(script.contains(token), "research status UI missing: \(token)")
+        }
+        for key in [
+            "research.status.queue", "research.status.inFlight", "research.status.lastFailure",
+            "research.status.lastFailure.due", "research.status.noFailures", "research.status.retryNow",
+            "research.status.retryNowHint",
+        ] + GroundedResearchFailureKind.allCases.map { "research.failure.\($0.rawValue)" } {
+            XCTAssertTrue(strings.contains("\"\(key)\""), "strings.js missing \(key)")
         }
     }
 

@@ -710,12 +710,33 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         }
     }
 
+    /// Drops every persisted research cooldown so the next classification of
+    /// each affected video may research again. Returns how many were cleared.
+    @discardableResult
+    public func clearResearchAttempts() -> Int {
+        (try? lock.withLock { () -> Int in
+            let count = state.workspaceCatalog.researchAttempts.count
+            guard count > 0 else { return 0 }
+            state.workspaceCatalog.researchAttempts.removeAll()
+            try stateFile.save(state)
+            return count
+        }) ?? 0
+    }
+
     public func recordResearchMutation(_ mutation: GroundedResearchQueueMutation) async {
         do {
             switch mutation {
             case .failed(_, let attempt):
                 try lock.withLock {
                     state.workspaceCatalog.upsertResearchAttempt(attempt)
+                    try stateFile.save(state)
+                }
+            case .retryRequested(let task, let subjectKey):
+                try lock.withLock {
+                    state.workspaceCatalog.removeResearchAttempt(
+                        subjectKey: subjectKey,
+                        classifierTypeID: task.classifierTypeID
+                    )
                     try stateFile.save(state)
                 }
             case .succeeded(let task, let result, let usage):
