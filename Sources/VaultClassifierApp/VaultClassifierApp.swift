@@ -129,6 +129,7 @@ final class VaultClassifierViewModel: ObservableObject {
 
     private var coordinator: LocalClassifierCoordinator?
     private var groundedResearchQueue: GroundedResearchQueue?
+    @Published private(set) var researchQueueStatus = GroundedResearchQueueStatus()
     private var sharedHubClient: SharedHubClient?
     private var collectionDiagnostics: CollectionDiagnosticsStore?
     private var providerModelCatalogStore: ProviderModelCatalogStore?
@@ -261,6 +262,15 @@ final class VaultClassifierViewModel: ObservableObject {
         )
         groundedResearchQueue = queue
         coordinator.setGroundedResearchQueue(queue)
+        Task {
+            await queue.setStatusObserver { [weak self] status in
+                Task { @MainActor [weak self] in
+                    guard let self, self.researchQueueStatus != status else { return }
+                    self.researchQueueStatus = status
+                    self.onWebStateChange?()
+                }
+            }
+        }
         coordinator.setOnVideoReclassified { [weak self] platformID, entryID, projection in
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -1959,6 +1969,62 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
+    /// "Retry failed subjects now": drop every persisted cooldown, then re-queue
+    /// the subjects that failed this session.
+    func retryFailedResearch() {
+        let cleared = coordinator?.clearResearchAttempts() ?? 0
+        guard let queue = groundedResearchQueue else {
+            refreshLocalState()
+            return
+        }
+        Task { @MainActor [weak self] in
+            let requeued = await queue.retryFailedNow()
+            VaultDevLog.shared.log("research", "retry-now", [
+                "cleared": String(cleared),
+                "requeued": String(requeued),
+            ])
+            self?.refreshLocalState()
+            self?.onWebStateChange?()
+        }
+    }
+
+    /// Research lane status for the settings panel: live queue counters plus
+    /// the durable cooldown picture from the persisted attempt records.
+    nonisolated static func researchStatusPayload(
+        queue: GroundedResearchQueueStatus,
+        attempts: [ResearchAttemptRecord],
+        now: Date
+    ) -> [String: Any] {
+        let nowMilliseconds = Int64(now.timeIntervalSince1970 * 1_000)
+        let cooling = attempts.filter { $0.retryAfterMilliseconds > nowMilliseconds }
+        let transientCooling = cooling.filter { $0.failureKind?.isTransient == true }
+        let latest = attempts.max(by: { $0.lastAttemptAtMilliseconds < $1.lastAttemptAtMilliseconds })
+        var lastFailure: Any = NSNull()
+        if let latest {
+            lastFailure = [
+                "subject": latest.displaySubject,
+                "kind": (latest.failureKind ?? .unknown).rawValue,
+                "agoSeconds": max(0, (nowMilliseconds - latest.lastAttemptAtMilliseconds) / 1_000),
+                "retryInSeconds": max(0, (latest.retryAfterMilliseconds - nowMilliseconds) / 1_000),
+                "failureCount": latest.failureCount,
+            ] as [String: Any]
+        }
+        return [
+            "pending": queue.pendingCount,
+            "inFlight": queue.inFlightSubjectKey.map { key -> String in
+                ResearchAttemptRecord(subjectKey: key, lastAttemptAtMilliseconds: 0, retryAfterMilliseconds: 0).displaySubject
+            } ?? "",
+            "succeeded": queue.succeededCount,
+            "failed": queue.failedCount,
+            "retries": queue.transientRetryCount,
+            "skippedBudget": queue.skippedForBudgetCount,
+            "retryable": queue.retryableFailedCount,
+            "inCooldown": cooling.count,
+            "transientInCooldown": transientCooling.count,
+            "lastFailure": lastFailure,
+        ]
+    }
+
     func saveResearchSettings(_ updated: ResearchSettings) {
         guard let coordinator else { return }
         do {
@@ -2356,6 +2422,11 @@ final class VaultClassifierViewModel: ObservableObject {
                 "knowledgeTTLDays": researchSettings.knowledgeTTLDays,
                 "maxKnowledgePerVideo": researchSettings.maxKnowledgePerVideo,
                 "tokensUsedToday": GroundedResearchQueue.usedResearchTokens(in: catalog.tokenUsage, at: Date()),
+                "status": Self.researchStatusPayload(
+                    queue: researchQueueStatus,
+                    attempts: catalog.researchAttempts,
+                    now: Date()
+                ),
             ] as [String: Any],
         ]
         let backupPayload: [String: Any] = [
@@ -2774,6 +2845,8 @@ final class VaultClassifierViewModel: ObservableObject {
                     id: try webString(data, key: "id", limit: 512),
                     meaning: try webString(data, key: "meaning", limit: KnowledgeEntry.maximumMeaningLength)
                 )
+            case "retryFailedResearch":
+                retryFailedResearch()
             case "saveResearchSettings":
                 saveResearchSettings(ResearchSettings(
                     enabled: try webBool(data, key: "enabled"),
