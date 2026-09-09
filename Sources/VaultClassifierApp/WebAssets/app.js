@@ -461,6 +461,50 @@
     return text ? `<div class="notice ${esc(tone)}">${esc(text)}</div>` : "";
   }
 
+  // Compact "3h 12m" / "45s" for research cooldowns and ages.
+  function formatDuration(totalSeconds) {
+    const seconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 48) return `${hours}h ${minutes % 60}m`;
+    return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+  }
+
+  // Research lane status: live queue counters + the durable cooldown picture,
+  // plus the user's escape hatch when a provider was down ("retry now").
+  function researchStatusBlock(status) {
+    if (!status || typeof status !== "object") return "";
+    const lines = [tx("research.status.queue", {
+      pending: status.pending ?? 0,
+      inCooldown: status.inCooldown ?? 0,
+      transient: status.transientInCooldown ?? 0,
+      succeeded: status.succeeded ?? 0,
+      failed: status.failed ?? 0,
+      retries: status.retries ?? 0,
+      skippedBudget: status.skippedBudget ?? 0
+    })];
+    if (status.inFlight) lines.push(tx("research.status.inFlight", { subject: status.inFlight }));
+    const failure = status.lastFailure;
+    if (failure && typeof failure === "object") {
+      const kindKey = `research.failure.${failure.kind || "unknown"}`;
+      const kind = tx(kindKey) === kindKey ? tx("research.failure.unknown") : tx(kindKey);
+      const retryIn = Number(failure.retryInSeconds) || 0;
+      lines.push(tx(retryIn > 0 ? "research.status.lastFailure" : "research.status.lastFailure.due", {
+        kind,
+        subject: failure.subject || "",
+        ago: formatDuration(failure.agoSeconds),
+        count: failure.failureCount ?? 1,
+        retry: formatDuration(retryIn)
+      }));
+    } else {
+      lines.push(tx("research.status.noFailures"));
+    }
+    const canRetry = (status.retryable ?? 0) > 0 || (status.inCooldown ?? 0) > 0;
+    return `<div class="research-status notice navy" data-research-status><strong>${tx("research.status.heading")}</strong>${lines.map((line) => `<p class="small-copy">${esc(line)}</p>`).join("")}<div class="action-row"><button class="secondary" data-action="retryFailedResearch" title="${esc(tx("research.status.retryNowHint"))}"${canRetry ? "" : " disabled"}>${tx("research.status.retryNow")}</button></div></div>`;
+  }
+
   function statusPill(title, tone = "navy") {
     return `<span class="status-pill ${esc(tone)}">${esc(title)}</span>`;
   }
@@ -708,7 +752,7 @@
         field("research.knowledgeTTLDays", "research.knowledgeTTLDaysHint", "knowledgeTTLDays", research.knowledgeTTLDays ?? 0, "number", 'min="0" max="3650"')
       }${
         field("research.maxKnowledgePerVideo", "research.maxKnowledgePerVideoHint", "maxKnowledgePerVideo", research.maxKnowledgePerVideo ?? 8, "number", 'min="1" max="32"')
-      }</div></section></div><p class="small-copy">${tx("research.usageToday", { used: research.tokensUsedToday ?? 0 })}</p><div class="action-row"><button class="primary" data-action="saveResearchSettings" data-form="utility-research-form">${tx("research.save")}</button></div></section>`;
+      }</div></section></div><p class="small-copy">${tx("research.usageToday", { used: research.tokensUsedToday ?? 0 })}</p>${researchStatusBlock(research.status)}<div class="action-row"><button class="primary" data-action="saveResearchSettings" data-form="utility-research-form">${tx("research.save")}</button></div></section>`;
       const packageSection = `<section class="utility-settings-section utility-resource-section" data-form-id="utility-package-form"><h3 class="utility-settings-section-title">${tx("settings.packageUpdates")}</h3><div class="utility-settings-fields">${selectField("settings.packageUpdates", "settings.packageUpdatesCopy", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div><div class="action-row"><button class="primary" data-action="savePackageSettings" data-form="utility-package-form">${tx("common.save")}</button></div></section>`;
       content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${llmSection}${modelLibrarySection}${researchSection}${packageSection}</div></section>`;
     }

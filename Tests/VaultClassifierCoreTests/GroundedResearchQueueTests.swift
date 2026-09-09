@@ -41,9 +41,14 @@ private final class ResearchQueueHarness: @unchecked Sendable {
                         $0.subjectKey == attempt.subjectKey
                 }
                 storedSnapshot.failedAttempts.append(attempt)
+            case .retryRequested(let task, let subjectKey):
+                storedSnapshot.failedAttempts.removeAll {
+                    $0.classifierTypeID == task.classifierTypeID && $0.subjectKey == subjectKey
+                }
             }
         }
     }
+    var mutations: [GroundedResearchQueueMutation] { lock.withLock { storedMutations } }
 }
 
 private final class FirstResearchGate: @unchecked Sendable {
@@ -319,5 +324,208 @@ final class GroundedResearchQueueTests: XCTestCase {
         catalog.upsertResearchAttempt(attempt)
         let decoded = try JSONDecoder().decode(WorkspaceCatalog.self, from: JSONEncoder().encode(catalog))
         XCTAssertEqual(decoded.researchAttempts, [attempt])
+    }
+}
+
+// MARK: - Failure classification, in-place retries, escalating cooldown, retry-now
+
+private final class FailingResearcher: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedCalls = 0
+    private let errors: [Error]
+    init(errors: [Error]) { self.errors = errors }
+    var calls: Int { lock.withLock { storedCalls } }
+    func run(_ subject: ResearchSubject) async throws -> GroundedResearchResult {
+        let index = lock.withLock { () -> Int in defer { storedCalls += 1 }; return storedCalls }
+        if index < errors.count { throw errors[index] }
+        return .init(knowledge: .init(kind: subject.kind, subject: subject.subject, meaning: "meaning"), chargedTokenCount: 1)
+    }
+}
+
+final class GroundedResearchFailureHandlingTests: XCTestCase {
+    private let hour: Int64 = 60 * 60 * 1_000
+
+    private func providers() -> GroundedResearchProviderConfiguration {
+        .init(
+            llmProfile: .init(id: "llm", type: .ollama),
+            llmCredential: .init(values: [:]),
+            llmModelIdentifier: "model",
+            webSearchProfile: .init(id: "search", type: .serper, credential: "key"),
+            webSearchCredential: .init(values: [.apiKey: "key"]),
+            maximumOutputTokens: 100
+        )
+    }
+
+    private func task(_ name: String) -> ResearchTask {
+        .init(classifierTypeID: "type", platformID: "youtube", entryID: "entry", creatorID: "creator",
+              subjects: [ResearchSubject(kind: .term, subject: name)!])
+    }
+
+    private func makeQueue(
+        harness: ResearchQueueHarness,
+        researcher: FailingResearcher,
+        cooldownHours: Int64 = 24
+    ) -> GroundedResearchQueue {
+        GroundedResearchQueue(
+            configurationProvider: { [providers = providers()] _ in
+                .init(providers: providers, requestsPerMinute: 120, dailyTokenLimit: 1_000,
+                      failureCooldownMilliseconds: cooldownHours * 60 * 60 * 1_000)
+            },
+            snapshotProvider: { _ in harness.snapshot },
+            mutationWriter: { harness.write($0) },
+            researcher: { subject, _ in try await researcher.run(subject) },
+            now: { harness.now },
+            sleeper: { harness.sleep($0) }
+        )
+    }
+
+    private func failedAttempt(_ harness: ResearchQueueHarness) -> ResearchAttemptRecord? {
+        harness.snapshot.failedAttempts.first
+    }
+
+    func testClassifyMapsErrorsToKinds() {
+        XCTAssertEqual(GroundedResearchFailureKind.classify(URLError(.timedOut)), .timeout)
+        XCTAssertEqual(GroundedResearchFailureKind.classify(URLError(.notConnectedToInternet)), .network)
+        XCTAssertEqual(GroundedResearchFailureKind.classify(ProviderTestHTTPError.status(429)), .rateLimited)
+        XCTAssertEqual(GroundedResearchFailureKind.classify(ProviderTestHTTPError.status(503)), .serverError)
+        XCTAssertEqual(GroundedResearchFailureKind.classify(ProviderTestHTTPError.status(401)), .providerRejected)
+        XCTAssertEqual(GroundedResearchFailureKind.classify(GroundedResearchError.emptyMeaning), .emptyResponse)
+        XCTAssertEqual(GroundedResearchFailureKind.classify(GroundedResearchError.invalidConfiguration), .invalidConfiguration)
+        XCTAssertEqual(GroundedResearchFailureKind.classify(ProviderTestProtocolError.invalidResponse), .unknown)
+        XCTAssertTrue(GroundedResearchFailureKind.timeout.isTransient)
+        XCTAssertFalse(GroundedResearchFailureKind.providerRejected.isTransient)
+    }
+
+    func testTransientFailureRetriesInPlaceThenParksOnShortEscalatingCooldown() async {
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        let harness = ResearchQueueHarness(now: start)
+        let researcher = FailingResearcher(errors: Array(repeating: URLError(.timedOut), count: 10))
+        let queue = makeQueue(harness: harness, researcher: researcher)
+
+        await queue.enqueue(task("alpha"))
+        await queue.waitUntilIdle()
+
+        // 1 request + 2 in-place retries, spaced by the retry delays.
+        XCTAssertEqual(researcher.calls, 3)
+        XCTAssertEqual(harness.sleepIntervals, GroundedResearchQueue.transientRetryDelays)
+        let first = failedAttempt(harness)
+        XCTAssertEqual(first?.failureKind, .timeout)
+        XCTAssertEqual(first?.failureCount, 1)
+        XCTAssertEqual((first?.retryAfterMilliseconds ?? 0) - (first?.lastAttemptAtMilliseconds ?? 0),
+                       GroundedResearchQueue.baseTransientCooldownMilliseconds)
+        let status = await queue.currentStatus
+        XCTAssertEqual(status.failedCount, 1)
+        XCTAssertEqual(status.transientRetryCount, 2)
+        XCTAssertEqual(status.retryableFailedCount, 1)
+        XCTAssertEqual(status.lastFailure?.kind, .timeout)
+        XCTAssertNil(status.inFlightSubjectKey)
+
+        // Still cooling → skipped, not re-requested.
+        await queue.enqueue(task("alpha"))
+        await queue.waitUntilIdle()
+        XCTAssertEqual(researcher.calls, 3)
+        let skipped = await queue.currentStatus
+        XCTAssertEqual(skipped.skippedForCooldownCount, 1)
+
+        // After the cooldown, a second consecutive transient failure doubles it.
+        harness.sleep(TimeInterval(GroundedResearchQueue.baseTransientCooldownMilliseconds / 1_000) + 1)
+        await queue.enqueue(task("alpha"))
+        await queue.waitUntilIdle()
+        XCTAssertEqual(researcher.calls, 6)
+        let second = failedAttempt(harness)
+        XCTAssertEqual(second?.failureCount, 2)
+        XCTAssertEqual((second?.retryAfterMilliseconds ?? 0) - (second?.lastAttemptAtMilliseconds ?? 0),
+                       GroundedResearchQueue.baseTransientCooldownMilliseconds * 2)
+    }
+
+    func testTransientCooldownNeverExceedsConfiguredCooldown() {
+        let configured: Int64 = 1 * hour
+        XCTAssertEqual(GroundedResearchQueue.cooldownMilliseconds(for: .timeout, failureCount: 1, configured: configured), 15 * 60 * 1_000)
+        XCTAssertEqual(GroundedResearchQueue.cooldownMilliseconds(for: .timeout, failureCount: 3, configured: configured), configured)
+        XCTAssertEqual(GroundedResearchQueue.cooldownMilliseconds(for: .timeout, failureCount: 40, configured: configured), configured)
+        XCTAssertEqual(GroundedResearchQueue.cooldownMilliseconds(for: .providerRejected, failureCount: 1, configured: configured), configured)
+    }
+
+    func testPermanentFailureIsNotRetriedAndUsesConfiguredCooldown() async {
+        let harness = ResearchQueueHarness(now: Date(timeIntervalSince1970: 1_700_000_000))
+        let researcher = FailingResearcher(errors: [ProviderTestHTTPError.status(401)])
+        let queue = makeQueue(harness: harness, researcher: researcher, cooldownHours: 24)
+
+        await queue.enqueue(task("beta"))
+        await queue.waitUntilIdle()
+
+        XCTAssertEqual(researcher.calls, 1)
+        XCTAssertTrue(harness.sleepIntervals.isEmpty)
+        let attempt = failedAttempt(harness)
+        XCTAssertEqual(attempt?.failureKind, .providerRejected)
+        XCTAssertEqual((attempt?.retryAfterMilliseconds ?? 0) - (attempt?.lastAttemptAtMilliseconds ?? 0), 24 * hour)
+    }
+
+    func testRetryFailedNowDropsCooldownAndReResearches() async {
+        let harness = ResearchQueueHarness(now: Date(timeIntervalSince1970: 1_700_000_000))
+        // Permanent failure first, then success on the user-driven retry.
+        let researcher = FailingResearcher(errors: [ProviderTestHTTPError.status(401)])
+        let queue = makeQueue(harness: harness, researcher: researcher)
+
+        await queue.enqueue(task("gamma"))
+        await queue.waitUntilIdle()
+        XCTAssertEqual(harness.snapshot.failedAttempts.count, 1)
+
+        let requeued = await queue.retryFailedNow()
+        await queue.waitUntilIdle()
+
+        XCTAssertEqual(requeued, 1)
+        XCTAssertEqual(researcher.calls, 2)
+        XCTAssertTrue(harness.snapshot.failedAttempts.isEmpty)
+        XCTAssertTrue(harness.snapshot.existingKnowledgeKeys.contains("term:gamma"))
+        var sawRetryRequest = false
+        for mutation in harness.mutations {
+            if case .retryRequested(_, let key) = mutation, key == "term:gamma" { sawRetryRequest = true }
+        }
+        XCTAssertTrue(sawRetryRequest)
+        let status = await queue.currentStatus
+        XCTAssertEqual(status.retryableFailedCount, 0)
+        XCTAssertEqual(status.succeededCount, 1)
+        // A second retry-now has nothing left to re-queue.
+        let again = await queue.retryFailedNow()
+        XCTAssertEqual(again, 0)
+    }
+
+    func testStatusObserverReportsPendingAndInFlight() async {
+        let harness = ResearchQueueHarness(now: Date(timeIntervalSince1970: 1_700_000_000))
+        let researcher = FailingResearcher(errors: [])
+        let queue = makeQueue(harness: harness, researcher: researcher)
+        final class Sink: @unchecked Sendable {
+            let lock = NSLock(); var statuses: [GroundedResearchQueueStatus] = []
+            func add(_ s: GroundedResearchQueueStatus) { lock.withLock { statuses.append(s) } }
+            var all: [GroundedResearchQueueStatus] { lock.withLock { statuses } }
+        }
+        let sink = Sink()
+        await queue.setStatusObserver { sink.add($0) }
+        await queue.enqueue(task("delta"))
+        await queue.waitUntilIdle()
+        let all = sink.all
+        XCTAssertTrue(all.contains { $0.pendingCount == 1 })
+        XCTAssertTrue(all.contains { $0.inFlightSubjectKey == "term:delta" })
+        XCTAssertEqual(all.last?.succeededCount, 1)
+        XCTAssertEqual(all.last?.pendingCount, 0)
+        XCTAssertNil(all.last?.inFlightSubjectKey)
+    }
+
+    func testAttemptRecordDecodesLegacyShapeAndRoundTripsNewFields() throws {
+        let legacy = Data("""
+        {"subjectKey":"term:old","lastAttemptAtMilliseconds":10,"retryAfterMilliseconds":20}
+        """.utf8)
+        let decoded = try JSONDecoder().decode(ResearchAttemptRecord.self, from: legacy)
+        XCTAssertEqual(decoded.failureCount, 1)
+        XCTAssertNil(decoded.failureKind)
+        XCTAssertEqual(decoded.displaySubject, "old")
+
+        let record = ResearchAttemptRecord(classifierTypeID: "t", subjectKey: "creator:@someone",
+                                           lastAttemptAtMilliseconds: 5, retryAfterMilliseconds: 9,
+                                           failureCount: 3, failureKind: .rateLimited)
+        let roundTrip = try JSONDecoder().decode(ResearchAttemptRecord.self, from: JSONEncoder().encode(record))
+        XCTAssertEqual(roundTrip, record)
+        XCTAssertEqual(roundTrip.displaySubject, "@someone")
     }
 }
