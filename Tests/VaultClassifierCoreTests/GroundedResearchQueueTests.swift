@@ -527,5 +527,7 @@ final class GroundedResearchFailureHandlingTests: XCTestCase {
         let roundTrip = try JSONDecoder().decode(ResearchAttemptRecord.self, from: JSONEncoder().encode(record))
         XCTAssertEqual(roundTrip, record)
         XCTAssertEqual(roundTrip.displaySubject, "@someone")
+        let escaped = ResearchAttemptRecord(subjectKey: "creator:@%e5%ad%99taku", lastAttemptAtMilliseconds: 1, retryAfterMilliseconds: 2)
+        XCTAssertEqual(escaped.displaySubject, "@\u{5B59}taku")
     }
 }
