@@ -108,29 +108,5 @@ public final class ScreenTimeTokenStore: @unchecked Sendable {
 
         return (targets, tokens)
     }
-
-    /// The set of target IDs that currently have tokens, for authorization
-    /// checks in `ScreenTimePolicyAdapter`.
-    public func authorizedTargets() -> AuthorizedScreenTimeTargets {
-        let tokens = load()
-        return AuthorizedScreenTimeTargets(
-            applicationTargetIDs: Set(tokens.applications.keys),
-            categoryTargetIDs: Set(tokens.categories.keys),
-            webDomainTargetIDs: Set(tokens.webDomains.keys)
-        )
-    }
-}
-
-/// Backs `ScreenTimePolicyAdapter` with the persisted token set.
-public struct TokenBackedTargetProvider: AuthorizedScreenTimeTargetProviding {
-    private let tokenStore: ScreenTimeTokenStore
-
-    public init(tokenStore: ScreenTimeTokenStore = ScreenTimeTokenStore()) {
-        self.tokenStore = tokenStore
-    }
-
-    public func authorizedTargets() async throws -> AuthorizedScreenTimeTargets {
-        tokenStore.authorizedTargets()
-    }
 }
 #endif

@@ -10,9 +10,7 @@ import MacBlockerCore
 /// 2. **Kill if running** — sweeps running processes and SIGKILLs / suspends /
 ///    terminates anything already open (covers apps started before the block).
 ///
-/// The editor uses this as its primary `PolicyApplying` implementation on
-/// macOS; `MacControlPolicyAdapter` remains as the soft, foreground-only
-/// fallback.
+/// The editor uses this as its `PolicyApplying` implementation on macOS.
 public actor EndpointSecurityPolicyAdapter: PolicyApplying {
     public let capabilities: PlatformCapabilities = .macOS
 
