@@ -239,12 +239,20 @@
       isShortUrl(url) {
         if (!isFacebookHost(getHostname(url))) return false;
         const path = getPathname(url);
-        return path.startsWith("/reel/") || path.startsWith("/watch/reel/");
+        return (
+          path.startsWith("/reel/") ||
+          path.startsWith("/watch/reel/") ||
+          path.startsWith("/share/r/")
+        );
       },
       isVideoUrl(url) {
         if (!isFacebookHost(getHostname(url))) return false;
         const path = getPathname(url);
-        return path.startsWith("/watch") && !path.startsWith("/watch/reel/");
+        return (
+          (path.startsWith("/watch") && !path.startsWith("/watch/reel/")) ||
+          path.startsWith("/videos/") ||
+          path.startsWith("/share/v/")
+        );
       },
       isPostUrl(url) {
         if (!isFacebookHost(getHostname(url))) return false;
@@ -266,7 +274,7 @@
         }
         const path = parsed.pathname.toLowerCase().replace(/^\/+|\/+$/g, "");
         const first = path.split("/")[0] || "";
-        const reserved = new Set(["watch", "reel", "groups", "marketplace", "gaming", "video", "videos"]);
+        const reserved = new Set(["watch", "reel", "share", "groups", "marketplace", "gaming", "video", "videos"]);
         return !reserved.has(first) && /^[a-z0-9.]+$/.test(first) ? first : null;
       },
       extractVideoId(url) {
@@ -275,7 +283,7 @@
         if (parsed.pathname.startsWith("/watch")) {
           return parsed.searchParams.get("v");
         }
-        const m = parsed.pathname.match(/\/reel\/([^/?#]+)/);
+        const m = parsed.pathname.match(/\/(?:reel|videos|share\/r|share\/v)\/([^/?#]+)/);
         return m ? m[1] : null;
       }
     },
@@ -2086,9 +2094,24 @@
   // site blocklist. On the extension side, "windows" are browser tabs.
   // ────────────────────────────────────────────────────────────────────────
 
-  const windowBlocklist = new Map(); // pattern -> true (shared across groups, session lifetime)
+  // Rule-created blocks are owned by their group. The background keeps the
+  // authoritative browser-session mirror; this local bucket only supports the
+  // synchronous isBlocked()/getBlocked() helper reads inside the sandbox.
+  const windowBlocklistsByGroup = new Map(); // groupId -> Map<pattern, true>
 
-  function createWindowHelper(accumulatorRef, dispatchContextRef) {
+  function windowBlocklistForGroup(groupId) {
+    if (!windowBlocklistsByGroup.has(groupId)) {
+      windowBlocklistsByGroup.set(groupId, new Map());
+    }
+    return windowBlocklistsByGroup.get(groupId);
+  }
+
+  function clearEventWindowBlocklist(groupId) {
+    windowBlocklistsByGroup.delete(String(groupId || ""));
+  }
+
+  function createWindowHelper(groupId, accumulatorRef, dispatchContextRef) {
+    const windowBlocklist = windowBlocklistForGroup(groupId);
     function snapshot() {
       const ctx = typeof dispatchContextRef === "function" ? dispatchContextRef() : (dispatchContextRef || {});
       return Array.isArray(ctx.tabsSnapshot) ? ctx.tabsSnapshot : [];
@@ -2161,13 +2184,13 @@
         const p = normalizePattern(pattern);
         if (!p) return;
         windowBlocklist.set(p, true);
-        pushIntent({ kind: "window", action: "blockSite", pattern: p });
+        pushIntent({ kind: "window", action: "blockSite", groupId, pattern: p });
       },
 
       unblock(pattern) {
         const p = normalizePattern(pattern);
         windowBlocklist.delete(p);
-        pushIntent({ kind: "window", action: "unblockSite", pattern: p });
+        pushIntent({ kind: "window", action: "unblockSite", groupId, pattern: p });
       },
 
       isBlocked(urlOrHostname) {
@@ -2689,7 +2712,7 @@
     const storage = createStorageHelper(persistenceBucket || {}, accumulatorRef);
     const localFolder = createLocalFolderHelper(groupId, accumulatorRef);
     const tabs = createTabHelper(accumulatorRef, dispatchContextRef);
-    const win = createWindowHelper(accumulatorRef, dispatchContextRef);
+    const win = createWindowHelper(groupId, accumulatorRef, dispatchContextRef);
     const platform = createEventPlatformHelper(
       accumulatorRef,
       dispatchContextRef,
@@ -2767,6 +2790,7 @@
     createDOMHelper,
     createPanelHelper,
     createTabHelper,
+    clearEventWindowBlocklist,
     // Exposed so event-sandbox.js can call it from registerHandler too,
     // ensuring a registration loop (`for (let i = 0; i < 1e5; i++)
     // events.register(...)`) terminates within the time budget even
