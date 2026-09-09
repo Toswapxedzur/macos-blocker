@@ -49,7 +49,7 @@ public struct InstalledApplication: Identifiable, Equatable, Sendable, Codable {
 /// No special entitlement is required to *list* applications — these are
 /// readable from the standard application directories and `NSWorkspace`.
 /// (Reading or controlling another app's *UI* is separate and gated by the
-/// Accessibility permission; see `MacAppUIReader`.)
+/// Accessibility permission.)
 public enum MacApplicationInventory {
     /// Standard locations macOS apps are installed into.
     public static func searchDirectories() -> [URL] {
