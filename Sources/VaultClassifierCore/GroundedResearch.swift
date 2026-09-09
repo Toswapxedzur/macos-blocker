@@ -402,12 +402,17 @@ public struct ResearchAttemptRecord: Codable, Equatable, Sendable, Identifiable 
         )
     }
 
-    /// The subject as a human-readable string (the key minus its kind prefix).
+    /// The subject as a human-readable string: the key minus its kind prefix,
+    /// percent-decoded (older creator keys stored URL-escaped handles).
     public var displaySubject: String {
+        var subject = subjectKey
         if let separator = subjectKey.firstIndex(of: ":") {
-            return String(subjectKey[subjectKey.index(after: separator)...])
+            subject = String(subjectKey[subjectKey.index(after: separator)...])
         }
-        return subjectKey
+        if subject.contains("%"), let decoded = subject.removingPercentEncoding, !decoded.isEmpty {
+            return decoded
+        }
+        return subject
     }
 }
 
