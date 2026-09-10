@@ -464,14 +464,16 @@ final class VaultClassifierViewModel: ObservableObject {
         // network-bound) so they overlap each other and the serial LLM decodes;
         // the per-item recognizedText below then hits the warm cache / shared task.
         if ocrEnabled {
-            let entryIDs = fresh.map(\.entryID)
-            Task.detached { await ThumbnailOCR.shared.prewarm(entryIDs: entryIDs) }
+            let entries = fresh.map { (entryID: $0.entryID, thumbnailURL: $0.acceptedThumbnailURL(platformID: platformID)) }
+            Task.detached { await ThumbnailOCR.shared.prewarm(platformID: platformID, entries: entries) }
         }
         Task { @MainActor [weak self] in
             for item in fresh {
                 defer { self?.inFlightVideoClassifications.remove(Self.inFlightKey(platformID, item.entryID)) }
                 guard let coordinator = self?.coordinator else { continue }
-                let thumbnailText = ocrEnabled ? await ThumbnailOCR.shared.recognizedText(forEntryID: item.entryID) : nil
+                let thumbnailText = ocrEnabled
+                    ? await ThumbnailOCR.shared.recognizedText(platformID: platformID, entryID: item.entryID, thumbnailURL: item.acceptedThumbnailURL(platformID: platformID))
+                    : nil
                 guard let projection = try? await coordinator.classifyVideo(
                     platformID: platformID, entryID: item.entryID, creatorID: item.creatorID,
                     title: item.title, summary: item.summary, text: thumbnailText ?? item.text) else { continue }
