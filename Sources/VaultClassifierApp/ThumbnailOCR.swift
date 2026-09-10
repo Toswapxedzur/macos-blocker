@@ -1,6 +1,7 @@
 import Foundation
 import Vision
 import AppKit
+import VaultClassifierCore
 
 /// On-device OCR of a video's thumbnail, used as extra classification evidence
 /// so the model can read baked-in thumbnail text (titles, "DEBUNKED", model
@@ -15,62 +16,60 @@ import AppKit
 actor ThumbnailOCR {
     static let shared = ThumbnailOCR()
 
-    private var cache: [String: String] = [:]           // videoID -> recognized text ("" = tried, none)
+    private var cache: [String: String] = [:]           // image URL -> recognized text ("" = tried, none)
     private var inFlight: [String: Task<String?, Never>] = [:]
     private let maxCacheEntries = 4_000
 
-    /// The deterministic YouTube thumbnail video id from an entry id, or nil.
-    static func youtubeVideoID(fromEntryID entryID: String) -> String? {
-        // entryID shape: "youtube:video:<VIDEOID>"
-        let parts = entryID.split(separator: ":", omittingEmptySubsequences: false)
-        guard parts.count == 3, parts[0] == "youtube", parts[1] == "video" else { return nil }
-        let id = String(parts[2])
-        guard !id.isEmpty, id.count <= 20, id.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil else { return nil }
-        return id
+    /// The image to OCR for an entry: YouTube's deterministic thumbnail, or the
+    /// collector-supplied cover when `ThumbnailURLPolicy` accepts it (Bilibili).
+    static func imageURL(platformID: String, entryID: String, thumbnailURL: String?) -> URL? {
+        ThumbnailURLPolicy.resolve(platformID: platformID, entryID: entryID, provided: thumbnailURL)
     }
 
-    /// Recognized thumbnail text for a YouTube entry, or nil. Cached; concurrent
-    /// callers for the same id await one shared OCR task (no double fetch).
-    func recognizedText(forEntryID entryID: String) async -> String? {
-        guard let videoID = Self.youtubeVideoID(fromEntryID: entryID) else { return nil }
-        if let cached = cache[videoID] { return cached.isEmpty ? nil : cached }
-        if let existing = inFlight[videoID] { return await existing.value }
+    /// Recognized thumbnail text for an entry, or nil. Cached by image URL;
+    /// concurrent callers for the same image await one shared OCR task.
+    func recognizedText(platformID: String, entryID: String, thumbnailURL: String? = nil) async -> String? {
+        guard let url = Self.imageURL(platformID: platformID, entryID: entryID, thumbnailURL: thumbnailURL) else { return nil }
+        let key = url.absoluteString
+        if let cached = cache[key] { return cached.isEmpty ? nil : cached }
+        if let existing = inFlight[key] { return await existing.value }
 
-        let task = Task { await Self.performOCR(videoID: videoID) }
-        inFlight[videoID] = task
+        let task = Task { await Self.performOCR(url: url) }
+        inFlight[key] = task
         let text = await task.value
-        inFlight[videoID] = nil
+        inFlight[key] = nil
         if cache.count >= maxCacheEntries { cache.removeAll() }
-        cache[videoID] = text ?? ""
+        cache[key] = text ?? ""
         return text
     }
 
     /// Kick off OCR for a batch of entries with bounded concurrency so the
     /// network fetches overlap (they dominate the per-thumbnail cost). Results
-    /// land in the cache; the per-video `recognizedText` above then hits it or
+    /// land in the cache; the per-entry `recognizedText` above then hits it or
     /// shares the in-flight task. Awaiting this is optional — callers can fire it
     /// and let the serial classify loop consume the warm cache.
-    func prewarm(entryIDs: [String], maxConcurrent: Int = 6) async {
-        let ids = entryIDs.filter { entry in
-            guard let v = Self.youtubeVideoID(fromEntryID: entry) else { return false }
-            return cache[v] == nil
+    func prewarm(platformID: String, entries: [(entryID: String, thumbnailURL: String?)], maxConcurrent: Int = 6) async {
+        let pending = entries.filter { entry in
+            guard let url = Self.imageURL(platformID: platformID, entryID: entry.entryID, thumbnailURL: entry.thumbnailURL) else { return false }
+            return cache[url.absoluteString] == nil
         }
-        guard !ids.isEmpty else { return }
+        guard !pending.isEmpty else { return }
         var index = 0
         await withTaskGroup(of: Void.self) { group in
             func addNext() {
-                guard index < ids.count else { return }
-                let entry = ids[index]; index += 1
-                group.addTask { [weak self] in _ = await self?.recognizedText(forEntryID: entry) }
+                guard index < pending.count else { return }
+                let entry = pending[index]; index += 1
+                group.addTask { [weak self] in
+                    _ = await self?.recognizedText(platformID: platformID, entryID: entry.entryID, thumbnailURL: entry.thumbnailURL)
+                }
             }
-            for _ in 0..<min(maxConcurrent, ids.count) { addNext() }
+            for _ in 0..<min(maxConcurrent, pending.count) { addNext() }
             while await group.next() != nil { addNext() }
         }
     }
 
-    private static func performOCR(videoID: String) async -> String? {
-        guard let url = URL(string: "https://i.ytimg.com/vi/\(videoID)/hqdefault.jpg"),
-              let (data, response) = try? await URLSession.shared.data(from: url),
+    private static func performOCR(url: URL) async -> String? {
+        guard let (data, response) = try? await URLSession.shared.data(from: url),
               (response as? HTTPURLResponse)?.statusCode == 200,
               let image = NSImage(data: data),
               let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {

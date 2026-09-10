@@ -571,7 +571,7 @@ public enum CollectionPlatformRegistry {
         .init(id: "facebook", name: "Facebook", collectorAvailable: true),
         .init(id: "instagram", name: "Instagram", collectorAvailable: true),
         .init(id: "twitch", name: "Twitch", collectorAvailable: true, supportsLocalModel: false),
-        .init(id: "reddit", name: "Reddit", sourceKind: .subreddit, collectorAvailable: true, supportsLocalModel: false),
+        .init(id: "reddit", name: "Reddit", sourceKind: .subreddit, collectorAvailable: true),
         .init(id: "discord", name: "Discord", sourceKind: .server, collectorAvailable: true, supportsLocalModel: false),
         .init(id: "twitter", name: "Twitter / X", sourceKind: .account, collectorAvailable: true),
         .init(id: "bilibili", name: "Bilibili", collectorAvailable: true),

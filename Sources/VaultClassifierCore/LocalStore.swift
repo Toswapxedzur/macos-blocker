@@ -1194,6 +1194,9 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
             if key == "sourceIconURL", !SourceIconURLPolicy.isAccepted(platformID: platformID, value: rendered) {
                 continue
             }
+            if key == "thumbnailURL", !ThumbnailURLPolicy.isAccepted(platformID: platformID, value: rendered) {
+                continue
+            }
             output[key] = rendered
         }
         return output
