@@ -83,20 +83,25 @@ public struct NativeVideoTagsRequest: Codable, Equatable, Sendable {
     public var title: String
     public var summary: String?
     public var text: String?
+    /// The entry's own public cover image, for on-device OCR evidence on
+    /// platforms whose thumbnail is not derivable from the entry id. Accepted
+    /// only when `ThumbnailURLPolicy` allows the host for this platform.
+    public var thumbnailURL: String?
 
     public static let maximumTitleLength = 500
     public static let maximumEvidenceLength = 4_000
 
-    public init(platformID: String, entryID: String, creatorID: String, title: String, summary: String? = nil, text: String? = nil) {
+    public init(platformID: String, entryID: String, creatorID: String, title: String, summary: String? = nil, text: String? = nil, thumbnailURL: String? = nil) {
         self.platformID = platformID
         self.entryID = entryID
         self.creatorID = creatorID
         self.title = title
         self.summary = summary
         self.text = text
+        self.thumbnailURL = thumbnailURL
     }
 
-    private enum CodingKeys: String, CodingKey { case platformID, entryID, creatorID, title, summary, text }
+    private enum CodingKeys: String, CodingKey { case platformID, entryID, creatorID, title, summary, text, thumbnailURL }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -106,6 +111,13 @@ public struct NativeVideoTagsRequest: Codable, Equatable, Sendable {
         title = try container.decode(String.self, forKey: .title)
         summary = try container.decodeIfPresent(String.self, forKey: .summary)
         text = try container.decodeIfPresent(String.self, forKey: .text)
+        thumbnailURL = try container.decodeIfPresent(String.self, forKey: .thumbnailURL)
+    }
+
+    /// The thumbnail URL this platform's policy accepts, or nil.
+    public var acceptedThumbnailURL: String? {
+        guard let thumbnailURL, ThumbnailURLPolicy.isAccepted(platformID: platformID, value: thumbnailURL) else { return nil }
+        return thumbnailURL
     }
 
     public func validate() throws {
@@ -126,7 +138,8 @@ public struct NativeVideoTagsRequest: Codable, Equatable, Sendable {
             throw NativeVideoTagsError.invalidEvidence
         }
         guard (summary?.count ?? 0) <= Self.maximumEvidenceLength,
-              (text?.count ?? 0) <= Self.maximumEvidenceLength else {
+              (text?.count ?? 0) <= Self.maximumEvidenceLength,
+              (thumbnailURL?.utf8.count ?? 0) <= ThumbnailURLPolicy.maximumLength else {
             throw NativeVideoTagsError.invalidEvidence
         }
     }
@@ -202,16 +215,18 @@ public struct NativeVideoTagsBatchItem: Codable, Equatable, Sendable {
     public var title: String
     public var summary: String?
     public var text: String?
+    public var thumbnailURL: String?
 
-    public init(entryID: String, creatorID: String, title: String, summary: String? = nil, text: String? = nil) {
+    public init(entryID: String, creatorID: String, title: String, summary: String? = nil, text: String? = nil, thumbnailURL: String? = nil) {
         self.entryID = entryID
         self.creatorID = creatorID
         self.title = title
         self.summary = summary
         self.text = text
+        self.thumbnailURL = thumbnailURL
     }
 
-    private enum CodingKeys: String, CodingKey { case entryID, creatorID, title, summary, text }
+    private enum CodingKeys: String, CodingKey { case entryID, creatorID, title, summary, text, thumbnailURL }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -220,6 +235,13 @@ public struct NativeVideoTagsBatchItem: Codable, Equatable, Sendable {
         title = try container.decode(String.self, forKey: .title)
         summary = try container.decodeIfPresent(String.self, forKey: .summary)
         text = try container.decodeIfPresent(String.self, forKey: .text)
+        thumbnailURL = try container.decodeIfPresent(String.self, forKey: .thumbnailURL)
+    }
+
+    /// The thumbnail URL the platform's policy accepts, or nil.
+    public func acceptedThumbnailURL(platformID: String) -> String? {
+        guard let thumbnailURL, ThumbnailURLPolicy.isAccepted(platformID: platformID, value: thumbnailURL) else { return nil }
+        return thumbnailURL
     }
 }
 
@@ -242,7 +264,7 @@ public struct NativeVideoTagsBatchRequest: Codable, Equatable, Sendable {
         for item in items {
             try NativeVideoTagsRequest(
                 platformID: platformID, entryID: item.entryID, creatorID: item.creatorID,
-                title: item.title, summary: item.summary, text: item.text
+                title: item.title, summary: item.summary, text: item.text, thumbnailURL: item.thumbnailURL
             ).validate()
         }
     }
