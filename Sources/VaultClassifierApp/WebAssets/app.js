@@ -59,6 +59,9 @@
   // renders; the detail pane reads it during its targeted refreshes too.
   const suppliedTagNodeByPlatform = new Map();
   let pendingDeletion = null;
+  // Non-null while the "create a group" dialog is open: { presetID, platformID }.
+  // A group can only be created through this dialog, and only from a preset.
+  let pendingCreateType = null;
   let utilityPanel = null;
   // Which classifier type is open in the left-panel list (client-only UI state).
   let selectedTypeID = null;
@@ -1125,8 +1128,18 @@
         field("research.maxKnowledgePerVideo", "research.maxKnowledgePerVideoHint", "maxKnowledgePerVideo", researchDefaults.maxKnowledgePerVideo ?? 8, "number", 'min="1" max="32"')
       }</div></section></div>`;
       const researchOverrideSection = supportsLocalModel ? `<section class="classifier-type-section classifier-research-overrides"><div class="section-header"><div><h3>${tx("bridge.researchOverrides")}</h3><p class="section-copy">${tx("bridge.researchOverridesCopy")}</p></div></div><div data-form-id="${esc(researchFormID)}">${toggle("bridge.researchOverrideEnabled", "overrideEnabled", Boolean(researchOverrides))}<div class="utility-advanced${researchAdvancedOpen ? " open" : ""}" data-research-advanced><button type="button" class="secondary advanced-toggle" data-action="toggleResearchAdvanced" aria-expanded="${researchAdvancedOpen}"><span>${tx("bridge.researchOverrideControls")}</span><span class="advanced-chevron" aria-hidden="true">⌄</span></button><div class="advanced-settings-body"><div class="advanced-settings-inner">${researchOverrideBody}</div></div></div><p class="small-copy research-master-note">${tx("bridge.researchMasterGate")}</p><div class="action-row"><button type="button" class="primary" data-action="saveClassifierTypeResearch" data-form="${esc(researchFormID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div></div></section>` : "";
+      // Preset provenance: every type is created from a preset. Show which one,
+      // and flag drift ("Modified from <preset>") once its overrides diverge from
+      // what the preset writes — the detailed form below is the "Advanced" surface.
+      const presetName = classifierType.presetNameKey ? t(classifierType.presetNameKey) : "";
+      const presetBadge = presetName
+        ? statusPill(
+            t(classifierType.modifiedFromPreset ? "preset.modifiedFrom" : "preset.basedOn", { name: presetName }),
+            classifierType.modifiedFromPreset ? "gold" : "muted"
+          )
+        : "";
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}">
-        <div class="classifier-type-head"><div><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div>${statusPill(typeStatus, applicablePlatformID ? "navy" : "muted")}</div>
+        <div class="classifier-type-head"><div><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div><div class="classifier-type-head-pills">${presetBadge}${statusPill(typeStatus, applicablePlatformID ? "navy" : "muted")}</div></div>
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}<button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("bridge.saveType")}</button><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}" data-name="${esc(classifierType.name)}">${tx("bridge.deleteType")}</button></div>
         <section class="classifier-type-section classifier-applicable-platform-section"><div class="section-header"><div><h3>${tx("bridge.applicablePlatform")}</h3><p class="section-copy">${tx("bridge.assetSelectionCopy")}</p></div></div><div class="classifier-applicable-platform-row">${valueSelectField("bridge.applicablePlatform", "bridge.applicablePlatformCopy", "applicablePlatformID", applicablePlatformID, applicablePlatformOptions)}<div class="classifier-platform-data-status"><span class="eyebrow">${tx("bridge.platformData")}</span><p class="small-copy">${esc(platformDataStatus)}</p></div></div>${applicablePlatform && !supportsLocalModel ? `<p class="small-copy" data-collection-only-platform-note>${tx("bridge.collectionOnlyCopy")}</p>` : ""}</section>
         ${localModelOverrideSection}
@@ -1492,6 +1505,25 @@
     return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelPendingDeletion" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog" role="dialog" aria-modal="true"><h3>${tx("trash.confirmTitle")}</h3><p class="section-copy">${tx("trash.confirmCopy", { name: pendingDeletion.name })}</p><label class="field"><span class="field-label">${tx("trash.typeNameLabel")}</span><input type="text" data-deletion-name-input autocomplete="off" spellcheck="false"></label><div class="action-row"><button class="secondary" data-action="cancelPendingDeletion">${tx("common.cancel")}</button><button class="danger" data-action="confirmPendingDeletion" disabled>${tx("trash.confirmDelete")}</button></div></div></div>`;
   }
 
+  // Create-a-group dialog. A classifier group can only be created here, and only
+  // from a preset — the preset seeds the model + research settings so nobody
+  // hand-tunes them at creation. Platform and name are also chosen here.
+  function createTypeModal() {
+    if (!pendingCreateType) return "";
+    const presets = state.assets?.presets || [];
+    const platforms = state.assets?.collectionPlatforms || [];
+    if (!presets.length || !platforms.length) return "";
+    const selectedPresetID = pendingCreateType.presetID || state.assets?.defaultPresetID || presets[0].id;
+    const selectedPlatformID = pendingCreateType.platformID || platforms[0].id;
+    const presetCards = presets.map((preset) => {
+      const active = preset.id === selectedPresetID;
+      const badge = preset.isDefault ? `<span class="preset-card-badge">${tx("preset.default.badge")}</span>` : "";
+      return `<button type="button" class="preset-card${active ? " active" : ""}" role="radio" aria-checked="${active}" data-action="selectCreatePreset" data-preset-id="${esc(preset.id)}"><span class="preset-card-head"><span class="preset-card-name">${tx(preset.nameKey)}</span>${badge}</span><span class="preset-card-desc">${tx(preset.descKey)}</span></button>`;
+    }).join("");
+    const platformOptions = platforms.map((platform) => `<option value="${esc(platform.id)}"${platform.id === selectedPlatformID ? " selected" : ""}>${esc(platform.name)} · ${esc(platform.browser)}</option>`).join("");
+    return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelCreateType" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog create-type-dialog" role="dialog" aria-modal="true"><h3>${tx("createType.title")}</h3><p class="section-copy">${tx("createType.copy")}</p><div class="field"><span class="field-label">${tx("createType.presetLabel")}</span><div class="preset-card-grid" role="radiogroup" aria-label="${tx("createType.presetLabel")}">${presetCards}</div></div><label class="field"><span class="field-label">${tx("createType.platformLabel")}</span><select data-create-type-platform>${platformOptions}</select></label><label class="field"><span class="field-label">${tx("createType.nameLabel")}</span><input type="text" data-create-type-name autocomplete="off" spellcheck="false" value="${esc(pendingCreateType.name != null ? pendingCreateType.name : t("createType.defaultName"))}"></label><div class="action-row"><button class="secondary" data-action="cancelCreateType">${tx("common.cancel")}</button><button class="primary" data-action="confirmCreateType">${tx("createType.create")}</button></div></div></div>`;
+  }
+
   // Keyed list: rendered as an empty container in the shell (so its row data is
   // excluded from the render signature) and populated/updated by
   // reconcileKeyedLists. On a state push that only changes row data, render()
@@ -1573,7 +1605,7 @@
       return;
     }
     resetDeferredRendering();
-    const markup = shell(workspace()) + deletionModal();
+    const markup = shell(workspace()) + deletionModal() + createTypeModal();
     // Fast path: the signature (everything except keyed-list rows, live
     // regions, and windowed virtual-list rows) is unchanged, so only
     // reconcilable data differs. Update those in place and keep scroll. Virtual
@@ -1708,11 +1740,48 @@
     }
     if (action === "newType") {
       const platforms = state.assets?.collectionPlatforms || [];
-      if (!platforms.length) return;
-      // Directly create a type (default name + first platform) and open its
-      // Config tab on the next snapshot — no separate create form.
+      const presets = state.assets?.presets || [];
+      if (!platforms.length || !presets.length) return;
+      // Open the create-a-group dialog. A group can only be created from a preset,
+      // so there is no direct-create path any more.
+      pendingCreateType = {
+        presetID: state.assets?.defaultPresetID || presets[0].id,
+        platformID: platforms[0].id,
+      };
+      render();
+      return;
+    }
+    if (action === "selectCreatePreset") {
+      if (pendingCreateType) {
+        // Preserve the platform/name the person may have already chosen.
+        const nameInput = root.querySelector("[data-create-type-name]");
+        const platformSelect = root.querySelector("[data-create-type-platform]");
+        pendingCreateType = {
+          presetID: button.dataset.presetId,
+          platformID: platformSelect?.value || pendingCreateType.platformID,
+          name: nameInput ? nameInput.value : pendingCreateType.name,
+        };
+        render();
+      }
+      return;
+    }
+    if (action === "cancelCreateType") {
+      pendingCreateType = null;
+      render();
+      return;
+    }
+    if (action === "confirmCreateType") {
+      if (!pendingCreateType) return;
+      const nameInput = root.querySelector("[data-create-type-name]");
+      const platformSelect = root.querySelector("[data-create-type-platform]");
+      const name = ((nameInput?.value) || t("createType.defaultName")).trim() || t("createType.defaultName");
+      const platformID = platformSelect?.value || pendingCreateType.platformID;
+      const presetID = pendingCreateType.presetID;
+      if (!platformID || !presetID) return;
       pendingSelectNewType = new Set((state.assets?.classifierTypes || []).map((type) => type.id));
-      send("createClassifierType", { name: t("navigation.newType"), platformID: platforms[0].id });
+      pendingCreateType = null;
+      render();
+      send("createClassifierType", { name, platformID, presetID });
       return;
     }
     if (action === "confirmDeleteClassifierType" || action === "confirmDeleteCollectionPlatform") {

@@ -231,4 +231,35 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         XCTAssertFalse(script.contains("correction-tags-updated"))
         XCTAssertFalse(script.contains("research-tags-updated"))
     }
+
+    func testCreateGroupFlowGoesThroughPresetPicker() throws {
+        let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
+        let script = try String(contentsOf: appURL, encoding: .utf8)
+        // Creating a group opens the preset dialog; there is no direct-create path.
+        XCTAssertTrue(script.contains("createTypeModal"))
+        XCTAssertTrue(script.contains("pendingCreateType"))
+        XCTAssertTrue(script.contains("selectCreatePreset"))
+        XCTAssertTrue(script.contains("confirmCreateType"))
+        XCTAssertTrue(script.contains("cancelCreateType"))
+        // The create action must carry a presetID (a group can only be made from a preset).
+        let confirmStart = try XCTUnwrap(script.range(of: "action === \"confirmCreateType\""))
+        let confirmBody = String(script[confirmStart.lowerBound...].prefix(1000))
+        XCTAssertTrue(confirmBody.contains("presetID"), "confirmCreateType must send a presetID")
+        XCTAssertTrue(confirmBody.contains("send(\"createClassifierType\""))
+        // The old direct newType create (default name + first platform, no preset) is gone.
+        XCTAssertFalse(script.contains("send(\"createClassifierType\", { name: t(\"navigation.newType\")"))
+        // Drift indicator + preset badge are wired.
+        XCTAssertTrue(script.contains("modifiedFromPreset"))
+        XCTAssertTrue(script.contains("presetNameKey"))
+
+        let stringsURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "strings", extension: "js"))
+        let strings = try String(contentsOf: stringsURL, encoding: .utf8)
+        for key in [
+            "createType.title", "createType.presetLabel", "createType.create",
+            "preset.gentle.name", "preset.balanced.name", "preset.strict.name",
+            "preset.localOnly.name", "preset.modifiedFrom", "preset.basedOn",
+        ] {
+            XCTAssertTrue(strings.contains(key), "missing preset string: \(key)")
+        }
+    }
 }
