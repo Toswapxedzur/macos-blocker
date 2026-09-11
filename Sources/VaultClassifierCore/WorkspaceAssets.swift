@@ -403,6 +403,11 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     /// research consent remains the master gate even when this value enables
     /// research for the type.
     public var researchOverrides: ResearchSettings?
+    /// The preset a person chose when creating this type (a `VaultPreset`
+    /// rawValue), or nil for legacy/hand-built types. Stored as a string so an
+    /// unknown preset from a newer build survives a round-trip. Advanced edits
+    /// keep it, so the UI can flag "modified from <preset>".
+    public var presetID: String?
     /// Position in the reorderable classifier-type list. Types targeting the
     /// same platform apply in ascending order; a card unions their tags in this
     /// order.
@@ -420,6 +425,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         localModelOverrides: LocalModelOverrides? = nil,
         modelFileName: String? = nil,
         researchOverrides: ResearchSettings? = nil,
+        presetID: String? = nil,
         order: Int = 0,
         updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
     ) {
@@ -435,13 +441,15 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         let cleanedModelFileName = modelFileName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.modelFileName = cleanedModelFileName.isEmpty ? nil : String(cleanedModelFileName.prefix(255))
         self.researchOverrides = researchOverrides
+        let cleanedPresetID = presetID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.presetID = cleanedPresetID.isEmpty ? nil : String(cleanedPresetID.prefix(64))
         self.order = order
         self.updatedAtMilliseconds = updatedAtMilliseconds
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, treeID, treeRevision, datasetID, datasetRevision, applicablePlatformID,
-             localModelOverrides, modelFileName, researchOverrides, order, updatedAtMilliseconds
+             localModelOverrides, modelFileName, researchOverrides, presetID, order, updatedAtMilliseconds
     }
 
     private enum RetiredCodingKeys: String, CodingKey {
@@ -486,6 +494,9 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         modelFileName = decodedModelFileName.isEmpty ? nil : String(decodedModelFileName.prefix(255))
         researchOverrides = try container.decodeIfPresent(ResearchSettings.self, forKey: .researchOverrides)
+        let decodedPresetID = try container.decodeIfPresent(String.self, forKey: .presetID)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        presetID = decodedPresetID.isEmpty ? nil : String(decodedPresetID.prefix(64))
         order = try container.decodeIfPresent(Int.self, forKey: .order) ?? 0
         updatedAtMilliseconds = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMilliseconds)
             ?? WorkspaceCatalog.now()
@@ -503,6 +514,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         try container.encodeIfPresent(localModelOverrides, forKey: .localModelOverrides)
         try container.encodeIfPresent(modelFileName, forKey: .modelFileName)
         try container.encodeIfPresent(researchOverrides, forKey: .researchOverrides)
+        try container.encodeIfPresent(presetID, forKey: .presetID)
         try container.encode(order, forKey: .order)
         try container.encode(updatedAtMilliseconds, forKey: .updatedAtMilliseconds)
     }

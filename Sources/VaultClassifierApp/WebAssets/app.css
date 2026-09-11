@@ -464,6 +464,33 @@ h3 { font-size: 13px; }
 .deletion-dialog h3 { color: var(--ink); font-size: 15px; }
 .deletion-dialog .action-row { display: flex; justify-content: flex-end; gap: 8px; }
 
+/* Create-a-group dialog: a preset is the primary choice, so it gets a card grid. */
+.create-type-dialog { width: min(560px, 94vw); gap: 14px; }
+.create-type-dialog .field { display: flex; flex-direction: column; gap: 6px; }
+.create-type-dialog .field-label { font-size: 12px; font-weight: 600; color: var(--muted-ink, #64748b); }
+.create-type-dialog select,
+.create-type-dialog input[type="text"] {
+  width: 100%; padding: 8px 10px; border-radius: 9px;
+  border: 1px solid var(--hairline, #e2e8f0); background: #fff; color: var(--ink); font-size: 13px;
+}
+.preset-card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.preset-card {
+  display: flex; flex-direction: column; gap: 4px; align-items: flex-start;
+  padding: 10px 12px; border-radius: 11px; text-align: left; cursor: pointer;
+  border: 1px solid var(--hairline, #e2e8f0); background: var(--surface-2, #f8fafc);
+  transition: border-color .12s ease, background .12s ease;
+}
+.preset-card:hover { border-color: var(--navy-40, #94a3b8); }
+.preset-card.active { border-color: var(--navy, #1e3a8a); background: var(--navy-50, #eef2ff); box-shadow: inset 0 0 0 1px var(--navy, #1e3a8a); }
+.preset-card-head { display: flex; align-items: center; gap: 6px; width: 100%; }
+.preset-card-name { font-size: 13px; font-weight: 600; color: var(--ink); }
+.preset-card-badge {
+  margin-left: auto; font-size: 10px; font-weight: 600; letter-spacing: .02em;
+  padding: 2px 6px; border-radius: 6px; color: var(--green-text, #166534); background: var(--green-50, #dcfce7);
+}
+.preset-card-desc { font-size: 11.5px; line-height: 1.4; color: var(--muted-ink, #64748b); }
+.classifier-type-head-pills { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
 .incremental-list-sentinel {
   display: block;
   min-height: 1px;

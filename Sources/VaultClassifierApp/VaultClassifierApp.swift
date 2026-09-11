@@ -1347,10 +1347,18 @@ final class VaultClassifierViewModel: ObservableObject {
         onWebStateChange?()
     }
 
-    func createClassifierType(name: String, platformID: String) {
+    /// Creates a classifier type (a "group") from a preset the person picks. A
+    /// preset is the *only* way to create a type: it seeds the type's on-device
+    /// model overrides, its grounded-research profile, and a RAM-appropriate model
+    /// (when already downloaded), so nobody hand-tunes the underlying knobs at
+    /// creation. The detailed form stays available afterwards as "Advanced", which
+    /// reports drift as "modified from <preset>". `presetID` must resolve to a
+    /// known `VaultPreset`.
+    func createClassifierType(name: String, platformID: String, presetID: String) {
         do {
             let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !cleaned.isEmpty,
+            guard let preset = VaultPreset.resolve(presetID.trimmingCharacters(in: .whitespacesAndNewlines)),
+                  !cleaned.isEmpty,
                   cleaned.count <= ClassifierTypeAsset.maximumNameLength,
                   CollectionPlatformRegistry.definition(for: platformID) != nil,
                   var catalog = localState?.workspaceCatalog else {
@@ -1366,6 +1374,13 @@ final class VaultClassifierViewModel: ObservableObject {
             let tree = TagTreeAsset(name: cleaned, nodes: [])
             catalog.trees.append(tree)
             let nextOrder = (catalog.classifierTypes.map(\.order).max() ?? -1) + 1
+            // Apply the preset bundle. Model file is set only when the recommended
+            // model for this machine's RAM is already on disk — a preset must never
+            // point a type at a missing model (nil = inherit the global choice).
+            let modelFileName = preset.modelFileName(
+                systemRAMGB: HardwareProfile.physicalRAMGB(),
+                availableModelFiles: VaultLocalLLMEngine.availableModelFiles()
+            )
             catalog.classifierTypes.append(.init(
                 name: cleaned,
                 treeID: tree.id,
@@ -1373,6 +1388,10 @@ final class VaultClassifierViewModel: ObservableObject {
                 datasetID: dataset.id,
                 datasetRevision: dataset.revision,
                 applicablePlatformID: platformID,
+                localModelOverrides: preset.localModelOverrides,
+                modelFileName: modelFileName,
+                researchOverrides: preset.researchOverrides(),
+                presetID: preset.rawValue,
                 order: nextOrder
             ))
             try coordinator?.updateWorkspaceCatalog(catalog)
@@ -1437,6 +1456,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 localModelOverrides: existingClassifierType.localModelOverrides,
                 modelFileName: existingClassifierType.modelFileName,
                 researchOverrides: existingClassifierType.researchOverrides,
+                presetID: existingClassifierType.presetID,
                 order: catalog.classifierTypes[typeIndex].order
             )
             try coordinator?.updateWorkspaceCatalog(catalog)
@@ -2471,10 +2491,23 @@ final class VaultClassifierViewModel: ObservableObject {
             "terms": knowledgePayload(catalog.knowledgeEntries),
         ]
         assets["classifierTypes"] = catalog.classifierTypes.map { classifierType in
+                // Drift: a type shows "modified from <preset>" once its overrides
+                // diverge from what the preset writes. Unknown/absent preset → not
+                // modified (nothing to compare against).
+                let preset = VaultPreset.resolve(classifierType.presetID)
+                let modifiedFromPreset = preset.map {
+                    !$0.matches(
+                        localModelOverrides: classifierType.localModelOverrides,
+                        researchOverrides: classifierType.researchOverrides
+                    )
+                } ?? false
                 return [
                     "id": classifierType.id,
                     "name": classifierType.name,
                     "order": classifierType.order,
+                    "presetID": classifierType.presetID ?? NSNull(),
+                    "presetNameKey": preset?.displayNameKey ?? NSNull(),
+                    "modifiedFromPreset": modifiedFromPreset,
                     "treeID": classifierType.treeID,
                     "treeRevision": classifierType.treeRevision,
                     "datasetID": classifierType.datasetID,
@@ -2510,6 +2543,17 @@ final class VaultClassifierViewModel: ObservableObject {
                     } ?? NSNull(),
                 ] as [String: Any]
             }
+        // The preset catalog for the "create a group" picker. A preset is the only
+        // way to create a classifier type; the order here is the display order.
+        assets["presets"] = VaultPreset.allCases.map { preset in
+            [
+                "id": preset.rawValue,
+                "nameKey": preset.displayNameKey,
+                "descKey": preset.descriptionKey,
+                "isDefault": preset == VaultPreset.default,
+            ] as [String: Any]
+        }
+        assets["defaultPresetID"] = VaultPreset.default.rawValue
         assets["providerProfiles"] = catalog.providerProfiles.map { profile in
                 let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
                 return [
@@ -2702,7 +2746,8 @@ final class VaultClassifierViewModel: ObservableObject {
             case "createClassifierType":
                 createClassifierType(
                     name: try webString(data, key: "name", limit: ClassifierTypeAsset.maximumNameLength),
-                    platformID: try webString(data, key: "platformID", limit: 64)
+                    platformID: try webString(data, key: "platformID", limit: 64),
+                    presetID: try webString(data, key: "presetID", limit: 64)
                 )
             case "reorderClassifierTypes":
                 reorderClassifierTypes(orderedIDs: try webStringArray(data, key: "orderedIDs", limit: 256, elementLimit: 256))
