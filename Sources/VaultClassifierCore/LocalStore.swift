@@ -440,27 +440,6 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         Set(catalog.trees.flatMap { $0.nodes.map(\.id) })
     }
 
-    /// Resolve the content-block verdict for one classified entry: find the
-    /// policy bound to the platform (`PlatformBinding.policyID`), evaluate it
-    /// against the projection's tags + confidences, and return the surface
-    /// actions. `.allow`/`.allow` when no policy is bound. This is the seam that
-    /// turns content tags into a block decision — replacing the old creator match.
-    public func contentBlockActions(
-        platformID: String,
-        projection: VideoTagsProjection
-    ) -> (feed: PresentationAction, page: PresentationAction) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let binding = state.workspaceCatalog.bindings.first(where: { $0.id == platformID }),
-              let policyID = binding.policyID,
-              let policy = state.policies.first(where: { $0.id == policyID })
-        else { return (.allow, .allow) }
-        let observations = projection.tags.map { node in
-            NamedPolicy.TagObservation(tagID: node.id, confidence: projection.confidenceByTagID[node.id] ?? 5)
-        }
-        return policy.resolveActions(for: observations)
-    }
-
     public func classifyVideo(
         platformID: String,
         entryID: String,
