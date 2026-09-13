@@ -157,7 +157,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 retiredDirectory: vaultDirectory.appendingPathComponent("creator-avatars", isDirectory: true)
             )
             collectionDiagnostics.record(event: "app-started", outcome: "ready")
-            let coordinator = try LocalClassifierCoordinator(verifiedPackage: package, stateFile: LocalStateFile(url: vaultDirectory.appendingPathComponent("state.json")), defaultPolicies: [StarterPolicies.clashRoyale])
+            let coordinator = try LocalClassifierCoordinator(verifiedPackage: package, stateFile: LocalStateFile(url: vaultDirectory.appendingPathComponent("state.json")))
             self.coordinator = coordinator
             self.policies = coordinator.policies()
             self.localState = coordinator.snapshot()
@@ -484,15 +484,16 @@ final class VaultClassifierViewModel: ObservableObject {
     }
 
     private func broadcastResolvedVideoTags(platformID: String, entryID: String, projection: VideoTagsProjection) {
-        let actions = coordinator?.contentBlockActions(platformID: platformID, projection: projection) ?? (.allow, .allow)
+        // The classifier only tags — it makes no block decision. The verdict is
+        // the extension's job (its custom-rule engine reads these tags). So the
+        // broadcast carries tags + confidence only; feed/page default to allow.
         let broadcast = NativeVideoTagsBroadcast(platformID: platformID, items: [NativeVideoTagsBatchResponseItem(
             entryID: entryID, tags: Self.nativeVideoTags(from: projection),
-            predicted: projection.predicted, pending: false,
-            feedAction: actions.feed, pageAction: actions.page)])
+            predicted: projection.predicted, pending: false)])
         guard let encoded = try? JSONEncoder().encode(broadcast),
               let object = try? JSONSerialization.jsonObject(with: encoded) as? [String: Any] else { return }
         sharedHubClient?.broadcast(operation: "video-tags-updated", body: object)
-        devLog("video-tags-updated", ["platform": platformID, "entry": entryID, "tags": "\(projection.tags.count)", "feed": actions.feed.rawValue, "page": actions.page.rawValue])
+        devLog("video-tags-updated", ["platform": platformID, "entry": entryID, "tags": "\(projection.tags.count)"])
     }
 
     /// Dev-only pipeline test mode (`ADAMANCIA_VAULT_TAG_TEST=creator-echo`):
@@ -594,12 +595,10 @@ final class VaultClassifierViewModel: ObservableObject {
                         tags: [Self.creatorEchoTag(creatorID: videoTags.creatorID)], predicted: false, pending: false))
                 }
                 if let cached = coordinator.cachedVideoTags(platformID: videoTags.platformID, entryID: videoTags.entryID) {
-                    let actions = coordinator.contentBlockActions(platformID: videoTags.platformID, projection: cached)
-                    devLog("video-tags", ["platform": videoTags.platformID, "entry": videoTags.entryID, "outcome": "cached", "tags": "\(cached.tags.count)", "feed": actions.feed.rawValue, "page": actions.page.rawValue])
+                    devLog("video-tags", ["platform": videoTags.platformID, "entry": videoTags.entryID, "outcome": "cached", "tags": "\(cached.tags.count)"])
                     return try sharedHubReply(NativeVideoTagsResponse(
                         platformID: videoTags.platformID, entryID: videoTags.entryID,
-                        tags: Self.nativeVideoTags(from: cached), predicted: cached.predicted, pending: false,
-                        feedAction: actions.feed, pageAction: actions.page))
+                        tags: Self.nativeVideoTags(from: cached), predicted: cached.predicted, pending: false))
                 }
                 // No classifier type targets this platform → definitively empty, not
                 // pending (avoids a stuck "Tagging" pill that re-requests forever).
@@ -638,10 +637,8 @@ final class VaultClassifierViewModel: ObservableObject {
                 for item in batch.items {
                     if let cached = coordinator.cachedVideoTags(platformID: batch.platformID, entryID: item.entryID) {
                         cachedCount += 1
-                        let actions = coordinator.contentBlockActions(platformID: batch.platformID, projection: cached)
                         responses.append(NativeVideoTagsBatchResponseItem(
-                            entryID: item.entryID, tags: Self.nativeVideoTags(from: cached), predicted: cached.predicted, pending: false,
-                            feedAction: actions.feed, pageAction: actions.page))
+                            entryID: item.entryID, tags: Self.nativeVideoTags(from: cached), predicted: cached.predicted, pending: false))
                     } else if !platformHasTypes {
                         // No classifier type for this platform → definitively empty.
                         responses.append(NativeVideoTagsBatchResponseItem(entryID: item.entryID, tags: [], predicted: false, pending: false))
