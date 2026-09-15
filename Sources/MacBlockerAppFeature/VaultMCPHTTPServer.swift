@@ -6,8 +6,9 @@ import Network
 /// Loopback HTTP transport for the Mac Vault MCP server (MCP "Streamable HTTP":
 /// a single `POST /mcp` endpoint carrying JSON-RPC). The protocol logic lives in
 /// `MCPServer`; this is the thin socket shell, hardened loopback-only like the
-/// hub. It is instantiable and unit-tested at the request/response layer but is
-/// NOT started until the integration goes live (auth + launch wiring).
+/// hub. It is instantiable and unit-tested at the request/response layer, and is
+/// started at launch by `BlockerAppDelegate` with an HMAC-derived bearer token
+/// (`LocalHubAuthentication.mcpBearerToken`) once the hub secret is available.
 public final class VaultMCPHTTPServer: @unchecked Sendable {
     private static let maxRequestBytes = 4 * 1_048_576
 
