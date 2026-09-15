@@ -751,4 +751,36 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertEqual(probe.count, 3)
         await queue.waitUntilIdle()
     }
+
+    func testStaleClassificationsAreNotServedFromCache() {
+        func row(_ source: VideoClassificationSource, _ modelVersion: String) -> VideoClassification {
+            VideoClassification(
+                classifierTypeID: "t", platformID: "youtube", entryID: "youtube:video:v",
+                creatorID: "c", treeID: "tree", treeRevision: 1,
+                tags: [], source: source, modelVersion: modelVersion
+            )
+        }
+        let type = ClassifierTypeAsset(
+            id: "t", name: "YT", treeID: "tree", treeRevision: 1,
+            datasetID: "d", datasetRevision: 1, applicablePlatformID: "youtube"
+        )
+        let settings = LocalLLMSettings(modelFileName: "qwen2.5-7b.gguf")
+        let current = LocalClassifierCoordinator.isClassificationCurrent
+
+        // Current model (with and without the "+<prompt>" suffix) → served.
+        XCTAssertTrue(current(row(.model, "llamacpp/qwen2.5-7b.gguf+prompt-3"), type, settings))
+        XCTAssertTrue(current(row(.model, "llamacpp/qwen2.5-7b.gguf"), type, settings))
+        // Stub-era and a previously-selected model → stale.
+        XCTAssertFalse(current(row(.model, "stub/v1"), type, settings))
+        XCTAssertFalse(current(row(.model, "llamacpp/llama-3.2-3b.gguf+prompt-3"), type, settings))
+        // A human correction is authoritative regardless of its model version.
+        XCTAssertTrue(current(row(.humanCorrected, "stub/v1"), type, settings))
+        // A per-type model overrides the global default.
+        var typeWithModel = type
+        typeWithModel.modelFileName = "gemma-2b.gguf"
+        XCTAssertTrue(current(row(.model, "llamacpp/gemma-2b.gguf+p"), typeWithModel, settings))
+        XCTAssertFalse(current(row(.model, "llamacpp/qwen2.5-7b.gguf+p"), typeWithModel, settings))
+        // No real model configured → serve whatever exists (cannot reclassify).
+        XCTAssertTrue(current(row(.model, "stub/v1"), type, LocalLLMSettings(modelFileName: nil)))
+    }
 }
