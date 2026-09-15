@@ -8,9 +8,18 @@ import Foundation
 
 public struct VideoClassificationPipeline: Sendable {
     public let llm: any OnDeviceLLM
-    /// App-wide cap. The shipping grammar emits one name, so this is deliberately
-    /// not exposed as a per-type override.
+    /// Upper bound on tags per video. The engine now emits up to this many names
+    /// (grammar-bounded), so it is a real knob — but see `secondaryConfidenceFloor`:
+    /// only the top tag is unconditional; additional tags must clear the floor, so
+    /// a single-topic video still resolves to one tag even at a high cap.
     public let maximumTags: Int
+    /// A secondary (non-top) tag is kept only when its confidence is at least this.
+    /// Ungated multi-tag floods low-confidence guesses (eval 2026-09-16: at cap 3,
+    /// micro-precision 0.56→0.21, exact-set 57%→24%); gating the extras at the
+    /// policy's own block floor keeps genuine multi-topic recall without that
+    /// precision collapse. The top tag is always kept (single-tag behavior is
+    /// exactly preserved at cap 1, or when no secondary clears the floor).
+    public let secondaryConfidenceFloor: Int
     public let promptVersion: String
     /// Minimum cross-creator title similarity for a correction to be retrieved as
     /// a per-video exemplar (see CorrectionRetriever). Exposed so the eval A/B can
@@ -20,11 +29,13 @@ public struct VideoClassificationPipeline: Sendable {
     public init(
         llm: any OnDeviceLLM,
         maximumTags: Int = 5,
+        secondaryConfidenceFloor: Int = 4,
         promptVersion: String = "p1",
         correctionSimilarityFloor: Double = CorrectionRetriever.defaultMinimumSimilarity
     ) {
         self.llm = llm
         self.maximumTags = maximumTags
+        self.secondaryConfidenceFloor = secondaryConfidenceFloor
         self.promptVersion = promptVersion
         self.correctionSimilarityFloor = correctionSimilarityFloor
     }
@@ -189,6 +200,13 @@ public struct VideoClassificationPipeline: Sendable {
         scoredTags.sort { lhs, rhs in
             lhs.confidence == rhs.confidence ? lhs.tagID < rhs.tagID : lhs.confidence > rhs.confidence
         }
-        return (Array(scoredTags.prefix(maximumTags)), result.unknownTerms)
+        // Keep the top tag unconditionally (the primary decision — identical to
+        // the former single-tag behavior); add further tags only when they clear
+        // the secondary-confidence floor, so an over-eager multi-tag decode can't
+        // flood a single-topic video with low-confidence guesses.
+        let gated = scoredTags.enumerated()
+            .filter { $0.offset == 0 || $0.element.confidence >= secondaryConfidenceFloor }
+            .map(\.element)
+        return (Array(gated.prefix(maximumTags)), result.unknownTerms)
     }
 }

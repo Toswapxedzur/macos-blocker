@@ -95,7 +95,8 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
     public func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult {
         let effectiveAllowDecline = request.allowDecline ?? configuration.allowDecline
         let effectiveThresholds = request.confidenceThresholds ?? configuration.confidenceThresholds
-        guard let grammar = Self.nameGrammar(allowed: request.allowedTagNames, allowDecline: effectiveAllowDecline) else {
+        let maximumTags = max(1, request.maximumTags)
+        guard let grammar = Self.namesGrammar(allowed: request.allowedTagNames, allowDecline: effectiveAllowDecline, maximumTags: maximumTags) else {
             // No usable tag names → definitively empty, matching the stub's shape.
             return LLMClassificationResult(tags: [], unknownTerms: [])
         }
@@ -152,13 +153,31 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
             : request.allowedTagNames
         let candidateFirstTokens = Set(candidateNames.compactMap { try? tokenize($0, addSpecial: false).first })
 
+        // The model emits up to `maximumTags` names as JSON-object continuations
+        // (`Name"},{"name":"Next…`): the separator IS the scaffold's own
+        // boilerplate, so the output stays a coherent continuation of the
+        // `{"tags":[{"name":"` runway and the accuracy-critical scaffold is
+        // preserved. Each name's first token gets its own renormalized-softmax
+        // confidence, captured the moment that name begins (step 0, or right
+        // after a separator completes) — identical calibration to the former
+        // single-name path, now applied per tag.
+        let separatorText = "\"},{\"name\":\""
+        let decodeCap = min(
+            max(1, contextTokenLimit - tokens.count - 1),
+            max(configuration.maximumOutputTokens, maximumTags * 16 + 8)
+        )
         var generated = ""
-        var firstTokenProbability: Double?
-        for step in 0..<configuration.maximumOutputTokens {
+        var nameStartProbabilities: [Double] = []
+        var awaitingNameStart = true
+        for _ in 0..<decodeCap {
             let token = llama_sampler_sample(sampler, context, -1)
             if llama_vocab_is_eog(vocab, token) { break }
-            if step == 0 { firstTokenProbability = probability(of: token, among: candidateFirstTokens) }
+            if awaitingNameStart {
+                nameStartProbabilities.append(probability(of: token, among: candidateFirstTokens))
+                awaitingNameStart = false
+            }
             generated += piece(for: token)
+            if generated.hasSuffix(separatorText) { awaitingNameStart = true }
             var single = [token]
             let status = single.withUnsafeMutableBufferPointer { buffer in
                 llama_decode(context, llama_batch_get_one(buffer.baseAddress, 1))
@@ -171,14 +190,22 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
             cachedTokens.append(token)
         }
 
-        let name = generated.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard request.allowedTagNames.contains(name) else {
-            // The decline literal (or, unreachable via grammar, any stray
-            // output) resolves to a definitive empty classification.
-            return LLMClassificationResult(tags: [], unknownTerms: [])
+        // Split the JSON-object continuations back into names, pair each with the
+        // confidence captured when it began, keep only real taxonomy names (the
+        // decline literal `none` falls out here → an empty classification), and
+        // de-duplicate keeping the first (highest-priority) occurrence.
+        let rawNames = generated
+            .components(separatedBy: separatorText)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        var tags: [LLMTagScore] = []
+        var seen = Set<String>()
+        for (index, rawName) in rawNames.enumerated() {
+            guard request.allowedTagNames.contains(rawName), seen.insert(rawName).inserted else { continue }
+            let firstTokenProbability = index < nameStartProbabilities.count ? nameStartProbabilities[index] : 0
+            let confidence = Self.confidence(fromProbability: firstTokenProbability, thresholds: effectiveThresholds)
+            tags.append(LLMTagScore(name: rawName, confidence: confidence))
         }
-        let confidence = Self.confidence(fromProbability: firstTokenProbability ?? 0, thresholds: effectiveThresholds)
-        return LLMClassificationResult(tags: [LLMTagScore(name: name, confidence: confidence)], unknownTerms: [])
+        return LLMClassificationResult(tags: tags, unknownTerms: [])
     }
 
     /// A separate tiny constrained decode used only after the name grammar
@@ -327,11 +354,15 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
     character ::= [^"\\\r\n\t ]
     """#
 
-    /// GBNF grammar admitting exactly one of the allowed tag names, plus the
-    /// decline literal when enabled. Names with embedded newlines cannot be
-    /// expressed as a GBNF literal and are skipped.
-    static func nameGrammar(allowed: [String], allowDecline: Bool = true) -> String? {
-        var literals = allowed
+    /// GBNF grammar admitting up to `maximumTags` of the allowed tag names,
+    /// separated by the JSON scaffold's own `"},{"name":"` boilerplate — so the
+    /// generated output stays a coherent continuation of the prompt's
+    /// `{"tags":[{"name":"` runway (removing that scaffold measurably regressed
+    /// accuracy) — plus the decline literal `none` when enabled. Names with
+    /// embedded newlines cannot be expressed as a GBNF literal and are skipped;
+    /// returns nil when no tag name is usable.
+    static func namesGrammar(allowed: [String], allowDecline: Bool = true, maximumTags: Int = 1) -> String? {
+        let literals = allowed
             .filter { !$0.isEmpty && !$0.contains("\n") && !$0.contains("\r") }
             .map { name in
                 "\"" + name
@@ -339,10 +370,25 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
                     .replacingOccurrences(of: "\"", with: "\\\"") + "\""
             }
         guard !literals.isEmpty else { return nil }
+        let bound = max(1, maximumTags)
+        let extra = bound - 1  // optional additional names after the first
+        var lines: [String] = []
+        let rootBody = extra > 0 ? "name tail0" : "name"
         if allowDecline, !allowed.contains(declineLiteral) {
-            literals.append("\"\(declineLiteral)\"")
+            lines.append("root ::= \"\(declineLiteral)\" | \(rootBody)")
+        } else {
+            lines.append("root ::= \(rootBody)")
         }
-        return "root ::= " + literals.joined(separator: " | ")
+        // A bounded optional chain: each tail may end the list or add one more
+        // `sep name`, so the model emits between 1 and `bound` names.
+        for i in 0..<extra {
+            let continuation = i == extra - 1 ? "" : " tail\(i + 1)"
+            lines.append("tail\(i) ::= \"\" | sep name\(continuation)")
+        }
+        // The separator is the JSON boilerplate between two {"name":"…"} objects.
+        lines.append("sep ::= \"\\\"},{\\\"name\\\":\\\"\"")
+        lines.append("name ::= " + literals.joined(separator: " | "))
+        return lines.joined(separator: "\n")
     }
 
     /// Maps the first chosen token's renormalized softmax probability onto the
