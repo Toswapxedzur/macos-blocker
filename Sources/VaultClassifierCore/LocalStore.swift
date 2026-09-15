@@ -425,12 +425,50 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         let catalog = state.workspaceCatalog
+        let localLLM = state.settings.localLLM
         let types = Self.orderedTypes(for: platformID, in: catalog)
         guard !types.isEmpty else { return nil }
-        guard types.contains(where: {
-            catalog.videoClassification(classifierTypeID: $0.id, platformID: platformID, entryID: entryID) != nil
-        }) else { return nil }
+        // Only serve a cached projection when every stored classification for this
+        // entry is still current for the model its type is configured to use. A
+        // stale row (produced by the stub or a previously-selected model) is not
+        // served, so the request falls through to a fresh classifyVideo. Human
+        // corrections are always authoritative and never treated as stale.
+        var sawClassification = false
+        for type in types {
+            guard let classification = catalog.videoClassification(
+                classifierTypeID: type.id, platformID: platformID, entryID: entryID
+            ) else { continue }
+            sawClassification = true
+            guard Self.isClassificationCurrent(classification, forType: type, localLLMSettings: localLLM) else {
+                return nil
+            }
+        }
+        guard sawClassification else { return nil }
         return Self.videoTagsProjection(entryID: entryID, platformID: platformID, types: types, catalog: catalog)
+    }
+
+    /// Whether a stored classification may be served from cache without
+    /// reclassifying. It is current when a human confirmed it, or when it was
+    /// produced by the model the type is configured to use now. The engine
+    /// stamps `modelVersion` as `"llamacpp/<file>"` and the pipeline appends
+    /// `"+<promptVersion>"`, so a prefix match against the configured file is
+    /// exact. When no real model is configured we cannot reclassify anyway, so
+    /// whatever exists is served rather than churned.
+    /// (Edge case: if a type's configured model file was deleted, the engine
+    /// falls back to the default, so its stored token won't match the requested
+    /// file and the entry will reclassify each time it is requested — a bounded,
+    /// self-correcting cost of an already-degraded configuration.)
+    static func isClassificationCurrent(
+        _ classification: VideoClassification,
+        forType type: ClassifierTypeAsset,
+        localLLMSettings: LocalLLMSettings
+    ) -> Bool {
+        if classification.source == .humanCorrected { return true }
+        guard let expectedFile = type.modelFileName ?? localLLMSettings.modelFileName,
+              !expectedFile.isEmpty else { return true }
+        let expected = "llamacpp/" + expectedFile
+        return classification.modelVersion == expected
+            || classification.modelVersion.hasPrefix(expected + "+")
     }
 
     /// Every tag id defined across the user's classifier trees — the id space a
