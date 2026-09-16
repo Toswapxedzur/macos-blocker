@@ -540,7 +540,8 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                 resolver: engineResolver,
                 configuration: localLLMSettings
             )
-            let pipeline = VideoClassificationPipeline(llm: llm, maximumTags: maximumTags)
+            let effectiveMaximumTags = overrides?.effectiveMaximumTags(global: maximumTags) ?? maximumTags
+            let pipeline = VideoClassificationPipeline(llm: llm, maximumTags: effectiveMaximumTags)
             // `text` carries the thumbnail-OCR evidence; honor the per-type opt-out.
             let typeText = (overrides?.effectiveThumbnailOcrEvidence ?? LocalModelOverrides.defaultThumbnailOcrEvidence) ? text : nil
             let classification = try await pipeline.classify(

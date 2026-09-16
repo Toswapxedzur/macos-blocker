@@ -271,7 +271,8 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
                 applicablePlatformID: "youtube",
                 localModelOverrides: .init(
                     houseRules: "Type A rule.", allowDecline: false,
-                    confidenceThresholds: [0.1, 0.3, 0.6, 0.9]
+                    confidenceThresholds: [0.1, 0.3, 0.6, 0.9],
+                    maximumTags: 2
                 ), order: 0
             ),
             .init(
@@ -297,7 +298,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertTrue(recorder.requests[1].staticPrefix.contains("Global rule."))
         XCTAssertNil(recorder.requests[1].allowDecline)
         XCTAssertNil(recorder.requests[1].confidenceThresholds)
-        XCTAssertEqual(recorder.requests.map(\.maximumTags), [3, 3], "maximumTags remains global")
+        XCTAssertEqual(recorder.requests.map(\.maximumTags), [2, 3], "type A overrides maximumTags (2); type B inherits the global (3)")
     }
 
     func testResearchTriggerIsExplicitModelDeclineOnly() {
