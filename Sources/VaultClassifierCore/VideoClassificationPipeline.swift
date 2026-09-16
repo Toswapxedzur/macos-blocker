@@ -57,49 +57,24 @@ public struct VideoClassificationPipeline: Sendable {
         maxKnowledgePerVideo: Int = ResearchSettings.defaultMaxKnowledgePerVideo,
         creatorGroundingConfidenceFloor: Int = ResearchSettings.defaultConfidenceTriggerLevel
     ) async throws -> VideoClassification {
-        let nameByID = Dictionary(tree.nodes.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
-
-        // Derived creator prior: how often THIS creator's already-classified
-        // videos carry each tag (share of videoCount). A consistent creator is a
-        // strong prior for an otherwise-ambiguous title; the assembler frames it.
-        var creatorPrior: [CreatorPriorTag] = []
-        var creatorVideoCount = 0
-        if let histogram = catalog.creatorHistogram(classifierTypeID: classifierType.id, platformID: platformID, creatorID: creatorID), histogram.videoCount > 0 {
-            creatorVideoCount = histogram.videoCount
-            creatorPrior = histogram.stats
-                .compactMap { tagID, stat -> CreatorPriorTag? in
-                    guard let name = nameByID[tagID] else { return nil }
-                    return CreatorPriorTag(tagName: name, count: stat.count, share: Double(stat.count) / Double(histogram.videoCount),
-                                           averageConfidence: stat.averageConfidence, confidenceStdev: stat.confidenceStdev)
-                }
-                .sorted { $0.share == $1.share ? $0.tagName < $1.tagName : $0.share > $1.share }
-        }
-
-        // Grounded generalization: the user's own past corrections most similar
-        // to THIS video, as concrete few-shot exemplars (see CorrectionRetriever).
-        // Relevance-ranked per video, not a static recency block — so the model
-        // generalizes from the corrections that actually bear on this title.
-        let correctionExemplars = CorrectionRetriever.retrieve(
-            title: title,
-            creatorID: creatorID,
-            excludingEntryID: entryID,
-            from: catalog.correctionExamples.filter { $0.classifierTypeID == classifierType.id },
-            tree: tree,
-            minimumSimilarity: correctionSimilarityFloor
+        // Evidence gathering (creator prior + matched knowledge + correction
+        // exemplars) is shared with `primaryPromptParts`, so the calibration eval
+        // drives the model on the exact same prompt this path builds.
+        let evidence = gatherEvidence(
+            title: title, entryID: entryID, creatorID: creatorID, platformID: platformID,
+            classifierType: classifierType, tree: tree, catalog: catalog,
+            knowledgeTTLDays: knowledgeTTLDays, maxKnowledgePerVideo: maxKnowledgePerVideo
         )
+        let creatorPrior = evidence.creatorPrior
+        let creatorVideoCount = evidence.creatorVideoCount
+        let termKnowledge = evidence.termKnowledge
 
         // Primary decode: the video's own content plus any matched term
         // knowledge. The creator description is deliberately withheld here.
-        let termKnowledge = catalog.matchedKnowledge(
-            title: title,
-            creatorID: creatorID,
-            limit: maxKnowledgePerVideo,
-            ttlDays: knowledgeTTLDays
-        )
         let primary = try await decode(
             tree: tree, houseRules: houseRules, title: title, summary: summary, text: text,
             creatorPrior: creatorPrior, creatorVideoCount: creatorVideoCount, knowledge: termKnowledge,
-            correctionExemplars: correctionExemplars,
+            correctionExemplars: evidence.correctionExemplars,
             allowDecline: allowDecline, confidenceThresholds: confidenceThresholds
         )
 
@@ -113,7 +88,7 @@ public struct VideoClassificationPipeline: Sendable {
             let grounded = try await decode(
                 tree: tree, houseRules: houseRules, title: title, summary: summary, text: text,
                 creatorPrior: creatorPrior, creatorVideoCount: creatorVideoCount, knowledge: groundedKnowledge,
-                correctionExemplars: correctionExemplars,
+                correctionExemplars: evidence.correctionExemplars,
                 allowDecline: allowDecline, confidenceThresholds: confidenceThresholds
             )
             // Only adopt the creator-grounded result if it actually produced a
@@ -148,6 +123,99 @@ public struct VideoClassificationPipeline: Sendable {
             knowledgeRefs: termKnowledge.map(\.id),
             source: termKnowledge.isEmpty ? .model : .modelKnowledge,
             modelVersion: "\(llm.modelVersion)+\(promptVersion)"
+        )
+    }
+
+    /// The creator prior + correction exemplars + matched term knowledge for one
+    /// video — the evidence that `classify`'s primary decode and `primaryPromptParts`
+    /// both build on. Extracted so the two paths can never drift apart.
+    private func gatherEvidence(
+        title: String,
+        entryID: String,
+        creatorID: String,
+        platformID: String,
+        classifierType: ClassifierTypeAsset,
+        tree: TagTreeAsset,
+        catalog: WorkspaceCatalog,
+        knowledgeTTLDays: Int,
+        maxKnowledgePerVideo: Int
+    ) -> (creatorPrior: [CreatorPriorTag], creatorVideoCount: Int, correctionExemplars: [CorrectionExemplar], termKnowledge: [KnowledgeEntry]) {
+        let nameByID = Dictionary(tree.nodes.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+
+        // Derived creator prior: how often THIS creator's already-classified
+        // videos carry each tag (share of videoCount). A consistent creator is a
+        // strong prior for an otherwise-ambiguous title; the assembler frames it.
+        var creatorPrior: [CreatorPriorTag] = []
+        var creatorVideoCount = 0
+        if let histogram = catalog.creatorHistogram(classifierTypeID: classifierType.id, platformID: platformID, creatorID: creatorID), histogram.videoCount > 0 {
+            creatorVideoCount = histogram.videoCount
+            creatorPrior = histogram.stats
+                .compactMap { tagID, stat -> CreatorPriorTag? in
+                    guard let name = nameByID[tagID] else { return nil }
+                    return CreatorPriorTag(tagName: name, count: stat.count, share: Double(stat.count) / Double(histogram.videoCount),
+                                           averageConfidence: stat.averageConfidence, confidenceStdev: stat.confidenceStdev)
+                }
+                .sorted { $0.share == $1.share ? $0.tagName < $1.tagName : $0.share > $1.share }
+        }
+
+        // Grounded generalization: the user's own past corrections most similar
+        // to THIS video, as concrete few-shot exemplars (see CorrectionRetriever).
+        // Relevance-ranked per video, not a static recency block — so the model
+        // generalizes from the corrections that actually bear on this title.
+        let correctionExemplars = CorrectionRetriever.retrieve(
+            title: title,
+            creatorID: creatorID,
+            excludingEntryID: entryID,
+            from: catalog.correctionExamples.filter { $0.classifierTypeID == classifierType.id },
+            tree: tree,
+            minimumSimilarity: correctionSimilarityFloor
+        )
+
+        // Matched term knowledge. The creator description is deliberately withheld
+        // here (it enters only via the low-confidence creator fallback).
+        let termKnowledge = catalog.matchedKnowledge(
+            title: title,
+            creatorID: creatorID,
+            limit: maxKnowledgePerVideo,
+            ttlDays: knowledgeTTLDays
+        )
+        return (creatorPrior, creatorVideoCount, correctionExemplars, termKnowledge)
+    }
+
+    /// The exact prompt parts `classify`'s primary decode would build for one
+    /// video. Exposed so the calibration eval (RESEARCH-REDESIGN Phase 0) can run
+    /// `classifyWithModelConfidence` on the real production prompt without
+    /// duplicating the evidence-gathering, and so both stay in lockstep.
+    public func primaryPromptParts(
+        title: String,
+        summary: String? = nil,
+        text: String? = nil,
+        entryID: String,
+        creatorID: String,
+        platformID: String,
+        classifierType: ClassifierTypeAsset,
+        tree: TagTreeAsset,
+        catalog: WorkspaceCatalog,
+        houseRules: String? = nil,
+        knowledgeTTLDays: Int = ResearchSettings.defaultKnowledgeTTLDays,
+        maxKnowledgePerVideo: Int = ResearchSettings.defaultMaxKnowledgePerVideo
+    ) -> ClassificationPromptParts {
+        let evidence = gatherEvidence(
+            title: title, entryID: entryID, creatorID: creatorID, platformID: platformID,
+            classifierType: classifierType, tree: tree, catalog: catalog,
+            knowledgeTTLDays: knowledgeTTLDays, maxKnowledgePerVideo: maxKnowledgePerVideo
+        )
+        return ClassificationPromptAssembler.assemble(
+            tree: tree,
+            houseRules: houseRules,
+            maximumTags: maximumTags,
+            title: title,
+            summary: summary,
+            text: text,
+            creatorPrior: evidence.creatorPrior,
+            creatorVideoCount: evidence.creatorVideoCount,
+            knowledge: evidence.termKnowledge,
+            correctionExemplars: evidence.correctionExemplars
         )
     }
 
