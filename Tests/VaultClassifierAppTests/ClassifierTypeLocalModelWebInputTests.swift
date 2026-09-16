@@ -49,6 +49,29 @@ final class ClassifierTypeLocalModelWebInputTests: XCTestCase {
         XCTAssertNil(input.modelFileName)
         XCTAssertNil(input.overrides?.confidenceThresholds)
         XCTAssertNil(input.overrides?.allowDecline)
+        XCTAssertNil(input.overrides?.maximumTags)
+    }
+
+    func testPerTypeMaximumTagsParsesAndClampsElseInherits() throws {
+        func parse(_ value: String) throws -> LocalModelOverrides? {
+            try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
+                "typeID": "type", "overrideEnabled": true, "maximumTags": value,
+            ]).overrides
+        }
+        XCTAssertEqual(try parse("3")?.maximumTags, 3)
+        XCTAssertEqual(try parse("99")?.maximumTags, 16)   // clamped high
+        XCTAssertEqual(try parse("0")?.maximumTags, 1)     // clamped low
+        // Blank / unparseable → nil = inherit the global cap; with nothing else
+        // set the whole override collapses to nil.
+        XCTAssertNil(try parse("  "))
+        XCTAssertNil(try parse("not-a-number"))
+    }
+
+    func testEffectiveMaximumTagsPrefersOverrideElseGlobal() {
+        XCTAssertEqual(LocalModelOverrides(maximumTags: 2).effectiveMaximumTags(global: 5), 2)
+        XCTAssertEqual(LocalModelOverrides().effectiveMaximumTags(global: 5), 5)
+        XCTAssertEqual(LocalModelOverrides(maximumTags: 99).maximumTags, 16)
+        XCTAssertEqual(LocalModelOverrides(maximumTags: 0).maximumTags, 1)
     }
 
     func testDeletingProviderNullsResearchReferencesWithoutReenablingOrDisabling() {
