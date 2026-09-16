@@ -970,7 +970,6 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                 treeID: tree.id,
                 treeRevision: tree.revision,
                 tags: uniqueTagIDs.map { .init(tagID: $0, confidence: ScoredTag.maxConfidence) },
-                unknownTerms: [],
                 knowledgeRefs: previous?.knowledgeRefs ?? [],
                 source: .humanCorrected,
                 modelVersion: previous?.modelVersion ?? "human-correction-v1",

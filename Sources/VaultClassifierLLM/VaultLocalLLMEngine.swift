@@ -128,7 +128,7 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
         let maximumTags = max(1, request.maximumTags)
         guard let grammar = Self.namesGrammar(allowed: request.allowedTagNames, allowDecline: effectiveAllowDecline, maximumTags: maximumTags) else {
             // No usable tag names → definitively empty, matching the stub's shape.
-            return LLMClassificationResult(tags: [], unknownTerms: [])
+            return LLMClassificationResult(tags: [])
         }
         let prompt = request.staticPrefix + "\n\n" + request.dynamicSuffix
         let tokens = try tokenize(prompt)
@@ -235,7 +235,7 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
             let confidence = Self.confidence(fromProbability: firstTokenProbability, thresholds: effectiveThresholds)
             tags.append(LLMTagScore(name: rawName, confidence: confidence))
         }
-        return LLMClassificationResult(tags: tags, unknownTerms: [])
+        return LLMClassificationResult(tags: tags)
     }
 
     /// Experiment-1 structured decode: same prompt + same first-token softmax

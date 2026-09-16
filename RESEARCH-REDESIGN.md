@@ -238,3 +238,10 @@ mini1 for weak-hardware latency):
   self-assessment; PROPOSED default is urgency = **Int 1–5** (symmetry with
   confidence, reuses the rubric), with a dedicated urgency eval deferred until real
   urgency-labeled data exists. Owner to confirm.
+- 2026-09-17 — **Owner confirmed: Urgency = Int 1–5**, proceed to Phase 1 now.
+  Dedicated urgency eval deferred until real urgency-labeled data exists.
+- 2026-09-17 — **Phase 1 sequencing note.** `trigger`/`confidenceTriggerLevel`
+  removal is load-bearing (the research gate + the pipeline's creator-grounding
+  floor consume it), so it is done *with* its urgency-driven replacement rather
+  than ahead of it — the genuinely-dead parts (`unknownTerms`, raw-search Cut A,
+  `maxSubjectsPerVideo`) come out first, each green-checkpointed.
