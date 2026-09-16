@@ -84,13 +84,12 @@ final class VideoClassificationPipelineTests: XCTestCase {
         XCTAssertEqual(result.creatorID, "c1")
     }
 
-    func testPipelineMapsNamesToIDsDropsUnknownAndRecordsUnknownTerms() async throws {
+    func testPipelineMapsNamesToIDsAndDropsUnknownNames() async throws {
         let recorder = RequestRecorder()
         let llm = ScriptedOnDeviceLLM(
             modelVersion: "scripted/v9",
             result: LLMClassificationResult(
-                tags: [LLMTagScore(name: "Games", confidence: 5), LLMTagScore(name: "NotATag", confidence: 3)],
-                unknownTerms: ["HermitCraft"]
+                tags: [LLMTagScore(name: "Games", confidence: 5), LLMTagScore(name: "NotATag", confidence: 3)]
             ),
             recorder: recorder
         )
@@ -100,7 +99,6 @@ final class VideoClassificationPipelineTests: XCTestCase {
             classifierType: makeType(), tree: makeTree(), catalog: WorkspaceCatalog()
         )
         XCTAssertEqual(result.tags, [ScoredTag(tagID: "g", confidence: 5)]) // NotATag dropped
-        XCTAssertEqual(result.unknownTerms, ["HermitCraft"])
         XCTAssertEqual(result.modelVersion, "scripted/v9+pX")
     }
 

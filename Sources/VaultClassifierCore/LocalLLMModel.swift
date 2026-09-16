@@ -49,7 +49,6 @@ public enum VideoClassificationSource: String, Codable, Sendable, CaseIterable {
 /// classification record in the new model.
 public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
     public static let maximumTags = 32
-    public static let maximumUnknownTerms = 16
 
     public var id: String
     public var classifierTypeID: String
@@ -60,9 +59,6 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
     public var treeRevision: Int
     /// Per-tag scored result (1–5 confidence).
     public var tags: [ScoredTag]
-    /// Salient entities/creators the model could not confidently place — the
-    /// research queue's input (a creator name may appear here too).
-    public var unknownTerms: [String]
     /// Knowledge-map keys injected into the prompt that produced this result.
     public var knowledgeRefs: [String]
     public var source: VideoClassificationSource
@@ -80,7 +76,6 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
         treeID: String,
         treeRevision: Int,
         tags: [ScoredTag],
-        unknownTerms: [String] = [],
         knowledgeRefs: [String] = [],
         source: VideoClassificationSource,
         modelVersion: String,
@@ -95,7 +90,6 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
         self.treeID = treeID
         self.treeRevision = treeRevision
         self.tags = Array(tags.prefix(Self.maximumTags))
-        self.unknownTerms = Array(unknownTerms.prefix(Self.maximumUnknownTerms))
         self.knowledgeRefs = knowledgeRefs
         self.source = source
         self.modelVersion = modelVersion
@@ -108,7 +102,7 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, classifierTypeID, platformID, entryID, creatorID, treeID,
-             treeRevision, tags, unknownTerms, knowledgeRefs, source,
+             treeRevision, tags, knowledgeRefs, source,
              modelVersion, createdAtMilliseconds, updatedAtMilliseconds
     }
 
@@ -122,7 +116,7 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
         treeID = try container.decode(String.self, forKey: .treeID)
         treeRevision = try container.decode(Int.self, forKey: .treeRevision)
         tags = Array((try container.decodeIfPresent([ScoredTag].self, forKey: .tags) ?? []).prefix(Self.maximumTags))
-        unknownTerms = Array((try container.decodeIfPresent([String].self, forKey: .unknownTerms) ?? []).prefix(Self.maximumUnknownTerms))
+        // (Legacy `unknownTerms` key is intentionally ignored on decode — dropped in Phase 1.)
         knowledgeRefs = try container.decodeIfPresent([String].self, forKey: .knowledgeRefs) ?? []
         source = try container.decodeIfPresent(VideoClassificationSource.self, forKey: .source) ?? .model
         modelVersion = try container.decodeIfPresent(String.self, forKey: .modelVersion) ?? ""

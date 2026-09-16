@@ -81,7 +81,7 @@ public struct VideoClassificationPipeline: Sendable {
         // Low-confidence creator fallback: when the content signal is weak (a
         // decline, or a top confidence at/under the floor) and this creator is
         // already keyed, infer the tag from the creator's stored description.
-        let primaryTop = primary.tags.map(\.confidence).max() ?? 0
+        let primaryTop = primary.map(\.confidence).max() ?? 0
         if primaryTop <= creatorGroundingConfidenceFloor,
            let creatorEntry = catalog.creatorKnowledgeEntry(for: creatorID) {
             let groundedKnowledge = termKnowledge + [creatorEntry]
@@ -93,8 +93,8 @@ public struct VideoClassificationPipeline: Sendable {
             )
             // Only adopt the creator-grounded result if it actually produced a
             // tag (or improved confidence); otherwise keep the primary outcome.
-            let groundedTop = grounded.tags.map(\.confidence).max() ?? 0
-            if !grounded.tags.isEmpty, groundedTop >= primaryTop {
+            let groundedTop = grounded.map(\.confidence).max() ?? 0
+            if !grounded.isEmpty, groundedTop >= primaryTop {
                 return VideoClassification(
                     classifierTypeID: classifierType.id,
                     platformID: platformID,
@@ -102,8 +102,7 @@ public struct VideoClassificationPipeline: Sendable {
                     creatorID: creatorID,
                     treeID: tree.id,
                     treeRevision: tree.revision,
-                    tags: grounded.tags,
-                    unknownTerms: grounded.unknownTerms,
+                    tags: grounded,
                     knowledgeRefs: groundedKnowledge.map(\.id),
                     source: .modelKnowledge,
                     modelVersion: "\(llm.modelVersion)+\(promptVersion)"
@@ -118,8 +117,7 @@ public struct VideoClassificationPipeline: Sendable {
             creatorID: creatorID,
             treeID: tree.id,
             treeRevision: tree.revision,
-            tags: primary.tags,
-            unknownTerms: primary.unknownTerms,
+            tags: primary,
             knowledgeRefs: termKnowledge.map(\.id),
             source: termKnowledge.isEmpty ? .model : .modelKnowledge,
             modelVersion: "\(llm.modelVersion)+\(promptVersion)"
@@ -233,7 +231,7 @@ public struct VideoClassificationPipeline: Sendable {
         correctionExemplars: [CorrectionExemplar],
         allowDecline: Bool?,
         confidenceThresholds: [Double]?
-    ) async throws -> (tags: [ScoredTag], unknownTerms: [String]) {
+    ) async throws -> [ScoredTag] {
         let parts = ClassificationPromptAssembler.assemble(
             tree: tree,
             houseRules: houseRules,
@@ -275,6 +273,6 @@ public struct VideoClassificationPipeline: Sendable {
         let gated = scoredTags.enumerated()
             .filter { $0.offset == 0 || $0.element.confidence >= secondaryConfidenceFloor }
             .map(\.element)
-        return (Array(gated.prefix(maximumTags)), result.unknownTerms)
+        return Array(gated.prefix(maximumTags))
     }
 }
