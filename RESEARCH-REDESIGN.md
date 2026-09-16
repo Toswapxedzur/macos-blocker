@@ -245,3 +245,16 @@ mini1 for weak-hardware latency):
   floor consume it), so it is done *with* its urgency-driven replacement rather
   than ahead of it — the genuinely-dead parts (`unknownTerms`, raw-search Cut A,
   `maxSubjectsPerVideo`) come out first, each green-checkpointed.
+- 2026-09-17 — **Phase 1a done:** dead `unknownTerms` removed from the classification
+  contract + persisted model (decode-and-drop). 152/152 core tests.
+- 2026-09-17 — **Phase 2 Decode-1 wired to production** (owner-chosen next step).
+  `classify` now uses the structured decode (model-emitted confidence); `classify`
+  + `classifyWithModelConfidence` share one `structuredDecode`; softmax retained
+  per-tag as `LLMTagScore.softmaxConfidence` (cross-check, not persisted). Added
+  `NamesWithConfidenceGrammarTests`. Measured on `score` (dev 7B):
+  **cap 1 → micro-P 0.56 / R 0.52 / exact 57% — identical to the softmax cap-1
+  baseline (P 0.56 / exact 57%): zero accuracy regression** (same top tag chosen;
+  only the confidence value changed to the calibrated one). cap 3 → P 0.36 /
+  exact 42% (up from softmax's 0.27 / 33%). conf≤2 = 0% correct holds end-to-end
+  → trustworthy gate for blocking. `namesGrammar` (name-only) is now unused in
+  production but kept (tested; possible fallback).

@@ -26,10 +26,17 @@ public struct LLMTagOption: Sendable, Equatable {
 /// the runtime exposes it, otherwise self-reported).
 public struct LLMTagScore: Sendable, Equatable {
     public let name: String
+    /// Primary confidence (1–5). As of RESEARCH-REDESIGN Phase 2 this is
+    /// MODEL-emitted (Experiment 1 showed it is better calibrated than softmax).
     public let confidence: Int
-    public init(name: String, confidence: Int) {
+    /// The former production signal — the renormalized first-token softmax mapped
+    /// to 1–5 — kept as a cheap cross-check (nil for engines/stubs that don't
+    /// compute it). Not persisted; for logging/diagnostics only.
+    public let softmaxConfidence: Int?
+    public init(name: String, confidence: Int, softmaxConfidence: Int? = nil) {
         self.name = name
         self.confidence = ScoredTag.clamp(confidence)
+        self.softmaxConfidence = softmaxConfidence.map(ScoredTag.clamp)
     }
 }
 
