@@ -258,3 +258,10 @@ mini1 for weak-hardware latency):
   exact 42% (up from softmax's 0.27 / 33%). conf≤2 = 0% correct holds end-to-end
   → trustworthy gate for blocking. `namesGrammar` (name-only) is now unused in
   production but kept (tested; possible fallback).
+- 2026-09-17 — **§6 rubric added to the static prefix** (explicit 1–5 anchors:
+  5 = certain named subject … 1 = little basis; reserve 4–5). Measured on `score`
+  (dev 7B): **within noise** — cap 1 P0.56→0.58 / exact 57→58 / decline 36→38,
+  cap 3 flat (P0.36, exact 42→41); conf≤2 = 0% still holds. Kept (non-harmful,
+  explicit contract, cached prefix so ~free). **Few-shot calibration from the
+  user's corrections is the remaining §6 lever** (not yet done) if a bigger
+  calibration move is wanted.
