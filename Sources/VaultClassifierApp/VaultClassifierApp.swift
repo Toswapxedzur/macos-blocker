@@ -2129,7 +2129,8 @@ final class VaultClassifierViewModel: ObservableObject {
         houseRules: String?,
         allowDecline: Bool?,
         confidenceThresholds: [Double]?,
-        thumbnailOcrEvidence: Bool?
+        thumbnailOcrEvidence: Bool?,
+        maximumTags: Int?
     ) {
         do {
             guard var catalog = localState?.workspaceCatalog,
@@ -2142,7 +2143,8 @@ final class VaultClassifierViewModel: ObservableObject {
                 houseRules: houseRules,
                 allowDecline: allowDecline,
                 confidenceThresholds: confidenceThresholds,
-                thumbnailOcrEvidence: thumbnailOcrEvidence
+                thumbnailOcrEvidence: thumbnailOcrEvidence,
+                maximumTags: maximumTags
             ) : nil
             catalog.classifierTypes[index].localModelOverrides = overrides?.isEmpty == false ? overrides : nil
             catalog.classifierTypes[index].modelFileName = modelFileName
@@ -2219,11 +2221,21 @@ final class VaultClassifierViewModel: ObservableObject {
                       value.isFinite else { return nil }
                 return value
             }
+        // Empty/blank/unparseable → nil = inherit the global cap; the struct
+        // clamps a set value to 1–16.
+        let maximumTags: Int?
+        if let raw = data["maximumTags"] as? String {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            maximumTags = trimmed.isEmpty ? nil : Int(trimmed)
+        } else {
+            maximumTags = data["maximumTags"] as? Int
+        }
         let overrides = LocalModelOverrides(
             houseRules: houseRules,
             allowDecline: data["allowDecline"] as? Bool,
             confidenceThresholds: rawThresholds.isEmpty ? nil : rawThresholds,
-            thumbnailOcrEvidence: data["thumbnailOcrEvidence"] as? Bool
+            thumbnailOcrEvidence: data["thumbnailOcrEvidence"] as? Bool,
+            maximumTags: maximumTags
         )
         return .init(
             typeID: typeID,
@@ -2516,6 +2528,7 @@ final class VaultClassifierViewModel: ObservableObject {
                             "allowDecline": overrides.allowDecline ?? NSNull(),
                             "confidenceThresholds": overrides.confidenceThresholds ?? NSNull(),
                             "thumbnailOcrEvidence": overrides.thumbnailOcrEvidence ?? NSNull(),
+                            "maximumTags": overrides.maximumTags ?? NSNull(),
                         ] as [String: Any]
                     } ?? NSNull(),
                     "modelFileName": classifierType.modelFileName ?? "",
@@ -2970,7 +2983,8 @@ final class VaultClassifierViewModel: ObservableObject {
                     houseRules: input.overrides?.houseRules,
                     allowDecline: input.overrides?.allowDecline,
                     confidenceThresholds: input.overrides?.confidenceThresholds,
-                    thumbnailOcrEvidence: input.overrides?.thumbnailOcrEvidence
+                    thumbnailOcrEvidence: input.overrides?.thumbnailOcrEvidence,
+                    maximumTags: input.overrides?.maximumTags
                 )
             case "saveClassifierTypeResearch":
                 let input = try Self.parseClassifierTypeResearchWebInput(data)

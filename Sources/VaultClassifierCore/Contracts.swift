@@ -298,12 +298,16 @@ public struct LocalModelOverrides: Codable, Equatable, Sendable {
     /// Per-type: whether the browser extension OCRs the thumbnail and sends its
     /// text as classification evidence. nil = inherit the default (ON).
     public var thumbnailOcrEvidence: Bool?
+    /// Per-type cap on tags kept per video. nil = inherit the global
+    /// `LocalLLMSettings.maximumTags`. Clamped 1–16 when set.
+    public var maximumTags: Int?
 
     public init(
         houseRules: String? = nil,
         allowDecline: Bool? = nil,
         confidenceThresholds: [Double]? = nil,
-        thumbnailOcrEvidence: Bool? = nil
+        thumbnailOcrEvidence: Bool? = nil,
+        maximumTags: Int? = nil
     ) {
         self.houseRules = houseRules.map { String($0.prefix(4_000)) }
         self.allowDecline = allowDecline
@@ -317,6 +321,7 @@ public struct LocalModelOverrides: Codable, Equatable, Sendable {
             self.confidenceThresholds = nil
         }
         self.thumbnailOcrEvidence = thumbnailOcrEvidence
+        self.maximumTags = maximumTags.map { min(16, max(1, $0)) }
     }
 
     /// Effective value with the default applied.
@@ -324,8 +329,14 @@ public struct LocalModelOverrides: Codable, Equatable, Sendable {
         thumbnailOcrEvidence ?? Self.defaultThumbnailOcrEvidence
     }
 
+    /// The effective tag cap: the per-type override when set, else the global.
+    public func effectiveMaximumTags(global: Int) -> Int {
+        maximumTags ?? global
+    }
+
     public var isEmpty: Bool {
-        houseRules == nil && allowDecline == nil && confidenceThresholds == nil && thumbnailOcrEvidence == nil
+        houseRules == nil && allowDecline == nil && confidenceThresholds == nil
+            && thumbnailOcrEvidence == nil && maximumTags == nil
     }
 }
 

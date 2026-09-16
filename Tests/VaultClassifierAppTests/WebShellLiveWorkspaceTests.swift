@@ -60,7 +60,7 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         XCTAssertTrue(overrideBody.contains("allowDecline"))
         XCTAssertTrue(overrideBody.contains("confidenceBand"))
         XCTAssertTrue(overrideBody.contains("thumbnailOcrEvidence"), "per-type thumbnail-OCR toggle missing")
-        XCTAssertFalse(overrideBody.contains("maximumTags"))
+        XCTAssertTrue(overrideBody.contains("maximumTags"), "per-type max-tags field missing")
     }
 
     func testShellGroupsGranularResearchControlsGloballyAndPerType() throws {
