@@ -57,7 +57,7 @@ public enum ClassificationPromptAssembler {
         lines.append("Rules:")
         lines.append("- Pick the tag(s) that best match the video's topic; prefer specific child tags over broad parents. Infer the topic from the title even when it is short — a named subject (a person, product, game, show, place, event, or theme) is usually enough to place it, so do not decline just because the title is brief.")
         lines.append("- Assign at most \(maximumTags) tags.")
-        lines.append("- For each chosen tag give a confidence from 1 (low) to 5 (high).")
+        lines.append("- For each chosen tag give a confidence from 1 to 5 for how sure you are the tag is correct (not how popular the tag is): 5 = the evidence names a subject you are certain maps to this tag; 4 = strong evidence; 3 = a plausible inference; 2 = a weak guess; 1 = little basis. Reserve 4 and 5 for clear cases, and use 1-2 when you are mostly guessing.")
         lines.append("- If the title is uninformative, use the creator prior when provided, but treat it as a weak, partial sample of what the creator makes — it may not represent them fully.")
         lines.append("- Reply with one JSON object only: {\"tags\":[{\"name\":\"<tag name>\",\"confidence\":<1-5>}]}. Use tag names exactly as written. No prose.")
         lines.append("- Use none only when the title names no topic at all — a bare question, reaction, or phrase with no subject. Do not force a tag onto a genuinely topicless title, and do not invent a topic the title does not state.")
