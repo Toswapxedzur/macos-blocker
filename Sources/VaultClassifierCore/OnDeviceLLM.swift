@@ -33,15 +33,13 @@ public struct LLMTagScore: Sendable, Equatable {
     }
 }
 
-/// The model's structured classification output (`{ tags, unknownTerms }`).
+/// The model's structured classification output. (The former `unknownTerms`
+/// field was dead — always `[]` from every engine — and is removed; research
+/// needs will come from the dedicated Decode 2 in RESEARCH-REDESIGN Phase 2.)
 public struct LLMClassificationResult: Sendable, Equatable {
     public let tags: [LLMTagScore]
-    /// Salient entities/creators the model could not confidently place — the
-    /// grounded-research queue's input.
-    public let unknownTerms: [String]
-    public init(tags: [LLMTagScore], unknownTerms: [String] = []) {
+    public init(tags: [LLMTagScore]) {
         self.tags = tags
-        self.unknownTerms = unknownTerms
     }
 }
 
@@ -134,7 +132,7 @@ public struct StubOnDeviceLLM: OnDeviceLLM, OnDeviceResearchSubjectExtracting {
             .filter { !$0.isEmpty && haystack.contains($0.lowercased()) }
             .prefix(request.maximumTags)
             .map { LLMTagScore(name: $0, confidence: defaultConfidence) }
-        return LLMClassificationResult(tags: Array(chosen), unknownTerms: [])
+        return LLMClassificationResult(tags: Array(chosen))
     }
 
     public func extractResearchSubject(_ request: LLMResearchSubjectRequest) async throws -> ResearchSubject? {

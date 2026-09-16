@@ -24,7 +24,7 @@ final class LocalLLMModelTests: XCTestCase {
             classifierTypeID: "type", platformID: "youtube", entryID: "youtube:video:v1",
             creatorID: "youtube:handle:c1", treeID: "tree", treeRevision: 1,
             tags: [ScoredTag(tagID: "games", confidence: 5), ScoredTag(tagID: "politics", confidence: 3)],
-            unknownTerms: ["HermitCraft"], knowledgeRefs: ["term:hermitcraft"],
+            knowledgeRefs: ["term:hermitcraft"],
             source: .modelKnowledge, modelVersion: "llama-3.2-3b/v1"
         )
         let data = try JSONEncoder().encode(original)
