@@ -1,9 +1,8 @@
 # Vault Classifier — Research & Classification Redesign
 
-> **Status: DRAFT for owner review (2026-09-16).** Do not build until the text is
-> settled (project convention: design doc first, like `REWORK-local-model-centered.md`
-> and `PHASE3-BUILD-PLAN.md`). This supersedes the current research trigger/queue
-> design once approved.
+> **Status: APPROVED — build in progress (owner said "proceed with plan", 2026-09-16).**
+> Phase 0 Experiment 1 is complete (see §6/§10/§13); Phase 1 next. Supersedes the
+> current research trigger/queue design.
 
 ## 1. Why
 
@@ -128,6 +127,17 @@ Self-report failed before (4/5 self-reported on a 37%-true case) — but that wa
   is not better-calibrated than softmax, Decode 1 stays name-only + softmax and we
   don't pay the extra generation. This is an explicit off-ramp, not a commitment.
 
+> **Phase-0 Experiment 1 result (2026-09-16, dev Qwen2.5-7B, 65 labeled items,
+> 150 emitted tags — off-ramp NOT taken).** Head-to-head from a single structured
+> decode (`VaultClassifierEval calib`): model-emitted confidence beat first-token
+> softmax on every axis — **ECE 0.287 vs 0.353, strictly monotone vs non-monotone
+> (softmax c3 0.12 < c2 0.14), separation Δ 0.54 vs 0.30.** Decisive tell: tags the
+> model rates ≤2 (31 of 150) are **0% correct** — a clean suppression gate; softmax
+> instead crams 99/125 tags into c4–c5 (its overconfidence). This held with only the
+> *basic* "give a confidence 1–5" instruction — before §6's rubric/few-shot. **We
+> adopt structured model-emitted confidence for Decode 1**; softmax stays as the
+> cheap cross-check.
+
 ## 7. Research trigger & queue
 
 - **Candidates** = every emitted `term` with `urgency ≥ user floor`. No decline
@@ -169,9 +179,10 @@ Per-type overrides shrink to **on/off (+ optional provider)**.
 Extend `VaultClassifierEval` and run on the real engine (laptop 7B for quality,
 mini1 for weak-hardware latency):
 
-1. **Model-confidence vs softmax calibration.** Add model-emitted confidence to
-   Decode 1; on `eval-set.json` compare reliability (precision-by-confidence,
-   ECE) of model-confidence vs softmax. Winner drives §6's off-ramp.
+1. **Model-confidence vs softmax calibration.** ✅ DONE 2026-09-16 (`calib` mode,
+   dev 7B): model confidence wins — ECE 0.287 vs 0.353, monotone, Δ0.54 vs 0.30;
+   conf≤2 is 0% correct. Off-ramp not taken → structured Decode 1 with model
+   confidence. See §6 result box.
 2. **Urgency form.** Compare urgency as a 1–5 number vs a named scale — which
    correlates better with "actually needed research" (proxy: decline/correction/
    later-corrected). Settles §2.4/§11.
@@ -181,8 +192,9 @@ mini1 for weak-hardware latency):
 ## 11. Open questions (to close before/with the eval)
 
 - **Urgency scale:** 1–5 number vs named options (→ experiment 2).
-- **Confidence off-ramp:** if model-confidence loses to softmax, keep softmax and
-  drop structured Decode 1 (→ experiment 1).
+- ~~**Confidence off-ramp:** if model-confidence loses to softmax, keep softmax and
+  drop structured Decode 1 (→ experiment 1).~~ **CLOSED 2026-09-16:** model
+  confidence won decisively; structured Decode 1 adopted.
 - **Author-accumulation defaults:** the shipped default threshold (N, L, W).
 - **Decline-with-no-term:** does a bare decline still enqueue a fallback subject,
   or only explicit terms drive research?
@@ -214,3 +226,15 @@ mini1 for weak-hardware latency):
 - 2026-09-16 — Cut A confirmed: native provider-grounding only; drop rawSearch.
 - 2026-09-16 — Latency measured (mini1 bench): confidence/urgency generation is
   cheap; prefill dominates; design targets Apple Silicon for <500 ms.
+- 2026-09-16 — **Phase-0 Experiment 1 RUN & CLOSED.** Built `classifyWithModelConfidence`
+  + `namesWithConfidenceGrammar` (engine) and the `calib` eval mode; refactored the
+  pipeline (`gatherEvidence` + `primaryPromptParts`, behavior-preserving, 12/12 tests).
+  Result (dev 7B, 65 items): model-emitted confidence beats softmax (ECE 0.287<0.353,
+  monotone, Δ0.54>0.30, conf≤2 = 0% correct). Structured Decode 1 with model
+  confidence adopted; softmax retained as cross-check.
+- 2026-09-16 — **Urgency form (Experiment 2) — data gap surfaced.** `eval-set.json`
+  has no urgency ground truth, so the specified urgency eval can't run yet without a
+  weak proxy. Experiment 1 already shows the model emits a well-calibrated 1–5
+  self-assessment; PROPOSED default is urgency = **Int 1–5** (symmetry with
+  confidence, reuses the rubric), with a dedicated urgency eval deferred until real
+  urgency-labeled data exists. Owner to confirm.

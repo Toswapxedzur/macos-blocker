@@ -2,6 +2,36 @@ import Foundation
 import VaultClassifierCore
 import Cllama
 
+// MARK: - Calibration diagnostics (RESEARCH-REDESIGN Phase 0, Experiment 1)
+
+/// One predicted tag carrying BOTH confidence signals from a single structured
+/// decode, so the calibration eval can score them head-to-head on the same tag
+/// choice: `modelConfidence` is the digit the model emitted (`…,"confidence":N`),
+/// `softmaxConfidence` is the production signal (renormalized first-token softmax
+/// mapped through the same thresholds). `softmaxProbability` is the raw prob for
+/// ECE binning.
+public struct LLMCalibrationTag: Sendable, Equatable {
+    public let name: String
+    public let modelConfidence: Int
+    public let softmaxConfidence: Int
+    public let softmaxProbability: Double
+    public init(name: String, modelConfidence: Int, softmaxConfidence: Int, softmaxProbability: Double) {
+        self.name = name
+        self.modelConfidence = modelConfidence
+        self.softmaxConfidence = softmaxConfidence
+        self.softmaxProbability = softmaxProbability
+    }
+}
+
+public struct LLMCalibrationResult: Sendable, Equatable {
+    public let tags: [LLMCalibrationTag]
+    public let declined: Bool
+    public init(tags: [LLMCalibrationTag], declined: Bool) {
+        self.tags = tags
+        self.declined = declined
+    }
+}
+
 // In-process llama.cpp engine implementing the FINAL Phase-0 output contract
 // (REWORK decision log, 2026-08-15):
 //
@@ -208,6 +238,123 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
         return LLMClassificationResult(tags: tags, unknownTerms: [])
     }
 
+    /// Experiment-1 structured decode: same prompt + same first-token softmax
+    /// capture as `classify`, but the grammar lets the model ALSO emit its own
+    /// confidence digit per tag (`Name","confidence":N`). Returns both signals so
+    /// the calibration eval can decide whether model-emitted confidence beats
+    /// softmax (RESEARCH-REDESIGN §6 off-ramp). Diagnostic-only; the production
+    /// `classify` above is untouched. Greedy so the digit is the model's argmax.
+    public func classifyWithModelConfidence(_ request: LLMClassificationRequest) async throws -> LLMCalibrationResult {
+        let effectiveAllowDecline = request.allowDecline ?? configuration.allowDecline
+        let effectiveThresholds = request.confidenceThresholds ?? configuration.confidenceThresholds
+        let maximumTags = max(1, request.maximumTags)
+        guard let grammar = Self.namesWithConfidenceGrammar(allowed: request.allowedTagNames, allowDecline: effectiveAllowDecline, maximumTags: maximumTags) else {
+            return LLMCalibrationResult(tags: [], declined: true)
+        }
+        let prompt = request.staticPrefix + "\n\n" + request.dynamicSuffix
+        let tokens = try tokenize(prompt)
+        guard tokens.count + 24 <= contextTokenLimit else {
+            throw OnDeviceLLMError.inference("prompt-exceeds-context (\(tokens.count) tokens)")
+        }
+        try prefillReusingCache(tokens, errorLabel: "prompt-decode-failed")
+
+        let sampler = llama_sampler_chain_init(llama_sampler_chain_default_params())
+        defer { llama_sampler_free(sampler) }
+        llama_sampler_chain_add(sampler, llama_sampler_init_grammar(vocab, grammar, "root"))
+        llama_sampler_chain_add(sampler, llama_sampler_init_greedy())
+
+        let candidateNames = effectiveAllowDecline
+            ? request.allowedTagNames + [Self.declineLiteral]
+            : request.allowedTagNames
+        let candidateFirstTokens = Set(candidateNames.compactMap { try? tokenize($0, addSpecial: false).first })
+
+        // Between two `{"name":"…","confidence":N}` objects the scaffold emits
+        // `},{"name":"` (no leading quote — the name's closing quote was consumed
+        // by the confidence clause). A name begins at step 0 and right after this
+        // separator completes, exactly where the first-token softmax is measured.
+        let separatorText = "},{\"name\":\""
+        let decodeCap = min(
+            max(1, contextTokenLimit - tokens.count - 1),
+            max(configuration.maximumOutputTokens, maximumTags * 24 + 8)
+        )
+        var generated = ""
+        var nameStartProbabilities: [Double] = []
+        var awaitingNameStart = true
+        for _ in 0..<decodeCap {
+            let token = llama_sampler_sample(sampler, context, -1)
+            if llama_vocab_is_eog(vocab, token) { break }
+            if awaitingNameStart {
+                nameStartProbabilities.append(probability(of: token, among: candidateFirstTokens))
+                awaitingNameStart = false
+            }
+            generated += piece(for: token)
+            if generated.hasSuffix(separatorText) { awaitingNameStart = true }
+            var single = [token]
+            let status = single.withUnsafeMutableBufferPointer { buffer in
+                llama_decode(context, llama_batch_get_one(buffer.baseAddress, 1))
+            }
+            guard status == 0 else {
+                cachedTokens = []
+                llama_memory_seq_rm(llama_get_memory(context), 0, 0, -1)
+                throw OnDeviceLLMError.inference("generation-decode-failed (\(status))")
+            }
+            cachedTokens.append(token)
+        }
+
+        if generated.trimmingCharacters(in: .whitespacesAndNewlines) == Self.declineLiteral {
+            return LLMCalibrationResult(tags: [], declined: true)
+        }
+        // Each object continuation is `Name","confidence":N`; split on the
+        // inter-object separator, then on the name→confidence boilerplate.
+        let confidenceBoilerplate = "\",\"confidence\":"
+        let chunks = generated.components(separatedBy: separatorText)
+        var tags: [LLMCalibrationTag] = []
+        var seen = Set<String>()
+        for (index, chunk) in chunks.enumerated() {
+            guard let range = chunk.range(of: confidenceBoilerplate) else { continue }
+            let name = String(chunk[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard request.allowedTagNames.contains(name), seen.insert(name).inserted else { continue }
+            let digit = chunk[range.upperBound...].first.flatMap { Int(String($0)) } ?? 0
+            let probability = index < nameStartProbabilities.count ? nameStartProbabilities[index] : 0
+            tags.append(LLMCalibrationTag(
+                name: name,
+                modelConfidence: min(5, max(1, digit)),
+                softmaxConfidence: Self.confidence(fromProbability: probability, thresholds: effectiveThresholds),
+                softmaxProbability: probability
+            ))
+        }
+        return LLMCalibrationResult(tags: tags, declined: tags.isEmpty)
+    }
+
+    /// Truncate the KV cache to the longest common prefix with `tokens`, drop the
+    /// rest, and prefill the remaining suffix in chunks (always leaving ≥1 token
+    /// to decode). Mirrors the reuse logic inlined in `classify`; factored out for
+    /// the calibration decode so the hot path stays byte-for-byte unchanged.
+    private func prefillReusingCache(_ tokens: [llama_token], errorLabel: String) throws {
+        var common = 0
+        while common < min(tokens.count, cachedTokens.count), tokens[common] == cachedTokens[common] {
+            common += 1
+        }
+        if common == tokens.count { common = max(0, common - 1) }
+        llama_memory_seq_rm(llama_get_memory(context), 0, llama_pos(common), -1)
+        cachedTokens = Array(tokens.prefix(common))
+        var index = common
+        while index < tokens.count {
+            let end = min(index + 512, tokens.count)
+            var chunk = Array(tokens[index..<end])
+            let status = chunk.withUnsafeMutableBufferPointer { buffer in
+                llama_decode(context, llama_batch_get_one(buffer.baseAddress, Int32(buffer.count)))
+            }
+            guard status == 0 else {
+                cachedTokens = []
+                llama_memory_seq_rm(llama_get_memory(context), 0, 0, -1)
+                throw OnDeviceLLMError.inference("\(errorLabel) (\(status))")
+            }
+            cachedTokens.append(contentsOf: tokens[index..<end])
+            index = end
+        }
+    }
+
     /// A separate tiny constrained decode used only after the name grammar
     /// returned `none`. It copies one salient named noun phrase from the local
     /// title/summary; the common classification loop above is untouched.
@@ -387,6 +534,43 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
         }
         // The separator is the JSON boilerplate between two {"name":"…"} objects.
         lines.append("sep ::= \"\\\"},{\\\"name\\\":\\\"\"")
+        lines.append("name ::= " + literals.joined(separator: " | "))
+        return lines.joined(separator: "\n")
+    }
+
+    /// Like `namesGrammar`, but each tag is a full object continuation
+    /// `Name","confidence":N` so the model emits its OWN confidence digit — the
+    /// structured Decode 1 of RESEARCH-REDESIGN §5. Continues the same prompt
+    /// runway (`{"tags":[{"name":"`); the inter-object separator is `},{"name":"`.
+    /// Diagnostic-only (calibration eval); returns nil when no name is usable.
+    static func namesWithConfidenceGrammar(allowed: [String], allowDecline: Bool = true, maximumTags: Int = 1) -> String? {
+        let literals = allowed
+            .filter { !$0.isEmpty && !$0.contains("\n") && !$0.contains("\r") }
+            .map { name in
+                "\"" + name
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "\"", with: "\\\"") + "\""
+            }
+        guard !literals.isEmpty else { return nil }
+        let bound = max(1, maximumTags)
+        let extra = bound - 1
+        var lines: [String] = []
+        let rootBody = extra > 0 ? "obj tail0" : "obj"
+        if allowDecline, !allowed.contains(declineLiteral) {
+            lines.append("root ::= \"\(declineLiteral)\" | \(rootBody)")
+        } else {
+            lines.append("root ::= \(rootBody)")
+        }
+        for i in 0..<extra {
+            let continuation = i == extra - 1 ? "" : " tail\(i + 1)"
+            lines.append("tail\(i) ::= \"\" | osep obj\(continuation)")
+        }
+        lines.append("obj ::= name conf")
+        // conf emits `","confidence":` then a single 1–5 digit.
+        lines.append("conf ::= \"\\\",\\\"confidence\\\":\" digit")
+        lines.append("digit ::= \"1\" | \"2\" | \"3\" | \"4\" | \"5\"")
+        // osep is the boilerplate between two objects: `},{"name":"`.
+        lines.append("osep ::= \"},{\\\"name\\\":\\\"\"")
         lines.append("name ::= " + literals.joined(separator: " | "))
         return lines.joined(separator: "\n")
     }

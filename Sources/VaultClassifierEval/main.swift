@@ -282,6 +282,106 @@ case "abtest":
     print("\nregressions (baseline right → grounded wrong): \(regressions.count)")
     for (t, ex) in regressions.prefix(20) { print("  ▼ \(t.prefix(50))\n      via \(ex.joined(separator: "  "))") }
 
+case "calib":
+    // RESEARCH-REDESIGN Phase 0, Experiment 1: does model-EMITTED confidence beat
+    // the production first-token SOFTMAX confidence? One structured decode per
+    // video yields both signals for the same tag choices, so this is a fair
+    // head-to-head. We score each emitted tag as correct (in truth) or wrong, bin
+    // by each confidence level, and report precision-by-level + ECE for both.
+    // The winner decides §6's off-ramp (keep softmax, or adopt model confidence).
+    guard args.count > 1, let data = try? Data(contentsOf: URL(fileURLWithPath: args[1])),
+          let set = try? JSONDecoder().decode(EvalSet.self, from: data) else { die("could not read eval set") }
+    // Calibration needs KNOWN truth per item, and this schema can't tell an
+    // unlabeled item (trueTags omitted) from a genuine "no tag" one — so restrict
+    // to items that were actually labeled with ≥1 tag. Pass --with-declines to
+    // also include trueTags=[] rows as true-decline evidence.
+    let includeDeclines = args.contains("--with-declines")
+    let labeled = includeDeclines ? set.items : set.items.filter { !$0.trueTags.isEmpty }
+    guard labeled.contains(where: { !$0.trueTags.isEmpty }) else { die("no items labeled yet — fill in trueTags") }
+    let verbose = args.contains("-v") || args.contains("--dump")
+
+    let modelOverride = args.compactMap { $0.hasPrefix("--model=") ? String($0.dropFirst(8)) : nil }.first
+    guard let modelPath = modelOverride ?? VaultLocalLLMEngine.defaultModelPath(preferredFileName: state.settings.localLLM.modelFileName) else {
+        die("no .gguf model found for this environment")
+    }
+    let engine: VaultLocalLLMEngine
+    do { engine = try VaultLocalLLMEngine(modelPath: modelPath) } catch { die("engine load failed: \(error)") }
+
+    let settings = state.settings.localLLM
+    let research = state.settings.research
+    let overrides = type.localModelOverrides
+    // Default cap 3 so multi-tag videos populate the lower-confidence bins; the
+    // production gate is intentionally NOT applied — calibration needs raw tags.
+    let maxTags = args.compactMap { $0.hasPrefix("--max=") ? Int($0.dropFirst(6)) : nil }.first ?? 3
+    let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: maxTags)
+    print("• model: \((modelPath as NSString).lastPathComponent)  •  \(labeled.count) labeled items  •  maxTags \(maxTags)  •  type \"\(type.name)\"\n")
+
+    // Per confidence LEVEL (1–5): how many emitted tags landed there, and how many
+    // were correct. Kept separately for the model's digit and the softmax level.
+    var modelN = [Int: Int](), modelHit = [Int: Int]()
+    var softN = [Int: Int](), softHit = [Int: Int]()
+    var declined = 0, emittedTags = 0
+
+    for item in labeled {
+        let truth = Set(item.trueTags.compactMap { tagIDByName[$0.lowercased()] })
+        let parts = pipeline.primaryPromptParts(
+            title: item.title, entryID: item.entryID, creatorID: item.creatorID, platformID: "youtube",
+            classifierType: type, tree: tree, catalog: catalog,
+            houseRules: overrides?.houseRules ?? settings.houseRules,
+            knowledgeTTLDays: research.knowledgeTTLDays,
+            maxKnowledgePerVideo: research.maxKnowledgePerVideo
+        )
+        let result = try await engine.classifyWithModelConfidence(LLMClassificationRequest(
+            staticPrefix: parts.staticPrefix,
+            dynamicSuffix: parts.dynamicSuffix,
+            allowedTagNames: parts.allowedTagNames,
+            maximumTags: maxTags,
+            allowDecline: overrides?.allowDecline ?? settings.allowDecline,
+            confidenceThresholds: overrides?.confidenceThresholds ?? settings.confidenceThresholds
+        ))
+        if result.tags.isEmpty { declined += 1 }
+        for tag in result.tags {
+            guard let tagID = parts.nameToTagID[tag.name] else { continue }
+            emittedTags += 1
+            let correct = truth.contains(tagID) ? 1 : 0
+            modelN[tag.modelConfidence, default: 0] += 1; modelHit[tag.modelConfidence, default: 0] += correct
+            softN[tag.softmaxConfidence, default: 0] += 1; softHit[tag.softmaxConfidence, default: 0] += correct
+            if verbose {
+                let mark = correct == 1 ? "✓" : "✗"
+                print(String(format: "%@ %-28@ model c%d  soft c%d (p=%.2f)  | %@",
+                             mark, tag.name as NSString, tag.modelConfidence, tag.softmaxConfidence,
+                             tag.softmaxProbability, String(item.title.prefix(40))))
+            }
+        }
+    }
+
+    // Representative probability for each 1–5 level, so both signals get an ECE.
+    let levelProbability: [Int: Double] = [1: 0.1, 2: 0.3, 3: 0.5, 4: 0.7, 5: 0.9]
+    func report(_ label: String, _ n: [Int: Int], _ hit: [Int: Int]) {
+        print("\n=== \(label) — precision by confidence level ===")
+        print("level    n    correct   precision   (target p)")
+        var ece = 0.0, total = 0, monotoneOK = true, lastPrecision = -1.0
+        for level in 1...5 { total += n[level] ?? 0 }
+        for level in 1...5 {
+            let count = n[level] ?? 0, correct = hit[level] ?? 0
+            let precision = count == 0 ? 0 : Double(correct) / Double(count)
+            let target = levelProbability[level] ?? 0
+            if count > 0 { ece += Double(count) / Double(max(1, total)) * abs(precision - target) }
+            if count > 0 { if precision < lastPrecision - 0.001 { monotoneOK = false }; lastPrecision = precision }
+            print(String(format: "  c%d  %5d   %5d      %.2f        %.1f", level, count, correct, precision, target))
+        }
+        // Separation: precision of the top two levels vs the bottom two.
+        let hi = (4...5).reduce(0) { $0 + (hit[$1] ?? 0) }, hiN = (4...5).reduce(0) { $0 + (n[$1] ?? 0) }
+        let lo = (1...2).reduce(0) { $0 + (hit[$1] ?? 0) }, loN = (1...2).reduce(0) { $0 + (n[$1] ?? 0) }
+        let hiP = hiN == 0 ? 0 : Double(hi) / Double(hiN), loP = loN == 0 ? 0 : Double(lo) / Double(loN)
+        print(String(format: "  ECE %.3f   monotone %@   high(4-5) p=%.2f (n=%d)   low(1-2) p=%.2f (n=%d)   separation Δ=%.2f",
+                     ece, monotoneOK ? "yes" : "NO", hiP, hiN, loP, loN, hiP - loP))
+    }
+    print("\n\(emittedTags) tags emitted over \(labeled.count) videos  •  \(declined) declined")
+    report("MODEL-emitted confidence", modelN, modelHit)
+    report("SOFTMAX confidence (production)", softN, softHit)
+    print("\nVerdict rule: prefer the signal with lower ECE + monotone precision + larger separation Δ.")
+
 default:
-    die("usage: VaultClassifierEval sample <N> [out.json] | score <in.json> | abtest <in.json>")
+    die("usage: VaultClassifierEval sample <N> [out.json] | score <in.json> | abtest <in.json> | calib <in.json>")
 }
