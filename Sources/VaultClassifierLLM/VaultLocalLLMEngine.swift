@@ -122,134 +122,38 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
         llama_model_free(model)
     }
 
+    /// Decode 1 (RESEARCH-REDESIGN Phase 2). The structured decode emits the
+    /// model's OWN confidence digit per tag — Experiment 1 (2026-09-16) showed it
+    /// is better calibrated than the first-token softmax (ECE 0.287 vs 0.353,
+    /// monotone, conf≤2 = 0% correct). The softmax level is still computed and
+    /// carried as a cheap cross-check on each `LLMTagScore`.
     public func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult {
-        let effectiveAllowDecline = request.allowDecline ?? configuration.allowDecline
-        let effectiveThresholds = request.confidenceThresholds ?? configuration.confidenceThresholds
-        let maximumTags = max(1, request.maximumTags)
-        guard let grammar = Self.namesGrammar(allowed: request.allowedTagNames, allowDecline: effectiveAllowDecline, maximumTags: maximumTags) else {
-            // No usable tag names → definitively empty, matching the stub's shape.
-            return LLMClassificationResult(tags: [])
-        }
-        let prompt = request.staticPrefix + "\n\n" + request.dynamicSuffix
-        let tokens = try tokenize(prompt)
-        guard tokens.count + 24 <= contextTokenLimit else {
-            throw OnDeviceLLMError.inference("prompt-exceeds-context (\(tokens.count) tokens)")
-        }
-
-        // Static-prefix reuse: keep the longest common prefix of the KV cache,
-        // drop the rest, and prefill only what changed. Always leave at least
-        // one token to decode so the call ends with fresh logits.
-        var common = 0
-        while common < min(tokens.count, cachedTokens.count), tokens[common] == cachedTokens[common] {
-            common += 1
-        }
-        if common == tokens.count { common = max(0, common - 1) }
-        llama_memory_seq_rm(llama_get_memory(context), 0, llama_pos(common), -1)
-        cachedTokens = Array(tokens.prefix(common))
-
-        var index = common
-        while index < tokens.count {
-            let end = min(index + 512, tokens.count)
-            var chunk = Array(tokens[index..<end])
-            let status = chunk.withUnsafeMutableBufferPointer { buffer in
-                llama_decode(context, llama_batch_get_one(buffer.baseAddress, Int32(buffer.count)))
-            }
-            guard status == 0 else {
-                cachedTokens = []
-                llama_memory_seq_rm(llama_get_memory(context), 0, 0, -1)
-                throw OnDeviceLLMError.inference("prompt-decode-failed (\(status))")
-            }
-            cachedTokens.append(contentsOf: tokens[index..<end])
-            index = end
-        }
-
-        let sampler = llama_sampler_chain_init(llama_sampler_chain_default_params())
-        defer { llama_sampler_free(sampler) }
-        llama_sampler_chain_add(sampler, llama_sampler_init_grammar(vocab, grammar, "root"))
-        if configuration.temperature > 0 {
-            llama_sampler_chain_add(sampler, llama_sampler_init_temp(Float(configuration.temperature)))
-            llama_sampler_chain_add(sampler, llama_sampler_init_dist(0xC1A5))
-        } else {
-            llama_sampler_chain_add(sampler, llama_sampler_init_greedy())
-        }
-
-        // Confidence is measured among the legal first moves: the distinct
-        // first tokens of the allowed names. Renormalizing over that set (not
-        // the full vocabulary) is what separates "certain" from "guessing" —
-        // full-vocabulary mass on structurally plausible but grammar-illegal
-        // tokens would otherwise dilute every probability.
-        let candidateNames = effectiveAllowDecline
-            ? request.allowedTagNames + [Self.declineLiteral]
-            : request.allowedTagNames
-        let candidateFirstTokens = Set(candidateNames.compactMap { try? tokenize($0, addSpecial: false).first })
-
-        // The model emits up to `maximumTags` names as JSON-object continuations
-        // (`Name"},{"name":"Next…`): the separator IS the scaffold's own
-        // boilerplate, so the output stays a coherent continuation of the
-        // `{"tags":[{"name":"` runway and the accuracy-critical scaffold is
-        // preserved. Each name's first token gets its own renormalized-softmax
-        // confidence, captured the moment that name begins (step 0, or right
-        // after a separator completes) — identical calibration to the former
-        // single-name path, now applied per tag.
-        let separatorText = "\"},{\"name\":\""
-        let decodeCap = min(
-            max(1, contextTokenLimit - tokens.count - 1),
-            max(configuration.maximumOutputTokens, maximumTags * 16 + 8)
-        )
-        var generated = ""
-        var nameStartProbabilities: [Double] = []
-        var awaitingNameStart = true
-        for _ in 0..<decodeCap {
-            let token = llama_sampler_sample(sampler, context, -1)
-            if llama_vocab_is_eog(vocab, token) { break }
-            if awaitingNameStart {
-                nameStartProbabilities.append(probability(of: token, among: candidateFirstTokens))
-                awaitingNameStart = false
-            }
-            generated += piece(for: token)
-            if generated.hasSuffix(separatorText) { awaitingNameStart = true }
-            var single = [token]
-            let status = single.withUnsafeMutableBufferPointer { buffer in
-                llama_decode(context, llama_batch_get_one(buffer.baseAddress, 1))
-            }
-            guard status == 0 else {
-                cachedTokens = []
-                llama_memory_seq_rm(llama_get_memory(context), 0, 0, -1)
-                throw OnDeviceLLMError.inference("generation-decode-failed (\(status))")
-            }
-            cachedTokens.append(token)
-        }
-
-        // Split the JSON-object continuations back into names, pair each with the
-        // confidence captured when it began, keep only real taxonomy names (the
-        // decline literal `none` falls out here → an empty classification), and
-        // de-duplicate keeping the first (highest-priority) occurrence.
-        let rawNames = generated
-            .components(separatedBy: separatorText)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        var tags: [LLMTagScore] = []
-        var seen = Set<String>()
-        for (index, rawName) in rawNames.enumerated() {
-            guard request.allowedTagNames.contains(rawName), seen.insert(rawName).inserted else { continue }
-            let firstTokenProbability = index < nameStartProbabilities.count ? nameStartProbabilities[index] : 0
-            let confidence = Self.confidence(fromProbability: firstTokenProbability, thresholds: effectiveThresholds)
-            tags.append(LLMTagScore(name: rawName, confidence: confidence))
-        }
-        return LLMClassificationResult(tags: tags)
+        let decoded = try await structuredDecode(request)
+        return LLMClassificationResult(tags: decoded.tags.map {
+            LLMTagScore(name: $0.name, confidence: $0.modelConfidence, softmaxConfidence: $0.softmaxConfidence)
+        })
     }
 
-    /// Experiment-1 structured decode: same prompt + same first-token softmax
-    /// capture as `classify`, but the grammar lets the model ALSO emit its own
-    /// confidence digit per tag (`Name","confidence":N`). Returns both signals so
-    /// the calibration eval can decide whether model-emitted confidence beats
-    /// softmax (RESEARCH-REDESIGN §6 off-ramp). Diagnostic-only; the production
-    /// `classify` above is untouched. Greedy so the digit is the model's argmax.
+    /// Diagnostic entry point for the calibration eval: the same structured decode
+    /// as `classify`, but exposing BOTH raw signals per tag for head-to-head
+    /// scoring (`VaultClassifierEval calib`).
     public func classifyWithModelConfidence(_ request: LLMClassificationRequest) async throws -> LLMCalibrationResult {
+        let decoded = try await structuredDecode(request)
+        return LLMCalibrationResult(tags: decoded.tags, declined: decoded.declined)
+    }
+
+    /// The shared structured decode behind both `classify` and
+    /// `classifyWithModelConfidence`: grammar-constrained `{"name":"…","confidence":N}`
+    /// objects continuing the prompt's `{"tags":[{"name":"` runway, up to
+    /// `maximumTags`, with the decline literal when enabled. Each tag carries the
+    /// model's emitted digit AND the renormalized first-token softmax (captured at
+    /// each name-start). Greedy so the digit is the model's argmax.
+    private func structuredDecode(_ request: LLMClassificationRequest) async throws -> (tags: [LLMCalibrationTag], declined: Bool) {
         let effectiveAllowDecline = request.allowDecline ?? configuration.allowDecline
         let effectiveThresholds = request.confidenceThresholds ?? configuration.confidenceThresholds
         let maximumTags = max(1, request.maximumTags)
         guard let grammar = Self.namesWithConfidenceGrammar(allowed: request.allowedTagNames, allowDecline: effectiveAllowDecline, maximumTags: maximumTags) else {
-            return LLMCalibrationResult(tags: [], declined: true)
+            return ([], true)
         }
         let prompt = request.staticPrefix + "\n\n" + request.dynamicSuffix
         let tokens = try tokenize(prompt)
@@ -302,10 +206,11 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
         }
 
         if generated.trimmingCharacters(in: .whitespacesAndNewlines) == Self.declineLiteral {
-            return LLMCalibrationResult(tags: [], declined: true)
+            return ([], true)
         }
         // Each object continuation is `Name","confidence":N`; split on the
-        // inter-object separator, then on the name→confidence boilerplate.
+        // inter-object separator, then on the name→confidence boilerplate. Keep
+        // only real taxonomy names, de-duplicated (first occurrence wins).
         let confidenceBoilerplate = "\",\"confidence\":"
         let chunks = generated.components(separatedBy: separatorText)
         var tags: [LLMCalibrationTag] = []
@@ -323,7 +228,7 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
                 softmaxProbability: probability
             ))
         }
-        return LLMCalibrationResult(tags: tags, declined: tags.isEmpty)
+        return (tags, tags.isEmpty)
     }
 
     /// Truncate the KV cache to the longest common prefix with `tokens`, drop the
