@@ -214,7 +214,10 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
     public var temperature: Double
     /// Whether the grammar includes the reserved "none" decline literal.
     public var allowDecline: Bool
-    /// Most tags a single video may keep after mapping (pipeline cap).
+    /// Most tags a single video may keep after mapping (pipeline cap). Defaults
+    /// to 1 (single most-confident tag — highest precision); the user raises it
+    /// to opt into multi-tag recall. Secondaries above 1 are confidence-gated in
+    /// the pipeline. Clamped 1–16.
     public var maximumTags: Int
     /// Ascending probability thresholds mapping the chosen token's renormalized
     /// softmax onto confidence 2, 3, 4, 5 (below the first threshold = 1).
@@ -233,7 +236,7 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
         maximumOutputTokens: Int = 16,
         temperature: Double = 0,
         allowDecline: Bool = true,
-        maximumTags: Int = 3,
+        maximumTags: Int = 1,
         confidenceThresholds: [Double] = [0.20, 0.40, 0.60, 0.85],
         houseRules: String = "",
         maxResidentModels: Int = Self.defaultMaxResidentModels
@@ -274,7 +277,7 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
             maximumOutputTokens: try container.decodeIfPresent(Int.self, forKey: .maximumOutputTokens) ?? 16,
             temperature: try container.decodeIfPresent(Double.self, forKey: .temperature) ?? 0,
             allowDecline: try container.decodeIfPresent(Bool.self, forKey: .allowDecline) ?? true,
-            maximumTags: try container.decodeIfPresent(Int.self, forKey: .maximumTags) ?? 3,
+            maximumTags: try container.decodeIfPresent(Int.self, forKey: .maximumTags) ?? 1,
             confidenceThresholds: try container.decodeIfPresent([Double].self, forKey: .confidenceThresholds) ?? [0.20, 0.40, 0.60, 0.85],
             houseRules: try container.decodeIfPresent(String.self, forKey: .houseRules) ?? "",
             maxResidentModels: try container.decodeIfPresent(Int.self, forKey: .maxResidentModels) ?? Self.defaultMaxResidentModels

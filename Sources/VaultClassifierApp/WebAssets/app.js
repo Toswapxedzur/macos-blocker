@@ -699,7 +699,7 @@
       }${
         field("localModel.maxOutputTokens", "localModel.maxOutputTokensHint", "maximumOutputTokens", llm.maximumOutputTokens ?? 16)
       }${
-        field("localModel.maxTags", "localModel.maxTagsHint", "maximumTags", llm.maximumTags ?? 3)
+        field("localModel.maxTags", "localModel.maxTagsHint", "maximumTags", llm.maximumTags ?? 1)
       }${
         field("localModel.temperature", "localModel.temperatureHint", "temperature", llm.temperature ?? 0)
       }${
