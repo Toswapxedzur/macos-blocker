@@ -116,7 +116,8 @@ case "score":
     let research = state.settings.research
     let overrides = type.localModelOverrides
     let maxTags = maxOverride ?? settings.maximumTags
-    let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: maxTags)
+    let priorRows = args.compactMap { $0.hasPrefix("--prior-rows=") ? Int($0.dropFirst(13)) : nil }.first
+    let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: maxTags, creatorPriorRowLimit: priorRows)
 
     // Optional leaf-only tree: drop every node that has children, so the grammar
     // can never emit a broad parent bucket (Gaming/Technology/Entertainment/Lifestyle).
@@ -489,6 +490,71 @@ case "latency":
     print("Decode 2 (term extraction, warm KV):   \(stats(decode2))")
     print("Both:                                  \(stats(zip(decode1, decode2).map { $0 + $1 }))")
 
+case "batch":
+    // LATENCY-REFINEMENT Phase 1: the SAME requests decoded serially and then as
+    // one multi-sequence batch — must give the same tags+confidence, and we time
+    // both. `--limit=N` videos (default 16), `--max=` tag cap (default 1).
+    guard args.count > 1, let data = try? Data(contentsOf: URL(fileURLWithPath: args[1])),
+          let set = try? JSONDecoder().decode(EvalSet.self, from: data) else { die("could not read eval set") }
+    let limit = args.compactMap { $0.hasPrefix("--limit=") ? Int($0.dropFirst(8)) : nil }.first ?? 16
+    let offset = args.compactMap { $0.hasPrefix("--offset=") ? Int($0.dropFirst(9)) : nil }.first ?? 0
+    let items = Array(set.items.dropFirst(offset).prefix(limit))
+    let modelOverride = args.compactMap { $0.hasPrefix("--model=") ? String($0.dropFirst(8)) : nil }.first
+    guard let modelPath = modelOverride ?? VaultLocalLLMEngine.defaultModelPath(preferredFileName: state.settings.localLLM.modelFileName) else {
+        die("no .gguf model found for this environment")
+    }
+    let engine: VaultLocalLLMEngine
+    do { engine = try VaultLocalLLMEngine(modelPath: modelPath) } catch { die("engine load failed: \(error)") }
+    let settings = state.settings.localLLM
+    let research = state.settings.research
+    let overrides = type.localModelOverrides
+    let maxTags = args.compactMap { $0.hasPrefix("--max=") ? Int($0.dropFirst(6)) : nil }.first ?? 1
+    let priorRows = args.compactMap { $0.hasPrefix("--prior-rows=") ? Int($0.dropFirst(13)) : nil }.first
+    let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: maxTags, creatorPriorRowLimit: priorRows)
+    let requests = items.map { item -> LLMClassificationRequest in
+        let parts = pipeline.primaryPromptParts(
+            title: item.title, entryID: item.entryID, creatorID: item.creatorID, platformID: "youtube",
+            classifierType: type, tree: tree, catalog: catalog,
+            houseRules: overrides?.houseRules ?? settings.houseRules,
+            knowledgeTTLDays: research.knowledgeTTLDays, maxKnowledgePerVideo: research.maxKnowledgePerVideo)
+        return LLMClassificationRequest(
+            staticPrefix: parts.staticPrefix, dynamicSuffix: parts.dynamicSuffix,
+            allowedTagNames: parts.allowedTagNames, maximumTags: maxTags,
+            allowDecline: overrides?.allowDecline ?? settings.allowDecline,
+            confidenceThresholds: overrides?.confidenceThresholds ?? settings.confidenceThresholds)
+    }
+    if args.contains("--dump") {
+        let sorted = requests.sorted { $0.dynamicSuffix.count > $1.dynamicSuffix.count }
+        print("dynamic-suffix chars: " + requests.map { String($0.dynamicSuffix.count) }.joined(separator: " "))
+        print("---- longest suffix ----\n\(sorted[0].dynamicSuffix)\n---- shortest suffix ----\n\(sorted[sorted.count - 1].dynamicSuffix)\n----")
+    }
+    _ = try await engine.classify(requests[0])          // warm the static prefix
+    func ms(_ a: Date, _ b: Date) -> Double { b.timeIntervalSince(a) * 1_000 }
+    let s0 = Date()
+    var serial: [LLMClassificationResult] = []
+    for request in requests { serial.append(try await engine.classify(request)) }
+    let s1 = Date()
+    let batched = try await engine.classifyBatch(requests)
+    let s2 = Date()
+    func show(_ r: LLMClassificationResult) -> String {
+        r.tags.isEmpty ? "—" : r.tags.map { "\($0.name)·c\($0.confidence)" }.joined(separator: ",")
+    }
+    var sameTags = 0, sameAll = 0
+    for (index, item) in items.enumerated() {
+        let tagsEqual = serial[index].tags.map(\.name) == batched[index].tags.map(\.name)
+        let allEqual = tagsEqual && serial[index].tags.map(\.confidence) == batched[index].tags.map(\.confidence)
+        if tagsEqual { sameTags += 1 }
+        if allEqual { sameAll += 1 }
+        if !allEqual {
+            print(String(format: "  DIFF %@ | serial %@ | batched %@", String(item.title.prefix(40)) as NSString, show(serial[index]) as NSString, show(batched[index]) as NSString))
+        }
+    }
+    let tagged = serial.filter { !$0.tags.isEmpty }.count
+    print("• model: \((modelPath as NSString).lastPathComponent)  •  \(items.count) videos (\(tagged) tagged, \(items.count - tagged) declined)  •  maxTags \(maxTags)")
+    print(String(format: "serial : %.0f ms total   (%.0f ms/video)", ms(s0, s1), ms(s0, s1) / Double(items.count)))
+    print(String(format: "batched: %.0f ms total   (%.0f ms/video)   speedup ×%.1f", ms(s1, s2), ms(s1, s2) / Double(items.count), ms(s0, s1) / ms(s1, s2)))
+    print("equivalence: same tags \(sameTags)/\(items.count)   same tags+confidence \(sameAll)/\(items.count)")
+
 default:
-    die("usage: VaultClassifierEval sample <N> [out.json] | score <in.json> | abtest <in.json> | calib <in.json> | needs <in.json> | latency <in.json>")
+    die("usage: VaultClassifierEval sample <N> [out.json] | score <in.json> | abtest <in.json> | calib <in.json> | needs <in.json> | latency <in.json> | batch <in.json>")
 }

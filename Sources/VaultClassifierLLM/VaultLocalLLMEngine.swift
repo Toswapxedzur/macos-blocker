@@ -50,13 +50,18 @@ public struct LLMCalibrationResult: Sendable, Equatable {
 // The model file is user-provided (catalog/loader phase pending): the
 // `ADAMANCIA_VAULT_LLM_MODEL` environment variable, or the first *.gguf under
 // `<app support>/<environment dir>/models/`.
-public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting, OnDeviceResearchNeedsExtracting {
+public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtracting, OnDeviceResearchNeedsExtracting {
     public nonisolated let modelVersion: String
 
     private let model: OpaquePointer
     private let context: OpaquePointer
     private let vocab: OpaquePointer
     private let contextTokenLimit: Int
+    private let batchTokenLimit: Int
+    /// Videos decoded together in one multi-sequence pass. Generation is
+    /// memory-bandwidth-bound (every step re-reads all the weights), so N sequences
+    /// per step cost about the same as one — this is the throughput lever.
+    public static let maximumParallelSequences = 16
     private let configuration: LocalLLMSettings
     private var cachedTokens: [llama_token] = []
 
@@ -105,6 +110,11 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
         var contextParams = llama_context_default_params()
         contextParams.n_ctx = UInt32(configuration.contextTokens)
         contextParams.n_batch = UInt32(configuration.batchTokens)
+        // Batched classification (LATENCY-REFINEMENT Phase 1): seq 0 holds the shared
+        // prompt prefix; seqs 1…N decode a screenful of videos in lock-step. A
+        // unified KV lets `seq_cp` share the prefix cells instead of copying them.
+        contextParams.n_seq_max = UInt32(1 + Self.maximumParallelSequences)
+        contextParams.kv_unified = true
         guard let context = llama_init_from_model(model, contextParams) else {
             llama_model_free(model)
             throw EngineError.contextCreationFailed
@@ -113,6 +123,7 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
         self.context = context
         self.vocab = llama_model_get_vocab(model)
         self.contextTokenLimit = configuration.contextTokens
+        self.batchTokenLimit = max(32, configuration.batchTokens)
         self.configuration = configuration
         self.modelVersion = "llamacpp/" + (modelPath as NSString).lastPathComponent
     }
@@ -142,6 +153,221 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
         return LLMCalibrationResult(tags: decoded.tags, declined: decoded.declined)
     }
 
+    // MARK: - Batched decode (LATENCY-REFINEMENT Phase 1)
+
+    private struct ParallelItem {
+        let index: Int                     // position in the caller's request array
+        let request: LLMClassificationRequest
+        let tokens: [llama_token]
+        let grammar: String
+        let generationCap: Int
+        let candidateFirstTokens: Set<llama_token>
+        let thresholds: [Double]
+    }
+
+    /// Classifies many videos in lock-step. Same grammar + greedy sampling as the
+    /// serial `classify`, so each video gets the answer it would have got alone —
+    /// but the weight-read that dominates every generation step is shared by all
+    /// of them. Requests are packed into sub-batches that fit the KV budget.
+    public func classifyBatch(_ requests: [LLMClassificationRequest]) async throws -> [LLMClassificationResult] {
+        guard requests.count > 1 else {
+            var single: [LLMClassificationResult] = []
+            for request in requests { single.append(try await classify(request)) }
+            return single
+        }
+        var results = [LLMClassificationResult](repeating: .init(tags: []), count: requests.count)
+        var items: [ParallelItem] = []
+        for (index, request) in requests.enumerated() {
+            let allowDecline = request.allowDecline ?? configuration.allowDecline
+            let maximumTags = max(1, request.maximumTags)
+            guard let grammar = Self.namesWithConfidenceGrammar(
+                allowed: request.allowedTagNames, allowDecline: allowDecline, maximumTags: maximumTags
+            ) else { continue }   // no usable names → stays the empty result
+            let tokens = try tokenize(request.staticPrefix + "\n\n" + request.dynamicSuffix)
+            guard tokens.count + 24 <= contextTokenLimit else {
+                throw OnDeviceLLMError.inference("prompt-exceeds-context (\(tokens.count) tokens)")
+            }
+            let candidateNames = allowDecline ? request.allowedTagNames + [Self.declineLiteral] : request.allowedTagNames
+            items.append(ParallelItem(
+                index: index, request: request, tokens: tokens, grammar: grammar,
+                generationCap: max(configuration.maximumOutputTokens, maximumTags * 24 + 8),
+                candidateFirstTokens: Set(candidateNames.compactMap { try? tokenize($0, addSpecial: false).first }),
+                thresholds: request.confidenceThresholds ?? configuration.confidenceThresholds
+            ))
+        }
+
+        // Greedy packing: a sub-batch holds at most `maximumParallelSequences`
+        // videos and must fit the KV: shared prefix once + each video's own
+        // suffix and generation room.
+        var cursor = 0
+        while cursor < items.count {
+            var group: [ParallelItem] = [items[cursor]]
+            cursor += 1
+            while cursor < items.count, group.count < Self.maximumParallelSequences {
+                let candidate = group + [items[cursor]]
+                guard Self.kvCellsNeeded(candidate) + 8 <= contextTokenLimit else { break }
+                group = candidate
+                cursor += 1
+            }
+            if group.count == 1 {
+                results[group[0].index] = try await classify(group[0].request)
+                continue
+            }
+            for (item, decoded) in zip(group, try decodeParallel(group)) {
+                results[item.index] = LLMClassificationResult(tags: decoded.tags.map {
+                    LLMTagScore(name: $0.name, confidence: $0.modelConfidence, softmaxConfidence: $0.softmaxConfidence)
+                })
+            }
+        }
+        return results
+    }
+
+    private static func sharedPrefixLength(_ items: [ParallelItem]) -> Int {
+        guard let first = items.first else { return 0 }
+        // Every sequence must keep ≥1 own token to decode, so it ends on fresh logits.
+        var length = items.map { $0.tokens.count - 1 }.min() ?? 0
+        for item in items.dropFirst() {
+            var common = 0
+            while common < length, item.tokens[common] == first.tokens[common] { common += 1 }
+            length = common
+        }
+        return max(0, length)
+    }
+
+    private static func kvCellsNeeded(_ items: [ParallelItem]) -> Int {
+        let prefix = sharedPrefixLength(items)
+        return prefix + items.reduce(0) { $0 + ($1.tokens.count - prefix) + $1.generationCap }
+    }
+
+    private typealias BatchEntry = (token: llama_token, position: Int32, sequence: Int32, wantsLogits: Bool)
+
+    /// One `llama_decode` over explicit (token, position, sequence) entries.
+    private func decode(_ entries: [BatchEntry], using batch: inout llama_batch) -> Int32 {
+        for (slot, entry) in entries.enumerated() {
+            batch.token[slot] = entry.token
+            batch.pos[slot] = entry.position
+            batch.n_seq_id[slot] = 1
+            batch.seq_id[slot]![0] = entry.sequence
+            batch.logits[slot] = entry.wantsLogits ? 1 : 0
+        }
+        batch.n_tokens = Int32(entries.count)
+        return llama_decode(context, batch)
+    }
+
+    private func decodeParallel(_ items: [ParallelItem]) throws -> [(tags: [LLMCalibrationTag], declined: Bool)] {
+        let timing = ProcessInfo.processInfo.environment["VAULT_DECODE_TIMING"] == "1"
+        let tStart = DispatchTime.now()
+        let memory = llama_get_memory(context)
+        let prefixLength = Self.sharedPrefixLength(items)
+        let prefix = Array(items[0].tokens.prefix(prefixLength))
+        var batch = llama_batch_init(Int32(batchTokenLimit), 0, 1)
+        defer { llama_batch_free(batch) }
+
+        func fail(_ label: String, _ status: Int32) -> OnDeviceLLMError {
+            // Unknown KV state → drop everything so the next request starts clean.
+            cachedTokens = []
+            llama_memory_seq_rm(memory, -1, -1, -1)
+            return OnDeviceLLMError.inference("\(label) (\(status))")
+        }
+        func run(_ entries: [BatchEntry], _ label: String) throws {
+            var start = 0
+            while start < entries.count {
+                let end = min(start + batchTokenLimit, entries.count)
+                let status = decode(Array(entries[start..<end]), using: &batch)
+                guard status == 0 else { throw fail(label, status) }
+                start = end
+            }
+        }
+
+        // 1. Sequence 0 holds the shared prefix (reusing whatever is already cached).
+        var common = 0
+        while common < min(prefix.count, cachedTokens.count), prefix[common] == cachedTokens[common] { common += 1 }
+        llama_memory_seq_rm(memory, 0, llama_pos(common), -1)
+        try run((common..<prefix.count).map { (prefix[$0], Int32($0), 0, false) }, "batch-prefix-decode-failed")
+        cachedTokens = prefix
+
+        // 2. Every video's sequence shares those prefix cells, then prefills its own
+        //    suffix. The last token of each is held back for one final decode whose
+        //    outputs are, in order, each sequence's first-generation logits.
+        var suffixEntries: [BatchEntry] = []
+        var lastEntries: [BatchEntry] = []
+        for (slot, item) in items.enumerated() {
+            let sequence = Int32(slot + 1)
+            llama_memory_seq_rm(memory, sequence, -1, -1)
+            if prefixLength > 0 { llama_memory_seq_cp(memory, 0, sequence, 0, llama_pos(prefixLength)) }
+            for position in prefixLength..<(item.tokens.count - 1) {
+                suffixEntries.append((item.tokens[position], Int32(position), sequence, false))
+            }
+            lastEntries.append((item.tokens[item.tokens.count - 1], Int32(item.tokens.count - 1), sequence, true))
+        }
+        try run(suffixEntries, "batch-suffix-decode-failed")
+        try run(lastEntries, "batch-suffix-decode-failed")
+        if timing { llama_synchronize(context) }   // Metal is async — stamp after the GPU finishes
+        let tPrefill = DispatchTime.now()
+
+        // 3. Lock-step generation: one decode advances every live sequence.
+        struct Live {
+            var sampler: UnsafeMutablePointer<llama_sampler>
+            var outputIndex: Int32
+            var length: Int
+            var generated = ""
+            var generatedTokens = 0
+            var nameStartProbabilities: [Double] = []
+            var awaitingNameStart = true
+            var finished = false
+        }
+        var live: [Live] = items.enumerated().map { slot, item in
+            let sampler = llama_sampler_chain_init(llama_sampler_chain_default_params())!
+            llama_sampler_chain_add(sampler, llama_sampler_init_grammar(vocab, item.grammar, "root"))
+            llama_sampler_chain_add(sampler, llama_sampler_init_greedy())
+            return Live(sampler: sampler, outputIndex: Int32(slot), length: item.tokens.count)
+        }
+        defer { for state in live { llama_sampler_free(state.sampler) } }
+
+        var steps = 0
+        while true {
+            var next: [BatchEntry] = []
+            for slot in live.indices where !live[slot].finished {
+                let token = llama_sampler_sample(live[slot].sampler, context, live[slot].outputIndex)
+                if llama_vocab_is_eog(vocab, token) { live[slot].finished = true; continue }
+                if live[slot].awaitingNameStart {
+                    live[slot].nameStartProbabilities.append(probability(
+                        of: token, among: items[slot].candidateFirstTokens, outputIndex: live[slot].outputIndex))
+                    live[slot].awaitingNameStart = false
+                }
+                live[slot].generated += piece(for: token)
+                live[slot].generatedTokens += 1
+                if live[slot].generated.hasSuffix(Self.structuredSeparator) { live[slot].awaitingNameStart = true }
+                if live[slot].generatedTokens >= items[slot].generationCap { live[slot].finished = true; continue }
+                live[slot].outputIndex = Int32(next.count)
+                next.append((token, Int32(live[slot].length), Int32(slot + 1), true))
+                live[slot].length += 1
+            }
+            guard !next.isEmpty else { break }
+            let status = decode(next, using: &batch)
+            guard status == 0 else { throw fail("batch-generation-decode-failed", status) }
+            steps += 1
+        }
+
+        // 4. Release the per-video sequences; sequence 0 keeps the shared prefix.
+        for slot in items.indices { llama_memory_seq_rm(memory, Int32(slot + 1), -1, -1) }
+
+        if timing {
+            let ms = { (a: DispatchTime, b: DispatchTime) in Double(b.uptimeNanoseconds - a.uptimeNanoseconds) / 1_000_000 }
+            let tEnd = DispatchTime.now()
+            FileHandle.standardError.write(Data(String(
+                format: "[batch-timing] videos=%d prefix=%d (reused %d) suffixTokens=%d  prefill=%.0f  gen=%.0f  steps=%d  genTokens=%d  total=%.0fms\n",
+                items.count, prefixLength, common, suffixEntries.count + lastEntries.count, ms(tStart, tPrefill), ms(tPrefill, tEnd), steps,
+                live.reduce(0) { $0 + $1.generatedTokens }, ms(tStart, tEnd)
+            ).utf8))
+        }
+        return zip(items, live).map { item, state in
+            Self.parseStructuredOutput(
+                state.generated, nameStartProbabilities: state.nameStartProbabilities,
+                allowedTagNames: item.request.allowedTagNames, thresholds: item.thresholds)
+        }
+    }
+
     /// The shared structured decode behind both `classify` and
     /// `classifyWithModelConfidence`: grammar-constrained `{"name":"…","confidence":N}`
     /// objects continuing the prompt's `{"tags":[{"name":"` runway, up to
@@ -160,12 +386,19 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
         guard tokens.count + 24 <= contextTokenLimit else {
             throw OnDeviceLLMError.inference("prompt-exceeds-context (\(tokens.count) tokens)")
         }
+        // Diagnostic split (VAULT_DECODE_TIMING=1): prefill vs generation vs the
+        // real generated-token count — sizes the "prefill the forced tokens" win.
+        let timing = ProcessInfo.processInfo.environment["VAULT_DECODE_TIMING"] == "1"
+        let cacheBefore = cachedTokens.count
+        let tStart = timing ? DispatchTime.now() : nil
         try prefillReusingCache(tokens, errorLabel: "prompt-decode-failed")
+        let tPrefill = timing ? DispatchTime.now() : nil
 
         let sampler = llama_sampler_chain_init(llama_sampler_chain_default_params())
         defer { llama_sampler_free(sampler) }
         llama_sampler_chain_add(sampler, llama_sampler_init_grammar(vocab, grammar, "root"))
         llama_sampler_chain_add(sampler, llama_sampler_init_greedy())
+        let tGrammar = timing ? DispatchTime.now() : nil
 
         let candidateNames = effectiveAllowDecline
             ? request.allowedTagNames + [Self.declineLiteral]
@@ -176,17 +409,19 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
         // `},{"name":"` (no leading quote — the name's closing quote was consumed
         // by the confidence clause). A name begins at step 0 and right after this
         // separator completes, exactly where the first-token softmax is measured.
-        let separatorText = "},{\"name\":\""
+        let separatorText = Self.structuredSeparator
         let decodeCap = min(
             max(1, contextTokenLimit - tokens.count - 1),
             max(configuration.maximumOutputTokens, maximumTags * 24 + 8)
         )
         var generated = ""
+        var generatedTokenCount = 0
         var nameStartProbabilities: [Double] = []
         var awaitingNameStart = true
         for _ in 0..<decodeCap {
             let token = llama_sampler_sample(sampler, context, -1)
             if llama_vocab_is_eog(vocab, token) { break }
+            generatedTokenCount += 1
             if awaitingNameStart {
                 nameStartProbabilities.append(probability(of: token, among: candidateFirstTokens))
                 awaitingNameStart = false
@@ -205,6 +440,35 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
             cachedTokens.append(token)
         }
 
+        if let tStart, let tPrefill, let tGrammar {
+            let ms = { (a: DispatchTime, b: DispatchTime) in Double(b.uptimeNanoseconds - a.uptimeNanoseconds) / 1_000_000 }
+            let tEnd = DispatchTime.now()
+            let suffixTokens = tokens.count - cacheBefore
+            let escaped = generated.replacingOccurrences(of: "\n", with: "⏎").prefix(48)
+            FileHandle.standardError.write(Data(String(
+                format: "[decode-timing] prompt=%d suffix≈%d  prefill=%.0f  grammar=%.0f  gen=%.0f  genTokens=%d  out=«%@»\n",
+                tokens.count, max(0, suffixTokens), ms(tStart, tPrefill), ms(tPrefill, tGrammar), ms(tGrammar, tEnd),
+                generatedTokenCount, String(escaped) as NSString
+            ).utf8))
+        }
+        return Self.parseStructuredOutput(
+            generated, nameStartProbabilities: nameStartProbabilities,
+            allowedTagNames: request.allowedTagNames, thresholds: effectiveThresholds
+        )
+    }
+
+    /// The inter-object boilerplate of the structured decode (`},{"name":"`): a
+    /// name begins at step 0 and right after this completes.
+    static let structuredSeparator = "},{\"name\":\""
+
+    /// Turns one sequence's generated `Name","confidence":N},{"name":"…` text into
+    /// tags (shared by the serial and the batched decode).
+    static func parseStructuredOutput(
+        _ generated: String,
+        nameStartProbabilities: [Double],
+        allowedTagNames: [String],
+        thresholds effectiveThresholds: [Double]
+    ) -> (tags: [LLMCalibrationTag], declined: Bool) {
         if generated.trimmingCharacters(in: .whitespacesAndNewlines) == Self.declineLiteral {
             return ([], true)
         }
@@ -212,13 +476,13 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
         // inter-object separator, then on the name→confidence boilerplate. Keep
         // only real taxonomy names, de-duplicated (first occurrence wins).
         let confidenceBoilerplate = "\",\"confidence\":"
-        let chunks = generated.components(separatedBy: separatorText)
+        let chunks = generated.components(separatedBy: structuredSeparator)
         var tags: [LLMCalibrationTag] = []
         var seen = Set<String>()
         for (index, chunk) in chunks.enumerated() {
             guard let range = chunk.range(of: confidenceBoilerplate) else { continue }
             let name = String(chunk[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard request.allowedTagNames.contains(name), seen.insert(name).inserted else { continue }
+            guard allowedTagNames.contains(name), seen.insert(name).inserted else { continue }
             let digit = chunk[range.upperBound...].first.flatMap { Int(String($0)) } ?? 0
             let probability = index < nameStartProbabilities.count ? nameStartProbabilities[index] : 0
             tags.append(LLMCalibrationTag(
@@ -614,8 +878,8 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
 
     /// Softmax probability of `token` renormalized over `candidates` (the
     /// grammar-legal first moves), from the last decode's logits.
-    private func probability(of token: llama_token, among candidates: Set<llama_token>) -> Double {
-        guard let logits = llama_get_logits_ith(context, -1) else { return 0 }
+    private func probability(of token: llama_token, among candidates: Set<llama_token>, outputIndex: Int32 = -1) -> Double {
+        guard let logits = llama_get_logits_ith(context, outputIndex) else { return 0 }
         let vocabularySize = Int(llama_vocab_n_tokens(vocab))
         let pool = candidates.union([token]).filter { Int($0) < vocabularySize && $0 >= 0 }
         guard !pool.isEmpty else { return 0 }
