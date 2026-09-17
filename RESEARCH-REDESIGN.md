@@ -310,3 +310,19 @@ mini1 for weak-hardware latency):
   punctuation artifact (`:皇室戰爭`); terms are the secondary signal now, urgency the
   primary. Decode-2 mechanism + the derived-urgency signal are done for Phase 2;
   gating term-extraction on uncertainty + author accumulation are Phase 3.
+- 2026-09-17 — **Phase 3 landed (a/b/c).** (3a) `ResearchTask.urgency` + the queue
+  drains highest-urgency first (was FIFO); ordering test. (3b) research fires on a
+  video's DERIVED urgency (`ResearchUrgency.fromTagConfidences`) reaching a new
+  `ResearchSettings.urgencyFloor` (default 3) — replaces the `trigger` modes +
+  `confidenceTriggerLevel` at the trigger point; derived urgency threaded to the
+  queue at all enqueue sites. (3c) **author accumulation** — new persisted
+  `WorkspaceCatalog.creatorResearchAccumulators` + `AuthorResearchThreshold{level,
+  count,windowDays}` (owner-confirmed default **L3/N5/W30**): every model classify
+  adds its derived urgency to the creator's windowed accumulator; ≥N samples
+  averaging ≥L → one author research task (urgency = the mean), then reset. Replaces
+  the old "append the creator handle when the histogram is weak" heuristic
+  (main-path `includeCreator` now false). 157 core tests green (incl. urgency-trigger,
+  queue-ordering, and 4 accumulator tests). Still open: wire Decode 2
+  (`researchNeeds`) in place of `extractResearchSubject` (parts plumbing); settings
+  collapse (§9) + removing `trigger`/`confidenceTriggerLevel`/`maxSubjectsPerVideo`
+  + raw-search (Cut A, needs file-deletion consent).
