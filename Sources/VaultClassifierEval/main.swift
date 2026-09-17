@@ -549,6 +549,7 @@ case "batch":
             print(String(format: "  DIFF %@ | serial %@ | batched %@", String(item.title.prefix(40)) as NSString, show(serial[index]) as NSString, show(batched[index]) as NSString))
         }
     }
+    if args.contains("-v") { for (index, item) in items.enumerated() { print("RESULT \(item.entryID) \(show(batched[index]))") } }
     let tagged = serial.filter { !$0.tags.isEmpty }.count
     print("• model: \((modelPath as NSString).lastPathComponent)  •  \(items.count) videos (\(tagged) tagged, \(items.count - tagged) declined)  •  maxTags \(maxTags)")
     print(String(format: "serial : %.0f ms total   (%.0f ms/video)", ms(s0, s1), ms(s0, s1) / Double(items.count)))
