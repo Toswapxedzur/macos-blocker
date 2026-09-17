@@ -265,3 +265,48 @@ mini1 for weak-hardware latency):
   explicit contract, cached prefix so ~free). **Few-shot calibration from the
   user's corrections is the remaining §6 lever** (not yet done) if a bigger
   calibration move is wanted.
+- 2026-09-17 — **Decode 2 built + live-smoked → KEY FINDING: model-emitted
+  research-needs/author-urgency are UNRELIABLE with the 7B.** Contracts
+  (`ResearchNeed`, `ResearchNeedsResult`, `LLMResearchNeedsRequest`, protocol),
+  the GBNF (`researchNeedsGrammar`), the parser (`parseResearchNeeds`), the engine
+  decode (`researchNeeds`, KV-reuse over Decode 1), and a `needs` eval mode all
+  work — GBNF compiles in llama.cpp, output is valid, 8/8 unit tests. BUT the live
+  `needs` smoke (12 items, dev 7B) is degenerate: **`needs` empty on every video**
+  (greedy → `]` is the safe completion; a knowledgeable 7B recognizes most
+  subjects) and **`author-urgency` just echoes the prompt's stated default**
+  (all-5, then all-1 when told "default to 1") — the self-report failure mode
+  again, worsened by Decode 1 withholding the creator description. **Implication:
+  the reliable uncertainty signal is Decode 1's (now model-emitted, calibrated)
+  confidence — a decline / low-conf tag IS "needs research" — matching the owner's
+  "confidence shows how urgent" framing.** Proposed pivot (owner to decide):
+  (A) demote Decode 2 to a CONDITIONAL subject-extraction that runs only when
+  Decode 1 declines or is low-confidence, with urgency = f(Decode-1 confidence)
+  not a separate ask; (B) DERIVE author-urgency (creator has no knowledge entry +
+  low Decode-1 confidence) instead of asking the model. This revisits §2.2.
+- 2026-09-17 — **Owner reframe (decisive): author/video-urgency = an AGGREGATION
+  of the Decode-1 tag confidences, not a model ask.** "How confident are you about
+  the entire title" = aggregate the per-tag confidences; low aggregate (or a
+  decline) = high urgency. So model-emitted urgency/author-urgency are DROPPED.
+  Revised design:
+  • **Video research-urgency = f(Decode-1 confidences)** — mean of the kept tags'
+    confidences (at cap 1 = the top tag), a decline = max urgency 5; inverse map
+    (conf 5 → urgency 1 … conf 1 → urgency 5).
+  • **Author accumulation (§8)** sums that derived per-video urgency per creator →
+    research a creator whose videos are consistently low-confidence.
+  • **Decode 2 shrinks to TERM EXTRACTION ONLY** ("which subject to look up"),
+    gated to run only when the video is uncertain (decline / low aggregate conf);
+    the term inherits the video's derived urgency. `ResearchNeed` loses its
+    model-emitted `urgency`. Keeps only what the model does well (copy a span),
+    all urgency flowing from the calibrated confidence. Supersedes §2.2/§2.4's
+    "urgency graded by the model."
+- 2026-09-17 — **Reworked Decode 2 to the reframe + re-smoked (validated).**
+  `ResearchNeed` keeps a derived urgency; added `ResearchUrgency.fromTagConfidences`
+  (inverse mean, decline = 5); `researchNeeds` now returns `[String]` terms only,
+  grammar is a quoted-term list, `parseResearchTerms` extracts spans; `needs` eval
+  mode prints the derived urgency; 9/9 unit tests + core suite green. Live smoke
+  (dev 7B, 12 items): **derived-urgency varies correctly** — declines → 5, high-conf
+  (Clash Royale/Ludwig/Strength SMP) → 2, mixed → 3–4. Term extraction fires rarely
+  on mainstream content (expected — the 7B recognizes it) with one minor leading-
+  punctuation artifact (`:皇室戰爭`); terms are the secondary signal now, urgency the
+  primary. Decode-2 mechanism + the derived-urgency signal are done for Phase 2;
+  gating term-extraction on uncertainty + author accumulation are Phase 3.
