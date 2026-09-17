@@ -101,7 +101,10 @@ case "score":
     let maxOverride = args.compactMap { $0.hasPrefix("--max=") ? Int($0.dropFirst(6)) : nil }.first
     guard args.count > 1, let data = try? Data(contentsOf: URL(fileURLWithPath: args[1])),
           let set = try? JSONDecoder().decode(EvalSet.self, from: data) else { die("could not read eval set") }
-    let labeled = set.items.filter { !$0.trueTags.isEmpty || $0.trueTags.isEmpty }  // all; empty = declined truth
+    // Default: all items, an empty trueTags counting as "should decline". The schema
+    // cannot tell an UNLABELED item from a true no-tag one, so `--labeled-only`
+    // scores just the items that carry ≥1 label (no reward for merely declining).
+    let labeled = args.contains("--labeled-only") ? set.items.filter { !$0.trueTags.isEmpty } : set.items
     guard labeled.contains(where: { !$0.trueTags.isEmpty }) else { die("no items labeled yet — fill in trueTags") }
 
     let modelOverride = args.compactMap { $0.hasPrefix("--model=") ? String($0.dropFirst(8)) : nil }.first
@@ -129,7 +132,7 @@ case "score":
     print("• config: leafOnly=\(leafOnly)  maxTags=\(maxTags)  allowedTags=\(evalTree.nodes.filter { !$0.isRetired }.count)\n")
 
     var tp: [String: Int] = [:], fp: [String: Int] = [:], fn: [String: Int] = [:]
-    var exact = 0, declineTrue = 0, declineRight = 0
+    var exact = 0, declineTrue = 0, declineRight = 0, predictedDeclines = 0
     var fpByConf: [Int: Int] = [:], tpByConf: [Int: Int] = [:]
     var predConfByID: [String: Int] = [:]
 
@@ -157,6 +160,7 @@ case "score":
             print(String(format: "%@ %-52@ pred: %-34@ truth: %@", mark, String(item.title.prefix(52)) as NSString, predStr as NSString, truthStr))
         }
 
+        if predicted.isEmpty { predictedDeclines += 1 }
         if truth.isEmpty { declineTrue += 1; if predicted.isEmpty { declineRight += 1 } }
         if predicted == truth { exact += 1 }
         for id in predicted.intersection(truth) { tp[id, default: 0] += 1; tpByConf[predConfByID[id] ?? 0, default: 0] += 1 }
@@ -175,7 +179,7 @@ case "score":
     let TP = tp.values.reduce(0, +), FP = fp.values.reduce(0, +), FN = fn.values.reduce(0, +)
     let microP = rate(TP, TP + FP), microR = rate(TP, TP + FN)
     print(String(format: "\nMICRO  precision %.2f  recall %.2f  F1 %.2f", microP, microR, (microP + microR) == 0 ? 0 : 2 * microP * microR / (microP + microR)))
-    print(String(format: "exact-set match: %d/%d (%.0f%%)   decline: %d/%d correct", exact, labeled.count, 100 * rate(exact, labeled.count), declineRight, declineTrue))
+    print(String(format: "exact-set match: %d/%d (%.0f%%)   decline: %d/%d correct   predicted-declines: %d   format: %@", exact, labeled.count, 100 * rate(exact, labeled.count), declineRight, declineTrue, predictedDeclines, ClassificationReplyFormat.current.id))
     print("\n=== the conf≤2 hypothesis: where do the false positives sit? ===")
     for c in 1...5 {
         let f = fpByConf[c] ?? 0, t = tpByConf[c] ?? 0

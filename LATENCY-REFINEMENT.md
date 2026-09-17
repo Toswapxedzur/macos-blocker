@@ -218,6 +218,39 @@ JSON…` boilerplate + the creator counts line) and ~1.5 s is generation. Prefil
 is compute-bound and unbatchable, so the remaining lever is fewer suffix tokens
 (or the flash policy, §4 Phase 4), not the decoder.
 
+## 6d. Is there a balance point between JSON and bare? — No (2026-09-17)
+
+Owner question: keep the brackets but drop the key names? The reply shape is now
+four strings (`ClassificationReplyFormat`: rule line, prompt runway, name→digit
+text, item separator; `VAULT_REPLY_FORMAT=json|pairs|object`, production = json).
+Dev 7B, cap 1, forced-span feeding on, batched speed on 16 videos:
+
+| format | ms/video | 120 items: P/R/F1, exact | 65 LABELED only: P/R/F1, exact | predicted declines (of 120) |
+|---|---|---|---|---|
+| json `{"tags":[{"name":"Music","confidence":4}]}` | 295 | .59/.61/**.60**, 62% | **.82/.61/.70**, 60% | 52 |
+| pairs `[["Music",4]]` | 284 | .46/.59/.52, 52% | .72/.59/.65, 58% | 36 |
+| object `{"Music":4}` | 280 | .46/.53/.49, 54% | .67/.53/.59, 52% | 44 |
+| bare `Music 4` (branch) | 278 | .50/.47/.48, 51% | not run | — |
+
+- **Monotone: less scaffold → less accuracy**, and since forced-span feeding the
+  whole speed range is only ~15 ms/video. There is no balance point worth taking;
+  **production stays on full JSON.**
+- **Why (what the data supports):** the "bare over-declines" hypothesis is WRONG —
+  lighter formats decline LESS (36–44 vs 52). With the explicit `"name"` /
+  `"confidence"` keys the model is more *deliberate*: it commits at conf 5 or
+  declines (no tags below c4). Without keys it guesses more — pairs emits 21 tags
+  at c2–c3 that are only ~48% right. At the blocking gate (conf ≥4) JSON yields 40
+  correct / 9 wrong vs pairs 29 / 4: pairs is a touch more precise but misses
+  ~a quarter of the blocks JSON gets. (Pairs does spread confidence more usefully:
+  c2 .46, c3 .50, c4 .90, c5 .85 — worth remembering if calibration ever matters
+  more than recall.)
+- **Eval caveat found on the way:** 55 of the 120 eval items have no labels and
+  `score` counts any tag on them as a false positive, which rewards whichever
+  variant declines most. `score --labeled-only` removes that; the ranking above is
+  the same both ways, but absolute precision is .82, not .59. Open: whether those
+  55 are "judged no-tag" or "never labeled" (owner) — and the counts-only creator
+  line's gain (F1 .54→.60) was measured on all 120 only.
+
 ## 7. Decisions log
 - 2026-09-17 — Measured: 7B generation is bandwidth-bound at ~40 ms/token on M1
   Pro; prefill cached (~3 ms); ~165 ms first-token cost; tagged video ~585 ms
