@@ -432,6 +432,9 @@ final class VaultClassifierViewModel: ObservableObject {
     /// skipping any already in flight. Each completed video is broadcast through
     /// the hub so provisional pills resolve the moment the result exists,
     /// instead of waiting for the extension's next poll.
+    /// Videos handed to the engine together — its parallel-sequence capacity.
+    private static let classificationChunkSize = 16
+
     private func queueVideoClassification(platformID: String, items: [NativeVideoTagsBatchItem]) {
         let fresh = items.filter {
             inFlightVideoClassifications.insert(Self.inFlightKey(platformID, $0.entryID)).inserted
@@ -449,16 +452,40 @@ final class VaultClassifierViewModel: ObservableObject {
             Task.detached { await ThumbnailOCR.shared.prewarm(platformID: platformID, entries: entries) }
         }
         Task { @MainActor [weak self] in
-            for item in fresh {
-                defer { self?.inFlightVideoClassifications.remove(Self.inFlightKey(platformID, item.entryID)) }
+            // Classify a screenful at a time (LATENCY-REFINEMENT Phase 1): the engine
+            // decodes a chunk's videos in ONE multi-sequence pass instead of one by
+            // one, and each chunk's verdicts are pushed as soon as it lands. OCR for
+            // the whole request was prewarmed above, so these awaits hit warm work.
+            let chunkSize = Self.classificationChunkSize
+            for start in stride(from: 0, to: fresh.count, by: chunkSize) {
+                let chunk = Array(fresh[start..<min(start + chunkSize, fresh.count)])
+                defer { for item in chunk { self?.inFlightVideoClassifications.remove(Self.inFlightKey(platformID, item.entryID)) } }
                 guard let coordinator = self?.coordinator else { continue }
-                let thumbnailText = ocrEnabled
-                    ? await ThumbnailOCR.shared.recognizedText(platformID: platformID, entryID: item.entryID, thumbnailURL: item.acceptedThumbnailURL(platformID: platformID))
-                    : nil
-                guard let projection = try? await coordinator.classifyVideo(
-                    platformID: platformID, entryID: item.entryID, creatorID: item.creatorID,
-                    title: item.title, summary: item.summary, text: thumbnailText ?? item.text) else { continue }
-                self?.broadcastResolvedVideoTags(platformID: platformID, entryID: item.entryID, projection: projection)
+                var inputs: [VideoClassificationPipeline.Input] = []
+                for item in chunk {
+                    let thumbnailText = ocrEnabled
+                        ? await ThumbnailOCR.shared.recognizedText(platformID: platformID, entryID: item.entryID, thumbnailURL: item.acceptedThumbnailURL(platformID: platformID))
+                        : nil
+                    inputs.append(.init(
+                        title: item.title, summary: item.summary, text: thumbnailText ?? item.text,
+                        entryID: item.entryID, creatorID: item.creatorID))
+                }
+                var projections = (try? await coordinator.classifyVideos(platformID: platformID, items: inputs)) ?? [:]
+                if projections.isEmpty {
+                    // The batch failed as a whole — fall back to one video at a time
+                    // so a single bad item cannot sink the rest of the screen.
+                    for input in inputs {
+                        if let single = try? await coordinator.classifyVideo(
+                            platformID: platformID, entryID: input.entryID, creatorID: input.creatorID,
+                            title: input.title, summary: input.summary, text: input.text) {
+                            projections[input.entryID] = single
+                        }
+                    }
+                }
+                for item in chunk {
+                    guard let projection = projections[item.entryID] else { continue }
+                    self?.broadcastResolvedVideoTags(platformID: platformID, entryID: item.entryID, projection: projection)
+                }
             }
             self?.onWebStateChange?()
         }

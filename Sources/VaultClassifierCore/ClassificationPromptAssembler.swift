@@ -125,13 +125,15 @@ public enum ClassificationPromptAssembler {
             lines.append("")
         }
 
-        // Plain data — the model judges how much to weight it (no framing).
-        // Per tag: share of the creator's classified videos + confidence mean±stdev.
+        // Plain data — the model judges how much to weight it (no framing). Owner
+        // spec (2026-09-17): exactly the creator's total classified videos and a
+        // frequency per tag — nothing else. The former per-row percentage and
+        // confidence mean±stdev were never asked for and cost ~19 prompt tokens a
+        // row, which must be prefilled per video (~800 ms on a 7B for a prolific
+        // creator); one compact line is ~4× cheaper.
         if !creatorPrior.isEmpty, creatorVideoCount > 0 {
-            lines.append("Creator's tag history (\(creatorVideoCount) of their videos classified):")
-            for item in creatorPrior {
-                lines.append("- \(item.tagName): \(item.count)/\(creatorVideoCount) (\(Int((item.share * 100).rounded()))%), confidence \(String(format: "%.1f", item.averageConfidence))±\(String(format: "%.1f", item.confidenceStdev))")
-            }
+            let counts = creatorPrior.map { "\($0.tagName) \($0.count)" }.joined(separator: ", ")
+            lines.append("Creator: \(creatorVideoCount) videos classified. Tag counts: \(counts)")
             lines.append("")
         }
 

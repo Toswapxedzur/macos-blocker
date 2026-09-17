@@ -1,6 +1,7 @@
 # Vault Classifier — Latency Refinement (single 7B, feed-fast)
 
-> **Status: DRAFT for owner review (2026-09-17).** Owner decision: keep a SINGLE
+> **Status: Phase 1 BUILT (2026-09-17) — see §6a/§6b for what the measurements
+> changed; §1's prefill claims are superseded.** Owner decision: keep a SINGLE
 > model (the 7B quality model) — no 1B+7B pipeline. This plans the engine changes
 > that make one 7B usable for a live feed. Design-doc-first (like
 > `RESEARCH-REDESIGN.md`); do not build until settled.
@@ -152,6 +153,34 @@ with identical tags on the sample; accuracy impact NOT yet scored.
 rows, maybe trim exemplars — validated by `score`; (2) batched decode (built) for
 the generation half, whose share GROWS as the suffix shrinks; (3) forced-token
 batching. Wiring `classifyBatch` into pipeline/store/app is not done yet.
+
+## 6b. Phase 1 wired end-to-end + the creator line fixed to owner spec (2026-09-17)
+
+- **Owner correction:** the prompt's "Creator's tag history" block
+  (`27/70 (39%), confidence 3.9±0.9` per row) was never asked for. Spec = **the
+  creator's total classified videos + a count per tag, nothing else.** Now one line:
+  `Creator: 70 videos classified. Tag counts: News & Politics 27, Comedy & Memes 18, …`
+  (all tags kept). Effect on the same 16 videos: suffix **1,318 → 751 tokens**, and
+  accuracy IMPROVED on `score` (dev 7B, cap 1): **P 0.58→0.59, R 0.50→0.61,
+  F1 0.54→0.60, exact 58%→62%** (declines 36/55 vs 38). Watch: confidence now
+  concentrates at 5 (c5 0.64 precision ×56, c4 0.33 ×12) — monotone, but more
+  assertive; re-run `calib` before relying on c4 as a gate.
+- **Wiring done, batch-first everywhere (single = batch of one, one code path):**
+  `VideoClassificationPipeline.classifyBatch` (primary batch, then a second
+  creator-grounded batch for the weak ones) → `LocalClassifierCoordinator.
+  classifyVideos` (one save, per-video research scheduling) → the app's drain loop
+  now hands the engine 16-video chunks instead of awaiting per item (whole-batch
+  failure falls back to per-video). OCR prewarm was ALREADY concurrent with the
+  LLM, so §4 Phase 3 needed no work.
+- **Measured (same 16 videos, 7B): 581 ms/video serial originally → 361 ms/video
+  batched with the owner-spec creator line** (suffix prefill 3.1 s + generation
+  2.7 s for the screen). Batched == serial on 16/16. 221 tests; live full-loop
+  smoke passes through the new path.
+- **Remaining levers, in order:** (1) the ~16-token fixed boilerplate + title are
+  now most of the suffix — little left to trim; (2) forced-token batching
+  (generation is now ~half the time: 64 tokens in 9 rounds); (3) the flash policy
+  (owner). A caveat of batching: videos in one batch don't see each other in the
+  creator counts (they reflect the catalog before the batch).
 
 ## 7. Decisions log
 - 2026-09-17 — Measured: 7B generation is bandwidth-bound at ~40 ms/token on M1
