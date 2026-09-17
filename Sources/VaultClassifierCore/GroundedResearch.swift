@@ -73,19 +73,25 @@ public struct ResearchSubject: Equatable, Sendable {
 /// no title/summary/body fields, so the remote executor cannot leak them.
 public struct ResearchTask: Equatable, Sendable {
     public static let maximumSubjects = 3
+    public static let defaultUrgency = 3
 
     public let classifierTypeID: String
     public let platformID: String
     public let entryID: String
     public let creatorID: String
     public let subjects: [ResearchSubject]
+    /// How urgently this task needs research (1–5), DERIVED from the triggering
+    /// video's Decode-1 confidences (`ResearchUrgency`), not model-emitted. The
+    /// queue drains highest-urgency first (RESEARCH-REDESIGN §7).
+    public let urgency: Int
 
     public init(
         classifierTypeID: String,
         platformID: String,
         entryID: String,
         creatorID: String,
-        subjects: [ResearchSubject]
+        subjects: [ResearchSubject],
+        urgency: Int = defaultUrgency
     ) {
         self.classifierTypeID = String(classifierTypeID.prefix(256))
         self.platformID = platformID
@@ -93,6 +99,7 @@ public struct ResearchTask: Equatable, Sendable {
         self.creatorID = creatorID
         var seen = Set<String>()
         self.subjects = Array(subjects.filter { seen.insert($0.key).inserted }.prefix(Self.maximumSubjects))
+        self.urgency = min(5, max(1, urgency))
     }
 }
 
@@ -654,7 +661,13 @@ public actor GroundedResearchQueue {
 
     private func drain() async {
         while !pending.isEmpty {
-            let item = pending.removeFirst()
+            // Urgency-ordered (RESEARCH-REDESIGN §7): drain the highest-urgency
+            // pending subject first; ties keep insertion order (stable — first max).
+            var chosen = 0
+            for index in pending.indices where pending[index].task.urgency > pending[chosen].task.urgency {
+                chosen = index
+            }
+            let item = pending.remove(at: chosen)
             let pendingKey = "\(item.task.classifierTypeID)\u{1F}\(item.subject.key)"
             defer { pendingKeys.remove(pendingKey) }
             guard var configuration = configurationProvider(item.task) else { continue }
