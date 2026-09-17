@@ -382,6 +382,60 @@ case "calib":
     report("SOFTMAX confidence (production)", softN, softHit)
     print("\nVerdict rule: prefer the signal with lower ECE + monotone precision + larger separation Δ.")
 
+case "needs":
+    // RESEARCH-REDESIGN Phase 2, Decode 2 live smoke: run the classification
+    // decode, then the research-needs decode over the same KV-cached evidence, and
+    // print the emitted terms/urgency + author-urgency. Proves the GBNF compiles
+    // in llama.cpp and the model produces sane, copied terms — not measured, just
+    // eyeballed. `--limit=N` caps how many videos to run (default 12).
+    guard args.count > 1, let data = try? Data(contentsOf: URL(fileURLWithPath: args[1])),
+          let set = try? JSONDecoder().decode(EvalSet.self, from: data) else { die("could not read eval set") }
+    let limit = args.compactMap { $0.hasPrefix("--limit=") ? Int($0.dropFirst(8)) : nil }.first ?? 12
+    let items = Array(set.items.filter { !$0.trueTags.isEmpty }.prefix(limit))
+    guard !items.isEmpty else { die("no labeled items to run") }
+
+    let modelOverride = args.compactMap { $0.hasPrefix("--model=") ? String($0.dropFirst(8)) : nil }.first
+    guard let modelPath = modelOverride ?? VaultLocalLLMEngine.defaultModelPath(preferredFileName: state.settings.localLLM.modelFileName) else {
+        die("no .gguf model found for this environment")
+    }
+    let engine: VaultLocalLLMEngine
+    do { engine = try VaultLocalLLMEngine(modelPath: modelPath) } catch { die("engine load failed: \(error)") }
+
+    let settings = state.settings.localLLM
+    let research = state.settings.research
+    let overrides = type.localModelOverrides
+    let maxTerms = args.compactMap { $0.hasPrefix("--terms=") ? Int($0.dropFirst(8)) : nil }.first ?? 3
+    let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: settings.maximumTags)
+    print("• model: \((modelPath as NSString).lastPathComponent)  •  \(items.count) items  •  maxTerms \(maxTerms)  •  type \"\(type.name)\"\n")
+
+    for item in items {
+        let parts = pipeline.primaryPromptParts(
+            title: item.title, entryID: item.entryID, creatorID: item.creatorID, platformID: "youtube",
+            classifierType: type, tree: tree, catalog: catalog,
+            houseRules: overrides?.houseRules ?? settings.houseRules,
+            knowledgeTTLDays: research.knowledgeTTLDays,
+            maxKnowledgePerVideo: research.maxKnowledgePerVideo
+        )
+        // Decode 1 first, so Decode 2 reuses its KV-cached evidence prefix.
+        let classification = try await engine.classify(LLMClassificationRequest(
+            staticPrefix: parts.staticPrefix, dynamicSuffix: parts.dynamicSuffix,
+            allowedTagNames: parts.allowedTagNames, maximumTags: settings.maximumTags,
+            allowDecline: overrides?.allowDecline ?? settings.allowDecline,
+            confidenceThresholds: overrides?.confidenceThresholds ?? settings.confidenceThresholds
+        ))
+        let terms = try await engine.researchNeeds(LLMResearchNeedsRequest(
+            staticPrefix: parts.staticPrefix, dynamicSuffix: parts.dynamicSuffix, maximumTerms: maxTerms
+        ))
+        // Urgency is DERIVED from the classification confidences (the reliable
+        // signal), not asked of the model — same value feeds §8's author accumulator.
+        let derivedUrgency = ResearchUrgency.fromTagConfidences(classification.tags.map(\.confidence))
+        let tagStr = classification.tags.isEmpty ? "—(declined)"
+            : classification.tags.map { "\($0.name)·c\($0.confidence)" }.joined(separator: ", ")
+        let termStr = terms.isEmpty ? "(none)" : terms.map { "\"\($0)\"" }.joined(separator: ", ")
+        print(String(format: "• %-46@\n    tags: %@\n    terms: %@   derived-urgency: %d",
+                     String(item.title.prefix(46)) as NSString, tagStr, termStr, derivedUrgency))
+    }
+
 default:
-    die("usage: VaultClassifierEval sample <N> [out.json] | score <in.json> | abtest <in.json> | calib <in.json>")
+    die("usage: VaultClassifierEval sample <N> [out.json] | score <in.json> | abtest <in.json> | calib <in.json> | needs <in.json>")
 }
