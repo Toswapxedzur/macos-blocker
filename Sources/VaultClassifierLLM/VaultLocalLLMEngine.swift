@@ -161,6 +161,7 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
         let tokens: [llama_token]
         let grammar: String
         let generationCap: Int
+        let allowDecline: Bool
         let candidateFirstTokens: Set<llama_token>
         let thresholds: [Double]
     }
@@ -191,6 +192,7 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
             items.append(ParallelItem(
                 index: index, request: request, tokens: tokens, grammar: grammar,
                 generationCap: max(configuration.maximumOutputTokens, maximumTags * 24 + 8),
+                allowDecline: allowDecline,
                 candidateFirstTokens: Set(candidateNames.compactMap { try? tokenize($0, addSpecial: false).first }),
                 thresholds: request.confidenceThresholds ?? configuration.confidenceThresholds
             ))
@@ -337,11 +339,28 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
                 }
                 live[slot].generated += piece(for: token)
                 live[slot].generatedTokens += 1
+                // Whatever the grammar now forces rides in THIS step's decode.
+                var stepTokens = [token]
+                if Self.feedsForcedSpans {
+                    let forced = Self.forcedContinuation(
+                        after: live[slot].generated, allowedTagNames: items[slot].request.allowedTagNames,
+                        allowDecline: items[slot].allowDecline, maximumTags: items[slot].request.maximumTags)
+                    if forced.finished { live[slot].finished = true; continue }
+                    if !forced.forced.isEmpty, let forcedTokens = try? tokenize(forced.forced, addSpecial: false) {
+                        for forcedToken in forcedTokens { llama_sampler_accept(live[slot].sampler, forcedToken) }
+                        stepTokens += forcedTokens
+                        live[slot].generated += forced.forced
+                        live[slot].generatedTokens += forcedTokens.count
+                    }
+                }
                 if live[slot].generated.hasSuffix(Self.structuredSeparator) { live[slot].awaitingNameStart = true }
                 if live[slot].generatedTokens >= items[slot].generationCap { live[slot].finished = true; continue }
-                live[slot].outputIndex = Int32(next.count)
-                next.append((token, Int32(live[slot].length), Int32(slot + 1), true))
-                live[slot].length += 1
+                for (offset, stepToken) in stepTokens.enumerated() {
+                    let isLast = offset == stepTokens.count - 1
+                    if isLast { live[slot].outputIndex = Int32(next.count) }
+                    next.append((stepToken, Int32(live[slot].length), Int32(slot + 1), isLast))
+                    live[slot].length += 1
+                }
             }
             guard !next.isEmpty else { break }
             let status = decode(next, using: &batch)
@@ -427,17 +446,30 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
                 awaitingNameStart = false
             }
             generated += piece(for: token)
+            // Whatever the grammar now forces is fed in THIS decode, not sampled.
+            var stepTokens = [token]
+            if Self.feedsForcedSpans {
+                let forced = Self.forcedContinuation(
+                    after: generated, allowedTagNames: request.allowedTagNames,
+                    allowDecline: effectiveAllowDecline, maximumTags: maximumTags)
+                if forced.finished { break }        // nothing but end-of-text can follow
+                if !forced.forced.isEmpty, let forcedTokens = try? tokenize(forced.forced, addSpecial: false) {
+                    for forcedToken in forcedTokens { llama_sampler_accept(sampler, forcedToken) }
+                    stepTokens += forcedTokens
+                    generated += forced.forced
+                    generatedTokenCount += forcedTokens.count
+                }
+            }
             if generated.hasSuffix(separatorText) { awaitingNameStart = true }
-            var single = [token]
-            let status = single.withUnsafeMutableBufferPointer { buffer in
-                llama_decode(context, llama_batch_get_one(buffer.baseAddress, 1))
+            let status = stepTokens.withUnsafeMutableBufferPointer { buffer in
+                llama_decode(context, llama_batch_get_one(buffer.baseAddress, Int32(buffer.count)))
             }
             guard status == 0 else {
                 cachedTokens = []
                 llama_memory_seq_rm(llama_get_memory(context), 0, 0, -1)
                 throw OnDeviceLLMError.inference("generation-decode-failed (\(status))")
             }
-            cachedTokens.append(token)
+            cachedTokens.append(contentsOf: stepTokens)
         }
 
         if let tStart, let tPrefill, let tGrammar {
@@ -457,6 +489,62 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
         )
     }
 
+    /// The name→confidence boilerplate of the structured decode.
+    static let confidenceBoilerplate = "\",\"confidence\":"
+
+    /// Never SAMPLE what the grammar forces (LATENCY-REFINEMENT Phase 2). Given the
+    /// text generated so far, returns the span the grammar leaves no choice about —
+    /// so the caller can feed it in the same decode step as the last sampled token
+    /// instead of spending a ~40 ms generation round per forced token — and whether
+    /// the reply is already complete (tag cap reached, or an unambiguous decline),
+    /// so no round is spent sampling end-of-text. The prompt and every real choice
+    /// (each name token, each confidence digit, "another tag or stop") are untouched,
+    /// so the decisions are the ones the plain decode would make.
+    static func forcedContinuation(
+        after generated: String,
+        allowedTagNames: [String],
+        allowDecline: Bool,
+        maximumTags: Int
+    ) -> (forced: String, finished: Bool) {
+        // A quote inside a tag name would make the boilerplate ambiguous — don't force.
+        guard !allowedTagNames.contains(where: { $0.contains("\"") }) else { return ("", false) }
+        let chunks = generated.components(separatedBy: structuredSeparator)
+        guard let current = chunks.last else { return ("", false) }
+
+        if let boilerplate = current.range(of: confidenceBoilerplate) {
+            let tail = current[boilerplate.upperBound...]
+            guard let digit = tail.first else { return ("", false) }           // the digit is a real choice
+            guard ("1"..."5").contains(String(digit)) else { return ("", false) }
+            let afterDigit = String(tail.dropFirst())
+            if afterDigit.isEmpty {
+                // Item complete: at the cap nothing but end-of-text can follow.
+                return ("", chunks.count >= max(1, maximumTags))
+            }
+            // The model chose to continue: the rest of `},{"name":"` is forced.
+            if structuredSeparator.hasPrefix(afterDigit) {
+                return (String(structuredSeparator.dropFirst(afterDigit.count)), false)
+            }
+            return ("", false)
+        }
+
+        // Still inside a name (or its trailing boilerplate).
+        if chunks.count == 1, allowDecline, current == declineLiteral,
+           !allowedTagNames.contains(where: { $0.hasPrefix(declineLiteral) }) {
+            return ("", true)
+        }
+        for name in allowedTagNames where !name.isEmpty && current.hasPrefix(name) {
+            let tail = String(current.dropFirst(name.count))
+            guard confidenceBoilerplate.hasPrefix(tail) else { continue }
+            // `name` is complete only if no longer tag name could still be forming.
+            if tail.isEmpty, allowedTagNames.contains(where: { $0 != name && $0.hasPrefix(name) }) { continue }
+            return (String(confidenceBoilerplate.dropFirst(tail.count)), false)
+        }
+        return ("", false)
+    }
+
+    /// `VAULT_NO_FORCED_SPANS=1` restores sample-everything decoding (for A/B evals).
+    private static let feedsForcedSpans = ProcessInfo.processInfo.environment["VAULT_NO_FORCED_SPANS"] != "1"
+
     /// The inter-object boilerplate of the structured decode (`},{"name":"`): a
     /// name begins at step 0 and right after this completes.
     static let structuredSeparator = "},{\"name\":\""
@@ -475,7 +563,6 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
         // Each object continuation is `Name","confidence":N`; split on the
         // inter-object separator, then on the name→confidence boilerplate. Keep
         // only real taxonomy names, de-duplicated (first occurrence wins).
-        let confidenceBoilerplate = "\",\"confidence\":"
         let chunks = generated.components(separatedBy: structuredSeparator)
         var tags: [LLMCalibrationTag] = []
         var seen = Set<String>()
