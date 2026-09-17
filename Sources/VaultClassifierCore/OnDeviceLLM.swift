@@ -94,6 +94,28 @@ public protocol OnDeviceLLM: Sendable {
     func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult
 }
 
+/// An engine that can decode MANY classification requests in one multi-sequence
+/// pass (LATENCY-REFINEMENT Phase 1). Generation is memory-bandwidth-bound — each
+/// step re-reads all the weights — so advancing N videos per step costs about the
+/// same as one. Results are positional: `result[i]` answers `requests[i]`.
+public protocol OnDeviceBatchLLM: OnDeviceLLM {
+    func classifyBatch(_ requests: [LLMClassificationRequest]) async throws -> [LLMClassificationResult]
+}
+
+public extension OnDeviceLLM {
+    /// Batched when the engine supports it, otherwise the same requests serially —
+    /// so callers have one code path regardless of engine.
+    func classifyAll(_ requests: [LLMClassificationRequest]) async throws -> [LLMClassificationResult] {
+        if requests.count > 1, let batching = self as? any OnDeviceBatchLLM {
+            return try await batching.classifyBatch(requests)
+        }
+        var results: [LLMClassificationResult] = []
+        results.reserveCapacity(requests.count)
+        for request in requests { results.append(try await classify(request)) }
+        return results
+    }
+}
+
 /// Runtime-neutral bridge to the native resident-engine registry. Core keeps
 /// the default engine as its zero-overhead path and consults this resolver only
 /// for classifier types with an explicit model selection.
