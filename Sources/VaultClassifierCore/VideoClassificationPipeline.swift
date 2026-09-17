@@ -25,6 +25,10 @@ public struct VideoClassificationPipeline: Sendable {
     /// a per-video exemplar (see CorrectionRetriever). Exposed so the eval A/B can
     /// sweep it; production uses the retriever's tuned default.
     public let correctionSimilarityFloor: Double
+    /// At or below this top confidence (or on a decline) the pipeline retries with
+    /// the creator's stored description. A classification constant — it was
+    /// formerly borrowed from the research `confidenceTriggerLevel` setting.
+    public static let defaultCreatorGroundingConfidenceFloor = 2
 
     public init(
         llm: any OnDeviceLLM,
@@ -55,7 +59,7 @@ public struct VideoClassificationPipeline: Sendable {
         confidenceThresholds: [Double]? = nil,
         knowledgeTTLDays: Int = ResearchSettings.defaultKnowledgeTTLDays,
         maxKnowledgePerVideo: Int = ResearchSettings.defaultMaxKnowledgePerVideo,
-        creatorGroundingConfidenceFloor: Int = ResearchSettings.defaultConfidenceTriggerLevel
+        creatorGroundingConfidenceFloor: Int = VideoClassificationPipeline.defaultCreatorGroundingConfidenceFloor
     ) async throws -> VideoClassification {
         // Evidence gathering (creator prior + matched knowledge + correction
         // exemplars) is shared with `primaryPromptParts`, so the calibration eval

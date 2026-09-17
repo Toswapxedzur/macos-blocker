@@ -564,8 +564,7 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                 allowDecline: overrides?.allowDecline,
                 confidenceThresholds: overrides?.confidenceThresholds,
                 knowledgeTTLDays: knowledgeSettings.knowledgeTTLDays,
-                maxKnowledgePerVideo: knowledgeSettings.maxKnowledgePerVideo,
-                creatorGroundingConfidenceFloor: knowledgeSettings.confidenceTriggerLevel
+                maxKnowledgePerVideo: knowledgeSettings.maxKnowledgePerVideo
             )
             classifications.append(classification)
             if let effectiveResearch = Self.effectiveResearchSettings(
@@ -635,7 +634,6 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                     creatorID: creatorID,
                     title: title,
                     summary: summary,
-                    includeCreator: false,
                     urgency: Self.researchUrgency(for: classification),
                     promptParts: researchParts[type.id]
                 )
@@ -718,9 +716,6 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
 
     private static func scheduleResearchSubjectExtraction(
         llm: any OnDeviceLLM,
-        resolver: (any OnDeviceLLMEngineResolving)? = nil,
-        localLLMSettings: LocalLLMSettings = LocalLLMSettings(),
-        classifierType: ClassifierTypeAsset? = nil,
         queue: GroundedResearchQueue,
         settings: ResearchSettings,
         classifierTypeID: String,
@@ -729,22 +724,11 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         creatorID: String,
         title: String,
         summary: String?,
-        includeCreator: Bool,
         urgency: Int = ResearchTask.defaultUrgency,
         promptParts: ClassificationPromptParts? = nil
     ) {
         Task.detached(priority: .utility) {
-            let extractionLLM: any OnDeviceLLM
-            if let classifierType {
-                extractionLLM = await Self.resolvedLLM(
-                    for: classifierType,
-                    defaultLLM: llm,
-                    resolver: resolver,
-                    configuration: localLLMSettings
-                )
-            } else {
-                extractionLLM = llm
-            }
+            let extractionLLM = llm
             var subjects: [ResearchSubject] = []
             // Decode 2 (RESEARCH-REDESIGN §5): over the classification prompt, copy
             // the named subjects the model does not recognize. Falls back to the
@@ -754,7 +738,7 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                let terms = try? await needsExtractor.researchNeeds(.init(
                    staticPrefix: promptParts.staticPrefix,
                    dynamicSuffix: promptParts.dynamicSuffix,
-                   maximumTerms: settings.maxSubjectsPerVideo
+                   maximumTerms: ResearchTask.maximumSubjects
                )) {
                 subjects = terms.compactMap { ResearchSubject(kind: .term, subject: $0) }
             }
@@ -762,18 +746,13 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                let subject = try? await extractor.extractResearchSubject(.init(title: title, summary: summary)) {
                 subjects.append(subject)
             }
-            if includeCreator,
-               subjects.count < settings.maxSubjectsPerVideo,
-               let creator = ResearchSubject(kind: .creator, subject: creatorID) {
-                subjects.append(creator)
-            }
             guard !subjects.isEmpty else { return }
             _ = await queue.enqueue(.init(
                 classifierTypeID: classifierTypeID,
                 platformID: platformID,
                 entryID: entryID,
                 creatorID: creatorID,
-                subjects: Array(subjects.prefix(settings.maxSubjectsPerVideo)),
+                subjects: Array(subjects.prefix(ResearchTask.maximumSubjects)),
                 urgency: urgency
             ))
         }
@@ -919,7 +898,6 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         Task.detached(priority: .utility) {
             for candidate in candidates {
                 let entry = candidate.entry
-                let settings = candidate.settings
                 let llm = await Self.resolvedLLM(
                     for: candidate.classifierType,
                     defaultLLM: defaultLLM,
@@ -933,7 +911,7 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                 ) {
                     subjects.append(subject)
                 }
-                if subjects.count < settings.maxSubjectsPerVideo,
+                if subjects.count < ResearchTask.maximumSubjects,
                    let creator = ResearchSubject(kind: .creator, subject: entry.creatorID) {
                     subjects.append(creator)
                 }
@@ -943,17 +921,17 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                     platformID: entry.platformID,
                     entryID: entry.entryID,
                     creatorID: entry.creatorID,
-                    subjects: Array(subjects.prefix(settings.maxSubjectsPerVideo)),
+                    subjects: Array(subjects.prefix(ResearchTask.maximumSubjects)),
                     urgency: candidate.urgency
                 ))
             }
         }
     }
 
-    /// Stores an authoritative human correction, periodically refreshes the
-    /// type's learned rule block, updates the cached projection, and—when the
-    /// user has opted in and the type's trigger includes corrections—schedules
-    /// the same sanitized second-decode research path used by model triggers.
+    /// Stores an authoritative human correction and updates the cached
+    /// projection. A correction never schedules research: research is driven by
+    /// the model's own uncertainty (derived urgency), and a human-corrected video
+    /// has none left (the former `correctionsOnly`/`all` trigger modes are gone).
     @discardableResult
     public func submitCorrection(
         classifierTypeID: String,
@@ -964,13 +942,6 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
     ) throws -> VideoTagsProjection {
         let saved = try lock.withLock { () throws -> (
             projection: VideoTagsProjection,
-            entry: CollectedPlatformEntry,
-            llm: any OnDeviceLLM,
-            resolver: (any OnDeviceLLMEngineResolving)?,
-            localLLMSettings: LocalLLMSettings,
-            queue: GroundedResearchQueue?,
-            settings: ResearchSettings?,
-            classifierType: ClassifierTypeAsset,
             callback: (@Sendable (String, String, VideoTagsProjection) -> Void)?
         ) in
             guard let typeIndex = state.workspaceCatalog.classifierTypes.firstIndex(where: {
@@ -1037,13 +1008,6 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                     types: types,
                     catalog: state.workspaceCatalog
                 ),
-                entry,
-                onDeviceLLM,
-                onDeviceLLMEngineResolver,
-                state.settings.localLLM,
-                groundedResearchQueue,
-                Self.effectiveResearchSettings(global: state.settings.research, for: type),
-                type,
                 onVideoReclassifiedCallback
             )
         }
@@ -1055,25 +1019,6 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         // handful of corrections fabricates spurious rules ("tag Samsung as
         // Sports") that poison classification. Grounded exemplars beat invented
         // framing; see the creator prior for the same lesson.
-        if let settings = saved.settings,
-           settings.trigger.includesCorrections,
-           let queue = saved.queue {
-            Self.scheduleResearchSubjectExtraction(
-                llm: saved.llm,
-                resolver: saved.resolver,
-                localLLMSettings: saved.localLLMSettings,
-                classifierType: saved.classifierType,
-                queue: queue,
-                settings: settings,
-                classifierTypeID: saved.classifierType.id,
-                platformID: platformID,
-                entryID: entryID,
-                creatorID: saved.entry.creatorID,
-                title: saved.entry.title,
-                summary: saved.entry.summary,
-                includeCreator: true
-            )
-        }
         return saved.projection
     }
 

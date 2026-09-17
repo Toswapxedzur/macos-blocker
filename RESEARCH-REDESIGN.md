@@ -1,8 +1,8 @@
 # Vault Classifier — Research & Classification Redesign
 
 > **Status: APPROVED — build in progress (owner said "proceed with plan", 2026-09-16).**
-> Phase 0 Experiment 1 is complete (see §6/§10/§13); Phase 1 next. Supersedes the
-> current research trigger/queue design.
+> Phases 0–4 are done (see §13 for what changed vs. this text — notably urgency is
+> DERIVED from confidence, not model-emitted). Only raw-search removal remains.
 
 ## 1. Why
 
@@ -336,3 +336,20 @@ mini1 for weak-hardware latency):
   recognized content). Test covers both the Decode-2 path and the fallback.
   Note: the decode runs detached, so the KV prefix is usually cold by then —
   correct, but the §5 KV-reuse saving only materializes if it is moved inline.
+- 2026-09-17 — **Phase 4: settings collapse + UI.** Removed `ResearchTrigger` and
+  the `trigger` / `confidenceTriggerLevel` / `maxSubjectsPerVideo` settings (the cap
+  is now the fixed `ResearchTask.maximumSubjects`; the pipeline's creator-grounding
+  floor is its own constant, 2). **Legacy states migrate on decode**: `declineOnly`/
+  `correctionsOnly` → floor 5; `declineAndLowConfidence`/`all` → `6 − level`; retired
+  keys never re-encode. **`urgencyFloor` default is now 5 (declines only)** — the
+  pre-redesign default — because 3b's interim default of 3 would have silently
+  widened research spend; presets map gentle/localOnly → 5, balanced/strict → 4
+  (exactly their old triggers). **Correction-triggered research is gone** (it was
+  the `correctionsOnly`/`all` modes, off by default; a human-corrected video has no
+  uncertainty left) and the scheduler helper lost its correction-only parameters.
+  Web shell: the Trigger group is one "Research when" select (5 plain-language
+  levels) plus a new "Creator research" group (videos / level / window days), in
+  both the global and per-type forms; bridge keys `urgencyFloor`, `authorLevel`,
+  `authorCount`, `authorWindowDays`. 221/221 tests. Remaining: raw-search removal
+  (Cut A — `searchMode`, `webSearchProviderProfileID`, `searchResultCount`,
+  `snippetContextChars`, `RawWebSearchProtocol.swift`; needs file-deletion consent).
