@@ -316,40 +316,36 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertFalse(LocalClassifierCoordinator.hasExplicitModelDecline([knowledgeDecline]))
     }
 
-    func testGranularResearchTriggerModesAndConfidenceLevel() {
+    func testUrgencyDrivenResearchTrigger() {
+        // RESEARCH-REDESIGN §7: research fires when a video's DERIVED urgency
+        // (inverse mean confidence; decline = 5) reaches the user's urgencyFloor.
         let decline = VideoClassification(
             classifierTypeID: "type", platformID: "youtube", entryID: "v", creatorID: "c",
             treeID: "tree", treeRevision: 1, tags: [], source: .model, modelVersion: "m"
         )
-        var low = decline
+        var low = decline            // confidence 3 → urgency 3
         low.tags = [.init(tagID: "tag", confidence: 3)]
-        var grounded = low
+        var mid = decline            // confidence 4 → urgency 2
+        mid.tags = [.init(tagID: "tag", confidence: 4)]
+        var high = decline           // confidence 5 → urgency 1
+        high.tags = [.init(tagID: "tag", confidence: 5)]
+        var grounded = low           // non-model source never triggers
         grounded.source = .modelKnowledge
 
-        XCTAssertTrue(LocalClassifierCoordinator.shouldTriggerResearch(
-            for: decline,
-            settings: .init(trigger: .declineOnly)
-        ))
-        XCTAssertFalse(LocalClassifierCoordinator.shouldTriggerResearch(
-            for: low,
-            settings: .init(trigger: .declineOnly, confidenceTriggerLevel: 3)
-        ))
-        XCTAssertTrue(LocalClassifierCoordinator.shouldTriggerResearch(
-            for: low,
-            settings: .init(trigger: .declineAndLowConfidence, confidenceTriggerLevel: 3)
-        ))
-        XCTAssertFalse(LocalClassifierCoordinator.shouldTriggerResearch(
-            for: low,
-            settings: .init(trigger: .declineAndLowConfidence, confidenceTriggerLevel: 2)
-        ))
-        XCTAssertFalse(LocalClassifierCoordinator.shouldTriggerResearch(
-            for: decline,
-            settings: .init(trigger: .correctionsOnly)
-        ))
-        XCTAssertFalse(LocalClassifierCoordinator.shouldTriggerResearch(
-            for: grounded,
-            settings: .init(trigger: .all, confidenceTriggerLevel: 5)
-        ))
+        XCTAssertEqual(LocalClassifierCoordinator.researchUrgency(for: decline), 5)
+        XCTAssertEqual(LocalClassifierCoordinator.researchUrgency(for: low), 3)
+        XCTAssertEqual(LocalClassifierCoordinator.researchUrgency(for: high), 1)
+
+        // A decline (urgency 5) triggers at any floor.
+        XCTAssertTrue(LocalClassifierCoordinator.shouldTriggerResearch(for: decline, settings: .init(urgencyFloor: 5)))
+        // Low confidence (urgency 3) triggers at floor 3, not at a stricter floor 4.
+        XCTAssertTrue(LocalClassifierCoordinator.shouldTriggerResearch(for: low, settings: .init(urgencyFloor: 3)))
+        XCTAssertFalse(LocalClassifierCoordinator.shouldTriggerResearch(for: low, settings: .init(urgencyFloor: 4)))
+        // Confident classifications (urgency 1–2) don't trigger at the default floor.
+        XCTAssertFalse(LocalClassifierCoordinator.shouldTriggerResearch(for: mid, settings: .init(urgencyFloor: 3)))
+        XCTAssertFalse(LocalClassifierCoordinator.shouldTriggerResearch(for: high, settings: .init(urgencyFloor: 3)))
+        // Non-model (grounded) results never trigger, whatever the urgency/floor.
+        XCTAssertFalse(LocalClassifierCoordinator.shouldTriggerResearch(for: grounded, settings: .init(urgencyFloor: 1)))
     }
 
     func testEffectiveResearchSettingsInheritOverrideAndRespectMasterGate() {

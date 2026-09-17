@@ -376,6 +376,10 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
     public static let defaultCooldownHours = 24
     public static let maximumCooldownHours = 720
     public static let defaultConfidenceTriggerLevel = 2
+    /// RESEARCH-REDESIGN §7: research fires when a video's DERIVED urgency
+    /// (`ResearchUrgency.fromTagConfidences`, the inverse of its mean confidence;
+    /// a decline = 5) is at least this. 3 ⇒ research when mean confidence ≤ ~3.
+    public static let defaultUrgencyFloor = 3
     public static let defaultSearchResultCount = 5
     public static let maximumSearchResultCount = 5
     public static let defaultSnippetContextChars = 16_000
@@ -399,6 +403,9 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
     public var cooldownHours: Int
     public var trigger: ResearchTrigger
     public var confidenceTriggerLevel: Int
+    /// Minimum derived urgency (1–5) that fires research. Replaces the
+    /// `trigger`/`confidenceTriggerLevel` machinery (RESEARCH-REDESIGN §7).
+    public var urgencyFloor: Int
     public var searchResultCount: Int
     public var snippetContextChars: Int
     public var knowledgeTTLDays: Int
@@ -416,6 +423,7 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
         cooldownHours: Int = Self.defaultCooldownHours,
         trigger: ResearchTrigger = .declineOnly,
         confidenceTriggerLevel: Int = Self.defaultConfidenceTriggerLevel,
+        urgencyFloor: Int = Self.defaultUrgencyFloor,
         searchResultCount: Int = Self.defaultSearchResultCount,
         snippetContextChars: Int = Self.defaultSnippetContextChars,
         knowledgeTTLDays: Int = Self.defaultKnowledgeTTLDays,
@@ -432,6 +440,7 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
         self.cooldownHours = min(Self.maximumCooldownHours, max(1, cooldownHours))
         self.trigger = trigger
         self.confidenceTriggerLevel = min(5, max(1, confidenceTriggerLevel))
+        self.urgencyFloor = min(5, max(1, urgencyFloor))
         self.searchResultCount = min(Self.maximumSearchResultCount, max(1, searchResultCount))
         self.snippetContextChars = min(
             Self.maximumSnippetContextChars,
@@ -444,7 +453,7 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case enabled, searchMode, llmProviderProfileID, llmModelIdentifier, webSearchProviderProfileID
         case requestsPerMinute, dailyTokenLimit, maxSubjectsPerVideo, cooldownHours
-        case trigger, confidenceTriggerLevel, searchResultCount, snippetContextChars
+        case trigger, confidenceTriggerLevel, urgencyFloor, searchResultCount, snippetContextChars
         case knowledgeTTLDays, maxKnowledgePerVideo
     }
 
@@ -464,6 +473,7 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
             cooldownHours: try container.decodeIfPresent(Int.self, forKey: .cooldownHours) ?? Self.defaultCooldownHours,
             trigger: try container.decodeIfPresent(ResearchTrigger.self, forKey: .trigger) ?? .declineOnly,
             confidenceTriggerLevel: try container.decodeIfPresent(Int.self, forKey: .confidenceTriggerLevel) ?? Self.defaultConfidenceTriggerLevel,
+            urgencyFloor: try container.decodeIfPresent(Int.self, forKey: .urgencyFloor) ?? Self.defaultUrgencyFloor,
             searchResultCount: try container.decodeIfPresent(Int.self, forKey: .searchResultCount) ?? Self.defaultSearchResultCount,
             snippetContextChars: try container.decodeIfPresent(Int.self, forKey: .snippetContextChars) ?? Self.defaultSnippetContextChars,
             knowledgeTTLDays: try container.decodeIfPresent(Int.self, forKey: .knowledgeTTLDays) ?? Self.defaultKnowledgeTTLDays,
