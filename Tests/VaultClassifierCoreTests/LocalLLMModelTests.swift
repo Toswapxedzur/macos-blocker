@@ -278,4 +278,59 @@ final class LocalLLMModelTests: XCTestCase {
         XCTAssertTrue(starter.creatorHistograms.isEmpty)
         XCTAssertNoThrow(try starter.validate())
     }
+
+    // MARK: - Author research accumulator (§8)
+
+    func testAuthorAccumulatorFiresAtThresholdWithMeanThenResets() {
+        var catalog = WorkspaceCatalog()
+        let threshold = AuthorResearchThreshold(level: 3, count: 5, windowDays: 30)
+        let now: Int64 = 1_000_000_000_000
+        // Four uncertain (urgency 4) videos — count not yet met.
+        for i in 0..<4 {
+            XCTAssertNil(catalog.recordCreatorResearchUrgency(
+                classifierTypeID: "t", creatorID: "c", urgency: 4, threshold: threshold, nowMilliseconds: now + Int64(i)))
+        }
+        // Fifth crosses count; mean 4 ≥ level 3 → fires with the rounded mean, resets.
+        XCTAssertEqual(catalog.recordCreatorResearchUrgency(
+            classifierTypeID: "t", creatorID: "c", urgency: 4, threshold: threshold, nowMilliseconds: now + 5), 4)
+        // After the reset the accumulator is empty, so the next sample does not refire.
+        XCTAssertNil(catalog.recordCreatorResearchUrgency(
+            classifierTypeID: "t", creatorID: "c", urgency: 4, threshold: threshold, nowMilliseconds: now + 6))
+    }
+
+    func testAuthorAccumulatorDoesNotFireWhenMeanBelowLevel() {
+        var catalog = WorkspaceCatalog()
+        let threshold = AuthorResearchThreshold(level: 3, count: 3, windowDays: 30)
+        let now: Int64 = 1_000_000_000_000
+        // A confidently-classified creator (urgency 1) never crosses even at count.
+        for i in 0..<6 {
+            XCTAssertNil(catalog.recordCreatorResearchUrgency(
+                classifierTypeID: "t", creatorID: "c", urgency: 1, threshold: threshold, nowMilliseconds: now + Int64(i)))
+        }
+    }
+
+    func testAuthorAccumulatorPrunesSamplesOutsideWindow() {
+        var catalog = WorkspaceCatalog()
+        let threshold = AuthorResearchThreshold(level: 3, count: 3, windowDays: 1)
+        let day: Int64 = 24 * 60 * 60 * 1_000
+        let base: Int64 = 10 * day
+        // Two samples two days ago — older than the 1-day window.
+        XCTAssertNil(catalog.recordCreatorResearchUrgency(classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: threshold, nowMilliseconds: base - 2 * day))
+        XCTAssertNil(catalog.recordCreatorResearchUrgency(classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: threshold, nowMilliseconds: base - 2 * day + 1))
+        // Three recent samples: the stale two prune out, so only these three count.
+        XCTAssertNil(catalog.recordCreatorResearchUrgency(classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: threshold, nowMilliseconds: base))
+        XCTAssertNil(catalog.recordCreatorResearchUrgency(classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: threshold, nowMilliseconds: base + 1))
+        XCTAssertEqual(catalog.recordCreatorResearchUrgency(classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: threshold, nowMilliseconds: base + 2), 5)
+    }
+
+    func testAuthorAccumulatorIsPerTypeAndCreatorAndSurvivesCodableRoundTrip() throws {
+        var catalog = WorkspaceCatalog()
+        let threshold = AuthorResearchThreshold(level: 3, count: 3, windowDays: 30)
+        let now: Int64 = 2_000_000_000_000
+        _ = catalog.recordCreatorResearchUrgency(classifierTypeID: "t1", creatorID: "c", urgency: 4, threshold: threshold, nowMilliseconds: now)
+        _ = catalog.recordCreatorResearchUrgency(classifierTypeID: "t2", creatorID: "c", urgency: 4, threshold: threshold, nowMilliseconds: now)
+        XCTAssertEqual(catalog.creatorResearchAccumulators.count, 2)   // keyed per type+creator
+        let decoded = try JSONDecoder().decode(WorkspaceCatalog.self, from: JSONEncoder().encode(catalog))
+        XCTAssertEqual(decoded.creatorResearchAccumulators.count, 2)   // persisted
+    }
 }

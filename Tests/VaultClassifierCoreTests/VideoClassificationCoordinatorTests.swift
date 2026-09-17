@@ -622,14 +622,16 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertTrue(projection.tags.isEmpty, "an unrecognized title should be declined by the model")
 
         // The second decode is fire-and-forget: wait for it to extract, enqueue,
-        // and drain (the term subject plus the sanitized creator handle).
-        for _ in 0..<200 where recorder.subjects.count < 2 {
+        // and drain the TERM subject. Author research is now accumulation-gated
+        // (§8) — a single declining video does not research the creator — so only
+        // the extracted term leaves here.
+        for _ in 0..<200 where recorder.subjects.isEmpty {
             try? await Task<Never, Never>.sleep(nanoseconds: 2_000_000)
         }
         await queue.waitUntilIdle()
         let leaked = recorder.subjects.map(\.subject)
         XCTAssertTrue(leaked.contains("HermitCraft"), "the extracted term subject should trigger research")
-        XCTAssertTrue(leaked.contains("@creator"), "the creator ID should be sanitized to its @handle")
+        XCTAssertFalse(leaked.contains("@creator"), "a single video must not trigger author research (accumulation-gated)")
         for subject in leaked {
             XCTAssertFalse(subject.lowercased().contains("nonsense"), "raw title text must never leave the device")
             XCTAssertFalse(subject.contains("youtube:"), "raw creator/channel IDs must never leave the device")
