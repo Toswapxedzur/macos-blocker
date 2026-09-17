@@ -1,6 +1,6 @@
 # Vault Classifier — Latency Refinement (single 7B, feed-fast)
 
-> **Status: Phase 1 BUILT (2026-09-17) — see §6a/§6b for what the measurements
+> **Status: Phases 1–2 BUILT (2026-09-17) — see §6a/§6b for what the measurements
 > changed; §1's prefill claims are superseded.** Owner decision: keep a SINGLE
 > model (the 7B quality model) — no 1B+7B pipeline. This plans the engine changes
 > that make one 7B usable for a live feed. Design-doc-first (like
@@ -181,6 +181,42 @@ batching. Wiring `classifyBatch` into pipeline/store/app is not done yet.
   (generation is now ~half the time: 64 tokens in 9 rounds); (3) the flash policy
   (owner). A caveat of batching: videos in one batch don't see each other in the
   creator counts (they reflect the catalog before the batch).
+
+## 6c. Phase 2 — two ways to stop generating scaffold, measured (2026-09-17)
+
+**(i) Owner-requested BARE reply (`Music 4 Sports 2`, runway `Tags:`, no JSON at
+all) — REJECTED on accuracy, kept on branch `experiment/bare-reply-format`.**
+Dev 7B, 120-video eval, cap 1, vs the JSON-scaffold contract:
+
+| | JSON scaffold | bare `Name D` |
+|---|---|---|
+| batched speed | 361 ms/video | **278 ms/video** |
+| P / R / F1 | 0.59 / 0.61 / **0.60** | 0.50 / 0.47 / **0.48** |
+| exact match | 62% | 51% |
+| declines correct | 36/55 | 31/55 |
+| calibration (ECE) | ~0.30 | 0.239, separation 0.60 (better) |
+
+This confirms, on the 7B and a real eval set, the 2026-08-15 note that the
+`{"tags":[{"name":"` runway carries accuracy: without it the model declines more
+and picks worse. Do not remove the JSON runway from the PROMPT.
+
+**(ii) Forced-span feeding — SHIPPED.** Keep the prompt exactly as is, but never
+*sample* what the grammar forces (`forcedContinuation`): once the name is
+unambiguous (no longer tag name could still be forming), `","confidence":` is fed
+in the SAME decode step as the name token; a started `},{"name":"` is completed;
+and at the tag cap (or on an unambiguous `none`) the decode stops right after the
+digit instead of spending a round sampling end-of-text. Every real choice — each
+name token, each digit, "another tag or stop" — is still the model's.
+Result (dev 7B, 32 videos): **answers identical to sample-everything on 32/32
+(tags + confidence)**; generation **9 → 5 lock-step rounds (2.7 s → 1.5 s per
+16)**; **batched 379 → 303 ms/video, serial 516 → 405 ms/video.** A/B switch:
+`VAULT_NO_FORCED_SPANS=1`.
+
+**Where the time is now (16 videos ≈ 4.8 s):** ~3.2 s is suffix prefill (~47
+tokens/video at ~245 tok/s: title + ~16 tokens of fixed `Video:/Title:/Output
+JSON…` boilerplate + the creator counts line) and ~1.5 s is generation. Prefill
+is compute-bound and unbatchable, so the remaining lever is fewer suffix tokens
+(or the flash policy, §4 Phase 4), not the decoder.
 
 ## 7. Decisions log
 - 2026-09-17 — Measured: 7B generation is bandwidth-bound at ~40 ms/token on M1
