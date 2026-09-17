@@ -369,6 +369,28 @@ public enum ResearchSearchMode: String, Codable, Equatable, Sendable, CaseIterab
     case providerGrounding
 }
 
+/// When to research a CREATOR (RESEARCH-REDESIGN §8): research the author once,
+/// within a `windowDays` window, at least `count` of their videos have a mean
+/// derived urgency of at least `level`. Replaces the "append the creator handle
+/// when the histogram is weak" heuristic with a graded, accumulating signal.
+public struct AuthorResearchThreshold: Codable, Equatable, Sendable {
+    public static let defaultLevel = 3
+    public static let defaultCount = 5
+    public static let defaultWindowDays = 30
+    public static let maximumCount = 512
+    public static let maximumWindowDays = 3_650
+
+    public var level: Int
+    public var count: Int
+    public var windowDays: Int
+
+    public init(level: Int = defaultLevel, count: Int = defaultCount, windowDays: Int = defaultWindowDays) {
+        self.level = min(5, max(1, level))
+        self.count = min(Self.maximumCount, max(1, count))
+        self.windowDays = min(Self.maximumWindowDays, max(1, windowDays))
+    }
+}
+
 public struct ResearchSettings: Codable, Equatable, Sendable {
     public static let maximumRequestsPerMinute = 120
     public static let maximumDailyTokenLimit = 10_000_000
@@ -406,6 +428,8 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
     /// Minimum derived urgency (1–5) that fires research. Replaces the
     /// `trigger`/`confidenceTriggerLevel` machinery (RESEARCH-REDESIGN §7).
     public var urgencyFloor: Int
+    /// When to research the creator itself (RESEARCH-REDESIGN §8).
+    public var authorThreshold: AuthorResearchThreshold
     public var searchResultCount: Int
     public var snippetContextChars: Int
     public var knowledgeTTLDays: Int
@@ -424,6 +448,7 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
         trigger: ResearchTrigger = .declineOnly,
         confidenceTriggerLevel: Int = Self.defaultConfidenceTriggerLevel,
         urgencyFloor: Int = Self.defaultUrgencyFloor,
+        authorThreshold: AuthorResearchThreshold = AuthorResearchThreshold(),
         searchResultCount: Int = Self.defaultSearchResultCount,
         snippetContextChars: Int = Self.defaultSnippetContextChars,
         knowledgeTTLDays: Int = Self.defaultKnowledgeTTLDays,
@@ -441,6 +466,7 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
         self.trigger = trigger
         self.confidenceTriggerLevel = min(5, max(1, confidenceTriggerLevel))
         self.urgencyFloor = min(5, max(1, urgencyFloor))
+        self.authorThreshold = authorThreshold
         self.searchResultCount = min(Self.maximumSearchResultCount, max(1, searchResultCount))
         self.snippetContextChars = min(
             Self.maximumSnippetContextChars,
@@ -453,7 +479,7 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case enabled, searchMode, llmProviderProfileID, llmModelIdentifier, webSearchProviderProfileID
         case requestsPerMinute, dailyTokenLimit, maxSubjectsPerVideo, cooldownHours
-        case trigger, confidenceTriggerLevel, urgencyFloor, searchResultCount, snippetContextChars
+        case trigger, confidenceTriggerLevel, urgencyFloor, authorThreshold, searchResultCount, snippetContextChars
         case knowledgeTTLDays, maxKnowledgePerVideo
     }
 
@@ -474,6 +500,7 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
             trigger: try container.decodeIfPresent(ResearchTrigger.self, forKey: .trigger) ?? .declineOnly,
             confidenceTriggerLevel: try container.decodeIfPresent(Int.self, forKey: .confidenceTriggerLevel) ?? Self.defaultConfidenceTriggerLevel,
             urgencyFloor: try container.decodeIfPresent(Int.self, forKey: .urgencyFloor) ?? Self.defaultUrgencyFloor,
+            authorThreshold: try container.decodeIfPresent(AuthorResearchThreshold.self, forKey: .authorThreshold) ?? AuthorResearchThreshold(),
             searchResultCount: try container.decodeIfPresent(Int.self, forKey: .searchResultCount) ?? Self.defaultSearchResultCount,
             snippetContextChars: try container.decodeIfPresent(Int.self, forKey: .snippetContextChars) ?? Self.defaultSnippetContextChars,
             knowledgeTTLDays: try container.decodeIfPresent(Int.self, forKey: .knowledgeTTLDays) ?? Self.defaultKnowledgeTTLDays,

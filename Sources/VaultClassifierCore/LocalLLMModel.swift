@@ -403,6 +403,33 @@ public struct CreatorTagHistogram: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+// MARK: - Author research accumulator (RESEARCH-REDESIGN §8)
+
+/// One windowed per-video urgency sample for a creator.
+public struct CreatorUrgencySample: Codable, Equatable, Sendable {
+    public var urgency: Int
+    public var atMilliseconds: Int64
+    public init(urgency: Int, atMilliseconds: Int64) {
+        self.urgency = min(5, max(1, urgency))
+        self.atMilliseconds = atMilliseconds
+    }
+}
+
+/// Accumulates a creator's recent derived-urgency samples (per classifier type)
+/// so author research can fire when they are consistently hard to classify.
+public struct CreatorResearchAccumulator: Codable, Equatable, Sendable, Identifiable {
+    /// `classifierTypeID\u{1F}creatorID`.
+    public var id: String
+    public var samples: [CreatorUrgencySample]
+    public init(id: String, samples: [CreatorUrgencySample] = []) {
+        self.id = id
+        self.samples = samples
+    }
+    public static func key(classifierTypeID: String, creatorID: String) -> String {
+        "\(classifierTypeID)\u{1F}\(creatorID)"
+    }
+}
+
 // MARK: - Catalog integration (additive)
 
 public extension WorkspaceCatalog {
@@ -411,6 +438,8 @@ public extension WorkspaceCatalog {
     static let maximumResearchAttempts = 20_000
     static let maximumCorrectionExamples = 5_000
     static let maximumMatchedKnowledgeEntries = 8
+    static let maximumCreatorAccumulators = 20_000
+    static let maximumCreatorUrgencySamples = 512
 
     /// The current per-video classification for a type + platform + video.
     func videoClassification(classifierTypeID: String, platformID: String, entryID: String) -> VideoClassification? {
@@ -559,6 +588,50 @@ public extension WorkspaceCatalog {
         researchAttempts.removeAll {
             $0.classifierTypeID == classifierTypeID && $0.subjectKey == subjectKey
         }
+    }
+
+    /// Records one video's derived urgency against a creator's accumulator
+    /// (pruning samples outside the window), and — when the creator now has at
+    /// least `threshold.count` samples averaging at least `threshold.level` — RESETS
+    /// the accumulator and returns the rounded mean urgency to research the author
+    /// with. Returns nil when the threshold is not yet met (RESEARCH-REDESIGN §8).
+    @discardableResult
+    mutating func recordCreatorResearchUrgency(
+        classifierTypeID: String,
+        creatorID: String,
+        urgency: Int,
+        threshold: AuthorResearchThreshold,
+        nowMilliseconds: Int64
+    ) -> Int? {
+        let key = CreatorResearchAccumulator.key(classifierTypeID: classifierTypeID, creatorID: creatorID)
+        let windowMilliseconds = Int64(threshold.windowDays) * 24 * 60 * 60 * 1_000
+        let cutoff = nowMilliseconds - windowMilliseconds
+
+        var accumulator = creatorResearchAccumulators.first(where: { $0.id == key }) ?? .init(id: key)
+        accumulator.samples.removeAll { $0.atMilliseconds < cutoff }
+        accumulator.samples.append(.init(urgency: urgency, atMilliseconds: nowMilliseconds))
+        if accumulator.samples.count > Self.maximumCreatorUrgencySamples {
+            accumulator.samples = Array(accumulator.samples.suffix(Self.maximumCreatorUrgencySamples))
+        }
+
+        var crossed: Int?
+        if accumulator.samples.count >= threshold.count {
+            let mean = Double(accumulator.samples.reduce(0) { $0 + $1.urgency }) / Double(accumulator.samples.count)
+            if mean >= Double(threshold.level) {
+                crossed = min(5, max(1, Int(mean.rounded())))
+                accumulator.samples.removeAll()   // reset after firing
+            }
+        }
+
+        creatorResearchAccumulators.removeAll { $0.id == key }
+        // Keep only non-empty accumulators, newest activity first, under the bound.
+        if !accumulator.samples.isEmpty {
+            creatorResearchAccumulators.insert(accumulator, at: 0)
+            if creatorResearchAccumulators.count > Self.maximumCreatorAccumulators {
+                creatorResearchAccumulators = Array(creatorResearchAccumulators.prefix(Self.maximumCreatorAccumulators))
+            }
+        }
+        return crossed
     }
 
     /// Stores one authoritative correction per classifier type/platform/video.

@@ -1238,8 +1238,11 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     public var researchAttempts: [ResearchAttemptRecord]
     public var correctionExamples: [CorrectionExample]
     public var creatorHistograms: [CreatorTagHistogram]
+    /// Per-creator (per classifier type) accumulator of derived research urgency,
+    /// windowed — drives author research (RESEARCH-REDESIGN §8).
+    public var creatorResearchAccumulators: [CreatorResearchAccumulator]
 
-    public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], bindings: [PlatformBinding] = [], classifierTypes: [ClassifierTypeAsset] = [], tokenUsage: [TokenUsageRecord] = [], providerRequestRecords: [ProviderRequestRecord] = [], providerProfiles: [APIKeyProviderProfile] = [], trash: [TrashedEntry] = [], videoClassifications: [VideoClassification] = [], knowledgeEntries: [KnowledgeEntry] = [], creatorKnowledge: [KnowledgeEntry] = [], researchAttempts: [ResearchAttemptRecord] = [], correctionExamples: [CorrectionExample] = [], creatorHistograms: [CreatorTagHistogram] = []) {
+    public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], bindings: [PlatformBinding] = [], classifierTypes: [ClassifierTypeAsset] = [], tokenUsage: [TokenUsageRecord] = [], providerRequestRecords: [ProviderRequestRecord] = [], providerProfiles: [APIKeyProviderProfile] = [], trash: [TrashedEntry] = [], videoClassifications: [VideoClassification] = [], knowledgeEntries: [KnowledgeEntry] = [], creatorKnowledge: [KnowledgeEntry] = [], researchAttempts: [ResearchAttemptRecord] = [], correctionExamples: [CorrectionExample] = [], creatorHistograms: [CreatorTagHistogram] = [], creatorResearchAccumulators: [CreatorResearchAccumulator] = []) {
         self.trees = trees
         self.datasets = datasets
         self.bindings = bindings
@@ -1254,6 +1257,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         self.researchAttempts = researchAttempts
         self.correctionExamples = correctionExamples
         self.creatorHistograms = creatorHistograms
+        self.creatorResearchAccumulators = creatorResearchAccumulators
     }
 
     public static func now() -> Int64 { Int64(Date().timeIntervalSince1970 * 1_000) }
@@ -1378,7 +1382,8 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case trees, datasets, bindings, classifierTypes, tokenUsage, providerRequestRecords, providerProfiles, trash,
-             videoClassifications, knowledgeEntries, creatorKnowledge, researchAttempts, correctionExamples, creatorHistograms
+             videoClassifications, knowledgeEntries, creatorKnowledge, researchAttempts, correctionExamples, creatorHistograms,
+             creatorResearchAccumulators
     }
 
     private enum RetiredCodingKeys: String, CodingKey { case models }
@@ -1411,6 +1416,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         researchAttempts = try container.decodeIfPresent([ResearchAttemptRecord].self, forKey: .researchAttempts) ?? []
         correctionExamples = try container.decodeIfPresent([CorrectionExample].self, forKey: .correctionExamples) ?? []
         creatorHistograms = try container.decodeIfPresent([CreatorTagHistogram].self, forKey: .creatorHistograms) ?? []
+        creatorResearchAccumulators = try container.decodeIfPresent([CreatorResearchAccumulator].self, forKey: .creatorResearchAccumulators) ?? []
     }
 
     private func unique(_ identifiers: [String]) throws {

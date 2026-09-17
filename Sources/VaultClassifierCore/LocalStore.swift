@@ -573,10 +573,28 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
             }
         }
 
-        let saved = try lock.withLock {
+        let (saved, authorTasks) = try lock.withLock { () -> (WorkspaceCatalog, [ResearchTask]) in
             for classification in classifications { state.workspaceCatalog.upsertVideoClassification(classification) }
+            // Author accumulation (§8): every model classification adds its derived
+            // urgency to the creator's windowed accumulator; a creator that is
+            // consistently hard to classify crosses the threshold → an author task.
+            var authorTasks: [ResearchTask] = []
+            let nowMilliseconds = WorkspaceCatalog.now()
+            for (type, classification, settings, _) in researchCandidates where classification.source == .model {
+                guard let meanUrgency = state.workspaceCatalog.recordCreatorResearchUrgency(
+                    classifierTypeID: type.id,
+                    creatorID: creatorID,
+                    urgency: Self.researchUrgency(for: classification),
+                    threshold: settings.authorThreshold,
+                    nowMilliseconds: nowMilliseconds
+                ), let creatorSubject = ResearchSubject(kind: .creator, subject: creatorID) else { continue }
+                authorTasks.append(.init(
+                    classifierTypeID: type.id, platformID: platformID, entryID: entryID,
+                    creatorID: creatorID, subjects: [creatorSubject], urgency: meanUrgency
+                ))
+            }
             try stateFile.save(state)
-            return state.workspaceCatalog
+            return (state.workspaceCatalog, authorTasks)
         }
 
         let projection = Self.videoTagsProjection(entryID: entryID, platformID: platformID, types: types, catalog: saved)
@@ -589,13 +607,11 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
             "tags": "\(projection.tags.count)"
         ])
         if let researchQueue {
+            // Author research now comes from the §8 accumulator, not the old
+            // "append the creator handle when the histogram is weak" heuristic.
+            for task in authorTasks { _ = await researchQueue.enqueue(task) }
             for (type, classification, settings, llm) in researchCandidates
             where Self.shouldTriggerResearch(for: classification, settings: settings) {
-                let hasWeakCreatorPrior = catalog.creatorHistogram(
-                    classifierTypeID: type.id,
-                    platformID: platformID,
-                    creatorID: creatorID
-                ) == nil
                 Self.scheduleResearchSubjectExtraction(
                     llm: llm,
                     queue: researchQueue,
@@ -606,7 +622,7 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                     creatorID: creatorID,
                     title: title,
                     summary: summary,
-                    includeCreator: hasWeakCreatorPrior,
+                    includeCreator: false,
                     urgency: Self.researchUrgency(for: classification)
                 )
             }
