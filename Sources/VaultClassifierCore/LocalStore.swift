@@ -606,7 +606,8 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                     creatorID: creatorID,
                     title: title,
                     summary: summary,
-                    includeCreator: hasWeakCreatorPrior
+                    includeCreator: hasWeakCreatorPrior,
+                    urgency: Self.researchUrgency(for: classification)
                 )
             }
         }
@@ -667,15 +668,22 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         classifications.contains { $0.source == .model && $0.tags.isEmpty }
     }
 
+    /// The derived research urgency for a model classification (inverse of its
+    /// mean confidence; a decline = 5). Single source of truth for the trigger and
+    /// for the queued task's priority (RESEARCH-REDESIGN §7).
+    public static func researchUrgency(for classification: VideoClassification) -> Int {
+        ResearchUrgency.fromTagConfidences(classification.tags.map(\.confidence))
+    }
+
     public static func shouldTriggerResearch(
         for classification: VideoClassification,
         settings: ResearchSettings
     ) -> Bool {
-        guard classification.source == .model,
-              settings.trigger.includesLiveClassification else { return false }
-        if classification.tags.isEmpty { return true }
-        guard settings.trigger.includesLowConfidence else { return false }
-        return (classification.tags.map(\.confidence).max() ?? 0) <= settings.confidenceTriggerLevel
+        // Urgency-driven (replaces the ResearchTrigger modes + confidenceTriggerLevel):
+        // fire when the video's derived urgency reaches the user's floor. A decline
+        // is urgency 5, so it still always triggers.
+        guard classification.source == .model else { return false }
+        return researchUrgency(for: classification) >= settings.urgencyFloor
     }
 
     private static func scheduleResearchSubjectExtraction(
@@ -691,7 +699,8 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         creatorID: String,
         title: String,
         summary: String?,
-        includeCreator: Bool
+        includeCreator: Bool,
+        urgency: Int = ResearchTask.defaultUrgency
     ) {
         Task.detached(priority: .utility) {
             let extractionLLM: any OnDeviceLLM
@@ -723,7 +732,8 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                 platformID: platformID,
                 entryID: entryID,
                 creatorID: creatorID,
-                subjects: Array(subjects.prefix(settings.maxSubjectsPerVideo))
+                subjects: Array(subjects.prefix(settings.maxSubjectsPerVideo)),
+                urgency: urgency
             ))
         }
     }
@@ -846,7 +856,8 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         let candidates = eligible.compactMap { classification -> (
             entry: CollectedPlatformEntry,
             classifierType: ClassifierTypeAsset,
-            settings: ResearchSettings
+            settings: ResearchSettings,
+            urgency: Int
         )? in
             guard let classifierType = catalog.classifierTypes.first(where: {
                 $0.id == classification.classifierTypeID
@@ -861,7 +872,7 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                 entryID: classification.entryID,
                 catalog: catalog
             ) else { return nil }
-            return (entry, classifierType, settings)
+            return (entry, classifierType, settings, Self.researchUrgency(for: classification))
         }.prefix(limit)
 
         Task.detached(priority: .utility) {
@@ -891,7 +902,8 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                     platformID: entry.platformID,
                     entryID: entry.entryID,
                     creatorID: entry.creatorID,
-                    subjects: Array(subjects.prefix(settings.maxSubjectsPerVideo))
+                    subjects: Array(subjects.prefix(settings.maxSubjectsPerVideo)),
+                    urgency: candidate.urgency
                 ))
             }
         }
