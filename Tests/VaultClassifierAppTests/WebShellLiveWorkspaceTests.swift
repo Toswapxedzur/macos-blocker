@@ -67,12 +67,12 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
         for field in [
-            "cooldownHours", "urgencyFloor", "authorCount", "authorLevel", "authorWindowDays", "searchResultCount",
-            "snippetContextChars", "knowledgeTTLDays", "maxKnowledgePerVideo",
+            "cooldownHours", "urgencyFloor", "authorCount", "authorLevel", "authorWindowDays",
+            "knowledgeTTLDays", "maxKnowledgePerVideo",
         ] {
             XCTAssertGreaterThanOrEqual(script.components(separatedBy: field).count - 1, 2)
         }
-        for group in ["research.group.frequency", "research.group.trigger", "research.group.search"] {
+        for group in ["research.group.frequency", "research.group.trigger", "research.group.author", "research.group.knowledge"] {
             XCTAssertGreaterThanOrEqual(script.components(separatedBy: group).count - 1, 2)
         }
     }
@@ -142,39 +142,38 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         XCTAssertTrue(strings.contains("never in the system keychain"))
     }
 
-    func testShellExposesResearchSearchModeSelectorGloballyAndPerType() throws {
+    /// Research is provider-grounding only (Cut A): the shell must not offer a
+    /// search mode, a web-search provider, or the raw-search tuning fields, must
+    /// offer only grounding-capable providers, and must retire Serper/You.com.
+    func testShellIsProviderGroundingOnlyGloballyAndPerType() throws {
         let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
         let stringsURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "strings", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
         let strings = try String(contentsOf: stringsURL, encoding: .utf8)
 
-        // The search-mode selector, the two modes, and the grounding badge are
-        // rendered in both the global settings panel and the per-type override
-        // body (each token should appear at least twice — once per surface).
-        for token in [
-            "\"searchMode\"", "research.searchMode.raw", "research.searchMode.grounding",
-            "research.groundingBadge", "data-search-provider-field",
+        // Quoted, so an identifier like `typeResearchModelListID` is not a false hit.
+        for retired in [
+            "\"searchMode\"", "rawSearchProvider", "\"webSearchProviderProfileID\"", "data-search-provider-field",
+            "\"searchResultCount\"", "\"snippetContextChars\"", "supportsRawWebSearch", "llm.providerGroup.search",
         ] {
-            XCTAssertGreaterThanOrEqual(
-                script.components(separatedBy: token).count - 1, 2,
-                "Expected \(token) in both global and per-type research UI"
-            )
+            XCTAssertFalse(script.contains(retired), "\(retired) should be gone from the shell")
         }
-        // The live change handler that hides the raw-search provider in grounding mode.
-        XCTAssertTrue(script.contains("[data-field=\"searchMode\"]"))
-        XCTAssertTrue(script.contains("providerGrounding"))
-        // Only grounding-capable providers are marked, using the native-search capability.
-        XCTAssertTrue(script.contains("supportsNativeWebSearch"))
-
-        // Strings for the selector and the mode labels exist.
-        for key in [
-            "\"research.searchMode\"", "\"research.searchMode.raw\"",
-            "\"research.searchMode.grounding\"", "\"research.groundingBadge\"",
+        for retiredString in [
+            "research.searchMode", "research.searchProvider", "research.searchResultCount",
+            "research.snippetContextChars", "research.groundingBadge", "llm.providerGroup.search",
         ] {
-            XCTAssertTrue(strings.contains(key), "Missing string \(key)")
+            XCTAssertFalse(strings.contains("\"\(retiredString)"), "\(retiredString) string should be gone")
         }
-        // The disclosure copy now covers provider-grounding mode explicitly.
-        XCTAssertTrue(strings.contains("provider-grounding mode the sanitized subject is sent to a single grounding-capable provider"))
+        // Both research forms filter the provider list to grounding-capable profiles.
+        XCTAssertGreaterThanOrEqual(script.components(separatedBy: "supportsNativeWebSearch").count - 1, 2)
+        XCTAssertTrue(script.contains(".filter(isGroundingCapable)"))
+        XCTAssertTrue(script.contains(".filter(typeIsGroundingCapable)"))
+        // Existing search-only profiles are flagged retired, not silently inert.
+        XCTAssertTrue(script.contains("retiredSearchProvider"))
+        XCTAssertTrue(strings.contains("\"llm.retiredSearchProvider\""))
+        // The data-flow disclosure describes the single grounding-capable provider.
+        XCTAssertTrue(strings.contains("single grounding-capable provider"))
+        XCTAssertFalse(strings.contains("raw-search mode"))
     }
 
     func testShellDisclosesOptInResearchDataFlow() throws {
@@ -187,7 +186,7 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         XCTAssertTrue(script.contains("research.consent"))
         XCTAssertTrue(script.contains("supportsGenerateText"))
         XCTAssertTrue(strings.contains("Raw video titles, summaries, body text, and private creator IDs are never sent"))
-        XCTAssertTrue(strings.contains("selected trigger policy"))
+        XCTAssertTrue(strings.contains("videos the model is unsure about"))
         XCTAssertFalse(strings.contains("Everything runs on this Mac; nothing leaves it"))
     }
 

@@ -70,7 +70,6 @@ let credential: ProviderCredentialRecord = descriptor.credentialFields.first
     .map { ProviderCredentialRecord(values: [$0: apiKey]) } ?? ProviderCredentialRecord(values: [:])
 
 let configuration = GroundedResearchProviderConfiguration(
-    searchMode: .providerGrounding,
     llmProfile: profile,
     llmCredential: credential,
     llmModelIdentifier: model

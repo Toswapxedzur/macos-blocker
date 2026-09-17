@@ -77,7 +77,6 @@ final class WorkspaceAssetsTests: XCTestCase {
                 enabled: true,
                 llmProviderProfileID: "llm",
                 llmModelIdentifier: "model",
-                webSearchProviderProfileID: "search",
                 requestsPerMinute: 12,
                 dailyTokenLimit: 42_000,
                 urgencyFloor: 4

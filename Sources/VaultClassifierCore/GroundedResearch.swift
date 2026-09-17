@@ -104,46 +104,23 @@ public struct ResearchTask: Equatable, Sendable {
 }
 
 public struct GroundedResearchProviderConfiguration: Sendable {
-    public var searchMode: ResearchSearchMode
     public var llmProfile: APIKeyProviderProfile
     public var llmCredential: ProviderCredentialRecord
     public var llmModelIdentifier: String
-    /// Required only for `.rawSearchProvider`. In `.providerGrounding` the LLM
-    /// provider searches natively, so no separate search provider is used.
-    public var webSearchProfile: APIKeyProviderProfile?
-    public var webSearchCredential: ProviderCredentialRecord?
     public var maximumOutputTokens: Int
-    public var searchResultCount: Int
-    public var snippetContextChars: Int
 
     public init(
-        searchMode: ResearchSearchMode = .rawSearchProvider,
         llmProfile: APIKeyProviderProfile,
         llmCredential: ProviderCredentialRecord,
         llmModelIdentifier: String,
-        webSearchProfile: APIKeyProviderProfile? = nil,
-        webSearchCredential: ProviderCredentialRecord? = nil,
-        maximumOutputTokens: Int = 512,
-        searchResultCount: Int = ResearchSettings.defaultSearchResultCount,
-        snippetContextChars: Int = ResearchSettings.defaultSnippetContextChars
+        maximumOutputTokens: Int = 512
     ) {
-        self.searchMode = searchMode
         self.llmProfile = llmProfile
         self.llmCredential = llmCredential
         self.llmModelIdentifier = llmModelIdentifier
-        self.webSearchProfile = webSearchProfile
-        self.webSearchCredential = webSearchCredential
         self.maximumOutputTokens = min(
             ProviderGenerationProtocol.maximumOutputTokens,
             max(1, maximumOutputTokens)
-        )
-        self.searchResultCount = min(
-            ResearchSettings.maximumSearchResultCount,
-            max(1, searchResultCount)
-        )
-        self.snippetContextChars = min(
-            ResearchSettings.maximumSnippetContextChars,
-            max(ResearchSettings.minimumSnippetContextChars, snippetContextChars)
         )
     }
 }
@@ -177,20 +154,9 @@ public struct GroundedResearchExecutor: Sendable {
         else {
             throw GroundedResearchError.invalidConfiguration
         }
-        switch configuration.searchMode {
-        case .providerGrounding:
-            return try await researchViaProviderGrounding(sanitized, using: configuration)
-        case .rawSearchProvider:
-            return try await researchViaRawSearch(sanitized, using: configuration)
-        }
-    }
-
-    /// Provider-grounding mode: the LLM provider searches natively (Gemini
-    /// google_search, OpenAI/Anthropic web_search) and distills in one call.
-    private func researchViaProviderGrounding(
-        _ sanitized: ResearchSubject,
-        using configuration: GroundedResearchProviderConfiguration
-    ) async throws -> GroundedResearchResult {
+        // The only search execution (RESEARCH-REDESIGN Cut A): the LLM provider
+        // searches natively (Gemini google_search, OpenAI/Anthropic web_search)
+        // and distills in one call. The separate raw-search provider is gone.
         guard GroundedGenerationProtocol.supportsProviderGrounding(profile: configuration.llmProfile) else {
             throw GroundedResearchError.invalidConfiguration
         }
@@ -219,79 +185,6 @@ public struct GroundedResearchExecutor: Sendable {
             meaning: meaning,
             contextTagHints: [],
             sourceURLs: parsed.sourceURLs
-        )
-        return GroundedResearchResult(
-            knowledge: knowledge,
-            chargedTokenCount: parsed.usage.tokenCount ?? configuration.maximumOutputTokens
-        )
-    }
-
-    /// Raw-search mode: a separate search provider supplies snippets, then the
-    /// LLM provider distills them.
-    private func researchViaRawSearch(
-        _ sanitized: ResearchSubject,
-        using configuration: GroundedResearchProviderConfiguration
-    ) async throws -> GroundedResearchResult {
-        guard let webSearchProfile = configuration.webSearchProfile,
-              let webSearchCredential = configuration.webSearchCredential,
-              webSearchProfile.type.supportsRawWebSearch
-        else {
-            throw GroundedResearchError.invalidConfiguration
-        }
-
-        let search = try RawWebSearchProtocol.prepareSearch(
-            profile: webSearchProfile,
-            query: sanitized.subject,
-            resultCount: configuration.searchResultCount
-        )
-        let searchResponse = try await http.send(
-            plan: search.plan,
-            body: search.body,
-            credential: webSearchCredential,
-            timeout: Self.requestTimeout
-        )
-        let results = Array(try RawWebSearchProtocol.parseResults(
-            searchResponse.data,
-            format: search.plan.bodyFormat
-        ).prefix(configuration.searchResultCount))
-
-        let unboundedEvidence = results.enumerated().map { index, result in
-            "[\(index + 1)] \(result.title)\n\(result.url)\n\(result.snippet)"
-        }.joined(separator: "\n\n")
-        let evidence = String(unboundedEvidence.prefix(configuration.snippetContextChars))
-        let distillPrompt: String
-        switch sanitized.kind {
-        case .creator:
-            distillPrompt = "Distill a short factual description of the named creator or channel from the supplied public web results: who they are and the kinds of topics, genres, or content they are known for. Never assign, suggest, or mention classification tags. Do not infer facts absent from the evidence. Return plain text only."
-        case .term:
-            distillPrompt = "Distill a short factual description of the named subject from the supplied public web results. Never assign, suggest, or mention classification tags. Do not infer facts absent from the evidence. Return plain text only."
-        }
-        let generation = try ProviderGenerationProtocol.prepareGenerateText(
-            profile: configuration.llmProfile,
-            modelIdentifier: configuration.llmModelIdentifier,
-            systemPrompt: distillPrompt,
-            userPrompt: "Subject: \(sanitized.subject)\n\nPublic web results:\n\(evidence)",
-            maximumOutputTokens: configuration.maximumOutputTokens
-        )
-        let generatedResponse = try await http.send(
-            plan: generation.plan,
-            body: generation.body,
-            credential: configuration.llmCredential,
-            timeout: Self.requestTimeout
-        )
-        let parsed = try ProviderGenerationProtocol.parseGeneratedText(
-            generatedResponse.data,
-            format: generation.plan.bodyFormat
-        )
-        let meaning = parsed.content.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !meaning.isEmpty else { throw GroundedResearchError.emptyMeaning }
-
-        let knowledge = KnowledgeEntry(
-            kind: sanitized.kind,
-            subject: sanitized.subject,
-            meaning: meaning,
-            contextTagHints: [],
-            sourceURLs: results.map(\.url)
         )
         return GroundedResearchResult(
             knowledge: knowledge,

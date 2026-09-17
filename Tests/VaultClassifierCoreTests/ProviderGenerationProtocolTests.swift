@@ -3,29 +3,19 @@ import XCTest
 @testable import VaultClassifierCore
 
 final class ProviderGenerationProtocolTests: XCTestCase {
-    func testArbitrarySearchRequestIsBoundedAndProviderSpecific() throws {
-        let serper = APIKeyProviderProfile(type: .serper, credential: "key")
-        let prepared = try RawWebSearchProtocol.prepareSearch(
-            profile: serper,
-            query: "  Example   Show  ",
-            resultCount: 3
-        )
-        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: prepared.body) as? [String: Any])
-        XCTAssertEqual(body["q"] as? String, "Example Show")
-        XCTAssertEqual(body["num"] as? Int, 3)
-        XCTAssertEqual(prepared.operation, .searchWeb)
-
-        XCTAssertThrowsError(try RawWebSearchProtocol.prepareSearch(
-            profile: serper,
-            query: String(repeating: "x", count: RawWebSearchProtocol.maximumQueryCharacters + 1)
-        ))
-    }
-
-    func testSearchParsersBoundAndSanitizePublicURLs() throws {
-        let data = Data(#"{"organic":[{"title":"One","link":"https://user:pass@example.test/a#private","snippet":"Result"},{"title":"Bad","link":"file:///tmp/private","snippet":"drop"}]}"#.utf8)
-        let results = try RawWebSearchProtocol.parseResults(data, format: .serperSearch)
-        XCTAssertEqual(results.count, 1)
-        XCTAssertEqual(results[0].url, "https://example.test/a")
+    /// Serper / You.com fed the removed raw-search mode. Their types stay decodable
+    /// (a saved profile is never silently dropped) but they are retired: flagged,
+    /// untestable, and unusable for research.
+    func testSearchOnlyProvidersAreRetiredButStillDecodable() throws {
+        for type in [APIKeyProviderType.serper, .youSearch] {
+            XCTAssertTrue(type.isRetiredSearchProvider)
+            let profile = APIKeyProviderProfile(type: type, credential: "key")
+            let decoded = try JSONDecoder().decode(APIKeyProviderProfile.self, from: JSONEncoder().encode(profile))
+            XCTAssertEqual(decoded.type, type)
+            XCTAssertThrowsError(try ProviderTestProtocol.prepare(profile: profile))
+            XCTAssertFalse(GroundedGenerationProtocol.supportsProviderGrounding(profile: profile))
+        }
+        XCTAssertFalse(APIKeyProviderType.gemini.isRetiredSearchProvider)
     }
 
     func testGenerationBodiesCoverEverySupportedFormat() throws {

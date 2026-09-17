@@ -6,8 +6,10 @@ cloud provider profiles do not classify collected creators or videos.
 
 ## Profiles and model catalogs
 
-The workspace retains provider profiles for language-model APIs, official
-platform APIs, and raw-search APIs. A profile contains its type, bounded
+The workspace retains provider profiles for language-model APIs and official
+platform APIs. (Raw-search APIs — Serper, You.com — were retired with the
+raw-search research mode on 2026-09-17: a previously saved profile still loads
+and is shown as inactive, but none can be created, tested, or used.) A profile contains its type, bounded
 protocol configuration, optional endpoint override, explicit test model, and
 the locally saved credential field.
 
@@ -16,8 +18,8 @@ Language-model profiles may run two explicit, content-free network actions:
 - **Test** sends the provider's fixed `Return exactly OK.` health prompt.
 - **Probe** reads the provider's bounded model catalog and capability metadata.
 
-Official platform and raw-search profiles likewise expose fixed health checks.
-Those checks use known public targets or the constant Example Domain query;
+Official platform profiles likewise expose fixed health checks.
+Those checks use known public targets;
 they never include browser-collected entries, source identities, taxonomy,
 classification output, or local LLM prompts.
 

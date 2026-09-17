@@ -304,34 +304,15 @@ final class VaultClassifierViewModel: ObservableObject {
               let llmCredential = try? researchCredential(for: llmProfile)
         else { return nil }
 
-        // In providerGrounding mode the LLM provider searches natively — no
-        // separate search provider is needed. In rawSearchProvider mode a valid
-        // raw-search provider + credential is required.
-        var webSearchProfile: APIKeyProviderProfile?
-        var webSearchCredential: ProviderCredentialRecord?
-        switch settings.searchMode {
-        case .providerGrounding:
-            guard GroundedGenerationProtocol.supportsProviderGrounding(profile: llmProfile) else { return nil }
-        case .rawSearchProvider:
-            guard let searchProfileID = settings.webSearchProviderProfileID,
-                  let searchProfile = profiles.first(where: { $0.id == searchProfileID }),
-                  searchProfile.type.supportsRawWebSearch,
-                  let searchCredential = try? researchCredential(for: searchProfile)
-            else { return nil }
-            webSearchProfile = searchProfile
-            webSearchCredential = searchCredential
-        }
+        // Research is provider-grounding only: the LLM provider searches natively,
+        // so it must be grounding-capable (OpenAI / Gemini / Anthropic).
+        guard GroundedGenerationProtocol.supportsProviderGrounding(profile: llmProfile) else { return nil }
 
         return .init(
             providers: .init(
-                searchMode: settings.searchMode,
                 llmProfile: llmProfile,
                 llmCredential: llmCredential,
-                llmModelIdentifier: modelIdentifier,
-                webSearchProfile: webSearchProfile,
-                webSearchCredential: webSearchCredential,
-                searchResultCount: settings.searchResultCount,
-                snippetContextChars: settings.snippetContextChars
+                llmModelIdentifier: modelIdentifier
             ),
             requestsPerMinute: settings.requestsPerMinute,
             dailyTokenLimit: settings.dailyTokenLimit,
@@ -1250,9 +1231,6 @@ final class VaultClassifierViewModel: ObservableObject {
             updated.llmProviderProfileID = nil
             updated.llmModelIdentifier = nil
         }
-        if updated.webSearchProviderProfileID == profileID {
-            updated.webSearchProviderProfileID = nil
-        }
         return updated
     }
 
@@ -2077,18 +2055,8 @@ final class VaultClassifierViewModel: ObservableObject {
         }
         _ = try researchCredential(for: llmProfile)
 
-        switch settings.searchMode {
-        case .providerGrounding:
-            guard GroundedGenerationProtocol.supportsProviderGrounding(profile: llmProfile) else {
-                throw WebBridgeInputError.invalidChoice("grounding-capable provider")
-            }
-        case .rawSearchProvider:
-            guard let searchProfileID = settings.webSearchProviderProfileID,
-                  let searchProfile = catalog.providerProfiles.first(where: { $0.id == searchProfileID }),
-                  searchProfile.type.supportsRawWebSearch else {
-                throw WebBridgeInputError.invalidChoice("research providers and model")
-            }
-            _ = try researchCredential(for: searchProfile)
+        guard GroundedGenerationProtocol.supportsProviderGrounding(profile: llmProfile) else {
+            throw WebBridgeInputError.invalidChoice("grounding-capable provider")
         }
     }
 
@@ -2270,11 +2238,8 @@ final class VaultClassifierViewModel: ObservableObject {
             overrideEnabled: true,
             settings: ResearchSettings(
                 enabled: data["enabled"] as? Bool ?? defaults.enabled,
-                searchMode: (data["searchMode"] as? String)
-                    .flatMap(ResearchSearchMode.init(rawValue:)) ?? defaults.searchMode,
                 llmProviderProfileID: optionalString("llmProviderProfileID"),
                 llmModelIdentifier: optionalString("llmModelIdentifier"),
-                webSearchProviderProfileID: optionalString("webSearchProviderProfileID"),
                 requestsPerMinute: optionalInteger("requestsPerMinute") ?? defaults.requestsPerMinute,
                 dailyTokenLimit: optionalInteger("dailyTokenLimit") ?? defaults.dailyTokenLimit,
                 cooldownHours: optionalInteger("cooldownHours") ?? defaults.cooldownHours,
@@ -2284,8 +2249,6 @@ final class VaultClassifierViewModel: ObservableObject {
                     count: optionalInteger("authorCount") ?? defaults.authorThreshold.count,
                     windowDays: optionalInteger("authorWindowDays") ?? defaults.authorThreshold.windowDays
                 ),
-                searchResultCount: optionalInteger("searchResultCount") ?? defaults.searchResultCount,
-                snippetContextChars: optionalInteger("snippetContextChars") ?? defaults.snippetContextChars,
                 knowledgeTTLDays: optionalInteger("knowledgeTTLDays") ?? defaults.knowledgeTTLDays,
                 maxKnowledgePerVideo: optionalInteger("maxKnowledgePerVideo") ?? defaults.maxKnowledgePerVideo
             )
@@ -2441,10 +2404,8 @@ final class VaultClassifierViewModel: ObservableObject {
             ] as [String: Any],
             "research": [
                 "enabled": researchSettings.enabled,
-                "searchMode": researchSettings.searchMode.rawValue,
                 "llmProviderProfileID": researchSettings.llmProviderProfileID ?? "",
                 "llmModelIdentifier": researchSettings.llmModelIdentifier ?? "",
-                "webSearchProviderProfileID": researchSettings.webSearchProviderProfileID ?? "",
                 "requestsPerMinute": researchSettings.requestsPerMinute,
                 "dailyTokenLimit": researchSettings.dailyTokenLimit,
                 "cooldownHours": researchSettings.cooldownHours,
@@ -2452,8 +2413,6 @@ final class VaultClassifierViewModel: ObservableObject {
                 "authorLevel": researchSettings.authorThreshold.level,
                 "authorCount": researchSettings.authorThreshold.count,
                 "authorWindowDays": researchSettings.authorThreshold.windowDays,
-                "searchResultCount": researchSettings.searchResultCount,
-                "snippetContextChars": researchSettings.snippetContextChars,
                 "knowledgeTTLDays": researchSettings.knowledgeTTLDays,
                 "maxKnowledgePerVideo": researchSettings.maxKnowledgePerVideo,
                 "tokensUsedToday": GroundedResearchQueue.usedResearchTokens(in: catalog.tokenUsage, at: Date()),
@@ -2539,10 +2498,8 @@ final class VaultClassifierViewModel: ObservableObject {
                     "researchOverrides": classifierType.researchOverrides.map { research in
                         [
                             "enabled": research.enabled,
-                            "searchMode": research.searchMode.rawValue,
                             "llmProviderProfileID": research.llmProviderProfileID ?? "",
                             "llmModelIdentifier": research.llmModelIdentifier ?? "",
-                            "webSearchProviderProfileID": research.webSearchProviderProfileID ?? "",
                             "requestsPerMinute": research.requestsPerMinute,
                             "dailyTokenLimit": research.dailyTokenLimit,
                             "cooldownHours": research.cooldownHours,
@@ -2550,8 +2507,6 @@ final class VaultClassifierViewModel: ObservableObject {
                             "authorLevel": research.authorThreshold.level,
                             "authorCount": research.authorThreshold.count,
                             "authorWindowDays": research.authorThreshold.windowDays,
-                            "searchResultCount": research.searchResultCount,
-                            "snippetContextChars": research.snippetContextChars,
                             "knowledgeTTLDays": research.knowledgeTTLDays,
                             "maxKnowledgePerVideo": research.maxKnowledgePerVideo,
                         ] as [String: Any]
@@ -2617,7 +2572,7 @@ final class VaultClassifierViewModel: ObservableObject {
                         "supportsPlatformData": descriptor.requestFormats.contains(where: { $0.operation == .readPublicContent }),
                         "supportsNativeWebSearch": type.supportsProviderNativeWebSearch,
                         "supportsAttachedWebSearchTool": type.supportsAttachedWebSearchTool,
-                        "supportsRawWebSearch": type.supportsRawWebSearch,
+                        "retiredSearchProvider": type.isRetiredSearchProvider,
                         "allowsEndpointOverride": descriptor.allowsEndpointOverride,
                         "credentialRequired": !descriptor.credentialFields.isEmpty,
                         "credentialFields": descriptor.credentialFields.map(\.rawValue),
@@ -2912,16 +2867,8 @@ final class VaultClassifierViewModel: ObservableObject {
             case "saveResearchSettings":
                 saveResearchSettings(ResearchSettings(
                     enabled: try webBool(data, key: "enabled"),
-                    searchMode: try {
-                        let raw = try webString(data, key: "searchMode", limit: 64)
-                        guard let value = ResearchSearchMode(rawValue: raw) else {
-                            throw WebBridgeInputError.invalidChoice("research search mode")
-                        }
-                        return value
-                    }(),
                     llmProviderProfileID: try webOptionalString(data, key: "llmProviderProfileID", limit: 256),
                     llmModelIdentifier: try webOptionalString(data, key: "llmModelIdentifier", limit: 256),
-                    webSearchProviderProfileID: try webOptionalString(data, key: "webSearchProviderProfileID", limit: 256),
                     requestsPerMinute: try positiveInteger(
                         try webString(data, key: "requestsPerMinute", limit: 16),
                         label: "Research requests per minute"
@@ -2951,14 +2898,6 @@ final class VaultClassifierViewModel: ObservableObject {
                             try webString(data, key: "authorWindowDays", limit: 16),
                             label: "Author research window days"
                         )
-                    ),
-                    searchResultCount: try positiveInteger(
-                        try webString(data, key: "searchResultCount", limit: 16),
-                        label: "Research search results"
-                    ),
-                    snippetContextChars: try positiveInteger(
-                        try webString(data, key: "snippetContextChars", limit: 16),
-                        label: "Research snippet context"
                     ),
                     knowledgeTTLDays: try nonnegativeInteger(
                         try webString(data, key: "knowledgeTTLDays", limit: 16),
