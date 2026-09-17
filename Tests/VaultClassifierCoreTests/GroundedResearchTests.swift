@@ -41,21 +41,22 @@ final class GroundedResearchTests: XCTestCase {
         XCTAssertNil(ResearchSubject(kind: .term, subject: String(repeating: "long ", count: 20)))
     }
 
+    // Research is provider-grounding only (RESEARCH-REDESIGN Cut A): one call to a
+    // grounding-capable provider that searches natively. No raw-search leg exists.
+
     func testExecutorSendsOnlySanitizedSubjectAndReturnsKnowledgeWithoutTags() async throws {
-        let search = Data(#"{"organic":[{"title":"HermitCraft","link":"https://example.test/hermitcraft","snippet":"A collaborative Minecraft survival server."}]}"#.utf8)
-        let completion = Data(#"{"choices":[{"message":{"content":"HermitCraft is a collaborative Minecraft survival multiplayer series."}}],"usage":{"prompt_tokens":21,"completion_tokens":9}}"#.utf8)
-        let http = ScriptedResearchHTTPClient(responses: [search, completion])
-        let executor = GroundedResearchExecutor(http: http)
+        let grounded = Data(#"""
+        {"candidates":[{"content":{"parts":[{"text":"HermitCraft is a collaborative Minecraft survival multiplayer series."}]},"groundingMetadata":{"groundingChunks":[{"web":{"uri":"https://example.test/hermitcraft"}}]}}],"usageMetadata":{"promptTokenCount":21,"candidatesTokenCount":9}}
+        """#.utf8)
+        let http = ScriptedResearchHTTPClient(responses: [grounded])
         let configuration = GroundedResearchProviderConfiguration(
-            llmProfile: .init(type: .deepSeek, credential: "llm-key"),
+            llmProfile: .init(type: .gemini, credential: "llm-key"),
             llmCredential: .init(values: [.apiKey: "llm-key"]),
-            llmModelIdentifier: "model",
-            webSearchProfile: .init(type: .serper, credential: "search-key"),
-            webSearchCredential: .init(values: [.apiKey: "search-key"])
+            llmModelIdentifier: "model"
         )
         let subject = try XCTUnwrap(ResearchSubject(kind: .term, subject: "HermitCraft"))
 
-        let result = try await executor.research(subject, using: configuration)
+        let result = try await GroundedResearchExecutor(http: http).research(subject, using: configuration)
 
         XCTAssertEqual(result.knowledge.kind, .term)
         XCTAssertEqual(result.knowledge.subject, "HermitCraft")
@@ -64,21 +65,19 @@ final class GroundedResearchTests: XCTestCase {
         XCTAssertEqual(result.chargedTokenCount, 30)
         XCTAssertLessThanOrEqual(result.knowledge.meaning.count, KnowledgeEntry.maximumMeaningLength)
 
+        XCTAssertEqual(http.capturedRequests.count, 1, "a single grounded call — no separate search provider")
         let outbound = http.capturedRequests.compactMap(\.httpBody).map { String(decoding: $0, as: UTF8.self) }.joined(separator: "\n")
         XCTAssertTrue(outbound.contains("HermitCraft"))
         XCTAssertFalse(outbound.contains("RAW PRIVATE VIDEO TITLE"))
     }
 
     func testMissingUsageChargesRequestedOutputCap() async throws {
-        let search = Data(#"{"results":{"web":[{"title":"Show","url":"https://example.test/show","snippets":["A game show."]}]}}"#.utf8)
-        let completion = Data(#"{"message":{"content":"A public game show."}}"#.utf8)
-        let http = ScriptedResearchHTTPClient(responses: [search, completion])
+        let grounded = Data(#"{"candidates":[{"content":{"parts":[{"text":"A public game show."}]}}]}"#.utf8)
+        let http = ScriptedResearchHTTPClient(responses: [grounded])
         let configuration = GroundedResearchProviderConfiguration(
-            llmProfile: .init(type: .ollama),
-            llmCredential: .init(values: [:]),
+            llmProfile: .init(type: .gemini, credential: "llm-key"),
+            llmCredential: .init(values: [.apiKey: "llm-key"]),
             llmModelIdentifier: "model",
-            webSearchProfile: .init(type: .youSearch, credential: "key"),
-            webSearchCredential: .init(values: [.apiKey: "key"]),
             maximumOutputTokens: 77
         )
         let result = try await GroundedResearchExecutor(http: http).research(
@@ -86,36 +85,5 @@ final class GroundedResearchTests: XCTestCase {
             using: configuration
         )
         XCTAssertEqual(result.chargedTokenCount, 77)
-    }
-
-    func testExecutorHonorsSearchCountAndSnippetContextBudget() async throws {
-        let longSnippet = String(repeating: "x", count: 700) + "OUTSIDE-CONTEXT"
-        let searchObject: [String: Any] = ["organic": [
-            ["title": "First", "link": "https://example.test/first", "snippet": longSnippet],
-            ["title": "SECOND-RESULT", "link": "https://example.test/second", "snippet": "unused"],
-        ]]
-        let search = try JSONSerialization.data(withJSONObject: searchObject)
-        let completion = Data(#"{"choices":[{"message":{"content":"Grounded."}}]}"#.utf8)
-        let http = ScriptedResearchHTTPClient(responses: [search, completion])
-        let configuration = GroundedResearchProviderConfiguration(
-            llmProfile: .init(type: .deepSeek, credential: "llm-key"),
-            llmCredential: .init(values: [.apiKey: "llm-key"]),
-            llmModelIdentifier: "model",
-            webSearchProfile: .init(type: .serper, credential: "search-key"),
-            webSearchCredential: .init(values: [.apiKey: "search-key"]),
-            searchResultCount: 1,
-            snippetContextChars: 512
-        )
-
-        _ = try await GroundedResearchExecutor(http: http).research(
-            XCTUnwrap(ResearchSubject(kind: .term, subject: "Subject")),
-            using: configuration
-        )
-
-        let requests = http.capturedRequests
-        XCTAssertTrue(String(decoding: try XCTUnwrap(requests.first?.httpBody), as: UTF8.self).contains(#""num":1"#))
-        let generationBody = String(decoding: try XCTUnwrap(requests.last?.httpBody), as: UTF8.self)
-        XCTAssertFalse(generationBody.contains("SECOND-RESULT"))
-        XCTAssertFalse(generationBody.contains("OUTSIDE-CONTEXT"))
     }
 }

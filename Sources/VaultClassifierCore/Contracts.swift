@@ -340,16 +340,6 @@ public struct LocalModelOverrides: Codable, Equatable, Sendable {
     }
 }
 
-/// How the grounded-research step obtains public web evidence.
-public enum ResearchSearchMode: String, Codable, Equatable, Sendable, CaseIterable {
-    /// A separate raw-search provider (Serper/You.com) supplies snippets, which
-    /// a language-model provider then distills. Needs two provider profiles.
-    case rawSearchProvider
-    /// The language-model provider searches natively (e.g. Gemini google_search)
-    /// and distills in one call. Needs only the grounding-capable LLM provider.
-    case providerGrounding
-}
-
 /// When to research a CREATOR (RESEARCH-REDESIGN §8): research the author once,
 /// within a `windowDays` window, at least `count` of their videos have a mean
 /// derived urgency of at least `level`. Replaces the "append the creator handle
@@ -383,11 +373,6 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
     /// the pre-redesign default (`trigger: .declineOnly`), so research spend does
     /// not silently grow; lower it (4, 3…) to also research low-confidence videos.
     public static let defaultUrgencyFloor = 5
-    public static let defaultSearchResultCount = 5
-    public static let maximumSearchResultCount = 5
-    public static let defaultSnippetContextChars = 16_000
-    public static let minimumSnippetContextChars = 512
-    public static let maximumSnippetContextChars = 19_000
     public static let defaultKnowledgeTTLDays = 0
     public static let maximumKnowledgeTTLDays = 3_650
     public static let defaultMaxKnowledgePerVideo = 8
@@ -396,10 +381,8 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
     /// Explicit opt-in. When false, classification performs no extra decode,
     /// queue work, credential lookup, or network request.
     public var enabled: Bool
-    public var searchMode: ResearchSearchMode
     public var llmProviderProfileID: String?
     public var llmModelIdentifier: String?
-    public var webSearchProviderProfileID: String?
     public var requestsPerMinute: Int
     public var dailyTokenLimit: Int
     public var cooldownHours: Int
@@ -409,54 +392,44 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
     public var urgencyFloor: Int
     /// When to research the creator itself (RESEARCH-REDESIGN §8).
     public var authorThreshold: AuthorResearchThreshold
-    public var searchResultCount: Int
-    public var snippetContextChars: Int
     public var knowledgeTTLDays: Int
     public var maxKnowledgePerVideo: Int
 
     public init(
         enabled: Bool = false,
-        searchMode: ResearchSearchMode = .rawSearchProvider,
         llmProviderProfileID: String? = nil,
         llmModelIdentifier: String? = nil,
-        webSearchProviderProfileID: String? = nil,
         requestsPerMinute: Int = 6,
         dailyTokenLimit: Int = 10_000,
         cooldownHours: Int = Self.defaultCooldownHours,
         urgencyFloor: Int = Self.defaultUrgencyFloor,
         authorThreshold: AuthorResearchThreshold = AuthorResearchThreshold(),
-        searchResultCount: Int = Self.defaultSearchResultCount,
-        snippetContextChars: Int = Self.defaultSnippetContextChars,
         knowledgeTTLDays: Int = Self.defaultKnowledgeTTLDays,
         maxKnowledgePerVideo: Int = Self.defaultMaxKnowledgePerVideo
     ) {
         self.enabled = enabled
-        self.searchMode = searchMode
         self.llmProviderProfileID = Self.optionalIdentifier(llmProviderProfileID)
         self.llmModelIdentifier = Self.optionalIdentifier(llmModelIdentifier)
-        self.webSearchProviderProfileID = Self.optionalIdentifier(webSearchProviderProfileID)
         self.requestsPerMinute = min(Self.maximumRequestsPerMinute, max(1, requestsPerMinute))
         self.dailyTokenLimit = min(Self.maximumDailyTokenLimit, max(1, dailyTokenLimit))
         self.cooldownHours = min(Self.maximumCooldownHours, max(1, cooldownHours))
         self.urgencyFloor = min(5, max(1, urgencyFloor))
         self.authorThreshold = authorThreshold
-        self.searchResultCount = min(Self.maximumSearchResultCount, max(1, searchResultCount))
-        self.snippetContextChars = min(
-            Self.maximumSnippetContextChars,
-            max(Self.minimumSnippetContextChars, snippetContextChars)
-        )
         self.knowledgeTTLDays = min(Self.maximumKnowledgeTTLDays, max(0, knowledgeTTLDays))
         self.maxKnowledgePerVideo = min(Self.maximumKnowledgePerVideo, max(1, maxKnowledgePerVideo))
     }
 
     private enum CodingKeys: String, CodingKey {
-        case enabled, searchMode, llmProviderProfileID, llmModelIdentifier, webSearchProviderProfileID
+        case enabled, llmProviderProfileID, llmModelIdentifier
         case requestsPerMinute, dailyTokenLimit, cooldownHours
-        case urgencyFloor, authorThreshold, searchResultCount, snippetContextChars
+        case urgencyFloor, authorThreshold
         case knowledgeTTLDays, maxKnowledgePerVideo
     }
 
     /// Retired keys, read only to migrate a pre-redesign state (never re-encoded).
+    /// The raw-search keys (`searchMode`, `webSearchProviderProfileID`,
+    /// `searchResultCount`, `snippetContextChars`) are simply ignored on decode:
+    /// research is provider-grounding only (Cut A).
     private enum LegacyCodingKeys: String, CodingKey { case trigger, confidenceTriggerLevel }
 
     /// The urgency floor equivalent to a legacy trigger: decline-only (and the
@@ -482,17 +455,13 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
         )
         self.init(
             enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false,
-            searchMode: try container.decodeIfPresent(ResearchSearchMode.self, forKey: .searchMode) ?? .rawSearchProvider,
             llmProviderProfileID: try container.decodeIfPresent(String.self, forKey: .llmProviderProfileID),
             llmModelIdentifier: try container.decodeIfPresent(String.self, forKey: .llmModelIdentifier),
-            webSearchProviderProfileID: try container.decodeIfPresent(String.self, forKey: .webSearchProviderProfileID),
             requestsPerMinute: try container.decodeIfPresent(Int.self, forKey: .requestsPerMinute) ?? 6,
             dailyTokenLimit: try container.decodeIfPresent(Int.self, forKey: .dailyTokenLimit) ?? 10_000,
             cooldownHours: try container.decodeIfPresent(Int.self, forKey: .cooldownHours) ?? Self.defaultCooldownHours,
             urgencyFloor: try container.decodeIfPresent(Int.self, forKey: .urgencyFloor) ?? migratedFloor,
             authorThreshold: try container.decodeIfPresent(AuthorResearchThreshold.self, forKey: .authorThreshold) ?? AuthorResearchThreshold(),
-            searchResultCount: try container.decodeIfPresent(Int.self, forKey: .searchResultCount) ?? Self.defaultSearchResultCount,
-            snippetContextChars: try container.decodeIfPresent(Int.self, forKey: .snippetContextChars) ?? Self.defaultSnippetContextChars,
             knowledgeTTLDays: try container.decodeIfPresent(Int.self, forKey: .knowledgeTTLDays) ?? Self.defaultKnowledgeTTLDays,
             maxKnowledgePerVideo: try container.decodeIfPresent(Int.self, forKey: .maxKnowledgePerVideo) ?? Self.defaultMaxKnowledgePerVideo
         )

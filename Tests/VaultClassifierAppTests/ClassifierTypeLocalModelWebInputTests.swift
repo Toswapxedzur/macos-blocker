@@ -78,8 +78,7 @@ final class ClassifierTypeLocalModelWebInputTests: XCTestCase {
         let settings = ResearchSettings(
             enabled: true,
             llmProviderProfileID: "llm",
-            llmModelIdentifier: "model",
-            webSearchProviderProfileID: "search"
+            llmModelIdentifier: "model"
         )
 
         let withoutLLM = VaultClassifierViewModel.researchSettings(
@@ -89,15 +88,13 @@ final class ClassifierTypeLocalModelWebInputTests: XCTestCase {
         XCTAssertTrue(withoutLLM.enabled)
         XCTAssertNil(withoutLLM.llmProviderProfileID)
         XCTAssertNil(withoutLLM.llmModelIdentifier)
-        XCTAssertEqual(withoutLLM.webSearchProviderProfileID, "search")
 
-        let withoutSearch = VaultClassifierViewModel.researchSettings(
+        let withoutOther = VaultClassifierViewModel.researchSettings(
             settings,
-            removingProviderID: "search"
+            removingProviderID: "some-other-profile"
         )
-        XCTAssertNil(withoutSearch.webSearchProviderProfileID)
-        XCTAssertEqual(withoutSearch.llmProviderProfileID, "llm")
-        XCTAssertEqual(withoutSearch.llmModelIdentifier, "model")
+        XCTAssertEqual(withoutOther.llmProviderProfileID, "llm")
+        XCTAssertEqual(withoutOther.llmModelIdentifier, "model")
     }
 
     func testDisabledResearchOverrideDoesNotParseHiddenOrEmptyFields() throws {
@@ -124,8 +121,6 @@ final class ClassifierTypeLocalModelWebInputTests: XCTestCase {
             "authorLevel": "0",
             "authorCount": "not-a-number",
             "authorWindowDays": "99999",
-            "searchResultCount": "0",
-            "snippetContextChars": "100",
             "knowledgeTTLDays": "not-a-number",
             "maxKnowledgePerVideo": "100",
         ])
@@ -139,8 +134,6 @@ final class ClassifierTypeLocalModelWebInputTests: XCTestCase {
         XCTAssertEqual(input.settings?.authorThreshold.level, 1)
         XCTAssertEqual(input.settings?.authorThreshold.count, AuthorResearchThreshold.defaultCount)
         XCTAssertEqual(input.settings?.authorThreshold.windowDays, AuthorResearchThreshold.maximumWindowDays)
-        XCTAssertEqual(input.settings?.searchResultCount, 1)
-        XCTAssertEqual(input.settings?.snippetContextChars, 512)
         XCTAssertEqual(input.settings?.knowledgeTTLDays, 0)
         XCTAssertEqual(input.settings?.maxKnowledgePerVideo, 32)
     }

@@ -30,22 +30,20 @@ private final class ScriptedGroundingHTTPClient: ProviderHTTPClient, @unchecked 
 }
 
 final class GroundedGenerationProtocolTests: XCTestCase {
-    // MARK: - searchMode persistence
+    // MARK: - retired raw-search settings
 
-    func testSearchModeRoundTripsAndDefaultsToRawWhenAbsent() throws {
-        var settings = ResearchSettings()
-        XCTAssertEqual(settings.searchMode, .rawSearchProvider)
-        settings.searchMode = .providerGrounding
+    /// A state saved while raw search existed still decodes (the retired keys are
+    /// ignored — research is provider-grounding only) and never re-encodes them.
+    func testRetiredRawSearchKeysAreIgnoredAndNeverReencoded() throws {
+        let legacy = Data(#"{"enabled":true,"requestsPerMinute":6,"searchMode":"rawSearchProvider","webSearchProviderProfileID":"serper-1","searchResultCount":3,"snippetContextChars":900}"#.utf8)
+        let decoded = try JSONDecoder().decode(ResearchSettings.self, from: legacy)
+        XCTAssertTrue(decoded.enabled)
+        XCTAssertEqual(decoded.requestsPerMinute, 6)
 
-        let encoded = try JSONEncoder().encode(settings)
-        let decoded = try JSONDecoder().decode(ResearchSettings.self, from: encoded)
-        XCTAssertEqual(decoded.searchMode, .providerGrounding)
-
-        // Back-compat: a stored payload predating searchMode decodes to the default.
-        let legacy = Data(#"{"enabled":true,"requestsPerMinute":6}"#.utf8)
-        let legacyDecoded = try JSONDecoder().decode(ResearchSettings.self, from: legacy)
-        XCTAssertEqual(legacyDecoded.searchMode, .rawSearchProvider)
-        XCTAssertTrue(legacyDecoded.enabled)
+        let reencoded = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
+        for retired in ["searchMode", "webSearchProviderProfileID", "searchResultCount", "snippetContextChars"] {
+            XCTAssertFalse(reencoded.contains(retired))
+        }
     }
 
     // MARK: - Capability gate
@@ -163,7 +161,6 @@ final class GroundedGenerationProtocolTests: XCTestCase {
         """#.utf8)
         let http = ScriptedGroundingHTTPClient(responses: [grounded])
         let configuration = GroundedResearchProviderConfiguration(
-            searchMode: .providerGrounding,
             llmProfile: .init(type: .gemini, credential: "llm-key"),
             llmCredential: .init(values: [.apiKey: "llm-key"]),
             llmModelIdentifier: "gemini-2.0-flash"
@@ -187,7 +184,6 @@ final class GroundedGenerationProtocolTests: XCTestCase {
     func testExecutorGroundingRejectsNonGroundingProvider() async {
         let http = ScriptedGroundingHTTPClient(responses: [Data("{}".utf8)])
         let configuration = GroundedResearchProviderConfiguration(
-            searchMode: .providerGrounding,
             llmProfile: .init(type: .deepSeek, credential: "llm-key"),
             llmCredential: .init(values: [.apiKey: "llm-key"]),
             llmModelIdentifier: "model"

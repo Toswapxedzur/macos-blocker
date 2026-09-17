@@ -158,7 +158,10 @@ public struct ProviderProtocolDescriptor: Codable, Equatable, Sendable {
         requestFormats.contains { $0.operation == .generateText || $0.operation == .embedText }
     }
 
-    public var supportsRawWebSearch: Bool {
+    /// Search-only providers (Serper, You.com) fed the removed raw-search research
+    /// mode. Their types stay decodable so a saved profile is never silently
+    /// dropped, but nothing uses them and no new one can be created.
+    public var isRetiredSearchProvider: Bool {
         requestFormats.contains { $0.operation == .searchWeb }
     }
 

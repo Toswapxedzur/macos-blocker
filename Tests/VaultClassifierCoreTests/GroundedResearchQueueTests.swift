@@ -137,8 +137,6 @@ final class GroundedResearchQueueTests: XCTestCase {
             llmProfile: .init(id: "llm", type: .ollama),
             llmCredential: .init(values: [:]),
             llmModelIdentifier: "model",
-            webSearchProfile: .init(id: "search", type: .serper, credential: "key"),
-            webSearchCredential: .init(values: [.apiKey: "key"]),
             maximumOutputTokens: outputTokens
         )
     }
@@ -389,8 +387,6 @@ final class GroundedResearchFailureHandlingTests: XCTestCase {
             llmProfile: .init(id: "llm", type: .ollama),
             llmCredential: .init(values: [:]),
             llmModelIdentifier: "model",
-            webSearchProfile: .init(id: "search", type: .serper, credential: "key"),
-            webSearchCredential: .init(values: [.apiKey: "key"]),
             maximumOutputTokens: 100
         )
     }
