@@ -326,3 +326,13 @@ mini1 for weak-hardware latency):
   (`researchNeeds`) in place of `extractResearchSubject` (parts plumbing); settings
   collapse (§9) + removing `trigger`/`confidenceTriggerLevel`/`maxSubjectsPerVideo`
   + raw-search (Cut A, needs file-deletion consent).
+- 2026-09-17 — **Decode 2 wired into the live research path.** The classify loop
+  captures `primaryPromptParts` (strings only) for videos that will trigger
+  research; the detached scheduler runs `researchNeeds` over that SAME
+  classification prompt and researches the copied terms (capped by
+  `maxSubjectsPerVideo`). Falls back to the legacy single-subject
+  `extractResearchSubject` when the engine lacks Decode 2, no parts were captured
+  (correction path), or Decode 2 returns nothing (it is conservative on
+  recognized content). Test covers both the Decode-2 path and the fallback.
+  Note: the decode runs detached, so the KV prefix is usually cold by then —
+  correct, but the §5 KV-reuse saving only materializes if it is moved inline.

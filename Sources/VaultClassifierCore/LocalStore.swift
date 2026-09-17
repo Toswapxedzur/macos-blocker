@@ -516,6 +516,9 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
             ResearchSettings,
             any OnDeviceLLM
         )] = []
+        // Decode 2 reuses the classification prompt, so the parts are captured here
+        // (strings only — no decode) for the videos that will trigger research.
+        var researchParts: [String: ClassificationPromptParts] = [:]
         for type in types {
             guard let tree = catalog.trees.first(where: { $0.id == type.treeID }),
                   type.treeRevision == tree.revision else { continue }
@@ -570,6 +573,16 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                 for: type
             ) {
                 researchCandidates.append((type, classification, effectiveResearch, llm))
+                if Self.shouldTriggerResearch(for: classification, settings: effectiveResearch) {
+                    researchParts[type.id] = pipeline.primaryPromptParts(
+                        title: title, summary: summary, text: typeText,
+                        entryID: entryID, creatorID: creatorID, platformID: platformID,
+                        classifierType: type, tree: tree, catalog: catalog,
+                        houseRules: Self.effectiveHouseRules(global: houseRules, perType: overrides?.houseRules),
+                        knowledgeTTLDays: knowledgeSettings.knowledgeTTLDays,
+                        maxKnowledgePerVideo: knowledgeSettings.maxKnowledgePerVideo
+                    )
+                }
             }
         }
 
@@ -623,7 +636,8 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                     title: title,
                     summary: summary,
                     includeCreator: false,
-                    urgency: Self.researchUrgency(for: classification)
+                    urgency: Self.researchUrgency(for: classification),
+                    promptParts: researchParts[type.id]
                 )
             }
         }
@@ -716,7 +730,8 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         title: String,
         summary: String?,
         includeCreator: Bool,
-        urgency: Int = ResearchTask.defaultUrgency
+        urgency: Int = ResearchTask.defaultUrgency,
+        promptParts: ClassificationPromptParts? = nil
     ) {
         Task.detached(priority: .utility) {
             let extractionLLM: any OnDeviceLLM
@@ -730,11 +745,21 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
             } else {
                 extractionLLM = llm
             }
-            guard let extractor = extractionLLM as? any OnDeviceResearchSubjectExtracting else { return }
             var subjects: [ResearchSubject] = []
-            if let subject = try? await extractor.extractResearchSubject(
-                .init(title: title, summary: summary)
-            ) {
+            // Decode 2 (RESEARCH-REDESIGN §5): over the classification prompt, copy
+            // the named subjects the model does not recognize. Falls back to the
+            // legacy single-subject decode when the parts or the capability are
+            // missing, or when Decode 2 finds nothing (it is conservative).
+            if let promptParts, let needsExtractor = extractionLLM as? any OnDeviceResearchNeedsExtracting,
+               let terms = try? await needsExtractor.researchNeeds(.init(
+                   staticPrefix: promptParts.staticPrefix,
+                   dynamicSuffix: promptParts.dynamicSuffix,
+                   maximumTerms: settings.maxSubjectsPerVideo
+               )) {
+                subjects = terms.compactMap { ResearchSubject(kind: .term, subject: $0) }
+            }
+            if subjects.isEmpty, let extractor = extractionLLM as? any OnDeviceResearchSubjectExtracting,
+               let subject = try? await extractor.extractResearchSubject(.init(title: title, summary: summary)) {
                 subjects.append(subject)
             }
             if includeCreator,

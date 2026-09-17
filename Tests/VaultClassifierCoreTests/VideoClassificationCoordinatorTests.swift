@@ -87,6 +87,32 @@ private struct ImmediateSubjectLLM: OnDeviceLLM, OnDeviceResearchSubjectExtracti
     }
 }
 
+private final class NeedsRequestProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [LLMResearchNeedsRequest] = []
+    private var storedLegacyCount = 0
+    func record(_ request: LLMResearchNeedsRequest) { lock.withLock { stored.append(request) } }
+    func recordLegacy() { lock.withLock { storedLegacyCount += 1 } }
+    var requests: [LLMResearchNeedsRequest] { lock.withLock { stored } }
+    var legacyCount: Int { lock.withLock { storedLegacyCount } }
+}
+
+/// Declines every title and supports Decode 2 (term extraction over the prompt).
+private struct NeedsExtractingLLM: OnDeviceLLM, OnDeviceResearchSubjectExtracting, OnDeviceResearchNeedsExtracting {
+    let modelVersion = "needs/v1"
+    let probe: NeedsRequestProbe
+    let terms: [String]
+    func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult { .init(tags: []) }
+    func extractResearchSubject(_ request: LLMResearchSubjectRequest) async throws -> ResearchSubject? {
+        probe.recordLegacy()
+        return ResearchSubject(kind: .term, subject: "LegacySubject")
+    }
+    func researchNeeds(_ request: LLMResearchNeedsRequest) async throws -> [String] {
+        probe.record(request)
+        return terms
+    }
+}
+
 private final class ResearchSubjectRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var stored: [ResearchSubject] = []
@@ -635,6 +661,62 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         for subject in leaked {
             XCTAssertFalse(subject.lowercased().contains("nonsense"), "raw title text must never leave the device")
             XCTAssertFalse(subject.contains("youtube:"), "raw creator/channel IDs must never leave the device")
+        }
+    }
+
+    /// Decode 2 wiring: when the engine supports `researchNeeds`, its copied terms
+    /// (over the SAME classification prompt) are what get researched — the legacy
+    /// single-subject decode is not consulted. When Decode 2 finds nothing, the
+    /// legacy decode is the fallback.
+    func testDecodeTwoTermsAreResearchedOverTheClassificationPrompt() async throws {
+        for (terms, expected, expectLegacy) in [
+            (["HermitCraft", "Mumbo Jumbo"], Set(["HermitCraft", "Mumbo Jumbo"]), false),
+            ([String](), Set(["LegacySubject"]), true),
+        ] {
+            let (coordinator, root) = try makeCoordinatorWithYouTubeType()
+            defer { try? FileManager.default.removeItem(at: root) }
+            try coordinator.updateSettings(.init(research: .init(enabled: true)))
+            let recorder = ResearchSubjectRecorder()
+            let queue = GroundedResearchQueue(
+                configurationProvider: { _ in
+                    .init(
+                        providers: .init(
+                            searchMode: .providerGrounding,
+                            llmProfile: .init(id: "llm", type: .gemini, credential: "k"),
+                            llmCredential: .init(values: [.apiKey: "k"]),
+                            llmModelIdentifier: "gemini-2.0-flash"
+                        ),
+                        requestsPerMinute: 6_000,
+                        dailyTokenLimit: 1_000_000
+                    )
+                },
+                snapshotProvider: { _ in .init() },
+                mutationWriter: { _ in },
+                researcher: { subject, _ in
+                    recorder.append(subject)
+                    return .init(knowledge: .init(kind: subject.kind, subject: subject.subject, meaning: "m"), chargedTokenCount: 1)
+                },
+                sleeper: { _ in }
+            )
+            coordinator.setGroundedResearchQueue(queue)
+            let probe = NeedsRequestProbe()
+            coordinator.setOnDeviceLLM(NeedsExtractingLLM(probe: probe, terms: terms))
+
+            _ = try await coordinator.classifyVideo(
+                platformID: "youtube", entryID: "youtube:video:needs",
+                creatorID: "youtube:handle:@creator", title: "HermitCraft finale with Mumbo Jumbo"
+            )
+            for _ in 0..<300 where recorder.subjects.count < expected.count {
+                try? await Task<Never, Never>.sleep(nanoseconds: 2_000_000)
+            }
+            await queue.waitUntilIdle()
+
+            XCTAssertEqual(Set(recorder.subjects.map(\.subject)), expected)
+            XCTAssertEqual(probe.requests.count, 1)
+            XCTAssertTrue(probe.requests[0].dynamicSuffix.contains("HermitCraft finale with Mumbo Jumbo"),
+                          "Decode 2 must run over the classification prompt (KV-prefix reuse)")
+            XCTAssertTrue(probe.requests[0].dynamicSuffix.hasSuffix("{\"tags\":[{\"name\":\""))
+            XCTAssertEqual(probe.legacyCount > 0, expectLegacy)
         }
     }
 
