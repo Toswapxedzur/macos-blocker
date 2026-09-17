@@ -378,6 +378,14 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
         return Self.parseResearchTerms(generated)
     }
 
+    static let researchTermEdgeJunk: CharacterSet = {
+        var set = CharacterSet.whitespacesAndNewlines
+        set.formUnion(.punctuationCharacters)
+        set.formUnion(.symbols)
+        set.remove(charactersIn: "@")
+        return set
+    }()
+
     /// Extract the quoted term spans out of Decode 2's generated `"A","B"]}` text
     /// (the grammar guarantees the quoting). Robust to the empty-list case (`]}`
     /// immediately → no quoted spans). De-duplicates, keeping order.
@@ -388,7 +396,11 @@ public actor VaultLocalLLMEngine: OnDeviceLLM, OnDeviceResearchSubjectExtracting
         while let open = rest.range(of: "\"") {
             let afterOpen = rest[open.upperBound...]
             guard let close = afterOpen.range(of: "\"") else { break }
-            let term = String(afterOpen[..<close.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            // The open-vocabulary span can pick up stray edge punctuation from the
+            // title (live smoke: `:皇室戰爭` from `【皇室戰爭】`-style brackets) — trim it
+            // so the researched subject is the entity itself. `@` is kept (handles).
+            let term = String(afterOpen[..<close.lowerBound])
+                .trimmingCharacters(in: Self.researchTermEdgeJunk)
             if !term.isEmpty, seen.insert(term).inserted { terms.append(term) }
             rest = afterOpen[close.upperBound...]
         }
