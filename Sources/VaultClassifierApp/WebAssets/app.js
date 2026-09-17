@@ -720,20 +720,15 @@
       }</div><div class="utility-advanced${advancedSettingsOpen ? " open" : ""}" data-advanced-settings><button type="button" class="secondary advanced-toggle" data-action="toggleAdvancedSettings" aria-expanded="${advancedSettingsOpen}"><span>${tx("localModel.advanced")}</span><span class="advanced-chevron" aria-hidden="true">⌄</span></button><div class="advanced-settings-body"><div class="advanced-settings-inner">${advancedBody}</div></div></div><div class="action-row"><button class="primary" data-action="saveLocalLLMSettings" data-form="utility-llm-form">${tx("localModel.save")}</button></div></section>`;
       const modelLibrarySection = `<section class="utility-settings-section utility-model-library-section"><div><h3 class="utility-settings-section-title">${tx("modelLibrary.title")}</h3><p class="section-copy">${tx("modelLibrary.copy")}</p></div><p class="model-library-source-note">${tx("modelLibrary.sourceNote")}</p><div class="model-library-groups">${modelLibraryContent(llm.modelLibrary || [])}</div></section>`;
       const generationProfiles = profiles.filter((profile) => protocols[profile.type]?.supportsGenerateText === true);
-      const searchProfiles = profiles.filter((profile) => protocols[profile.type]?.supportsRawWebSearch === true);
       const isGroundingCapable = (profile) => protocols[profile.type]?.supportsGenerateText === true && protocols[profile.type]?.supportsNativeWebSearch === true;
-      const profileOptions = (items) => [["", tx("research.chooseProvider")]].concat(items.map((profile) => [profile.id, profile.name]));
-      const llmProviderOptions = [["", tx("research.chooseProvider")]].concat(generationProfiles.map((profile) => [profile.id, isGroundingCapable(profile) ? `${profile.name} · ${tx("research.groundingBadge")}` : profile.name]));
+      // Research is provider-grounding only, so only grounding-capable providers are offered.
+      const llmProviderOptions = [["", tx("research.chooseProvider")]].concat(generationProfiles.filter(isGroundingCapable).map((profile) => [profile.id, profile.name]));
       const modelSuggestions = assets.providerModelCatalogs?.[research.llmProviderProfileID] || [];
       const researchSection = `<section class="utility-settings-section utility-research-section" data-form-id="utility-research-form"><h3 class="utility-settings-section-title">${tx("research.title")} ${statusPill(tx(research.enabled ? "research.status.on" : "research.status.off"), research.enabled ? "cyan" : "muted")}</h3><p class="section-copy">${tx("research.copy")}</p><div class="notice navy research-data-flow">${tx("research.disclosure")}</div><div class="utility-toggles">${
         toggle("research.consent", "enabled", research.enabled === true)
       }</div><div class="research-settings-groups"><section class="research-settings-group"><h4>${tx("research.group.providers")}</h4><div class="utility-settings-fields">${
-        selectField("research.searchMode", "research.searchModeHint", "searchMode", research.searchMode || "rawSearchProvider", [["rawSearchProvider", "research.searchMode.raw"], ["providerGrounding", "research.searchMode.grounding"]])
-      }${
         valueSelectField("research.llmProvider", "research.llmProviderHint", "llmProviderProfileID", research.llmProviderProfileID || "", llmProviderOptions)
-      }<div class="research-search-provider-field" data-search-provider-field${research.searchMode === "providerGrounding" ? " hidden" : ""}>${
-        valueSelectField("research.searchProvider", "research.searchProviderHint", "webSearchProviderProfileID", research.webSearchProviderProfileID || "", profileOptions(searchProfiles))
-      }</div>${
+      }${
         field("research.model", "research.modelHint", "llmModelIdentifier", research.llmModelIdentifier || "", "text", 'list="research-model-suggestions" maxlength="256"')
       }<datalist id="research-model-suggestions">${modelSuggestions.map((model) => `<option value="${esc(model)}"></option>`).join("")}</datalist></div></section><section class="research-settings-group"><h4>${tx("research.group.frequency")}</h4><div class="utility-settings-fields">${
         field("research.requestsPerMinute", "research.requestsPerMinuteHint", "requestsPerMinute", research.requestsPerMinute ?? 6, "number", 'min="1" max="120"')
@@ -749,11 +744,7 @@
         field("research.authorLevel", "research.authorLevelHint", "authorLevel", research.authorLevel ?? 3, "number", 'min="1" max="5"')
       }${
         field("research.authorWindowDays", "research.authorWindowDaysHint", "authorWindowDays", research.authorWindowDays ?? 30, "number", 'min="1" max="3650"')
-      }</div></section><section class="research-settings-group"><h4>${tx("research.group.search")}</h4><div class="utility-settings-fields">${
-        field("research.searchResultCount", "research.searchResultCountHint", "searchResultCount", research.searchResultCount ?? 5, "number", 'min="1" max="5"')
-      }${
-        field("research.snippetContextChars", "research.snippetContextCharsHint", "snippetContextChars", research.snippetContextChars ?? 16000, "number", 'min="512" max="19000"')
-      }${
+      }</div></section><section class="research-settings-group"><h4>${tx("research.group.knowledge")}</h4><div class="utility-settings-fields">${
         field("research.knowledgeTTLDays", "research.knowledgeTTLDaysHint", "knowledgeTTLDays", research.knowledgeTTLDays ?? 0, "number", 'min="0" max="3650"')
       }${
         field("research.maxKnowledgePerVideo", "research.maxKnowledgePerVideoHint", "maxKnowledgePerVideo", research.maxKnowledgePerVideo ?? 8, "number", 'min="1" max="32"')
@@ -1000,7 +991,6 @@
     const profileTypeGroups = [
       ["llm.providerGroup.models", ["openAI", "deepSeek", "gemini", "anthropic", "mistral", "cohere", "groq", "openRouter", "ollama"].map((type) => [type, t(providerTypeLabelKey(type))])],
       ["llm.providerGroup.platform", ["youtubeData", "twitch", "reddit", "xPlatform", "tikTok", "instagramGraph", "facebookGraph"].map((type) => [type, t(providerTypeLabelKey(type))])],
-      ["llm.providerGroup.search", ["serper", "youSearch"].map((type) => [type, t(providerTypeLabelKey(type))])],
       ["llm.providerGroup.custom", ["openAICompatible", "custom"].map((type) => [type, t(providerTypeLabelKey(type))])],
     ];
     const panel = (profile) => {
@@ -1008,7 +998,8 @@
       const protocol = protocols[profile.type] || {};
       const supportsLLM = Boolean(protocol.supportsLLMConfiguration);
       const supportsPlatformData = Boolean(protocol.supportsPlatformData);
-      const supportsRawWebSearch = Boolean(protocol.supportsRawWebSearch);
+      // Serper / You.com fed the removed raw-search mode: kept readable, never testable or used.
+      const retiredSearchProvider = Boolean(protocol.retiredSearchProvider);
       const profileRecords = requestRecords.filter((record) => record.profileID === profile.id);
       const latestResponseDiagnostic = profileRecords
         .filter((record) => typeof record.responseShape === "string" && record.responseShape.length > 0)
@@ -1031,15 +1022,15 @@
         "data-provider-connection"
       )).join("");
       const connectionFields = [credentialField, endpointField, testModelField, protocolFields].filter(Boolean).join("");
-      const testAvailable = supportsLLM || supportsPlatformData || supportsRawWebSearch;
+      const testAvailable = (supportsLLM || supportsPlatformData) && !retiredSearchProvider;
       const testButton = testAvailable ? `<button class="gold-action" data-action="testProviderProfile" data-form="${esc(formID)}" data-profile-id="${esc(profile.id)}"${disabled(profile.testing)}>${tx(profile.testing ? "llm.testing" : "llm.test")}</button>` : "";
-      const usage = supportsPlatformData || supportsRawWebSearch
+      const usage = supportsPlatformData || retiredSearchProvider
         ? `<p class="provider-token-usage"><span>${tx("llm.apiCalls")}</span><strong>${profileRecords.filter((record) => ["readPublicContent", "searchWeb", "search-creator-web"].includes(record.operation) && Number.isInteger(record.statusCode)).length}</strong></p>`
         : `<p class="provider-token-usage"><span>${tx("llm.tokenUsage")}</span><strong>${tx("llm.tokenTotal", { total: tokenTotal })}</strong></p>`;
       const responseDiagnostic = latestResponseDiagnostic
         ? `<p class="provider-response-shape"><span>${tx("llm.responseShape")}</span><strong>${esc(latestResponseDiagnostic.responseShape)}</strong></p>`
         : "";
-      return `<section class="provider-panel" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}"><div class="provider-panel-head"><h3>${esc(profile.name)}</h3><div class="provider-panel-actions">${testButton}<button class="danger" data-action="confirmDeleteProviderProfile" data-profile-id="${esc(profile.id)}">${tx("llm.deleteProfile")}</button></div></div><div class="provider-panel-body">${connectionFields ? `<div class="provider-connection-fields">${connectionFields}</div>` : ""}<div class="provider-request-summary">${usage}${responseDiagnostic}</div></div>${profile.testSucceeded ? notice(t("llm.testSucceeded"), "green") : ""}</section>`;
+      return `<section class="provider-panel" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}"><div class="provider-panel-head"><h3>${esc(profile.name)}</h3><div class="provider-panel-actions">${testButton}<button class="danger" data-action="confirmDeleteProviderProfile" data-profile-id="${esc(profile.id)}">${tx("llm.deleteProfile")}</button></div></div>${retiredSearchProvider ? `<div class="notice navy">${tx("llm.retiredSearchProvider")}</div>` : ""}<div class="provider-panel-body">${connectionFields ? `<div class="provider-connection-fields">${connectionFields}</div>` : ""}<div class="provider-request-summary">${usage}${responseDiagnostic}</div></div>${profile.testSucceeded ? notice(t("llm.testSucceeded"), "green") : ""}</section>`;
     };
     return `<div class="workspace provider-workspace">${header("llm.title", "llm.copy", t("llm.keyLibrary"), "gold")}<div class="notice navy provider-local-only">${tx("llm.localOnlyDisclosure")}</div><section class="provider-create" data-form-id="new-provider-profile-form">${groupedValueSelectField("llm.providerType", "", "type", "", profileTypeGroups)}<button class="gold-action" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button><span class="small-copy">${tx("llm.createCopy")}</span></section><div class="provider-panels">${profiles.length ? profiles.map(panel).join("") : `<div class="empty">${tx("llm.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
   }
@@ -1094,19 +1085,13 @@
       const researchDefaults = researchOverrides || state.settings?.research || {};
       const researchFormID = `classifier-research-form-${classifierType.id}`;
       const generationProfiles = profiles.filter((profile) => assets.providerProtocols?.[profile.type]?.supportsGenerateText === true);
-      const searchProfiles = profiles.filter((profile) => assets.providerProtocols?.[profile.type]?.supportsRawWebSearch === true);
       const typeIsGroundingCapable = (profile) => assets.providerProtocols?.[profile.type]?.supportsGenerateText === true && assets.providerProtocols?.[profile.type]?.supportsNativeWebSearch === true;
-      const researchProfileOptions = (items) => [["", tx("research.chooseProvider")]].concat(items.map((profile) => [profile.id, profile.name]));
-      const typeLLMProviderOptions = [["", tx("research.chooseProvider")]].concat(generationProfiles.map((profile) => [profile.id, typeIsGroundingCapable(profile) ? `${profile.name} · ${tx("research.groundingBadge")}` : profile.name]));
+      const typeLLMProviderOptions = [["", tx("research.chooseProvider")]].concat(generationProfiles.filter(typeIsGroundingCapable).map((profile) => [profile.id, profile.name]));
       const typeModelSuggestions = assets.providerModelCatalogs?.[researchDefaults.llmProviderProfileID] || [];
       const typeResearchModelListID = `research-model-suggestions-${classifierType.id}`;
       const researchOverrideBody = `<div class="utility-toggles">${toggle("bridge.researchEnabled", "enabled", researchDefaults.enabled === true)}</div><div class="research-settings-groups"><section class="research-settings-group"><h4>${tx("research.group.providers")}</h4><div class="utility-settings-fields">${
-        selectField("research.searchMode", "research.searchModeHint", "searchMode", researchDefaults.searchMode || "rawSearchProvider", [["rawSearchProvider", "research.searchMode.raw"], ["providerGrounding", "research.searchMode.grounding"]])
-      }${
         valueSelectField("research.llmProvider", "research.llmProviderHint", "llmProviderProfileID", researchDefaults.llmProviderProfileID || "", typeLLMProviderOptions)
-      }<div class="research-search-provider-field" data-search-provider-field${researchDefaults.searchMode === "providerGrounding" ? " hidden" : ""}>${
-        valueSelectField("research.searchProvider", "research.searchProviderHint", "webSearchProviderProfileID", researchDefaults.webSearchProviderProfileID || "", researchProfileOptions(searchProfiles))
-      }</div>${
+      }${
         field("research.model", "research.modelHint", "llmModelIdentifier", researchDefaults.llmModelIdentifier || "", "text", `list="${esc(typeResearchModelListID)}" maxlength="256"`)
       }<datalist id="${esc(typeResearchModelListID)}">${typeModelSuggestions.map((model) => `<option value="${esc(model)}"></option>`).join("")}</datalist></div></section><section class="research-settings-group"><h4>${tx("research.group.frequency")}</h4><div class="utility-settings-fields">${
         field("research.requestsPerMinute", "research.requestsPerMinuteHint", "requestsPerMinute", researchDefaults.requestsPerMinute ?? 6, "number", 'min="1" max="120"')
@@ -1122,11 +1107,7 @@
         field("research.authorLevel", "research.authorLevelHint", "authorLevel", researchDefaults.authorLevel ?? 3, "number", 'min="1" max="5"')
       }${
         field("research.authorWindowDays", "research.authorWindowDaysHint", "authorWindowDays", researchDefaults.authorWindowDays ?? 30, "number", 'min="1" max="3650"')
-      }</div></section><section class="research-settings-group"><h4>${tx("research.group.search")}</h4><div class="utility-settings-fields">${
-        field("research.searchResultCount", "research.searchResultCountHint", "searchResultCount", researchDefaults.searchResultCount ?? 5, "number", 'min="1" max="5"')
-      }${
-        field("research.snippetContextChars", "research.snippetContextCharsHint", "snippetContextChars", researchDefaults.snippetContextChars ?? 16000, "number", 'min="512" max="19000"')
-      }${
+      }</div></section><section class="research-settings-group"><h4>${tx("research.group.knowledge")}</h4><div class="utility-settings-fields">${
         field("research.knowledgeTTLDays", "research.knowledgeTTLDaysHint", "knowledgeTTLDays", researchDefaults.knowledgeTTLDays ?? 0, "number", 'min="0" max="3650"')
       }${
         field("research.maxKnowledgePerVideo", "research.maxKnowledgePerVideoHint", "maxKnowledgePerVideo", researchDefaults.maxKnowledgePerVideo ?? 8, "number", 'min="1" max="32"')
@@ -2013,13 +1994,6 @@
     }
     if (event.target.closest('[data-field="applicablePlatformID"]')) {
       applyApplicablePlatformCapabilities();
-      return;
-    }
-    const searchModeControl = event.target.closest('[data-field="searchMode"]');
-    if (searchModeControl) {
-      const scope = searchModeControl.closest("[data-form-id]") || document;
-      const providerField = scope.querySelector("[data-search-provider-field]");
-      if (providerField) providerField.hidden = searchModeControl.value === "providerGrounding";
       return;
     }
   });

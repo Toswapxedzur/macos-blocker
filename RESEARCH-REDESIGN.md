@@ -2,7 +2,7 @@
 
 > **Status: APPROVED — build in progress (owner said "proceed with plan", 2026-09-16).**
 > Phases 0–4 are done (see §13 for what changed vs. this text — notably urgency is
-> DERIVED from confidence, not model-emitted). Only raw-search removal remains.
+> DERIVED from confidence, not model-emitted). All planned phases, incl. Cut A, are done.
 
 ## 1. Why
 
@@ -353,3 +353,20 @@ mini1 for weak-hardware latency):
   `authorCount`, `authorWindowDays`. 221/221 tests. Remaining: raw-search removal
   (Cut A — `searchMode`, `webSearchProviderProfileID`, `searchResultCount`,
   `snippetContextChars`, `RawWebSearchProtocol.swift`; needs file-deletion consent).
+- 2026-09-17 — **Cut A done: raw search removed (owner consented to deleting
+  `RawWebSearchProtocol.swift`).** Research is provider-grounding only: one call to
+  a grounding-capable provider (OpenAI / Gemini / Anthropic) that searches natively.
+  Removed `ResearchSearchMode`, `searchMode`, `webSearchProviderProfileID`,
+  `searchResultCount`, `snippetContextChars`, the executor's raw-search leg, and the
+  search-provider half of `GroundedResearchProviderConfiguration`; legacy keys are
+  ignored on decode and never re-encoded. **Serper / You.com provider TYPES stay
+  decodable** (a saved profile + key is never silently dropped) but are retired:
+  not offered in "add provider", untestable, flagged with an inactive notice. Web
+  shell: no search-mode / web-search-provider / search-tuning fields; the research
+  provider pickers list only grounding-capable profiles; the "Search specifics"
+  group is now "Knowledge"; the data-flow disclosure was rewritten to match (up to
+  three copied terms, creator handle only via accumulation, single provider).
+  **Behavior change to know:** a user who had research enabled in raw-search mode
+  with a non-grounding LLM (DeepSeek, Ollama, …) now gets no research until they
+  pick a grounding-capable provider — `searchMode` previously DEFAULTED to raw.
+  219/219 tests. **The redesign's planned phases are complete.**

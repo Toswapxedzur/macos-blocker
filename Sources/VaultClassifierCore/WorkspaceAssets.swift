@@ -881,8 +881,9 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
         ProviderProtocolRegistry.descriptor(for: self).supportsLLMConfiguration
     }
 
-    public var supportsRawWebSearch: Bool {
-        ProviderProtocolRegistry.descriptor(for: self).supportsRawWebSearch
+    /// Serper / You.com: retired with the raw-search research mode (kept decodable).
+    public var isRetiredSearchProvider: Bool {
+        ProviderProtocolRegistry.descriptor(for: self).isRetiredSearchProvider
     }
 
     /// A provider-native search invocation has an explicit request grammar in

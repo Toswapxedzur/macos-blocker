@@ -379,7 +379,6 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             enabled: true,
             llmProviderProfileID: "global-llm",
             llmModelIdentifier: "global-model",
-            webSearchProviderProfileID: "global-search",
             requestsPerMinute: 6,
             dailyTokenLimit: 10_000,
             urgencyFloor: 5
@@ -397,7 +396,6 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             enabled: true,
             llmProviderProfileID: "type-llm",
             llmModelIdentifier: "type-model",
-            webSearchProviderProfileID: "type-search",
             requestsPerMinute: 15,
             dailyTokenLimit: 20_000,
             urgencyFloor: 3
@@ -621,7 +619,6 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             configurationProvider: { _ in
                 .init(
                     providers: .init(
-                        searchMode: .providerGrounding,
                         llmProfile: .init(id: "llm", type: .gemini, credential: "k"),
                         llmCredential: .init(values: [.apiKey: "k"]),
                         llmModelIdentifier: "gemini-2.0-flash"
@@ -685,7 +682,6 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
                 configurationProvider: { _ in
                     .init(
                         providers: .init(
-                            searchMode: .providerGrounding,
                             llmProfile: .init(id: "llm", type: .gemini, credential: "k"),
                             llmCredential: .init(values: [.apiKey: "k"]),
                             llmModelIdentifier: "gemini-2.0-flash"

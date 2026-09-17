@@ -86,7 +86,6 @@ catch { fail("error: seeding catalog failed: \(error)") }
 do {
     try coordinator.updateSettings(ClassifierSettings(research: ResearchSettings(
         enabled: true,
-        searchMode: .providerGrounding,
         llmProviderProfileID: geminiProfile.id,
         llmModelIdentifier: APIKeyProviderType.gemini.defaultModelIdentifier,
         requestsPerMinute: 30,
@@ -118,7 +117,6 @@ func queueConfiguration(for classifierTypeID: String) -> GroundedResearchQueueCo
         .map { ProviderCredentialRecord(values: [$0: key]) } ?? ProviderCredentialRecord(values: [:])
     return GroundedResearchQueueConfiguration(
         providers: .init(
-            searchMode: r.searchMode,
             llmProfile: profile,
             llmCredential: credential,
             llmModelIdentifier: model

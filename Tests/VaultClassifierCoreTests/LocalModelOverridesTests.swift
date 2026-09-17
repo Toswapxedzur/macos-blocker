@@ -50,7 +50,6 @@ final class LocalModelOverridesTests: XCTestCase {
             enabled: true,
             llmProviderProfileID: "llm",
             llmModelIdentifier: "model",
-            webSearchProviderProfileID: "search",
             requestsPerMinute: 9,
             dailyTokenLimit: 12_345,
             urgencyFloor: 4,
@@ -68,8 +67,6 @@ final class LocalModelOverridesTests: XCTestCase {
         XCTAssertEqual(decoded.cooldownHours, 24)
         XCTAssertEqual(decoded.urgencyFloor, 5, "no legacy trigger = the old declines-only default")
         XCTAssertEqual(decoded.authorThreshold, AuthorResearchThreshold())
-        XCTAssertEqual(decoded.searchResultCount, 5)
-        XCTAssertEqual(decoded.snippetContextChars, 16_000)
         XCTAssertEqual(decoded.knowledgeTTLDays, 0)
         XCTAssertEqual(decoded.maxKnowledgePerVideo, 8)
     }
@@ -99,30 +96,22 @@ final class LocalModelOverridesTests: XCTestCase {
         let low = ResearchSettings(
             cooldownHours: 0,
             urgencyFloor: 0,
-            searchResultCount: 0,
-            snippetContextChars: 1,
             knowledgeTTLDays: -1,
             maxKnowledgePerVideo: 0
         )
         XCTAssertEqual(low.cooldownHours, 1)
         XCTAssertEqual(low.urgencyFloor, 1)
-        XCTAssertEqual(low.searchResultCount, 1)
-        XCTAssertEqual(low.snippetContextChars, 512)
         XCTAssertEqual(low.knowledgeTTLDays, 0)
         XCTAssertEqual(low.maxKnowledgePerVideo, 1)
 
         let high = ResearchSettings(
             cooldownHours: 9_999,
             urgencyFloor: 9,
-            searchResultCount: 9,
-            snippetContextChars: 99_999,
             knowledgeTTLDays: 99_999,
             maxKnowledgePerVideo: 99
         )
         XCTAssertEqual(high.cooldownHours, 720)
         XCTAssertEqual(high.urgencyFloor, 5)
-        XCTAssertEqual(high.searchResultCount, 5)
-        XCTAssertEqual(high.snippetContextChars, 19_000)
         XCTAssertEqual(high.knowledgeTTLDays, 3_650)
         XCTAssertEqual(high.maxKnowledgePerVideo, 32)
     }
