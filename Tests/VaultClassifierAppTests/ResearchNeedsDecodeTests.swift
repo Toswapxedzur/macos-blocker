@@ -52,6 +52,12 @@ final class ResearchNeedsDecodeTests: XCTestCase {
         XCTAssertEqual(VaultLocalLLMEngine.parseResearchTerms(#""Ludwig","Ludwig"]}"#), ["Ludwig"])
     }
 
+    func testStripsStrayEdgePunctuationButKeepsHandlesAndInnerPunctuation() {
+        // Seen live: a bracketed CJK title yielded `:皇室戰爭`.
+        XCTAssertEqual(VaultLocalLLMEngine.parseResearchTerms(#"":皇室戰爭","【HermitCraft】","@ludwig","Spider-Man: No Way Home","::"]}"#),
+                       ["皇室戰爭", "HermitCraft", "@ludwig", "Spider-Man: No Way Home"])
+    }
+
     // MARK: - Derived urgency (the reframe)
 
     func testUrgencyIsInverseOfMeanConfidence() {
