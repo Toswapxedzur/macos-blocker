@@ -490,7 +490,7 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
     }
 
     /// The name→confidence boilerplate of the structured decode.
-    static let confidenceBoilerplate = "\",\"confidence\":"
+    static var confidenceBoilerplate: String { ClassificationReplyFormat.current.nameToDigit }
 
     /// Never SAMPLE what the grammar forces (LATENCY-REFINEMENT Phase 2). Given the
     /// text generated so far, returns the span the grammar leaves no choice about —
@@ -547,7 +547,7 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
 
     /// The inter-object boilerplate of the structured decode (`},{"name":"`): a
     /// name begins at step 0 and right after this completes.
-    static let structuredSeparator = "},{\"name\":\""
+    static var structuredSeparator: String { ClassificationReplyFormat.current.itemSeparator }
 
     /// Turns one sequence's generated `Name","confidence":N},{"name":"…` text into
     /// tags (shared by the serial and the batched decode).
@@ -926,10 +926,13 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
         }
         lines.append("obj ::= name conf")
         // conf emits `","confidence":` then a single 1–5 digit.
-        lines.append("conf ::= \"\\\",\\\"confidence\\\":\" digit")
+        func literal(_ text: String) -> String {
+            "\"" + text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+        }
+        lines.append("conf ::= \(literal(confidenceBoilerplate)) digit")
         lines.append("digit ::= \"1\" | \"2\" | \"3\" | \"4\" | \"5\"")
         // osep is the boilerplate between two objects: `},{"name":"`.
-        lines.append("osep ::= \"},{\\\"name\\\":\\\"\"")
+        lines.append("osep ::= \(literal(structuredSeparator))")
         lines.append("name ::= " + literals.joined(separator: " | "))
         return lines.joined(separator: "\n")
     }
