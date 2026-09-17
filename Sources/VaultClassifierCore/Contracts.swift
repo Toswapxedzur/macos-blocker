@@ -340,25 +340,6 @@ public struct LocalModelOverrides: Codable, Equatable, Sendable {
     }
 }
 
-public enum ResearchTrigger: String, Codable, Equatable, Sendable, CaseIterable {
-    case declineOnly
-    case declineAndLowConfidence
-    case correctionsOnly
-    case all
-
-    public var includesLiveClassification: Bool {
-        self == .declineOnly || self == .declineAndLowConfidence || self == .all
-    }
-
-    public var includesLowConfidence: Bool {
-        self == .declineAndLowConfidence || self == .all
-    }
-
-    public var includesCorrections: Bool {
-        self == .correctionsOnly || self == .all
-    }
-}
-
 /// How the grounded-research step obtains public web evidence.
 public enum ResearchSearchMode: String, Codable, Equatable, Sendable, CaseIterable {
     /// A separate raw-search provider (Serper/You.com) supplies snippets, which
@@ -394,14 +375,14 @@ public struct AuthorResearchThreshold: Codable, Equatable, Sendable {
 public struct ResearchSettings: Codable, Equatable, Sendable {
     public static let maximumRequestsPerMinute = 120
     public static let maximumDailyTokenLimit = 10_000_000
-    public static let maximumSubjectsPerVideo = ResearchTask.maximumSubjects
     public static let defaultCooldownHours = 24
     public static let maximumCooldownHours = 720
-    public static let defaultConfidenceTriggerLevel = 2
     /// RESEARCH-REDESIGN §7: research fires when a video's DERIVED urgency
     /// (`ResearchUrgency.fromTagConfidences`, the inverse of its mean confidence;
-    /// a decline = 5) is at least this. 3 ⇒ research when mean confidence ≤ ~3.
-    public static let defaultUrgencyFloor = 3
+    /// a decline = 5) is at least this. The default 5 researches DECLINES ONLY —
+    /// the pre-redesign default (`trigger: .declineOnly`), so research spend does
+    /// not silently grow; lower it (4, 3…) to also research low-confidence videos.
+    public static let defaultUrgencyFloor = 5
     public static let defaultSearchResultCount = 5
     public static let maximumSearchResultCount = 5
     public static let defaultSnippetContextChars = 16_000
@@ -421,12 +402,10 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
     public var webSearchProviderProfileID: String?
     public var requestsPerMinute: Int
     public var dailyTokenLimit: Int
-    public var maxSubjectsPerVideo: Int
     public var cooldownHours: Int
-    public var trigger: ResearchTrigger
-    public var confidenceTriggerLevel: Int
-    /// Minimum derived urgency (1–5) that fires research. Replaces the
-    /// `trigger`/`confidenceTriggerLevel` machinery (RESEARCH-REDESIGN §7).
+    /// Minimum derived urgency (1–5) that fires research. Replaced the former
+    /// `trigger` modes + `confidenceTriggerLevel` (RESEARCH-REDESIGN §7); legacy
+    /// persisted values migrate on decode.
     public var urgencyFloor: Int
     /// When to research the creator itself (RESEARCH-REDESIGN §8).
     public var authorThreshold: AuthorResearchThreshold
@@ -443,10 +422,7 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
         webSearchProviderProfileID: String? = nil,
         requestsPerMinute: Int = 6,
         dailyTokenLimit: Int = 10_000,
-        maxSubjectsPerVideo: Int = 3,
         cooldownHours: Int = Self.defaultCooldownHours,
-        trigger: ResearchTrigger = .declineOnly,
-        confidenceTriggerLevel: Int = Self.defaultConfidenceTriggerLevel,
         urgencyFloor: Int = Self.defaultUrgencyFloor,
         authorThreshold: AuthorResearchThreshold = AuthorResearchThreshold(),
         searchResultCount: Int = Self.defaultSearchResultCount,
@@ -461,10 +437,7 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
         self.webSearchProviderProfileID = Self.optionalIdentifier(webSearchProviderProfileID)
         self.requestsPerMinute = min(Self.maximumRequestsPerMinute, max(1, requestsPerMinute))
         self.dailyTokenLimit = min(Self.maximumDailyTokenLimit, max(1, dailyTokenLimit))
-        self.maxSubjectsPerVideo = min(Self.maximumSubjectsPerVideo, max(1, maxSubjectsPerVideo))
         self.cooldownHours = min(Self.maximumCooldownHours, max(1, cooldownHours))
-        self.trigger = trigger
-        self.confidenceTriggerLevel = min(5, max(1, confidenceTriggerLevel))
         self.urgencyFloor = min(5, max(1, urgencyFloor))
         self.authorThreshold = authorThreshold
         self.searchResultCount = min(Self.maximumSearchResultCount, max(1, searchResultCount))
@@ -478,15 +451,35 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case enabled, searchMode, llmProviderProfileID, llmModelIdentifier, webSearchProviderProfileID
-        case requestsPerMinute, dailyTokenLimit, maxSubjectsPerVideo, cooldownHours
-        case trigger, confidenceTriggerLevel, urgencyFloor, authorThreshold, searchResultCount, snippetContextChars
+        case requestsPerMinute, dailyTokenLimit, cooldownHours
+        case urgencyFloor, authorThreshold, searchResultCount, snippetContextChars
         case knowledgeTTLDays, maxKnowledgePerVideo
+    }
+
+    /// Retired keys, read only to migrate a pre-redesign state (never re-encoded).
+    private enum LegacyCodingKeys: String, CodingKey { case trigger, confidenceTriggerLevel }
+
+    /// The urgency floor equivalent to a legacy trigger: decline-only (and the
+    /// live-inert corrections-only) ⇒ 5; "declines + low confidence at/below L" ⇒
+    /// `6 − L`, since a top confidence ≤ L is a derived urgency ≥ 6 − L.
+    static func migratedUrgencyFloor(legacyTrigger: String?, legacyConfidenceTriggerLevel: Int?) -> Int {
+        switch legacyTrigger {
+        case "declineAndLowConfidence", "all":
+            return min(5, max(1, 6 - min(5, max(1, legacyConfidenceTriggerLevel ?? 2))))
+        default:
+            return defaultUrgencyFloor
+        }
     }
 
     /// Settings persisted before granular research controls inherit the exact
     /// defaults that reproduce the former queue and prompt behavior.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let legacy = try decoder.container(keyedBy: LegacyCodingKeys.self)
+        let migratedFloor = Self.migratedUrgencyFloor(
+            legacyTrigger: try? legacy.decodeIfPresent(String.self, forKey: .trigger),
+            legacyConfidenceTriggerLevel: try? legacy.decodeIfPresent(Int.self, forKey: .confidenceTriggerLevel)
+        )
         self.init(
             enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false,
             searchMode: try container.decodeIfPresent(ResearchSearchMode.self, forKey: .searchMode) ?? .rawSearchProvider,
@@ -495,11 +488,8 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
             webSearchProviderProfileID: try container.decodeIfPresent(String.self, forKey: .webSearchProviderProfileID),
             requestsPerMinute: try container.decodeIfPresent(Int.self, forKey: .requestsPerMinute) ?? 6,
             dailyTokenLimit: try container.decodeIfPresent(Int.self, forKey: .dailyTokenLimit) ?? 10_000,
-            maxSubjectsPerVideo: try container.decodeIfPresent(Int.self, forKey: .maxSubjectsPerVideo) ?? 3,
             cooldownHours: try container.decodeIfPresent(Int.self, forKey: .cooldownHours) ?? Self.defaultCooldownHours,
-            trigger: try container.decodeIfPresent(ResearchTrigger.self, forKey: .trigger) ?? .declineOnly,
-            confidenceTriggerLevel: try container.decodeIfPresent(Int.self, forKey: .confidenceTriggerLevel) ?? Self.defaultConfidenceTriggerLevel,
-            urgencyFloor: try container.decodeIfPresent(Int.self, forKey: .urgencyFloor) ?? Self.defaultUrgencyFloor,
+            urgencyFloor: try container.decodeIfPresent(Int.self, forKey: .urgencyFloor) ?? migratedFloor,
             authorThreshold: try container.decodeIfPresent(AuthorResearchThreshold.self, forKey: .authorThreshold) ?? AuthorResearchThreshold(),
             searchResultCount: try container.decodeIfPresent(Int.self, forKey: .searchResultCount) ?? Self.defaultSearchResultCount,
             snippetContextChars: try container.decodeIfPresent(Int.self, forKey: .snippetContextChars) ?? Self.defaultSnippetContextChars,

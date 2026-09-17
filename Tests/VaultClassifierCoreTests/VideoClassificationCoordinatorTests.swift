@@ -382,7 +382,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             webSearchProviderProfileID: "global-search",
             requestsPerMinute: 6,
             dailyTokenLimit: 10_000,
-            maxSubjectsPerVideo: 3
+            urgencyFloor: 5
         )
         let inherited = ClassifierTypeAsset(
             id: "inherit", name: "Inherit", treeID: "tree", treeRevision: 1,
@@ -400,7 +400,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             webSearchProviderProfileID: "type-search",
             requestsPerMinute: 15,
             dailyTokenLimit: 20_000,
-            maxSubjectsPerVideo: 1
+            urgencyFloor: 3
         )
         let overridden = ClassifierTypeAsset(
             id: "override", name: "Override", treeID: "tree", treeRevision: 1,
@@ -568,7 +568,11 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertTrue(request.dynamicSuffix.contains("Games episode"), "the real corrected titles are the exemplars")
     }
 
-    func testCorrectionTriggersSanitizedSecondDecodeWhenConfigured() async throws {
+    /// Research is driven by the model's own uncertainty; a human correction is
+    /// authoritative, so it must never start a second decode or enqueue research
+    /// (the former `correctionsOnly`/`all` trigger modes are gone) — even with the
+    /// most permissive urgency floor.
+    func testCorrectionNeverSchedulesResearch() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
         defer { try? FileManager.default.removeItem(at: root) }
         var catalog = coordinator.snapshot().workspaceCatalog
@@ -582,7 +586,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         try coordinator.updateWorkspaceCatalog(catalog)
         try coordinator.updateSettings(.init(research: .init(
             enabled: true,
-            trigger: .correctionsOnly
+            urgencyFloor: 1
         )))
         let queue = GroundedResearchQueue(
             configurationProvider: { _ in nil },
@@ -597,11 +601,11 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         _ = try coordinator.submitCorrection(
             classifierTypeID: "type", platformID: "youtube", entryID: "v", correctTagIDs: ["g"]
         )
-        await probe.waitUntilStarted()
-        XCTAssertEqual(probe.count, 1)
-        probe.release()
-        for _ in 0..<20 { await Task.yield() }
-        await queue.waitUntilIdle()
+        for _ in 0..<50 { await Task.yield() }
+        try? await Task<Never, Never>.sleep(nanoseconds: 20_000_000)
+        XCTAssertEqual(probe.count, 0)
+        let pending = await queue.pendingCount
+        XCTAssertEqual(pending, 0)
     }
 
     /// End-to-end: a fake, unrecognized title is declined by the model, which
@@ -611,7 +615,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
     func testFakeDecliningTitleTriggersResearchAndOnlySanitizedSubjectsLeave() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
         defer { try? FileManager.default.removeItem(at: root) }
-        try coordinator.updateSettings(.init(research: .init(enabled: true, trigger: .declineOnly)))
+        try coordinator.updateSettings(.init(research: .init(enabled: true)))
         let recorder = ResearchSubjectRecorder()
         let queue = GroundedResearchQueue(
             configurationProvider: { _ in
@@ -725,7 +729,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
     func testConfidentlyTaggedTitleDoesNotTriggerResearch() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
         defer { try? FileManager.default.removeItem(at: root) }
-        try coordinator.updateSettings(.init(research: .init(enabled: true, trigger: .declineOnly)))
+        try coordinator.updateSettings(.init(research: .init(enabled: true)))
         let recorder = ResearchSubjectRecorder()
         let queue = GroundedResearchQueue(
             configurationProvider: { _ in
@@ -814,7 +818,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         try coordinator.updateWorkspaceCatalog(catalog)
         try coordinator.updateSettings(.init(research: .init(
             enabled: true,
-            trigger: .declineAndLowConfidence
+            urgencyFloor: 4   // confidence-2 rows are urgency 4
         )))
         let queue = GroundedResearchQueue(
             configurationProvider: { _ in nil }, snapshotProvider: { _ in .init() },

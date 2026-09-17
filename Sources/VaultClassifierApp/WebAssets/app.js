@@ -740,13 +740,15 @@
       }${
         field("research.dailyTokenLimit", "research.dailyTokenLimitHint", "dailyTokenLimit", research.dailyTokenLimit ?? 10000, "number", 'min="1" max="10000000"')
       }${
-        field("research.maxSubjects", "research.maxSubjectsHint", "maxSubjectsPerVideo", research.maxSubjectsPerVideo ?? 3, "number", 'min="1" max="3"')
-      }${
         field("research.cooldownHours", "research.cooldownHoursHint", "cooldownHours", research.cooldownHours ?? 24, "number", 'min="1" max="720"')
       }</div></section><section class="research-settings-group"><h4>${tx("research.group.trigger")}</h4><div class="utility-settings-fields">${
-        selectField("research.trigger", "research.triggerHint", "trigger", research.trigger || "declineOnly", [["declineOnly", "research.trigger.declineOnly"], ["declineAndLowConfidence", "research.trigger.declineAndLowConfidence"], ["correctionsOnly", "research.trigger.correctionsOnly"], ["all", "research.trigger.all"]])
+        selectField("research.urgencyFloor", "research.urgencyFloorHint", "urgencyFloor", String(research.urgencyFloor ?? 5), [["5", "research.urgencyFloor.5"], ["4", "research.urgencyFloor.4"], ["3", "research.urgencyFloor.3"], ["2", "research.urgencyFloor.2"], ["1", "research.urgencyFloor.1"]])
+      }</div></section><section class="research-settings-group"><h4>${tx("research.group.author")}</h4><div class="utility-settings-fields">${
+        field("research.authorCount", "research.authorCountHint", "authorCount", research.authorCount ?? 5, "number", 'min="1" max="512"')
       }${
-        field("research.confidenceTriggerLevel", "research.confidenceTriggerLevelHint", "confidenceTriggerLevel", research.confidenceTriggerLevel ?? 2, "number", 'min="1" max="5"')
+        field("research.authorLevel", "research.authorLevelHint", "authorLevel", research.authorLevel ?? 3, "number", 'min="1" max="5"')
+      }${
+        field("research.authorWindowDays", "research.authorWindowDaysHint", "authorWindowDays", research.authorWindowDays ?? 30, "number", 'min="1" max="3650"')
       }</div></section><section class="research-settings-group"><h4>${tx("research.group.search")}</h4><div class="utility-settings-fields">${
         field("research.searchResultCount", "research.searchResultCountHint", "searchResultCount", research.searchResultCount ?? 5, "number", 'min="1" max="5"')
       }${
@@ -1111,13 +1113,15 @@
       }${
         field("research.dailyTokenLimit", "research.dailyTokenLimitHint", "dailyTokenLimit", researchDefaults.dailyTokenLimit ?? 10000, "number", 'min="1" max="10000000"')
       }${
-        field("research.maxSubjects", "research.maxSubjectsHint", "maxSubjectsPerVideo", researchDefaults.maxSubjectsPerVideo ?? 3, "number", 'min="1" max="3"')
-      }${
         field("research.cooldownHours", "research.cooldownHoursHint", "cooldownHours", researchDefaults.cooldownHours ?? 24, "number", 'min="1" max="720"')
       }</div></section><section class="research-settings-group"><h4>${tx("research.group.trigger")}</h4><div class="utility-settings-fields">${
-        selectField("research.trigger", "research.triggerHint", "trigger", researchDefaults.trigger || "declineOnly", [["declineOnly", "research.trigger.declineOnly"], ["declineAndLowConfidence", "research.trigger.declineAndLowConfidence"], ["correctionsOnly", "research.trigger.correctionsOnly"], ["all", "research.trigger.all"]])
+        selectField("research.urgencyFloor", "research.urgencyFloorHint", "urgencyFloor", String(researchDefaults.urgencyFloor ?? 5), [["5", "research.urgencyFloor.5"], ["4", "research.urgencyFloor.4"], ["3", "research.urgencyFloor.3"], ["2", "research.urgencyFloor.2"], ["1", "research.urgencyFloor.1"]])
+      }</div></section><section class="research-settings-group"><h4>${tx("research.group.author")}</h4><div class="utility-settings-fields">${
+        field("research.authorCount", "research.authorCountHint", "authorCount", researchDefaults.authorCount ?? 5, "number", 'min="1" max="512"')
       }${
-        field("research.confidenceTriggerLevel", "research.confidenceTriggerLevelHint", "confidenceTriggerLevel", researchDefaults.confidenceTriggerLevel ?? 2, "number", 'min="1" max="5"')
+        field("research.authorLevel", "research.authorLevelHint", "authorLevel", researchDefaults.authorLevel ?? 3, "number", 'min="1" max="5"')
+      }${
+        field("research.authorWindowDays", "research.authorWindowDaysHint", "authorWindowDays", researchDefaults.authorWindowDays ?? 30, "number", 'min="1" max="3650"')
       }</div></section><section class="research-settings-group"><h4>${tx("research.group.search")}</h4><div class="utility-settings-fields">${
         field("research.searchResultCount", "research.searchResultCountHint", "searchResultCount", researchDefaults.searchResultCount ?? 5, "number", 'min="1" max="5"')
       }${
