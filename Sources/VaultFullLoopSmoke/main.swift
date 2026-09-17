@@ -91,9 +91,7 @@ do {
         llmModelIdentifier: APIKeyProviderType.gemini.defaultModelIdentifier,
         requestsPerMinute: 30,
         dailyTokenLimit: 200_000,
-        maxSubjectsPerVideo: 2,
-        trigger: .all,
-        confidenceTriggerLevel: 5
+        urgencyFloor: 1
     )))
 } catch { fail("error: research settings failed: \(error)") }
 

@@ -80,7 +80,7 @@ final class WorkspaceAssetsTests: XCTestCase {
                 webSearchProviderProfileID: "search",
                 requestsPerMinute: 12,
                 dailyTokenLimit: 42_000,
-                maxSubjectsPerVideo: 2
+                urgencyFloor: 4
             )
         )
         let roundTrip = try JSONDecoder().decode(ClassifierTypeAsset.self, from: JSONEncoder().encode(value))

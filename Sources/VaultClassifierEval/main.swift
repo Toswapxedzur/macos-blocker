@@ -143,8 +143,7 @@ case "score":
             allowDecline: overrides?.allowDecline ?? settings.allowDecline,
             confidenceThresholds: overrides?.confidenceThresholds ?? settings.confidenceThresholds,
             knowledgeTTLDays: research.knowledgeTTLDays,
-            maxKnowledgePerVideo: research.maxKnowledgePerVideo,
-            creatorGroundingConfidenceFloor: research.confidenceTriggerLevel
+            maxKnowledgePerVideo: research.maxKnowledgePerVideo
         )
         let predicted = Set(result.tags.map(\.tagID))
         for tag in result.tags { predConfByID[tag.tagID] = tag.confidence }
@@ -233,8 +232,7 @@ case "abtest":
             allowDecline: overrides?.allowDecline ?? settings.allowDecline,
             confidenceThresholds: overrides?.confidenceThresholds ?? settings.confidenceThresholds,
             knowledgeTTLDays: research.knowledgeTTLDays,
-            maxKnowledgePerVideo: research.maxKnowledgePerVideo,
-            creatorGroundingConfidenceFloor: research.confidenceTriggerLevel
+            maxKnowledgePerVideo: research.maxKnowledgePerVideo
         )
         return Set(r.tags.map(\.tagID))
     }

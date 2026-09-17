@@ -2277,10 +2277,13 @@ final class VaultClassifierViewModel: ObservableObject {
                 webSearchProviderProfileID: optionalString("webSearchProviderProfileID"),
                 requestsPerMinute: optionalInteger("requestsPerMinute") ?? defaults.requestsPerMinute,
                 dailyTokenLimit: optionalInteger("dailyTokenLimit") ?? defaults.dailyTokenLimit,
-                maxSubjectsPerVideo: optionalInteger("maxSubjectsPerVideo") ?? defaults.maxSubjectsPerVideo,
                 cooldownHours: optionalInteger("cooldownHours") ?? defaults.cooldownHours,
-                trigger: (data["trigger"] as? String).flatMap(ResearchTrigger.init(rawValue:)) ?? defaults.trigger,
-                confidenceTriggerLevel: optionalInteger("confidenceTriggerLevel") ?? defaults.confidenceTriggerLevel,
+                urgencyFloor: optionalInteger("urgencyFloor") ?? defaults.urgencyFloor,
+                authorThreshold: AuthorResearchThreshold(
+                    level: optionalInteger("authorLevel") ?? defaults.authorThreshold.level,
+                    count: optionalInteger("authorCount") ?? defaults.authorThreshold.count,
+                    windowDays: optionalInteger("authorWindowDays") ?? defaults.authorThreshold.windowDays
+                ),
                 searchResultCount: optionalInteger("searchResultCount") ?? defaults.searchResultCount,
                 snippetContextChars: optionalInteger("snippetContextChars") ?? defaults.snippetContextChars,
                 knowledgeTTLDays: optionalInteger("knowledgeTTLDays") ?? defaults.knowledgeTTLDays,
@@ -2444,10 +2447,11 @@ final class VaultClassifierViewModel: ObservableObject {
                 "webSearchProviderProfileID": researchSettings.webSearchProviderProfileID ?? "",
                 "requestsPerMinute": researchSettings.requestsPerMinute,
                 "dailyTokenLimit": researchSettings.dailyTokenLimit,
-                "maxSubjectsPerVideo": researchSettings.maxSubjectsPerVideo,
                 "cooldownHours": researchSettings.cooldownHours,
-                "trigger": researchSettings.trigger.rawValue,
-                "confidenceTriggerLevel": researchSettings.confidenceTriggerLevel,
+                "urgencyFloor": researchSettings.urgencyFloor,
+                "authorLevel": researchSettings.authorThreshold.level,
+                "authorCount": researchSettings.authorThreshold.count,
+                "authorWindowDays": researchSettings.authorThreshold.windowDays,
                 "searchResultCount": researchSettings.searchResultCount,
                 "snippetContextChars": researchSettings.snippetContextChars,
                 "knowledgeTTLDays": researchSettings.knowledgeTTLDays,
@@ -2541,10 +2545,11 @@ final class VaultClassifierViewModel: ObservableObject {
                             "webSearchProviderProfileID": research.webSearchProviderProfileID ?? "",
                             "requestsPerMinute": research.requestsPerMinute,
                             "dailyTokenLimit": research.dailyTokenLimit,
-                            "maxSubjectsPerVideo": research.maxSubjectsPerVideo,
                             "cooldownHours": research.cooldownHours,
-                            "trigger": research.trigger.rawValue,
-                            "confidenceTriggerLevel": research.confidenceTriggerLevel,
+                            "urgencyFloor": research.urgencyFloor,
+                            "authorLevel": research.authorThreshold.level,
+                            "authorCount": research.authorThreshold.count,
+                            "authorWindowDays": research.authorThreshold.windowDays,
                             "searchResultCount": research.searchResultCount,
                             "snippetContextChars": research.snippetContextChars,
                             "knowledgeTTLDays": research.knowledgeTTLDays,
@@ -2925,24 +2930,27 @@ final class VaultClassifierViewModel: ObservableObject {
                         try webString(data, key: "dailyTokenLimit", limit: 16),
                         label: "Research daily token limit"
                     ),
-                    maxSubjectsPerVideo: try positiveInteger(
-                        try webString(data, key: "maxSubjectsPerVideo", limit: 16),
-                        label: "Research subjects per video"
-                    ),
                     cooldownHours: try positiveInteger(
                         try webString(data, key: "cooldownHours", limit: 16),
                         label: "Research cooldown hours"
                     ),
-                    trigger: try {
-                        let raw = try webString(data, key: "trigger", limit: 64)
-                        guard let value = ResearchTrigger(rawValue: raw) else {
-                            throw WebBridgeInputError.invalidChoice("research trigger")
-                        }
-                        return value
-                    }(),
-                    confidenceTriggerLevel: try positiveInteger(
-                        try webString(data, key: "confidenceTriggerLevel", limit: 16),
-                        label: "Research confidence trigger"
+                    urgencyFloor: try positiveInteger(
+                        try webString(data, key: "urgencyFloor", limit: 16),
+                        label: "Research urgency floor"
+                    ),
+                    authorThreshold: AuthorResearchThreshold(
+                        level: try positiveInteger(
+                            try webString(data, key: "authorLevel", limit: 16),
+                            label: "Author research urgency level"
+                        ),
+                        count: try positiveInteger(
+                            try webString(data, key: "authorCount", limit: 16),
+                            label: "Author research video count"
+                        ),
+                        windowDays: try positiveInteger(
+                            try webString(data, key: "authorWindowDays", limit: 16),
+                            label: "Author research window days"
+                        )
                     ),
                     searchResultCount: try positiveInteger(
                         try webString(data, key: "searchResultCount", limit: 16),
