@@ -32,6 +32,49 @@ public struct CreatorPriorTag: Sendable, Equatable {
     }
 }
 
+/// The shape of the model's reply. Four strings define it: the rule line that
+/// describes it, the prompt RUNWAY the reply continues, the text between a tag name
+/// and its confidence digit, and the text between two items. Production is `.json`;
+/// the others exist to measure how much scaffold the accuracy actually needs
+/// (LATENCY-REFINEMENT §6d) and are selected with `VAULT_REPLY_FORMAT`.
+public struct ClassificationReplyFormat: Sendable, Equatable {
+    public let id: String
+    public let rule: String
+    public let runway: String
+    public let nameToDigit: String
+    public let itemSeparator: String
+
+    /// `{"tags":[{"name":"Music","confidence":4},{"name":"Sports","confidence":2}]}`
+    public static let json = ClassificationReplyFormat(
+        id: "json",
+        rule: "- Reply with one JSON object only: {\"tags\":[{\"name\":\"<tag name>\",\"confidence\":<1-5>}]}. Use tag names exactly as written. No prose.",
+        runway: "Output JSON: {\"tags\":[{\"name\":\"",
+        nameToDigit: "\",\"confidence\":",
+        itemSeparator: "},{\"name\":\"")
+    /// Brackets kept, key names dropped: `[["Music",4],["Sports",2]]`
+    public static let pairs = ClassificationReplyFormat(
+        id: "pairs",
+        rule: "- Reply with one JSON array only, one [tag name, confidence] pair per chosen tag: [[\"<tag name>\",<1-5>]]. Use tag names exactly as written. No prose.",
+        runway: "Output JSON: [[\"",
+        nameToDigit: "\",",
+        itemSeparator: "],[\"")
+    /// The tag name IS the key: `{"Music":4,"Sports":2}`
+    public static let object = ClassificationReplyFormat(
+        id: "object",
+        rule: "- Reply with one JSON object only, mapping each chosen tag name to its confidence: {\"<tag name>\":<1-5>}. Use tag names exactly as written. No prose.",
+        runway: "Output JSON: {\"",
+        nameToDigit: "\":",
+        itemSeparator: ",\"")
+
+    public static let current: ClassificationReplyFormat = {
+        switch ProcessInfo.processInfo.environment["VAULT_REPLY_FORMAT"] {
+        case "pairs": return .pairs
+        case "object": return .object
+        default: return .json
+        }
+    }()
+}
+
 public enum ClassificationPromptAssembler {
     public static let maximumEvidenceTextLength = 1_000
 
@@ -59,7 +102,7 @@ public enum ClassificationPromptAssembler {
         lines.append("- Assign at most \(maximumTags) tags.")
         lines.append("- For each chosen tag give a confidence from 1 to 5 for how sure you are the tag is correct (not how popular the tag is): 5 = the evidence names a subject you are certain maps to this tag; 4 = strong evidence; 3 = a plausible inference; 2 = a weak guess; 1 = little basis. Reserve 4 and 5 for clear cases, and use 1-2 when you are mostly guessing.")
         lines.append("- If the title is uninformative, use the creator prior when provided, but treat it as a weak, partial sample of what the creator makes — it may not represent them fully.")
-        lines.append("- Reply with one JSON object only: {\"tags\":[{\"name\":\"<tag name>\",\"confidence\":<1-5>}]}. Use tag names exactly as written. No prose.")
+        lines.append(ClassificationReplyFormat.current.rule)
         lines.append("- Use none only when the title names no topic at all — a bare question, reaction, or phrase with no subject. Do not force a tag onto a genuinely topicless title, and do not invent a topic the title does not state.")
 
         if let houseRules, !houseRules.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -151,7 +194,7 @@ public enum ClassificationPromptAssembler {
         // the model's first decoded token is the decision itself. Removing this
         // scaffold (or the reply-shape rule above) measurably regressed
         // accuracy from 7/8 to 5/8.
-        lines.append("Output JSON: {\"tags\":[{\"name\":\"")
+        lines.append(ClassificationReplyFormat.current.runway)
         return lines.joined(separator: "\n")
     }
 
