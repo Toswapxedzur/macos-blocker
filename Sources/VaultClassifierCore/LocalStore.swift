@@ -478,6 +478,7 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         Set(catalog.trees.flatMap { $0.nodes.map(\.id) })
     }
 
+    /// Single-video convenience: a batch of one (one code path).
     public func classifyVideo(
         platformID: String,
         entryID: String,
@@ -486,6 +487,19 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         summary: String? = nil,
         text: String? = nil
     ) async throws -> VideoTagsProjection {
+        try await classifyVideos(platformID: platformID, items: [
+            .init(title: title, summary: summary, text: text, entryID: entryID, creatorID: creatorID)
+        ])[entryID] ?? VideoTagsProjection(tags: [], predicted: false)
+    }
+
+    /// Classifies a screenful of videos for one platform. Per classifier type, every
+    /// not-yet-corrected video goes to the engine as ONE batch (a multi-sequence
+    /// decode on engines that support it — LATENCY-REFINEMENT Phase 1); state is
+    /// saved once, then research is scheduled per video. Keyed by entry id.
+    public func classifyVideos(
+        platformID: String,
+        items: [VideoClassificationPipeline.Input]
+    ) async throws -> [String: VideoTagsProjection] {
         let snapshot = lock.withLock {
             (
                 state.workspaceCatalog,
@@ -507,35 +521,50 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
             throw PlatformCollectionError.disabled(platformID)
         }
         let types = Self.orderedTypes(for: platformID, in: catalog)
-        guard !types.isEmpty else { return VideoTagsProjection(tags: [], predicted: false) }
+        guard !types.isEmpty, !items.isEmpty else {
+            return Dictionary(items.map { ($0.entryID, VideoTagsProjection(tags: [], predicted: false)) }, uniquingKeysWith: { first, _ in first })
+        }
 
         var classifications: [VideoClassification] = []
         var researchCandidates: [(
-            ClassifierTypeAsset,
-            VideoClassification,
-            ResearchSettings,
-            any OnDeviceLLM
+            type: ClassifierTypeAsset,
+            classification: VideoClassification,
+            settings: ResearchSettings,
+            llm: any OnDeviceLLM,
+            input: VideoClassificationPipeline.Input
         )] = []
         // Decode 2 reuses the classification prompt, so the parts are captured here
         // (strings only — no decode) for the videos that will trigger research.
         var researchParts: [String: ClassificationPromptParts] = [:]
+        func partsKey(_ typeID: String, _ entryID: String) -> String { "\(typeID)\u{1F}\(entryID)" }
+
         for type in types {
             guard let tree = catalog.trees.first(where: { $0.id == type.treeID }),
                   type.treeRevision == tree.revision else { continue }
-            // A correction is authoritative for this taxonomy revision. Live
-            // requests and research-triggered refreshes must not overwrite it
-            // with a later model decision.
-            if let corrected = catalog.videoClassification(
-                classifierTypeID: type.id,
-                platformID: platformID,
-                entryID: entryID
-            ), corrected.source == .humanCorrected,
-               corrected.treeID == tree.id,
-               corrected.treeRevision == tree.revision {
-                classifications.append(corrected)
-                continue
-            }
             let overrides = type.localModelOverrides
+            // `text` carries the thumbnail-OCR evidence; honor the per-type opt-out.
+            let usesOCR = overrides?.effectiveThumbnailOcrEvidence ?? LocalModelOverrides.defaultThumbnailOcrEvidence
+            var pending: [VideoClassificationPipeline.Input] = []
+            for item in items {
+                // A correction is authoritative for this taxonomy revision. Live
+                // requests and research-triggered refreshes must not overwrite it
+                // with a later model decision.
+                if let corrected = catalog.videoClassification(
+                    classifierTypeID: type.id,
+                    platformID: platformID,
+                    entryID: item.entryID
+                ), corrected.source == .humanCorrected,
+                   corrected.treeID == tree.id,
+                   corrected.treeRevision == tree.revision {
+                    classifications.append(corrected)
+                } else {
+                    pending.append(.init(
+                        title: item.title, summary: item.summary, text: usesOCR ? item.text : nil,
+                        entryID: item.entryID, creatorID: item.creatorID))
+                }
+            }
+            guard !pending.isEmpty else { continue }
+
             let knowledgeSettings = type.researchOverrides ?? globalResearchSettings
             let llm = await Self.resolvedLLM(
                 for: type,
@@ -545,39 +574,32 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
             )
             let effectiveMaximumTags = overrides?.effectiveMaximumTags(global: maximumTags) ?? maximumTags
             let pipeline = VideoClassificationPipeline(llm: llm, maximumTags: effectiveMaximumTags)
-            // `text` carries the thumbnail-OCR evidence; honor the per-type opt-out.
-            let typeText = (overrides?.effectiveThumbnailOcrEvidence ?? LocalModelOverrides.defaultThumbnailOcrEvidence) ? text : nil
-            let classification = try await pipeline.classify(
-                title: title,
-                summary: summary,
-                text: typeText,
-                entryID: entryID,
-                creatorID: creatorID,
+            let typeHouseRules = Self.effectiveHouseRules(global: houseRules, perType: overrides?.houseRules)
+            let results = try await pipeline.classifyBatch(
+                pending,
                 platformID: platformID,
                 classifierType: type,
                 tree: tree,
                 catalog: catalog,
-                houseRules: Self.effectiveHouseRules(
-                    global: houseRules,
-                    perType: overrides?.houseRules
-                ),
+                houseRules: typeHouseRules,
                 allowDecline: overrides?.allowDecline,
                 confidenceThresholds: overrides?.confidenceThresholds,
                 knowledgeTTLDays: knowledgeSettings.knowledgeTTLDays,
                 maxKnowledgePerVideo: knowledgeSettings.maxKnowledgePerVideo
             )
-            classifications.append(classification)
-            if let effectiveResearch = Self.effectiveResearchSettings(
+            classifications.append(contentsOf: results)
+            guard let effectiveResearch = Self.effectiveResearchSettings(
                 global: globalResearchSettings,
                 for: type
-            ) {
-                researchCandidates.append((type, classification, effectiveResearch, llm))
+            ) else { continue }
+            for (input, classification) in zip(pending, results) {
+                researchCandidates.append((type, classification, effectiveResearch, llm, input))
                 if Self.shouldTriggerResearch(for: classification, settings: effectiveResearch) {
-                    researchParts[type.id] = pipeline.primaryPromptParts(
-                        title: title, summary: summary, text: typeText,
-                        entryID: entryID, creatorID: creatorID, platformID: platformID,
+                    researchParts[partsKey(type.id, input.entryID)] = pipeline.primaryPromptParts(
+                        title: input.title, summary: input.summary, text: input.text,
+                        entryID: input.entryID, creatorID: input.creatorID, platformID: platformID,
                         classifierType: type, tree: tree, catalog: catalog,
-                        houseRules: Self.effectiveHouseRules(global: houseRules, perType: overrides?.houseRules),
+                        houseRules: typeHouseRules,
                         knowledgeTTLDays: knowledgeSettings.knowledgeTTLDays,
                         maxKnowledgePerVideo: knowledgeSettings.maxKnowledgePerVideo
                     )
@@ -592,54 +614,57 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
             // consistently hard to classify crosses the threshold → an author task.
             var authorTasks: [ResearchTask] = []
             let nowMilliseconds = WorkspaceCatalog.now()
-            for (type, classification, settings, _) in researchCandidates where classification.source == .model {
+            for candidate in researchCandidates where candidate.classification.source == .model {
                 guard let meanUrgency = state.workspaceCatalog.recordCreatorResearchUrgency(
-                    classifierTypeID: type.id,
-                    creatorID: creatorID,
-                    urgency: Self.researchUrgency(for: classification),
-                    threshold: settings.authorThreshold,
+                    classifierTypeID: candidate.type.id,
+                    creatorID: candidate.input.creatorID,
+                    urgency: Self.researchUrgency(for: candidate.classification),
+                    threshold: candidate.settings.authorThreshold,
                     nowMilliseconds: nowMilliseconds
-                ), let creatorSubject = ResearchSubject(kind: .creator, subject: creatorID) else { continue }
+                ), let creatorSubject = ResearchSubject(kind: .creator, subject: candidate.input.creatorID) else { continue }
                 authorTasks.append(.init(
-                    classifierTypeID: type.id, platformID: platformID, entryID: entryID,
-                    creatorID: creatorID, subjects: [creatorSubject], urgency: meanUrgency
+                    classifierTypeID: candidate.type.id, platformID: platformID, entryID: candidate.input.entryID,
+                    creatorID: candidate.input.creatorID, subjects: [creatorSubject], urgency: meanUrgency
                 ))
             }
             try stateFile.save(state)
             return (state.workspaceCatalog, authorTasks)
         }
 
-        let projection = Self.videoTagsProjection(entryID: entryID, platformID: platformID, types: types, catalog: saved)
-        VaultDevLog.shared.log("classify", "video", [
+        var projections: [String: VideoTagsProjection] = [:]
+        for item in items {
+            projections[item.entryID] = Self.videoTagsProjection(
+                entryID: item.entryID, platformID: platformID, types: types, catalog: saved)
+        }
+        VaultDevLog.shared.log("classify", "videos", [
             "platform": platformID,
-            "entry": entryID,
-            "creator": creatorID,
+            "videos": "\(items.count)",
             "types": "\(types.count)",
             "classified": "\(classifications.count)",
-            "tags": "\(projection.tags.count)"
+            "tagged": "\(projections.values.filter { !$0.tags.isEmpty }.count)"
         ])
         if let researchQueue {
             // Author research now comes from the §8 accumulator, not the old
             // "append the creator handle when the histogram is weak" heuristic.
             for task in authorTasks { _ = await researchQueue.enqueue(task) }
-            for (type, classification, settings, llm) in researchCandidates
-            where Self.shouldTriggerResearch(for: classification, settings: settings) {
+            for candidate in researchCandidates
+            where Self.shouldTriggerResearch(for: candidate.classification, settings: candidate.settings) {
                 Self.scheduleResearchSubjectExtraction(
-                    llm: llm,
+                    llm: candidate.llm,
                     queue: researchQueue,
-                    settings: settings,
-                    classifierTypeID: type.id,
+                    settings: candidate.settings,
+                    classifierTypeID: candidate.type.id,
                     platformID: platformID,
-                    entryID: entryID,
-                    creatorID: creatorID,
-                    title: title,
-                    summary: summary,
-                    urgency: Self.researchUrgency(for: classification),
-                    promptParts: researchParts[type.id]
+                    entryID: candidate.input.entryID,
+                    creatorID: candidate.input.creatorID,
+                    title: candidate.input.title,
+                    summary: candidate.input.summary,
+                    urgency: Self.researchUrgency(for: candidate.classification),
+                    promptParts: researchParts[partsKey(candidate.type.id, candidate.input.entryID)]
                 )
             }
         }
-        return projection
+        return projections
     }
 
     private static func resolvedLLM(

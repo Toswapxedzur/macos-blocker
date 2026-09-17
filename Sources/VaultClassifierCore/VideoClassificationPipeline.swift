@@ -51,6 +51,23 @@ public struct VideoClassificationPipeline: Sendable {
         self.creatorPriorRowLimit = creatorPriorRowLimit.map { max(1, $0) }
     }
 
+    /// One video's evidence for a batched classification.
+    public struct Input: Sendable {
+        public let title: String
+        public let summary: String?
+        public let text: String?
+        public let entryID: String
+        public let creatorID: String
+        public init(title: String, summary: String? = nil, text: String? = nil, entryID: String, creatorID: String) {
+            self.title = title
+            self.summary = summary
+            self.text = text
+            self.entryID = entryID
+            self.creatorID = creatorID
+        }
+    }
+
+    /// Single-video convenience: a batch of one, so there is exactly one code path.
     public func classify(
         title: String,
         summary: String? = nil,
@@ -68,71 +85,106 @@ public struct VideoClassificationPipeline: Sendable {
         maxKnowledgePerVideo: Int = ResearchSettings.defaultMaxKnowledgePerVideo,
         creatorGroundingConfidenceFloor: Int = VideoClassificationPipeline.defaultCreatorGroundingConfidenceFloor
     ) async throws -> VideoClassification {
+        try await classifyBatch(
+            [Input(title: title, summary: summary, text: text, entryID: entryID, creatorID: creatorID)],
+            platformID: platformID, classifierType: classifierType, tree: tree, catalog: catalog,
+            houseRules: houseRules, allowDecline: allowDecline, confidenceThresholds: confidenceThresholds,
+            knowledgeTTLDays: knowledgeTTLDays, maxKnowledgePerVideo: maxKnowledgePerVideo,
+            creatorGroundingConfidenceFloor: creatorGroundingConfidenceFloor
+        )[0]
+    }
+
+    /// Classifies a screenful of videos against one classifier type. All primary
+    /// decodes go to the engine as ONE batch (`classifyAll` → a multi-sequence pass
+    /// on engines that support it; LATENCY-REFINEMENT Phase 1); the videos that come
+    /// back weak AND have a keyed creator then share a second, creator-grounded
+    /// batch. Results are positional. Note: videos in one batch do not see each
+    /// other in the creator prior (it reflects the catalog before the batch).
+    public func classifyBatch(
+        _ inputs: [Input],
+        platformID: String,
+        classifierType: ClassifierTypeAsset,
+        tree: TagTreeAsset,
+        catalog: WorkspaceCatalog,
+        houseRules: String? = nil,
+        allowDecline: Bool? = nil,
+        confidenceThresholds: [Double]? = nil,
+        knowledgeTTLDays: Int = ResearchSettings.defaultKnowledgeTTLDays,
+        maxKnowledgePerVideo: Int = ResearchSettings.defaultMaxKnowledgePerVideo,
+        creatorGroundingConfidenceFloor: Int = VideoClassificationPipeline.defaultCreatorGroundingConfidenceFloor
+    ) async throws -> [VideoClassification] {
+        guard !inputs.isEmpty else { return [] }
         // Evidence gathering (creator prior + matched knowledge + correction
         // exemplars) is shared with `primaryPromptParts`, so the calibration eval
         // drives the model on the exact same prompt this path builds.
-        let evidence = gatherEvidence(
-            title: title, entryID: entryID, creatorID: creatorID, platformID: platformID,
-            classifierType: classifierType, tree: tree, catalog: catalog,
-            knowledgeTTLDays: knowledgeTTLDays, maxKnowledgePerVideo: maxKnowledgePerVideo
-        )
-        let creatorPrior = evidence.creatorPrior
-        let creatorVideoCount = evidence.creatorVideoCount
-        let termKnowledge = evidence.termKnowledge
+        let evidence = inputs.map { input in
+            gatherEvidence(
+                title: input.title, entryID: input.entryID, creatorID: input.creatorID, platformID: platformID,
+                classifierType: classifierType, tree: tree, catalog: catalog,
+                knowledgeTTLDays: knowledgeTTLDays, maxKnowledgePerVideo: maxKnowledgePerVideo
+            )
+        }
+        func parts(_ index: Int, knowledge: [KnowledgeEntry]) -> ClassificationPromptParts {
+            ClassificationPromptAssembler.assemble(
+                tree: tree, houseRules: houseRules, maximumTags: maximumTags,
+                title: inputs[index].title, summary: inputs[index].summary, text: inputs[index].text,
+                creatorPrior: evidence[index].creatorPrior, creatorVideoCount: evidence[index].creatorVideoCount,
+                knowledge: knowledge, correctionExemplars: evidence[index].correctionExemplars
+            )
+        }
+        func request(_ parts: ClassificationPromptParts) -> LLMClassificationRequest {
+            LLMClassificationRequest(
+                staticPrefix: parts.staticPrefix, dynamicSuffix: parts.dynamicSuffix,
+                allowedTagNames: parts.allowedTagNames, maximumTags: maximumTags,
+                allowDecline: allowDecline, confidenceThresholds: confidenceThresholds
+            )
+        }
 
-        // Primary decode: the video's own content plus any matched term
+        // Primary decode: each video's own content plus any matched term
         // knowledge. The creator description is deliberately withheld here.
-        let primary = try await decode(
-            tree: tree, houseRules: houseRules, title: title, summary: summary, text: text,
-            creatorPrior: creatorPrior, creatorVideoCount: creatorVideoCount, knowledge: termKnowledge,
-            correctionExemplars: evidence.correctionExemplars,
-            allowDecline: allowDecline, confidenceThresholds: confidenceThresholds
-        )
+        let primaryParts = inputs.indices.map { parts($0, knowledge: evidence[$0].termKnowledge) }
+        let primaryResults = try await llm.classifyAll(primaryParts.map(request))
+        var tags = zip(primaryResults, primaryParts).map { scoredTags(from: $0, parts: $1) }
+        var knowledgeUsed = evidence.map(\.termKnowledge)
+        var grounded = [Bool](repeating: false, count: inputs.count)
 
         // Low-confidence creator fallback: when the content signal is weak (a
         // decline, or a top confidence at/under the floor) and this creator is
         // already keyed, infer the tag from the creator's stored description.
-        let primaryTop = primary.map(\.confidence).max() ?? 0
-        if primaryTop <= creatorGroundingConfidenceFloor,
-           let creatorEntry = catalog.creatorKnowledgeEntry(for: creatorID) {
-            let groundedKnowledge = termKnowledge + [creatorEntry]
-            let grounded = try await decode(
-                tree: tree, houseRules: houseRules, title: title, summary: summary, text: text,
-                creatorPrior: creatorPrior, creatorVideoCount: creatorVideoCount, knowledge: groundedKnowledge,
-                correctionExemplars: evidence.correctionExemplars,
-                allowDecline: allowDecline, confidenceThresholds: confidenceThresholds
-            )
-            // Only adopt the creator-grounded result if it actually produced a
-            // tag (or improved confidence); otherwise keep the primary outcome.
-            let groundedTop = grounded.map(\.confidence).max() ?? 0
-            if !grounded.isEmpty, groundedTop >= primaryTop {
-                return VideoClassification(
-                    classifierTypeID: classifierType.id,
-                    platformID: platformID,
-                    entryID: entryID,
-                    creatorID: creatorID,
-                    treeID: tree.id,
-                    treeRevision: tree.revision,
-                    tags: grounded,
-                    knowledgeRefs: groundedKnowledge.map(\.id),
-                    source: .modelKnowledge,
-                    modelVersion: "\(llm.modelVersion)+\(promptVersion)"
-                )
+        let weak: [(index: Int, knowledge: [KnowledgeEntry])] = inputs.indices.compactMap { index in
+            guard (tags[index].map(\.confidence).max() ?? 0) <= creatorGroundingConfidenceFloor,
+                  let creatorEntry = catalog.creatorKnowledgeEntry(for: inputs[index].creatorID) else { return nil }
+            return (index, evidence[index].termKnowledge + [creatorEntry])
+        }
+        if !weak.isEmpty {
+            let groundedParts = weak.map { parts($0.index, knowledge: $0.knowledge) }
+            let groundedResults = try await llm.classifyAll(groundedParts.map(request))
+            for (slot, candidate) in weak.enumerated() {
+                let groundedTags = scoredTags(from: groundedResults[slot], parts: groundedParts[slot])
+                // Only adopt the creator-grounded result if it actually produced a
+                // tag (or improved confidence); otherwise keep the primary outcome.
+                let primaryTop = tags[candidate.index].map(\.confidence).max() ?? 0
+                guard !groundedTags.isEmpty, (groundedTags.map(\.confidence).max() ?? 0) >= primaryTop else { continue }
+                tags[candidate.index] = groundedTags
+                knowledgeUsed[candidate.index] = candidate.knowledge
+                grounded[candidate.index] = true
             }
         }
 
-        return VideoClassification(
-            classifierTypeID: classifierType.id,
-            platformID: platformID,
-            entryID: entryID,
-            creatorID: creatorID,
-            treeID: tree.id,
-            treeRevision: tree.revision,
-            tags: primary,
-            knowledgeRefs: termKnowledge.map(\.id),
-            source: termKnowledge.isEmpty ? .model : .modelKnowledge,
-            modelVersion: "\(llm.modelVersion)+\(promptVersion)"
-        )
+        return inputs.indices.map { index in
+            VideoClassification(
+                classifierTypeID: classifierType.id,
+                platformID: platformID,
+                entryID: inputs[index].entryID,
+                creatorID: inputs[index].creatorID,
+                treeID: tree.id,
+                treeRevision: tree.revision,
+                tags: tags[index],
+                knowledgeRefs: knowledgeUsed[index].map(\.id),
+                source: (grounded[index] || !knowledgeUsed[index].isEmpty) ? .modelKnowledge : .model,
+                modelVersion: "\(llm.modelVersion)+\(promptVersion)"
+            )
+        }
     }
 
     /// The creator prior + correction exemplars + matched term knowledge for one
@@ -229,41 +281,9 @@ public struct VideoClassificationPipeline: Sendable {
         )
     }
 
-    /// One assemble-and-decode pass: builds the prompt from the given knowledge
-    /// set, runs the LLM, and maps readable tag names back to tree ids.
-    private func decode(
-        tree: TagTreeAsset,
-        houseRules: String?,
-        title: String,
-        summary: String?,
-        text: String?,
-        creatorPrior: [CreatorPriorTag],
-        creatorVideoCount: Int,
-        knowledge: [KnowledgeEntry],
-        correctionExemplars: [CorrectionExemplar],
-        allowDecline: Bool?,
-        confidenceThresholds: [Double]?
-    ) async throws -> [ScoredTag] {
-        let parts = ClassificationPromptAssembler.assemble(
-            tree: tree,
-            houseRules: houseRules,
-            maximumTags: maximumTags,
-            title: title,
-            summary: summary,
-            text: text,
-            creatorPrior: creatorPrior,
-            creatorVideoCount: creatorVideoCount,
-            knowledge: knowledge,
-            correctionExemplars: correctionExemplars
-        )
-        let result = try await llm.classify(LLMClassificationRequest(
-            staticPrefix: parts.staticPrefix,
-            dynamicSuffix: parts.dynamicSuffix,
-            allowedTagNames: parts.allowedTagNames,
-            maximumTags: maximumTags,
-            allowDecline: allowDecline,
-            confidenceThresholds: confidenceThresholds
-        ))
+    /// Maps one engine result's readable tag names back to tree ids and applies
+    /// the top-tag / secondary-floor gate.
+    private func scoredTags(from result: LLMClassificationResult, parts: ClassificationPromptParts) -> [ScoredTag] {
         // Map readable names back to tag ids; silently drop any name not in the
         // tree (a constrained decoder should prevent these, but a stub or a loose
         // runtime might not). Dedupe by id, keeping the highest confidence.

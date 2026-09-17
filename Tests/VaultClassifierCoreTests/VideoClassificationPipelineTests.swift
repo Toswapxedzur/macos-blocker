@@ -62,9 +62,11 @@ final class VideoClassificationPipelineTests: XCTestCase {
             knowledge: knowledge
         )
         XCTAssertTrue(suffix.contains("HermitCraft: A Minecraft SMP."))
-        // Total classified count + per-tag share + confidence mean±stdev; no framing.
-        XCTAssertTrue(suffix.contains("Creator's tag history (20 of their videos classified):"))
-        XCTAssertTrue(suffix.contains("Games: 17/20 (85%), confidence 4.2±0.6"))
+        // Owner spec: total classified videos + a frequency per tag — nothing else
+        // (no percentages, no confidence statistics), on one compact line; no framing.
+        XCTAssertTrue(suffix.contains("Creator: 20 videos classified. Tag counts: Games 17"))
+        XCTAssertFalse(suffix.contains("%"))
+        XCTAssertFalse(suffix.contains("±"))
         XCTAssertTrue(suffix.contains("Title: HermitCraft finale"))
         XCTAssertFalse(suffix.contains("weight it lightly"))
         XCTAssertFalse(suffix.contains("STRONG default"))
@@ -141,8 +143,7 @@ final class VideoClassificationPipelineTests: XCTestCase {
             classifierType: makeType(), tree: makeTree(), catalog: catalog
         )
         let suffix = try XCTUnwrap(recorder.last?.dynamicSuffix)
-        XCTAssertTrue(suffix.contains("Creator's tag history (1 of their videos classified):"))
-        XCTAssertTrue(suffix.contains("Games: 1/1 (100%), confidence 5.0±0.0"))
+        XCTAssertTrue(suffix.contains("Creator: 1 videos classified. Tag counts: Games 1"))
     }
 
     func testPipelineCarriesPerTypeRequestOverrides() async throws {
