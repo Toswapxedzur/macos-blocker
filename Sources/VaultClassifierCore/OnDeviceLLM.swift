@@ -120,11 +120,66 @@ public protocol OnDeviceResearchSubjectExtracting: Sendable {
     func extractResearchSubject(_ request: LLMResearchSubjectRequest) async throws -> ResearchSubject?
 }
 
+// MARK: - Decode 2: research-term extraction (RESEARCH-REDESIGN §4/§5, revised)
+
+// Live smoke (2026-09-17) showed model-EMITTED urgency/author-urgency are
+// unreliable (the model anchors the required digit to the prompt default). Per
+// the owner's reframe, ALL research urgency is now DERIVED from the calibrated
+// Decode-1 confidences (see `ResearchUrgency`), and Decode 2 does only what the
+// model does well: copy the salient named span(s) to look up.
+
+/// A single thing to research, with an urgency (1–5; 5 = "the video couldn't be
+/// placed"). `term` is copied verbatim from the video's evidence by Decode 2;
+/// `urgency` is DERIVED from the video's Decode-1 confidences, not model-emitted.
+public struct ResearchNeed: Sendable, Equatable {
+    public let term: String
+    public let urgency: Int
+    public init(term: String, urgency: Int) {
+        self.term = term
+        self.urgency = min(5, max(1, urgency))
+    }
+}
+
+/// Derives research urgency from the reliable signal — the video's Decode-1 tag
+/// confidences — replacing the model's (degenerate) urgency/author-urgency asks.
+public enum ResearchUrgency {
+    /// A video's research urgency (1–5) as the inverse of its mean kept-tag
+    /// confidence; a decline (no tags) is maximally uncertain (5). This same
+    /// per-video value feeds the per-creator author accumulator (§8): a creator
+    /// whose videos are consistently low-confidence crosses the research threshold.
+    public static func fromTagConfidences(_ confidences: [Int]) -> Int {
+        guard !confidences.isEmpty else { return 5 }   // decline = maximally uncertain
+        let mean = Double(confidences.reduce(0, +)) / Double(confidences.count)
+        return min(5, max(1, 6 - Int(mean.rounded())))
+    }
+}
+
+/// Decode 2 request. Carries the SAME prompt parts as the classification decode
+/// (`staticPrefix` + `dynamicSuffix`) so the engine appends the extraction ask and
+/// reuses the KV-cached evidence prefix — in steady state it prefills only the
+/// short appendix and, for a recognized video, generates an empty list.
+public struct LLMResearchNeedsRequest: Sendable, Equatable {
+    public let staticPrefix: String
+    public let dynamicSuffix: String
+    public let maximumTerms: Int
+    public init(staticPrefix: String, dynamicSuffix: String, maximumTerms: Int = 3) {
+        self.staticPrefix = staticPrefix
+        self.dynamicSuffix = dynamicSuffix
+        self.maximumTerms = max(1, maximumTerms)
+    }
+}
+
+public protocol OnDeviceResearchNeedsExtracting: Sendable {
+    /// Copies up to `maximumTerms` named subjects the model does not recognize and
+    /// would look up. Terms only — urgency is derived (`ResearchUrgency`), not asked.
+    func researchNeeds(_ request: LLMResearchNeedsRequest) async throws -> [String]
+}
+
 /// A deterministic stand-in used before a real MLX model is wired, and in tests.
 /// It "classifies" by selecting allowed tag names that appear (case-insensitive)
 /// in the dynamic suffix — enough to exercise the whole pipeline end-to-end and
 /// keep the build green, with no intelligence claimed.
-public struct StubOnDeviceLLM: OnDeviceLLM, OnDeviceResearchSubjectExtracting {
+public struct StubOnDeviceLLM: OnDeviceLLM, OnDeviceResearchSubjectExtracting, OnDeviceResearchNeedsExtracting {
     public let modelVersion: String
     public let defaultConfidence: Int
 
@@ -144,5 +199,9 @@ public struct StubOnDeviceLLM: OnDeviceLLM, OnDeviceResearchSubjectExtracting {
 
     public func extractResearchSubject(_ request: LLMResearchSubjectRequest) async throws -> ResearchSubject? {
         nil
+    }
+
+    public func researchNeeds(_ request: LLMResearchNeedsRequest) async throws -> [String] {
+        []
     }
 }
