@@ -93,7 +93,45 @@ private final class FirstResearchGate: @unchecked Sendable {
     }
 }
 
+private actor OrderRecorder {
+    private var items: [String] = []
+    func record(_ subject: String) { items.append(subject) }
+    var all: [String] { items }
+}
+
 final class GroundedResearchQueueTests: XCTestCase {
+
+    /// RESEARCH-REDESIGN §7: the drain must pull the highest-urgency pending
+    /// subject first, not FIFO. Block the first (low-urgency) subject in-flight,
+    /// enqueue higher-urgency ones behind it, release, and assert the remainder
+    /// drained high→low regardless of insertion order.
+    func testDrainsHighestUrgencyFirst() async {
+        let harness = ResearchQueueHarness(now: Date(timeIntervalSince1970: 1_000_000))
+        let order = OrderRecorder()
+        let gate = FirstResearchGate()
+        let queue = GroundedResearchQueue(
+            configurationProvider: { _ in .init(providers: self.providers(), requestsPerMinute: 6_000, dailyTokenLimit: 1_000_000) },
+            snapshotProvider: { _ in harness.snapshot },
+            mutationWriter: { harness.write($0) },
+            researcher: { subject, _ in
+                await order.record(subject.subject)
+                return await gate.run(subject)   // only the first call blocks
+            },
+            now: { harness.now },
+            sleeper: { _ in }
+        )
+        _ = await queue.enqueue(task("low", entryID: "1", urgency: 1))
+        await gate.waitUntilStarted()            // "low" is now in-flight, blocked
+        _ = await queue.enqueue(task("mid", entryID: "2", urgency: 3))
+        _ = await queue.enqueue(task("high", entryID: "3", urgency: 5))
+        _ = await queue.enqueue(task("low2", entryID: "4", urgency: 2))
+        gate.release()
+        await queue.waitUntilIdle()
+        let recorded = await order.all
+        // "low" ran first (it was alone when picked); the rest drain by urgency.
+        XCTAssertEqual(recorded, ["low", "high", "mid", "low2"])
+    }
+
     private func providers(outputTokens: Int = 100) -> GroundedResearchProviderConfiguration {
         .init(
             llmProfile: .init(id: "llm", type: .ollama),
@@ -105,13 +143,14 @@ final class GroundedResearchQueueTests: XCTestCase {
         )
     }
 
-    private func task(_ name: String, entryID: String = "entry", typeID: String = "type") -> ResearchTask {
+    private func task(_ name: String, entryID: String = "entry", typeID: String = "type", urgency: Int = ResearchTask.defaultUrgency) -> ResearchTask {
         .init(
             classifierTypeID: typeID,
             platformID: "youtube",
             entryID: entryID,
             creatorID: "creator",
-            subjects: [ResearchSubject(kind: .term, subject: name)!]
+            subjects: [ResearchSubject(kind: .term, subject: name)!],
+            urgency: urgency
         )
     }
 
