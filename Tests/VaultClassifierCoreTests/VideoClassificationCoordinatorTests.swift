@@ -113,6 +113,34 @@ private struct NeedsExtractingLLM: OnDeviceLLM, OnDeviceResearchSubjectExtractin
     }
 }
 
+private final class BatchCallProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedBatchSizes: [Int] = []
+    private var storedSingles = 0
+    func recordBatch(_ size: Int) { lock.withLock { storedBatchSizes.append(size) } }
+    func recordSingle() { lock.withLock { storedSingles += 1 } }
+    var batchSizes: [Int] { lock.withLock { storedBatchSizes } }
+    var singles: Int { lock.withLock { storedSingles } }
+}
+
+/// A batching engine: tags a video "Games" when its title mentions games.
+private struct BatchingLLM: OnDeviceBatchLLM {
+    let modelVersion = "batching/v1"
+    let probe: BatchCallProbe
+    private func answer(_ request: LLMClassificationRequest) -> LLMClassificationResult {
+        request.dynamicSuffix.lowercased().contains("games")
+            ? .init(tags: [LLMTagScore(name: "Games", confidence: 5)]) : .init(tags: [])
+    }
+    func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult {
+        probe.recordSingle()
+        return answer(request)
+    }
+    func classifyBatch(_ requests: [LLMClassificationRequest]) async throws -> [LLMClassificationResult] {
+        probe.recordBatch(requests.count)
+        return requests.map(answer)
+    }
+}
+
 private final class ResearchSubjectRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var stored: [ResearchSubject] = []
@@ -718,6 +746,34 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             XCTAssertTrue(probe.requests[0].dynamicSuffix.hasSuffix("{\"tags\":[{\"name\":\""))
             XCTAssertEqual(probe.legacyCount > 0, expectLegacy)
         }
+    }
+
+    /// LATENCY-REFINEMENT Phase 1: a screenful reaches the engine as ONE batch (not
+    /// N serial decodes), results come back keyed per video, a human-corrected
+    /// video is never re-decoded, and a single video still uses the plain path.
+    func testClassifyVideosSendsOneBatchAndKeysResultsPerVideo() async throws {
+        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let probe = BatchCallProbe()
+        coordinator.setOnDeviceLLM(BatchingLLM(probe: probe))
+
+        let projections = try await coordinator.classifyVideos(platformID: "youtube", items: [
+            .init(title: "Best games of the year", entryID: "a", creatorID: "youtube:handle:@one"),
+            .init(title: "A quiet walk", entryID: "b", creatorID: "youtube:handle:@two"),
+            .init(title: "More GAMES news", entryID: "c", creatorID: "youtube:handle:@one"),
+        ])
+        XCTAssertEqual(probe.batchSizes, [3], "three videos → one batched engine call")
+        XCTAssertEqual(probe.singles, 0)
+        XCTAssertEqual(projections["a"]?.tags.map(\.id), ["g"])
+        XCTAssertEqual(projections["b"]?.tags.map(\.id) ?? ["?"], [])
+        XCTAssertEqual(projections["c"]?.tags.map(\.id), ["g"])
+        // Persisted once for all three.
+        XCTAssertEqual(coordinator.snapshot().workspaceCatalog.videoClassifications.count, 3)
+
+        // A single video is a batch of one → the plain decode, no batch call.
+        _ = try await coordinator.classifyVideo(platformID: "youtube", entryID: "d", creatorID: "youtube:handle:@two", title: "solo games")
+        XCTAssertEqual(probe.batchSizes, [3])
+        XCTAssertEqual(probe.singles, 1)
     }
 
     /// The contrast case: a title the model classifies confidently is not a
