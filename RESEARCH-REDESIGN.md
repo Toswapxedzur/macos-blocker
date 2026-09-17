@@ -370,3 +370,30 @@ mini1 for weak-hardware latency):
   with a non-grounding LLM (DeepSeek, Ollama, …) now gets no research until they
   pick a grounding-capable provider — `searchMode` previously DEFAULTED to raw.
   219/219 tests. **The redesign's planned phases are complete.**
+- 2026-09-17 — **Comprehensive stage test (dev M1 Pro, Qwen2.5-7B unless noted).**
+  PASS: clean build + 220/220; real prod + dev `state.json` decode under the new
+  code (legacy trigger/raw-search keys, and 5,000 dev rows still carrying
+  `unknownTerms`); `score` cap 1 = P0.58/R0.50/exact 58%, decline 38/55 — identical
+  to the pre-Phase-3 baseline (no regression); `calib` still favours model
+  confidence (ECE 0.299 vs softmax 0.367, conf≤2 = 0% correct); web shell rendered
+  in a real browser from a mock payload — research form, grounding-only provider
+  picker, retired-Serper notice all correct, no console errors; live
+  `VaultFullLoopSmoke` (real engine → accumulator → real Gemini grounding → creator
+  keyed with 7 sources → re-classify) completes. Fixed during the test: the smoke
+  still assumed single-video creator research (now sets author count 1); Decode-2
+  terms could keep stray edge punctuation (`:皇室戰爭`) — now trimmed.
+  **FAIL — §10 Experiment 3 latency guardrail (<500 ms) is NOT met on the 7B:**
+  new `latency` eval mode → Decode 1 median 458 ms / **p90 1,242 ms**; Decode 2
+  (warm KV) median 549 ms. 3B: 405 / 268 ms. Cause (llama-bench: prefill 263 tok/s,
+  generation 26 tok/s = 38 ms/token): the structured decode GENERATES ~8 tokens per
+  tag (`Name","confidence":N`) vs ~2–3 for name-only, so model confidence costs
+  ≈ +200 ms/video — double §3's estimate — and Decode 2's ~110-token ask is ~420 ms
+  of prefill even when it returns `[]` (so it must stay detached, never inline).
+  The p90 tail is long evidence suffixes (creator prior + correction exemplars).
+  **Proposed fix (not done — needs calib+score re-validation):** the
+  `","confidence":` boilerplate is grammar-forced, so PREFILL it as one batch after
+  the name instead of sampling it token by token (~190 ms → ~20 ms); and shorten
+  the Decode-2 ask. **Also still open:** §9's "per-type overrides shrink to on/off"
+  was never done (types can still override every research field); few-shot
+  calibration; each knowledge write re-classifies the video (the smoke showed 4–5
+  redundant re-classifies of one video).

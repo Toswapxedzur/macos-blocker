@@ -434,6 +434,61 @@ case "needs":
                      String(item.title.prefix(46)) as NSString, tagStr, termStr, derivedUrgency))
     }
 
+case "latency":
+    // RESEARCH-REDESIGN §10 Experiment 3: per-video wall time of Decode 1
+    // (structured, model confidence) and Decode 2 (term extraction), steady state.
+    // Decode 2 is timed right after Decode 1 (warm KV — the inline cost) — the app
+    // currently runs it detached, so this is the best case for moving it inline.
+    guard args.count > 1, let data = try? Data(contentsOf: URL(fileURLWithPath: args[1])),
+          let set = try? JSONDecoder().decode(EvalSet.self, from: data) else { die("could not read eval set") }
+    let limit = args.compactMap { $0.hasPrefix("--limit=") ? Int($0.dropFirst(8)) : nil }.first ?? 30
+    let items = Array(set.items.prefix(limit))
+    let modelOverride = args.compactMap { $0.hasPrefix("--model=") ? String($0.dropFirst(8)) : nil }.first
+    guard let modelPath = modelOverride ?? VaultLocalLLMEngine.defaultModelPath(preferredFileName: state.settings.localLLM.modelFileName) else {
+        die("no .gguf model found for this environment")
+    }
+    let engine: VaultLocalLLMEngine
+    do { engine = try VaultLocalLLMEngine(modelPath: modelPath) } catch { die("engine load failed: \(error)") }
+    let settings = state.settings.localLLM
+    let research = state.settings.research
+    let overrides = type.localModelOverrides
+    let maxTags = args.compactMap { $0.hasPrefix("--max=") ? Int($0.dropFirst(6)) : nil }.first ?? 1
+    let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: maxTags)
+    var decode1: [Double] = [], decode2: [Double] = []
+    for (index, item) in items.enumerated() {
+        let parts = pipeline.primaryPromptParts(
+            title: item.title, entryID: item.entryID, creatorID: item.creatorID, platformID: "youtube",
+            classifierType: type, tree: tree, catalog: catalog,
+            houseRules: overrides?.houseRules ?? settings.houseRules,
+            knowledgeTTLDays: research.knowledgeTTLDays, maxKnowledgePerVideo: research.maxKnowledgePerVideo
+        )
+        let t0 = Date()
+        _ = try await engine.classify(LLMClassificationRequest(
+            staticPrefix: parts.staticPrefix, dynamicSuffix: parts.dynamicSuffix,
+            allowedTagNames: parts.allowedTagNames, maximumTags: maxTags,
+            allowDecline: overrides?.allowDecline ?? settings.allowDecline,
+            confidenceThresholds: overrides?.confidenceThresholds ?? settings.confidenceThresholds
+        ))
+        let t1 = Date()
+        _ = try await engine.researchNeeds(LLMResearchNeedsRequest(
+            staticPrefix: parts.staticPrefix, dynamicSuffix: parts.dynamicSuffix, maximumTerms: 3
+        ))
+        let t2 = Date()
+        if index > 0 {   // skip the cold first video (static-prefix prefill)
+            decode1.append(t1.timeIntervalSince(t0) * 1_000)
+            decode2.append(t2.timeIntervalSince(t1) * 1_000)
+        }
+    }
+    func stats(_ v: [Double]) -> String {
+        let s = v.sorted()
+        guard !s.isEmpty else { return "n/a" }
+        return String(format: "median %.0f ms   p90 %.0f ms   max %.0f ms", s[s.count / 2], s[min(s.count - 1, Int(Double(s.count) * 0.9))], s[s.count - 1])
+    }
+    print("• model: \((modelPath as NSString).lastPathComponent)  •  \(decode1.count) warm videos  •  maxTags \(maxTags)")
+    print("Decode 1 (classify, model confidence): \(stats(decode1))")
+    print("Decode 2 (term extraction, warm KV):   \(stats(decode2))")
+    print("Both:                                  \(stats(zip(decode1, decode2).map { $0 + $1 }))")
+
 default:
-    die("usage: VaultClassifierEval sample <N> [out.json] | score <in.json> | abtest <in.json> | calib <in.json> | needs <in.json>")
+    die("usage: VaultClassifierEval sample <N> [out.json] | score <in.json> | abtest <in.json> | calib <in.json> | needs <in.json> | latency <in.json>")
 }
