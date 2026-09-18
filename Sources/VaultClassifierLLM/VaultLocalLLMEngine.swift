@@ -760,66 +760,6 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
         return terms
     }
 
-    /// Free-form (ungrammared) greedy generation with a repetition penalty,
-    /// reusing the same KV-cache prefix handling as the constrained decodes.
-    /// Currently unused: the correction "summary" path that generalized sparse
-    /// corrections into free-text rules was removed (a small model fabricated
-    /// spurious rules that poisoned classification). Retained for a possible
-    /// future grounded free-text need; delete if none materializes.
-    private func generateFreeText(prompt: String, maximumTokens: Int) throws -> String {
-        let tokens = try tokenize(prompt)
-        guard tokens.count + maximumTokens <= contextTokenLimit else {
-            throw OnDeviceLLMError.inference("summary-prompt-exceeds-context (\(tokens.count) tokens)")
-        }
-        var common = 0
-        while common < min(tokens.count, cachedTokens.count), tokens[common] == cachedTokens[common] {
-            common += 1
-        }
-        if common == tokens.count { common = max(0, common - 1) }
-        llama_memory_seq_rm(llama_get_memory(context), 0, llama_pos(common), -1)
-        cachedTokens = Array(tokens.prefix(common))
-
-        var index = common
-        while index < tokens.count {
-            let end = min(index + 512, tokens.count)
-            var chunk = Array(tokens[index..<end])
-            let status = chunk.withUnsafeMutableBufferPointer { buffer in
-                llama_decode(context, llama_batch_get_one(buffer.baseAddress, Int32(buffer.count)))
-            }
-            guard status == 0 else {
-                cachedTokens = []
-                llama_memory_seq_rm(llama_get_memory(context), 0, 0, -1)
-                throw OnDeviceLLMError.inference("summary-prompt-decode-failed (\(status))")
-            }
-            cachedTokens.append(contentsOf: tokens[index..<end])
-            index = end
-        }
-
-        let sampler = llama_sampler_chain_init(llama_sampler_chain_default_params())
-        defer { llama_sampler_free(sampler) }
-        llama_sampler_chain_add(sampler, llama_sampler_init_penalties(llama_vocab_n_tokens(vocab), 64, 1.15, 0, 0))
-        llama_sampler_chain_add(sampler, llama_sampler_init_greedy())
-
-        var generated = ""
-        for _ in 0..<maximumTokens {
-            let token = llama_sampler_sample(sampler, context, -1)
-            if llama_vocab_is_eog(vocab, token) { break }
-            generated += piece(for: token)
-            if generated.contains("\n\n\n") { break }
-            var single = [token]
-            let status = single.withUnsafeMutableBufferPointer { buffer in
-                llama_decode(context, llama_batch_get_one(buffer.baseAddress, 1))
-            }
-            guard status == 0 else {
-                cachedTokens = []
-                llama_memory_seq_rm(llama_get_memory(context), 0, 0, -1)
-                throw OnDeviceLLMError.inference("summary-generation-decode-failed (\(status))")
-            }
-            cachedTokens.append(token)
-        }
-        return generated.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     // MARK: - Contract pieces
 
     /// The reserved decline literal: without it the grammar would FORCE a tag
