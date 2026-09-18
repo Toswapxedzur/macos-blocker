@@ -105,8 +105,9 @@ What the classifier promises, after Phases 1–4:
 - **Output:** up to `maximumTags` `{tagID, confidence 1…5}`; **no block/dim
   decisions** — those are the extension's.
 - **Tag-count bounds** (`TagBounds`): `minimumTags` (default 0; ≥1 forbids
-  declining and forces the best guesses), `expectedTags` (soft prompt target,
-  never enforced), `maximumTags` (hard cap). Per-type overrides resolve through
+  declining and forces the best guesses) and `maximumTags` (hard cap). (A third,
+  `expectedTags` soft target was measured to do nothing — 40/42/40% exact — and
+  removed.) Per-type overrides resolve through
   the same type.
 - **Confidence is model-emitted** (structured `{"name","confidence"}` — beat the
   first-token softmax in Exp 1; softmax retained as a cross-check). Two gates
