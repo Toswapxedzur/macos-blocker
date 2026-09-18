@@ -188,6 +188,26 @@ public enum PresentationAction: String, Codable, Sendable, CaseIterable, Compara
     public static func < (lhs: PresentationAction, rhs: PresentationAction) -> Bool { lhs.rank < rhs.rank }
 }
 
+/// The normalized tag-count bounds for one classification: how many tags the
+/// grammar may emit. This is the SINGLE place the invariants live —
+/// `0 ≤ minimum ≤ maximum ≤ 16` and `expected ∈ [max(1, minimum), maximum]` —
+/// so the settings, per-type overrides, the pipeline, and the store can never
+/// disagree about what "min/expected/max" resolve to. Every site that used to
+/// re-derive these clamps now builds a `TagBounds` instead.
+public struct TagBounds: Equatable, Sendable {
+    public let minimum: Int
+    public let expected: Int?
+    public let maximum: Int
+
+    public init(minimum: Int, expected: Int?, maximum: Int) {
+        let cappedMaximum = min(16, max(1, maximum))
+        let cappedMinimum = min(cappedMaximum, max(0, minimum))
+        self.maximum = cappedMaximum
+        self.minimum = cappedMinimum
+        self.expected = expected.map { min(cappedMaximum, max(max(1, cappedMinimum), $0)) }
+    }
+}
+
 /// User-tunable configuration for the in-process on-device LLM (the final
 /// Phase-0 contract engine). Every knob is clamped into a safe range at init,
 /// so hand-edited or stale persisted values can never produce an unusable
@@ -258,11 +278,10 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
         self.maximumOutputTokens = min(128, max(4, maximumOutputTokens))
         self.temperature = min(2.0, max(0, temperature))
         self.allowDecline = allowDecline
-        let cappedMaximum = min(16, max(1, maximumTags))
-        self.maximumTags = cappedMaximum
-        let cappedMinimum = min(cappedMaximum, max(0, minimumTags))
-        self.minimumTags = cappedMinimum
-        self.expectedTags = expectedTags.map { min(cappedMaximum, max(max(1, cappedMinimum), $0)) }
+        let bounds = TagBounds(minimum: minimumTags, expected: expectedTags, maximum: maximumTags)
+        self.maximumTags = bounds.maximum
+        self.minimumTags = bounds.minimum
+        self.expectedTags = bounds.expected
         let cleaned = confidenceThresholds
             .map { min(0.999, max(0.001, $0)) }
             .sorted()
@@ -360,11 +379,12 @@ public struct LocalModelOverrides: Codable, Equatable, Sendable {
     /// Effective min/expected, resolved and mutually consistent (0 ≤ min ≤
     /// expected ≤ max). Resolves against the global settings when unset.
     public func effectiveTagBounds(global: LocalLLMSettings) -> (minimum: Int, expected: Int?, maximum: Int) {
-        let maximum = effectiveMaximumTags(global: global.maximumTags)
-        let minimum = min(maximum, max(0, minimumTags ?? global.minimumTags))
-        let expectedRaw = expectedTags ?? global.expectedTags
-        let expected = expectedRaw.map { min(maximum, max(max(1, minimum), $0)) }
-        return (minimum, expected, maximum)
+        let bounds = TagBounds(
+            minimum: minimumTags ?? global.minimumTags,
+            expected: expectedTags ?? global.expectedTags,
+            maximum: effectiveMaximumTags(global: global.maximumTags)
+        )
+        return (bounds.minimum, bounds.expected, bounds.maximum)
     }
 
     public var isEmpty: Bool {

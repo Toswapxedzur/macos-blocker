@@ -52,9 +52,9 @@ public struct VideoClassificationPipeline: Sendable {
     ) {
         self.llm = llm
         self.maximumTags = maximumTags
-        let clampedMinimum = min(maximumTags, max(0, minimumTags))
-        self.minimumTags = clampedMinimum
-        self.expectedTags = expectedTags.map { min(maximumTags, max(max(1, clampedMinimum), $0)) }
+        let bounds = TagBounds(minimum: minimumTags, expected: expectedTags, maximum: maximumTags)
+        self.minimumTags = bounds.minimum
+        self.expectedTags = bounds.expected
         self.secondaryConfidenceFloor = secondaryConfidenceFloor
         self.promptVersion = promptVersion
         self.correctionSimilarityFloor = correctionSimilarityFloor
