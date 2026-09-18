@@ -179,10 +179,11 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
         var results = [LLMClassificationResult](repeating: .init(tags: []), count: requests.count)
         var items: [ParallelItem] = []
         for (index, request) in requests.enumerated() {
-            let allowDecline = request.allowDecline ?? configuration.allowDecline
             let maximumTags = max(1, request.maximumTags)
+            // minimumTags ≥ 1 forbids declining, whatever the allowDecline flag says.
+            let allowDecline = (request.allowDecline ?? configuration.allowDecline) && request.minimumTags == 0
             guard let grammar = Self.namesWithConfidenceGrammar(
-                allowed: request.allowedTagNames, allowDecline: allowDecline, maximumTags: maximumTags
+                allowed: request.allowedTagNames, allowDecline: allowDecline, maximumTags: maximumTags, minimumTags: request.minimumTags
             ) else { continue }   // no usable names → stays the empty result
             let tokens = try tokenize(request.staticPrefix + "\n\n" + request.dynamicSuffix)
             guard tokens.count + 24 <= contextTokenLimit else {
@@ -394,10 +395,11 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
     /// model's emitted digit AND the renormalized first-token softmax (captured at
     /// each name-start). Greedy so the digit is the model's argmax.
     private func structuredDecode(_ request: LLMClassificationRequest) async throws -> (tags: [LLMCalibrationTag], declined: Bool) {
-        let effectiveAllowDecline = request.allowDecline ?? configuration.allowDecline
         let effectiveThresholds = request.confidenceThresholds ?? configuration.confidenceThresholds
         let maximumTags = max(1, request.maximumTags)
-        guard let grammar = Self.namesWithConfidenceGrammar(allowed: request.allowedTagNames, allowDecline: effectiveAllowDecline, maximumTags: maximumTags) else {
+        // minimumTags ≥ 1 forbids declining, whatever the allowDecline flag says.
+        let effectiveAllowDecline = (request.allowDecline ?? configuration.allowDecline) && request.minimumTags == 0
+        guard let grammar = Self.namesWithConfidenceGrammar(allowed: request.allowedTagNames, allowDecline: effectiveAllowDecline, maximumTags: maximumTags, minimumTags: request.minimumTags) else {
             return ([], true)
         }
         let prompt = request.staticPrefix + "\n\n" + request.dynamicSuffix
@@ -902,7 +904,7 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
     /// structured Decode 1 of RESEARCH-REDESIGN §5. Continues the same prompt
     /// runway (`{"tags":[{"name":"`); the inter-object separator is `},{"name":"`.
     /// Diagnostic-only (calibration eval); returns nil when no name is usable.
-    static func namesWithConfidenceGrammar(allowed: [String], allowDecline: Bool = true, maximumTags: Int = 1) -> String? {
+    static func namesWithConfidenceGrammar(allowed: [String], allowDecline: Bool = true, maximumTags: Int = 1, minimumTags: Int = 0) -> String? {
         let literals = allowed
             .filter { !$0.isEmpty && !$0.contains("\n") && !$0.contains("\r") }
             .map { name in
@@ -912,16 +914,23 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
             }
         guard !literals.isEmpty else { return nil }
         let bound = max(1, maximumTags)
-        let extra = bound - 1
+        // At least `mandatory` items are forced (no "" alternative); the remaining
+        // `optional` items are the bounded tail chain, so the model emits between
+        // max(1,min) and max items. Decline is only offered when min == 0.
+        let minimum = min(bound, max(0, minimumTags))
+        let mandatory = max(1, minimum)
+        let optional = bound - mandatory
         var lines: [String] = []
-        let rootBody = extra > 0 ? "obj tail0" : "obj"
-        if allowDecline, !allowed.contains(declineLiteral) {
+        // The mandatory objects are inlined as `obj osep obj osep …`.
+        var rootBody = (0..<mandatory).map { $0 == 0 ? "obj" : "osep obj" }.joined(separator: " ")
+        if optional > 0 { rootBody += " tail0" }
+        if minimum == 0, allowDecline, !allowed.contains(declineLiteral) {
             lines.append("root ::= \"\(declineLiteral)\" | \(rootBody)")
         } else {
             lines.append("root ::= \(rootBody)")
         }
-        for i in 0..<extra {
-            let continuation = i == extra - 1 ? "" : " tail\(i + 1)"
+        for i in 0..<optional {
+            let continuation = i == optional - 1 ? "" : " tail\(i + 1)"
             lines.append("tail\(i) ::= \"\" | osep obj\(continuation)")
         }
         lines.append("obj ::= name conf")

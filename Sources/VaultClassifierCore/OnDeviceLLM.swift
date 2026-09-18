@@ -58,6 +58,8 @@ public struct LLMClassificationRequest: Sendable, Equatable {
     public let dynamicSuffix: String
     public let allowedTagNames: [String]
     public let maximumTags: Int
+    /// Fewest tags the grammar must emit (0 = decline allowed). ≥1 forbids "none".
+    public let minimumTags: Int
     /// Nil falls back to the app-wide engine configuration.
     public let allowDecline: Bool?
     /// Nil falls back to the app-wide engine configuration.
@@ -68,6 +70,7 @@ public struct LLMClassificationRequest: Sendable, Equatable {
         dynamicSuffix: String,
         allowedTagNames: [String],
         maximumTags: Int,
+        minimumTags: Int = 0,
         allowDecline: Bool? = nil,
         confidenceThresholds: [Double]? = nil
     ) {
@@ -75,6 +78,7 @@ public struct LLMClassificationRequest: Sendable, Equatable {
         self.dynamicSuffix = dynamicSuffix
         self.allowedTagNames = allowedTagNames
         self.maximumTags = maximumTags
+        self.minimumTags = min(maximumTags, max(0, minimumTags))
         self.allowDecline = allowDecline
         self.confidenceThresholds = confidenceThresholds
     }
