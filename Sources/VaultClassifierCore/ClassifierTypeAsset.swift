@@ -74,15 +74,9 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
              localModelOverrides, modelFileName, researchOverrides, presetID, order, updatedAtMilliseconds
     }
 
-    private enum RetiredCodingKeys: String, CodingKey {
-        case dataSourcePlatformIDs, localModelID, selectedLLMProviderProfileID,
-             llmAssistDraftConfiguration, llmAssistConfiguration, llmProfileIDs,
-             decisionPriority, platformLocked
-    }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let retired = try decoder.container(keyedBy: RetiredCodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         treeID = try container.decode(String.self, forKey: .treeID)
@@ -90,26 +84,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         datasetID = try container.decode(String.self, forKey: .datasetID)
         datasetRevision = try container.decode(Int.self, forKey: .datasetRevision)
         let decodedPlatformID = (try container.decodeIfPresent(String.self, forKey: .applicablePlatformID)?.trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
-        if !decodedPlatformID.isEmpty {
-            applicablePlatformID = decodedPlatformID
-        } else {
-            // The retired multi-source field is read only as a bounded crash
-            // guard. It can be preserved only when it already described one
-            // platform; a combined legacy type must be configured again.
-            let legacyPlatformIDs = Array(Set(try retired.decodeIfPresent([String].self, forKey: .dataSourcePlatformIDs) ?? []))
-                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            applicablePlatformID = legacyPlatformIDs.count == 1 ? legacyPlatformIDs[0] : nil
-        }
-        // Removed trainable-model and per-type provider-assist fields are
-        // accepted only as retired keys so old state opens safely. Their values
-        // are deliberately discarded and are never re-encoded.
-        _ = retired.contains(.localModelID)
-        _ = retired.contains(.selectedLLMProviderProfileID)
-        _ = retired.contains(.llmAssistDraftConfiguration)
-        _ = retired.contains(.llmAssistConfiguration)
-        _ = retired.contains(.llmProfileIDs)
-        _ = retired.contains(.decisionPriority)
-        _ = retired.contains(.platformLocked)
+        applicablePlatformID = decodedPlatformID.isEmpty ? nil : decodedPlatformID
         let decodedOverrides = try container.decodeIfPresent(LocalModelOverrides.self, forKey: .localModelOverrides)
         localModelOverrides = decodedOverrides?.isEmpty == false ? decodedOverrides : nil
         let decodedModelFileName = try container.decodeIfPresent(String.self, forKey: .modelFileName)?

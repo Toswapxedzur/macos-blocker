@@ -244,13 +244,9 @@ public struct ClassificationDataset: Codable, Equatable, Sendable, Identifiable 
     }
 
     private enum CodingKeys: String, CodingKey { case id, name, collectedEntries, revision }
-    private enum RetiredCodingKeys: String, CodingKey { case records, creatorClassifications }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let retired = try decoder.container(keyedBy: RetiredCodingKeys.self)
-        _ = retired.contains(.records)
-        _ = retired.contains(.creatorClassifications)
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         collectedEntries = Array(

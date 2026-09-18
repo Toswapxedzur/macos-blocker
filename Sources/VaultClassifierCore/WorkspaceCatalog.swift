@@ -79,13 +79,9 @@ public struct TrashedEntry: Codable, Equatable, Sendable, Identifiable {
         case datasetID, collectedEntries
     }
 
-    private enum RetiredCodingKeys: String, CodingKey { case creatorClassifications, models }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let retired = try decoder.container(keyedBy: RetiredCodingKeys.self)
-        _ = retired.contains(.creatorClassifications)
-        _ = retired.contains(.models)
         id = try container.decode(String.self, forKey: .id)
         kind = try container.decode(TrashedEntryKind.self, forKey: .kind)
         name = try container.decode(String.self, forKey: .name)
@@ -279,12 +275,9 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
              creatorResearchAccumulators
     }
 
-    private enum RetiredCodingKeys: String, CodingKey { case models }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let retired = try decoder.container(keyedBy: RetiredCodingKeys.self)
-        _ = retired.contains(.models)
         trees = try container.decodeIfPresent([TagTreeAsset].self, forKey: .trees) ?? []
         datasets = try container.decodeIfPresent([ClassificationDataset].self, forKey: .datasets) ?? []
         bindings = try container.decodeIfPresent([PlatformBinding].self, forKey: .bindings) ?? []
