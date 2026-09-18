@@ -186,6 +186,32 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
+    /// Hermetic construction for tests (CLASSIFIER-INDEPENDENCE §7, Phase 5):
+    /// every file lives under `vaultDirectory`, and nothing touches the real
+    /// app-support directory, the Keychain, the local hub, the GGUF engine, the
+    /// network or the startup migrations. The coordinator runs on the stub LLM,
+    /// so `webSnapshot()` / `performWebAction` can be characterised exactly.
+    init(headlessVaultDirectory vaultDirectory: URL, modelDownloadManager: ModelDownloadManager = ModelDownloadManager()) throws {
+        self.modelDownloadManager = modelDownloadManager
+        let package = try SeedPackageLoader.bundled()
+        let collectionDiagnostics = CollectionDiagnosticsStore(fileURL: vaultDirectory.appendingPathComponent("collection-diagnostics.json"))
+        self.collectionDiagnostics = collectionDiagnostics
+        self.sourceIconCache = SourceIconCache(
+            directory: vaultDirectory.appendingPathComponent("source-icons", isDirectory: true),
+            retiredDirectory: vaultDirectory.appendingPathComponent("creator-avatars", isDirectory: true)
+        )
+        let coordinator = try LocalClassifierCoordinator(verifiedPackage: package, stateFile: LocalStateFile(url: vaultDirectory.appendingPathComponent("state.json")))
+        self.coordinator = coordinator
+        self.localState = coordinator.snapshot()
+        let providerModelCatalogStore = ProviderModelCatalogStore(fileURL: vaultDirectory.appendingPathComponent("provider-model-catalogs.json"))
+        self.providerModelCatalogStore = providerModelCatalogStore
+        self.providerModelCatalogs = providerModelCatalogStore.load(allowedProfileIDs: llmProviderProfileIDs())
+        loadResourceSettings(from: coordinator.snapshot().settings)
+        loadBackupConfiguration(from: coordinator.snapshot().backupConfiguration)
+        coordinator.setOnDeviceLLM(StubOnDeviceLLM())
+        llmEngineStatus = "disabled"
+    }
+
     /// Loads the in-process llama.cpp engine (final Phase-0 contract) with the
     /// user's settings and installs it as the coordinator's on-device LLM.
     /// Loading is a ~1–2 s mmap, done off the main actor; until it completes
@@ -3080,7 +3106,7 @@ final class VaultClassifierViewModel: ObservableObject {
 
 }
 
-private enum AppInputError: Error, LocalizedError {
+enum AppInputError: Error, LocalizedError {
     case invalidNumber(String)
     case backupLocked
 
@@ -3092,7 +3118,7 @@ private enum AppInputError: Error, LocalizedError {
     }
 }
 
-private enum ProviderTestHTTPError: Error, LocalizedError {
+enum ProviderTestHTTPError: Error, LocalizedError {
     case status(Int)
 
     var errorDescription: String? {
@@ -3102,7 +3128,7 @@ private enum ProviderTestHTTPError: Error, LocalizedError {
     }
 }
 
-private enum WebBridgeInputError: Error, LocalizedError {
+enum WebBridgeInputError: Error, LocalizedError {
     case missingValue(String)
     case exceedsLimit(String, Int)
     case invalidChoice(String)
