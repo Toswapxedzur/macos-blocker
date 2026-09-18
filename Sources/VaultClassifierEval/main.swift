@@ -598,7 +598,7 @@ case "summarize":
         engine: engine, modelName: (modelPath as NSString).lastPathComponent,
         type: type, tree: tree, baseCatalog: catalog,
         baseHouseRules: productionHouseRules,
-        maximumTags: state.settings.localLLM.maximumTags,
+        maximumTags: args.compactMap { $0.hasPrefix("--max=") ? Int($0.dropFirst(6)) : nil }.first ?? state.settings.localLLM.maximumTags,
         allowedNames: allowedNames,
         onlyScenario: args.compactMap { $0.hasPrefix("--only=") ? String($0.dropFirst(7)) : nil }.first,
         skipDownstream: args.contains("--no-downstream"))
