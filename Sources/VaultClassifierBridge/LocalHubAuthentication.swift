@@ -70,22 +70,6 @@ public enum LocalHubAuthentication {
         return constantTimeEquals(expectedData, suppliedData)
     }
 
-    public static func moveProductionSecretToDevelopmentOnce() throws {
-        let source = loadSecret(environment: .production)
-        let destination = loadSecret(environment: .development)
-        if let source, let destination, source != destination {
-            throw LocalHubAuthenticationError.environmentConflict
-        }
-        if let source, destination == nil {
-            try storeSecret(source, environment: .development)
-        }
-        if source != nil {
-            guard loadSecret(environment: .development) == source else {
-                throw LocalHubAuthenticationError.environmentMigration
-            }
-            deleteSecret(environment: .production)
-        }
-    }
 
     private static func ensureSecret(environment: VaultRuntimeEnvironment) throws -> Data {
         if let existing = loadSecret(environment: environment), existing.count == secretLength { return existing }

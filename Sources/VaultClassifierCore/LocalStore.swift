@@ -2,9 +2,9 @@ import CryptoKit
 import Foundation
 
 /// Durable state for the collection, per-video LLM, settings, and
-/// package-lifecycle paths. (Content-block policy is the extension's; a
-/// legacy `policies` key in older state files is ignored on read.) Retired deterministic-classifier fields are
-/// deliberately recognized while decoding and are never written back.
+/// package-lifecycle paths. Keys left behind by removed features (the deterministic
+/// classifier, audit, content-block policy — now the extension's) are simply never
+/// read, and so are never written back; see LegacyStateDecodeTests.
 public struct LocalClassifierState: Codable, Equatable, Sendable {
     public var schemaVersion: Int
     public var settings: ClassifierSettings
@@ -37,16 +37,8 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
         case activeModelIdentity, highestAcceptedSignedRelease, signedRollbackIdentities
     }
 
-    private enum RetiredCodingKeys: String, CodingKey {
-        case sequence, sourceProfiles, sourcePrior, personalModel, trainingCorpus
-        case creatorClassifications, cacheBackfill, cache, ledger, auditState
-    }
-
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        // Opening this container makes the migration intent explicit. Values
-        // are not decoded because the retired subsystem must never be revived.
-        _ = try decoder.container(keyedBy: RetiredCodingKeys.self)
         schemaVersion = max(2, try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 2)
         settings = try container.decodeIfPresent(ClassifierSettings.self, forKey: .settings) ?? .init()
         workspaceCatalog = try container.decodeIfPresent(WorkspaceCatalog.self, forKey: .workspaceCatalog) ?? .starter()
@@ -171,7 +163,7 @@ public enum CorrectionSubmissionError: Error, Equatable, LocalizedError, Sendabl
 }
 
 /// Coordinates collection, per-video on-device LLM classification, settings,
-/// policy validation, backups, and signed taxonomy-package lifecycle.
+/// backups, and signed taxonomy-package lifecycle.
 public final class LocalClassifierCoordinator: @unchecked Sendable {
     let stateFile: LocalStateFile
     let lock = NSLock()

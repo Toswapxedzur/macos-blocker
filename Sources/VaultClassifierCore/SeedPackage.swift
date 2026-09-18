@@ -18,13 +18,9 @@ public struct SeedModelPackage: Codable, Equatable, Sendable {
         case packageID, taxonomyVersion, modelVersion, taxonomy
     }
 
-    private enum RetiredCodingKeys: String, CodingKey {
-        case model, pageThreshold, feedThresholdOffset, sourcePrior
-    }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        _ = try decoder.container(keyedBy: RetiredCodingKeys.self)
         packageID = try container.decode(String.self, forKey: .packageID)
         taxonomyVersion = try container.decode(String.self, forKey: .taxonomyVersion)
         modelVersion = try container.decode(String.self, forKey: .modelVersion)

@@ -140,8 +140,7 @@ final class VaultClassifierViewModel: ObservableObject {
     init(modelDownloadManager: ModelDownloadManager = ModelDownloadManager()) {
         self.modelDownloadManager = modelDownloadManager
         do {
-            let vaultDirectory = try VaultDevelopmentEnvironmentMigration.prepareClassifierDirectory()
-            RetiredCredentialCleanup.removePersonalAuditCredential()
+            let vaultDirectory = try VaultClassifierDirectory.prepare()
             let package = try SeedPackageLoader.bundled()
             let collectionDiagnostics = CollectionDiagnosticsStore(fileURL: vaultDirectory.appendingPathComponent("collection-diagnostics.json"))
             self.collectionDiagnostics = collectionDiagnostics
@@ -153,7 +152,6 @@ final class VaultClassifierViewModel: ObservableObject {
             let coordinator = try LocalClassifierCoordinator(verifiedPackage: package, stateFile: LocalStateFile(url: vaultDirectory.appendingPathComponent("state.json")))
             self.coordinator = coordinator
             self.localState = coordinator.snapshot()
-            try migrateRetiredProviderCredentialsToWorkspace()
             purgeExpiredTrashOnLaunch()
             let providerModelCatalogStore = ProviderModelCatalogStore(fileURL: vaultDirectory.appendingPathComponent("provider-model-catalogs.json"))
             self.providerModelCatalogStore = providerModelCatalogStore
@@ -257,31 +255,6 @@ final class VaultClassifierViewModel: ObservableObject {
         }
     }
 
-    private func migrateRetiredProviderCredentialsToWorkspace() throws {
-        guard var catalog = localState?.workspaceCatalog else {
-            LegacyProviderCredentialMigration.purgeRemaining()
-            return
-        }
-        defer { LegacyProviderCredentialMigration.purgeRemaining() }
-        var changed = false
-        for index in catalog.providerProfiles.indices {
-            let profileID = catalog.providerProfiles[index].id
-            let descriptor = ProviderProtocolRegistry.descriptor(for: catalog.providerProfiles[index].type)
-            let retiredKeychainCredential = LegacyProviderCredentialMigration.consume(profileID: profileID)
-            if catalog.providerProfiles[index].credential == nil,
-               let credential = retiredKeychainCredential,
-               let field = descriptor.credentialFields.first,
-               (try? credential.validate(for: descriptor)) != nil,
-               let value = credential.values[field] {
-                catalog.providerProfiles[index].credential = value
-                catalog.providerProfiles[index].updatedAtMilliseconds = WorkspaceCatalog.now()
-                changed = true
-            }
-        }
-        guard changed else { return }
-        try coordinator?.updateWorkspaceCatalog(catalog)
-        localState = coordinator?.snapshot()
-    }
 
     // Dev-only instrumentation, routed into the unified VaultDevLog file.
     static let perfEnabled = VaultDevLog.shared.isEnabled

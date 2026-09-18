@@ -50,11 +50,9 @@ public struct LocalModelBackupManifest: Codable, Equatable, Sendable {
         case createdAtMilliseconds, activeModelIdentity, packageChecksum
         case collectedEntryCount, videoClassificationCount
     }
-    private enum RetiredCodingKeys: String, CodingKey { case trainingExampleCount, personalFeatureCount }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        _ = try decoder.container(keyedBy: RetiredCodingKeys.self)
         createdAtMilliseconds = try container.decode(Int64.self, forKey: .createdAtMilliseconds)
         activeModelIdentity = try container.decodeIfPresent(ActiveModelIdentity.self, forKey: .activeModelIdentity)
         packageChecksum = try container.decode(String.self, forKey: .packageChecksum)
@@ -201,26 +199,6 @@ public enum LocalBackupOwnerCodeStore {
         return Data(SHA256.hash(data: Data(code.utf8))).elementsEqual(expected)
     }
 
-    public static func moveProductionVerifierToDevelopmentOnce() throws {
-        let source = loadVerifier(environment: .production)
-        let destination = loadVerifier(environment: .development)
-        if let source, let destination, source != destination {
-            throw LocalBackupError.keychain(errSecDuplicateItem)
-        }
-        if let source, destination == nil {
-            var insert = identity(environment: .development)
-            insert[kSecValueData] = source
-            insert[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            let status = SecItemAdd(insert as CFDictionary, nil)
-            guard status == errSecSuccess else { throw LocalBackupError.keychain(status) }
-        }
-        if source != nil {
-            guard loadVerifier(environment: .development) == source else {
-                throw LocalBackupError.keychain(errSecInternalError)
-            }
-            SecItemDelete(identity(environment: .production) as CFDictionary)
-        }
-    }
 
     private static func service(environment: VaultRuntimeEnvironment) -> String {
         environment.keychainService(productionService)
