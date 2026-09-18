@@ -517,18 +517,10 @@ public struct ClassifierSettings: Codable, Equatable, Sendable {
         case packageUpdateMode, localLLM, research
     }
 
-    private enum RetiredCodingKeys: String, CodingKey {
-        // allowIdleWork / allowBackgroundSync gated the retired pre-LLM local
-        // training path; nothing consumes them since the per-video rework.
-        case resourceProfile, cacheCapacity, allowLocalLLMAudit, allowIdleWork, allowBackgroundSync
-    }
 
     /// Local state predating package preferences must remain usable offline.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        // Read the retired keys only to make old settings harmless. They are
-        // never retained or written again.
-        _ = try decoder.container(keyedBy: RetiredCodingKeys.self)
         self.init(
             packageUpdateMode: try container.decodeIfPresent(PackageUpdateMode.self, forKey: .packageUpdateMode) ?? .automatic,
             localLLM: try container.decodeIfPresent(LocalLLMSettings.self, forKey: .localLLM) ?? LocalLLMSettings(),

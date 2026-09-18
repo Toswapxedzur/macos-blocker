@@ -104,12 +104,9 @@ public struct PlatformBinding: Codable, Equatable, Sendable, Identifiable {
         case id, name, browser, treeID, datasetID, activeClassifierTypeID, collectionEnabled
     }
 
-    private enum RetiredCodingKeys: String, CodingKey { case activeModelID }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let retired = try decoder.container(keyedBy: RetiredCodingKeys.self)
-        _ = retired.contains(.activeModelID)
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         browser = try container.decodeIfPresent(String.self, forKey: .browser) ?? "Chrome and Edge"
