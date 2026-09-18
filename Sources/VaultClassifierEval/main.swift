@@ -119,8 +119,10 @@ case "score":
     let research = state.settings.research
     let overrides = type.localModelOverrides
     let maxTags = maxOverride ?? settings.maximumTags
+    let forceTag = args.contains("--no-decline")   // min-1: the model may not decline
     let priorRows = args.compactMap { $0.hasPrefix("--prior-rows=") ? Int($0.dropFirst(13)) : nil }.first
-    let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: maxTags, creatorPriorRowLimit: priorRows)
+    let minTags = args.compactMap { $0.hasPrefix("--min=") ? Int($0.dropFirst(6)) : nil }.first ?? 0
+    let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: maxTags, minimumTags: minTags, creatorPriorRowLimit: priorRows)
 
     // Optional leaf-only tree: drop every node that has children, so the grammar
     // can never emit a broad parent bucket (Gaming/Technology/Entertainment/Lifestyle).
@@ -144,7 +146,7 @@ case "score":
             title: item.title, text: ocrText, entryID: item.entryID, creatorID: item.creatorID, platformID: "youtube",
             classifierType: type, tree: evalTree, catalog: catalog,
             houseRules: overrides?.houseRules ?? settings.houseRules,
-            allowDecline: overrides?.allowDecline ?? settings.allowDecline,
+            allowDecline: forceTag ? false : (overrides?.allowDecline ?? settings.allowDecline),
             confidenceThresholds: overrides?.confidenceThresholds ?? settings.confidenceThresholds,
             knowledgeTTLDays: research.knowledgeTTLDays,
             maxKnowledgePerVideo: research.maxKnowledgePerVideo

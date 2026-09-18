@@ -93,17 +93,37 @@ public enum ClassificationPromptAssembler {
             }
     }
 
+    /// The count instruction from the min/expected/max tag bounds.
+    static func tagCountInstruction(minimum: Int, expected: Int?, maximum: Int) -> String {
+        let base: String
+        if maximum == minimum {
+            base = maximum == 1 ? "Assign exactly 1 tag" : "Assign exactly \(maximum) tags"
+        } else if minimum <= 0 {
+            base = maximum == 1 ? "Assign at most 1 tag" : "Assign at most \(maximum) tags"
+        } else {
+            base = "Assign at least \(minimum) and at most \(maximum) tags"
+        }
+        if let expected, minimum != maximum, expected != maximum {
+            return "\(base), aiming for about \(expected)."
+        }
+        return "\(base)."
+    }
+
     /// The cached static prefix: task rules + taxonomy + optional house-rules.
-    public static func staticPrefix(taxonomy: [LLMTagOption], houseRules: String?, maximumTags: Int) -> String {
+    public static func staticPrefix(taxonomy: [LLMTagOption], houseRules: String?, maximumTags: Int, minimumTags: Int = 0, expectedTags: Int? = nil) -> String {
         var lines: [String] = []
         lines.append("You are a tagging model. Classify a single video into tags from the taxonomy below, using the video's evidence.")
         lines.append("Rules:")
         lines.append("- Pick the tag(s) that best match the video's topic; prefer specific child tags over broad parents. Infer the topic from the title even when it is short — a named subject (a person, product, game, show, place, event, or theme) is usually enough to place it, so do not decline just because the title is brief.")
-        lines.append("- Assign at most \(maximumTags) tags.")
+        lines.append("- \(Self.tagCountInstruction(minimum: minimumTags, expected: expectedTags, maximum: maximumTags))")
         lines.append("- For each chosen tag give a confidence from 1 to 5 for how sure you are the tag is correct (not how popular the tag is): 5 = the evidence names a subject you are certain maps to this tag; 4 = strong evidence; 3 = a plausible inference; 2 = a weak guess; 1 = little basis. Reserve 4 and 5 for clear cases, and use 1-2 when you are mostly guessing.")
         lines.append("- If the title is uninformative, use the creator prior when provided, but treat it as a weak, partial sample of what the creator makes — it may not represent them fully.")
         lines.append(ClassificationReplyFormat.current.rule)
-        lines.append("- Use none only when the title names no topic at all — a bare question, reaction, or phrase with no subject. Do not force a tag onto a genuinely topicless title, and do not invent a topic the title does not state.")
+        if minimumTags == 0 {
+            lines.append("- Use none only when the title names no topic at all — a bare question, reaction, or phrase with no subject. Do not force a tag onto a genuinely topicless title, and do not invent a topic the title does not state.")
+        } else {
+            lines.append("- Every video has a topic: never decline. If the title is thin, use the creator prior and your best judgement to place it, and set a low confidence rather than refusing.")
+        }
 
         if let houseRules, !houseRules.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             lines.append("")
@@ -203,6 +223,8 @@ public enum ClassificationPromptAssembler {
         tree: TagTreeAsset,
         houseRules: String?,
         maximumTags: Int,
+        minimumTags: Int = 0,
+        expectedTags: Int? = nil,
         title: String,
         summary: String?,
         text: String?,
@@ -221,7 +243,7 @@ public enum ClassificationPromptAssembler {
             allowedTagNames.append(option.name)
         }
         return ClassificationPromptParts(
-            staticPrefix: staticPrefix(taxonomy: taxonomy, houseRules: houseRules, maximumTags: maximumTags),
+            staticPrefix: staticPrefix(taxonomy: taxonomy, houseRules: houseRules, maximumTags: maximumTags, minimumTags: minimumTags, expectedTags: expectedTags),
             dynamicSuffix: dynamicSuffix(title: title, summary: summary, text: text, creatorPrior: creatorPrior, creatorVideoCount: creatorVideoCount, knowledge: knowledge, correctionExemplars: correctionExemplars),
             allowedTagNames: allowedTagNames,
             nameToTagID: nameToTagID
