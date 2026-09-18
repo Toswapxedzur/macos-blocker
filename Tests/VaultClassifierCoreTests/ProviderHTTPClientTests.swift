@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import VaultClassifierCore
+@testable import VaultClassifierResearch
 
 private final class ProviderRequestCapture: @unchecked Sendable {
     private let lock = NSLock()

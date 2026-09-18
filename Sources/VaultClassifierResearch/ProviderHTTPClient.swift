@@ -1,4 +1,5 @@
 import Foundation
+import VaultClassifierCore
 
 /// The narrow HTTP seam used by background research. Request construction and
 /// response parsing remain in the provider protocol types, while tests can
@@ -96,12 +97,3 @@ public struct URLSessionProviderHTTPClient: ProviderHTTPClient {
     }
 }
 
-public enum ProviderTestHTTPError: Error, Equatable, LocalizedError, Sendable {
-    case status(Int)
-
-    public var errorDescription: String? {
-        switch self {
-        case .status(let status): return "The provider returned HTTP \(status)."
-        }
-    }
-}

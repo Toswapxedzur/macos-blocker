@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import VaultClassifierCore
+@testable import VaultClassifierResearch
 
 private final class ScriptedGroundingHTTPClient: ProviderHTTPClient, @unchecked Sendable {
     private let lock = NSLock()

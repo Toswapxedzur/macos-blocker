@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import VaultClassifierCore
+import VaultClassifierResearch
 import VaultClassifierBridge
 import VaultClassifierLLM
 
@@ -359,16 +360,6 @@ enum AppInputError: Error, LocalizedError {
         switch self {
         case .invalidNumber(let label): return "\(label) must be a positive whole number."
         case .backupLocked: return "Enter the local backup owner code before changing backup mode."
-        }
-    }
-}
-
-enum ProviderTestHTTPError: Error, LocalizedError {
-    case status(Int)
-
-    var errorDescription: String? {
-        switch self {
-        case .status(let status): return "The provider returned HTTP \(status)."
         }
     }
 }
