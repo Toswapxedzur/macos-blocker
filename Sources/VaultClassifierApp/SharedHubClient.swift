@@ -1,5 +1,6 @@
 import Foundation
 import VaultClassifierCore
+import VaultClassifierBridge
 
 /// The classifier joins the fixed local Vault hub and becomes its lightweight
 /// classifier host when Mac Vault is not open.

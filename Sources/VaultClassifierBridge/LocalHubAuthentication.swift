@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import Security
+import VaultClassifierCore
 
 /// Authentication for the fixed local Vault hub. Browser code never receives
 /// this secret: Chromium asks its registered native host to answer a fresh hub

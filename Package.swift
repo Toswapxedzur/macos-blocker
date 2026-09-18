@@ -39,6 +39,15 @@ let package = Package(
             name: "VaultClassifierCore",
             resources: [.copy("Resources")]
         ),
+        // Suite-integration boundary: the browser-bridge operation vocabulary +
+        // message DTOs and the local-hub HMAC authentication. Kept OUT of
+        // VaultClassifierCore so the tagging core carries no networking/auth and
+        // can be reasoned about (and tested) independently of the extension/hub.
+        // Depends on Core; nothing in Core depends back on it.
+        .target(
+            name: "VaultClassifierBridge",
+            dependencies: ["VaultClassifierCore"]
+        ),
         // Homebrew's llama.cpp (libllama + Metal-at-runtime ggml). Resolved via
         // pkg-config, so `brew install llama.cpp` is the only prerequisite.
         .systemLibrary(
@@ -56,14 +65,14 @@ let package = Package(
         ),
         .executableTarget(
             name: "VaultClassifierApp",
-            dependencies: ["VaultClassifierCore", "VaultClassifierLLM"],
+            dependencies: ["VaultClassifierCore", "VaultClassifierBridge", "VaultClassifierLLM"],
             resources: [.copy("WebAssets")],
             swiftSettings: cllamaIncludeFlags,
             linkerSettings: cllamaLinkFlags
         ),
         .executableTarget(
             name: "VaultLocalHubNativeHost",
-            dependencies: ["VaultClassifierCore"]
+            dependencies: ["VaultClassifierCore", "VaultClassifierBridge"]
         ),
         // Live smoke test for provider-native search grounding (one real call).
         .executableTarget(
@@ -93,11 +102,11 @@ let package = Package(
         ),
         .testTarget(
             name: "VaultClassifierCoreTests",
-            dependencies: ["VaultClassifierCore"]
+            dependencies: ["VaultClassifierCore", "VaultClassifierBridge"]
         ),
         .testTarget(
             name: "VaultClassifierAppTests",
-            dependencies: ["VaultClassifierApp", "VaultClassifierCore", "VaultClassifierLLM"],
+            dependencies: ["VaultClassifierApp", "VaultClassifierCore", "VaultClassifierBridge", "VaultClassifierLLM"],
             swiftSettings: cllamaIncludeFlags,
             linkerSettings: cllamaLinkFlags
         ),

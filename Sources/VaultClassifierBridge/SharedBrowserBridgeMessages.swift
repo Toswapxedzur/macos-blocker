@@ -1,4 +1,5 @@
 import Foundation
+import VaultClassifierCore
 
 /// Bounded request/response shapes relayed over the shared local hub. These
 /// messages contain no hub-authentication material; authentication is handled

@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import VaultClassifierCore
+import VaultClassifierBridge
 
 /// Minimal local hub used only while Vault Classifier owns the fixed loopback
 /// address. Mac Vault takes over the listener when it opens, because it is the
