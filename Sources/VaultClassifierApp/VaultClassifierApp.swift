@@ -105,15 +105,6 @@ final class VaultClassifierViewModel: ObservableObject {
     @Published var workspace: Workspace = .tagTree
     @Published var issue: String?
     @Published var localState: LocalClassifierState?
-    @Published var policies: [NamedPolicy] = []
-    @Published var editingPolicyID = ""
-    @Published var editingPolicyName = ""
-    @Published var editingPolicyIncludeTag = "content.entities.clash-royale"
-    @Published var editingPolicyExcludeTag = ""
-    @Published var editingFeedAction: PresentationAction = .dim
-    @Published var editingPageAction: PresentationAction = .block
-    @Published var editingConfidenceFloor: Int = NamedPolicy.defaultConfidenceFloor
-    @Published var editingUntaggedAction: PresentationAction = .allow
     @Published var packageUpdateMode: PackageUpdateMode = .automatic
     // Local-model settings, mirrored from ClassifierSettings.localLLM.
     @Published var llmSettings = LocalLLMSettings()
@@ -160,7 +151,6 @@ final class VaultClassifierViewModel: ObservableObject {
             collectionDiagnostics.record(event: "app-started", outcome: "ready")
             let coordinator = try LocalClassifierCoordinator(verifiedPackage: package, stateFile: LocalStateFile(url: vaultDirectory.appendingPathComponent("state.json")))
             self.coordinator = coordinator
-            self.policies = coordinator.policies()
             self.localState = coordinator.snapshot()
             try migrateRetiredProviderCredentialsToWorkspace()
             purgeExpiredTrashOnLaunch()
@@ -558,10 +548,7 @@ final class VaultClassifierViewModel: ObservableObject {
             switch request.operation {
             case .bridgeInfo:
                 _ = try JSONDecoder().decode(NativeBridgeInfoRequest.self, from: request.bodyData)
-                let response = NativeBridgeInfoResponse(policies: coordinator.policies().prefix(64).map {
-                    NativeBridgePolicy(id: $0.id, name: $0.name)
-                })
-                return try sharedHubReply(response)
+                return try sharedHubReply(NativeBridgeInfoResponse())
             case .collectionInfo:
                 _ = try JSONDecoder().decode(NativeCollectionInfoRequest.self, from: request.bodyData)
                 let response = NativeCollectionInfoResponse(enabledPlatformIDs: coordinator.enabledCollectionPlatformIDs(), developmentMode: VaultDevLog.shared.isEnabled, ocrPlatformIDs: coordinator.ocrEvidencePlatformIDs())
@@ -738,70 +725,6 @@ final class VaultClassifierViewModel: ObservableObject {
             return .failure("classifier-response-invalid")
         }
         return .success(object)
-    }
-
-    func savePolicy() {
-        do {
-            guard let coordinator else { return }
-            let identifier = editingPolicyID.trimmingCharacters(in: .whitespacesAndNewlines)
-            let policy = NamedPolicy(
-                id: identifier,
-                name: editingPolicyName.trimmingCharacters(in: .whitespacesAndNewlines),
-                includeAnyTagIDs: splitTagList(editingPolicyIncludeTag),
-                excludeTagIDs: splitTagList(editingPolicyExcludeTag),
-                feedAction: editingFeedAction,
-                pageAction: editingPageAction,
-                confidenceFloor: editingConfidenceFloor,
-                untaggedAction: editingUntaggedAction
-            )
-            var replacement = policies.filter { $0.id != policy.id }
-            replacement.append(policy)
-            try coordinator.replacePolicies(replacement.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending })
-            policies = coordinator.policies()
-            select(policy)
-            refreshLocalState()
-            issue = nil
-        } catch {
-            issue = error.localizedDescription
-        }
-    }
-
-    func select(_ policy: NamedPolicy) {
-        editingPolicyID = policy.id
-        editingPolicyName = policy.name
-        editingPolicyIncludeTag = policy.includeAnyTagIDs.joined(separator: ", ")
-        editingPolicyExcludeTag = policy.excludeTagIDs.joined(separator: ", ")
-        editingFeedAction = policy.feedAction
-        editingPageAction = policy.pageAction
-        editingConfidenceFloor = policy.confidenceFloor
-        editingUntaggedAction = policy.untaggedAction
-    }
-
-    func startNewPolicy() {
-        editingPolicyID = ""
-        editingPolicyName = ""
-        editingPolicyIncludeTag = ""
-        editingPolicyExcludeTag = ""
-        editingFeedAction = .dim
-        editingPageAction = .block
-        editingConfidenceFloor = NamedPolicy.defaultConfidenceFloor
-        editingUntaggedAction = .allow
-    }
-
-    func deleteEditingPolicy() {
-        do {
-            guard let coordinator else { return }
-            let identifier = editingPolicyID
-            guard !identifier.isEmpty else { return }
-            let replacement = policies.filter { $0.id != identifier }
-            try coordinator.replacePolicies(replacement)
-            policies = coordinator.policies()
-            startNewPolicy()
-            refreshLocalState()
-            issue = nil
-        } catch {
-            issue = error.localizedDescription
-        }
     }
 
     func refreshLocalState() {
@@ -2394,31 +2317,6 @@ final class VaultClassifierViewModel: ObservableObject {
         ]
         let catalog = state?.workspaceCatalog ?? .starter()
         let researchSettings = state?.settings.research ?? ResearchSettings()
-        let policyItems: [[String: Any]] = policies.map { policy in
-            [
-                "id": policy.id,
-                "name": policy.name,
-                "includeAny": policy.includeAnyTagIDs,
-                "exclude": policy.excludeTagIDs,
-                "feedAction": policy.feedAction.rawValue,
-                "pageAction": policy.pageAction.rawValue,
-                "confidenceFloor": policy.confidenceFloor,
-                "untaggedAction": policy.untaggedAction.rawValue,
-            ]
-        }
-        let policiesPayload: [String: Any] = [
-            "items": policyItems,
-            "editor": [
-                "id": editingPolicyID,
-                "name": editingPolicyName,
-                "includeAny": editingPolicyIncludeTag,
-                "exclude": editingPolicyExcludeTag,
-                "feedAction": editingFeedAction.rawValue,
-                "pageAction": editingPageAction.rawValue,
-                "confidenceFloor": editingConfidenceFloor,
-                "untaggedAction": editingUntaggedAction.rawValue,
-            ] as [String: Any],
-        ]
         let availableModelFiles = VaultLocalLLMEngine.availableModelFiles()
         let settingsPayload: [String: Any] = [
             "packageUpdateMode": packageUpdateMode.rawValue,
@@ -2659,7 +2557,6 @@ final class VaultClassifierViewModel: ObservableObject {
             "workspace": workspace.rawValue,
             "issue": issue ?? NSNull(),
             "notices": notices,
-            "policies": policiesPayload,
             "settings": settingsPayload,
             "backup": backupPayload,
             "assets": assets,
@@ -2828,36 +2725,6 @@ final class VaultClassifierViewModel: ObservableObject {
                 disconnectTag(treeID: try webString(data, key: "treeID", limit: 256), nodeID: try webString(data, key: "nodeID", limit: 256))
             case "deleteTag":
                 deleteTag(treeID: try webString(data, key: "treeID", limit: 256), nodeID: try webString(data, key: "nodeID", limit: 256))
-            case "newPolicy":
-                startNewPolicy()
-            case "selectPolicy":
-                let identifier = try webString(data, key: "id", limit: 256)
-                guard let policy = policies.first(where: { $0.id == identifier }) else { throw WebBridgeInputError.invalidChoice("policy") }
-                select(policy)
-            case "savePolicy":
-                editingPolicyID = try webString(data, key: "id", limit: 256)
-                editingPolicyName = try webString(data, key: "name", limit: 256)
-                editingPolicyIncludeTag = try webString(data, key: "includeAny", limit: 4_096)
-                editingPolicyExcludeTag = try webString(data, key: "exclude", limit: 4_096)
-                let feed = try webString(data, key: "feedAction", limit: 16)
-                let page = try webString(data, key: "pageAction", limit: 16)
-                guard let feedAction = PresentationAction(rawValue: feed), let pageAction = PresentationAction(rawValue: page) else {
-                    throw WebBridgeInputError.invalidChoice("policy action")
-                }
-                editingFeedAction = feedAction
-                editingPageAction = pageAction
-                // Confidence floor: accept a JSON number or a numeric string; the
-                // NamedPolicy init clamps it to 1...5, so any out-of-range value is safe.
-                let rawFloor = (data["confidenceFloor"] as? Int) ?? Int((data["confidenceFloor"] as? String) ?? "") ?? NamedPolicy.defaultConfidenceFloor
-                editingConfidenceFloor = min(5, max(1, rawFloor))
-                let untagged = try webString(data, key: "untaggedAction", limit: 16)
-                guard let untaggedAction = PresentationAction(rawValue: untagged) else {
-                    throw WebBridgeInputError.invalidChoice("untagged action")
-                }
-                editingUntaggedAction = untaggedAction
-                savePolicy()
-            case "deletePolicy":
-                deleteEditingPolicy()
             case "savePackageSettings":
                 let rawMode = try webString(data, key: "packageUpdateMode", limit: 32)
                 guard let updateMode = PackageUpdateMode(rawValue: rawMode) else {
@@ -3211,9 +3078,6 @@ final class VaultClassifierViewModel: ObservableObject {
         return value
     }
 
-    private func splitTagList(_ raw: String) -> [String] {
-        Array(Set(raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
-    }
 }
 
 private enum AppInputError: Error, LocalizedError {

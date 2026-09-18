@@ -67,7 +67,6 @@ public struct LocalModelBackupManifest: Codable, Equatable, Sendable {
 public struct LocalModelBackupPayload: Codable, Equatable, Sendable {
     public var schemaVersion: Int
     public var settings: ClassifierSettings
-    public var policies: [NamedPolicy]
     public var workspaceCatalog: WorkspaceCatalog
     public var activeModelIdentity: ActiveModelIdentity?
     public var highestAcceptedSignedRelease: PackageReleaseStamp?
@@ -76,7 +75,6 @@ public struct LocalModelBackupPayload: Codable, Equatable, Sendable {
     public init(state: LocalClassifierState) {
         schemaVersion = state.schemaVersion
         settings = state.settings
-        policies = state.policies
         workspaceCatalog = state.workspaceCatalog
         activeModelIdentity = state.activeModelIdentity
         highestAcceptedSignedRelease = state.highestAcceptedSignedRelease

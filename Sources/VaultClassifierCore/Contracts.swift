@@ -60,11 +60,10 @@ public struct EntryEvidence: Codable, Equatable, Sendable, Identifiable {
     public var sourceAliases: [String]
     public var surface: EntrySurface
     public var evidence: EvidencePayload
-    public var policyIDs: [String]
 
     public var id: String { requestID }
 
-    public init(requestID: String = UUID().uuidString, platform: String, entryID: String? = nil, sourceID: String? = nil, sourceAliases: [String] = [], surface: EntrySurface, evidence: EvidencePayload, policyIDs: [String] = []) {
+    public init(requestID: String = UUID().uuidString, platform: String, entryID: String? = nil, sourceID: String? = nil, sourceAliases: [String] = [], surface: EntrySurface, evidence: EvidencePayload) {
         self.requestID = requestID
         self.platform = platform
         self.entryID = entryID
@@ -72,11 +71,10 @@ public struct EntryEvidence: Codable, Equatable, Sendable, Identifiable {
         self.sourceAliases = sourceAliases
         self.surface = surface
         self.evidence = evidence
-        self.policyIDs = policyIDs
     }
 
     private enum CodingKeys: String, CodingKey {
-        case requestID, platform, entryID, sourceID, sourceAliases, surface, evidence, policyIDs
+        case requestID, platform, entryID, sourceID, sourceAliases, surface, evidence
     }
 
     public init(from decoder: Decoder) throws {
@@ -89,7 +87,6 @@ public struct EntryEvidence: Codable, Equatable, Sendable, Identifiable {
         sourceAliases = try container.decodeIfPresent([String].self, forKey: .sourceAliases) ?? []
         surface = try container.decode(EntrySurface.self, forKey: .surface)
         evidence = try container.decode(EvidencePayload.self, forKey: .evidence)
-        policyIDs = try container.decodeIfPresent([String].self, forKey: .policyIDs) ?? []
     }
 }
 
@@ -176,17 +173,6 @@ public struct EntryEvidenceValidator: Sendable {
     }
 }
 
-public enum PresentationAction: String, Codable, Sendable, CaseIterable, Comparable {
-    case allow
-    case dim
-    case block
-
-    private var rank: Int {
-        switch self { case .allow: return 0; case .dim: return 1; case .block: return 2 }
-    }
-
-    public static func < (lhs: PresentationAction, rhs: PresentationAction) -> Bool { lhs.rank < rhs.rank }
-}
 
 /// The normalized tag-count bounds for one classification: how many tags the
 /// grammar may emit. This is the SINGLE place the invariants live —
