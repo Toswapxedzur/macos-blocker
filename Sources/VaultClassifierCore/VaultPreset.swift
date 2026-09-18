@@ -2,9 +2,8 @@ import Foundation
 
 /// A named starting point a person chooses when creating a classifier type, so
 /// nobody has to hand-tune the two dozen underlying fields. A preset bundles the
-/// type's on-device-model overrides, its grounded-research profile, the block
-/// policy's confidence floor + untagged action, and a RAM-appropriate model
-/// suggestion. Selecting one writes those fields; the detailed form stays
+/// type's on-device-model overrides, its grounded-research profile, and a
+/// RAM-appropriate model suggestion. Selecting one writes those fields; the detailed form stays
 /// available as "Advanced", which reports when a type has drifted from its
 /// preset. Presets populate the underlying knobs — they never remove them.
 public enum VaultPreset: String, Codable, Sendable, CaseIterable, Identifiable {
@@ -73,23 +72,6 @@ public enum VaultPreset: String, Codable, Sendable, CaseIterable, Identifiable {
         }
         return settings
     }
-
-    /// The block policy's minimum tag confidence. Lower floor blocks more.
-    public var confidenceFloor: Int {
-        switch self {
-        case .gentle: return 5
-        case .balanced: return 4
-        case .strict: return 3
-        case .localOnly: return 4
-        }
-    }
-
-    /// Content the model could not confidently classify is never hidden.
-    public var untaggedAction: PresentationAction { .allow }
-    /// Blocked feed cards dim (visible + correctable, per the product rule); the
-    /// content page itself blocks.
-    public var feedAction: PresentationAction { .dim }
-    public var pageAction: PresentationAction { .block }
 
     /// A RAM-appropriate model file, but only when it is already downloaded — a
     /// preset must never point a type at a missing model. nil = inherit the
