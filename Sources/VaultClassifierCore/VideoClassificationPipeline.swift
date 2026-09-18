@@ -16,8 +16,6 @@ public struct VideoClassificationPipeline: Sendable {
     /// Fewest tags to keep (0 = may decline). ≥1 forbids declining and forces the
     /// best guesses even below the secondary floor; see LocalLLMSettings.minimumTags.
     public let minimumTags: Int
-    /// Soft target told to the model; nil = none. Bounded to [min, max].
-    public let expectedTags: Int?
     /// A secondary (non-top) tag is kept only when its confidence is at least this.
     /// Ungated multi-tag floods low-confidence guesses (eval 2026-09-16: at cap 3,
     /// micro-precision 0.56→0.21, exact-set 57%→24%); gating the extras at the
@@ -44,7 +42,6 @@ public struct VideoClassificationPipeline: Sendable {
         llm: any OnDeviceLLM,
         maximumTags: Int = 5,
         minimumTags: Int = 0,
-        expectedTags: Int? = nil,
         secondaryConfidenceFloor: Int = 4,
         promptVersion: String = "p1",
         correctionSimilarityFloor: Double = CorrectionRetriever.defaultMinimumSimilarity,
@@ -52,9 +49,7 @@ public struct VideoClassificationPipeline: Sendable {
     ) {
         self.llm = llm
         self.maximumTags = maximumTags
-        let bounds = TagBounds(minimum: minimumTags, expected: expectedTags, maximum: maximumTags)
-        self.minimumTags = bounds.minimum
-        self.expectedTags = bounds.expected
+        self.minimumTags = TagBounds(minimum: minimumTags, maximum: maximumTags).minimum
         self.secondaryConfidenceFloor = secondaryConfidenceFloor
         self.promptVersion = promptVersion
         self.correctionSimilarityFloor = correctionSimilarityFloor
@@ -136,7 +131,7 @@ public struct VideoClassificationPipeline: Sendable {
         }
         func parts(_ index: Int, knowledge: [KnowledgeEntry]) -> ClassificationPromptParts {
             ClassificationPromptAssembler.assemble(
-                tree: tree, houseRules: houseRules, maximumTags: maximumTags, minimumTags: minimumTags, expectedTags: expectedTags,
+                tree: tree, houseRules: houseRules, maximumTags: maximumTags, minimumTags: minimumTags,
                 title: inputs[index].title, summary: inputs[index].summary, text: inputs[index].text,
                 creatorPrior: evidence[index].creatorPrior, creatorVideoCount: evidence[index].creatorVideoCount,
                 knowledge: knowledge, correctionExemplars: evidence[index].correctionExemplars
@@ -282,7 +277,6 @@ public struct VideoClassificationPipeline: Sendable {
             houseRules: houseRules,
             maximumTags: maximumTags,
             minimumTags: minimumTags,
-            expectedTags: expectedTags,
             title: title,
             summary: summary,
             text: text,

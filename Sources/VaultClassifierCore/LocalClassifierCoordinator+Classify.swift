@@ -149,14 +149,13 @@ extension LocalClassifierCoordinator {
                 configuration: localLLMSettings
             )
             // The max source here is the resolved global cap (classificationMaximumTags),
-            // while min/expected globals come from the local-LLM settings — each per-type
+            // while the min global comes from the local-LLM settings — each per-type
             // overridable — so we resolve them together through the one `TagBounds`.
             let bounds = TagBounds(
                 minimum: overrides?.minimumTags ?? localLLMSettings.minimumTags,
-                expected: overrides?.expectedTags ?? localLLMSettings.expectedTags,
                 maximum: overrides?.maximumTags ?? maximumTags)
             let pipeline = VideoClassificationPipeline(
-                llm: llm, maximumTags: bounds.maximum, minimumTags: bounds.minimum, expectedTags: bounds.expected)
+                llm: llm, maximumTags: bounds.maximum, minimumTags: bounds.minimum)
             let typeHouseRules = Self.effectiveHouseRules(global: houseRules, perType: overrides?.houseRules)
             let results = try await pipeline.classifyBatch(
                 pending,

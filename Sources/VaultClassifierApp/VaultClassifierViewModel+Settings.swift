@@ -130,8 +130,7 @@ extension VaultClassifierViewModel {
         confidenceThresholds: [Double]?,
         thumbnailOcrEvidence: Bool?,
         maximumTags: Int?,
-        minimumTags: Int?,
-        expectedTags: Int?
+        minimumTags: Int?
     ) {
         do {
             guard var catalog = localState?.workspaceCatalog,
@@ -146,8 +145,7 @@ extension VaultClassifierViewModel {
                 confidenceThresholds: confidenceThresholds,
                 thumbnailOcrEvidence: thumbnailOcrEvidence,
                 maximumTags: maximumTags,
-                minimumTags: minimumTags,
-                expectedTags: expectedTags
+                minimumTags: minimumTags
             ) : nil
             catalog.classifierTypes[index].localModelOverrides = overrides?.isEmpty == false ? overrides : nil
             catalog.classifierTypes[index].modelFileName = modelFileName
@@ -217,8 +215,7 @@ extension VaultClassifierViewModel {
             confidenceThresholds: rawThresholds.isEmpty ? nil : rawThresholds,
             thumbnailOcrEvidence: data["thumbnailOcrEvidence"] as? Bool,
             maximumTags: maximumTags,
-            minimumTags: Self.optionalWebInteger(data["minimumTags"]),
-            expectedTags: Self.optionalWebInteger(data["expectedTags"])
+            minimumTags: Self.optionalWebInteger(data["minimumTags"])
         )
         return .init(
             typeID: typeID,
