@@ -802,44 +802,8 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
         return lines.joined(separator: "\n")
     }
 
-    /// GBNF grammar admitting up to `maximumTags` of the allowed tag names,
-    /// separated by the JSON scaffold's own `"},{"name":"` boilerplate — so the
-    /// generated output stays a coherent continuation of the prompt's
-    /// `{"tags":[{"name":"` runway (removing that scaffold measurably regressed
-    /// accuracy) — plus the decline literal `none` when enabled. Names with
-    /// embedded newlines cannot be expressed as a GBNF literal and are skipped;
-    /// returns nil when no tag name is usable.
-    static func namesGrammar(allowed: [String], allowDecline: Bool = true, maximumTags: Int = 1) -> String? {
-        let literals = allowed
-            .filter { !$0.isEmpty && !$0.contains("\n") && !$0.contains("\r") }
-            .map { name in
-                "\"" + name
-                    .replacingOccurrences(of: "\\", with: "\\\\")
-                    .replacingOccurrences(of: "\"", with: "\\\"") + "\""
-            }
-        guard !literals.isEmpty else { return nil }
-        let bound = max(1, maximumTags)
-        let extra = bound - 1  // optional additional names after the first
-        var lines: [String] = []
-        let rootBody = extra > 0 ? "name tail0" : "name"
-        if allowDecline, !allowed.contains(declineLiteral) {
-            lines.append("root ::= \"\(declineLiteral)\" | \(rootBody)")
-        } else {
-            lines.append("root ::= \(rootBody)")
-        }
-        // A bounded optional chain: each tail may end the list or add one more
-        // `sep name`, so the model emits between 1 and `bound` names.
-        for i in 0..<extra {
-            let continuation = i == extra - 1 ? "" : " tail\(i + 1)"
-            lines.append("tail\(i) ::= \"\" | sep name\(continuation)")
-        }
-        // The separator is the JSON boilerplate between two {"name":"…"} objects.
-        lines.append("sep ::= \"\\\"},{\\\"name\\\":\\\"\"")
-        lines.append("name ::= " + literals.joined(separator: " | "))
-        return lines.joined(separator: "\n")
-    }
 
-    /// Like `namesGrammar`, but each tag is a full object continuation
+    /// The production GBNF: each tag is a full object continuation
     /// `Name","confidence":N` so the model emits its OWN confidence digit — the
     /// structured Decode 1 of RESEARCH-REDESIGN §5. Continues the same prompt
     /// runway (`{"tags":[{"name":"`); the inter-object separator is `},{"name":"`.
