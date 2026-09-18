@@ -676,6 +676,66 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
         return terms
     }
 
+    // MARK: - Diagnostic free-text generation (eval only)
+
+    /// Greedy, ungrammared generation with a mild repetition penalty. NOT a
+    /// production path: the correction-summary feature that used free text was
+    /// removed (5ca3ff7) after a small model fabricated rules that poisoned
+    /// classification. This exists solely so `VaultClassifierEval summarize` can
+    /// re-measure that behaviour on synthetic corrections before anyone considers
+    /// bringing it back. Stops at end-of-text, `maximumTokens`, or any stop string.
+    /// `chat: true` wraps the prompt as a single user turn in the model's own chat
+    /// template (how an instruct model is meant to be asked); `false` is a raw
+    /// completion, which is how the removed feature actually called it.
+    public func generateTextForEvaluation(prompt rawPrompt: String, maximumTokens: Int = 240, stop: [String] = ["\n\n\n"], chat: Bool = false) throws -> String {
+        let prompt = chat ? try chatFormatted(user: rawPrompt) : rawPrompt
+        let tokens = try tokenize(prompt, addSpecial: !chat)
+        guard tokens.count + maximumTokens + 8 <= contextTokenLimit else {
+            throw OnDeviceLLMError.inference("eval-prompt-exceeds-context (\(tokens.count) tokens)")
+        }
+        try prefillReusingCache(tokens, errorLabel: "eval-prompt-decode-failed")
+        let sampler = llama_sampler_chain_init(llama_sampler_chain_default_params())
+        defer { llama_sampler_free(sampler) }
+        llama_sampler_chain_add(sampler, llama_sampler_init_penalties(llama_vocab_n_tokens(vocab), 64, 1.1, 0, 0))
+        llama_sampler_chain_add(sampler, llama_sampler_init_greedy())
+        var generated = ""
+        generation: for _ in 0..<maximumTokens {
+            let token = llama_sampler_sample(sampler, context, -1)
+            if llama_vocab_is_eog(vocab, token) { break }
+            generated += piece(for: token)
+            for marker in stop where generated.hasSuffix(marker) {
+                generated.removeLast(marker.count)
+                break generation
+            }
+            var single = [token]
+            let status = single.withUnsafeMutableBufferPointer { buffer in
+                llama_decode(context, llama_batch_get_one(buffer.baseAddress, 1))
+            }
+            guard status == 0 else {
+                cachedTokens = []
+                llama_memory_seq_rm(llama_get_memory(context), 0, 0, -1)
+                throw OnDeviceLLMError.inference("eval-generation-decode-failed (\(status))")
+            }
+            cachedTokens.append(token)
+        }
+        return generated.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func chatFormatted(user: String) throws -> String {
+        let template = llama_model_chat_template(model, nil)   // nil → llama.cpp falls back to chatml
+        return try user.withCString { content -> String in
+            try "user".withCString { role -> String in
+                var message = llama_chat_message(role: role, content: content)
+                var buffer = [CChar](repeating: 0, count: user.utf8.count * 2 + 1_024)
+                let written = llama_chat_apply_template(template, &message, 1, true, &buffer, Int32(buffer.count))
+                guard written > 0, Int(written) <= buffer.count else {
+                    throw OnDeviceLLMError.inference("eval-chat-template-failed (\(written))")
+                }
+                return String(decoding: buffer.prefix(Int(written)).map { UInt8(bitPattern: $0) }, as: UTF8.self)
+            }
+        }
+    }
+
     // MARK: - Contract pieces
 
     /// The reserved decline literal: without it the grammar would FORCE a tag
