@@ -225,7 +225,7 @@ final class LocalClassifierHub {
         guard let requestID = frame["requestID"] as? String,
               requestID.count > 0, requestID.count <= 128,
               let operation = frame["operation"] as? String,
-              ["bridge-info", "collection-info", "diagnostic", "collect", "video-tags", "video-tags-batch", "classifier-taxonomy", "submit-correction", "dev-log"].contains(operation),
+              SharedBrowserBridgeOperation.relayableRequestOperations.contains(operation),
               let body = frame["body"] as? [String: Any], JSONSerialization.isValidJSONObject(body) else { return }
         lock.lock()
         guard let source = peers[key], LocalHubAuthentication.isBrowserProgram(source.program),
@@ -250,7 +250,7 @@ final class LocalClassifierHub {
     /// an invalid frame is dropped rather than disconnecting the classifier.
     private func routeBroadcast(_ frame: [String: Any], from key: ObjectIdentifier) {
         guard let operation = frame["operation"] as? String,
-              ["video-tags-updated"].contains(operation),
+              SharedBrowserBridgeOperation.relayableBroadcastOperations.contains(operation),
               let body = frame["body"] as? [String: Any],
               JSONSerialization.isValidJSONObject(body) else { return }
         lock.lock()
