@@ -1,4 +1,5 @@
 import Foundation
+import VaultClassifierCore
 
 public struct ProviderModelCatalogEntry: Codable, Equatable, Sendable, Identifiable {
     public var identifier: String

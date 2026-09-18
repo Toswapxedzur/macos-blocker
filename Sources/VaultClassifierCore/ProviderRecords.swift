@@ -69,6 +69,8 @@ public struct TokenUsageRecord: Codable, Equatable, Sendable, Identifiable {
 /// response-shape summary made only from structural field names and counts;
 /// credentials, headers, request text, and response text are never retained.
 public struct ProviderRequestRecord: Codable, Equatable, Sendable, Identifiable {
+    /// Cap on the stored response-shape summary; the test protocol trims to it too.
+    public static let maximumResponseShapeCharacters = 256
     public var id: String
     public var profileID: String
     public var provider: String
@@ -113,7 +115,7 @@ public struct ProviderRequestRecord: Codable, Equatable, Sendable, Identifiable 
         self.method = method
         self.statusCode = statusCode
         let cleanedResponseShape = responseShape?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        self.responseShape = cleanedResponseShape.isEmpty ? nil : String(cleanedResponseShape.prefix(ProviderTestProtocol.maximumResponseShapeCharacters))
+        self.responseShape = cleanedResponseShape.isEmpty ? nil : String(cleanedResponseShape.prefix(ProviderRequestRecord.maximumResponseShapeCharacters))
         self.durationMilliseconds = durationMilliseconds
         self.tokenCount = tokenCount.map { max(0, $0) }
         let cleanedClassifierTypeID = classifierTypeID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

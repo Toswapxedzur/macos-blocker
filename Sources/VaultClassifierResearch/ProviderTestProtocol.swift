@@ -1,4 +1,5 @@
 import Foundation
+import VaultClassifierCore
 
 /// A bounded, explicit test request for a configured provider profile. Model
 /// profiles use a constant harmless prompt; platform-data profiles use a
@@ -8,7 +9,7 @@ public enum ProviderTestProtocol {
     public static let prompt = "Return exactly OK."
     public static let maximumOutputTokens = 32
     public static let maximumResponseCharacters = 12_000
-    public static let maximumResponseShapeCharacters = 256
+    public static var maximumResponseShapeCharacters: Int { ProviderRequestRecord.maximumResponseShapeCharacters }
 
     public static func prepare(profile: APIKeyProviderProfile) throws -> ProviderTestPreparedRequest {
         let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)

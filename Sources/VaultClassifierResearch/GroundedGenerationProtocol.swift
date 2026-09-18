@@ -1,4 +1,5 @@
 import Foundation
+import VaultClassifierCore
 
 /// Builds one bounded generation request that lets the language-model provider
 /// perform the web search itself via its native grounding tool (Gemini

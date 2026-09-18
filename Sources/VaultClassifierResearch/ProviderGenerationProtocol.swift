@@ -1,4 +1,5 @@
 import Foundation
+import VaultClassifierCore
 
 /// Builds one bounded non-streaming generation request and delegates response
 /// parsing to ProviderTestProtocol's public, format-aware parser. It rejects
@@ -6,7 +7,7 @@ import Foundation
 public enum ProviderGenerationProtocol {
     public static let maximumPromptCharacters = 20_000
     public static let maximumModelIdentifierCharacters = 256
-    public static let maximumOutputTokens = 4_096
+    public static var maximumOutputTokens: Int { GroundedResearchProviderConfiguration.maximumOutputTokens }
 
     public static func supportsGeneration(profile: APIKeyProviderProfile) -> Bool {
         let supportedFormats: [ProviderRequestBodyFormat] = [

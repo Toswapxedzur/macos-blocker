@@ -1,4 +1,5 @@
 import Foundation
+import VaultClassifierCore
 
 /// A credential-free health request for one saved official platform API
 /// profile. It intentionally includes no collected content or creator data.

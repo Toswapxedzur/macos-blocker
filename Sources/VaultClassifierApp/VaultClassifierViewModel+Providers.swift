@@ -1,5 +1,6 @@
 import Foundation
 import VaultClassifierCore
+import VaultClassifierResearch
 import VaultClassifierBridge
 import VaultClassifierLLM
 
