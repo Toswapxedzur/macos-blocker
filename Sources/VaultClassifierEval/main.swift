@@ -57,6 +57,26 @@ let tagNameByID = Dictionary(tree.nodes.map { ($0.id, $0.name) }, uniquingKeysWi
 let tagIDByName = Dictionary(tree.nodes.map { ($0.name.lowercased(), $0.id) }, uniquingKeysWith: { a, _ in a })
 let allowedNames = tree.nodes.filter { !$0.isRetired }.map(\.name).sorted()
 
+// The house rules PRODUCTION would use for this type — identical to the
+// coordinator's `effectiveHouseRules`: a type's own rules replace the global
+// ones, and a legacy LLM-written "Learned preferences" block is stripped. The
+// harness used to pass the type's rules RAW, so every eval ran with that stale,
+// fabricated block ("Samsung products → Sports") still in the prompt while the
+// real app had been stripping it since 5ca3ff7. `--raw-house-rules` restores the
+// old behaviour to reproduce earlier numbers.
+let productionHouseRules: String? = {
+    let perType = type.localModelOverrides?.houseRules
+    let global = state.settings.localLLM.houseRules
+    if args.contains("--raw-house-rules") { return perType ?? global }
+    let manualPerType = CorrectionDistiller.manualRules(from: perType)
+    if !manualPerType.isEmpty { return manualPerType }
+    let trimmed = global.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+}()
+if CorrectionDistiller.containsLearnedPreferences(type.localModelOverrides?.houseRules) {
+    FileHandle.standardError.write(Data("• note: this type still stores a legacy \"Learned preferences\" block; \(args.contains("--raw-house-rules") ? "KEEPING it (--raw-house-rules)" : "stripped, as production does").\n".utf8))
+}
+
 struct EvalItem: Codable {
     var entryID: String
     var creatorID: String
@@ -145,7 +165,7 @@ case "score":
         let result = try await pipeline.classify(
             title: item.title, text: ocrText, entryID: item.entryID, creatorID: item.creatorID, platformID: "youtube",
             classifierType: type, tree: evalTree, catalog: catalog,
-            houseRules: overrides?.houseRules ?? settings.houseRules,
+            houseRules: productionHouseRules,
             allowDecline: forceTag ? false : (overrides?.allowDecline ?? settings.allowDecline),
             confidenceThresholds: overrides?.confidenceThresholds ?? settings.confidenceThresholds,
             knowledgeTTLDays: research.knowledgeTTLDays,
@@ -235,7 +255,7 @@ case "abtest":
         let r = try await pipeline.classify(
             title: item.title, entryID: item.entryID, creatorID: item.creatorID, platformID: "youtube",
             classifierType: type, tree: evalTree, catalog: c,
-            houseRules: overrides?.houseRules ?? settings.houseRules,
+            houseRules: productionHouseRules,
             allowDecline: overrides?.allowDecline ?? settings.allowDecline,
             confidenceThresholds: overrides?.confidenceThresholds ?? settings.confidenceThresholds,
             knowledgeTTLDays: research.knowledgeTTLDays,
@@ -332,7 +352,7 @@ case "calib":
         let parts = pipeline.primaryPromptParts(
             title: item.title, entryID: item.entryID, creatorID: item.creatorID, platformID: "youtube",
             classifierType: type, tree: tree, catalog: catalog,
-            houseRules: overrides?.houseRules ?? settings.houseRules,
+            houseRules: productionHouseRules,
             knowledgeTTLDays: research.knowledgeTTLDays,
             maxKnowledgePerVideo: research.maxKnowledgePerVideo
         )
@@ -417,7 +437,7 @@ case "needs":
         let parts = pipeline.primaryPromptParts(
             title: item.title, entryID: item.entryID, creatorID: item.creatorID, platformID: "youtube",
             classifierType: type, tree: tree, catalog: catalog,
-            houseRules: overrides?.houseRules ?? settings.houseRules,
+            houseRules: productionHouseRules,
             knowledgeTTLDays: research.knowledgeTTLDays,
             maxKnowledgePerVideo: research.maxKnowledgePerVideo
         )
@@ -466,7 +486,7 @@ case "latency":
         let parts = pipeline.primaryPromptParts(
             title: item.title, entryID: item.entryID, creatorID: item.creatorID, platformID: "youtube",
             classifierType: type, tree: tree, catalog: catalog,
-            houseRules: overrides?.houseRules ?? settings.houseRules,
+            houseRules: productionHouseRules,
             knowledgeTTLDays: research.knowledgeTTLDays, maxKnowledgePerVideo: research.maxKnowledgePerVideo
         )
         let t0 = Date()
@@ -521,7 +541,7 @@ case "batch":
         let parts = pipeline.primaryPromptParts(
             title: item.title, entryID: item.entryID, creatorID: item.creatorID, platformID: "youtube",
             classifierType: type, tree: tree, catalog: catalog,
-            houseRules: overrides?.houseRules ?? settings.houseRules,
+            houseRules: productionHouseRules,
             knowledgeTTLDays: research.knowledgeTTLDays, maxKnowledgePerVideo: research.maxKnowledgePerVideo)
         return LLMClassificationRequest(
             staticPrefix: parts.staticPrefix, dynamicSuffix: parts.dynamicSuffix,
@@ -562,6 +582,27 @@ case "batch":
     print(String(format: "batched: %.0f ms total   (%.0f ms/video)   speedup ×%.1f", ms(s1, s2), ms(s1, s2) / Double(items.count), ms(s0, s1) / ms(s1, s2)))
     print("equivalence: same tags \(sameTags)/\(items.count)   same tags+confidence \(sameAll)/\(items.count)")
 
+case "summarize":
+    // Do corrections summarize into GOOD rules? Synthetic corrections with a known
+    // intended rule (incl. traps); see CorrectionSummaryExperiment.swift.
+    //   --model=<path.gguf>   model under test (default: this environment's)
+    //   --only=<substring>    run one scenario (e.g. --only=S2)
+    //   --no-downstream       only show what the model writes
+    let modelOverride = args.compactMap { $0.hasPrefix("--model=") ? String($0.dropFirst(8)) : nil }.first
+    guard let modelPath = modelOverride ?? VaultLocalLLMEngine.defaultModelPath(preferredFileName: state.settings.localLLM.modelFileName) else {
+        die("no .gguf model found for this environment")
+    }
+    let engine: VaultLocalLLMEngine
+    do { engine = try VaultLocalLLMEngine(modelPath: modelPath) } catch { die("engine load failed: \(error)") }
+    try await runSummarizeExperiment(
+        engine: engine, modelName: (modelPath as NSString).lastPathComponent,
+        type: type, tree: tree, baseCatalog: catalog,
+        baseHouseRules: productionHouseRules,
+        maximumTags: state.settings.localLLM.maximumTags,
+        allowedNames: allowedNames,
+        onlyScenario: args.compactMap { $0.hasPrefix("--only=") ? String($0.dropFirst(7)) : nil }.first,
+        skipDownstream: args.contains("--no-downstream"))
+
 default:
-    die("usage: VaultClassifierEval sample <N> [out.json] | score <in.json> | abtest <in.json> | calib <in.json> | needs <in.json> | latency <in.json> | batch <in.json>")
+    die("usage: VaultClassifierEval sample <N> [out.json] | score <in.json> | abtest <in.json> | calib <in.json> | needs <in.json> | latency <in.json> | batch <in.json> | summarize")
 }
