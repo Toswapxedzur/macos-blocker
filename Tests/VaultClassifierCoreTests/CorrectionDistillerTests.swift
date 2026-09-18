@@ -36,31 +36,15 @@ final class CorrectionDistillerTests: XCTestCase {
         XCTAssertEqual(catalog.correctionExamples.first?.entryID, "entry-\(WorkspaceCatalog.maximumCorrectionExamples)")
     }
 
-    func testDistillationIsBoundedAndPreservesManualRulesWhenReplaced() {
-        let corrections = (0..<10).map {
-            correction("\($0)", tagIDs: $0.isMultiple(of: 2) ? ["game"] : ["news"], at: Int64($0))
-        }
-        let learned = CorrectionDistiller.distill(corrections: corrections, tree: tree, limit: 180)
-        XCTAssertFalse(learned.isEmpty)
-        XCTAssertLessThanOrEqual(learned.count, 180)
-        XCTAssertTrue(learned.contains("Gaming") || learned.contains("News"))
-
-        let combined = CorrectionDistiller.combinedHouseRules(
-            manualHouseRules: "Never infer from a thumbnail.",
-            learnedRules: learned,
-            correctionCount: corrections.count
-        )
-        XCTAssertTrue(combined?.contains("Never infer from a thumbnail.") == true)
-        XCTAssertEqual(CorrectionDistiller.distilledCorrectionCount(in: combined), 10)
-
-        let replaced = CorrectionDistiller.combinedHouseRules(
-            manualHouseRules: combined,
-            learnedRules: "- New learned rule.",
-            correctionCount: 15
-        )
-        XCTAssertEqual(replaced?.components(separatedBy: CorrectionDistiller.startMarker).count, 2)
-        XCTAssertTrue(replaced?.contains("Never infer from a thumbnail.") == true)
-        XCTAssertTrue(replaced?.contains("New learned rule") == true)
-        XCTAssertFalse(replaced?.contains("Episode") == true)
+    func testLegacyLearnedBlockIsStrippedAndManualRulesSurvive() {
+        let stored = "Prefer specific tags.\n\n[Learned preferences; 5 corrections]\n4. If the video contains information about Samsung products, tag it with Sports.\n[/Learned preferences]\nNever tag ads."
+        XCTAssertTrue(CorrectionDistiller.containsLearnedPreferences(stored))
+        let manual = CorrectionDistiller.manualRules(from: stored)
+        XCTAssertFalse(manual.contains("Samsung"))
+        XCTAssertTrue(manual.contains("Prefer specific tags.") && manual.contains("Never tag ads."))
+        // An unterminated block (the real stored one was cut off mid-sentence) loses everything after the marker.
+        XCTAssertEqual(CorrectionDistiller.manualRules(from: "Keep me.\n[Learned preferences; 3 corrections]\n1. junk"), "Keep me.")
+        XCTAssertEqual(CorrectionDistiller.manualRules(from: nil), "")
+        XCTAssertFalse(CorrectionDistiller.containsLearnedPreferences("just my own rules"))
     }
 }

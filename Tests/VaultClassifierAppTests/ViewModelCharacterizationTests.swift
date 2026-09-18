@@ -59,12 +59,11 @@ final class ViewModelCharacterizationTests: XCTestCase {
         XCTAssertEqual(
             Set(llm.keys),
             ["modelFileName", "engineEnabled", "contextTokens", "batchTokens", "gpuOffload", "maximumOutputTokens",
-             "temperature", "allowDecline", "maximumTags", "minimumTags", "expectedTags", "confidenceThresholds",
+             "temperature", "allowDecline", "maximumTags", "minimumTags", "confidenceThresholds",
              "houseRules", "maxResidentModels", "engineStatus", "availableModels", "modelLibrary"]
         )
-        // Defaults: min-0 (may decline), no expected target, cap 1.
+        // Defaults: min-0 (may decline), cap 1.
         XCTAssertEqual(llm["minimumTags"] as? Int, 0)
-        XCTAssertTrue(llm["expectedTags"] is NSNull)
         XCTAssertEqual(llm["maximumTags"] as? Int, 1)
         XCTAssertEqual(llm["engineStatus"] as? String, "disabled")
     }
@@ -101,7 +100,7 @@ final class ViewModelCharacterizationTests: XCTestCase {
             "modelFileName": "", "engineEnabled": false,
             "contextTokens": "4096", "batchTokens": "512", "gpuOffload": true,
             "maximumOutputTokens": "16", "temperature": "0", "allowDecline": true,
-            "maximumTags": "3", "minimumTags": "1", "expectedTags": "2",
+            "maximumTags": "3", "minimumTags": "1",
             "confidenceBand2": "0.2", "confidenceBand3": "0.4", "confidenceBand4": "0.6", "confidenceBand5": "0.85",
             "houseRules": "prefer specific tags", "maxResidentModels": "2",
         ])
@@ -110,11 +109,9 @@ final class ViewModelCharacterizationTests: XCTestCase {
         let llm = try XCTUnwrap((vm.webSnapshot()["settings"] as? [String: Any])?["localLLM"] as? [String: Any])
         XCTAssertEqual(llm["maximumTags"] as? Int, 3)
         XCTAssertEqual(llm["minimumTags"] as? Int, 1)
-        XCTAssertEqual(llm["expectedTags"] as? Int, 2)
         XCTAssertEqual(llm["houseRules"] as? String, "prefer specific tags")
         // And it persisted through the coordinator, not just the published mirror.
         XCTAssertEqual(vm.localState?.settings.localLLM.minimumTags, 1)
-        XCTAssertEqual(vm.localState?.settings.localLLM.expectedTags, 2)
     }
 
     /// The complete web-action vocabulary. Each is probed with EMPTY data: a
