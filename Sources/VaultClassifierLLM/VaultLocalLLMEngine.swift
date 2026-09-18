@@ -171,32 +171,11 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
     /// but the weight-read that dominates every generation step is shared by all
     /// of them. Requests are packed into sub-batches that fit the KV budget.
     public func classifyBatch(_ requests: [LLMClassificationRequest]) async throws -> [LLMClassificationResult] {
-        guard requests.count > 1 else {
-            var single: [LLMClassificationResult] = []
-            for request in requests { single.append(try await classify(request)) }
-            return single
-        }
         var results = [LLMClassificationResult](repeating: .init(tags: []), count: requests.count)
         var items: [ParallelItem] = []
         for (index, request) in requests.enumerated() {
-            let maximumTags = max(1, request.maximumTags)
-            // minimumTags ≥ 1 forbids declining, whatever the allowDecline flag says.
-            let allowDecline = (request.allowDecline ?? configuration.allowDecline) && request.minimumTags == 0
-            guard let grammar = Self.namesWithConfidenceGrammar(
-                allowed: request.allowedTagNames, allowDecline: allowDecline, maximumTags: maximumTags, minimumTags: request.minimumTags
-            ) else { continue }   // no usable names → stays the empty result
-            let tokens = try tokenize(request.staticPrefix + "\n\n" + request.dynamicSuffix)
-            guard tokens.count + 24 <= contextTokenLimit else {
-                throw OnDeviceLLMError.inference("prompt-exceeds-context (\(tokens.count) tokens)")
-            }
-            let candidateNames = allowDecline ? request.allowedTagNames + [Self.declineLiteral] : request.allowedTagNames
-            items.append(ParallelItem(
-                index: index, request: request, tokens: tokens, grammar: grammar,
-                generationCap: max(configuration.maximumOutputTokens, maximumTags * 24 + 8),
-                allowDecline: allowDecline,
-                candidateFirstTokens: Set(candidateNames.compactMap { try? tokenize($0, addSpecial: false).first }),
-                thresholds: request.confidenceThresholds ?? configuration.confidenceThresholds
-            ))
+            // No usable names → stays the empty result.
+            if let item = try makeParallelItem(index: index, request: request) { items.append(item) }
         }
 
         // Greedy packing: a sub-batch holds at most `maximumParallelSequences`
@@ -212,10 +191,6 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
                 group = candidate
                 cursor += 1
             }
-            if group.count == 1 {
-                results[group[0].index] = try await classify(group[0].request)
-                continue
-            }
             for (item, decoded) in zip(group, try decodeParallel(group)) {
                 results[item.index] = LLMClassificationResult(tags: decoded.tags.map {
                     LLMTagScore(name: $0.name, confidence: $0.modelConfidence, softmaxConfidence: $0.softmaxConfidence)
@@ -223,6 +198,35 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
             }
         }
         return results
+    }
+
+    /// The ONE place a request is prepared for decoding — grammar, prompt tokens,
+    /// generation budget, decline handling, softmax candidates — shared by the
+    /// serial and batched paths so they can never diverge. nil = no usable tag
+    /// name (nothing to decode).
+    private func makeParallelItem(index: Int, request: LLMClassificationRequest) throws -> ParallelItem? {
+        let maximumTags = max(1, request.maximumTags)
+        // minimumTags ≥ 1 forbids declining, whatever the allowDecline flag says.
+        let allowDecline = (request.allowDecline ?? configuration.allowDecline) && request.minimumTags == 0
+        guard let grammar = Self.namesWithConfidenceGrammar(
+            allowed: request.allowedTagNames, allowDecline: allowDecline, maximumTags: maximumTags, minimumTags: request.minimumTags
+        ) else { return nil }
+        let tokens = try tokenize(request.staticPrefix + "\n\n" + request.dynamicSuffix)
+        guard tokens.count + 24 <= contextTokenLimit else {
+            throw OnDeviceLLMError.inference("prompt-exceeds-context (\(tokens.count) tokens)")
+        }
+        let candidateNames = allowDecline ? request.allowedTagNames + [Self.declineLiteral] : request.allowedTagNames
+        return ParallelItem(
+            index: index, request: request, tokens: tokens, grammar: grammar,
+            // Bounded by the room left in the context as well as the output budget.
+            generationCap: min(
+                max(1, contextTokenLimit - tokens.count - 1),
+                max(configuration.maximumOutputTokens, maximumTags * 24 + 8)
+            ),
+            allowDecline: allowDecline,
+            candidateFirstTokens: Set(candidateNames.compactMap { try? tokenize($0, addSpecial: false).first }),
+            thresholds: request.confidenceThresholds ?? configuration.confidenceThresholds
+        )
     }
 
     private static func sharedPrefixLength(_ items: [ParallelItem]) -> Int {
@@ -395,100 +399,12 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
     /// model's emitted digit AND the renormalized first-token softmax (captured at
     /// each name-start). Greedy so the digit is the model's argmax.
     private func structuredDecode(_ request: LLMClassificationRequest) async throws -> (tags: [LLMCalibrationTag], declined: Bool) {
-        let effectiveThresholds = request.confidenceThresholds ?? configuration.confidenceThresholds
-        let maximumTags = max(1, request.maximumTags)
-        // minimumTags ≥ 1 forbids declining, whatever the allowDecline flag says.
-        let effectiveAllowDecline = (request.allowDecline ?? configuration.allowDecline) && request.minimumTags == 0
-        guard let grammar = Self.namesWithConfidenceGrammar(allowed: request.allowedTagNames, allowDecline: effectiveAllowDecline, maximumTags: maximumTags, minimumTags: request.minimumTags) else {
-            return ([], true)
-        }
-        let prompt = request.staticPrefix + "\n\n" + request.dynamicSuffix
-        let tokens = try tokenize(prompt)
-        guard tokens.count + 24 <= contextTokenLimit else {
-            throw OnDeviceLLMError.inference("prompt-exceeds-context (\(tokens.count) tokens)")
-        }
-        // Diagnostic split (VAULT_DECODE_TIMING=1): prefill vs generation vs the
-        // real generated-token count — sizes the "prefill the forced tokens" win.
-        let timing = ProcessInfo.processInfo.environment["VAULT_DECODE_TIMING"] == "1"
-        let cacheBefore = cachedTokens.count
-        let tStart = timing ? DispatchTime.now() : nil
-        try prefillReusingCache(tokens, errorLabel: "prompt-decode-failed")
-        let tPrefill = timing ? DispatchTime.now() : nil
-
-        let sampler = llama_sampler_chain_init(llama_sampler_chain_default_params())
-        defer { llama_sampler_free(sampler) }
-        llama_sampler_chain_add(sampler, llama_sampler_init_grammar(vocab, grammar, "root"))
-        llama_sampler_chain_add(sampler, llama_sampler_init_greedy())
-        let tGrammar = timing ? DispatchTime.now() : nil
-
-        let candidateNames = effectiveAllowDecline
-            ? request.allowedTagNames + [Self.declineLiteral]
-            : request.allowedTagNames
-        let candidateFirstTokens = Set(candidateNames.compactMap { try? tokenize($0, addSpecial: false).first })
-
-        // Between two `{"name":"…","confidence":N}` objects the scaffold emits
-        // `},{"name":"` (no leading quote — the name's closing quote was consumed
-        // by the confidence clause). A name begins at step 0 and right after this
-        // separator completes, exactly where the first-token softmax is measured.
-        let separatorText = Self.structuredSeparator
-        let decodeCap = min(
-            max(1, contextTokenLimit - tokens.count - 1),
-            max(configuration.maximumOutputTokens, maximumTags * 24 + 8)
-        )
-        var generated = ""
-        var generatedTokenCount = 0
-        var nameStartProbabilities: [Double] = []
-        var awaitingNameStart = true
-        for _ in 0..<decodeCap {
-            let token = llama_sampler_sample(sampler, context, -1)
-            if llama_vocab_is_eog(vocab, token) { break }
-            generatedTokenCount += 1
-            if awaitingNameStart {
-                nameStartProbabilities.append(probability(of: token, among: candidateFirstTokens))
-                awaitingNameStart = false
-            }
-            generated += piece(for: token)
-            // Whatever the grammar now forces is fed in THIS decode, not sampled.
-            var stepTokens = [token]
-            if Self.feedsForcedSpans {
-                let forced = Self.forcedContinuation(
-                    after: generated, allowedTagNames: request.allowedTagNames,
-                    allowDecline: effectiveAllowDecline, maximumTags: maximumTags)
-                if forced.finished { break }        // nothing but end-of-text can follow
-                if !forced.forced.isEmpty, let forcedTokens = try? tokenize(forced.forced, addSpecial: false) {
-                    for forcedToken in forcedTokens { llama_sampler_accept(sampler, forcedToken) }
-                    stepTokens += forcedTokens
-                    generated += forced.forced
-                    generatedTokenCount += forcedTokens.count
-                }
-            }
-            if generated.hasSuffix(separatorText) { awaitingNameStart = true }
-            let status = stepTokens.withUnsafeMutableBufferPointer { buffer in
-                llama_decode(context, llama_batch_get_one(buffer.baseAddress, Int32(buffer.count)))
-            }
-            guard status == 0 else {
-                cachedTokens = []
-                llama_memory_seq_rm(llama_get_memory(context), 0, 0, -1)
-                throw OnDeviceLLMError.inference("generation-decode-failed (\(status))")
-            }
-            cachedTokens.append(contentsOf: stepTokens)
-        }
-
-        if let tStart, let tPrefill, let tGrammar {
-            let ms = { (a: DispatchTime, b: DispatchTime) in Double(b.uptimeNanoseconds - a.uptimeNanoseconds) / 1_000_000 }
-            let tEnd = DispatchTime.now()
-            let suffixTokens = tokens.count - cacheBefore
-            let escaped = generated.replacingOccurrences(of: "\n", with: "⏎").prefix(48)
-            FileHandle.standardError.write(Data(String(
-                format: "[decode-timing] prompt=%d suffix≈%d  prefill=%.0f  grammar=%.0f  gen=%.0f  genTokens=%d  out=«%@»\n",
-                tokens.count, max(0, suffixTokens), ms(tStart, tPrefill), ms(tPrefill, tGrammar), ms(tGrammar, tEnd),
-                generatedTokenCount, String(escaped) as NSString
-            ).utf8))
-        }
-        return Self.parseStructuredOutput(
-            generated, nameStartProbabilities: nameStartProbabilities,
-            allowedTagNames: request.allowedTagNames, thresholds: effectiveThresholds
-        )
+        // Serial is simply a batch of one: the same item preparation and the same
+        // lock-step generation loop as `classifyBatch`, so the two paths cannot
+        // drift (verified: the `batch` eval mode reports identical tags+confidence
+        // serial vs batched, and identical outputs before/after this unification).
+        guard let item = try makeParallelItem(index: 0, request: request) else { return ([], true) }
+        return try decodeParallel([item])[0]
     }
 
     /// The name→confidence boilerplate of the structured decode.
