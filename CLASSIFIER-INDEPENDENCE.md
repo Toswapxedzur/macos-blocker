@@ -1,6 +1,6 @@
 # Vault Classifier — Independence & Simplification
 
-> **Status: Phases 1–4 BUILT (2026-09-18), Phases 5–7 planned.** Owner ask:
+> **Status: ALL SEVEN PHASES BUILT (2026-09-18).** Owner ask:
 > "make the classifier more independent, clearer and simpler logic, more concise
 > and better" — all tiers, balanced. Each phase landed as its own verified
 > commit (build + full suite green) so the program is reviewable step by step.
@@ -120,43 +120,51 @@ What the classifier promises, after Phases 1–4:
   and emitted confidence cleanly separates good (conf5 P0.85) from bad
   (conf≤3 P0.11) forced guesses — so a downstream floor recovers precision.
 
-## 7. Planned — Phases 5–7
+## 7. Phases 5–7 (BUILT)
 
-### Phase 5 — God-object split (behind a characterisation net)
-1. Add a hermetic init seam to `VaultClassifierViewModel` (inject the vault
-   directory + a headless flag that skips hub connect / engine load / migrations).
-2. Characterise `webSnapshot()` and `performWebAction(_:data:)`: snapshot the
-   dict for a fixed starter state and pin it; drive each action against a temp
-   state file.
-3. Split by concern into `VaultClassifierViewModel+HubBridge / +Providers /
-   +TreeEditor / +WebShell / +Research / +ModelLibrary.swift` as extensions.
-   Swift `private` is file-scoped, so members a moved method needs become
-   `internal` — acceptable in an executable target (no external API), and the
-   net makes it provable.
-4. Same treatment for `LocalClassifierCoordinator` (storage vs classify
-   orchestration vs research scheduling — `classifyVideos` does all three) and
-   `WorkspaceAssets.swift` (one file per persisted type family).
+### Phase 5 — God-object split (BUILT, `3ad4756` `5d85e22` `a490ec3` `ac99485` `1df8882`)
+1. `init(headlessVaultDirectory:)` — hermetic construction (temp dir, stub
+   LLM, no hub/engine/Keychain/migrations/network).
+2. `ViewModelCharacterizationTests` (8) pin the web RPC: exact snapshot shape,
+   the return-value contract (`true` = re-send, incl. after an error surfaced
+   via `issue`; `false` only on a workspace switch), a settings round-trip,
+   and all **45 actions** probed as routed. The discovery pass corrected two
+   assumptions — that is what the net is for.
+3. `VaultClassifierViewModel` 3,252 → 388 lines + nine extension files
+   (WebShell 782, Providers 468, HubBridge 326, Workspace 311, Settings 292,
+   TreeEditor 291, Research 203, ModelLibrary 100, Backup 76). `private`
+   members a moved method needed became `internal`.
+4. `WorkspaceAssets.swift` 1,632 → six type-family files; `LocalStore.swift`
+   1,337 → 305 + five coordinator extensions (Classify 355, Collection 284,
+   Research 254, Settings 72, Packages 70). Also dropped the Tier C leftover
+   `PlatformBinding.policyID`.
 
-### Phase 6 — Tier B: research data/execution partition
+### Phase 6 — Tier B: research data/execution partition (BUILT, `44d4e4a`)
 Not a file move. Core's `LocalStore`/`WorkspaceAssets` persist 10 research/
 provider types (queue snapshot/mutation/actor, `ResearchSubject`/`Task`/
 `AttemptRecord`, provider descriptor/registry/credential field, `ProviderTestProtocol`).
 Only 5 of 8 files are clean-movable; `GroundedResearch.swift`, `ProviderProtocols.swift`
 and `ProviderTestProtocol.swift` interleave persisted data with execution, and
 `GroundedResearchQueue` is an actor that both holds queue state *and* calls the
-network executor. Plan: split those three files data→Core / execution→new
-`VaultClassifierResearch` target (depends on Core); the queue actor stays in Core
-behind an executor protocol Core owns. Net: research queue (15), generation (11),
-provider-test (5), HTTP-client (3) tests. Payoff: tagging builds without the
-cloud stack; the classifier's only network dependency becomes opt-in.
+network executor. Done as: data→Core / execution→`VaultClassifierResearch` (depends on Core).
+The queue already abstracted the executor behind its `Researcher` closure, so
+only `init(executor:)` moved (as an extension). Two shared values were hoisted
+into Core (`GroundedResearchProviderConfiguration.maximumOutputTokens`,
+`ProviderRequestRecord.maximumResponseShapeCharacters`) and
+`ProviderTestHTTPError` moved to Core because the persisted failure-kind
+classifier matches it — which also exposed and removed an identical shadowing
+copy of that enum in the App. A symbol scan confirms Core references nothing in
+the Research target. Tagging builds with no network-facing code.
 
-### Phase 7 — engine decode-loop dedup
-`structuredDecode` (serial) and `decodeParallel` (batch) re-implement the same
-generation loop. Make serial = batch-of-one. No unit tests exist for the engine
-(needs a real GGUF); verification is an exact-output A/B through
-`VaultClassifierEval score --labeled-only` (greedy decode is deterministic — the
-65 labelled items must tag identically before/after). Also delete `namesGrammar`
-(superseded by `namesWithConfidenceGrammar`; only its own tests use it).
+### Phase 7 — engine decode-loop dedup (BUILT, `b3663a7` `337d8bd`)
+`structuredDecode` (serial) and `decodeParallel` (batch) re-implemented the same
+generation loop. Serial is now a batch of one (`makeParallelItem` is the one
+place a request becomes decodable; no single-item special cases). No unit tests exist for the engine
+(needs a real GGUF); verification was an exact-output A/B through
+`VaultClassifierEval batch --limit=64 --max=3 -v`: all 64 per-item results
+byte-identical before/after, serial ≡ batched 64/64, batched throughput
+unchanged (503 ms/video). Engine 1,052 → 872 lines. `namesGrammar` deleted
+(its live sibling's invariants keep their 5 tests).
 
 ### Deferred (needs fixtures or owner call)
 - Startup migrations + `RetiredCodingKeys` blocks: delete once a fixture-backed
