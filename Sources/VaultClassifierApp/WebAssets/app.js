@@ -829,22 +829,6 @@
     </div>`;
   }
 
-  function policyWorkspace() {
-    const policies = state.policies;
-    const editor = policies.editor;
-    return `<div class="workspace">${header("policies.title", "policies.copy", t("policies.savedCount", { count: policies.items.length }), "navy")}
-      <section class="section-card navy"><div class="section-header"><div><h3>${tx("policies.saved")}</h3><p class="section-copy">${tx("policies.savedCopy")}</p></div><button class="secondary" data-action="newPolicy">${tx("policies.new")}</button></div>
-      ${policies.items.length ? `<div class="list">${policies.items.map((policy) => `<button class="list-row" data-action="selectPolicy" data-id="${esc(policy.id)}"><span class="list-symbol">⌗</span><span class="list-copy"><span class="list-title">${esc(policy.name || policy.id)}</span><span class="list-meta">${esc(policy.id)} · ${tx("enum.surface.feed").toLowerCase()} ${esc(enumText("action", policy.feedAction))}</span></span></button>`).join("")}</div>` : `<div class="empty">${tx("policies.empty")}</div>`}</section>
-      <section class="section-card navy" data-form-id="policy-form"><div class="section-header"><div><h3>${tx(editor.id ? "policies.edit" : "policies.create")}</h3><p class="section-copy">${tx("policies.editorCopy")}</p></div></div><div class="form-stack">
-      <div class="form-row">${field("policies.id", "policies.idHint", "id", editor.id)}${field("policies.displayName", "policies.localOnly", "name", editor.name)}</div>
-      ${field("policies.includeAny", "policies.exactIDs", "includeAny", editor.includeAny)}
-      ${field("policies.exclude", "", "exclude", editor.exclude)}
-      <div class="form-row">${selectField("policies.feedAction", "policies.feedHint", "feedAction", editor.feedAction, [["allow", "enum.action.allow"], ["dim", "enum.action.dim"], ["block", "enum.action.block"]])}${selectField("policies.pageAction", "policies.pageHint", "pageAction", editor.pageAction, [["allow", "enum.action.allow"], ["block", "enum.action.block"]])}</div>
-      <div class="form-row">${valueSelectField("policies.confidenceFloor", "policies.confidenceFloorHint", "confidenceFloor", String(editor.confidenceFloor ?? 4), [["1", tx("policies.floor1")], ["2", "≥ 2"], ["3", "≥ 3"], ["4", "≥ 4"], ["5", tx("policies.floor5")]])}${selectField("policies.untaggedAction", "policies.untaggedHint", "untaggedAction", editor.untaggedAction || "allow", [["allow", "enum.action.allow"], ["dim", "enum.action.dim"], ["block", "enum.action.block"]])}</div>
-      <div class="action-row"><button class="primary" data-action="savePolicy" data-form="policy-form">${tx("policies.save")}</button><button class="danger" data-action="deletePolicy"${disabled(!editor.id)}>${tx("common.delete")}</button></div>
-      </div></section>${notice(state.issue, "red")}</div>`;
-  }
-
   function backupWorkspace() {
     const backup = state.backup;
     const stateLabel = t(backup.savedEnabled ? "common.on" : "common.off");
@@ -1802,7 +1786,6 @@
     if (button.dataset.workspace) data.workspace = button.dataset.workspace;
     if (button.dataset.id) data.id = button.dataset.id;
     if (button.dataset.utilityPanel) data.utilityPanel = button.dataset.utilityPanel;
-    if (button.dataset.policyId) data.policyID = button.dataset.policyId;
     if (button.dataset.profileId) data.profileID = button.dataset.profileId;
     if (button.dataset.treeId) data.treeID = button.dataset.treeId;
     if (button.dataset.nodeId) data.nodeID = button.dataset.nodeId;

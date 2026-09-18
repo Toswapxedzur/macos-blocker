@@ -1,13 +1,13 @@
 import CryptoKit
 import Foundation
 
-/// Durable state for the collection, per-video LLM, policy, settings, and
-/// package-lifecycle paths. Retired deterministic-classifier fields are
+/// Durable state for the collection, per-video LLM, settings, and
+/// package-lifecycle paths. (Content-block policy is the extension's; a
+/// legacy `policies` key in older state files is ignored on read.) Retired deterministic-classifier fields are
 /// deliberately recognized while decoding and are never written back.
 public struct LocalClassifierState: Codable, Equatable, Sendable {
     public var schemaVersion: Int
     public var settings: ClassifierSettings
-    public var policies: [NamedPolicy]
     public var workspaceCatalog: WorkspaceCatalog
     public var backupConfiguration: LocalBackupConfiguration?
     public var activeModelIdentity: ActiveModelIdentity?
@@ -17,7 +17,6 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
     public init(
         schemaVersion: Int = 2,
         settings: ClassifierSettings = .init(),
-        policies: [NamedPolicy] = [],
         workspaceCatalog: WorkspaceCatalog = .starter(),
         backupConfiguration: LocalBackupConfiguration? = nil,
         activeModelIdentity: ActiveModelIdentity? = nil,
@@ -26,7 +25,6 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
     ) {
         self.schemaVersion = schemaVersion
         self.settings = settings
-        self.policies = policies
         self.workspaceCatalog = workspaceCatalog
         self.backupConfiguration = backupConfiguration
         self.activeModelIdentity = activeModelIdentity
@@ -35,7 +33,7 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, settings, policies, workspaceCatalog, backupConfiguration
+        case schemaVersion, settings, workspaceCatalog, backupConfiguration
         case activeModelIdentity, highestAcceptedSignedRelease, signedRollbackIdentities
     }
 
@@ -51,7 +49,6 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
         _ = try decoder.container(keyedBy: RetiredCodingKeys.self)
         schemaVersion = max(2, try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 2)
         settings = try container.decodeIfPresent(ClassifierSettings.self, forKey: .settings) ?? .init()
-        policies = try container.decodeIfPresent([NamedPolicy].self, forKey: .policies) ?? []
         workspaceCatalog = try container.decodeIfPresent(WorkspaceCatalog.self, forKey: .workspaceCatalog) ?? .starter()
         backupConfiguration = try container.decodeIfPresent(LocalBackupConfiguration.self, forKey: .backupConfiguration)
         activeModelIdentity = (try? container.decodeIfPresent(ActiveModelIdentity.self, forKey: .activeModelIdentity)) ?? nil
@@ -189,48 +186,42 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
 
     public convenience init(
         verifiedPackage: VerifiedSeedPackage,
-        stateFile: LocalStateFile,
-        defaultPolicies: [NamedPolicy] = []
+        stateFile: LocalStateFile
     ) throws {
         try self.init(
             verifiedPackage: verifiedPackage,
             activeManifest: nil,
-            stateFile: stateFile,
-            defaultPolicies: defaultPolicies
+            stateFile: stateFile
         )
     }
 
     public convenience init(
         verifiedModelPackage: VerifiedModelPackage,
-        stateFile: LocalStateFile,
-        defaultPolicies: [NamedPolicy] = []
+        stateFile: LocalStateFile
     ) throws {
         try self.init(
             verifiedPackage: verifiedModelPackage.seedPackage,
             activeManifest: verifiedModelPackage.manifest,
-            stateFile: stateFile,
-            defaultPolicies: defaultPolicies
+            stateFile: stateFile
         )
     }
 
     public convenience init(
         lifecycle: LocalPackageLifecycle,
         fallbackVerifiedSeedPackage: VerifiedSeedPackage,
-        stateFile: LocalStateFile,
-        defaultPolicies: [NamedPolicy] = []
+        stateFile: LocalStateFile
     ) throws {
         if let active = try lifecycle.activePackage() {
-            try self.init(verifiedModelPackage: active, stateFile: stateFile, defaultPolicies: defaultPolicies)
+            try self.init(verifiedModelPackage: active, stateFile: stateFile)
         } else {
-            try self.init(verifiedPackage: fallbackVerifiedSeedPackage, stateFile: stateFile, defaultPolicies: defaultPolicies)
+            try self.init(verifiedPackage: fallbackVerifiedSeedPackage, stateFile: stateFile)
         }
     }
 
     private init(
         verifiedPackage: VerifiedSeedPackage,
         activeManifest: ModelPackageManifest?,
-        stateFile: LocalStateFile,
-        defaultPolicies: [NamedPolicy]
+        stateFile: LocalStateFile
     ) throws {
         let identity = activeManifest.map {
             ActiveModelIdentity(
@@ -247,10 +238,8 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
 
         var loaded = try stateFile.load()
         let original = loaded
-        if loaded.policies.isEmpty { loaded.policies = defaultPolicies }
         loaded.workspaceCatalog.reconcileClassifierTypes()
         try loaded.workspaceCatalog.validate()
-        try PolicyCatalog(taxonomy: verifiedPackage.taxonomy, additionalValidTagIDs: Self.treeTagIDs(loaded.workspaceCatalog)).validate(loaded.policies)
         loaded.activeModelIdentity = identity
 
         if let activeManifest {
@@ -474,9 +463,6 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
     /// Every tag id defined across the user's classifier trees — the id space a
     /// content-block policy actually acts on (the classifier emits these), so
     /// policy validation must accept them alongside the seed taxonomy.
-    static func treeTagIDs(_ catalog: WorkspaceCatalog) -> Set<String> {
-        Set(catalog.trees.flatMap { $0.nodes.map(\.id) })
-    }
 
     /// Single-video convenience: a batch of one (one code path).
     public func classifyVideo(
@@ -1264,14 +1250,6 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         )
     }
 
-    public func replacePolicies(_ policies: [NamedPolicy]) throws {
-        lock.lock()
-        defer { lock.unlock() }
-        try PolicyCatalog(taxonomy: activeVerifiedPackage.taxonomy, additionalValidTagIDs: Self.treeTagIDs(state.workspaceCatalog)).validate(policies)
-        state.policies = policies
-        try stateFile.save(state)
-    }
-
     public func activateVerifiedModelPackage(_ verifiedPackage: VerifiedModelPackage) throws {
         try replacePackage(verifiedPackage, disposition: .forward)
     }
@@ -1288,7 +1266,6 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
     ) throws {
         lock.lock()
         defer { lock.unlock() }
-        try PolicyCatalog(taxonomy: verifiedPackage.seedPackage.taxonomy, additionalValidTagIDs: Self.treeTagIDs(state.workspaceCatalog)).validate(state.policies)
         let manifest = verifiedPackage.manifest
         let identity = ActiveModelIdentity(
             kind: .signedPackage,
@@ -1322,12 +1299,6 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         state.rememberSignedIdentityForRollback(identity)
         try stateFile.save(state)
         activeVerifiedPackage = verifiedPackage.seedPackage
-    }
-
-    public func policies() -> [NamedPolicy] {
-        lock.lock()
-        defer { lock.unlock() }
-        return state.policies
     }
 
     public func snapshot() -> LocalClassifierState {

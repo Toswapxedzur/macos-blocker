@@ -22,21 +22,6 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         }
     }
 
-    func testPolicyEditorExposesContentBlockKnobs() throws {
-        let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
-        let script = try String(contentsOf: appURL, encoding: .utf8)
-        // The two user-tunable content-block knobs must reach the policy form,
-        // with data-field keys matching the savePolicy hub action.
-        XCTAssertTrue(script.contains("\"confidenceFloor\""), "confidence floor control missing from policy editor")
-        XCTAssertTrue(script.contains("\"untaggedAction\""), "untagged-action control missing from policy editor")
-
-        let stringsURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "strings", extension: "js"))
-        let strings = try String(contentsOf: stringsURL, encoding: .utf8)
-        for key in ["policies.confidenceFloor", "policies.untaggedAction", "policies.floor5"] {
-            XCTAssertTrue(strings.contains(key), "missing policy string: \(key)")
-        }
-    }
-
     func testShellRetainsVideoCollectionLazyLoadChannel() throws {
         let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)

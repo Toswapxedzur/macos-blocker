@@ -43,12 +43,6 @@ final class VaultPresetTests: XCTestCase {
         XCTAssertFalse(VaultPreset.localOnly.researchOverrides().enabled)
     }
 
-    func testConfidenceFloorOrdering() {
-        // Stricter presets block on lower confidence (lower floor = more blocking).
-        XCTAssertGreaterThan(VaultPreset.gentle.confidenceFloor, VaultPreset.balanced.confidenceFloor)
-        XCTAssertGreaterThan(VaultPreset.balanced.confidenceFloor, VaultPreset.strict.confidenceFloor)
-    }
-
     func testMatchesDetectsDrift() {
         let preset = VaultPreset.balanced
         // Freshly-written preset values match.
