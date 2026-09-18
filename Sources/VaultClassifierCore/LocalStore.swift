@@ -572,14 +572,15 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
                 resolver: engineResolver,
                 configuration: localLLMSettings
             )
-            // `maximumTags` here is the resolved global cap (classificationMaximumTags);
-            // min/expected globals come from the local-LLM settings, per-type overridable.
-            let effectiveMaximum = overrides?.maximumTags ?? maximumTags
-            let effectiveMinimum = min(effectiveMaximum, max(0, overrides?.minimumTags ?? localLLMSettings.minimumTags))
-            let effectiveExpectedRaw = overrides?.expectedTags ?? localLLMSettings.expectedTags
-            let effectiveExpected = effectiveExpectedRaw.map { min(effectiveMaximum, max(max(1, effectiveMinimum), $0)) }
+            // The max source here is the resolved global cap (classificationMaximumTags),
+            // while min/expected globals come from the local-LLM settings — each per-type
+            // overridable — so we resolve them together through the one `TagBounds`.
+            let bounds = TagBounds(
+                minimum: overrides?.minimumTags ?? localLLMSettings.minimumTags,
+                expected: overrides?.expectedTags ?? localLLMSettings.expectedTags,
+                maximum: overrides?.maximumTags ?? maximumTags)
             let pipeline = VideoClassificationPipeline(
-                llm: llm, maximumTags: effectiveMaximum, minimumTags: effectiveMinimum, expectedTags: effectiveExpected)
+                llm: llm, maximumTags: bounds.maximum, minimumTags: bounds.minimum, expectedTags: bounds.expected)
             let typeHouseRules = Self.effectiveHouseRules(global: houseRules, perType: overrides?.houseRules)
             let results = try await pipeline.classifyBatch(
                 pending,
