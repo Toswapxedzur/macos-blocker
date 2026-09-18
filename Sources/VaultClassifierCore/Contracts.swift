@@ -219,6 +219,13 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
     /// to opt into multi-tag recall. Secondaries above 1 are confidence-gated in
     /// the pipeline. Clamped 1–16.
     public var maximumTags: Int
+    /// Fewest tags the model MUST emit (0 = it may decline with "none"). ≥1 drops
+    /// the decline option and forces at least this many best guesses — recall over
+    /// precision, correctable at the policy floor. Clamped to 0…maximumTags.
+    public var minimumTags: Int
+    /// A soft target told to the model ("aim for about N"); nil = no target. The
+    /// grammar still enforces minimumTags…maximumTags. Clamped to that range.
+    public var expectedTags: Int?
     /// Ascending probability thresholds mapping the chosen token's renormalized
     /// softmax onto confidence 2, 3, 4, 5 (below the first threshold = 1).
     public var confidenceThresholds: [Double]
@@ -237,6 +244,8 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
         temperature: Double = 0,
         allowDecline: Bool = true,
         maximumTags: Int = 1,
+        minimumTags: Int = 0,
+        expectedTags: Int? = nil,
         confidenceThresholds: [Double] = [0.20, 0.40, 0.60, 0.85],
         houseRules: String = "",
         maxResidentModels: Int = Self.defaultMaxResidentModels
@@ -249,7 +258,11 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
         self.maximumOutputTokens = min(128, max(4, maximumOutputTokens))
         self.temperature = min(2.0, max(0, temperature))
         self.allowDecline = allowDecline
-        self.maximumTags = min(16, max(1, maximumTags))
+        let cappedMaximum = min(16, max(1, maximumTags))
+        self.maximumTags = cappedMaximum
+        let cappedMinimum = min(cappedMaximum, max(0, minimumTags))
+        self.minimumTags = cappedMinimum
+        self.expectedTags = expectedTags.map { min(cappedMaximum, max(max(1, cappedMinimum), $0)) }
         let cleaned = confidenceThresholds
             .map { min(0.999, max(0.001, $0)) }
             .sorted()
@@ -260,7 +273,7 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case modelFileName, engineEnabled, contextTokens, batchTokens, gpuOffload
-        case maximumOutputTokens, temperature, allowDecline, maximumTags
+        case maximumOutputTokens, temperature, allowDecline, maximumTags, minimumTags, expectedTags
         case confidenceThresholds, houseRules, maxResidentModels
     }
 
@@ -278,6 +291,8 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
             temperature: try container.decodeIfPresent(Double.self, forKey: .temperature) ?? 0,
             allowDecline: try container.decodeIfPresent(Bool.self, forKey: .allowDecline) ?? true,
             maximumTags: try container.decodeIfPresent(Int.self, forKey: .maximumTags) ?? 1,
+            minimumTags: try container.decodeIfPresent(Int.self, forKey: .minimumTags) ?? 0,
+            expectedTags: try container.decodeIfPresent(Int.self, forKey: .expectedTags),
             confidenceThresholds: try container.decodeIfPresent([Double].self, forKey: .confidenceThresholds) ?? [0.20, 0.40, 0.60, 0.85],
             houseRules: try container.decodeIfPresent(String.self, forKey: .houseRules) ?? "",
             maxResidentModels: try container.decodeIfPresent(Int.self, forKey: .maxResidentModels) ?? Self.defaultMaxResidentModels
@@ -301,13 +316,19 @@ public struct LocalModelOverrides: Codable, Equatable, Sendable {
     /// Per-type cap on tags kept per video. nil = inherit the global
     /// `LocalLLMSettings.maximumTags`. Clamped 1–16 when set.
     public var maximumTags: Int?
+    /// Per-type fewest tags (see `LocalLLMSettings.minimumTags`). nil = inherit.
+    public var minimumTags: Int?
+    /// Per-type soft target (see `LocalLLMSettings.expectedTags`). nil = inherit.
+    public var expectedTags: Int?
 
     public init(
         houseRules: String? = nil,
         allowDecline: Bool? = nil,
         confidenceThresholds: [Double]? = nil,
         thumbnailOcrEvidence: Bool? = nil,
-        maximumTags: Int? = nil
+        maximumTags: Int? = nil,
+        minimumTags: Int? = nil,
+        expectedTags: Int? = nil
     ) {
         self.houseRules = houseRules.map { String($0.prefix(4_000)) }
         self.allowDecline = allowDecline
@@ -322,6 +343,8 @@ public struct LocalModelOverrides: Codable, Equatable, Sendable {
         }
         self.thumbnailOcrEvidence = thumbnailOcrEvidence
         self.maximumTags = maximumTags.map { min(16, max(1, $0)) }
+        self.minimumTags = minimumTags.map { min(16, max(0, $0)) }
+        self.expectedTags = expectedTags.map { min(16, max(1, $0)) }
     }
 
     /// Effective value with the default applied.
@@ -334,9 +357,20 @@ public struct LocalModelOverrides: Codable, Equatable, Sendable {
         maximumTags ?? global
     }
 
+    /// Effective min/expected, resolved and mutually consistent (0 ≤ min ≤
+    /// expected ≤ max). Resolves against the global settings when unset.
+    public func effectiveTagBounds(global: LocalLLMSettings) -> (minimum: Int, expected: Int?, maximum: Int) {
+        let maximum = effectiveMaximumTags(global: global.maximumTags)
+        let minimum = min(maximum, max(0, minimumTags ?? global.minimumTags))
+        let expectedRaw = expectedTags ?? global.expectedTags
+        let expected = expectedRaw.map { min(maximum, max(max(1, minimum), $0)) }
+        return (minimum, expected, maximum)
+    }
+
     public var isEmpty: Bool {
         houseRules == nil && allowDecline == nil && confidenceThresholds == nil
             && thumbnailOcrEvidence == nil && maximumTags == nil
+            && minimumTags == nil && expectedTags == nil
     }
 }
 

@@ -320,6 +320,13 @@ final class VaultClassifierViewModel: ObservableObject {
         )
     }
 
+    /// A web field that is optional: blank, absent, or unparseable → nil.
+    nonisolated static func optionalWebInteger(_ value: Any?) -> Int? {
+        if let n = value as? Int { return n }
+        guard let raw = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
+        return Int(raw)
+    }
+
     nonisolated private static func researchCredential(
         for profile: APIKeyProviderProfile
     ) throws -> ProviderCredentialRecord {
@@ -2125,7 +2132,9 @@ final class VaultClassifierViewModel: ObservableObject {
         allowDecline: Bool?,
         confidenceThresholds: [Double]?,
         thumbnailOcrEvidence: Bool?,
-        maximumTags: Int?
+        maximumTags: Int?,
+        minimumTags: Int?,
+        expectedTags: Int?
     ) {
         do {
             guard var catalog = localState?.workspaceCatalog,
@@ -2139,7 +2148,9 @@ final class VaultClassifierViewModel: ObservableObject {
                 allowDecline: allowDecline,
                 confidenceThresholds: confidenceThresholds,
                 thumbnailOcrEvidence: thumbnailOcrEvidence,
-                maximumTags: maximumTags
+                maximumTags: maximumTags,
+                minimumTags: minimumTags,
+                expectedTags: expectedTags
             ) : nil
             catalog.classifierTypes[index].localModelOverrides = overrides?.isEmpty == false ? overrides : nil
             catalog.classifierTypes[index].modelFileName = modelFileName
@@ -2230,7 +2241,9 @@ final class VaultClassifierViewModel: ObservableObject {
             allowDecline: data["allowDecline"] as? Bool,
             confidenceThresholds: rawThresholds.isEmpty ? nil : rawThresholds,
             thumbnailOcrEvidence: data["thumbnailOcrEvidence"] as? Bool,
-            maximumTags: maximumTags
+            maximumTags: maximumTags,
+            minimumTags: Self.optionalWebInteger(data["minimumTags"]),
+            expectedTags: Self.optionalWebInteger(data["expectedTags"])
         )
         return .init(
             typeID: typeID,
@@ -2418,6 +2431,8 @@ final class VaultClassifierViewModel: ObservableObject {
                     "temperature": llmSettings.temperature,
                     "allowDecline": llmSettings.allowDecline,
                     "maximumTags": llmSettings.maximumTags,
+                    "minimumTags": llmSettings.minimumTags,
+                    "expectedTags": llmSettings.expectedTags ?? NSNull(),
                     "confidenceThresholds": llmSettings.confidenceThresholds,
                     "houseRules": llmSettings.houseRules,
                     "maxResidentModels": llmSettings.maxResidentModels,
@@ -2519,6 +2534,8 @@ final class VaultClassifierViewModel: ObservableObject {
                             "confidenceThresholds": overrides.confidenceThresholds ?? NSNull(),
                             "thumbnailOcrEvidence": overrides.thumbnailOcrEvidence ?? NSNull(),
                             "maximumTags": overrides.maximumTags ?? NSNull(),
+                            "minimumTags": overrides.minimumTags ?? NSNull(),
+                            "expectedTags": overrides.expectedTags ?? NSNull(),
                         ] as [String: Any]
                     } ?? NSNull(),
                     "modelFileName": classifierType.modelFileName ?? "",
@@ -2869,6 +2886,8 @@ final class VaultClassifierViewModel: ObservableObject {
                     temperature: temperature,
                     allowDecline: try webBool(data, key: "allowDecline"),
                     maximumTags: try positiveInteger(try webString(data, key: "maximumTags", limit: 16), label: "Maximum tags"),
+                    minimumTags: try nonnegativeInteger(try webString(data, key: "minimumTags", limit: 16), label: "Minimum tags"),
+                    expectedTags: Self.optionalWebInteger(data["expectedTags"]),
                     confidenceThresholds: thresholds,
                     houseRules: try webString(data, key: "houseRules", limit: 4_000),
                     maxResidentModels: try positiveInteger(
@@ -2958,7 +2977,9 @@ final class VaultClassifierViewModel: ObservableObject {
                     allowDecline: input.overrides?.allowDecline,
                     confidenceThresholds: input.overrides?.confidenceThresholds,
                     thumbnailOcrEvidence: input.overrides?.thumbnailOcrEvidence,
-                    maximumTags: input.overrides?.maximumTags
+                    maximumTags: input.overrides?.maximumTags,
+                    minimumTags: input.overrides?.minimumTags,
+                    expectedTags: input.overrides?.expectedTags
                 )
             case "saveClassifierTypeResearch":
                 let input = try Self.parseClassifierTypeResearchWebInput(data)
