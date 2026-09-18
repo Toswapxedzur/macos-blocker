@@ -1,5 +1,6 @@
 import Foundation
 import VaultClassifierCore
+import VaultClassifierBridge
 
 /// One bounded migration for development builds that previously wrote into
 /// production-named local state. The move is atomic at the directory level;

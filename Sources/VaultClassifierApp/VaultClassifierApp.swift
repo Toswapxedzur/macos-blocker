@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import VaultClassifierCore
+import VaultClassifierBridge
 import VaultClassifierLLM
 
 @main

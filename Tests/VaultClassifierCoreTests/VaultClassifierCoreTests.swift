@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import VaultClassifierCore
+import VaultClassifierBridge
 
 final class VaultClassifierCoreTests: XCTestCase {
     func testBundledSeedLoadsAndTagTreeBuildsInferenceTaxonomy() throws {

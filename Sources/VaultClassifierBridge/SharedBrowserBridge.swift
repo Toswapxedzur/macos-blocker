@@ -1,4 +1,5 @@
 import Foundation
+import VaultClassifierCore
 
 /// The browser-facing operation vocabulary carried by the shared local Vault
 /// hub. The hub relays only these bounded request shapes and never classifies.
