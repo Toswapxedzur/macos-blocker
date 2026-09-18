@@ -34,7 +34,6 @@ extension VaultClassifierViewModel {
                     "allowDecline": llmSettings.allowDecline,
                     "maximumTags": llmSettings.maximumTags,
                     "minimumTags": llmSettings.minimumTags,
-                    "expectedTags": llmSettings.expectedTags ?? NSNull(),
                     "confidenceThresholds": llmSettings.confidenceThresholds,
                     "houseRules": llmSettings.houseRules,
                     "maxResidentModels": llmSettings.maxResidentModels,
@@ -137,7 +136,6 @@ extension VaultClassifierViewModel {
                             "thumbnailOcrEvidence": overrides.thumbnailOcrEvidence ?? NSNull(),
                             "maximumTags": overrides.maximumTags ?? NSNull(),
                             "minimumTags": overrides.minimumTags ?? NSNull(),
-                            "expectedTags": overrides.expectedTags ?? NSNull(),
                         ] as [String: Any]
                     } ?? NSNull(),
                     "modelFileName": classifierType.modelFileName ?? "",
@@ -458,7 +456,6 @@ extension VaultClassifierViewModel {
                     allowDecline: try webBool(data, key: "allowDecline"),
                     maximumTags: try positiveInteger(try webString(data, key: "maximumTags", limit: 16), label: "Maximum tags"),
                     minimumTags: try nonnegativeInteger(try webString(data, key: "minimumTags", limit: 16), label: "Minimum tags"),
-                    expectedTags: Self.optionalWebInteger(data["expectedTags"]),
                     confidenceThresholds: thresholds,
                     houseRules: try webString(data, key: "houseRules", limit: 4_000),
                     maxResidentModels: try positiveInteger(
@@ -549,8 +546,7 @@ extension VaultClassifierViewModel {
                     confidenceThresholds: input.overrides?.confidenceThresholds,
                     thumbnailOcrEvidence: input.overrides?.thumbnailOcrEvidence,
                     maximumTags: input.overrides?.maximumTags,
-                    minimumTags: input.overrides?.minimumTags,
-                    expectedTags: input.overrides?.expectedTags
+                    minimumTags: input.overrides?.minimumTags
                 )
             case "saveClassifierTypeResearch":
                 let input = try Self.parseClassifierTypeResearchWebInput(data)

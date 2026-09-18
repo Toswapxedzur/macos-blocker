@@ -582,27 +582,6 @@ case "batch":
     print(String(format: "batched: %.0f ms total   (%.0f ms/video)   speedup ×%.1f", ms(s1, s2), ms(s1, s2) / Double(items.count), ms(s0, s1) / ms(s1, s2)))
     print("equivalence: same tags \(sameTags)/\(items.count)   same tags+confidence \(sameAll)/\(items.count)")
 
-case "summarize":
-    // Do corrections summarize into GOOD rules? Synthetic corrections with a known
-    // intended rule (incl. traps); see CorrectionSummaryExperiment.swift.
-    //   --model=<path.gguf>   model under test (default: this environment's)
-    //   --only=<substring>    run one scenario (e.g. --only=S2)
-    //   --no-downstream       only show what the model writes
-    let modelOverride = args.compactMap { $0.hasPrefix("--model=") ? String($0.dropFirst(8)) : nil }.first
-    guard let modelPath = modelOverride ?? VaultLocalLLMEngine.defaultModelPath(preferredFileName: state.settings.localLLM.modelFileName) else {
-        die("no .gguf model found for this environment")
-    }
-    let engine: VaultLocalLLMEngine
-    do { engine = try VaultLocalLLMEngine(modelPath: modelPath) } catch { die("engine load failed: \(error)") }
-    try await runSummarizeExperiment(
-        engine: engine, modelName: (modelPath as NSString).lastPathComponent,
-        type: type, tree: tree, baseCatalog: catalog,
-        baseHouseRules: productionHouseRules,
-        maximumTags: args.compactMap { $0.hasPrefix("--max=") ? Int($0.dropFirst(6)) : nil }.first ?? state.settings.localLLM.maximumTags,
-        allowedNames: allowedNames,
-        onlyScenario: args.compactMap { $0.hasPrefix("--only=") ? String($0.dropFirst(7)) : nil }.first,
-        skipDownstream: args.contains("--no-downstream"))
-
 default:
-    die("usage: VaultClassifierEval sample <N> [out.json] | score <in.json> | abtest <in.json> | calib <in.json> | needs <in.json> | latency <in.json> | batch <in.json> | summarize")
+    die("usage: VaultClassifierEval sample <N> [out.json] | score <in.json> | abtest <in.json> | calib <in.json> | needs <in.json> | latency <in.json> | batch <in.json>")
 }
