@@ -388,6 +388,40 @@ func verifiedRules(_ output: String, corrections: [SyntheticCorrection], allowed
     return (kept, rejected)
 }
 
+/// A CORRECT-BY-CONSTRUCTION summary of corrections: code groups them by
+/// (what the assistant said → what the user chose), counts each pair, and quotes
+/// real titles verbatim. Nothing is written by a model, so nothing can be invented;
+/// nothing is matched on text, so no language handling exists — the classifier
+/// itself judges which line resembles the video in front of it. Lives in the cached
+/// static prefix (zero per-video cost). `maximumPairs` is the only knob.
+func correctionSummaryBlock(_ corrections: [SyntheticCorrection], withExamples: Bool, maximumPairs: Int = 12, examplesPerPair: Int = 2) -> String {
+    struct Pair { var count = 0; var titles: [String] = []; let said: String; let wants: String }
+    var pairs: [String: Pair] = [:]
+    var order: [String] = []
+    for c in corrections {
+        let said = c.modelSaid.isEmpty ? "no tag" : c.modelSaid.sorted().joined(separator: " + ")
+        let wants = c.userWants.isEmpty ? "no tag" : c.userWants.sorted().joined(separator: " + ")
+        let key = said + "\u{1F}" + wants
+        if pairs[key] == nil { pairs[key] = Pair(said: said, wants: wants); order.append(key) }
+        pairs[key]!.count += 1
+        pairs[key]!.titles.append(c.title)
+    }
+    let ranked = order.sorted { a, b in
+        pairs[a]!.count != pairs[b]!.count ? pairs[a]!.count > pairs[b]!.count : order.firstIndex(of: a)! < order.firstIndex(of: b)!
+    }.prefix(maximumPairs)
+    guard !ranked.isEmpty else { return "" }
+    var lines = ["Corrections this user has already made (the tag the assistant gave → the tag the user chose instead, how many times" + (withExamples ? ", real examples" : "") + "). Apply the same choice to videos on the same subject:"]
+    for key in ranked {
+        let pair = pairs[key]!
+        var line = "- \(pair.said) → \(pair.wants)  ×\(pair.count)"
+        if withExamples {
+            line += "   e.g. " + pair.titles.suffix(examplesPerPair).map { "\"" + String($0.prefix(90)) + "\"" }.joined(separator: ", ")
+        }
+        lines.append(line)
+    }
+    return lines.joined(separator: "\n")
+}
+
 struct RuleAssessment {
     let lines: [String]
     let saidNoRule: Bool
@@ -491,6 +525,31 @@ func runSummarizeExperiment(
     }
 
     let scenarios = summaryScenarios.filter { onlyScenario == nil || $0.id.lowercased().contains(onlyScenario!.lowercased()) }
+
+    // `--retrieval`: no model needed. For every held-out video that SHOULD be fixed,
+    // which of the scenario's corrections would production retrieve as exemplars
+    // when the video comes from a DIFFERENT creator? (Same creator retrieves all.)
+    if CommandLine.arguments.contains("--retrieval") {
+        var reached = 0, total = 0
+        for scenario in scenarios {
+            let examples = scenario.corrections.enumerated().map { index, c in
+                CorrectionExample(
+                    id: "r-\(index)", classifierTypeID: type.id, platformID: "youtube",
+                    entryID: "youtube:video:r-\(scenario.id)-\(index)", creatorID: "youtube:channel:corrected",
+                    title: c.title, correctTagIDs: c.userWants.compactMap { idByName[$0.lowercased()] }, note: nil,
+                    createdAtMilliseconds: Int64(index))
+            }
+            print("\n▌\(scenario.id)")
+            for item in scenario.heldOut where item.shouldChange {
+                let got = CorrectionRetriever.retrieve(title: item.title, creatorID: "youtube:channel:someone-else", excludingEntryID: nil, from: examples, tree: tree)
+                total += 1; if !got.isEmpty { reached += 1 }
+                print("  \(got.isEmpty ? "✗ nothing retrieved" : "✓ \(got.count) retrieved")  ← \(item.title)")
+                for exemplar in got { print("        via: \(exemplar.title)") }
+            }
+        }
+        print("\ncross-creator: a past correction reached \(reached)/\(total) of the videos it should have helped")
+        return
+    }
     var totals: [String: DownstreamTally] = [:]
     var writeStats: [SummaryPromptVariant: (captured: Int, toCapture: Int, traps: Int, invented: Int, noRuleRight: Int, noRuleCases: Int, offTax: Int)] = [:]
     for variant in SummaryPromptVariant.allCases { writeStats[variant] = (0, 0, 0, 0, 0, 0, 0) }
@@ -508,7 +567,7 @@ func runSummarizeExperiment(
         }
 
         var rulesByVariant: [SummaryPromptVariant: String] = [:]
-        for variant in SummaryPromptVariant.allCases {
+        for variant in SummaryPromptVariant.allCases where !CommandLine.arguments.contains("--no-generation") {
             let started = Date()
             let output = try await engine.generateTextForEvaluation(
                 prompt: variant.prompt(for: scenario.corrections, allowed: allowedNames),
@@ -564,8 +623,16 @@ func runSummarizeExperiment(
                 tags: c.userWants.compactMap { idByName[$0.lowercased()] }.map { ScoredTag(tagID: $0, confidence: ScoredTag.maxConfidence) },
                 source: .humanCorrected, modelVersion: "human-correction-v1"))
         }
+        func withSummary(_ block: String) -> String? {
+            let base = (baseHouseRules ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return block.isEmpty ? baseHouseRules : (base.isEmpty ? block : base + "\n\n" + block)
+        }
+        let pooled = summaryScenarios.flatMap(\.corrections)   // what a real user's block holds: EVERYTHING
         let titles = scenario.heldOut + globalControls
         let conditions: [(name: String, rules: String?, catalog: WorkspaceCatalog, creator: String?)] = [
+            ("summary:counts", withSummary(correctionSummaryBlock(scenario.corrections, withExamples: false)), emptyCatalog, nil),
+            ("summary:counts+ex", withSummary(correctionSummaryBlock(scenario.corrections, withExamples: true)), emptyCatalog, nil),
+            ("summary:ALL+ex", withSummary(correctionSummaryBlock(pooled, withExamples: true, maximumPairs: 24)), emptyCatalog, nil),
             ("no-rules", baseHouseRules, emptyCatalog, nil),
             ("exemplars(prod)", baseHouseRules, exemplarCatalog, nil),
             ("live:same-creator", baseHouseRules, liveCatalog, correctedCreator),
@@ -630,11 +697,11 @@ func runSummarizeExperiment(
         print("  \(variant.rawValue): \(runOn[variant]!)/\(scenarios.count) outputs ran on past the rules (hallucinated more corrections / 'refined' sections)")
     }
     print("WHAT IT DOES  (held-out titles; FIX = wanted tags present & old wrong tag gone, KEEP = own tags present & no leaked tag)")
-    for name in ["no-rules", "exemplars(prod)", "live:same-creator", "rules:as-shipped", "rules:orig+chat", "rules:verified", "rules:oracle"] {
+    for name in ["no-rules", "exemplars(prod)", "live:same-creator", "summary:counts", "summary:counts+ex", "summary:ALL+ex", "rules:as-shipped", "rules:orig+chat", "rules:verified", "rules:oracle"] {
         guard let t = totals[name] else { continue }
         print("  \(name.padding(toLength: 18, withPad: " ", startingAt: 0)) fixed \(t.fixed)/\(t.toFix)   kept intact \(t.intact)/\(t.toKeep)")
     }
-    for name in ["exemplars(prod)", "live:same-creator", "rules:as-shipped", "rules:orig+chat", "rules:verified", "rules:oracle"] {
+    for name in ["summary:counts", "summary:counts+ex", "summary:ALL+ex", "exemplars(prod)", "live:same-creator", "rules:as-shipped", "rules:orig+chat", "rules:verified", "rules:oracle"] {
         guard let t = totals[name], let base = totals["no-rules"] else { continue }
         let baseMisses = Set(base.misses.map { String($0.prefix(while: { $0 != "→" })) })
         let poisoned = t.misses.filter { !baseMisses.contains(String($0.prefix(while: { $0 != "→" }))) }
