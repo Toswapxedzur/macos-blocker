@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import VaultClassifierCore
+@testable import VaultClassifierResearch
 
 final class ProviderTestProtocolTests: XCTestCase {
     func testGeminiConnectionTestUsesFixedPromptAndParsesUsage() throws {

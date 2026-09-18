@@ -1,5 +1,6 @@
 import Foundation
 import VaultClassifierCore
+import VaultClassifierResearch
 
 // Live smoke test for provider-native search grounding. Performs ONE real
 // grounded-generate against the configured provider (default Gemini

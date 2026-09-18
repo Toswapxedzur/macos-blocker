@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import VaultClassifierCore
+@testable import VaultClassifierResearch
 
 final class ProviderGenerationProtocolTests: XCTestCase {
     /// Serper / You.com fed the removed raw-search mode. Their types stay decodable

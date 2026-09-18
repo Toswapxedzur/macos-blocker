@@ -70,7 +70,7 @@ public struct ResearchSubject: Equatable, Sendable {
 }
 
 /// Local routing metadata plus already-sanitized subjects. It deliberately has
-/// no title/summary/body fields, so the remote executor cannot leak them.
+/// no title/summary/body fields, so the remote executor (VaultClassifierResearch) cannot leak them.
 public struct ResearchTask: Equatable, Sendable {
     public static let maximumSubjects = 3
     public static let defaultUrgency = 3
@@ -104,6 +104,10 @@ public struct ResearchTask: Equatable, Sendable {
 }
 
 public struct GroundedResearchProviderConfiguration: Sendable {
+    /// Hard cap on a research generation's output tokens (the generation
+    /// protocol enforces the same bound on every request it builds).
+    public static let maximumOutputTokens = 4_096
+
     public var llmProfile: APIKeyProviderProfile
     public var llmCredential: ProviderCredentialRecord
     public var llmModelIdentifier: String
@@ -119,7 +123,7 @@ public struct GroundedResearchProviderConfiguration: Sendable {
         self.llmCredential = llmCredential
         self.llmModelIdentifier = llmModelIdentifier
         self.maximumOutputTokens = min(
-            ProviderGenerationProtocol.maximumOutputTokens,
+            Self.maximumOutputTokens,
             max(1, maximumOutputTokens)
         )
     }
@@ -133,63 +137,6 @@ public struct GroundedResearchResult: Equatable, Sendable {
     public init(knowledge: KnowledgeEntry, chargedTokenCount: Int) {
         self.knowledge = knowledge
         self.chargedTokenCount = max(0, chargedTokenCount)
-    }
-}
-
-public struct GroundedResearchExecutor: Sendable {
-    public static let requestTimeout: TimeInterval = 30
-    private let http: any ProviderHTTPClient
-
-    public init(http: any ProviderHTTPClient) {
-        self.http = http
-    }
-
-    public func research(
-        _ subject: ResearchSubject,
-        using configuration: GroundedResearchProviderConfiguration
-    ) async throws -> GroundedResearchResult {
-        guard let sanitized = ResearchSubject(kind: subject.kind, subject: subject.subject),
-              sanitized == subject,
-              configuration.llmProfile.type.supportsLLMConfiguration
-        else {
-            throw GroundedResearchError.invalidConfiguration
-        }
-        // The only search execution (RESEARCH-REDESIGN Cut A): the LLM provider
-        // searches natively (Gemini google_search, OpenAI/Anthropic web_search)
-        // and distills in one call. The separate raw-search provider is gone.
-        guard GroundedGenerationProtocol.supportsProviderGrounding(profile: configuration.llmProfile) else {
-            throw GroundedResearchError.invalidConfiguration
-        }
-        let request = try GroundedGenerationProtocol.prepareGroundedGenerate(
-            profile: configuration.llmProfile,
-            modelIdentifier: configuration.llmModelIdentifier,
-            subject: sanitized.subject,
-            kind: sanitized.kind,
-            maximumOutputTokens: configuration.maximumOutputTokens
-        )
-        let response = try await http.send(
-            plan: request.plan,
-            body: request.body,
-            credential: configuration.llmCredential,
-            timeout: Self.requestTimeout
-        )
-        let parsed = try GroundedGenerationProtocol.parseGroundedGeneration(
-            response.data,
-            format: request.plan.bodyFormat
-        )
-        let meaning = parsed.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !meaning.isEmpty else { throw GroundedResearchError.emptyMeaning }
-        let knowledge = KnowledgeEntry(
-            kind: sanitized.kind,
-            subject: sanitized.subject,
-            meaning: meaning,
-            contextTagHints: [],
-            sourceURLs: parsed.sourceURLs
-        )
-        return GroundedResearchResult(
-            knowledge: knowledge,
-            chargedTokenCount: parsed.usage.tokenCount ?? configuration.maximumOutputTokens
-        )
     }
 }
 
@@ -438,22 +385,6 @@ public actor GroundedResearchQueue {
     /// them without waiting for their video to be classified again.
     private var retryableFailures: [String: Pending] = [:]
     private var retryableFailureOrder: [String] = []
-
-    public init(
-        executor: GroundedResearchExecutor,
-        configurationProvider: @escaping ConfigurationProvider,
-        snapshotProvider: @escaping SnapshotProvider,
-        mutationWriter: @escaping MutationWriter
-    ) {
-        self.init(
-            configurationProvider: configurationProvider,
-            snapshotProvider: snapshotProvider,
-            mutationWriter: mutationWriter,
-            researcher: { subject, configuration in
-                try await executor.research(subject, using: configuration)
-            }
-        )
-    }
 
     public init(
         configurationProvider: @escaping ConfigurationProvider,

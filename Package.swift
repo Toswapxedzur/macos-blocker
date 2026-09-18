@@ -48,6 +48,15 @@ let package = Package(
             name: "VaultClassifierBridge",
             dependencies: ["VaultClassifierCore"]
         ),
+        // Cloud grounded-research EXECUTION (provider request plans, HTTP seam,
+        // generation/test/catalog protocols, the research executor). Optional
+        // enrichment kept out of Core so on-device tagging builds and runs with
+        // no network-facing code; Core keeps only the persisted research/provider
+        // DATA and the queue actor, which takes the executor as a closure.
+        .target(
+            name: "VaultClassifierResearch",
+            dependencies: ["VaultClassifierCore"]
+        ),
         // Homebrew's llama.cpp (libllama + Metal-at-runtime ggml). Resolved via
         // pkg-config, so `brew install llama.cpp` is the only prerequisite.
         .systemLibrary(
@@ -65,7 +74,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "VaultClassifierApp",
-            dependencies: ["VaultClassifierCore", "VaultClassifierBridge", "VaultClassifierLLM"],
+            dependencies: ["VaultClassifierCore", "VaultClassifierBridge", "VaultClassifierResearch", "VaultClassifierLLM"],
             resources: [.copy("WebAssets")],
             swiftSettings: cllamaIncludeFlags,
             linkerSettings: cllamaLinkFlags
@@ -77,12 +86,12 @@ let package = Package(
         // Live smoke test for provider-native search grounding (one real call).
         .executableTarget(
             name: "VaultGroundingSmoke",
-            dependencies: ["VaultClassifierCore"]
+            dependencies: ["VaultClassifierCore", "VaultClassifierResearch"]
         ),
         // End-to-end loop: real engine + real Gemini grounding + coordinator.
         .executableTarget(
             name: "VaultFullLoopSmoke",
-            dependencies: ["VaultClassifierCore", "VaultClassifierLLM"],
+            dependencies: ["VaultClassifierCore", "VaultClassifierResearch", "VaultClassifierLLM"],
             swiftSettings: cllamaIncludeFlags,
             linkerSettings: cllamaLinkFlags
         ),
@@ -102,11 +111,11 @@ let package = Package(
         ),
         .testTarget(
             name: "VaultClassifierCoreTests",
-            dependencies: ["VaultClassifierCore", "VaultClassifierBridge"]
+            dependencies: ["VaultClassifierCore", "VaultClassifierBridge", "VaultClassifierResearch"]
         ),
         .testTarget(
             name: "VaultClassifierAppTests",
-            dependencies: ["VaultClassifierApp", "VaultClassifierCore", "VaultClassifierBridge", "VaultClassifierLLM"],
+            dependencies: ["VaultClassifierApp", "VaultClassifierCore", "VaultClassifierBridge", "VaultClassifierResearch", "VaultClassifierLLM"],
             swiftSettings: cllamaIncludeFlags,
             linkerSettings: cllamaLinkFlags
         ),

@@ -1,5 +1,6 @@
 import Foundation
 import VaultClassifierCore
+import VaultClassifierResearch
 
 /// Stores only bounded model identifiers and model-list capability signals
 /// returned by an explicit Probe. It never stores a credential, endpoint,

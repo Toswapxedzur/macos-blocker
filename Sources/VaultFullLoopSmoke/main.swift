@@ -1,5 +1,6 @@
 import Foundation
 import VaultClassifierCore
+import VaultClassifierResearch
 import VaultClassifierLLM
 
 // End-to-end exercise of the full on-device loop against real components:
