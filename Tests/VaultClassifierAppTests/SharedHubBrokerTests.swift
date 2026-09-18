@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 @testable import VaultClassifierApp
 @testable import VaultClassifierCore
+import VaultClassifierBridge
 
 final class SharedHubBrokerTests: XCTestCase {
     private func decodedStatePayload(from script: String) throws -> [String: Any] {

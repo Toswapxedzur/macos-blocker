@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import Security
 import VaultClassifierCore
+import VaultClassifierBridge
 
 private let maximumFrameLength = 64 * 1_024
 #if VAULT_DEVELOPMENT_NATIVE_HOST
