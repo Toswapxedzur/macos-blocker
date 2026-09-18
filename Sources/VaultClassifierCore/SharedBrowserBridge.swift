@@ -21,6 +21,18 @@ public enum SharedBrowserBridgeOperation: String, CaseIterable, Codable, Sendabl
     case devLog = "dev-log"
 }
 
+public extension SharedBrowserBridgeOperation {
+    /// The request operations the local hub will relay browser→classifier —
+    /// exactly this vocabulary, so the broker's guard and the enum can never
+    /// drift (adding a case here is enough; there is no second list to update).
+    static let relayableRequestOperations: Set<String> = Set(allCases.map(\.rawValue))
+
+    /// The single classifier→browser broadcast the hub forwards (a completed
+    /// classification). Broadcast-only, so it is not a request case above.
+    static let videoTagsUpdatedBroadcast = "video-tags-updated"
+    static let relayableBroadcastOperations: Set<String> = [videoTagsUpdatedBroadcast]
+}
+
 public enum SharedBrowserBridgeProtocol {
     public static var address: String { address(for: .current) }
     public static let version = 4

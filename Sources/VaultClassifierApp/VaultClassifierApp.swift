@@ -507,7 +507,7 @@ final class VaultClassifierViewModel: ObservableObject {
             predicted: projection.predicted, pending: false)])
         guard let encoded = try? JSONEncoder().encode(broadcast),
               let object = try? JSONSerialization.jsonObject(with: encoded) as? [String: Any] else { return }
-        sharedHubClient?.broadcast(operation: "video-tags-updated", body: object)
+        sharedHubClient?.broadcast(operation: SharedBrowserBridgeOperation.videoTagsUpdatedBroadcast, body: object)
         devLog("video-tags-updated", ["platform": platformID, "entry": entryID, "tags": "\(projection.tags.count)"])
     }
 
