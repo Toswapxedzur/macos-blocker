@@ -1,5 +1,5 @@
 import Foundation
-import VaultClassifierCore
+@testable import VaultClassifierCore   // upsertVideoClassification: replay what a live correction stores
 import VaultClassifierLLM
 
 // `VaultClassifierEval summarize` — does a model turn user corrections into GOOD
@@ -475,11 +475,11 @@ func runSummarizeExperiment(
     emptyCatalog.correctionExamples = []
     let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: maximumTags)
 
-    func classify(_ titles: [HeldOutTitle], scenario: SummaryScenario, houseRules: String?, catalog: WorkspaceCatalog) async throws -> [[String]] {
+    func classify(_ titles: [HeldOutTitle], scenario: SummaryScenario, houseRules: String?, catalog: WorkspaceCatalog, creatorID: String? = nil) async throws -> [[String]] {
         let inputs = titles.enumerated().map { index, item in
             VideoClassificationPipeline.Input(
                 title: item.title, entryID: "youtube:video:synthetic-\(scenario.id)-\(index)",
-                creatorID: "youtube:channel:synthetic-heldout-\(scenario.id)")
+                creatorID: creatorID ?? "youtube:channel:synthetic-heldout-\(scenario.id)")
         }
         let results = try await pipeline.classifyBatch(
             inputs, platformID: "youtube", classifierType: type, tree: tree, catalog: catalog,
@@ -551,14 +551,28 @@ func runSummarizeExperiment(
                 correctTagIDs: c.userWants.compactMap { idByName[$0.lowercased()] }, note: c.note,
                 createdAtMilliseconds: Int64(1_700_000_000_000 + index))
         }
+        // What a LIVE CORRECTION really leaves behind, for that creator's next videos:
+        // the exemplar AND the authoritative row (human-corrected, confidence 5) that
+        // rebuilds the creator prior — exactly what submitCorrection stores.
+        let correctedCreator = "youtube:channel:synthetic-corrected-\(scenario.id)"
+        var liveCatalog = exemplarCatalog
+        for (index, c) in scenario.corrections.enumerated() {
+            liveCatalog.upsertVideoClassification(VideoClassification(
+                classifierTypeID: type.id, platformID: "youtube",
+                entryID: "youtube:video:synthetic-correction-\(scenario.id)-\(index)", creatorID: correctedCreator,
+                treeID: tree.id, treeRevision: tree.revision,
+                tags: c.userWants.compactMap { idByName[$0.lowercased()] }.map { ScoredTag(tagID: $0, confidence: ScoredTag.maxConfidence) },
+                source: .humanCorrected, modelVersion: "human-correction-v1"))
+        }
         let titles = scenario.heldOut + globalControls
-        let conditions: [(name: String, rules: String?, catalog: WorkspaceCatalog)] = [
-            ("no-rules", baseHouseRules, emptyCatalog),
-            ("exemplars(prod)", baseHouseRules, exemplarCatalog),
-            ("rules:as-shipped", withLearned(rulesByVariant[.asShipped] ?? "", count: scenario.corrections.count), emptyCatalog),
-            ("rules:orig+chat", withLearned(rulesByVariant[.originalChat] ?? "", count: scenario.corrections.count), emptyCatalog),
-            ("rules:verified", withLearned(rulesByVariant[.structured] ?? "", count: scenario.corrections.count), emptyCatalog),
-            ("rules:oracle", withLearned(scenario.oracleRule.isEmpty ? "" : "- " + scenario.oracleRule, count: scenario.corrections.count), emptyCatalog),
+        let conditions: [(name: String, rules: String?, catalog: WorkspaceCatalog, creator: String?)] = [
+            ("no-rules", baseHouseRules, emptyCatalog, nil),
+            ("exemplars(prod)", baseHouseRules, exemplarCatalog, nil),
+            ("live:same-creator", baseHouseRules, liveCatalog, correctedCreator),
+            ("rules:as-shipped", withLearned(rulesByVariant[.asShipped] ?? "", count: scenario.corrections.count), emptyCatalog, nil),
+            ("rules:orig+chat", withLearned(rulesByVariant[.originalChat] ?? "", count: scenario.corrections.count), emptyCatalog, nil),
+            ("rules:verified", withLearned(rulesByVariant[.structured] ?? "", count: scenario.corrections.count), emptyCatalog, nil),
+            ("rules:oracle", withLearned(scenario.oracleRule.isEmpty ? "" : "- " + scenario.oracleRule, count: scenario.corrections.count), emptyCatalog, nil),
         ]
         print("\n  ▸ downstream: held-out titles classified under each condition")
         // FIX  passes when every wanted tag is present and none of the tags the
@@ -577,7 +591,7 @@ func runSummarizeExperiment(
         }
         var table: [[[String]]] = []
         for condition in conditions {
-            table.append(try await classify(titles, scenario: scenario, houseRules: condition.rules, catalog: condition.catalog))
+            table.append(try await classify(titles, scenario: scenario, houseRules: condition.rules, catalog: condition.catalog, creatorID: condition.creator))
         }
         for (row, item) in titles.enumerated() {
             let want = item.expect.isEmpty ? "(none)" : item.expect.sorted().joined(separator: "+")
@@ -589,7 +603,7 @@ func runSummarizeExperiment(
             let kind = item.shouldChange ? "FIX " : "KEEP"
             print("    [\(kind)] \(item.title.prefix(52))")
             print("           want \(want)")
-            for (c, condition) in conditions.enumerated() { print("           \(condition.name.padding(toLength: 16, withPad: " ", startingAt: 0)) \(cells[c])") }
+            for (c, condition) in conditions.enumerated() { print("           \(condition.name.padding(toLength: 18, withPad: " ", startingAt: 0)) \(cells[c])") }
         }
         for (c, condition) in conditions.enumerated() {
             var tally = totals[condition.name] ?? DownstreamTally()
@@ -616,11 +630,11 @@ func runSummarizeExperiment(
         print("  \(variant.rawValue): \(runOn[variant]!)/\(scenarios.count) outputs ran on past the rules (hallucinated more corrections / 'refined' sections)")
     }
     print("WHAT IT DOES  (held-out titles; FIX = wanted tags present & old wrong tag gone, KEEP = own tags present & no leaked tag)")
-    for name in ["no-rules", "exemplars(prod)", "rules:as-shipped", "rules:orig+chat", "rules:verified", "rules:oracle"] {
+    for name in ["no-rules", "exemplars(prod)", "live:same-creator", "rules:as-shipped", "rules:orig+chat", "rules:verified", "rules:oracle"] {
         guard let t = totals[name] else { continue }
-        print("  \(name.padding(toLength: 16, withPad: " ", startingAt: 0)) fixed \(t.fixed)/\(t.toFix)   kept intact \(t.intact)/\(t.toKeep)")
+        print("  \(name.padding(toLength: 18, withPad: " ", startingAt: 0)) fixed \(t.fixed)/\(t.toFix)   kept intact \(t.intact)/\(t.toKeep)")
     }
-    for name in ["exemplars(prod)", "rules:as-shipped", "rules:orig+chat", "rules:verified", "rules:oracle"] {
+    for name in ["exemplars(prod)", "live:same-creator", "rules:as-shipped", "rules:orig+chat", "rules:verified", "rules:oracle"] {
         guard let t = totals[name], let base = totals["no-rules"] else { continue }
         let baseMisses = Set(base.misses.map { String($0.prefix(while: { $0 != "→" })) })
         let poisoned = t.misses.filter { !baseMisses.contains(String($0.prefix(while: { $0 != "→" }))) }
