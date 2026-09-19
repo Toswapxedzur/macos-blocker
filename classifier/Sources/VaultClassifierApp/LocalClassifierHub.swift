@@ -33,14 +33,40 @@ final class LocalClassifierHub {
     private var pending: [String: PendingRequest] = [:]
 
     private(set) var isHosting = false
+    /// Set when the classifier runs inside Mac Vault: Mac Vault's ConnectionHub
+    /// is the sole host (it owns activity + MCP handling), so the classifier must
+    /// never bind the port itself — otherwise it wins the race and the ops only
+    /// ConnectionHub handles are relayed to the classifier and rejected.
+    /// Hosting is opt-IN, and off by default, so an embedded classifier never
+    /// races Mac Vault's ConnectionHub for the fixed hub port. Only the
+    /// standalone development shell — which has no ConnectionHub — calls
+    /// `allowHosting()` to become its own hub. A runtime "suppress" call could
+    /// not win this race: the view model (and its client `connect()`) is built
+    /// before the host's launch code runs, so it must default to suppressed.
+    private var hostingSuppressed = true
 
     private init() {}
 
+    /// The standalone shell opts in to hosting before it builds the page.
+    func allowHosting() {
+        lock.lock()
+        hostingSuppressed = false
+        lock.unlock()
+    }
+
+    func suppressHosting() {
+        lock.lock()
+        hostingSuppressed = true
+        lock.unlock()
+        stopListenerOnly()
+    }
+
     func startIfNeeded() {
         lock.lock()
+        let suppressed = hostingSuppressed
         let alreadyListening = listener != nil
         lock.unlock()
-        guard !alreadyListening else { return }
+        guard !suppressed, !alreadyListening else { return }
         do {
             let parameters = NWParameters.tcp
             parameters.defaultProtocolStack.applicationProtocols.insert(NWProtocolWebSocket.Options(), at: 0)

@@ -46,8 +46,14 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
         // The Vault Classifier is a component of this app. Starting its tagging
         // service here — not when its page is first opened — keeps tags flowing
         // to the browser for the whole session, including after the window is
-        // closed (the process stays alive; see below).
-        MainActor.assumeIsolated { VaultClassifierPage.shared.start() }
+        // closed (the process stays alive; see below). Mac Vault's ConnectionHub
+        // (started above) is the sole hub host, so suppress the classifier's own
+        // hub before it connects — otherwise it races for the port and the
+        // activity/MCP ops only ConnectionHub handles get misrouted to it.
+        MainActor.assumeIsolated {
+            VaultClassifierPage.shared.suppressOwnHubHosting()
+            VaultClassifierPage.shared.start()
+        }
 
         // The Activity log records app-usage time (native) and browser activity
         // (flushed by the extension over the hub). One store is shared by the

@@ -31,6 +31,7 @@ let package = Package(
         // an in-app page (owner decision 2026-09-19 — the classifier is a
         // component of Mac Vault, not a separate product).
         .library(name: "VaultClassifierApp", targets: ["VaultClassifierApp"]),
+        .library(name: "VaultClassifierBridge", targets: ["VaultClassifierBridge"]),
         // Standalone development window around the same library (headless rigs).
         .executable(name: "VaultClassifierShell", targets: ["VaultClassifierShell"]),
         .executable(name: "VaultLocalHubNativeHost", targets: ["VaultLocalHubNativeHost"]),
