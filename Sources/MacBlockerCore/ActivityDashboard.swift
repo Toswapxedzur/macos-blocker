@@ -60,9 +60,8 @@ public struct ActivityDashboardSettings: Codable, Equatable, Sendable {
 public enum ActivityDashboard {
     public static let paletteSize = 12
 
-    /// A deterministic key→palette-index hash. `String.hashValue` is salted per
-    /// process, so a stable FNV-1a is used instead — a key keeps its colour
-    /// across launches and range changes.
+    /// A deterministic key→palette-index hash (FNV-1a; `String.hashValue` is
+    /// salted per process). Used as a fallback colour for a key that has no bar.
     public static func colorIndex(for key: String) -> Int {
         var hash: UInt64 = 0xcbf29ce484222325
         for byte in key.utf8 {
@@ -72,7 +71,10 @@ public enum ActivityDashboard {
         return Int(hash % UInt64(paletteSize))
     }
 
-    /// Ranked bars (largest first) of total seconds per key.
+    /// Ranked bars (largest first) of total seconds per key. Colour is assigned
+    /// by rank so the top items in a lens are always visually distinct (the dot
+    /// is a legend) — collisions only start past 12 keys. A key's colour holds
+    /// between a lens's bar and its timeline via the same ranking map.
     public static func bars(from records: [ActivityRecord]) -> [ActivityBar] {
         var totals: [String: (label: String, seconds: Double, platform: String?)] = [:]
         for record in records {
@@ -83,22 +85,28 @@ public enum ActivityDashboard {
             .map { (key: $0.key, label: $0.value.label, seconds: $0.value.seconds, platform: $0.value.platform) }
             .sorted { $0.seconds > $1.seconds }
         let maxSeconds = ranked.first?.seconds ?? 0
-        return ranked.map {
+        return ranked.enumerated().map { index, item in
             ActivityBar(
-                key: $0.key,
-                label: $0.label,
-                seconds: $0.seconds,
-                fraction: maxSeconds > 0 ? $0.seconds / maxSeconds : 0,
-                colorIndex: colorIndex(for: $0.key),
-                platform: $0.platform
+                key: item.key,
+                label: item.label,
+                seconds: item.seconds,
+                fraction: maxSeconds > 0 ? item.seconds / maxSeconds : 0,
+                colorIndex: index % paletteSize,
+                platform: item.platform
             )
         }
     }
 
     /// Chronological timeline segments positioned within the range. Each record
     /// is one contiguous session (the recorder already merged samples), so a
-    /// record maps to one segment. Fractions are clamped to the range.
-    public static func timeline(from records: [ActivityRecord], rangeStartMs: Double, rangeEndMs: Double) -> [ActivitySegment] {
+    /// record maps to one segment. Fractions are clamped to the range. Segment
+    /// colours come from `colorForKey` so they match the bar graph.
+    public static func timeline(
+        from records: [ActivityRecord],
+        rangeStartMs: Double,
+        rangeEndMs: Double,
+        colorForKey: (String) -> Int
+    ) -> [ActivitySegment] {
         let span = rangeEndMs - rangeStartMs
         guard span > 0 else { return [] }
         return records
@@ -112,7 +120,7 @@ public enum ActivityDashboard {
                 return ActivitySegment(
                     key: record.key,
                     label: record.label,
-                    colorIndex: colorIndex(for: record.key),
+                    colorIndex: colorForKey(record.key),
                     startFraction: start,
                     widthFraction: end - start,
                     startedAtMs: startMs,
@@ -122,10 +130,13 @@ public enum ActivityDashboard {
     }
 
     public static func lens(from records: [ActivityRecord], rangeStartMs: Double, rangeEndMs: Double) -> ActivityLensView {
-        ActivityLensView(
+        let bars = bars(from: records)
+        var colorByKey: [String: Int] = [:]
+        for bar in bars { colorByKey[bar.key] = bar.colorIndex }
+        return ActivityLensView(
             totalSeconds: records.reduce(0) { $0 + $1.seconds },
-            bars: bars(from: records),
-            timeline: timeline(from: records, rangeStartMs: rangeStartMs, rangeEndMs: rangeEndMs)
+            bars: bars,
+            timeline: timeline(from: records, rangeStartMs: rangeStartMs, rangeEndMs: rangeEndMs) { colorByKey[$0] ?? colorIndex(for: $0) }
         )
     }
 

@@ -55,6 +55,7 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
         // off), and the store is the backstop.
         let activityStore = ActivityStore.standard()
         ConnectionHub.shared.activityStore = activityStore
+        MainActor.assumeIsolated { ActivityPage.shared.configure(store: activityStore) }
         let activityRecorder = ActivityRecorderService(store: activityStore)
         activityRecorder.start()
         self.activityRecorder = activityRecorder
