@@ -107,6 +107,26 @@ public final class ActivityStore: @unchecked Sendable {
             .sorted { $0.startedAt < $1.startedAt }
     }
 
+    /// The render-ready dashboard snapshot for a range (bars + timeline + the
+    /// watched-content bars + the current settings). Reads app-usage / web-visit /
+    /// content-watched records for the range and builds geometry via
+    /// `ActivityDashboard`.
+    public func dashboardSnapshot(from start: Date, to end: Date) -> ActivityDashboardSnapshot {
+        let startMs = start.timeIntervalSince1970 * 1000
+        let endMs = end.timeIntervalSince1970 * 1000
+        let app = records(category: .appUsage, from: start, to: end)
+        let web = records(category: .webVisit, from: start, to: end)
+        let watched = records(category: .contentWatched, from: start, to: end)
+        return ActivityDashboardSnapshot(
+            rangeStartMs: startMs,
+            rangeEndMs: endMs,
+            app: ActivityDashboard.lens(from: app, rangeStartMs: startMs, rangeEndMs: endMs),
+            web: ActivityDashboard.lens(from: web, rangeStartMs: startMs, rangeEndMs: endMs),
+            watched: ActivityDashboard.bars(from: watched),
+            settings: ActivityDashboard.settingsView(loadSettings())
+        )
+    }
+
     // MARK: - Retention / deletion
 
     /// Deletes day files older than each category's retention window. A window of
