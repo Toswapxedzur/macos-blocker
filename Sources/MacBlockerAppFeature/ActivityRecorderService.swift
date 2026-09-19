@@ -1,13 +1,18 @@
 #if os(macOS)
 import AppKit
-import CoreGraphics
 import MacBlockerCore
 
-/// Samples the focused app and the user's activity on a timer and feeds the
-/// pure `ActivityUsageAccumulator`, writing `appUsage` records to the store.
-/// See ACTIVITY-LOG.md §2/§5. Local-only; no window titles are read (only the
-/// app's bundle id + name), so this needs no Accessibility or Screen-Recording
-/// grant.
+/// Samples the focused app on a timer and feeds the pure
+/// `ActivityUsageAccumulator`, writing `appUsage` records to the store.
+/// See ACTIVITY-LOG.md §2/§5. Local-only; reads only the app's bundle id + name
+/// (no window titles), so this needs no Accessibility or Screen-Recording grant.
+///
+/// Inactivity detection is intentionally OFF for now (owner decision
+/// 2026-09-19): time accrues while an app is foreground + focused whether or not
+/// the user is present. Accrual still stops naturally during system sleep (the
+/// timer does not fire and the monotonic clock does not advance), and the
+/// per-step cap bounds any gap. The `active` seam in the accumulator and the
+/// `idleThresholdSeconds` setting are kept so the feature can return later.
 public final class ActivityRecorderService {
     private let store: ActivityStore
     private let accumulator: ActivityUsageAccumulator
@@ -15,9 +20,6 @@ public final class ActivityRecorderService {
 
     private var timer: Timer?
     private var settings: ActivitySettings
-    private var isLocked = false
-    private var isAsleep = false
-    private var observers: [NSObjectProtocol] = []
 
     public init(store: ActivityStore, tickInterval: TimeInterval = 20) {
         self.store = store
@@ -34,7 +36,6 @@ public final class ActivityRecorderService {
 
     public func start() {
         store.prune(settings: settings)
-        installObservers()
         let timer = Timer(timeInterval: tickInterval, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
@@ -43,8 +44,6 @@ public final class ActivityRecorderService {
     public func stop() {
         timer?.invalidate()
         timer = nil
-        for observer in observers { removeObserver(observer) }
-        observers.removeAll()
         flush()
     }
 
@@ -58,15 +57,13 @@ public final class ActivityRecorderService {
             emit(accumulator.flush())
             return
         }
-        let idle = Self.systemIdleSeconds()
-        let active = !isLocked && !isAsleep && idle < Double(settings.idleThresholdSeconds)
         let app = NSWorkspace.shared.frontmostApplication
         let sample = ActivitySample(
             monotonic: ProcessInfo.processInfo.systemUptime,
             wall: Date(),
             appKey: app?.bundleIdentifier,
             appLabel: app?.localizedName ?? app?.bundleIdentifier ?? "Unknown",
-            active: active
+            active: true
         )
         emit(accumulator.sample(sample))
     }
@@ -77,35 +74,5 @@ public final class ActivityRecorderService {
     }
 
     private func flush() { emit(accumulator.flush()) }
-
-    /// Seconds since the last user input, system-wide. Needs no special
-    /// permission and does not read what the user typed.
-    private static func systemIdleSeconds() -> Double {
-        CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~UInt32(0))!)
-    }
-
-    // MARK: - Lock / sleep observers (accrual pauses; see ACTIVITY-LOG.md §2)
-
-    private func installObservers() {
-        let ws = NSWorkspace.shared.notificationCenter
-        observers.append(ws.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.isAsleep = true; self?.flush()
-        })
-        observers.append(ws.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.isAsleep = false
-        })
-        let dnc = DistributedNotificationCenter.default()
-        observers.append(dnc.addObserver(forName: .init("com.apple.screenIsLocked"), object: nil, queue: .main) { [weak self] _ in
-            self?.isLocked = true; self?.flush()
-        })
-        observers.append(dnc.addObserver(forName: .init("com.apple.screenIsUnlocked"), object: nil, queue: .main) { [weak self] _ in
-            self?.isLocked = false
-        })
-    }
-
-    private func removeObserver(_ observer: NSObjectProtocol) {
-        NSWorkspace.shared.notificationCenter.removeObserver(observer)
-        DistributedNotificationCenter.default().removeObserver(observer)
-    }
 }
 #endif
