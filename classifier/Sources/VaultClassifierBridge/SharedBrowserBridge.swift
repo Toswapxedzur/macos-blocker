@@ -20,7 +20,7 @@ public enum SharedBrowserBridgeOperation: String, CaseIterable, Codable, Sendabl
     // VaultDevLog file (blockerGroup/misc/dev.log). No-op unless the app is in
     // the development environment.
     case devLog = "dev-log"
-    // Activity log (see macosBlocker/ACTIVITY-LOG.md). The extension flushes
+    // Activity log (see macosBlocker/docs/ACTIVITY-LOG.md). The extension flushes
     // buffered browser-activity records (webVisit / contentWatched) to the native
     // store, and gets/sets the per-category recording settings. The hub host
     // handles these locally (writes its own store); they are not relayed to the
