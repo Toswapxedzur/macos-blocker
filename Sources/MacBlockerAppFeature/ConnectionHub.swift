@@ -71,6 +71,15 @@ final class ConnectionHub: ObservableObject {
     private let queue = DispatchQueue(label: "macosBlocker.ConnectionHub")
     private let lock = NSLock()
 
+    /// The Activity log store. When set, the hub handles the activity ops locally
+    /// (writing this store) instead of relaying them to the classifier peer. Set
+    /// once at launch; shared with the native app-usage recorder.
+    var activityStore: ActivityStore?
+    // Kept in sync with SharedBrowserBridgeOperation.activityRecord/.activitySettings
+    // (the enum is the cross-repo source of truth; the extension parity test checks
+    // the extension side against it). These are handled locally, not relayed.
+    private static let activityRequestOperations: Set<String> = ["activity-record", "activity-settings"]
+
     private var listener: NWListener?
     private var peers: [ObjectIdentifier: Peer] = [:]
     private var classifierRequests: [String: ClassifierRequest] = [:]
@@ -108,7 +117,7 @@ final class ConnectionHub: ObservableObject {
         guard let requestID = obj["requestID"] as? String,
               isVisibleBridgeIdentifier(requestID, maximumLength: 128),
               let operation = obj["operation"] as? String,
-              ["bridge-info", "collection-info", "diagnostic", "collect", "video-tags", "video-tags-batch", "classifier-taxonomy", "submit-correction", "dev-log"].contains(operation),
+              ["bridge-info", "collection-info", "diagnostic", "collect", "video-tags", "video-tags-batch", "classifier-taxonomy", "submit-correction", "dev-log", "activity-record", "activity-settings"].contains(operation),
               let body = obj["body"] as? [String: Any],
               JSONSerialization.isValidJSONObject(body),
               let bodyData = try? JSONSerialization.data(withJSONObject: body),
@@ -124,7 +133,7 @@ final class ConnectionHub: ObservableObject {
               let requestID = obj["requestID"] as? String,
               isVisibleBridgeIdentifier(requestID, maximumLength: 128),
               let operation = obj["operation"] as? String,
-              ["bridge-info", "collection-info", "diagnostic", "collect", "video-tags", "video-tags-batch", "classifier-taxonomy", "submit-correction", "dev-log"].contains(operation) else {
+              ["bridge-info", "collection-info", "diagnostic", "collect", "video-tags", "video-tags-batch", "classifier-taxonomy", "submit-correction", "dev-log", "activity-record", "activity-settings"].contains(operation) else {
             return "invalid-classifier-response"
         }
         if let body = obj["body"] as? [String: Any],
@@ -721,6 +730,15 @@ final class ConnectionHub: ObservableObject {
             return
         }
 
+        // The Activity ops are handled by the hub host itself (it owns the store)
+        // rather than relayed to the classifier peer.
+        if Self.activityRequestOperations.contains(operation) {
+            lock.lock(); let source = peers[key]?.connection; lock.unlock()
+            guard let source else { return }
+            handleActivityRequest(source: source, requestID: requestID, operation: operation, body: body)
+            return
+        }
+
         lock.lock()
         guard let source = peers[key], source.connected else { lock.unlock(); return }
         guard classifierRequests[requestID] == nil else {
@@ -755,6 +773,32 @@ final class ConnectionHub: ObservableObject {
         ])
         queue.asyncAfter(deadline: .now() + .seconds(Self.classifierRelayTimeoutSeconds)) { [weak self] in
             self?.expireClassifierRequest(requestID)
+        }
+    }
+
+    /// Handles an Activity op locally (the hub host owns the store; see
+    /// ACTIVITY-LOG.md §5) and replies on the same classifier-response channel the
+    /// extension already awaits. `activity-record` stores browser records (the
+    /// store is the privacy backstop — a disabled category writes nothing);
+    /// `activity-settings` gets, or merges-and-sets, the recording settings.
+    private func handleActivityRequest(source: NWConnection, requestID: String, operation: String, body: [String: Any]) {
+        guard let store = activityStore else {
+            send(source, dict: ["kind": "classifier-response", "requestID": requestID, "operation": operation, "error": "activity-unavailable"])
+            return
+        }
+        switch operation {
+        case "activity-record":
+            let settings = store.loadSettings()
+            var stored = 0
+            for record in ActivityWire.records(from: body) where store.record(record, settings: settings) { stored += 1 }
+            send(source, dict: ["kind": "classifier-response", "requestID": requestID, "operation": operation, "body": ["stored": stored]])
+        case "activity-settings":
+            if let settingsBody = body["settings"] as? [String: Any] {
+                store.saveSettings(ActivityWire.merged(store.loadSettings(), with: settingsBody))
+            }
+            send(source, dict: ["kind": "classifier-response", "requestID": requestID, "operation": operation, "body": ["settings": ActivityWire.settingsPayload(store.loadSettings())]])
+        default:
+            send(source, dict: ["kind": "classifier-response", "requestID": requestID, "operation": operation, "error": "unsupported-activity-op"])
         }
     }
 

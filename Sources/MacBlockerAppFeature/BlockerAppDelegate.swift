@@ -49,9 +49,13 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
         // closed (the process stays alive; see below).
         MainActor.assumeIsolated { VaultClassifierPage.shared.start() }
 
-        // The Activity log records app-usage time. It samples only while the
-        // appUsage category is enabled (default off); the store is the backstop.
-        let activityRecorder = ActivityRecorderService(store: .standard())
+        // The Activity log records app-usage time (native) and browser activity
+        // (flushed by the extension over the hub). One store is shared by the
+        // recorder and the hub; each category records only while enabled (default
+        // off), and the store is the backstop.
+        let activityStore = ActivityStore.standard()
+        ConnectionHub.shared.activityStore = activityStore
+        let activityRecorder = ActivityRecorderService(store: activityStore)
         activityRecorder.start()
         self.activityRecorder = activityRecorder
 

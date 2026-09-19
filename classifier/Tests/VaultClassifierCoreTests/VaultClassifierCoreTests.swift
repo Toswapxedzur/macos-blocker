@@ -35,7 +35,7 @@ final class VaultClassifierCoreTests: XCTestCase {
     func testSharedBridgeExposesOnlyLiveOperations() {
         XCTAssertEqual(
             Set(SharedBrowserBridgeOperation.allCases.map(\.rawValue)),
-            Set(["bridge-info", "collection-info", "diagnostic", "collect", "video-tags", "video-tags-batch", "classifier-taxonomy", "submit-correction", "dev-log"])
+            Set(["bridge-info", "collection-info", "diagnostic", "collect", "video-tags", "video-tags-batch", "classifier-taxonomy", "submit-correction", "dev-log", "activity-record", "activity-settings"])
         )
     }
 
