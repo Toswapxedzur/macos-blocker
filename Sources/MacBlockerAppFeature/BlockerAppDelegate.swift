@@ -18,6 +18,9 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
     /// Retains the running MCP server for the app session.
     private var mcpServer: VaultMCPHTTPServer?
 
+    /// Records app-usage time into the local Activity log (opt-in per category).
+    private var activityRecorder: ActivityRecorderService?
+
     open func applicationDidFinishLaunching(_ notification: Notification) {
         if CommandLine.arguments.contains("--unregister-login-item") {
             unregisterLoginItemForUninstall()
@@ -45,6 +48,12 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
         // to the browser for the whole session, including after the window is
         // closed (the process stays alive; see below).
         MainActor.assumeIsolated { VaultClassifierPage.shared.start() }
+
+        // The Activity log records app-usage time. It samples only while the
+        // appUsage category is enabled (default off); the store is the backstop.
+        let activityRecorder = ActivityRecorderService(store: .standard())
+        activityRecorder.start()
+        self.activityRecorder = activityRecorder
 
         // MCP go-live. Start the loopback MCP server gated by a bearer token
         // derived from the hub secret, tell the connector registry to write that
@@ -89,6 +98,7 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     open func applicationWillTerminate(_ notification: Notification) {
+        activityRecorder?.stop()
         MainActor.assumeIsolated { VaultClassifierPage.shared.flushPendingWrites() }
         ConnectionHub.shared.stop()
     }
