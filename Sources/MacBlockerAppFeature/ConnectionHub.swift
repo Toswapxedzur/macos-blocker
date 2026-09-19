@@ -2,6 +2,7 @@
 import Foundation
 import MacBlockerCore
 import Network
+import VaultClassifierBridge
 
 /// The fixed local Vault WebSocket hub.
 ///
@@ -104,12 +105,12 @@ final class ConnectionHub: ObservableObject {
         guard let program = obj["program"] as? String, remotePrograms.contains(program) else {
             return "invalid-program"
         }
-        guard let secret,
-              obj["challenge"] as? String == challenge,
-              let proof = obj["proof"] as? String,
-              LocalHubAuthentication.verifyProof(program: program, challenge: challenge, proof: proof, secret: secret) else {
-            return "authentication-failed"
-        }
+        guard let secret else { return "authentication-failed" }
+        guard obj["challenge"] as? String == challenge else { return "authentication-failed" }
+        guard let proof = obj["proof"] as? String else { return "authentication-failed" }
+        guard VaultClassifierBridge.LocalHubAuthentication.verifyProof(
+            program: program, challenge: challenge, proof: proof, secret: secret
+        ) else { return "authentication-failed" }
         return nil
     }
 
@@ -616,7 +617,11 @@ final class ConnectionHub: ObservableObject {
                 rejectAndClose(conn, reason: "authentication-failed")
                 return
             }
-            let secret = try? LocalHubAuthentication.sharedSecret()
+            // Verify against the classifier's file-based hub secret — the one the
+            // Native Messaging host hands the browser and the classifier client
+            // uses — so this hub (the sole host) accepts them. (Both modules
+            // declare LocalHubAuthentication; qualify the shared-secret source.)
+            let secret = try? VaultClassifierBridge.LocalHubAuthentication.sharedSecret()
             if let reason = Self.helloRejectionReason(obj, challenge: challenge, secret: secret) {
                 rejectAndClose(conn, reason: reason)
                 return

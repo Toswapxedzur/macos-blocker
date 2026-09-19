@@ -37,6 +37,9 @@ private final class VaultClassifierShellDelegate: NSObject, NSApplicationDelegat
         window.title = "Vault Classifier"
         window.minSize = NSSize(width: 980, height: 650)
         window.collectionBehavior.insert(.fullScreenPrimary)
+        // No ConnectionHub here, so this shell hosts its own local hub. Opt in
+        // before building the page (which starts the hub client).
+        VaultClassifierPage.shared.allowOwnHubHosting()
         window.contentView = VaultClassifierPage.shared.makeView()
         window.center()
         window.makeKeyAndOrderFront(nil)
