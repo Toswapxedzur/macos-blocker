@@ -1,0 +1,9 @@
+# vaultClassifier — Vault Classifier (local-first content classifier)
+
+> 🤖 **AI protocol:** Read `../package-info.md` (group), the group `AGENTS.md`, and `../misc/project-memory/PROJECT-MEMORY.md` before working here. Update this file when the folder changes. Never delete without owner consent; keep secrets out of git.
+
+- **What:** a local-first macOS Swift package that classifies collected public content (YouTube-first) on-device with llama.cpp, keeps per-video results and user corrections, and pushes tags to the extension for content-based blocking. Hosts the dev local hub (`ws://127.0.0.1:18787`) when Mac Vault is absent. Optional explicit LLM Assist providers and grounded correction retrieval. **Unreleased**; no default model is bundled.
+- **Own git repo:** `Toswapxedzur/vault-classifier`, branch `main`. Not versioned yet.
+- **Build/test/run:** `swift build`, `swift test`; dev launch **`run-vault-classifier.sh`** (signs with a Developer ID identity so the hub Keychain grant survives rebuilds — close every old instance first, per `../AGENTS.md`). `scripts/package-macapp.sh` bundles the app.
+- **Folders:** `Sources/` (`VaultClassifierApp`, `VaultClassifierCore` (pure tagging — imports none of the others), `VaultClassifierBridge` (hub auth + browser-bridge messages), `VaultClassifierResearch` (cloud research execution), `VaultClassifierLLM`, `VaultClassifierEval` (+ `abtest`), `Cllama`, `VaultLocalHubNativeHost`, smoke targets `VaultGroundingSmoke` / `VaultFullLoopSmoke` / `VaultLLMEngineSmoke`), `Tests/`, `native-host/` (native-messaging manifests + entitlements), `docs/architecture/`, `spike/` (throwaway experiment package), `dist/`.
+- **Planning docs:** `CLASSIFIER-INDEPENDENCE.md` (the 2026-09 four-target split + the tagging contract), `LATENCY-REFINEMENT.md`, `RESEARCH-REDESIGN.md`, `REWORK-local-model-centered.md`, `ROADMAP-per-type-granularity.md`, `PHASE3-BUILD-PLAN.md`; datasets `eval-set.json`, `mini-ocr.json`.

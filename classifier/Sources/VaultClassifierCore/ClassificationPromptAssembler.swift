@@ -1,0 +1,248 @@
+import Foundation
+
+// Builds the classification prompt as a cached static prefix + a small per-video
+// dynamic suffix (see REWORK §7.1). The split is deliberate: the prefix (task
+// rules + taxonomy + house-rules) is identical for every video, so its KV cache
+// is reused; only the suffix (knowledge, creator prior, the title) changes.
+// Everything here is deterministic so the prefix is byte-stable for cache hits.
+
+public struct ClassificationPromptParts: Sendable, Equatable {
+    public let staticPrefix: String
+    public let dynamicSuffix: String
+    public let allowedTagNames: [String]
+    /// Readable tag name → internal tag id, for mapping the model's output back.
+    public let nameToTagID: [String: String]
+}
+
+/// One tag in a creator's history, as raw stats fed to the model (no framing —
+/// the model judges how much to weight it): how many of the creator's classified
+/// videos carry the tag, its share, and the confidence mean ± stdev.
+public struct CreatorPriorTag: Sendable, Equatable {
+    public let tagName: String
+    public let count: Int
+    public let share: Double
+    public let averageConfidence: Double
+    public let confidenceStdev: Double
+    public init(tagName: String, count: Int, share: Double, averageConfidence: Double, confidenceStdev: Double) {
+        self.tagName = tagName
+        self.count = count
+        self.share = share
+        self.averageConfidence = averageConfidence
+        self.confidenceStdev = confidenceStdev
+    }
+}
+
+/// The shape of the model's reply. Four strings define it: the rule line that
+/// describes it, the prompt RUNWAY the reply continues, the text between a tag name
+/// and its confidence digit, and the text between two items. Production is `.json`;
+/// the others exist to measure how much scaffold the accuracy actually needs
+/// (LATENCY-REFINEMENT §6d) and are selected with `VAULT_REPLY_FORMAT`.
+public struct ClassificationReplyFormat: Sendable, Equatable {
+    public let id: String
+    public let rule: String
+    public let runway: String
+    public let nameToDigit: String
+    public let itemSeparator: String
+
+    /// `{"tags":[{"name":"Music","confidence":4},{"name":"Sports","confidence":2}]}`
+    public static let json = ClassificationReplyFormat(
+        id: "json",
+        rule: "- Reply with one JSON object only: {\"tags\":[{\"name\":\"<tag name>\",\"confidence\":<1-5>}]}. Use tag names exactly as written. No prose.",
+        runway: "Output JSON: {\"tags\":[{\"name\":\"",
+        nameToDigit: "\",\"confidence\":",
+        itemSeparator: "},{\"name\":\"")
+    /// Brackets kept, key names dropped: `[["Music",4],["Sports",2]]`
+    public static let pairs = ClassificationReplyFormat(
+        id: "pairs",
+        rule: "- Reply with one JSON array only, one [tag name, confidence] pair per chosen tag: [[\"<tag name>\",<1-5>]]. Use tag names exactly as written. No prose.",
+        runway: "Output JSON: [[\"",
+        nameToDigit: "\",",
+        itemSeparator: "],[\"")
+    /// The tag name IS the key: `{"Music":4,"Sports":2}`
+    public static let object = ClassificationReplyFormat(
+        id: "object",
+        rule: "- Reply with one JSON object only, mapping each chosen tag name to its confidence: {\"<tag name>\":<1-5>}. Use tag names exactly as written. No prose.",
+        runway: "Output JSON: {\"",
+        nameToDigit: "\":",
+        itemSeparator: ",\"")
+
+    public static let current: ClassificationReplyFormat = {
+        switch ProcessInfo.processInfo.environment["VAULT_REPLY_FORMAT"] {
+        case "pairs": return .pairs
+        case "object": return .object
+        default: return .json
+        }
+    }()
+}
+
+public enum ClassificationPromptAssembler {
+    public static let maximumEvidenceTextLength = 1_000
+
+    /// Non-retired tags as readable options, with their parent name for context.
+    public static func tagOptions(from tree: TagTreeAsset) -> [LLMTagOption] {
+        let nameByID = Dictionary(tree.nodes.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+        return tree.nodes
+            .filter { !$0.isRetired }
+            .map { node in
+                LLMTagOption(
+                    id: node.id,
+                    name: node.name,
+                    description: node.description,
+                    parentName: node.parentID.flatMap { nameByID[$0] }
+                )
+            }
+    }
+
+    /// The count instruction from the min/max tag bounds.
+    static func tagCountInstruction(minimum: Int, maximum: Int) -> String {
+        let base: String
+        if maximum == minimum {
+            base = maximum == 1 ? "Assign exactly 1 tag" : "Assign exactly \(maximum) tags"
+        } else if minimum <= 0 {
+            base = maximum == 1 ? "Assign at most 1 tag" : "Assign at most \(maximum) tags"
+        } else {
+            base = "Assign at least \(minimum) and at most \(maximum) tags"
+        }
+        return "\(base)."
+    }
+
+    /// The cached static prefix: task rules + taxonomy + optional house-rules.
+    public static func staticPrefix(taxonomy: [LLMTagOption], houseRules: String?, maximumTags: Int, minimumTags: Int = 0) -> String {
+        var lines: [String] = []
+        lines.append("You are a tagging model. Classify a single video into tags from the taxonomy below, using the video's evidence.")
+        lines.append("Rules:")
+        lines.append("- Pick the tag(s) that best match the video's topic; prefer specific child tags over broad parents. Infer the topic from the title even when it is short — a named subject (a person, product, game, show, place, event, or theme) is usually enough to place it, so do not decline just because the title is brief.")
+        lines.append("- \(Self.tagCountInstruction(minimum: minimumTags, maximum: maximumTags))")
+        lines.append("- For each chosen tag give a confidence from 1 to 5 for how sure you are the tag is correct (not how popular the tag is): 5 = the evidence names a subject you are certain maps to this tag; 4 = strong evidence; 3 = a plausible inference; 2 = a weak guess; 1 = little basis. Reserve 4 and 5 for clear cases, and use 1-2 when you are mostly guessing.")
+        lines.append("- If the title is uninformative, use the creator prior when provided, but treat it as a weak, partial sample of what the creator makes — it may not represent them fully.")
+        lines.append(ClassificationReplyFormat.current.rule)
+        if minimumTags == 0 {
+            lines.append("- Use none only when the title names no topic at all — a bare question, reaction, or phrase with no subject. Do not force a tag onto a genuinely topicless title, and do not invent a topic the title does not state.")
+        } else {
+            lines.append("- Every video has a topic: never decline. If the title is thin, use the creator prior and your best judgement to place it, and set a low confidence rather than refusing.")
+        }
+
+        if let houseRules, !houseRules.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            lines.append("")
+            lines.append("House rules (the user's tagging preferences):")
+            lines.append(houseRules.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+
+        lines.append("")
+        lines.append("Taxonomy:")
+        if taxonomy.isEmpty {
+            lines.append("(no tags defined yet)")
+        } else {
+            for option in taxonomy {
+                var line = "- \(option.name)"
+                if let parent = option.parentName, !parent.isEmpty { line += " (under \(parent))" }
+                if let description = option.description, !description.isEmpty { line += ": \(description)" }
+                lines.append(line)
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// The per-video dynamic suffix: matched knowledge, the derived creator prior
+    /// (with the required view-history caveat), and the video's own evidence.
+    public static func dynamicSuffix(
+        title: String,
+        summary: String?,
+        text: String?,
+        creatorPrior: [CreatorPriorTag],
+        creatorVideoCount: Int,
+        knowledge: [KnowledgeEntry],
+        correctionExemplars: [CorrectionExemplar] = []
+    ) -> String {
+        var lines: [String] = []
+
+        if !knowledge.isEmpty {
+            lines.append("Known context (grounded facts):")
+            for entry in knowledge {
+                lines.append("- \(entry.subject): \(entry.meaning)")
+            }
+            lines.append("")
+        }
+
+        // Grounded generalization: the user's own past corrections most similar
+        // to THIS video (see CorrectionRetriever). Real title → chosen tag pairs,
+        // on-taxonomy — the model generalizes from these concrete decisions, not
+        // from an invented rule. Presented as labeled data (the user's authored
+        // corrections on related videos); the model judges how closely they apply
+        // rather than being commanded to copy them.
+        if !correctionExemplars.isEmpty {
+            lines.append("The user's own past corrections on related videos (title → the tag they chose):")
+            for exemplar in correctionExemplars {
+                let decision = exemplar.tagNames.isEmpty
+                    ? "no tag"
+                    : exemplar.tagNames.joined(separator: ", ")
+                var line = "- \"\(String(exemplar.title.prefix(160)))\" → \(decision)"
+                if let note = exemplar.note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+                    line += " (\(String(note.prefix(120))))"
+                }
+                lines.append(line)
+            }
+            lines.append("")
+        }
+
+        // Plain data — the model judges how much to weight it (no framing). Owner
+        // spec (2026-09-17): exactly the creator's total classified videos and a
+        // frequency per tag — nothing else. The former per-row percentage and
+        // confidence mean±stdev were never asked for and cost ~19 prompt tokens a
+        // row, which must be prefilled per video (~800 ms on a 7B for a prolific
+        // creator); one compact line is ~4× cheaper.
+        if !creatorPrior.isEmpty, creatorVideoCount > 0 {
+            let counts = creatorPrior.map { "\($0.tagName) \($0.count)" }.joined(separator: ", ")
+            lines.append("Creator: \(creatorVideoCount) videos classified. Tag counts: \(counts)")
+            lines.append("")
+        }
+
+        lines.append("Video:")
+        lines.append("Title: \(title)")
+        if let summary = summary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
+            lines.append("Summary: \(String(summary.prefix(maximumEvidenceTextLength)))")
+        }
+        if let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+            lines.append("Text: \(String(text.prefix(maximumEvidenceTextLength)))")
+        }
+        // FINAL CONTRACT (Phase-0, 2026-08-15): the JSON scaffold is the model's
+        // structural runway and must be IN the prompt — prefilled in parallel,
+        // never generated. The engine's grammar then admits only a tag name, so
+        // the model's first decoded token is the decision itself. Removing this
+        // scaffold (or the reply-shape rule above) measurably regressed
+        // accuracy from 7/8 to 5/8.
+        lines.append(ClassificationReplyFormat.current.runway)
+        return lines.joined(separator: "\n")
+    }
+
+    /// Assemble the full prompt parts for one video against one tree.
+    public static func assemble(
+        tree: TagTreeAsset,
+        houseRules: String?,
+        maximumTags: Int,
+        minimumTags: Int = 0,
+        title: String,
+        summary: String?,
+        text: String?,
+        creatorPrior: [CreatorPriorTag],
+        creatorVideoCount: Int,
+        knowledge: [KnowledgeEntry],
+        correctionExemplars: [CorrectionExemplar] = []
+    ) -> ClassificationPromptParts {
+        let taxonomy = tagOptions(from: tree)
+        // De-duplicate names for the allowed set + mapping (a tree with duplicate
+        // names keeps the first id; that is the author's ambiguity, not ours).
+        var nameToTagID: [String: String] = [:]
+        var allowedTagNames: [String] = []
+        for option in taxonomy where nameToTagID[option.name] == nil {
+            nameToTagID[option.name] = option.id
+            allowedTagNames.append(option.name)
+        }
+        return ClassificationPromptParts(
+            staticPrefix: staticPrefix(taxonomy: taxonomy, houseRules: houseRules, maximumTags: maximumTags, minimumTags: minimumTags),
+            dynamicSuffix: dynamicSuffix(title: title, summary: summary, text: text, creatorPrior: creatorPrior, creatorVideoCount: creatorVideoCount, knowledge: knowledge, correctionExemplars: correctionExemplars),
+            allowedTagNames: allowedTagNames,
+            nameToTagID: nameToTagID
+        )
+    }
+}
