@@ -38,6 +38,14 @@ public enum LocalHubAuthentication {
         try makeProof(program: program, challenge: challenge, secret: ensureSecret(environment: environment))
     }
 
+    /// The local-hub secret the Native Messaging host hands the browser. Mac
+    /// Vault's ConnectionHub verifies browser/classifier proofs against this
+    /// (rather than its own Keychain secret) so that, when it is the sole hub
+    /// host, the extension authenticates with the single shared secret.
+    public static func sharedSecret(environment: VaultRuntimeEnvironment = .current) throws -> Data {
+        try ensureSecret(environment: environment)
+    }
+
     public static func makeProof(program: String, challenge: String, secret: Data) throws -> String {
         guard (isBrowserProgram(program) || isDesktopProgram(program)),
               isValidChallenge(challenge),

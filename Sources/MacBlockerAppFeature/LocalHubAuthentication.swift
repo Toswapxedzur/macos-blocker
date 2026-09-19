@@ -3,17 +3,20 @@ import CryptoKit
 import Foundation
 import MacBlockerCore
 import Security
+import VaultClassifierBridge
 
-/// Mirrors the Vault Classifier protocol-v4 proof format. The two desktop apps
-/// intentionally share only this Keychain secret and challenge grammar so
-/// either one can own the fixed local hub.
+/// Mirrors the Vault Classifier protocol-v4 proof format. Both desktop apps and
+/// the browser's native-messaging host share ONE on-device secret and challenge
+/// grammar so either app can own the fixed local hub. That secret is the
+/// classifier component's 0600 file (`VaultClassifierBridge`), never the
+/// Keychain: an unsigned development build is rebuilt on every `swift build`, so
+/// a Keychain item created by a previous binary would prompt for access on every
+/// launch. The file has no such per-binary ACL, so the app launches headlessly.
 enum LocalHubAuthentication {
     static let protocolVersion = 4
     static let browserPrograms: Set<String> = ["chrome", "edge"]
     static let desktopPrograms: Set<String> = ["classifier", "macapp"]
 
-    private static let productionService = "com.adamancia.vault.local-hub"
-    private static let account = "protocol-v4-challenge-secret"
     private static let secretLength = 32
     private static let challengeLength = 43
 
@@ -78,78 +81,19 @@ enum LocalHubAuthentication {
         return constantTimeEquals(expectedData, suppliedData)
     }
 
-    static func moveProductionSecretToDevelopmentOnce() throws {
-        let source = loadSecret(environment: .production)
-        let destination = loadSecret(environment: .development)
-        if let source, let destination, source != destination {
-            // Both a production and a development secret exist and differ. The
-            // development environment already owns an authoritative secret, so
-            // there is nothing to migrate. Leave both in place rather than
-            // clobbering the dev secret or failing the launch — crash-guard:
-            // reconcile/ignore bad local state, never crash. (Bindings are used
-            // by the condition above.)
-            _ = (source, destination)
-            return
-        }
-        if let source, destination == nil {
-            try storeSecret(source, environment: .development)
-        }
-        if source != nil {
-            guard loadSecret(environment: .development) == source else {
-                throw LocalHubAuthenticationError.environmentMigration
-            }
-            SecItemDelete(identity(environment: .production) as CFDictionary)
-        }
-    }
+    /// Retired. The hub secret is the classifier component's on-device file now
+    /// (see `ensureSecret`), so there is no Keychain item to migrate into the
+    /// development environment. Kept as a no-op for launch call-site
+    /// compatibility; it must never touch the Keychain (that was the source of
+    /// the per-launch access prompt on unsigned development builds).
+    static func moveProductionSecretToDevelopmentOnce() throws {}
 
     private static func ensureSecret(environment: VaultRuntimeEnvironment) throws -> Data {
-        if let existing = loadSecret(environment: environment), existing.count == secretLength { return existing }
-        if loadSecret(environment: environment) != nil {
-            SecItemDelete(identity(environment: environment) as CFDictionary)
-        }
-        var bytes = [UInt8](repeating: 0, count: secretLength)
-        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
-            throw LocalHubAuthenticationError.randomness
-        }
-        let secret = Data(bytes)
-        do {
-            try storeSecret(secret, environment: environment)
-            return secret
-        } catch LocalHubAuthenticationError.keychain(let status) where status == errSecDuplicateItem {
-            if let concurrentSecret = loadSecret(environment: environment),
-               concurrentSecret.count == secretLength {
-                return concurrentSecret
-            }
-            throw LocalHubAuthenticationError.keychain(status)
-        }
-    }
-
-    private static func storeSecret(_ secret: Data, environment: VaultRuntimeEnvironment) throws {
-        var item = identity(environment: environment)
-        item[kSecValueData] = secret
-        item[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        let status = SecItemAdd(item as CFDictionary, nil)
-        if status == errSecSuccess { return }
-        if status == errSecDuplicateItem,
-           loadSecret(environment: environment) == secret { return }
-        throw LocalHubAuthenticationError.keychain(status)
-    }
-
-    private static func identity(environment: VaultRuntimeEnvironment) -> [CFString: Any] {
-        [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: environment.keychainService(productionService),
-            kSecAttrAccount: account,
-        ]
-    }
-
-    private static func loadSecret(environment: VaultRuntimeEnvironment) -> Data? {
-        var query = identity(environment: environment)
-        query[kSecReturnData] = true
-        query[kSecMatchLimit] = kSecMatchLimitOne
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else { return nil }
-        return result as? Data
+        // The single on-device file secret, shared with the classifier and the
+        // browser's native-messaging host. `VaultClassifierBridge` resolves the
+        // environment from the same variable this app reads, so passing its own
+        // `.current` keeps development and production separated identically.
+        try VaultClassifierBridge.LocalHubAuthentication.sharedSecret()
     }
 
     private static func canonicalString(program: String, challenge: String) -> String {

@@ -79,6 +79,13 @@ let package = Package(
                     name: "VaultClassifierApp",
                     package: "classifier",
                     condition: .when(platforms: [.macOS])
+                ),
+                // The hub secret + auth grammar the browser uses (shared with the
+                // Native Messaging host), so ConnectionHub verifies against it.
+                .product(
+                    name: "VaultClassifierBridge",
+                    package: "classifier",
+                    condition: .when(platforms: [.macOS])
                 )
             ],
             swiftSettings: cllamaIncludeFlags
