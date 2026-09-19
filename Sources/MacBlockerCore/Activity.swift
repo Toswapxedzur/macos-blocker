@@ -67,8 +67,9 @@ public struct ActivityCategorySettings: Codable, Equatable, Sendable {
 /// would encode as an array under JSONEncoder).
 public struct ActivitySettings: Codable, Equatable, Sendable {
     private var byCategory: [String: ActivityCategorySettings]
-    /// Inactivity threshold in seconds; below this much idle time, accrual runs.
-    /// User-configurable. Default 60.
+    /// Inactivity threshold in seconds. Reserved: idle detection is disabled for
+    /// now (owner decision 2026-09-19), so this is stored but unused. Kept so the
+    /// feature can return without a settings migration. Default 60.
     public var idleThresholdSeconds: Int
 
     public init(
