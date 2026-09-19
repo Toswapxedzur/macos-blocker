@@ -1,0 +1,75 @@
+{
+  "packageID": "vault-seed-2026-07-15",
+  "taxonomyVersion": "vault-taxonomy-1",
+  "modelVersion": "vault-model-1",
+  "taxonomy": [
+    {
+      "id": "content",
+      "name": "Content",
+      "predictable": false
+    },
+    {
+      "id": "content.topics",
+      "name": "Topics",
+      "parentID": "content",
+      "predictable": false
+    },
+    {
+      "id": "content.topics.gaming",
+      "name": "Gaming",
+      "parentID": "content.topics"
+    },
+    {
+      "id": "content.topics.technology",
+      "name": "Technology",
+      "parentID": "content.topics"
+    },
+    {
+      "id": "content.topics.learning",
+      "name": "Learning",
+      "parentID": "content.topics"
+    },
+    {
+      "id": "content.topics.music",
+      "name": "Music",
+      "parentID": "content.topics"
+    },
+    {
+      "id": "content.entities",
+      "name": "Entities",
+      "parentID": "content",
+      "predictable": false
+    },
+    {
+      "id": "content.entities.clash-royale",
+      "name": "Clash Royale",
+      "parentID": "content.entities"
+    },
+    {
+      "id": "content.entities.minecraft",
+      "name": "Minecraft",
+      "parentID": "content.entities"
+    },
+    {
+      "id": "content.formats",
+      "name": "Formats",
+      "parentID": "content",
+      "predictable": false
+    },
+    {
+      "id": "content.formats.gameplay",
+      "name": "Gameplay",
+      "parentID": "content.formats"
+    },
+    {
+      "id": "content.formats.tutorial",
+      "name": "Tutorial",
+      "parentID": "content.formats"
+    },
+    {
+      "id": "content.formats.commentary",
+      "name": "Commentary",
+      "parentID": "content.formats"
+    }
+  ]
+}
