@@ -27,7 +27,12 @@ let package = Package(
     platforms: [.macOS(.v13)],
     products: [
         .library(name: "VaultClassifierCore", targets: ["VaultClassifierCore"]),
-        .executable(name: "VaultClassifierApp", targets: ["VaultClassifierApp"]),
+        // The classifier UI + tagging service as a library: Mac Vault hosts it as
+        // an in-app page (owner decision 2026-09-19 — the classifier is a
+        // component of Mac Vault, not a separate product).
+        .library(name: "VaultClassifierApp", targets: ["VaultClassifierApp"]),
+        // Standalone development window around the same library (headless rigs).
+        .executable(name: "VaultClassifierShell", targets: ["VaultClassifierShell"]),
         .executable(name: "VaultLocalHubNativeHost", targets: ["VaultLocalHubNativeHost"]),
         .executable(name: "VaultLLMEngineSmoke", targets: ["VaultLLMEngineSmoke"]),
         .executable(name: "VaultGroundingSmoke", targets: ["VaultGroundingSmoke"]),
@@ -70,14 +75,21 @@ let package = Package(
         .target(
             name: "VaultClassifierLLM",
             dependencies: ["VaultClassifierCore", "Cllama"],
-            swiftSettings: cllamaIncludeFlags
+            swiftSettings: cllamaIncludeFlags,
+            // Carried by the library so every product that links the engine —
+            // including Mac Vault, the classifier's host — finds the ggml keg.
+            linkerSettings: cllamaLinkFlags
         ),
-        .executableTarget(
+        .target(
             name: "VaultClassifierApp",
             dependencies: ["VaultClassifierCore", "VaultClassifierBridge", "VaultClassifierResearch", "VaultClassifierLLM"],
             resources: [.copy("WebAssets")],
-            swiftSettings: cllamaIncludeFlags,
-            linkerSettings: cllamaLinkFlags
+            swiftSettings: cllamaIncludeFlags
+        ),
+        .executableTarget(
+            name: "VaultClassifierShell",
+            dependencies: ["VaultClassifierApp"],
+            swiftSettings: cllamaIncludeFlags
         ),
         .executableTarget(
             name: "VaultLocalHubNativeHost",
@@ -92,22 +104,19 @@ let package = Package(
         .executableTarget(
             name: "VaultFullLoopSmoke",
             dependencies: ["VaultClassifierCore", "VaultClassifierResearch", "VaultClassifierLLM"],
-            swiftSettings: cllamaIncludeFlags,
-            linkerSettings: cllamaLinkFlags
+            swiftSettings: cllamaIncludeFlags
         ),
         // Classification accuracy eval harness (sample → label → score).
         .executableTarget(
             name: "VaultClassifierEval",
             dependencies: ["VaultClassifierCore", "VaultClassifierLLM"],
-            swiftSettings: cllamaIncludeFlags,
-            linkerSettings: cllamaLinkFlags
+            swiftSettings: cllamaIncludeFlags
         ),
         // Runs the Phase-0 title benchmark through the real in-process engine.
         .executableTarget(
             name: "VaultLLMEngineSmoke",
             dependencies: ["VaultClassifierCore", "VaultClassifierLLM"],
-            swiftSettings: cllamaIncludeFlags,
-            linkerSettings: cllamaLinkFlags
+            swiftSettings: cllamaIncludeFlags
         ),
         .testTarget(
             name: "VaultClassifierCoreTests",
@@ -116,8 +125,7 @@ let package = Package(
         .testTarget(
             name: "VaultClassifierAppTests",
             dependencies: ["VaultClassifierApp", "VaultClassifierCore", "VaultClassifierBridge", "VaultClassifierResearch", "VaultClassifierLLM"],
-            swiftSettings: cllamaIncludeFlags,
-            linkerSettings: cllamaLinkFlags
+            swiftSettings: cllamaIncludeFlags
         ),
     ]
 )

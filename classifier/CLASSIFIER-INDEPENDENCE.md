@@ -117,9 +117,11 @@ What the classifier promises, after Phases 1–4:
   third gate (`NamedPolicy.confidenceFloor`) is gone with policy.
 - **Decline** (`none`) is an active choice, allowed only when `minimumTags == 0`.
 - **Why min-1 exists:** the 7B's real weakness is over-declining knowable titles
-  (P0.82 R0.61 at min-0 vs P0.72 R0.71, exact 60→71 %, declines 16→0 at min-1),
-  and emitted confidence cleanly separates good (conf5 P0.85) from bad
-  (conf≤3 P0.11) forced guesses — so a downstream floor recovers precision.
+  (P0.85 R0.68 at min-0 vs P0.75 R0.74, exact 68→74 %, declines 12→0 at min-1;
+  65 labelled videos, one tag, re-measured after the eval harness stopped
+  feeding the stale learned-preferences block), and emitted confidence separates
+  good from bad forced guesses (confidence 5 is right 94 % of the time,
+  confidence 3 only 38 %) — so a downstream floor recovers precision.
 
 ## 7. Phases 5–7 (BUILT)
 

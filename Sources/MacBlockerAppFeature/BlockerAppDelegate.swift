@@ -3,6 +3,7 @@ import AppKit
 import ServiceManagement
 import MacBlockerCore
 import MacBlockerWebUI
+import VaultClassifierApp
 
 /// Process-level lifecycle owner for the macOS app.
 ///
@@ -38,6 +39,12 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
         // Every app instance participates in its environment's authenticated local
         // hub, which may listen on loopback when it wins host election.
         ConnectionHub.shared.start()
+
+        // The Vault Classifier is a component of this app. Starting its tagging
+        // service here — not when its page is first opened — keeps tags flowing
+        // to the browser for the whole session, including after the window is
+        // closed (the process stays alive; see below).
+        MainActor.assumeIsolated { VaultClassifierPage.shared.start() }
 
         // MCP go-live. Start the loopback MCP server gated by a bearer token
         // derived from the hub secret, tell the connector registry to write that
@@ -82,6 +89,7 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     open func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated { VaultClassifierPage.shared.flushPendingWrites() }
         ConnectionHub.shared.stop()
     }
 
