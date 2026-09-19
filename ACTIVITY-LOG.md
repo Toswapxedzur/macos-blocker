@@ -26,13 +26,20 @@ record in all three at once, and that is correct.
 - **Not captured, ever:** keystrokes, screenshots, message/content bodies,
   browser window titles, full URLs off supported platforms.
 
-## 2. Idle
+## 2. Idle — dropped for now (owner decision 2026-09-19)
 
-Accrual **pauses when inactive**. Inactive = **no input for 60 seconds**
-(`ActivitySettings.idleThresholdSeconds`, user-configurable). Accrual also pauses
-on screen lock, display sleep, and system sleep. Durations are measured on a
-**monotonic clock** (never wall-clock deltas, which jump on sleep / NTP / DST) and
-attributed to the local day of their start.
+Inactivity detection is **not implemented for now**: time accrues while an app is
+foreground + focused **whether or not the user is present** (leaving the desk
+keeps counting). Accrual still stops naturally during system sleep — the sample
+timer does not fire and the monotonic clock does not advance — and the per-step
+cap bounds any gap. Durations are measured on a **monotonic clock** (never
+wall-clock deltas, which jump on sleep / NTP / DST) and attributed to the local
+day of their start.
+
+The seams to re-enable idle later are kept: the accumulator takes an `active`
+flag (currently always true), and `ActivitySettings.idleThresholdSeconds` is
+stored but unused. When it returns, accrual would pause on no-input-for-N and on
+screen lock.
 
 ## 3. Privacy contract (enforced in code, not just here)
 
