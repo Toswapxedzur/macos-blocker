@@ -18,6 +18,10 @@ fi
 
 "$script_dir/scripts/development/migrate_state_once.sh"
 
+# The Vault Classifier is a component of this app: install the development
+# Native Messaging host that hands the browser extension the local-hub secret.
+VAULT_SIGNING_IDENTITY="$signing_identity" "$script_dir/classifier/scripts/install-dev-native-host.sh"
+
 swift build --product MacBlockerPanel
 binary_dir="$(swift build --show-bin-path)"
 binary="$binary_dir/MacBlockerPanel"
