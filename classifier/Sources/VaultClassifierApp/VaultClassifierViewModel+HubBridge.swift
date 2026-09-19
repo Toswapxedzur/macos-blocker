@@ -293,6 +293,10 @@ extension VaultClassifierViewModel {
                 try entry.validate()
                 VaultDevLog.shared.log(entry.layer, entry.event, entry.fields)
                 return try sharedHubReply(NativeDevLogResponse(accepted: true))
+            case .activityRecord, .activitySettings:
+                // Activity ops belong to the hub host (Mac Vault owns the store),
+                // never relayed to the classifier; reaching here means a misroute.
+                return .failure("activity-not-handled-by-classifier")
             }
         } catch {
             collectionDiagnostics?.record(event: "request-rejected", outcome: "rejected")
