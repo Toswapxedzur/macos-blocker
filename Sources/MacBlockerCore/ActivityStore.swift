@@ -14,6 +14,9 @@ public final class ActivityStore: @unchecked Sendable {
     private let fileManager = FileManager.default
 
     private static let settingsFileName = "settings.json"
+    private static let webIconsFileName = "web-icons.json"
+    private static let maxWebIcons = 500
+    private static let maxWebIconBytes = 24_000
 
     public init(
         directory: URL,
@@ -50,6 +53,45 @@ public final class ActivityStore: @unchecked Sendable {
     public func saveSettings(_ settings: ActivitySettings) {
         lock.lock(); defer { lock.unlock() }
         write(encode(settings), to: rootDirectory.appendingPathComponent(Self.settingsFileName))
+    }
+
+    /// Atomic read-modify-write of the settings, so a toggle from the dashboard
+    /// cannot race the hub's own settings writes.
+    public func updateSettings(_ mutate: (inout ActivitySettings) -> Void) {
+        lock.lock(); defer { lock.unlock() }
+        var settings = loadSettingsLocked()
+        mutate(&settings)
+        write(encode(settings), to: rootDirectory.appendingPathComponent(Self.settingsFileName))
+    }
+
+    // MARK: - Website icons (favicons, supplied by the extension as data URIs)
+
+    /// Deduped domain → data-URI favicon cache, kept out of the records so a
+    /// favicon is stored once per domain, not on every visit. Local only.
+    public func webIcons() -> [String: String] {
+        lock.lock(); defer { lock.unlock() }
+        return loadWebIconsLocked()
+    }
+
+    public func mergeWebIcons(_ icons: [String: String]) {
+        guard !icons.isEmpty else { return }
+        lock.lock(); defer { lock.unlock() }
+        var current = loadWebIconsLocked()
+        for (domain, uri) in icons {
+            guard !domain.isEmpty, uri.hasPrefix("data:image/"), uri.utf8.count <= Self.maxWebIconBytes else { continue }
+            current[domain] = uri
+        }
+        if current.count > Self.maxWebIcons {
+            current = Dictionary(uniqueKeysWithValues: current.prefix(Self.maxWebIcons).map { ($0.key, $0.value) })
+        }
+        write(encode(current), to: rootDirectory.appendingPathComponent(Self.webIconsFileName))
+    }
+
+    private func loadWebIconsLocked() -> [String: String] {
+        let url = rootDirectory.appendingPathComponent(Self.webIconsFileName)
+        guard let data = try? Data(contentsOf: url),
+              let icons = try? JSONDecoder().decode([String: String].self, from: data) else { return [:] }
+        return icons
     }
 
     // MARK: - Recording
@@ -154,11 +196,15 @@ public final class ActivityStore: @unchecked Sendable {
         for category in ActivityCategory.allCases {
             try? fileManager.removeItem(at: categoryDirectory(category))
         }
+        try? fileManager.removeItem(at: rootDirectory.appendingPathComponent(Self.webIconsFileName))
     }
 
     public func delete(category: ActivityCategory) {
         lock.lock(); defer { lock.unlock() }
         try? fileManager.removeItem(at: categoryDirectory(category))
+        if category == .webVisit {
+            try? fileManager.removeItem(at: rootDirectory.appendingPathComponent(Self.webIconsFileName))
+        }
     }
 
     /// Deletes records whose start falls in `[start, end]`. Whole day files inside

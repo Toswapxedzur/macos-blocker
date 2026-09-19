@@ -21,9 +21,9 @@ public struct BlockerMainView: View {
     #endif
 
     #if os(macOS)
-    /// The window's pages. Both stay alive while hidden, so switching never
-    /// reloads the editor or the classifier.
-    private enum Page: Hashable { case vault, classifier }
+    /// The window's pages. All stay alive while hidden, so switching never
+    /// reloads the editor, the classifier, or the activity dashboard.
+    private enum Page: Hashable { case vault, classifier, activity }
     @State private var page: Page = .vault
     #endif
 
@@ -38,12 +38,16 @@ public struct BlockerMainView: View {
             ClassifierPageView()
                 .opacity(page == .classifier ? 1 : 0)
                 .allowsHitTesting(page == .classifier)
+            ActivityPageView()
+                .opacity(page == .activity ? 1 : 0)
+                .allowsHitTesting(page == .activity)
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Picker("Page", selection: $page) {
                     Text("Vault").tag(Page.vault)
                     Text("Classifier").tag(Page.classifier)
+                    Text("Activity").tag(Page.activity)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -99,6 +103,15 @@ public struct BlockerMainView: View {
 private struct ClassifierPageView: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         VaultClassifierPage.shared.makeView()
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+/// The Activity dashboard page (configured with the shared store at launch).
+private struct ActivityPageView: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        ActivityPage.shared.makeView()
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {}

@@ -791,6 +791,7 @@ final class ConnectionHub: ObservableObject {
             let settings = store.loadSettings()
             var stored = 0
             for record in ActivityWire.records(from: body) where store.record(record, settings: settings) { stored += 1 }
+            if let icons = body["icons"] as? [String: String] { store.mergeWebIcons(icons) }
             send(source, dict: ["kind": "classifier-response", "requestID": requestID, "operation": operation, "body": ["stored": stored]])
         case "activity-settings":
             if let settingsBody = body["settings"] as? [String: Any] {
