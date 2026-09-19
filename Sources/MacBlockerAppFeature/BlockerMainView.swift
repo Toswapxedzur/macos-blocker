@@ -3,10 +3,12 @@ import MacBlockerWebUI
 #if os(macOS)
 import AppKit
 import MacBlockerMacControl
+import VaultClassifierApp
 #endif
 
 /// Top-level app surface. Hosts the ported customBlocker editor in a WKWebView
-/// with macOS enforcement wired up.
+/// with macOS enforcement wired up, and — on macOS — the Vault Classifier as a
+/// second page of the same window.
 @MainActor
 public struct BlockerMainView: View {
     @StateObject private var enforcement = MacEnforcementBridge()
@@ -18,15 +20,42 @@ public struct BlockerMainView: View {
     private let connection = ConnectionHub.shared
     #endif
 
+    #if os(macOS)
+    /// The window's pages. Both stay alive while hidden, so switching never
+    /// reloads the editor or the classifier.
+    private enum Page: Hashable { case vault, classifier }
+    @State private var page: Page = .vault
+    #endif
+
     public init() {}
 
     public var body: some View {
+        #if os(macOS)
+        ZStack {
+            editorContent
+                .opacity(page == .vault ? 1 : 0)
+                .allowsHitTesting(page == .vault)
+            ClassifierPageView()
+                .opacity(page == .classifier ? 1 : 0)
+                .allowsHitTesting(page == .classifier)
+        }
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("Page", selection: $page) {
+                    Text("Vault").tag(Page.vault)
+                    Text("Classifier").tag(Page.classifier)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+            }
+        }
+        .onAppear { enforcement.start() }
+        .onDisappear { enforcement.stop() }
+        #else
         VStack(spacing: 0) {
             editorContent
         }
-        #if os(macOS)
-        .onAppear { enforcement.start() }
-        .onDisappear { enforcement.stop() }
         #endif
     }
 
@@ -65,6 +94,16 @@ public struct BlockerMainView: View {
 }
 
 #if os(macOS)
+/// The Vault Classifier page. The classifier component owns one live web view
+/// per process (started by the app delegate at launch); this only embeds it.
+private struct ClassifierPageView: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        VaultClassifierPage.shared.makeView()
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
 /// Backs the web grant modal / Device Control settings actions. It owns no UI
 /// state: the modal is shown on app open (driven natively in BlockerWebView)
 /// and the Device Control section is kept in sync by the per-tick state push.

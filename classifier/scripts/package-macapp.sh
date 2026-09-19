@@ -36,7 +36,7 @@ sign_identity="${VAULT_CLASSIFIER_SIGNING_IDENTITY:--}"   # '-' = ad-hoc
 echo "• signing identity: ${sign_identity/-/ad-hoc}"
 
 echo "• building release (production)…"
-swift build -c release --product VaultClassifierApp >/dev/null
+swift build -c release --product VaultClassifierShell >/dev/null
 swift build -c release --product VaultLocalHubNativeHost >/dev/null   # production env (no -D dev flag)
 bin="$(swift build -c release --show-bin-path)"
 
@@ -62,7 +62,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 PLIST
 
 # --- executables --------------------------------------------------------------
-cp "$bin/VaultClassifierApp" "$app/Contents/MacOS/VaultClassifierApp"
+cp "$bin/VaultClassifierShell" "$app/Contents/MacOS/VaultClassifierApp"
 cp "$bin/VaultLocalHubNativeHost" "$app/Contents/MacOS/VaultLocalHubNativeHost"
 
 # --- SwiftPM resource bundles (WebAssets, Core Resources) ---------------------
@@ -70,50 +70,10 @@ shopt -s nullglob
 for b in "$bin"/*.bundle; do cp -R "$b" "$app/Contents/Resources/"; done
 shopt -u nullglob
 
-# --- runtime libraries --------------------------------------------------------
+# --- runtime libraries (llama.cpp / ggml, made self-contained) ----------------
+"$script_dir/scripts/bundle-llama-runtime.sh" "$app" VaultClassifierApp
 fw="$app/Contents/Frameworks"
-libs=(
-  "$llama_prefix/lib/libllama.0.dylib"
-  "$ggml_prefix/lib/libggml.0.dylib"
-  "$ggml_prefix/lib/libggml-base.0.dylib"
-)
-# OpenMP: a shared dependency of the ggml CPU/BLAS backends.
-libomp="$(brew --prefix libomp 2>/dev/null || true)/lib/libomp.dylib"
-[[ -f "$libomp" ]] && libs+=("$libomp")
-for d in "${libs[@]}"; do cp "$d" "$fw/$(basename "$d")"; done
-# ggml backends (dlopen'd by ggml_backend_load_all_from_path at runtime)
-for b in "$ggml_prefix"/libexec/libggml-*.so; do cp "$b" "$fw/$(basename "$b")"; done
-chmod u+w "$fw"/*
-
-# Every dependency whose basename we bundled is repointed to @rpath, so nothing
-# resolves from Homebrew. This handles all interdependencies generically
-# (llama→ggml→ggml-base, backends→ggml-base, backends→libomp, …).
-declare -A bundled
-for f in "$fw"/*; do bundled["$(basename "$f")"]=1; done
-for f in "$fw"/*.dylib "$fw"/*.so; do
-  base="$(basename "$f")"
-  install_name_tool -id "@rpath/$base" "$f" 2>/dev/null || true
-  while read -r dep; do
-    depbase="$(basename "$dep")"
-    if [[ -n "${bundled[$depbase]:-}" && "$dep" != "@rpath/$depbase" ]]; then
-      install_name_tool -change "$dep" "@rpath/$depbase" "$f" 2>/dev/null || true
-    fi
-  done < <(otool -L "$f" | tail -n +2 | awk '{print $1}')
-  # Backends carry an @loader_path/../lib rpath (Homebrew's lib+libexec layout);
-  # here everything is flat in Frameworks, so resolve @rpath beside the backend.
-  if [[ "$base" == *.so ]]; then
-    install_name_tool -add_rpath "@loader_path" "$f" 2>/dev/null || true
-    install_name_tool -delete_rpath "@loader_path/../lib" "$f" 2>/dev/null || true
-  fi
-done
-
-# --- app executable: repoint bundled deps to @rpath, add Frameworks rpath ------
 exe="$app/Contents/MacOS/VaultClassifierApp"
-while read -r dep; do
-  depbase="$(basename "$dep")"
-  [[ -n "${bundled[$depbase]:-}" ]] && install_name_tool -change "$dep" "@rpath/$depbase" "$exe" 2>/dev/null || true
-done < <(otool -L "$exe" | tail -n +2 | awk '{print $1}')
-install_name_tool -add_rpath "@executable_path/../Frameworks" "$exe" 2>/dev/null || true
 
 # --- production native-messaging-host manifest (points into the bundle) -------
 manifest_dir="$app/Contents/Resources"

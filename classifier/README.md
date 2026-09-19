@@ -46,7 +46,8 @@ of the others.
 | `VaultClassifierBridge` | Local-hub authentication and the browser-bridge operation vocabulary + messages. |
 | `VaultClassifierResearch` | Cloud grounded-research execution: provider request plans, the HTTP seam, the research executor. |
 | `VaultClassifierLLM` | The in-process llama.cpp engine (batched multi-sequence decode). |
-| `VaultClassifierApp` | The macOS shell: a small app file plus one file per concern (web shell, hub bridge, providers, tree editor, settings, …). |
+| `VaultClassifierApp` | The classifier page and tagging service as a library — one file per concern (web shell, hub bridge, providers, tree editor, settings, …). Its only public type is `VaultClassifierPage`; Mac Vault hosts it as the Classifier page. |
+| `VaultClassifierShell` | A thin standalone window around the same page, for development rigs. |
 | `VaultClassifierEval` | A command-line accuracy/latency harness that runs the real pipeline on your labelled videos. Not shipped. |
 
 See [CLASSIFIER-INDEPENDENCE.md](CLASSIFIER-INDEPENDENCE.md) for how it got this

@@ -1,6 +1,24 @@
 // swift-tools-version: 5.9
 
 import PackageDescription
+import Foundation
+
+// The classifier component links Homebrew's llama.cpp. llama.h includes
+// "ggml.h" from the separate ggml keg, so every target that (transitively)
+// imports the engine needs the shared Homebrew include root — the same rule,
+// and the same prefix resolution, as classifier/Package.swift.
+let brewPrefix: String = {
+    if let override = ProcessInfo.processInfo.environment["HOMEBREW_PREFIX"], !override.isEmpty {
+        return override
+    }
+    for candidate in ["/opt/homebrew", "/usr/local"] where FileManager.default.fileExists(atPath: candidate + "/include") {
+        return candidate
+    }
+    return "/opt/homebrew"
+}()
+let cllamaIncludeFlags: [SwiftSetting] = [
+    .unsafeFlags(["-Xcc", "-I\(brewPrefix)/include"], .when(platforms: [.macOS]))
+]
 
 let package = Package(
     name: "macosBlocker",
@@ -15,6 +33,11 @@ let package = Package(
         .library(name: "MacBlockerAppFeature", targets: ["MacBlockerAppFeature"]),
         .library(name: "MacBlockerWebUI", targets: ["MacBlockerWebUI"]),
         .executable(name: "MacBlockerPanel", targets: ["MacBlockerPanel"])
+    ],
+    dependencies: [
+        // The Vault Classifier component (on-device tagging + its page). It lives
+        // in this repository under classifier/ and is macOS-only.
+        .package(path: "classifier")
     ],
     targets: [
         .target(
@@ -51,12 +74,19 @@ let package = Package(
                 "MacBlockerCore",
                 "MacBlockerScreenTime",
                 "MacBlockerMacControl",
-                "MacBlockerWebUI"
-            ]
+                "MacBlockerWebUI",
+                .product(
+                    name: "VaultClassifierApp",
+                    package: "classifier",
+                    condition: .when(platforms: [.macOS])
+                )
+            ],
+            swiftSettings: cllamaIncludeFlags
         ),
         .executableTarget(
             name: "MacBlockerPanel",
-            dependencies: ["MacBlockerAppFeature"]
+            dependencies: ["MacBlockerAppFeature"],
+            swiftSettings: cllamaIncludeFlags
         ),
         .testTarget(
             name: "MacBlockerCoreTests",
@@ -68,7 +98,8 @@ let package = Package(
         ),
         .testTarget(
             name: "MacBlockerAppFeatureTests",
-            dependencies: ["MacBlockerAppFeature"]
+            dependencies: ["MacBlockerAppFeature"],
+            swiftSettings: cllamaIncludeFlags
         )
     ]
 )
