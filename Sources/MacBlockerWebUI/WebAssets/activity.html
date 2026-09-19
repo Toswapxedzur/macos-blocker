@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<!--
+  Activity dashboard (see macosBlocker/docs/ACTIVITY-LOG.md). A dumb renderer:
+  the native host computes all geometry (ActivityDashboard) and pushes it via
+  window.activityApply(snapshot, icons); this page draws a ranked BAR GRAPH of
+  totals and a single SEGMENTED TIMELINE BAR per lens, plus the watched-content
+  bars and the per-category controls. Each row shows a colour dot (the legend,
+  matching the timeline segments) and the app / site icon. Borderless by design.
+  Self-contained so both WKWebView (macOS) and, later, WebView2 (Windows) can
+  load it; icons arrive as local data URIs (no network).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Activity</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --ink: #1c2530; --muted: #737d89;
+    --accent: #2f6bd6; --track: #e9edf1;
+    --c0:#4e79a7; --c1:#f28e2b; --c2:#59a14f; --c3:#e15759; --c4:#76b7b2;
+    --c5:#edc948; --c6:#b07aa1; --c7:#ff9da7; --c8:#9c755f; --c9:#8cd17d;
+    --c10:#86bcb6; --c11:#d37295;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#1b1e22; --panel:#262a30; --ink:#e7ebf0; --muted:#9aa4b0;
+      --accent:#6ea8fe; --track:#31363d;
+      --c0:#6b93c7; --c1:#f6a54a; --c2:#77bd6c; --c3:#f0787a; --c4:#8fd0cb;
+      --c5:#f0d666; --c6:#c795ba; --c7:#ffb3bb; --c8:#b8917c; --c9:#a6dd98;
+      --c10:#a3d2cc; --c11:#e08daa;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 13px/1.45 -apple-system, "SF Pro Text", system-ui, sans-serif; background: var(--bg); color: var(--ink); }
+  header { display: flex; align-items: center; gap: 12px; padding: 16px 20px; position: sticky; top: 0; background: var(--bg); z-index: 2; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 650; }
+  .ranges { display: flex; gap: 4px; margin-left: auto; background: var(--track); padding: 3px; border-radius: 9px; }
+  .ranges button { border: 0; background: transparent; color: var(--muted); padding: 5px 13px; border-radius: 7px; cursor: pointer; font-size: 12px; }
+  .ranges button.active { background: var(--panel); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  main { padding: 4px 20px 48px; max-width: 920px; margin: 0 auto; }
+  .lens { background: var(--panel); border-radius: 14px; padding: 18px 20px; margin-bottom: 16px; }
+  .lens-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .lens-head h2 { font-size: 13px; margin: 0; font-weight: 650; }
+  .lens-total { color: var(--muted); font-size: 12px; }
+  .lens-controls { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+  .lens-controls label { color: var(--muted); font-size: 12px; display: inline-flex; align-items: center; gap: 5px; }
+  select { border: 0; background: var(--track); color: var(--ink); border-radius: 6px; padding: 3px 6px; font-size: 12px; }
+  .section-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; margin: 14px 0 7px; }
+  /* bar graph */
+  .bar-row { display: grid; grid-template-columns: 168px 1fr 60px; align-items: center; gap: 12px; margin: 5px 0; }
+  .bar-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+  .icon { width: 18px; height: 18px; border-radius: 4px; flex: 0 0 auto; object-fit: contain; background: var(--track); display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: var(--muted); overflow: hidden; }
+  .icon img { width: 18px; height: 18px; object-fit: contain; }
+  .bar-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bar-track { background: var(--track); border-radius: 6px; height: 15px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 6px; }
+  .bar-value { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+  /* segmented timeline */
+  .timeline { position: relative; height: 26px; background: var(--track); border-radius: 7px; overflow: hidden; margin-top: 2px; }
+  .timeline .seg { position: absolute; top: 0; bottom: 0; min-width: 2px; }
+  .timeline .day-line { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(128,128,128,.28); }
+  .axis { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; margin-top: 5px; }
+  .empty { color: var(--muted); font-size: 12px; padding: 8px 0; }
+  .off { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+  button.pill { border: 0; background: var(--accent); color: #fff; padding: 5px 13px; border-radius: 8px; cursor: pointer; font-size: 12px; }
+  .firstrun { background: var(--panel); border-radius: 14px; padding: 20px; margin-bottom: 16px; }
+  .firstrun h2 { margin: 0 0 6px; font-size: 15px; }
+  .firstrun p { color: var(--muted); margin: 0 0 14px; }
+  .danger { color: var(--c3); cursor: pointer; background: none; border: 0; font-size: 12px; padding: 0; }
+  .cat-0{background:var(--c0)}.cat-1{background:var(--c1)}.cat-2{background:var(--c2)}.cat-3{background:var(--c3)}
+  .cat-4{background:var(--c4)}.cat-5{background:var(--c5)}.cat-6{background:var(--c6)}.cat-7{background:var(--c7)}
+  .cat-8{background:var(--c8)}.cat-9{background:var(--c9)}.cat-10{background:var(--c10)}.cat-11{background:var(--c11)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Activity</h1>
+  <div class="ranges" id="ranges">
+    <button data-range="today" class="active">Today</button>
+    <button data-range="7d">7 days</button>
+    <button data-range="30d">30 days</button>
+  </div>
+</header>
+<main id="main"><p class="empty">Loading…</p></main>
+<script>
+"use strict";
+(function () {
+  var RETENTIONS = [[7, "7 days"], [30, "30 days"], [90, "90 days"], [0, "Forever"]];
+  var CATS = [
+    { id: "appUsage", key: "app-usage", title: "App usage", lens: "app" },
+    { id: "webVisit", key: "web-visit", title: "Website usage", lens: "web" },
+    { id: "contentWatched", key: "content-watched", title: "Watched content", lens: null },
+  ];
+  var currentRange = "today";
+  var snapshot = null;
+  var icons = {};
+
+  function send(msg) {
+    try {
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.activity) {
+        window.webkit.messageHandlers.activity.postMessage(msg);
+      } else if (window.chrome && window.chrome.webview) {
+        window.chrome.webview.postMessage(msg);
+      }
+    } catch (_) {}
+  }
+
+  function fmt(seconds) {
+    var s = Math.round(seconds);
+    if (s < 60) return s + "s";
+    var m = Math.round(s / 60);
+    if (m < 60) return m + "m";
+    return Math.floor(m / 60) + "h " + (m % 60) + "m";
+  }
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function cat(i) { return "cat-" + (((i % 12) + 12) % 12); }
+
+  function iconFor(key, label) {
+    var box = el("span", "icon");
+    var uri = icons[key];
+    if (uri) {
+      var img = el("img"); img.src = uri; img.alt = ""; box.appendChild(img);
+    } else {
+      box.textContent = ((label || key || "?").trim()[0] || "?").toUpperCase();
+    }
+    return box;
+  }
+
+  function nameCell(item) {
+    var cell = el("div", "bar-name");
+    var dot = el("span", "dot " + cat(item.colorIndex));
+    cell.appendChild(dot);
+    cell.appendChild(iconFor(item.key, item.label));
+    cell.appendChild(el("span", "bar-label", item.label || item.key));
+    return cell;
+  }
+
+  function barGraph(bars) {
+    var wrap = el("div");
+    if (!bars.length) { wrap.appendChild(el("p", "empty", "No activity in this range.")); return wrap; }
+    bars.slice(0, 12).forEach(function (b) {
+      var row = el("div", "bar-row");
+      row.appendChild(nameCell(b));
+      var track = el("div", "bar-track");
+      var fill = el("div", "bar-fill " + cat(b.colorIndex));
+      fill.style.width = Math.max(2, b.fraction * 100) + "%";
+      track.appendChild(fill);
+      row.appendChild(track);
+      row.appendChild(el("div", "bar-value", fmt(b.seconds)));
+      row.title = (b.label || b.key) + " — " + fmt(b.seconds);
+      wrap.appendChild(row);
+    });
+    return wrap;
+  }
+
+  function timelineBar(segments, startMs, endMs) {
+    var wrap = el("div");
+    var track = el("div", "timeline");
+    var span = endMs - startMs;
+    if (span > 0) {
+      var d = new Date(startMs); d.setHours(24, 0, 0, 0);
+      for (; d.getTime() < endMs; d.setDate(d.getDate() + 1)) {
+        var line = el("div", "day-line");
+        line.style.left = ((d.getTime() - startMs) / span * 100) + "%";
+        track.appendChild(line);
+      }
+    }
+    segments.forEach(function (s) {
+      var seg = el("div", "seg " + cat(s.colorIndex));
+      seg.style.left = (s.startFraction * 100) + "%";
+      seg.style.width = (s.widthFraction * 100) + "%";
+      seg.title = (s.label || s.key) + " — " + new Date(s.startedAtMs).toLocaleString() + " · " + fmt(s.seconds);
+      track.appendChild(seg);
+    });
+    wrap.appendChild(track);
+    var axis = el("div", "axis");
+    axis.appendChild(el("span", null, new Date(startMs).toLocaleString()));
+    axis.appendChild(el("span", null, new Date(endMs).toLocaleString()));
+    wrap.appendChild(axis);
+    return wrap;
+  }
+
+  function controls(catDef, settingsCat) {
+    var c = el("div", "lens-controls");
+    var toggle = el("input"); toggle.type = "checkbox"; toggle.checked = !!settingsCat.enabled;
+    toggle.addEventListener("change", function () { send({ kind: "setSettings", category: catDef.key, enabled: toggle.checked }); });
+    var tlabel = el("label"); tlabel.appendChild(toggle); tlabel.appendChild(document.createTextNode("record"));
+    c.appendChild(tlabel);
+    var sel = el("select");
+    RETENTIONS.forEach(function (r) { var o = el("option", null, r[1]); o.value = String(r[0]); if (r[0] === settingsCat.retentionDays) o.selected = true; sel.appendChild(o); });
+    sel.addEventListener("change", function () { send({ kind: "setSettings", category: catDef.key, retentionDays: parseInt(sel.value, 10) }); });
+    var slabel = el("label"); slabel.appendChild(document.createTextNode("keep")); slabel.appendChild(sel);
+    c.appendChild(slabel);
+    var del = el("button", "danger", "Delete");
+    del.addEventListener("click", function () { if (confirm("Delete all " + catDef.title.toLowerCase() + " history?")) send({ kind: "delete", scope: "category", category: catDef.key }); });
+    c.appendChild(del);
+    return c;
+  }
+
+  function lensPanel(catDef, settingsCat) {
+    var panel = el("div", "lens");
+    var head = el("div", "lens-head");
+    head.appendChild(el("h2", null, catDef.title));
+    var lens = catDef.lens ? snapshot[catDef.lens] : null;
+    var total = lens ? lens.totalSeconds : (snapshot.watched || []).reduce(function (a, b) { return a + b.seconds; }, 0);
+    head.appendChild(el("span", "lens-total", fmt(total)));
+    head.appendChild(controls(catDef, settingsCat));
+    panel.appendChild(head);
+
+    if (!settingsCat.enabled) {
+      var off = el("div", "off");
+      off.appendChild(el("span", null, "Recording is off."));
+      var on = el("button", "pill", "Turn on");
+      on.addEventListener("click", function () { send({ kind: "setSettings", category: catDef.key, enabled: true }); });
+      off.appendChild(on);
+      panel.appendChild(off);
+      return panel;
+    }
+
+    if (lens) {
+      panel.appendChild(el("div", "section-label", "Totals"));
+      panel.appendChild(barGraph(lens.bars));
+      panel.appendChild(el("div", "section-label", "Timeline"));
+      panel.appendChild(timelineBar(lens.timeline, snapshot.rangeStartMs, snapshot.rangeEndMs));
+    } else {
+      panel.appendChild(barGraph(snapshot.watched || []));
+    }
+    return panel;
+  }
+
+  function render() {
+    var main = document.getElementById("main");
+    main.textContent = "";
+    if (!snapshot) { main.appendChild(el("p", "empty", "Loading…")); return; }
+    var s = snapshot.settings || {};
+    var anyOn = CATS.some(function (c) { return s[c.id] && s[c.id].enabled; });
+    if (!anyOn) {
+      var fr = el("div", "firstrun");
+      fr.appendChild(el("h2", null, "Track your activity — privately, on this device"));
+      fr.appendChild(el("p", null, "Record time per app, time per website, and the videos you watch. Nothing leaves this Mac. Turn on only what you want; each has its own retention and can be deleted anytime."));
+      CATS.forEach(function (c) {
+        var b = el("button", "pill", "Turn on " + c.title.toLowerCase());
+        b.style.marginRight = "8px";
+        b.addEventListener("click", function () { send({ kind: "setSettings", category: c.key, enabled: true }); });
+        fr.appendChild(b);
+      });
+      main.appendChild(fr);
+    }
+    CATS.forEach(function (c) { main.appendChild(lensPanel(c, (s[c.id] || { enabled: false, retentionDays: 30 }))); });
+  }
+
+  window.activityApply = function (data, iconMap) { snapshot = data; icons = iconMap || {}; render(); };
+
+  document.getElementById("ranges").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-range]"); if (!b) return;
+    currentRange = b.dataset.range;
+    [].forEach.call(this.querySelectorAll("button"), function (x) { x.classList.toggle("active", x === b); });
+    send({ kind: "range", range: currentRange });
+  });
+
+  send({ kind: "ready" });
+})();
+</script>
+</body>
+</html>
