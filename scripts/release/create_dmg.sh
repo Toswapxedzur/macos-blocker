@@ -175,12 +175,18 @@ if [[ "\$remove_data" =~ ^[Yy]$ ]]; then
   remove_file "\$PREF_LEGACY"
   remove_dir "\$GROUP_CONTAINER"
   remove_dir "\$GROUP_CONTAINER_LEGACY"
+  # The Vault Classifier component: its state, knowledge and downloaded models.
+  remove_dir "\$HOME/Library/Application Support/VaultClassifier"
   remove_file "\$LAUNCH_AGENT"
   remove_file "\$NATIVE_CHROME"
   remove_file "\$NATIVE_CHROMIUM"
   remove_file "\$NATIVE_EDGE"
   remove_file "\$NATIVE_FIREFOX"
   remove_file "\$NATIVE_SAFARI"
+  # The local-hub helper the app registers on launch (NativeMessagingHostRegistration).
+  for hub_browser in "Google/Chrome" "Microsoft Edge" "Chromium" "BraveSoftware/Brave-Browser" "com.operasoftware.Opera"; do
+    remove_file "\$HOME/Library/Application Support/\$hub_browser/NativeMessagingHosts/com.adamancia.vault.local_hub.json"
+  done
 else
   log "kept settings/support files by user choice"
 fi

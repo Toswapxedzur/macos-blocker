@@ -29,6 +29,9 @@ packages:
     # The shared Swift package lives one directory up.
     path: ..
 
+# XcodeGen REWRITES each entitlements file from the `properties` listed beside its
+# path (an entry with no properties is emptied), so the properties here are the
+# source of truth for XcodeScaffold/Entitlements/*.
 targets:
   # --------------------------------------------------------- macOS App Store app
   AdamanciaVaultMac:
@@ -47,10 +50,18 @@ targets:
         NSSupportsAutomaticTermination: false
     entitlements:
       path: ../XcodeScaffold/Entitlements/AdamanciaVaultMacStore.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true
+        com.apple.security.network.server: true
     settings:
       base:
         PRODUCT_NAME: AdamanciaVault
         PRODUCT_BUNDLE_IDENTIFIER: com.adamancia.vault.mac
+        # This target imports MacBlockerAppFeature, which reaches the classifier's
+        # llama.cpp module; llama.h needs the shared Homebrew include root (the
+        # same rule as Package.swift). Apple Silicon prefix.
+        OTHER_SWIFT_FLAGS: "$(inherited) -Xcc -I/opt/homebrew/include"
     dependencies:
       - package: MacBlocker
         product: MacBlockerAppFeature
@@ -72,6 +83,11 @@ targets:
           websites you choose to block for yourself.
     entitlements:
       path: ../XcodeScaffold/Entitlements/macosBlockerApp.entitlements
+      properties:
+        com.apple.developer.family-controls: true
+        com.apple.security.application-groups: [group.com.adamancia.vault]
+        com.apple.security.network.client: true
+        com.apple.security.network.server: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.adamancia.vault.ios
@@ -103,6 +119,9 @@ targets:
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).DeviceActivityMonitorExtension
     entitlements:
       path: ../XcodeScaffold/Entitlements/macosBlockerExtensions.entitlements
+      properties:
+        com.apple.developer.family-controls: true
+        com.apple.security.application-groups: [group.com.adamancia.vault]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.adamancia.vault.ios.DeviceActivityMonitor
@@ -126,6 +145,9 @@ targets:
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShieldConfigurationExtension
     entitlements:
       path: ../XcodeScaffold/Entitlements/macosBlockerExtensions.entitlements
+      properties:
+        com.apple.developer.family-controls: true
+        com.apple.security.application-groups: [group.com.adamancia.vault]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.adamancia.vault.ios.ShieldConfiguration
@@ -145,6 +167,9 @@ targets:
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShieldActionExtension
     entitlements:
       path: ../XcodeScaffold/Entitlements/macosBlockerExtensions.entitlements
+      properties:
+        com.apple.developer.family-controls: true
+        com.apple.security.application-groups: [group.com.adamancia.vault]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.adamancia.vault.ios.ShieldAction

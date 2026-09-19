@@ -1,5 +1,6 @@
 import AppKit
 import WebKit
+import VaultClassifierBridge
 import VaultClassifierCore
 
 /// The one public surface of the classifier component. Its host (Mac Vault, or
@@ -21,6 +22,9 @@ public final class VaultClassifierPage {
     /// this at launch so tags keep flowing while the page is not on screen.
     public func start() {
         guard model == nil else { return }
+        // A packaged production app registers its browser helper itself (there is
+        // no installer); a no-op in development and for un-bundled builds.
+        NativeMessagingHostRegistration.registerBundledHost()
         model = VaultClassifierViewModel()
     }
 

@@ -45,13 +45,11 @@ done
 "$ROOT/classifier/scripts/bundle-llama-runtime.sh" "$APP_PATH" "$APP_NAME"
 
 # The production Native Messaging host — the helper that hands the browser
-# extension the local-hub secret — plus its manifest, pointing into the bundle.
-# Registering that manifest with each browser is an installer step.
+# extension the local-hub secret. The app registers it with each installed
+# browser on launch (NativeMessagingHostRegistration), so there is no installer
+# step and the registration follows the app if it is moved.
 swift build -c release --product VaultLocalHubNativeHost --package-path "$ROOT/classifier"
 cp "$ROOT/classifier/.build/arm64-apple-macosx/release/VaultLocalHubNativeHost" "$APP_PATH/Contents/MacOS/"
-sed "s|__ABSOLUTE_PATH_TO_VAULT_LOCAL_HUB_NATIVE_HOST__|/Applications/$APP_NAME.app/Contents/MacOS/VaultLocalHubNativeHost|g" \
-  "$ROOT/classifier/native-host/com.adamancia.vault.local_hub.json.template" \
-  > "$APP_PATH/Contents/Resources/com.adamancia.vault.local_hub.json"
 
 if [[ -f "$ICON_SOURCE" ]]; then
   ICONSET="$BUILD_DIR/$APP_NAME.iconset"
