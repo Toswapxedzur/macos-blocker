@@ -78,7 +78,11 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
         // turned off. Explicit disconnects are remembered and never re-registered.
         MCPConnectorRegistry.shared.applyDefaultConnections()
 
-        syncLoginItem(enabled: false)
+        // Relaunch at login so tag blocking (and the hub) resume after a reboot
+        // without the user reopening the app — otherwise protection silently
+        // stays off until they do. Production, bundled builds only; a user can
+        // still turn it off in System Settings ▸ Login Items.
+        syncLoginItem(enabled: true)
     }
 
     /// Keep the process — and therefore the hub — running after the last editor
