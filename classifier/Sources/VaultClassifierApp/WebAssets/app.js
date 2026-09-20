@@ -1037,7 +1037,12 @@
       const selectedDataset = datasets.find((dataset) => dataset.id === applicableBinding?.datasetID);
       const applicablePlatform = platformDefinitions.get(applicablePlatformID);
       const supportsLocalModel = applicablePlatform?.supportsLocalModel === true;
-      const applicablePlatformOptions = [["", t("bridge.noApplicablePlatform")], ...(assets.collectionPlatforms || []).map((definition) => {
+      // A platform belongs to at most one classifier type: hide platforms another
+      // type already claims (this type's own current platform stays selectable).
+      const claimedElsewhere = new Set(classifierTypes
+        .filter((other) => other.id !== classifierType.id && typeof other.applicablePlatformID === "string" && other.applicablePlatformID)
+        .map((other) => other.applicablePlatformID));
+      const applicablePlatformOptions = [["", t("bridge.noApplicablePlatform")], ...(assets.collectionPlatforms || []).filter((definition) => !claimedElsewhere.has(definition.id)).map((definition) => {
         const hasBinding = (assets.bindings || []).some((binding) => binding.id === definition.id);
         return [definition.id, `${definition.name} · ${definition.browser}${hasBinding ? "" : ` · ${t("bridge.platformDataAutoCreate")}`}${!definition.supportsLocalModel ? ` · ${t("bridge.collectionOnly")}` : ""}`];
       })];
