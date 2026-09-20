@@ -329,12 +329,15 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
                     maximumTags: 2
                 ), order: 0
             ),
+            // A platform belongs to at most one classifier type, so the second
+            // type lives on its own platform (same shared dataset).
             .init(
                 id: "b", name: "B", treeID: treeB.id, treeRevision: treeB.revision,
                 datasetID: dataset.id, datasetRevision: dataset.revision,
-                applicablePlatformID: "youtube", order: 1
+                applicablePlatformID: "bilibili", order: 1
             ),
         ]
+        _ = try catalog.ensurePlatformBinding("bilibili")
         try coordinator.updateWorkspaceCatalog(catalog)
         coordinator.setClassificationOptions(maximumTags: 3, houseRules: "Global rule.")
         let recorder = CoordinatorRequestRecorder()
@@ -343,8 +346,11 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         _ = try await coordinator.classifyVideo(
             platformID: "youtube", entryID: "v", creatorID: "c", title: "title"
         )
+        _ = try await coordinator.classifyVideo(
+            platformID: "bilibili", entryID: "w", creatorID: "c", title: "title"
+        )
 
-        XCTAssertEqual(recorder.requests.count, 2)
+        XCTAssertEqual(recorder.requests.count, 2, "one request per platform's single type")
         XCTAssertTrue(recorder.requests[0].staticPrefix.contains("Type A rule."))
         XCTAssertFalse(recorder.requests[0].staticPrefix.contains("Global rule."))
         XCTAssertEqual(recorder.requests[0].allowDecline, false)
