@@ -33,7 +33,6 @@ let package = Package(
         .library(name: "VaultClassifierApp", targets: ["VaultClassifierApp"]),
         .library(name: "VaultClassifierBridge", targets: ["VaultClassifierBridge"]),
         // Standalone development window around the same library (headless rigs).
-        .executable(name: "VaultClassifierShell", targets: ["VaultClassifierShell"]),
         .executable(name: "VaultLocalHubNativeHost", targets: ["VaultLocalHubNativeHost"]),
         .executable(name: "VaultLLMEngineSmoke", targets: ["VaultLLMEngineSmoke"]),
         .executable(name: "VaultGroundingSmoke", targets: ["VaultGroundingSmoke"]),
@@ -85,11 +84,6 @@ let package = Package(
             name: "VaultClassifierApp",
             dependencies: ["VaultClassifierCore", "VaultClassifierBridge", "VaultClassifierResearch", "VaultClassifierLLM"],
             resources: [.copy("WebAssets")],
-            swiftSettings: cllamaIncludeFlags
-        ),
-        .executableTarget(
-            name: "VaultClassifierShell",
-            dependencies: ["VaultClassifierApp"],
             swiftSettings: cllamaIncludeFlags
         ),
         .executableTarget(
