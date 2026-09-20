@@ -67,27 +67,6 @@ enum LocalHubAuthentication {
         return base64URL(Data(code))
     }
 
-    static func verifyProof(program: String, challenge: String, proof: String) -> Bool {
-        guard let secret = try? ensureSecret(environment: .current) else { return false }
-        return verifyProof(program: program, challenge: challenge, proof: proof, secret: secret)
-    }
-
-    static func verifyProof(program: String, challenge: String, proof: String, secret: Data) -> Bool {
-        guard let expected = try? makeProof(program: program, challenge: challenge, secret: secret),
-              let expectedData = base64URLData(expected),
-              let suppliedData = base64URLData(proof) else {
-            return false
-        }
-        return constantTimeEquals(expectedData, suppliedData)
-    }
-
-    /// Retired. The hub secret is the classifier component's on-device file now
-    /// (see `ensureSecret`), so there is no Keychain item to migrate into the
-    /// development environment. Kept as a no-op for launch call-site
-    /// compatibility; it must never touch the Keychain (that was the source of
-    /// the per-launch access prompt on unsigned development builds).
-    static func moveProductionSecretToDevelopmentOnce() throws {}
-
     private static func ensureSecret(environment: VaultRuntimeEnvironment) throws -> Data {
         // The single on-device file secret, shared with the classifier and the
         // browser's native-messaging host. `VaultClassifierBridge` resolves the
@@ -113,30 +92,10 @@ enum LocalHubAuthentication {
         data.base64EncodedString().replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
     }
-
-    private static func base64URLData(_ value: String) -> Data? {
-        guard value.count >= 32, value.count <= 128,
-              value.unicodeScalars.allSatisfy({
-                  ($0.value >= 0x41 && $0.value <= 0x5a) ||
-                  ($0.value >= 0x61 && $0.value <= 0x7a) ||
-                  ($0.value >= 0x30 && $0.value <= 0x39) ||
-                  $0.value == 0x2d || $0.value == 0x5f
-              }) else { return nil }
-        let normalized = value.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        return Data(base64Encoded: normalized + String(repeating: "=", count: (4 - normalized.count % 4) % 4))
-    }
-
-    private static func constantTimeEquals(_ lhs: Data, _ rhs: Data) -> Bool {
-        guard lhs.count == rhs.count else { return false }
-        return zip(lhs, rhs).reduce(0) { $0 | ($1.0 ^ $1.1) } == 0
-    }
 }
 
 enum LocalHubAuthenticationError: Error {
     case randomness
     case invalidInput
-    case keychain(OSStatus)
-    case environmentConflict
-    case environmentMigration
 }
 #endif

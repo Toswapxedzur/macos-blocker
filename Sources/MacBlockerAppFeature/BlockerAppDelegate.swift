@@ -28,17 +28,6 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        if VaultRuntimeEnvironment.current == .development {
-            do {
-                try LocalHubAuthentication.moveProductionSecretToDevelopmentOnce()
-            } catch {
-                // A Keychain migration hiccup must never block the dev app from
-                // launching (crash-guard). The hub fails open when auth is
-                // unavailable, so log and continue rather than terminating.
-                NSLog("[ConnectionHub] development Keychain migration skipped: \(error)")
-            }
-        }
-
         // Every app instance participates in its environment's authenticated local
         // hub, which may listen on loopback when it wins host election.
         ConnectionHub.shared.start()
@@ -47,11 +36,9 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
         // service here — not when its page is first opened — keeps tags flowing
         // to the browser for the whole session, including after the window is
         // closed (the process stays alive; see below). Mac Vault's ConnectionHub
-        // (started above) is the sole hub host, so suppress the classifier's own
-        // hub before it connects — otherwise it races for the port and the
-        // activity/MCP ops only ConnectionHub handles get misrouted to it.
+        // (started above) is the sole hub host; the classifier never hosts, it
+        // only joins as a client (see SharedHubClient).
         MainActor.assumeIsolated {
-            VaultClassifierPage.shared.suppressOwnHubHosting()
             VaultClassifierPage.shared.start()
         }
 

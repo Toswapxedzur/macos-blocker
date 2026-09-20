@@ -17,23 +17,6 @@ public final class VaultClassifierPage {
 
     private init() {}
 
-    /// Opt this process in to hosting the local hub. The classifier defaults to
-    /// NOT hosting so that, embedded in Mac Vault, it never races ConnectionHub
-    /// (the sole host, which owns activity + MCP handling) for the fixed port —
-    /// it only joins as a client. The standalone development shell, which has no
-    /// ConnectionHub, calls this before building the page so it hosts its own
-    /// hub. Must be called before `start()`/`makeView()`.
-    public func allowOwnHubHosting() {
-        LocalClassifierHub.shared.allowHosting()
-    }
-
-    /// Back-compat no-op-ish suppressor. Hosting is already off by default;
-    /// Mac Vault need not call this, but doing so stays safe (it also tears down
-    /// any listener that somehow started).
-    public func suppressOwnHubHosting() {
-        LocalClassifierHub.shared.suppressHosting()
-    }
-
     public func start() {
         guard model == nil else { return }
         // A packaged production app registers its browser helper itself (there is
