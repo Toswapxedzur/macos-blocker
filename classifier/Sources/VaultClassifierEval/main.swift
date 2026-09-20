@@ -72,6 +72,11 @@ struct EvalItem: Codable {
     var title: String
     var trueTags: [String]   // human fills these with tag names (empty = "no tag")
 }
+/// One hand-written `--knowledge-file` row (extra keys such as `obscure` are ignored).
+struct OracleTerm: Codable {
+    var subject: String
+    var meaning: String
+}
 struct EvalSet: Codable {
     var treeID: String
     var treeRevision: Int
@@ -141,6 +146,15 @@ case "score":
     var catalog = catalog
     if knowledgeArm == "none" || knowledgeArm == "creator" { catalog.knowledgeEntries = [] }
     if knowledgeArm == "none" || knowledgeArm == "terms" { catalog.creatorKnowledge = [] }
+    // `--knowledge-file=path` REPLACES the stored term knowledge with a hand-written
+    // `[{"subject":…,"meaning":…}]` list — the oracle arm: what classification does
+    // when it is handed the right term with a correct meaning.
+    if let path = args.compactMap({ $0.hasPrefix("--knowledge-file=") ? String($0.dropFirst(17)) : nil }).first {
+        guard let raw = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let rows = try? JSONDecoder().decode([OracleTerm].self, from: raw) else { die("could not read knowledge file") }
+        catalog.knowledgeEntries = rows.map { KnowledgeEntry(kind: .term, subject: $0.subject, meaning: $0.meaning) }
+        print("• oracle knowledge: \(catalog.knowledgeEntries.count) entries")
+    }
     // `--dump-json=path` writes every item's prediction for offline scoring.
     let dumpPath = args.compactMap { $0.hasPrefix("--dump-json=") ? String($0.dropFirst(12)) : nil }.first
     var dumpRows: [[String: Any]] = []
@@ -431,8 +445,14 @@ case "needs":
     guard args.count > 1, let data = try? Data(contentsOf: URL(fileURLWithPath: args[1])),
           let set = try? JSONDecoder().decode(EvalSet.self, from: data) else { die("could not read eval set") }
     let limit = args.compactMap { $0.hasPrefix("--limit=") ? Int($0.dropFirst(8)) : nil }.first ?? 12
-    let items = Array(set.items.filter { !$0.trueTags.isEmpty }.prefix(limit))
+    // `--all` runs every item (a true no-tag video can need research too);
+    // `--knowledge=none` hides stored research so the model is asked cold.
+    let items = Array((args.contains("--all") ? set.items : set.items.filter { !$0.trueTags.isEmpty }).prefix(limit))
     guard !items.isEmpty else { die("no labeled items to run") }
+    var catalog = catalog
+    if args.contains("--knowledge=none") { catalog.knowledgeEntries = []; catalog.creatorKnowledge = [] }
+    let needsDumpPath = args.compactMap { $0.hasPrefix("--dump-json=") ? String($0.dropFirst(12)) : nil }.first
+    var needsRows: [[String: Any]] = []
 
     let modelOverride = args.compactMap { $0.hasPrefix("--model=") ? String($0.dropFirst(8)) : nil }.first
     guard let modelPath = modelOverride ?? VaultLocalLLMEngine.defaultModelPath(preferredFileName: state.settings.localLLM.modelFileName) else {
@@ -469,11 +489,20 @@ case "needs":
         // Urgency is DERIVED from the classification confidences (the reliable
         // signal), not asked of the model — same value feeds §8's author accumulator.
         let derivedUrgency = ResearchUrgency.fromTagConfidences(classification.tags.map(\.confidence))
+        needsRows.append([
+            "entryID": item.entryID, "terms": terms, "urgency": derivedUrgency,
+            "tags": classification.tags.map { ["name": $0.name, "confidence": $0.confidence] as [String: Any] },
+        ])
         let tagStr = classification.tags.isEmpty ? "—(declined)"
             : classification.tags.map { "\($0.name)·c\($0.confidence)" }.joined(separator: ", ")
         let termStr = terms.isEmpty ? "(none)" : terms.map { "\"\($0)\"" }.joined(separator: ", ")
         print(String(format: "• %-46@\n    tags: %@\n    terms: %@   derived-urgency: %d",
                      String(item.title.prefix(46)) as NSString, tagStr, termStr, derivedUrgency))
+    }
+
+    if let needsDumpPath {
+        try JSONSerialization.data(withJSONObject: needsRows, options: [.prettyPrinted, .sortedKeys])
+            .write(to: URL(fileURLWithPath: needsDumpPath))
     }
 
 case "latency":
