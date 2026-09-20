@@ -813,7 +813,7 @@
   function shell(content) {
     return `<div class="popup">
       <header class="hero">
-        <div class="hero-copy"><span class="hero-mark" aria-hidden="true">V</span><div><h1>${tx("app.title")}</h1></div></div>
+        <div class="hero-copy"><span class="hero-mark" aria-hidden="true">V</span><nav class="scene-tabs" aria-label="Scene"><button type="button" class="scene-tab" data-action="switchScene" data-scene="vault">Vault</button><button type="button" class="scene-tab is-active" data-action="switchScene" data-scene="classifier">Classifier</button><button type="button" class="scene-tab" data-action="switchScene" data-scene="activity">Activity</button></nav></div>
         <div class="hero-controls"><span class="settings-popover-anchor"><button class="header-tool" data-action="openUtilityPanel" data-utility-panel="settings" aria-haspopup="dialog" aria-expanded="${utilityPanel ? "true" : "false"}">${tx("utility.settings.button")}</button>${utilityPanelContent()}</span>${languageSelection()}<div class="hero-status"><span class="status-dot"></span>${tx(state.settings?.research?.enabled ? "hero.researchEnabled" : "hero.offline")}</div></div>
       </header>
       <div class="layout">
@@ -1656,6 +1656,12 @@
     }
     if (button.disabled) return;
     const action = button.dataset.action;
+    if (action === "switchScene") {
+      // Header scene switch (Vault / Classifier / Activity). Classifier is the
+      // active scene here; ask the native host to show another one.
+      if (button.dataset.scene) send("switch-scene", { scene: button.dataset.scene });
+      return;
+    }
     if (action === "toggleAdvancedSettings") {
       // Class toggle only — a full render would replace the node and kill the
       // expand/collapse transition mid-flight.

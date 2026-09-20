@@ -105,6 +105,49 @@ h2 {
   gap: 8px;
 }
 
+/* Scene switch (Vault / Classifier / Activity) — three text labels with a
+   sliding blue underline. Borderless; the underline is the only chrome. */
+.scene-tabs {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 24px;
+  padding-bottom: 8px;
+}
+.scene-tab {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+.scene-tab:hover {
+  color: #64748b;
+}
+.scene-tab.is-active {
+  color: #1f2937;
+}
+.scene-underline {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  width: 0;
+  border-radius: 3px;
+  background: #2563eb;
+  transform: translateX(0);
+  transition: transform 0.26s cubic-bezier(0.4, 0, 0.2, 1),
+    width 0.26s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 .language-picker {
   display: flex;
   flex-direction: column;

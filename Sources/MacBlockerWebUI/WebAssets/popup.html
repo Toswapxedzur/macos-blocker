@@ -12,9 +12,12 @@
     <main class="popup">
       <header class="hero">
         <div class="hero-topbar">
-          <div>
-            <h1 data-i18n="app.shortTitle">Custom Application Blocker</h1>
-          </div>
+          <nav class="scene-tabs" id="sceneTabs" aria-label="Scene">
+            <button type="button" class="scene-tab is-active" data-scene="vault">Vault</button>
+            <button type="button" class="scene-tab" data-scene="classifier">Classifier</button>
+            <button type="button" class="scene-tab" data-scene="activity">Activity</button>
+            <span class="scene-underline" aria-hidden="true"></span>
+          </nav>
           <div class="hero-actions">
             <button id="settingsButton" type="button" class="secondary" data-i18n="settings.button">
               Settings

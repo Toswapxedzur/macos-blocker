@@ -138,6 +138,15 @@ final class VaultClassifierWebShell {
                     Self.layoutLogger.recordWebTrace(data)
                     return
                 }
+                // Host navigation (the Vault/Classifier/Activity switch in the
+                // header). The classifier stays host-agnostic: it just forwards
+                // the requested scene name to whatever host installed the hook.
+                if action == "switch-scene" {
+                    if let scene = data["scene"] as? String, scene.count <= 32 {
+                        VaultClassifierPage.hostNavigationHandler?(scene)
+                    }
+                    return
+                }
                 if action == "loadCreatorEntries" {
                     self.deliverCreatorEntries(data)
                     return

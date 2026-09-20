@@ -15,6 +15,12 @@ public final class VaultClassifierPage {
     private var webShell: VaultClassifierWebShell?
     private var webView: WKWebView?
 
+    /// Installed by the host (Mac Vault) so the classifier's in-page header
+    /// switch can ask it to show another scene. The argument is the requested
+    /// scene name (e.g. "vault", "activity"); the classifier is otherwise
+    /// unaware of the host's other pages. Nil in the standalone/test contexts.
+    public static var hostNavigationHandler: ((String) -> Void)?
+
     private init() {}
 
     public func start() {
