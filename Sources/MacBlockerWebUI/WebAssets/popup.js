@@ -7836,3 +7836,39 @@ initializePopupApp().catch((error) => {
   console.error("Failed to initialize popup.", error);
   setStatus(t("status.errorLoadGroups"), true);
 });
+
+// Scene switch (Vault / Classifier / Activity) in the hero header. Vault is the
+// active scene on this page; tapping another posts to the native shell, which
+// swaps the visible web view. The blue underline tracks the active label.
+(function initSceneTabs() {
+  function setup() {
+    var tabs = document.getElementById("sceneTabs");
+    if (!tabs) return;
+    var underline = tabs.querySelector(".scene-underline");
+    function position() {
+      var active = tabs.querySelector(".scene-tab.is-active");
+      if (!active || !underline) return;
+      underline.style.width = active.offsetWidth + "px";
+      underline.style.transform = "translateX(" + active.offsetLeft + "px)";
+    }
+    tabs.addEventListener("click", function (e) {
+      var btn = e.target.closest(".scene-tab");
+      if (!btn || btn.classList.contains("is-active")) return;
+      var scene = btn.dataset.scene;
+      try {
+        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.cbBridge) {
+          window.webkit.messageHandlers.cbBridge.postMessage({ kind: "switch-scene", scene: scene });
+        }
+      } catch (_) {}
+    });
+    position();
+    window.addEventListener("resize", position);
+    if (document.fonts && document.fonts.ready) { document.fonts.ready.then(position); }
+    setTimeout(position, 60);
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", setup);
+  } else {
+    setup();
+  }
+})();

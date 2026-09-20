@@ -4,6 +4,12 @@ import SwiftUI
 import WebKit
 import MacBlockerCore
 
+/// Posted (with userInfo `["scene": "vault"|"classifier"|"activity"]`) by a
+/// scene's in-web header switch; `BlockerMainView` listens and flips the page.
+public extension Notification.Name {
+    static let vaultSwitchScene = Notification.Name("VaultSwitchScene")
+}
+
 #if canImport(UIKit)
 import UIKit
 public typealias _CBViewRepresentable = UIViewRepresentable
@@ -574,6 +580,13 @@ public struct BlockerWebView: _CBViewRepresentable {
                 pushMcpConnectors()
             case "local-folder-reveal":
                 revealLocalFolder()
+            case "switch-scene":
+                #if os(macOS)
+                if let scene = (body["message"] as? [String: Any])?["scene"] as? String
+                    ?? body["scene"] as? String {
+                    NotificationCenter.default.post(name: .vaultSwitchScene, object: nil, userInfo: ["scene": scene])
+                }
+                #endif
             default:
                 break
             }
