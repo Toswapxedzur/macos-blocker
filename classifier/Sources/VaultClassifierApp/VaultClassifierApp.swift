@@ -189,6 +189,22 @@ final class VaultClassifierViewModel: ObservableObject {
     /// multiplied the queue and starved the tail of the viewport.
     var inFlightVideoClassifications = Set<String>()
 
+    /// The coalescing queue at the engine boundary (see ClassificationCoalescer):
+    /// requests that arrive while the engine is busy wait and are drained
+    /// together, up to `classificationChunkSize` per pass, instead of each
+    /// running alone. When idle, the first arrival waits a short window so the
+    /// rest of the screen can join it before the engine starts.
+    lazy var classificationCoalescer: ClassificationCoalescer<NativeVideoTagsBatchItem> = {
+        let coalescer = ClassificationCoalescer<NativeVideoTagsBatchItem>(
+            chunkSize: Self.classificationChunkSize,
+            arrivalWindowNanoseconds: 75_000_000
+        ) { [weak self] platformID, chunk in
+            await self?.classifyChunk(platformID: platformID, chunk)
+        }
+        coalescer.onIdle = { [weak self] in self?.onWebStateChange?() }
+        return coalescer
+    }()
+
     /// Queue background classification for videos with no cached decision,
     /// skipping any already in flight. Each completed video is broadcast through
     /// the hub so provisional pills resolve the moment the result exists,
