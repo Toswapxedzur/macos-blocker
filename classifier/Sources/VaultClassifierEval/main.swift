@@ -133,6 +133,18 @@ case "score":
     let minTags = args.compactMap { $0.hasPrefix("--min=") ? Int($0.dropFirst(6)) : nil }.first ?? 0
     let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: maxTags, minimumTags: minTags, creatorPriorRowLimit: priorRows)
 
+    // Research A/B: `--knowledge=all|none|terms|creator` chooses which stored
+    // research the classifier may read (default all = production). Everything
+    // else (creator counts, corrections, prompt) is identical across arms.
+    let knowledgeArm = args.compactMap { $0.hasPrefix("--knowledge=") ? String($0.dropFirst(12)) : nil }.first ?? "all"
+    guard ["all", "none", "terms", "creator"].contains(knowledgeArm) else { die("--knowledge= must be all|none|terms|creator") }
+    var catalog = catalog
+    if knowledgeArm == "none" || knowledgeArm == "creator" { catalog.knowledgeEntries = [] }
+    if knowledgeArm == "none" || knowledgeArm == "terms" { catalog.creatorKnowledge = [] }
+    // `--dump-json=path` writes every item's prediction for offline scoring.
+    let dumpPath = args.compactMap { $0.hasPrefix("--dump-json=") ? String($0.dropFirst(12)) : nil }.first
+    var dumpRows: [[String: Any]] = []
+
     // Optional leaf-only tree: drop every node that has children, so the grammar
     // can never emit a broad parent bucket (Gaming/Technology/Entertainment/Lifestyle).
     var evalTree = tree
@@ -162,6 +174,14 @@ case "score":
         )
         let predicted = Set(result.tags.map(\.tagID))
         for tag in result.tags { predConfByID[tag.tagID] = tag.confidence }
+        if dumpPath != nil {
+            dumpRows.append([
+                "entryID": item.entryID,
+                "tags": result.tags.map { ["name": tagNameByID[$0.tagID] ?? $0.tagID, "confidence": $0.confidence] as [String: Any] },
+                "knowledgeRefs": result.knowledgeRefs,
+                "source": result.source.rawValue,
+            ])
+        }
 
         if verbose {
             let predStr = result.tags.isEmpty ? "— (declined)"
@@ -177,6 +197,12 @@ case "score":
         for id in predicted.intersection(truth) { tp[id, default: 0] += 1; tpByConf[predConfByID[id] ?? 0, default: 0] += 1 }
         for id in predicted.subtracting(truth) { fp[id, default: 0] += 1; fpByConf[predConfByID[id] ?? 0, default: 0] += 1 }
         for id in truth.subtracting(predicted) { fn[id, default: 0] += 1 }
+    }
+
+    if let dumpPath {
+        try JSONSerialization.data(withJSONObject: dumpRows, options: [.prettyPrinted, .sortedKeys])
+            .write(to: URL(fileURLWithPath: dumpPath))
+        print("• wrote \(dumpRows.count) predictions (knowledge=\(knowledgeArm)) to \(dumpPath)")
     }
 
     func rate(_ a: Int, _ b: Int) -> Double { b == 0 ? 0 : Double(a) / Double(b) }
