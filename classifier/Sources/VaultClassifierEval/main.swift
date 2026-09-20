@@ -58,24 +58,13 @@ let tagIDByName = Dictionary(tree.nodes.map { ($0.name.lowercased(), $0.id) }, u
 let allowedNames = tree.nodes.filter { !$0.isRetired }.map(\.name).sorted()
 
 // The house rules PRODUCTION would use for this type — identical to the
-// coordinator's `effectiveHouseRules`: a type's own rules replace the global
-// ones, and a legacy LLM-written "Learned preferences" block is stripped. The
-// harness used to pass the type's rules RAW, so every eval ran with that stale,
-// fabricated block ("Samsung products → Sports") still in the prompt while the
-// real app had been stripping it since 5ca3ff7. `--raw-house-rules` restores the
-// old behaviour to reproduce earlier numbers.
+// coordinator's `effectiveHouseRules`: a type's own rules replace the global ones.
 let productionHouseRules: String? = {
-    let perType = type.localModelOverrides?.houseRules
-    let global = state.settings.localLLM.houseRules
-    if args.contains("--raw-house-rules") { return perType ?? global }
-    let manualPerType = CorrectionDistiller.manualRules(from: perType)
-    if !manualPerType.isEmpty { return manualPerType }
-    let trimmed = global.trimmingCharacters(in: .whitespacesAndNewlines)
+    let perType = type.localModelOverrides?.houseRules?.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let perType, !perType.isEmpty { return perType }
+    let trimmed = state.settings.localLLM.houseRules.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? nil : trimmed
 }()
-if CorrectionDistiller.containsLearnedPreferences(type.localModelOverrides?.houseRules) {
-    FileHandle.standardError.write(Data("• note: this type still stores a legacy \"Learned preferences\" block; \(args.contains("--raw-house-rules") ? "KEEPING it (--raw-house-rules)" : "stripped, as production does").\n".utf8))
-}
 
 struct EvalItem: Codable {
     var entryID: String
