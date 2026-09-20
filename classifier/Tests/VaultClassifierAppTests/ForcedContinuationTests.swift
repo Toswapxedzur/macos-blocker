@@ -17,11 +17,32 @@ final class ForcedContinuationTests: XCTestCase {
         XCTAssertFalse(next("Music").finished)
     }
 
-    func testPartialNamesAndAmbiguousPrefixesAreLeftToTheModel() {
-        XCTAssertEqual(next("Mus").forced, "")                 // still choosing the name
-        XCTAssertEqual(next("Clash").forced, "")
+    func testAmbiguousPrefixesAreLeftToTheModel() {
+        XCTAssertEqual(next("").forced, "")                    // the name decision itself is always sampled
+        XCTAssertEqual(next("G").forced, "")                   // "Gaming" or "Gaming News"
         XCTAssertEqual(next("Gaming").forced, "")              // could still become "Gaming News"
         XCTAssertEqual(next("Gaming News").forced, #"","confidence":"#)
+    }
+
+    /// Once a partial name can only become ONE allowed name, the grammar leaves no
+    /// choice about the rest: it is fed with its boilerplate in the same step
+    /// instead of costing a generation round per remaining name token.
+    func testAPartialNameWithOneCompletionIsCompleted() {
+        XCTAssertEqual(next("Mus").forced, #"ic","confidence":"#)
+        XCTAssertEqual(next("Clash").forced, #" Royale","confidence":"#)
+        XCTAssertEqual(next("Gaming N").forced, #"ews","confidence":"#)
+        // Second tag of a reply: only the current chunk decides.
+        XCTAssertEqual(next(#"Music","confidence":4},{"name":"Cl"#, cap: 3).forced, #"ash Royale","confidence":"#)
+    }
+
+    func testAPrefixSharedWithTheDeclineLiteralIsNotCompleted() {
+        let decline = VaultLocalLLMEngine.declineLiteral
+        let sharing = [decline + "sense"]                      // a tag name that starts like the decline literal
+        let first = String(decline.prefix(1))
+        let open = VaultLocalLLMEngine.forcedContinuation(after: first, allowedTagNames: sharing, allowDecline: true, maximumTags: 1)
+        XCTAssertEqual(open.forced, "", "could still be the decline literal")
+        let closed = VaultLocalLLMEngine.forcedContinuation(after: first, allowedTagNames: sharing, allowDecline: false, maximumTags: 1)
+        XCTAssertEqual(closed.forced, String(sharing[0].dropFirst()) + #"","confidence":"#)
     }
 
     func testPartiallyEmittedBoilerplateIsCompleted() {

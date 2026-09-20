@@ -119,6 +119,8 @@ public struct VideoClassificationPipeline: Sendable {
         creatorGroundingConfidenceFloor: Int = VideoClassificationPipeline.defaultCreatorGroundingConfidenceFloor
     ) async throws -> [VideoClassification] {
         guard !inputs.isEmpty else { return [] }
+        let timing = ProcessInfo.processInfo.environment["VAULT_DECODE_TIMING"] == "1"
+        let tStart = DispatchTime.now()
         // Evidence gathering (creator prior + matched knowledge + correction
         // exemplars) is shared with `primaryPromptParts`, so the calibration eval
         // drives the model on the exact same prompt this path builds.
@@ -148,7 +150,14 @@ public struct VideoClassificationPipeline: Sendable {
         // Primary decode: each video's own content plus any matched term
         // knowledge. The creator description is deliberately withheld here.
         let primaryParts = inputs.indices.map { parts($0, knowledge: evidence[$0].termKnowledge) }
+        let tAssembled = DispatchTime.now()
         let primaryResults = try await llm.classifyAll(primaryParts.map(request))
+        if timing {
+            let ms = { (a: DispatchTime, b: DispatchTime) in Double(b.uptimeNanoseconds - a.uptimeNanoseconds) / 1_000_000 }
+            FileHandle.standardError.write(Data(String(
+                format: "[pipeline-timing] videos=%d  evidence+assemble=%.0f  classifyAll=%.0fms\n",
+                inputs.count, ms(tStart, tAssembled), ms(tAssembled, DispatchTime.now())).utf8))
+        }
         var tags = zip(primaryResults, primaryParts).map { scoredTags(from: $0, parts: $1) }
         var knowledgeUsed = evidence.map(\.termKnowledge)
         var grounded = [Bool](repeating: false, count: inputs.count)
