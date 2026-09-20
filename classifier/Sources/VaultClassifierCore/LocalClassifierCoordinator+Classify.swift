@@ -189,6 +189,14 @@ extension LocalClassifierCoordinator {
             }
         }
 
+        let tPersist = DispatchTime.now()
+        defer {
+            if ProcessInfo.processInfo.environment["VAULT_DECODE_TIMING"] == "1" {
+                FileHandle.standardError.write(Data(String(
+                    format: "[classify-timing] videos=%d  persist+after=%.0fms\n", items.count,
+                    Double(DispatchTime.now().uptimeNanoseconds - tPersist.uptimeNanoseconds) / 1_000_000).utf8))
+            }
+        }
         let (saved, authorTasks) = try lock.withLock { () -> (WorkspaceCatalog, [ResearchTask]) in
             for classification in classifications { state.workspaceCatalog.upsertVideoClassification(classification) }
             // Author accumulation (§8): every model classification adds its derived

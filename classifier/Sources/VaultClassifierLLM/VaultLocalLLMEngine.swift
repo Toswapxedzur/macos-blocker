@@ -357,18 +357,40 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
             }
             var token = llama_token(best)
             if !accepted {
-                var all = (0..<vocabSize).map { llama_token_data(id: llama_token($0), logit: logits[$0], p: 0) }
-                token = all.withUnsafeMutableBufferPointer { buffer in
-                    var candidates = llama_token_data_array(data: buffer.baseAddress, size: vocabSize, selected: -1, sorted: false)
-                    llama_sampler_apply(sampler, &candidates)
-                    var pick = 0
-                    var pickLogit = -Float.infinity
-                    for index in 0..<Int(candidates.size) where candidates.data[index].logit > pickLogit {
-                        pick = index
-                        pickLogit = candidates.data[index].logit
+                // Highest-logit grammar-valid token among `pool`, or nil if none is valid.
+                func bestValid(_ pool: [llama_token_data]) -> llama_token? {
+                    var pool = pool
+                    return pool.withUnsafeMutableBufferPointer { buffer -> llama_token? in
+                        var candidates = llama_token_data_array(data: buffer.baseAddress, size: buffer.count, selected: -1, sorted: false)
+                        llama_sampler_apply(sampler, &candidates)
+                        var pick = -1
+                        var pickLogit = -Float.infinity
+                        for index in 0..<Int(candidates.size) where candidates.data[index].logit > pickLogit {
+                            pick = index
+                            pickLogit = candidates.data[index].logit
+                        }
+                        return pick >= 0 ? candidates.data[pick].id : nil
                     }
-                    return candidates.data[pick].id
                 }
+                // The greedy pick was invalid (~10% of steps). Masking the whole
+                // vocabulary costs ~116 ms; the best valid token is almost always
+                // among the top few logits, and if ANY of the top K is valid it is
+                // exactly the token the full mask would choose (everything outside
+                // the top K has a lower logit). Full mask only as a last resort.
+                let poolSize = min(64, vocabSize)
+                var top: [llama_token_data] = []
+                top.reserveCapacity(poolSize + 1)
+                var floor = -Float.infinity
+                for index in 0..<vocabSize where logits[index] > floor || top.count < poolSize {
+                    let entry = llama_token_data(id: llama_token(index), logit: logits[index], p: 0)
+                    let position = top.firstIndex(where: { $0.logit < entry.logit }) ?? top.count
+                    top.insert(entry, at: position)
+                    if top.count > poolSize { top.removeLast() }
+                    if top.count == poolSize { floor = top[poolSize - 1].logit }
+                }
+                token = bestValid(top)
+                    ?? bestValid((0..<vocabSize).map { llama_token_data(id: llama_token($0), logit: logits[$0], p: 0) })
+                    ?? llama_token(best)
             }
             llama_sampler_accept(sampler, token)
             return token
@@ -513,6 +535,18 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
             // `name` is complete only if no longer tag name could still be forming.
             if tail.isEmpty, allowedTagNames.contains(where: { $0 != name && $0.hasPrefix(name) }) { continue }
             return (String(confidenceBoilerplate.dropFirst(tail.count)), false)
+        }
+        // Mid-name: once the partial name can only become ONE allowed name (and
+        // cannot be the decline literal), the grammar leaves no choice about the
+        // rest of it — feed the remainder and its boilerplate now instead of
+        // spending a generation round per remaining name token. The first name
+        // token (the actual decision) is always sampled.
+        if !current.isEmpty {
+            let declineStillPossible = chunks.count == 1 && allowDecline && declineLiteral.hasPrefix(current)
+            let completions = allowedTagNames.filter { $0.hasPrefix(current) }
+            if !declineStillPossible, completions.count == 1, let only = completions.first, only != current {
+                return (String(only.dropFirst(current.count)) + confidenceBoilerplate, false)
+            }
         }
         return ("", false)
     }

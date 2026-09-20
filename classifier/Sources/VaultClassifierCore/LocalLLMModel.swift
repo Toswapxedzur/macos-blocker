@@ -232,9 +232,21 @@ public struct KnowledgeEntry: Codable, Equatable, Sendable, Identifiable {
         if Self.containsCJK(needle) {
             return title.lowercased().contains(needle.lowercased())
         }
-        let pattern = "(?<![\\p{L}\\p{N}])" + NSRegularExpression.escapedPattern(for: needle) + "(?![\\p{L}\\p{N}])"
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return false }
-        return regex.firstMatch(in: title, range: NSRange(title.startIndex..., in: title)) != nil
+        // Whole-word match without a regex: this runs for every term entry on every
+        // video, and compiling an NSRegularExpression per entry cost ~0.3 s per
+        // video (measured) — as much as the model's own prefill.
+        let haystack = title.lowercased()
+        let lowered = needle.lowercased()
+        func isWordCharacter(_ character: Character) -> Bool { character.isLetter || character.isNumber }
+        var searchStart = haystack.startIndex
+        while let found = haystack.range(of: lowered, range: searchStart..<haystack.endIndex) {
+            let boundedBefore = found.lowerBound == haystack.startIndex
+                || !isWordCharacter(haystack[haystack.index(before: found.lowerBound)])
+            let boundedAfter = found.upperBound == haystack.endIndex || !isWordCharacter(haystack[found.upperBound])
+            if boundedBefore && boundedAfter { return true }
+            searchStart = haystack.index(after: found.lowerBound)
+        }
+        return false
     }
 
     /// A TTL of zero means knowledge never expires. Expired entries stay in
