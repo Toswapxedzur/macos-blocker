@@ -14,6 +14,7 @@ public enum WorkspaceCatalogError: Error, Equatable, LocalizedError, Sendable {
     case invalidProviderProfile(String)
     case invalidClassifierType(String)
     case treeInUse(String)
+    case duplicateApplicablePlatform(String)
 
     public var errorDescription: String? {
         switch self {
@@ -27,6 +28,7 @@ public enum WorkspaceCatalogError: Error, Equatable, LocalizedError, Sendable {
         case .invalidProviderProfile(let value): return "The API provider profile is invalid: \(value)."
         case .invalidClassifierType(let value): return "The classifier type has incompatible local assets: \(value)."
         case .treeInUse(let value): return "The tag tree is still used by a classifier type or platform: \(value)."
+        case .duplicateApplicablePlatform(let value): return "That platform is already assigned to another classifier type: \(value). A platform can belong to only one type."
         }
     }
 }
@@ -184,6 +186,16 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             guard let dataset = datasets.first(where: { $0.id == binding.datasetID }) else { throw WorkspaceCatalogError.missingDataset(binding.datasetID) }
             _ = tree
             _ = dataset
+        }
+        // A platform belongs to at most one classifier type. The classify path
+        // runs EVERY type whose applicablePlatformID matches, so two types on
+        // one platform silently double all engine work.
+        var claimedPlatforms = Set<String>()
+        for classifierType in classifierTypes {
+            guard let platformID = classifierType.applicablePlatformID else { continue }
+            guard claimedPlatforms.insert(platformID).inserted else {
+                throw WorkspaceCatalogError.duplicateApplicablePlatform(platformID)
+            }
         }
         for dataset in datasets {
             guard dataset.collectedEntries.count <= CollectedPlatformEntry.maximumRetainedEntries else {
@@ -477,6 +489,20 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             reconciled.applicablePlatformID = applicableBinding?.id
             reconciled.updatedAtMilliseconds = WorkspaceCatalog.now()
             return reconciled
+        }
+        // Invariant: a platform is claimed by at most one classifier type (the
+        // classify path runs every matching type, so duplicates double the
+        // engine work). Resolve stale duplicates by UNBINDING the extras — never
+        // deleting a type: the binding's chosen active type wins, else the first.
+        // Deliberate duplicate assignments are refused earlier, at the write path.
+        for platformID in Set(classifierTypes.compactMap(\.applicablePlatformID)) {
+            let claimants = classifierTypes.indices.filter { classifierTypes[$0].applicablePlatformID == platformID }
+            guard claimants.count > 1 else { continue }
+            let activeID = bindings.first(where: { $0.id == platformID })?.activeClassifierTypeID
+            let winner = claimants.first(where: { classifierTypes[$0].id == activeID }) ?? claimants[0]
+            for index in claimants where index != winner {
+                classifierTypes[index].applicablePlatformID = nil
+            }
         }
         for index in bindings.indices {
             // Auto-select the sole compatible classifier type for the platform.

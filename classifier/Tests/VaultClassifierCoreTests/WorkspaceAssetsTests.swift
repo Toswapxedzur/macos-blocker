@@ -57,6 +57,46 @@ final class WorkspaceAssetsTests: XCTestCase {
         }
     }
 
+    /// A platform belongs to at most one classifier type: the classify path runs
+    /// every type whose applicablePlatformID matches, so two types on one platform
+    /// double all engine work. validate() asserts it; reconcile repairs stale
+    /// state by UNBINDING extras (never deleting), the binding's chosen type first.
+    func testAPlatformBelongsToAtMostOneClassifierType() throws {
+        var catalog = WorkspaceCatalog.starter()
+        let binding = try catalog.ensurePlatformBinding("youtube")
+        let tree = try XCTUnwrap(catalog.trees.first { $0.id == binding.treeID })
+        let dataset = try XCTUnwrap(catalog.datasets.first { $0.id == binding.datasetID })
+        let make = { (id: String) in
+            ClassifierTypeAsset(
+                id: id, name: id, treeID: tree.id, treeRevision: tree.revision,
+                datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformID: "youtube")
+        }
+        catalog.classifierTypes = [make("first"), make("second")]
+        let bindingIndex = try XCTUnwrap(catalog.bindings.firstIndex { $0.id == "youtube" })
+
+        XCTAssertThrowsError(try catalog.validate()) { error in
+            XCTAssertEqual(error as? WorkspaceCatalogError, .duplicateApplicablePlatform("youtube"))
+        }
+
+        // The binding's chosen active type keeps the platform; the other is unbound, not deleted.
+        var chosen = catalog
+        chosen.bindings[bindingIndex].activeClassifierTypeID = "second"
+        chosen.reconcileClassifierTypes()
+        XCTAssertEqual(chosen.classifierTypes.map(\.id), ["first", "second"], "no type is deleted")
+        XCTAssertNil(chosen.classifierTypes.first { $0.id == "first" }?.applicablePlatformID)
+        XCTAssertEqual(chosen.classifierTypes.first { $0.id == "second" }?.applicablePlatformID, "youtube")
+        XCTAssertEqual(chosen.bindings[bindingIndex].activeClassifierTypeID, "second")
+        XCTAssertNoThrow(try chosen.validate())
+
+        // With no chosen type the first claimant wins and becomes the sole, auto-selected type.
+        var unchosen = catalog
+        unchosen.reconcileClassifierTypes()
+        XCTAssertEqual(unchosen.classifierTypes.first { $0.id == "first" }?.applicablePlatformID, "youtube")
+        XCTAssertNil(unchosen.classifierTypes.first { $0.id == "second" }?.applicablePlatformID)
+        XCTAssertEqual(unchosen.bindings[bindingIndex].activeClassifierTypeID, "first")
+        XCTAssertNoThrow(try unchosen.validate())
+    }
+
     func testClassifierTypeLocalModelOverridesLegacyAndRoundTrip() throws {
         let legacy = Data(#"{"id":"type","name":"Type","treeID":"tree","treeRevision":1,"datasetID":"dataset","datasetRevision":1,"applicablePlatformID":"youtube","order":0}"#.utf8)
         let decodedLegacy = try JSONDecoder().decode(ClassifierTypeAsset.self, from: legacy)

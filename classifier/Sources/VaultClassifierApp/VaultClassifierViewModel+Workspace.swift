@@ -174,6 +174,13 @@ extension VaultClassifierViewModel {
             guard CollectionPlatformRegistry.definition(for: applicablePlatformID) != nil else {
                 throw WebBridgeInputError.invalidChoice("classifier type")
             }
+            // A platform belongs to at most one classifier type. Refuse the
+            // assignment outright — updateWorkspaceCatalog reconciles before it
+            // validates, which would otherwise silently unbind one of the two —
+            // so the owner sees exactly why it was not applied.
+            if catalog.classifierTypes.contains(where: { $0.id != typeID && $0.applicablePlatformID == applicablePlatformID }) {
+                throw WorkspaceCatalogError.duplicateApplicablePlatform(applicablePlatformID)
+            }
             let selectedBinding = try catalog.ensurePlatformBinding(applicablePlatformID)
             guard
                   // A type owns its own tree; the binding only supplies the shared
