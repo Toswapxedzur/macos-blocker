@@ -134,6 +134,39 @@ final class LocalLLMModelTests: XCTestCase {
         XCTAssertTrue(catalog.matchedKnowledge(title: "unrelated title", creatorID: "youtube:handle:unknown").isEmpty)
     }
 
+    /// Research term extraction can emit junk subjects — single letters,
+    /// abbreviations, bare numbers, corrupt text. Under raw substring matching a
+    /// term named "e" hit essentially every title and injected its whole meaning
+    /// into every prompt (measured live: ~570 tokens/video, the entire tagging
+    /// slowdown). Such subjects are never stored and never match; real subjects
+    /// match as whole words (CJK, which has no word boundaries, as substrings).
+    func testTermSubjectsMustBeSpecificAndMatchWholeWords() {
+        for junk in ["e", "T", "tE", "CE", "ml", "0", "2200", "832,000", ",", "12345678901234567890123456789", "\u{FFFD}劉", "新"] {
+            XCTAssertFalse(KnowledgeEntry.isSpecificTermSubject(junk), "junk subject accepted: \(junk)")
+            let entry = KnowledgeEntry(kind: .term, subject: junk, meaning: "Meaning")
+            XCTAssertFalse(entry.matches(title: "The best 2200 e-bikes: T, CE and ML explained"), "junk subject matched: \(junk)")
+            var catalog = WorkspaceCatalog()
+            catalog.upsertKnowledgeEntry(entry)
+            XCTAssertTrue(catalog.knowledgeEntries.isEmpty, "junk subject was stored: \(junk)")
+        }
+        for real in ["url", "KIA", "ГЛИ", "Clash Royale", "友宜", "太監"] {
+            XCTAssertTrue(KnowledgeEntry.isSpecificTermSubject(real), "real subject rejected: \(real)")
+        }
+
+        // Whole words only: "her" is not inside "hero" or "HERMITCRAFT".
+        let her = KnowledgeEntry(kind: .term, subject: "her", meaning: "A pronoun.")
+        XCTAssertTrue(her.matches(title: "Her story, told by her"))
+        XCTAssertFalse(her.matches(title: "My HERMITCRAFT base and a hero"))
+        let clash = KnowledgeEntry(kind: .term, subject: "Clash Royale", meaning: "A mobile game.")
+        XCTAssertTrue(clash.matches(title: "clash royale: best deck"))
+        XCTAssertFalse(clash.matches(title: "clash royalex deck"))
+
+        // CJK: no word boundaries, so two characters match as a substring.
+        let cjk = KnowledgeEntry(kind: .term, subject: "友宜", meaning: "侯友宜")
+        XCTAssertTrue(cjk.matches(title: "侯友宜宣布參選"))
+        XCTAssertFalse(cjk.matches(title: "unrelated"))
+    }
+
     func testMatchedKnowledgeIsTermOnlyAndBounded() {
         var catalog = WorkspaceCatalog()
         let creatorID = "youtube:handle:c1"
