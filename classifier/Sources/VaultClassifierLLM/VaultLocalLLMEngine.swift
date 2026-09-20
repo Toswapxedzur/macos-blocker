@@ -332,7 +332,12 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
         defer { for state in live { llama_sampler_free(state.sampler) } }
 
         var steps = 0
+        // Timing split (VAULT_DECODE_TIMING=1 only): per-sequence CPU work
+        // (grammar sampling, forced-span tokenize) vs the one batched GPU decode.
+        let msBetween = { (a: DispatchTime, b: DispatchTime) in Double(b.uptimeNanoseconds - a.uptimeNanoseconds) / 1_000_000 }
+        var sampleMs = 0.0, decodeMs = 0.0
         while true {
+            let tStep = DispatchTime.now()
             var next: [BatchEntry] = []
             for slot in live.indices where !live[slot].finished {
                 let token = llama_sampler_sample(live[slot].sampler, context, live[slot].outputIndex)
@@ -368,8 +373,17 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
                 }
             }
             guard !next.isEmpty else { break }
+            let tSampled = DispatchTime.now()
             let status = decode(next, using: &batch)
             guard status == 0 else { throw fail("batch-generation-decode-failed", status) }
+            if timing {
+                // Sampling reads the previous decode's logits, so without an
+                // explicit sync the GPU forward pass would be billed to the
+                // next step's first llama_sampler_sample.
+                llama_synchronize(context)
+                sampleMs += msBetween(tStep, tSampled)
+                decodeMs += msBetween(tSampled, DispatchTime.now())
+            }
             steps += 1
         }
 
@@ -380,8 +394,8 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
             let ms = { (a: DispatchTime, b: DispatchTime) in Double(b.uptimeNanoseconds - a.uptimeNanoseconds) / 1_000_000 }
             let tEnd = DispatchTime.now()
             FileHandle.standardError.write(Data(String(
-                format: "[batch-timing] videos=%d prefix=%d (reused %d) suffixTokens=%d  prefill=%.0f  gen=%.0f  steps=%d  genTokens=%d  total=%.0fms\n",
-                items.count, prefixLength, common, suffixEntries.count + lastEntries.count, ms(tStart, tPrefill), ms(tPrefill, tEnd), steps,
+                format: "[batch-timing] videos=%d prefix=%d (reused %d) suffixTokens=%d  prefill=%.0f  gen=%.0f (sample=%.0f decode=%.0f)  steps=%d  genTokens=%d  total=%.0fms\n",
+                items.count, prefixLength, common, suffixEntries.count + lastEntries.count, ms(tStart, tPrefill), ms(tPrefill, tEnd), sampleMs, decodeMs, steps,
                 live.reduce(0) { $0 + $1.generatedTokens }, ms(tStart, tEnd)
             ).utf8))
         }
