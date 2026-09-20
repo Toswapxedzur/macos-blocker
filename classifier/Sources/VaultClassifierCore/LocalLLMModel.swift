@@ -183,13 +183,58 @@ public struct KnowledgeEntry: Codable, Equatable, Sendable, Identifiable {
         }
     }
 
-    /// A term entry matches a title when its subject appears in the title
-    /// (case-insensitive). Creator entries are matched by key, not by title.
+    /// Minimum specificity for a TERM subject to be matched against titles (and
+    /// to be stored at all). Research term extraction can emit junk — single
+    /// letters ("e", "T"), abbreviations ("CE", "ml"), bare numbers, corrupt
+    /// text — and a raw substring match on those hits essentially every title,
+    /// injecting the whole "meaning" into every prompt (measured live:
+    /// ~570 tokens per video, i.e. the entire tagging slowdown). CJK has no word
+    /// boundaries, so two characters suffice there; other scripts need three
+    /// characters including a real word of three or more letters.
+    public static func isSpecificTermSubject(_ subject: String) -> Bool {
+        let trimmed = subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              !trimmed.unicodeScalars.contains(where: { $0.value == 0xFFFD }) else { return false }
+        if containsCJK(trimmed) {
+            return trimmed.unicodeScalars.filter(isCJK).count >= 2
+        }
+        guard trimmed.count >= 3 else { return false }
+        var run = 0
+        for scalar in trimmed.unicodeScalars {
+            if CharacterSet.letters.contains(scalar) {
+                run += 1
+                if run >= 3 { return true }
+            } else {
+                run = 0
+            }
+        }
+        return false
+    }
+
+    private static func isCJK(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x3040...0x30FF, 0x3400...0x4DBF, 0x4E00...0x9FFF, 0xF900...0xFAFF, 0xAC00...0xD7AF: return true
+        default: return false
+        }
+    }
+
+    private static func containsCJK(_ text: String) -> Bool {
+        text.unicodeScalars.contains(where: isCJK)
+    }
+
+    /// A term entry matches a title when its subject appears in the title — as a
+    /// whole word for scripts with word boundaries, as a substring for CJK —
+    /// and only for specific subjects (see `isSpecificTermSubject`). Creator
+    /// entries are matched by key, not by title.
     public func matches(title: String) -> Bool {
-        guard kind == .term else { return false }
-        let needle = subject.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !needle.isEmpty else { return false }
-        return title.lowercased().contains(needle)
+        guard kind == .term, Self.isSpecificTermSubject(subject) else { return false }
+        let needle = subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        if Self.containsCJK(needle) {
+            return title.lowercased().contains(needle.lowercased())
+        }
+        let pattern = "(?<![\\p{L}\\p{N}])" + NSRegularExpression.escapedPattern(for: needle) + "(?![\\p{L}\\p{N}])"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return false }
+        return regex.firstMatch(in: title, range: NSRange(title.startIndex..., in: title)) != nil
     }
 
     /// A TTL of zero means knowledge never expires. Expired entries stay in
@@ -550,6 +595,9 @@ public extension WorkspaceCatalog {
     /// Insert or update a knowledge entry (dedup by key), routed to the term or
     /// creator map by kind. Bounded by trimming the oldest when over the cap.
     mutating func upsertKnowledgeEntry(_ entry: KnowledgeEntry) {
+        // Junk term subjects (see isSpecificTermSubject) are never stored: they
+        // could never match legitimately and would only bloat the catalog.
+        if entry.kind == .term, !KnowledgeEntry.isSpecificTermSubject(entry.subject) { return }
         switch entry.kind {
         case .creator:
             if let index = creatorKnowledge.firstIndex(where: { $0.id == entry.id }) {
