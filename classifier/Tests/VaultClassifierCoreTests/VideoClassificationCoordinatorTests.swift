@@ -560,8 +560,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
 
         let saved = coordinator.snapshot().workspaceCatalog
         let rules = saved.classifierTypes[typeIndex].localModelOverrides?.houseRules
-        XCTAssertEqual(rules, "Manual type rule.")
-        XCTAssertFalse(CorrectionDistiller.containsLearnedPreferences(rules), "no distilled learned block is written")
+        XCTAssertEqual(rules, "Manual type rule.", "corrections never write into the house rules")
         XCTAssertEqual(saved.videoClassification(
             classifierTypeID: "type", platformID: "youtube", entryID: "v\(correctionCount - 1)"
         )?.source, .humanCorrected)

@@ -288,11 +288,10 @@ extension LocalClassifierCoordinator {
 
     static func effectiveHouseRules(global: String?, perType: String?) -> String? {
         // A type's own house rules REPLACE the global rules (intentional override).
-        // `perType` may still carry a legacy distilled "Learned preferences" block
-        // from before corrections moved to per-video retrieval; keep only its
-        // manual portion so stale distillations never leak back into the prompt.
-        let manualPerType = CorrectionDistiller.manualRules(from: perType)
-        if !manualPerType.isEmpty { return manualPerType }
+        // Both are the user's own text; corrections reach the model only as
+        // per-video retrieved exemplars (CorrectionRetriever), never as rules.
+        let trimmedPerType = perType?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmedPerType, !trimmedPerType.isEmpty { return trimmedPerType }
         let trimmedGlobal = global?.trimmingCharacters(in: .whitespacesAndNewlines)
         return (trimmedGlobal?.isEmpty == false) ? trimmedGlobal : nil
     }
