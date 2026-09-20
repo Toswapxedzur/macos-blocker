@@ -42,18 +42,15 @@ final class SharedHubClient {
 
     func connect() {
         desired = true
-        attemptHostOrJoin()
+        attemptJoin()
     }
 
-    /// Every fresh attempt begins with listener ownership. If a verified peer
-    /// still owns the address we join it; if the prior host disappeared, this
-    /// app becomes the replacement host instead of reconnecting blindly.
-    private func attemptHostOrJoin() {
+    /// Joins the local hub as a client. The classifier never hosts: it runs only
+    /// as a component of Mac Vault, whose ConnectionHub is the sole host (it owns
+    /// activity + MCP + group-sync). The socket below joins only after the hub's
+    /// welcome identifies Mac Vault (or another classifier) as the local hub.
+    private func attemptJoin() {
         guard desired else { return }
-        // First app owns the port. If another process already does, the socket
-        // below joins only after its welcome identifies Mac Vault or Vault
-        // Classifier as the local hub.
-        LocalClassifierHub.shared.startIfNeeded()
         reconnectTimer?.invalidate()
         reconnectTimer = nil
         handshakeTimer?.invalidate()
@@ -202,7 +199,9 @@ final class SharedHubClient {
     }
 
     private func connectionFailed(_ reason: String, retry: Bool) {
-        let wasJoinedHost = state == .connected && !LocalClassifierHub.shared.isHosting
+        // A drop after we were connected reconnects fast (the host likely just
+        // restarted); a failure to connect at all backs off longer.
+        let wasConnected = state == .connected
         handshakeTimer?.invalidate()
         handshakeTimer = nil
         closeSocket()
@@ -210,11 +209,11 @@ final class SharedHubClient {
         transition(to: canRetry ? .disconnected : .error, error: reason)
         guard canRetry else { return }
         reconnectTimer?.invalidate()
-        let delay = wasJoinedHost ? 0.25 : 2.0
+        let delay = wasConnected ? 0.25 : 2.0
         reconnectTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.desired else { return }
-                self.attemptHostOrJoin()
+                self.attemptJoin()
             }
         }
     }

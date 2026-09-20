@@ -14,9 +14,5 @@ final class VaultRuntimeEnvironmentTests: XCTestCase {
         XCTAssertNotEqual(production.sharedStoreDirectoryName, development.sharedStoreDirectoryName)
         XCTAssertNotEqual(production.policyDirectoryName, development.policyDirectoryName)
         XCTAssertNotEqual(production.localFilesDirectoryName, development.localFilesDirectoryName)
-        XCTAssertNotEqual(
-            production.keychainService("com.adamancia.vault.local-hub"),
-            development.keychainService("com.adamancia.vault.local-hub")
-        )
     }
 }

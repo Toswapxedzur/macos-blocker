@@ -65,11 +65,4 @@ public enum VaultRuntimeEnvironment: String, Codable, Sendable {
         case .development: return "MacBlocker-Development"
         }
     }
-
-    public func keychainService(_ productionService: String) -> String {
-        switch self {
-        case .production: return productionService
-        case .development: return productionService + ".development"
-        }
-    }
 }
