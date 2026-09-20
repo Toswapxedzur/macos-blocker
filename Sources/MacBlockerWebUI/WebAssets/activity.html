@@ -38,6 +38,12 @@
   .ranges { display: flex; gap: 4px; margin-left: auto; background: var(--track); padding: 3px; border-radius: 9px; }
   .ranges button { border: 0; background: transparent; color: var(--muted); padding: 5px 13px; border-radius: 7px; cursor: pointer; font-size: 12px; }
   .ranges button.active { background: var(--panel); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  /* scene switch: three text labels with a sliding blue underline */
+  .scene-tabs { position: relative; display: flex; align-items: flex-end; gap: 22px; }
+  .scene-tab { border: 0; background: transparent; padding: 0 0 6px; font: inherit; font-size: 16px; font-weight: 650; color: var(--muted); cursor: pointer; transition: color .2s; }
+  .scene-tab:hover { color: var(--ink); }
+  .scene-tab.is-active { color: var(--ink); }
+  .scene-underline { position: absolute; left: 0; bottom: 0; height: 2px; width: 0; border-radius: 2px; background: var(--accent); transition: transform .26s cubic-bezier(.4,0,.2,1), width .26s cubic-bezier(.4,0,.2,1); }
   main { padding: 4px 20px 48px; max-width: 920px; margin: 0 auto; }
   .lens { background: var(--panel); border-radius: 14px; padding: 18px 20px; margin-bottom: 16px; }
   .lens-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
@@ -76,7 +82,12 @@
 </head>
 <body>
 <header>
-  <h1>Activity</h1>
+  <nav class="scene-tabs" id="sceneTabs" aria-label="Scene">
+    <button type="button" class="scene-tab" data-scene="vault">Vault</button>
+    <button type="button" class="scene-tab" data-scene="classifier">Classifier</button>
+    <button type="button" class="scene-tab is-active" data-scene="activity">Activity</button>
+    <span class="scene-underline" aria-hidden="true"></span>
+  </nav>
   <div class="ranges" id="ranges">
     <button data-range="today" class="active">Today</button>
     <button data-range="7d">7 days</button>
@@ -259,6 +270,27 @@
     [].forEach.call(this.querySelectorAll("button"), function (x) { x.classList.toggle("active", x === b); });
     send({ kind: "range", range: currentRange });
   });
+
+  // Scene switch (Vault / Classifier / Activity). Activity is active here;
+  // tapping another asks the native shell to swap the visible web view.
+  (function () {
+    var tabs = document.getElementById("sceneTabs");
+    if (!tabs) return;
+    var underline = tabs.querySelector(".scene-underline");
+    function position() {
+      var active = tabs.querySelector(".scene-tab.is-active");
+      if (!active || !underline) return;
+      underline.style.width = active.offsetWidth + "px";
+      underline.style.transform = "translateX(" + active.offsetLeft + "px)";
+    }
+    tabs.addEventListener("click", function (e) {
+      var b = e.target.closest(".scene-tab"); if (!b || b.classList.contains("is-active")) return;
+      send({ kind: "switch-scene", scene: b.dataset.scene });
+    });
+    position();
+    window.addEventListener("resize", position);
+    setTimeout(position, 60);
+  })();
 
   send({ kind: "ready" });
 })();

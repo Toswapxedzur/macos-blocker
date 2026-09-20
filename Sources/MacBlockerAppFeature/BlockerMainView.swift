@@ -23,7 +23,9 @@ public struct BlockerMainView: View {
     #if os(macOS)
     /// The window's pages. All stay alive while hidden, so switching never
     /// reloads the editor, the classifier, or the activity dashboard.
-    private enum Page: Hashable { case vault, classifier, activity }
+    fileprivate enum Page: String, Hashable, CaseIterable {
+        case vault, classifier, activity
+    }
     @State private var page: Page = .vault
     #endif
 
@@ -31,31 +33,33 @@ public struct BlockerMainView: View {
 
     public var body: some View {
         #if os(macOS)
+        // The three scenes share one window; each scene's own web header carries
+        // the Vault/Classifier/Activity switch, which posts a notification the
+        // shell listens for. All stay alive while hidden, so switching never
+        // reloads the editor, the classifier, or the activity dashboard.
         ZStack {
+            // WKWebViews don't reliably honor SwiftUI .opacity, so the active
+            // page is also brought to front with zIndex: an opaque, full-bleed
+            // web view on top covers the (still-alive) hidden ones.
             editorContent
                 .opacity(page == .vault ? 1 : 0)
                 .allowsHitTesting(page == .vault)
+                .zIndex(page == .vault ? 1 : 0)
             ClassifierPageView()
                 .opacity(page == .classifier ? 1 : 0)
                 .allowsHitTesting(page == .classifier)
+                .zIndex(page == .classifier ? 1 : 0)
             ActivityPageView()
                 .opacity(page == .activity ? 1 : 0)
                 .allowsHitTesting(page == .activity)
-        }
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Picker("Page", selection: $page) {
-                    Text("Vault").tag(Page.vault)
-                    Text("Classifier").tag(Page.classifier)
-                    Text("Activity").tag(Page.activity)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-            }
+                .zIndex(page == .activity ? 1 : 0)
         }
         .onAppear { enforcement.start() }
         .onDisappear { enforcement.stop() }
+        .onReceive(NotificationCenter.default.publisher(for: .vaultSwitchScene)) { note in
+            guard let raw = note.userInfo?["scene"] as? String, let next = Page(rawValue: raw) else { return }
+            page = next
+        }
         #else
         VStack(spacing: 0) {
             editorContent

@@ -54,6 +54,12 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler, WKNavigationD
         case "delete":
             applyDelete(body)
             pushSnapshot()
+        case "switch-scene":
+            #if os(macOS)
+            if let scene = body["scene"] as? String {
+                NotificationCenter.default.post(name: .vaultSwitchScene, object: nil, userInfo: ["scene": scene])
+            }
+            #endif
         default:
             break
         }

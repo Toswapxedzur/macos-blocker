@@ -39,6 +39,11 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
         // (started above) is the sole hub host; the classifier never hosts, it
         // only joins as a client (see SharedHubClient).
         MainActor.assumeIsolated {
+            // The classifier's in-page header switch asks the shell to change
+            // scenes through this hook (mirrors the Vault/Activity web headers).
+            VaultClassifierPage.hostNavigationHandler = { scene in
+                NotificationCenter.default.post(name: .vaultSwitchScene, object: nil, userInfo: ["scene": scene])
+            }
             VaultClassifierPage.shared.start()
         }
 

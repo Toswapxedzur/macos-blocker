@@ -145,6 +145,36 @@ button:disabled {
   font-weight: 800;
 }
 
+/* Scene switch (Vault / Classifier / Activity) in the header. Three text
+   labels; the active one carries a blue underline. Classifier is active here. */
+.scene-tabs { position: relative; display: flex; align-items: flex-end; gap: 22px; }
+.scene-tab {
+  position: relative;
+  border: 0;
+  background: transparent;
+  padding: 0 0 7px;
+  font: inherit;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+.scene-tab:hover { color: var(--ink); }
+.scene-tab.is-active { color: var(--ink); }
+.scene-tab.is-active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  border-radius: 3px;
+  background: #2563eb;
+}
+
 h1,
 h2,
 h3,
