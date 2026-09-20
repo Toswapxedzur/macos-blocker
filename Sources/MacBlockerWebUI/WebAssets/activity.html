@@ -16,7 +16,7 @@
 <title>Activity</title>
 <style>
   :root {
-    --bg: #f4f5f7; --panel: #ffffff; --ink: #1c2530; --muted: #737d89;
+    --bg: #f8fafc; --panel: #ffffff; --ink: #1f2937; --muted: #64748b;
     --accent: #2f6bd6; --track: #e9edf1;
     --c0:#4e79a7; --c1:#f28e2b; --c2:#59a14f; --c3:#e15759; --c4:#76b7b2;
     --c5:#edc948; --c6:#b07aa1; --c7:#ff9da7; --c8:#9c755f; --c9:#8cd17d;
@@ -38,12 +38,13 @@
   .ranges { display: flex; gap: 4px; margin-left: auto; background: var(--track); padding: 3px; border-radius: 9px; }
   .ranges button { border: 0; background: transparent; color: var(--muted); padding: 5px 13px; border-radius: 7px; cursor: pointer; font-size: 12px; }
   .ranges button.active { background: var(--panel); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
-  /* scene switch: three text labels with a sliding blue underline */
-  .scene-tabs { position: relative; display: flex; align-items: flex-end; gap: 22px; }
-  .scene-tab { border: 0; background: transparent; padding: 0 0 6px; font: inherit; font-size: 16px; font-weight: 650; color: var(--muted); cursor: pointer; transition: color .2s; }
-  .scene-tab:hover { color: var(--ink); }
-  .scene-tab.is-active { color: var(--ink); }
-  .scene-underline { position: absolute; left: 0; bottom: 0; height: 2px; width: 0; border-radius: 2px; background: var(--accent); transition: transform .26s cubic-bezier(.4,0,.2,1), width .26s cubic-bezier(.4,0,.2,1); }
+  /* scene switch: three text labels with a sliding blue underline (identical
+     across Vault / Classifier / Activity for one shared header) */
+  .scene-tabs { position: relative; display: flex; align-items: flex-end; gap: 24px; }
+  .scene-tab { border: 0; background: transparent; padding: 0 0 8px; font: inherit; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.1; color: #94a3b8; cursor: pointer; transition: color .2s; }
+  .scene-tab:hover { color: #64748b; }
+  .scene-tab.is-active { color: #1f2937; }
+  .scene-underline { position: absolute; left: 0; bottom: 0; height: 3px; width: 0; border-radius: 3px; background: #2563eb; transition: transform .26s cubic-bezier(.4,0,.2,1), width .26s cubic-bezier(.4,0,.2,1); }
   main { padding: 4px 20px 48px; max-width: 920px; margin: 0 auto; }
   .lens { background: var(--panel); border-radius: 14px; padding: 18px 20px; margin-bottom: 16px; }
   .lens-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }

@@ -30,6 +30,10 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler, WKNavigationD
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
         webView.setValue(false, forKey: "drawsBackground")
+        // Match the other scenes (Vault + Classifier are light): force a light
+        // appearance so the dashboard doesn't follow the system into dark and
+        // clash with the rest of the window. One shared theme across the app.
+        webView.appearance = NSAppearance(named: .aqua)
         if let html = Self.pageHTML() {
             webView.loadHTMLString(html, baseURL: nil)
         }
