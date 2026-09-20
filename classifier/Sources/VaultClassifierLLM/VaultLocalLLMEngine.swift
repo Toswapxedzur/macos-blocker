@@ -323,13 +323,56 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
             var awaitingNameStart = true
             var finished = false
         }
+        // The sampler holds ONLY the grammar. Greedy selection is done by hand
+        // (see sampleGreedyValidated): the grammar is applied to the single
+        // greedy pick, not to the whole vocabulary — measured on the release
+        // build, grammar-masking all ~150k candidates per sequence per step was
+        // ~85% of generation time (~116 ms per sequence per step) while the
+        // batched GPU decode was ~17 ms.
         var live: [Live] = items.enumerated().map { slot, item in
             let sampler = llama_sampler_chain_init(llama_sampler_chain_default_params())!
             llama_sampler_chain_add(sampler, llama_sampler_init_grammar(vocab, item.grammar, "root"))
-            llama_sampler_chain_add(sampler, llama_sampler_init_greedy())
             return Live(sampler: sampler, outputIndex: Int32(slot), length: item.tokens.count)
         }
         defer { for state in live { llama_sampler_free(state.sampler) } }
+        let vocabSize = Int(llama_vocab_n_tokens(vocab))
+
+        /// Greedy token for `outputIndex`, validated against the sequence's
+        /// grammar; only if the greedy pick violates the grammar is the full
+        /// vocabulary masked and re-picked. Same token as grammar-then-greedy by
+        /// construction. Advances the grammar (as llama_sampler_sample did).
+        func sampleGreedyValidated(_ sampler: UnsafeMutablePointer<llama_sampler>, outputIndex: Int32) -> llama_token {
+            let logits = llama_get_logits_ith(context, outputIndex)!
+            var best = 0
+            var bestLogit = logits[0]
+            for index in 1..<vocabSize where logits[index] > bestLogit {
+                best = index
+                bestLogit = logits[index]
+            }
+            var single = [llama_token_data(id: llama_token(best), logit: bestLogit, p: 0)]
+            let accepted: Bool = single.withUnsafeMutableBufferPointer { buffer in
+                var candidates = llama_token_data_array(data: buffer.baseAddress, size: 1, selected: -1, sorted: false)
+                llama_sampler_apply(sampler, &candidates)
+                return candidates.size > 0 && candidates.data[0].logit > -Float.infinity
+            }
+            var token = llama_token(best)
+            if !accepted {
+                var all = (0..<vocabSize).map { llama_token_data(id: llama_token($0), logit: logits[$0], p: 0) }
+                token = all.withUnsafeMutableBufferPointer { buffer in
+                    var candidates = llama_token_data_array(data: buffer.baseAddress, size: vocabSize, selected: -1, sorted: false)
+                    llama_sampler_apply(sampler, &candidates)
+                    var pick = 0
+                    var pickLogit = -Float.infinity
+                    for index in 0..<Int(candidates.size) where candidates.data[index].logit > pickLogit {
+                        pick = index
+                        pickLogit = candidates.data[index].logit
+                    }
+                    return candidates.data[pick].id
+                }
+            }
+            llama_sampler_accept(sampler, token)
+            return token
+        }
 
         var steps = 0
         // Timing split (VAULT_DECODE_TIMING=1 only): per-sequence CPU work
@@ -340,7 +383,7 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
             let tStep = DispatchTime.now()
             var next: [BatchEntry] = []
             for slot in live.indices where !live[slot].finished {
-                let token = llama_sampler_sample(live[slot].sampler, context, live[slot].outputIndex)
+                let token = sampleGreedyValidated(live[slot].sampler, outputIndex: live[slot].outputIndex)
                 if llama_vocab_is_eog(vocab, token) { live[slot].finished = true; continue }
                 if live[slot].awaitingNameStart {
                     live[slot].nameStartProbabilities.append(probability(
