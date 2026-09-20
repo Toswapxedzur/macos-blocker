@@ -38,6 +38,12 @@
   .ranges { display: flex; gap: 4px; margin-left: auto; background: var(--track); padding: 3px; border-radius: 9px; }
   .ranges button { border: 0; background: transparent; color: var(--muted); padding: 5px 13px; border-radius: 7px; cursor: pointer; font-size: 12px; }
   .ranges button.active { background: var(--panel); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  /* lens tabs: three text labels with a sliding blue underline (no border) */
+  .tabs { position: relative; display: flex; gap: 26px; padding: 0 20px; max-width: 920px; margin: 0 auto; }
+  .tabs[hidden] { display: none; }
+  .tabs button { border: 0; background: transparent; color: var(--muted); font-size: 14px; font-weight: 600; padding: 8px 0 12px; cursor: pointer; transition: color .2s; }
+  .tabs button.active { color: var(--ink); }
+  .tab-underline { position: absolute; left: 0; bottom: 0; height: 2px; width: 0; background: var(--accent); border-radius: 2px; transform: translateX(0); transition: transform .26s cubic-bezier(.4,0,.2,1), width .26s cubic-bezier(.4,0,.2,1); }
   main { padding: 4px 20px 48px; max-width: 920px; margin: 0 auto; }
   .lens { background: var(--panel); border-radius: 14px; padding: 18px 20px; margin-bottom: 16px; }
   .lens-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
@@ -83,6 +89,12 @@
     <button data-range="30d">30 days</button>
   </div>
 </header>
+<nav class="tabs" id="tabs" hidden>
+  <button data-tab="0" class="active">App usage</button>
+  <button data-tab="1">Website usage</button>
+  <button data-tab="2">Watched content</button>
+  <span class="tab-underline" id="tabUnderline"></span>
+</nav>
 <main id="main"><p class="empty">Loading…</p></main>
 <script>
 "use strict";
@@ -94,6 +106,7 @@
     { id: "contentWatched", key: "content-watched", title: "Watched content", lens: null },
   ];
   var currentRange = "today";
+  var currentTab = 0;
   var snapshot = null;
   var icons = {};
 
@@ -202,7 +215,6 @@
   function lensPanel(catDef, settingsCat) {
     var panel = el("div", "lens");
     var head = el("div", "lens-head");
-    head.appendChild(el("h2", null, catDef.title));
     var lens = catDef.lens ? snapshot[catDef.lens] : null;
     var total = lens ? lens.totalSeconds : (snapshot.watched || []).reduce(function (a, b) { return a + b.seconds; }, 0);
     head.appendChild(el("span", "lens-total", fmt(total)));
@@ -230,13 +242,24 @@
     return panel;
   }
 
+  function positionUnderline() {
+    var tabs = document.getElementById("tabs");
+    var line = document.getElementById("tabUnderline");
+    var active = tabs.querySelector("button.active");
+    if (!active) return;
+    line.style.width = active.offsetWidth + "px";
+    line.style.transform = "translateX(" + active.offsetLeft + "px)";
+  }
+
   function render() {
     var main = document.getElementById("main");
+    var tabs = document.getElementById("tabs");
     main.textContent = "";
-    if (!snapshot) { main.appendChild(el("p", "empty", "Loading…")); return; }
+    if (!snapshot) { tabs.hidden = true; main.appendChild(el("p", "empty", "Loading…")); return; }
     var s = snapshot.settings || {};
     var anyOn = CATS.some(function (c) { return s[c.id] && s[c.id].enabled; });
     if (!anyOn) {
+      tabs.hidden = true;
       var fr = el("div", "firstrun");
       fr.appendChild(el("h2", null, "Track your activity — privately, on this device"));
       fr.appendChild(el("p", null, "Record time per app, time per website, and the videos you watch. Nothing leaves this Mac. Turn on only what you want; each has its own retention and can be deleted anytime."));
@@ -247,8 +270,16 @@
         fr.appendChild(b);
       });
       main.appendChild(fr);
+      return;
     }
-    CATS.forEach(function (c) { main.appendChild(lensPanel(c, (s[c.id] || { enabled: false, retentionDays: 30 }))); });
+    // One lens at a time, chosen by the tab bar; the blue underline tracks it.
+    tabs.hidden = false;
+    [].forEach.call(tabs.querySelectorAll("button[data-tab]"), function (b) {
+      b.classList.toggle("active", parseInt(b.dataset.tab, 10) === currentTab);
+    });
+    var catDef = CATS[currentTab];
+    main.appendChild(lensPanel(catDef, (s[catDef.id] || { enabled: false, retentionDays: 30 })));
+    positionUnderline();
   }
 
   window.activityApply = function (data, iconMap) { snapshot = data; icons = iconMap || {}; render(); };
@@ -259,6 +290,14 @@
     [].forEach.call(this.querySelectorAll("button"), function (x) { x.classList.toggle("active", x === b); });
     send({ kind: "range", range: currentRange });
   });
+
+  document.getElementById("tabs").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-tab]"); if (!b) return;
+    currentTab = parseInt(b.dataset.tab, 10);
+    render();
+  });
+
+  window.addEventListener("resize", positionUnderline);
 
   send({ kind: "ready" });
 })();
