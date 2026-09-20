@@ -152,21 +152,51 @@ extension LocalClassifierCoordinator {
             return affected
         }
 
-        for collected in affected {
-            let projection = try await Task.detached(priority: .utility) { [self] in
-                try await classifyVideo(
-                    platformID: collected.platformID,
-                    entryID: collected.entryID,
-                    creatorID: collected.creatorID,
-                    title: collected.title,
-                    summary: collected.summary,
-                    text: collected.text
-                )
-            }.value
-            let callback = lock.withLock { onVideoReclassifiedCallback }
-            callback?(collected.platformID, collected.entryID, projection)
+        // Re-classify the affected videos in ONE multi-sequence engine pass per
+        // platform (they are a known set), not one lone prefill each: a single
+        // video costs about as much as a full batch, so the loop this replaces
+        // paid the unbatchable prompt prefill `affected.count` times.
+        let byPlatform = Dictionary(grouping: affected, by: \.platformID)
+        var seenPlatforms = Set<String>()
+        let platformOrder = affected.map(\.platformID).filter { seenPlatforms.insert($0).inserted }
+        for platformID in platformOrder {
+            guard let group = byPlatform[platformID] else { continue }
+            for start in stride(from: 0, to: group.count, by: Self.reclassificationChunkSize) {
+                let chunk = Array(group[start..<min(start + Self.reclassificationChunkSize, group.count)])
+                let projections: [String: VideoTagsProjection] = try await Task.detached(priority: .utility) { [self] in
+                    let inputs = chunk.map {
+                        VideoClassificationPipeline.Input(
+                            title: $0.title, summary: $0.summary, text: $0.text,
+                            entryID: $0.entryID, creatorID: $0.creatorID)
+                    }
+                    var projections = (try? await classifyVideos(platformID: platformID, items: inputs)) ?? [:]
+                    if projections.isEmpty {
+                        // The batch failed as a whole — fall back to one video at a
+                        // time so a single bad item cannot sink the rest.
+                        for collected in chunk {
+                            if let single = try? await classifyVideo(
+                                platformID: platformID, entryID: collected.entryID, creatorID: collected.creatorID,
+                                title: collected.title, summary: collected.summary, text: collected.text) {
+                                projections[collected.entryID] = single
+                            }
+                        }
+                    }
+                    return projections
+                }.value
+                let callback = lock.withLock { onVideoReclassifiedCallback }
+                for collected in chunk {
+                    guard let projection = projections[collected.entryID] else { continue }
+                    callback?(platformID, collected.entryID, projection)
+                }
+            }
         }
     }
+
+    /// Videos handed to the engine together when research re-classifies — its
+    /// parallel-sequence capacity. Must track `VaultLocalLLMEngine
+    /// .maximumParallelSequences` (and the live pill path's chunk size); it is
+    /// a literal here because Core deliberately cannot import the LLM layer.
+    static let reclassificationChunkSize = 16
 
     public func startResearchBackfill(limit requestedLimit: Int = 16) {
         let snapshot = lock.withLock {
