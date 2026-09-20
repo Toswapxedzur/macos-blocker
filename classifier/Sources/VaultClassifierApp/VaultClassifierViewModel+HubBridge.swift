@@ -64,51 +64,51 @@ extension VaultClassifierViewModel {
         // OCR the thumbnail as evidence only when a classifier type for this
         // platform opts in (default on). Local Vision OCR; the per-type gate that
         // decides whether a type actually consumes the text lives in classifyVideo.
-        let ocrEnabled = coordinator?.ocrEvidencePlatformIDs().contains(platformID) ?? false
-        // Fetch+OCR the whole batch's thumbnails concurrently up front (fetch is
-        // network-bound) so they overlap each other and the serial LLM decodes;
-        // the per-item recognizedText below then hits the warm cache / shared task.
-        if ocrEnabled {
+        // Fetch+OCR concurrently up front (fetch is network-bound) so it overlaps
+        // the wait for the engine; classifyChunk's recognizedText then hits the
+        // warm cache / shared task.
+        if coordinator?.ocrEvidencePlatformIDs().contains(platformID) ?? false {
             let entries = fresh.map { (entryID: $0.entryID, thumbnailURL: $0.acceptedThumbnailURL(platformID: platformID)) }
             Task.detached { await ThumbnailOCR.shared.prewarm(platformID: platformID, entries: entries) }
         }
-        Task { @MainActor [weak self] in
-            // Classify a screenful at a time (LATENCY-REFINEMENT Phase 1): the engine
-            // decodes a chunk's videos in ONE multi-sequence pass instead of one by
-            // one, and each chunk's verdicts are pushed as soon as it lands. OCR for
-            // the whole request was prewarmed above, so these awaits hit warm work.
-            let chunkSize = Self.classificationChunkSize
-            for start in stride(from: 0, to: fresh.count, by: chunkSize) {
-                let chunk = Array(fresh[start..<min(start + chunkSize, fresh.count)])
-                defer { for item in chunk { self?.inFlightVideoClassifications.remove(Self.inFlightKey(platformID, item.entryID)) } }
-                guard let coordinator = self?.coordinator else { continue }
-                var inputs: [VideoClassificationPipeline.Input] = []
-                for item in chunk {
-                    let thumbnailText = ocrEnabled
-                        ? await ThumbnailOCR.shared.recognizedText(platformID: platformID, entryID: item.entryID, thumbnailURL: item.acceptedThumbnailURL(platformID: platformID))
-                        : nil
-                    inputs.append(.init(
-                        title: item.title, summary: item.summary, text: thumbnailText ?? item.text,
-                        entryID: item.entryID, creatorID: item.creatorID))
-                }
-                var projections = (try? await coordinator.classifyVideos(platformID: platformID, items: inputs)) ?? [:]
-                if projections.isEmpty {
-                    // The batch failed as a whole — fall back to one video at a time
-                    // so a single bad item cannot sink the rest of the screen.
-                    for input in inputs {
-                        if let single = try? await coordinator.classifyVideo(
-                            platformID: platformID, entryID: input.entryID, creatorID: input.creatorID,
-                            title: input.title, summary: input.summary, text: input.text) {
-                            projections[input.entryID] = single
-                        }
-                    }
-                }
-                for item in chunk {
-                    guard let projection = projections[item.entryID] else { continue }
-                    self?.broadcastResolvedVideoTags(platformID: platformID, entryID: item.entryID, projection: projection)
+        // Hand the items to the coalescing queue at the engine boundary. Requests
+        // arrive one card at a time; if the engine is busy they wait and are then
+        // drained together with everything else waiting, in one multi-sequence
+        // pass per chunk, instead of each paying a lone prompt prefill.
+        classificationCoalescer.enqueue(platformID: platformID, items: fresh)
+    }
+
+    /// One engine pass over a chunk the coalescer drained — everything that was
+    /// waiting for this platform, up to the engine's parallel-sequence capacity.
+    /// Each chunk's verdicts are broadcast the moment it lands.
+    func classifyChunk(platformID: String, _ chunk: [NativeVideoTagsBatchItem]) async {
+        defer { for item in chunk { inFlightVideoClassifications.remove(Self.inFlightKey(platformID, item.entryID)) } }
+        guard let coordinator else { return }
+        let ocrEnabled = coordinator.ocrEvidencePlatformIDs().contains(platformID)
+        var inputs: [VideoClassificationPipeline.Input] = []
+        for item in chunk {
+            let thumbnailText = ocrEnabled
+                ? await ThumbnailOCR.shared.recognizedText(platformID: platformID, entryID: item.entryID, thumbnailURL: item.acceptedThumbnailURL(platformID: platformID))
+                : nil
+            inputs.append(.init(
+                title: item.title, summary: item.summary, text: thumbnailText ?? item.text,
+                entryID: item.entryID, creatorID: item.creatorID))
+        }
+        var projections = (try? await coordinator.classifyVideos(platformID: platformID, items: inputs)) ?? [:]
+        if projections.isEmpty {
+            // The batch failed as a whole — fall back to one video at a time
+            // so a single bad item cannot sink the rest of the screen.
+            for input in inputs {
+                if let single = try? await coordinator.classifyVideo(
+                    platformID: platformID, entryID: input.entryID, creatorID: input.creatorID,
+                    title: input.title, summary: input.summary, text: input.text) {
+                    projections[input.entryID] = single
                 }
             }
-            self?.onWebStateChange?()
+        }
+        for item in chunk {
+            guard let projection = projections[item.entryID] else { continue }
+            broadcastResolvedVideoTags(platformID: platformID, entryID: item.entryID, projection: projection)
         }
     }
 
