@@ -40,9 +40,7 @@ public struct LLMTagScore: Sendable, Equatable {
     }
 }
 
-/// The model's structured classification output. (The former `unknownTerms`
-/// field was dead — always `[]` from every engine — and is removed; research
-/// needs will come from the dedicated Decode 2 in RESEARCH-REDESIGN Phase 2.)
+/// The model's structured classification output.
 public struct LLMClassificationResult: Sendable, Equatable {
     public let tags: [LLMTagScore]
     public init(tags: [LLMTagScore]) {
@@ -130,44 +128,8 @@ public protocol OnDeviceLLMEngineResolving: Sendable {
     ) async throws -> any OnDeviceLLM
 }
 
-/// Rare-path, local-only second decode used after an explicit classification
-/// decline. It is deliberately separate from the single-name hot-path request.
-public struct LLMResearchSubjectRequest: Sendable, Equatable {
-    public let title: String
-    public let summary: String?
-
-    public init(title: String, summary: String? = nil) {
-        self.title = title
-        self.summary = summary
-    }
-}
-
-public protocol OnDeviceResearchSubjectExtracting: Sendable {
-    func extractResearchSubject(_ request: LLMResearchSubjectRequest) async throws -> ResearchSubject?
-}
-
-// MARK: - Decode 2: research-term extraction (RESEARCH-REDESIGN §4/§5, revised)
-
-// Live smoke (2026-09-17) showed model-EMITTED urgency/author-urgency are
-// unreliable (the model anchors the required digit to the prompt default). Per
-// the owner's reframe, ALL research urgency is now DERIVED from the calibrated
-// Decode-1 confidences (see `ResearchUrgency`), and Decode 2 does only what the
-// model does well: copy the salient named span(s) to look up.
-
-/// A single thing to research, with an urgency (1–5; 5 = "the video couldn't be
-/// placed"). `term` is copied verbatim from the video's evidence by Decode 2;
-/// `urgency` is DERIVED from the video's Decode-1 confidences, not model-emitted.
-public struct ResearchNeed: Sendable, Equatable {
-    public let term: String
-    public let urgency: Int
-    public init(term: String, urgency: Int) {
-        self.term = term
-        self.urgency = min(5, max(1, urgency))
-    }
-}
-
-/// Derives research urgency from the reliable signal — the video's Decode-1 tag
-/// confidences — replacing the model's (degenerate) urgency/author-urgency asks.
+/// Derives research urgency from the reliable signal: the video's own tag
+/// confidences (the model's emitted urgency just anchored to the prompt default).
 public enum ResearchUrgency {
     /// A video's research urgency (1–5) as the inverse of its mean kept-tag
     /// confidence; a decline (no tags) is maximally uncertain (5). This same
@@ -180,32 +142,11 @@ public enum ResearchUrgency {
     }
 }
 
-/// Decode 2 request. Carries the SAME prompt parts as the classification decode
-/// (`staticPrefix` + `dynamicSuffix`) so the engine appends the extraction ask and
-/// reuses the KV-cached evidence prefix — in steady state it prefills only the
-/// short appendix and, for a recognized video, generates an empty list.
-public struct LLMResearchNeedsRequest: Sendable, Equatable {
-    public let staticPrefix: String
-    public let dynamicSuffix: String
-    public let maximumTerms: Int
-    public init(staticPrefix: String, dynamicSuffix: String, maximumTerms: Int = 3) {
-        self.staticPrefix = staticPrefix
-        self.dynamicSuffix = dynamicSuffix
-        self.maximumTerms = max(1, maximumTerms)
-    }
-}
-
-public protocol OnDeviceResearchNeedsExtracting: Sendable {
-    /// Copies up to `maximumTerms` named subjects the model does not recognize and
-    /// would look up. Terms only — urgency is derived (`ResearchUrgency`), not asked.
-    func researchNeeds(_ request: LLMResearchNeedsRequest) async throws -> [String]
-}
-
 /// A deterministic stand-in used before a real MLX model is wired, and in tests.
 /// It "classifies" by selecting allowed tag names that appear (case-insensitive)
 /// in the dynamic suffix — enough to exercise the whole pipeline end-to-end and
 /// keep the build green, with no intelligence claimed.
-public struct StubOnDeviceLLM: OnDeviceLLM, OnDeviceResearchSubjectExtracting, OnDeviceResearchNeedsExtracting {
+public struct StubOnDeviceLLM: OnDeviceLLM {
     public let modelVersion: String
     public let defaultConfidence: Int
 
@@ -221,13 +162,5 @@ public struct StubOnDeviceLLM: OnDeviceLLM, OnDeviceResearchSubjectExtracting, O
             .prefix(request.maximumTags)
             .map { LLMTagScore(name: $0, confidence: defaultConfidence) }
         return LLMClassificationResult(tags: Array(chosen))
-    }
-
-    public func extractResearchSubject(_ request: LLMResearchSubjectRequest) async throws -> ResearchSubject? {
-        nil
-    }
-
-    public func researchNeeds(_ request: LLMResearchNeedsRequest) async throws -> [String] {
-        []
     }
 }

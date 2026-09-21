@@ -17,100 +17,11 @@ private struct CoordinatorRecordingLLM: OnDeviceLLM {
     }
 }
 
-private final class SubjectExtractionProbe: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<Void, Never>?
-    private var started = 0
-    private var released = false
-
-    var count: Int { lock.withLock { started } }
-
-    func extract() async -> ResearchSubject? {
-        let shouldWait = lock.withLock { () -> Bool in
-            started += 1
-            return !released
-        }
-        if shouldWait {
-            await withCheckedContinuation { continuation in
-                let resumeNow = lock.withLock { () -> Bool in
-                    if released { return true }
-                    self.continuation = continuation
-                    return false
-                }
-                if resumeNow { continuation.resume() }
-            }
-        }
-        return ResearchSubject(kind: .term, subject: "HermitCraft")
-    }
-
-    func waitUntilStarted() async {
-        while count == 0 { await Task.yield() }
-    }
-
-    func release() {
-        let pending = lock.withLock { () -> CheckedContinuation<Void, Never>? in
-            released = true
-            defer { continuation = nil }
-            return continuation
-        }
-        pending?.resume()
-    }
-}
-
-private struct DecliningSubjectLLM: OnDeviceLLM, OnDeviceResearchSubjectExtracting {
+/// Declines every title: the weakest possible signal, so research decisions are
+/// exercised without any model.
+private struct DecliningLLM: OnDeviceLLM {
     let modelVersion = "decline/v1"
-    let probe: SubjectExtractionProbe
-    func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult {
-        .init(tags: [])
-    }
-    func extractResearchSubject(_ request: LLMResearchSubjectRequest) async throws -> ResearchSubject? {
-        await probe.extract()
-    }
-}
-
-private final class ImmediateSubjectProbe: @unchecked Sendable {
-    private let lock = NSLock()
-    private var storedCount = 0
-    var count: Int { lock.withLock { storedCount } }
-    func record() { lock.withLock { storedCount += 1 } }
-}
-
-private struct ImmediateSubjectLLM: OnDeviceLLM, OnDeviceResearchSubjectExtracting {
-    let modelVersion = "subject/v1"
-    let probe: ImmediateSubjectProbe
-    func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult {
-        .init(tags: [])
-    }
-    func extractResearchSubject(_ request: LLMResearchSubjectRequest) async throws -> ResearchSubject? {
-        probe.record()
-        return ResearchSubject(kind: .term, subject: "HermitCraft")
-    }
-}
-
-private final class NeedsRequestProbe: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stored: [LLMResearchNeedsRequest] = []
-    private var storedLegacyCount = 0
-    func record(_ request: LLMResearchNeedsRequest) { lock.withLock { stored.append(request) } }
-    func recordLegacy() { lock.withLock { storedLegacyCount += 1 } }
-    var requests: [LLMResearchNeedsRequest] { lock.withLock { stored } }
-    var legacyCount: Int { lock.withLock { storedLegacyCount } }
-}
-
-/// Declines every title and supports Decode 2 (term extraction over the prompt).
-private struct NeedsExtractingLLM: OnDeviceLLM, OnDeviceResearchSubjectExtracting, OnDeviceResearchNeedsExtracting {
-    let modelVersion = "needs/v1"
-    let probe: NeedsRequestProbe
-    let terms: [String]
     func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult { .init(tags: []) }
-    func extractResearchSubject(_ request: LLMResearchSubjectRequest) async throws -> ResearchSubject? {
-        probe.recordLegacy()
-        return ResearchSubject(kind: .term, subject: "LegacySubject")
-    }
-    func researchNeeds(_ request: LLMResearchNeedsRequest) async throws -> [String] {
-        probe.record(request)
-        return terms
-    }
 }
 
 private final class BatchCallProbe: @unchecked Sendable {
@@ -194,36 +105,6 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertEqual(selectedRecorder.requests.count, 1)
         XCTAssertEqual(selectedRecorder.requests.first?.allowDecline, false)
         XCTAssertEqual(selectedRecorder.requests.first?.confidenceThresholds, [0.1, 0.3, 0.6, 0.9])
-    }
-
-    func testExplicitTypeModelAlsoPerformsResearchSubjectExtraction() async throws {
-        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let defaultProbe = ImmediateSubjectProbe()
-        let selectedProbe = ImmediateSubjectProbe()
-        coordinator.setOnDeviceLLM(ImmediateSubjectLLM(probe: defaultProbe))
-        coordinator.setOnDeviceLLMEngineResolver(CountingEngineResolver(
-            engine: ImmediateSubjectLLM(probe: selectedProbe)
-        ))
-        try coordinator.updateSettings(.init(research: .init(enabled: true)))
-        coordinator.setGroundedResearchQueue(GroundedResearchQueue(
-            configurationProvider: { _ in nil },
-            snapshotProvider: { _ in .init() },
-            mutationWriter: { _ in },
-            researcher: { _, _ in throw GroundedResearchError.invalidConfiguration }
-        ))
-        var catalog = coordinator.snapshot().workspaceCatalog
-        let index = try XCTUnwrap(catalog.classifierTypes.firstIndex(where: { $0.applicablePlatformID == "youtube" }))
-        catalog.classifierTypes[index].modelFileName = "selected.gguf"
-        try coordinator.updateWorkspaceCatalog(catalog)
-
-        _ = try await coordinator.classifyVideo(
-            platformID: "youtube", entryID: "selected", creatorID: "creator", title: "Unclear"
-        )
-        for _ in 0..<100 where selectedProbe.count == 0 { await Task.yield() }
-
-        XCTAssertEqual(selectedProbe.count, 1)
-        XCTAssertEqual(defaultProbe.count, 0)
     }
 
     private func temporaryStateFile() -> (root: URL, file: LocalStateFile) {
@@ -361,61 +242,13 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertEqual(recorder.requests.map(\.maximumTags), [2, 3], "type A overrides maximumTags (2); type B inherits the global (3)")
     }
 
-    func testResearchTriggerIsExplicitModelDeclineOnly() {
-        let base = VideoClassification(
-            classifierTypeID: "type", platformID: "youtube", entryID: "v", creatorID: "c",
-            treeID: "tree", treeRevision: 1,
-            tags: [], source: .model, modelVersion: "m"
-        )
-        XCTAssertTrue(LocalClassifierCoordinator.hasExplicitModelDecline([base]))
-        var lowConfidence = base
-        lowConfidence.tags = [.init(tagID: "tag", confidence: 1)]
-        XCTAssertFalse(LocalClassifierCoordinator.hasExplicitModelDecline([lowConfidence]))
-        var knowledgeDecline = base
-        knowledgeDecline.source = .modelKnowledge
-        XCTAssertFalse(LocalClassifierCoordinator.hasExplicitModelDecline([knowledgeDecline]))
-    }
-
-    func testUrgencyDrivenResearchTrigger() {
-        // RESEARCH-REDESIGN §7: research fires when a video's DERIVED urgency
-        // (inverse mean confidence; decline = 5) reaches the user's urgencyFloor.
-        let decline = VideoClassification(
-            classifierTypeID: "type", platformID: "youtube", entryID: "v", creatorID: "c",
-            treeID: "tree", treeRevision: 1, tags: [], source: .model, modelVersion: "m"
-        )
-        var low = decline            // confidence 3 → urgency 3
-        low.tags = [.init(tagID: "tag", confidence: 3)]
-        var mid = decline            // confidence 4 → urgency 2
-        mid.tags = [.init(tagID: "tag", confidence: 4)]
-        var high = decline           // confidence 5 → urgency 1
-        high.tags = [.init(tagID: "tag", confidence: 5)]
-        var grounded = low           // non-model source never triggers
-        grounded.source = .modelKnowledge
-
-        XCTAssertEqual(LocalClassifierCoordinator.researchUrgency(for: decline), 5)
-        XCTAssertEqual(LocalClassifierCoordinator.researchUrgency(for: low), 3)
-        XCTAssertEqual(LocalClassifierCoordinator.researchUrgency(for: high), 1)
-
-        // A decline (urgency 5) triggers at any floor.
-        XCTAssertTrue(LocalClassifierCoordinator.shouldTriggerResearch(for: decline, settings: .init(urgencyFloor: 5)))
-        // Low confidence (urgency 3) triggers at floor 3, not at a stricter floor 4.
-        XCTAssertTrue(LocalClassifierCoordinator.shouldTriggerResearch(for: low, settings: .init(urgencyFloor: 3)))
-        XCTAssertFalse(LocalClassifierCoordinator.shouldTriggerResearch(for: low, settings: .init(urgencyFloor: 4)))
-        // Confident classifications (urgency 1–2) don't trigger at the default floor.
-        XCTAssertFalse(LocalClassifierCoordinator.shouldTriggerResearch(for: mid, settings: .init(urgencyFloor: 3)))
-        XCTAssertFalse(LocalClassifierCoordinator.shouldTriggerResearch(for: high, settings: .init(urgencyFloor: 3)))
-        // Non-model (grounded) results never trigger, whatever the urgency/floor.
-        XCTAssertFalse(LocalClassifierCoordinator.shouldTriggerResearch(for: grounded, settings: .init(urgencyFloor: 1)))
-    }
-
     func testEffectiveResearchSettingsInheritOverrideAndRespectMasterGate() {
         let global = ResearchSettings(
             enabled: true,
             llmProviderProfileID: "global-llm",
             llmModelIdentifier: "global-model",
             requestsPerMinute: 6,
-            dailyTokenLimit: 10_000,
-            urgencyFloor: 5
+            dailyTokenLimit: 10_000
         )
         let inherited = ClassifierTypeAsset(
             id: "inherit", name: "Inherit", treeID: "tree", treeRevision: 1,
@@ -431,8 +264,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             llmProviderProfileID: "type-llm",
             llmModelIdentifier: "type-model",
             requestsPerMinute: 15,
-            dailyTokenLimit: 20_000,
-            urgencyFloor: 3
+            dailyTokenLimit: 20_000
         )
         let overridden = ClassifierTypeAsset(
             id: "override", name: "Override", treeID: "tree", treeRevision: 1,
@@ -454,43 +286,6 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             datasetID: "dataset", datasetRevision: 1, researchOverrides: typeOff
         )
         XCTAssertNil(LocalClassifierCoordinator.effectiveResearchSettings(global: global, for: optedOut))
-    }
-
-    func testResearchDisabledDoesNoSecondDecode() async throws {
-        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let probe = SubjectExtractionProbe()
-        coordinator.setOnDeviceLLM(DecliningSubjectLLM(probe: probe))
-        _ = try await coordinator.classifyVideo(
-            platformID: "youtube", entryID: "v", creatorID: "youtube:handle:@creator", title: "HermitCraft"
-        )
-        for _ in 0..<20 { await Task.yield() }
-        XCTAssertEqual(probe.count, 0)
-    }
-
-    func testDeclineSubjectDecodeIsFireAndForgetFromLiveClassification() async throws {
-        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { try? FileManager.default.removeItem(at: root) }
-        try coordinator.updateSettings(.init(research: .init(enabled: true)))
-        let queue = GroundedResearchQueue(
-            configurationProvider: { _ in nil },
-            snapshotProvider: { _ in .init() },
-            mutationWriter: { _ in },
-            researcher: { _, _ in throw GroundedResearchError.invalidConfiguration }
-        )
-        coordinator.setGroundedResearchQueue(queue)
-        let probe = SubjectExtractionProbe()
-        coordinator.setOnDeviceLLM(DecliningSubjectLLM(probe: probe))
-
-        // This returns while the second decode is still deliberately blocked.
-        _ = try await coordinator.classifyVideo(
-            platformID: "youtube", entryID: "v", creatorID: "youtube:handle:@creator", title: "HermitCraft"
-        )
-        await probe.waitUntilStarted()
-        XCTAssertEqual(probe.count, 1)
-        probe.release()
-        for _ in 0..<20 { await Task.yield() }
-        await queue.waitUntilIdle()
     }
 
     func testRecordResearchKnowledgeReclassifiesOutsideLockAndCallsBack() async throws {
@@ -615,10 +410,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             creatorName: "Creator", entryType: "video", title: "HermitCraft episode"
         ))
         try coordinator.updateWorkspaceCatalog(catalog)
-        try coordinator.updateSettings(.init(research: .init(
-            enabled: true,
-            urgencyFloor: 1
-        )))
+        try coordinator.updateSettings(.init(research: .init(enabled: true)))
         let queue = GroundedResearchQueue(
             configurationProvider: { _ in nil },
             snapshotProvider: { _ in .init() },
@@ -626,29 +418,22 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             researcher: { _, _ in throw GroundedResearchError.invalidConfiguration }
         )
         coordinator.setGroundedResearchQueue(queue)
-        let probe = SubjectExtractionProbe()
-        coordinator.setOnDeviceLLM(DecliningSubjectLLM(probe: probe))
+        coordinator.setOnDeviceLLM(DecliningLLM())
 
         _ = try coordinator.submitCorrection(
             classifierTypeID: "type", platformID: "youtube", entryID: "v", correctTagIDs: ["g"]
         )
         for _ in 0..<50 { await Task.yield() }
         try? await Task<Never, Never>.sleep(nanoseconds: 20_000_000)
-        XCTAssertEqual(probe.count, 0)
         let pending = await queue.pendingCount
         XCTAssertEqual(pending, 0)
     }
 
-    /// End-to-end: a fake, unrecognized title is declined by the model, which
-    /// triggers grounded research — and only the *sanitized* subjects (the
-    /// extracted term and the @handle) ever reach the research queue. The raw
-    /// title text and the raw `youtube:handle:` creator ID never leave.
-    func testFakeDecliningTitleTriggersResearchAndOnlySanitizedSubjectsLeave() async throws {
-        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { try? FileManager.default.removeItem(at: root) }
-        try coordinator.updateSettings(.init(research: .init(enabled: true)))
-        let recorder = ResearchSubjectRecorder()
-        let queue = GroundedResearchQueue(
+    private func recordingQueue(
+        _ recorder: ResearchSubjectRecorder,
+        writer: @escaping GroundedResearchQueue.MutationWriter = { _ in }
+    ) -> GroundedResearchQueue {
+        GroundedResearchQueue(
             configurationProvider: { _ in
                 .init(
                     providers: .init(
@@ -656,101 +441,102 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
                         llmCredential: .init(values: [.apiKey: "k"]),
                         llmModelIdentifier: "gemini-2.0-flash"
                     ),
-                    requestsPerMinute: 600,
+                    requestsPerMinute: 6_000,
                     dailyTokenLimit: 1_000_000
                 )
             },
             snapshotProvider: { _ in .init() },
-            mutationWriter: { _ in },
+            mutationWriter: writer,
             researcher: { subject, _ in
                 recorder.append(subject)
                 return .init(
                     knowledge: .init(kind: subject.kind, subject: subject.subject, meaning: "meaning"),
                     chargedTokenCount: 1
                 )
-            }
+            },
+            sleeper: { _ in }
         )
+    }
+
+    /// The only AUTOMATIC research is the creator accumulator. A declined video
+    /// sends nothing on its own — no term is ever picked from a title — and once the
+    /// creator has been hard to classify often enough, only the sanitized @handle
+    /// leaves: never title text, never the raw `youtube:handle:` id.
+    func testDeclinedVideosSendNothingUntilTheCreatorThresholdThenOnlyTheHandle() async throws {
+        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try coordinator.updateSettings(.init(research: .init(
+            enabled: true,
+            authorThreshold: .init(level: 3.5, count: 3, windowDays: 30)
+        )))
+        let recorder = ResearchSubjectRecorder()
+        let queue = recordingQueue(recorder)
         coordinator.setGroundedResearchQueue(queue)
-        // Declines every title, then extracts "HermitCraft" as the subject.
-        coordinator.setOnDeviceLLM(ImmediateSubjectLLM(probe: ImmediateSubjectProbe()))
+        coordinator.setOnDeviceLLM(DecliningLLM())
 
-        let projection = try await coordinator.classifyVideo(
-            platformID: "youtube", entryID: "youtube:video:fake",
-            creatorID: "youtube:handle:@creator",
-            title: "Totally unrecognized nonsense zzzqqq"
+        for index in 0..<2 {
+            let projection = try await coordinator.classifyVideo(
+                platformID: "youtube", entryID: "youtube:video:fake\(index)",
+                creatorID: "youtube:handle:@creator", title: "HermitCraft nonsense zzzqqq \(index)"
+            )
+            XCTAssertTrue(projection.tags.isEmpty)
+        }
+        for _ in 0..<50 { await Task.yield() }
+        await queue.waitUntilIdle()
+        XCTAssertTrue(recorder.subjects.isEmpty, "below the creator threshold nothing may leave the device")
+
+        _ = try await coordinator.classifyVideo(
+            platformID: "youtube", entryID: "youtube:video:fake2",
+            creatorID: "youtube:handle:@creator", title: "HermitCraft nonsense zzzqqq 2"
         )
-        XCTAssertTrue(projection.tags.isEmpty, "an unrecognized title should be declined by the model")
-
-        // The second decode is fire-and-forget: wait for it to extract, enqueue,
-        // and drain the TERM subject. Author research is now accumulation-gated
-        // (§8) — a single declining video does not research the creator — so only
-        // the extracted term leaves here.
         for _ in 0..<200 where recorder.subjects.isEmpty {
             try? await Task<Never, Never>.sleep(nanoseconds: 2_000_000)
         }
         await queue.waitUntilIdle()
-        let leaked = recorder.subjects.map(\.subject)
-        XCTAssertTrue(leaked.contains("HermitCraft"), "the extracted term subject should trigger research")
-        XCTAssertFalse(leaked.contains("@creator"), "a single video must not trigger author research (accumulation-gated)")
-        for subject in leaked {
-            XCTAssertFalse(subject.lowercased().contains("nonsense"), "raw title text must never leave the device")
-            XCTAssertFalse(subject.contains("youtube:"), "raw creator/channel IDs must never leave the device")
-        }
+        XCTAssertEqual(recorder.subjects.map(\.kind), [.creator])
+        XCTAssertEqual(recorder.subjects.map(\.subject), ["@creator"])
     }
 
-    /// Decode 2 wiring: when the engine supports `researchNeeds`, its copied terms
-    /// (over the SAME classification prompt) are what get researched — the legacy
-    /// single-subject decode is not consulted. When Decode 2 finds nothing, the
-    /// legacy decode is the fallback.
-    func testDecodeTwoTermsAreResearchedOverTheClassificationPrompt() async throws {
-        for (terms, expected, expectLegacy) in [
-            (["HermitCraft", "Mumbo Jumbo"], Set(["HermitCraft", "Mumbo Jumbo"]), false),
-            ([String](), Set(["LegacySubject"]), true),
-        ] {
-            let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-            defer { try? FileManager.default.removeItem(at: root) }
-            try coordinator.updateSettings(.init(research: .init(enabled: true)))
-            let recorder = ResearchSubjectRecorder()
-            let queue = GroundedResearchQueue(
-                configurationProvider: { _ in
-                    .init(
-                        providers: .init(
-                            llmProfile: .init(id: "llm", type: .gemini, credential: "k"),
-                            llmCredential: .init(values: [.apiKey: "k"]),
-                            llmModelIdentifier: "gemini-2.0-flash"
-                        ),
-                        requestsPerMinute: 6_000,
-                        dailyTokenLimit: 1_000_000
-                    )
-                },
-                snapshotProvider: { _ in .init() },
-                mutationWriter: { _ in },
-                researcher: { subject, _ in
-                    recorder.append(subject)
-                    return .init(knowledge: .init(kind: subject.kind, subject: subject.subject, meaning: "m"), chargedTokenCount: 1)
-                },
-                sleeper: { _ in }
-            )
-            coordinator.setGroundedResearchQueue(queue)
-            let probe = NeedsRequestProbe()
-            coordinator.setOnDeviceLLM(NeedsExtractingLLM(probe: probe, terms: terms))
-
-            _ = try await coordinator.classifyVideo(
-                platformID: "youtube", entryID: "youtube:video:needs",
-                creatorID: "youtube:handle:@creator", title: "HermitCraft finale with Mumbo Jumbo"
-            )
-            for _ in 0..<300 where recorder.subjects.count < expected.count {
-                try? await Task<Never, Never>.sleep(nanoseconds: 2_000_000)
-            }
-            await queue.waitUntilIdle()
-
-            XCTAssertEqual(Set(recorder.subjects.map(\.subject)), expected)
-            XCTAssertEqual(probe.requests.count, 1)
-            XCTAssertTrue(probe.requests[0].dynamicSuffix.contains("HermitCraft finale with Mumbo Jumbo"),
-                          "Decode 2 must run over the classification prompt (KV-prefix reuse)")
-            XCTAssertTrue(probe.requests[0].dynamicSuffix.hasSuffix("{\"tags\":[{\"name\":\""))
-            XCTAssertEqual(probe.legacyCount > 0, expectLegacy)
+    /// Terms reach research only when the USER names one: it is looked up, stored,
+    /// and then matches titles. Junk subjects and a research-off state are refused.
+    func testOnlyAUserAddedTermIsLookedUp() async throws {
+        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recorder = ResearchSubjectRecorder()
+        let queue = recordingQueue(recorder) { [coordinator] mutation in
+            await coordinator.recordResearchMutation(mutation)
         }
+        coordinator.setGroundedResearchQueue(queue)
+
+        let whileOff = await coordinator.researchTerm("HermitCraft")
+        XCTAssertFalse(whileOff, "research off: nothing may be queued")
+        try coordinator.updateSettings(.init(research: .init(enabled: true)))
+        let tooGeneric = await coordinator.researchTerm("ab")
+        XCTAssertFalse(tooGeneric)
+
+        let queued = await coordinator.researchTerm("  HermitCraft ")
+        XCTAssertTrue(queued)
+        for _ in 0..<200 where coordinator.snapshot().workspaceCatalog.knowledgeEntries.isEmpty {
+            try? await Task<Never, Never>.sleep(nanoseconds: 2_000_000)
+        }
+        await queue.waitUntilIdle()
+        XCTAssertEqual(recorder.subjects.map(\.subject), ["HermitCraft"])
+        let stored = coordinator.snapshot().workspaceCatalog.knowledgeEntries
+        XCTAssertEqual(stored.map(\.subject), ["HermitCraft"])
+        XCTAssertTrue(stored[0].matches(title: "HermitCraft season finale"))
+    }
+
+    /// A term the user described themselves is stored as written, with no lookup.
+    func testAUserWrittenTermIsStoredWithoutResearch() throws {
+        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
+        defer { try? FileManager.default.removeItem(at: root) }
+        XCTAssertTrue(try coordinator.addKnowledgeTerm(subject: " Lifesteal SMP ", meaning: " A Minecraft server. "))
+        XCTAssertFalse(try coordinator.addKnowledgeTerm(subject: "ab", meaning: "too generic to match safely"))
+        XCTAssertFalse(try coordinator.addKnowledgeTerm(subject: "JudeLow", meaning: "   "))
+        let stored = coordinator.snapshot().workspaceCatalog.knowledgeEntries
+        XCTAssertEqual(stored.map(\.subject), ["Lifesteal SMP"])
+        XCTAssertEqual(stored.first?.meaning, "A Minecraft server.")
+        XCTAssertEqual(stored.first?.kind, .term)
     }
 
     /// LATENCY-REFINEMENT Phase 1: a screenful reaches the engine as ONE batch (not
@@ -850,48 +636,6 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         // Deleting the creator forgets it (allowing a fresh re-research).
         try coordinator.deleteKnowledgeEntry(id: "creator:c1")
         XCTAssertTrue(coordinator.snapshot().workspaceCatalog.creatorKnowledge.isEmpty)
-    }
-
-    func testResearchBackfillSweepsPersistedLowConfidenceRowsWithinBound() async throws {
-        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
-        defer { try? FileManager.default.removeItem(at: root) }
-        var catalog = coordinator.snapshot().workspaceCatalog
-        let datasetIndex = try XCTUnwrap(catalog.datasets.firstIndex(where: {
-            $0.id == catalog.bindings.first(where: { $0.id == "youtube" })?.datasetID
-        }))
-        for index in 0..<6 {
-            _ = catalog.datasets[datasetIndex].upsertCollectedEntry(.init(
-                id: "row-\(index)", platformID: "youtube", entryID: "v\(index)",
-                creatorID: "youtube:handle:@creator", creatorName: "Creator",
-                entryType: "video", title: "HermitCraft \(index)"
-            ))
-            catalog.upsertVideoClassification(.init(
-                classifierTypeID: "type", platformID: "youtube", entryID: "v\(index)",
-                creatorID: "youtube:handle:@creator", treeID: "t", treeRevision: 1,
-                tags: [.init(tagID: "g", confidence: index == 5 ? 5 : 2)],
-                source: .model, modelVersion: "old", updatedAtMilliseconds: Int64(index)
-            ))
-        }
-        try coordinator.updateWorkspaceCatalog(catalog)
-        try coordinator.updateSettings(.init(research: .init(
-            enabled: true,
-            urgencyFloor: 4   // confidence-2 rows are urgency 4
-        )))
-        let queue = GroundedResearchQueue(
-            configurationProvider: { _ in nil }, snapshotProvider: { _ in .init() },
-            mutationWriter: { _ in },
-            researcher: { _, _ in throw GroundedResearchError.invalidConfiguration }
-        )
-        coordinator.setGroundedResearchQueue(queue)
-        let probe = ImmediateSubjectProbe()
-        coordinator.setOnDeviceLLM(ImmediateSubjectLLM(probe: probe))
-
-        coordinator.startResearchBackfill(limit: 3)
-        for _ in 0..<100 where probe.count < 3 {
-            try? await Task<Never, Never>.sleep(nanoseconds: 1_000_000)
-        }
-        XCTAssertEqual(probe.count, 3)
-        await queue.waitUntilIdle()
     }
 
     func testStaleClassificationsAreNotServedFromCache() {

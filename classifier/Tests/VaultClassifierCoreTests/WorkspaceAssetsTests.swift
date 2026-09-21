@@ -118,8 +118,7 @@ final class WorkspaceAssetsTests: XCTestCase {
                 llmProviderProfileID: "llm",
                 llmModelIdentifier: "model",
                 requestsPerMinute: 12,
-                dailyTokenLimit: 42_000,
-                urgencyFloor: 4
+                dailyTokenLimit: 42_000
             )
         )
         let roundTrip = try JSONDecoder().decode(ClassifierTypeAsset.self, from: JSONEncoder().encode(value))

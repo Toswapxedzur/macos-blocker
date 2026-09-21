@@ -738,12 +738,10 @@
         field("research.dailyTokenLimit", "research.dailyTokenLimitHint", "dailyTokenLimit", research.dailyTokenLimit ?? 10000, "number", 'min="1" max="10000000"')
       }${
         field("research.cooldownHours", "research.cooldownHoursHint", "cooldownHours", research.cooldownHours ?? 24, "number", 'min="1" max="720"')
-      }</div></section><section class="research-settings-group"><h4>${tx("research.group.trigger")}</h4><div class="utility-settings-fields">${
-        selectField("research.urgencyFloor", "research.urgencyFloorHint", "urgencyFloor", String(research.urgencyFloor ?? 5), [["5", "research.urgencyFloor.5"], ["4", "research.urgencyFloor.4"], ["3", "research.urgencyFloor.3"], ["2", "research.urgencyFloor.2"], ["1", "research.urgencyFloor.1"]])
       }</div></section><section class="research-settings-group"><h4>${tx("research.group.author")}</h4><div class="utility-settings-fields">${
         field("research.authorCount", "research.authorCountHint", "authorCount", research.authorCount ?? 5, "number", 'min="1" max="512"')
       }${
-        field("research.authorLevel", "research.authorLevelHint", "authorLevel", research.authorLevel ?? 3, "number", 'min="1" max="5"')
+        field("research.authorLevel", "research.authorLevelHint", "authorLevel", research.authorLevel ?? 3.5, "number", 'min="1" max="5" step="0.5"')
       }${
         field("research.authorWindowDays", "research.authorWindowDaysHint", "authorWindowDays", research.authorWindowDays ?? 30, "number", 'min="1" max="3650"')
       }</div></section><section class="research-settings-group"><h4>${tx("research.group.knowledge")}</h4><div class="utility-settings-fields">${
@@ -1090,12 +1088,10 @@
         field("research.dailyTokenLimit", "research.dailyTokenLimitHint", "dailyTokenLimit", researchDefaults.dailyTokenLimit ?? 10000, "number", 'min="1" max="10000000"')
       }${
         field("research.cooldownHours", "research.cooldownHoursHint", "cooldownHours", researchDefaults.cooldownHours ?? 24, "number", 'min="1" max="720"')
-      }</div></section><section class="research-settings-group"><h4>${tx("research.group.trigger")}</h4><div class="utility-settings-fields">${
-        selectField("research.urgencyFloor", "research.urgencyFloorHint", "urgencyFloor", String(researchDefaults.urgencyFloor ?? 5), [["5", "research.urgencyFloor.5"], ["4", "research.urgencyFloor.4"], ["3", "research.urgencyFloor.3"], ["2", "research.urgencyFloor.2"], ["1", "research.urgencyFloor.1"]])
       }</div></section><section class="research-settings-group"><h4>${tx("research.group.author")}</h4><div class="utility-settings-fields">${
         field("research.authorCount", "research.authorCountHint", "authorCount", researchDefaults.authorCount ?? 5, "number", 'min="1" max="512"')
       }${
-        field("research.authorLevel", "research.authorLevelHint", "authorLevel", researchDefaults.authorLevel ?? 3, "number", 'min="1" max="5"')
+        field("research.authorLevel", "research.authorLevelHint", "authorLevel", researchDefaults.authorLevel ?? 3.5, "number", 'min="1" max="5" step="0.5"')
       }${
         field("research.authorWindowDays", "research.authorWindowDaysHint", "authorWindowDays", researchDefaults.authorWindowDays ?? 30, "number", 'min="1" max="3650"')
       }</div></section><section class="research-settings-group"><h4>${tx("research.group.knowledge")}</h4><div class="utility-settings-fields">${
@@ -1160,7 +1156,11 @@
 
     const group = (titleKey, hintKey, items, kind) => `<section class="knowledge-group"><div class="section-header"><div><h3>${tx(titleKey)} <span class="knowledge-count">${items.length}</span></h3><p class="section-copy">${tx(hintKey)}</p></div></div>${items.length ? `<div class="knowledge-list">${items.map((entry, index) => entryCard(entry, kind, index)).join("")}</div>` : `<div class="empty">${tx("knowledge.empty")}</div>`}</section>`;
 
-    return `<div class="workspace knowledge-workspace">${header("knowledge.title", "knowledge.copy", tx("knowledge.badge"), "gold")}<div class="notice navy">${tx("knowledge.disclosure")}</div>${group("knowledge.creators", "knowledge.creatorsHint", creators, "creator")}${group("knowledge.terms", "knowledge.termsHint", terms, "term")}${notice(state.issue, "red")}</div>`;
+    // Terms are only ever added here, by the user: name the term, and either
+    // write what it means or leave that blank to have it looked up.
+    const addTerm = `<section class="knowledge-group" data-form-id="knowledge-add-term"><div class="section-header"><div><h3>${tx("knowledge.addTerm")}</h3><p class="section-copy">${tx("knowledge.addTermHint")}</p></div></div><div class="form-stack">${field("knowledge.termSubject", "knowledge.termSubjectHint", "subject", "", "text", 'maxlength="120"')}<label class="field wide"><span class="field-label">${tx("knowledge.description")}</span><textarea data-field="meaning" rows="2" maxlength="2000" placeholder="${tx("knowledge.termMeaningPlaceholder")}"></textarea></label><div class="action-row"><button class="primary" data-action="addKnowledgeTerm" data-form="knowledge-add-term">${tx("knowledge.addTermButton")}</button></div></div></section>`;
+
+    return `<div class="workspace knowledge-workspace">${header("knowledge.title", "knowledge.copy", tx("knowledge.badge"), "gold")}<div class="notice navy">${tx("knowledge.disclosure")}</div>${notice(state.notices?.knowledge, "navy")}${notice(state.issue, "red")}${addTerm}${group("knowledge.terms", "knowledge.termsHint", terms, "term")}${group("knowledge.creators", "knowledge.creatorsHint", creators, "creator")}</div>`;
   }
 
   function classificationDataWorkspace() {
