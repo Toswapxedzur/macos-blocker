@@ -30,10 +30,8 @@ final class VaultPresetTests: XCTestCase {
 
     func testResearchOverridesProfiles() {
         XCTAssertTrue(VaultPreset.gentle.researchOverrides().enabled)
-        XCTAssertEqual(VaultPreset.gentle.researchOverrides().urgencyFloor, 5)   // declines only
 
         XCTAssertTrue(VaultPreset.balanced.researchOverrides().enabled)
-        XCTAssertEqual(VaultPreset.balanced.researchOverrides().urgencyFloor, 4) // + confidence ≤2
 
         XCTAssertTrue(VaultPreset.strict.researchOverrides().enabled)
         XCTAssertEqual(VaultPreset.strict.researchOverrides().cooldownHours, 12)

@@ -677,7 +677,7 @@ public extension WorkspaceCatalog {
         var crossed: Int?
         if accumulator.samples.count >= threshold.count {
             let mean = Double(accumulator.samples.reduce(0) { $0 + $1.urgency }) / Double(accumulator.samples.count)
-            if mean >= Double(threshold.level) {
+            if mean >= threshold.level {
                 crossed = min(5, max(1, Int(mean.rounded())))
                 accumulator.samples.removeAll()   // reset after firing
             }

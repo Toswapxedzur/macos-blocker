@@ -52,12 +52,12 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
         for field in [
-            "cooldownHours", "urgencyFloor", "authorCount", "authorLevel", "authorWindowDays",
+            "cooldownHours", "authorCount", "authorLevel", "authorWindowDays",
             "knowledgeTTLDays", "maxKnowledgePerVideo",
         ] {
             XCTAssertGreaterThanOrEqual(script.components(separatedBy: field).count - 1, 2)
         }
-        for group in ["research.group.frequency", "research.group.trigger", "research.group.author", "research.group.knowledge"] {
+        for group in ["research.group.frequency", "research.group.author", "research.group.knowledge"] {
             XCTAssertGreaterThanOrEqual(script.components(separatedBy: group).count - 1, 2)
         }
     }
@@ -170,8 +170,10 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         XCTAssertTrue(script.contains("saveResearchSettings"))
         XCTAssertTrue(script.contains("research.consent"))
         XCTAssertTrue(script.contains("supportsGenerateText"))
-        XCTAssertTrue(strings.contains("Raw video titles, summaries, body text, and private creator IDs are never sent"))
-        XCTAssertTrue(strings.contains("videos the model is unsure about"))
+        XCTAssertTrue(strings.contains("Video titles, summaries, body text, and private creator IDs are never sent"))
+        XCTAssertTrue(strings.contains("a term you chose to add"))
+        XCTAssertFalse(strings.contains("second on-device constrained decode"), "the automatic term decode is gone")
+        XCTAssertTrue(script.contains("addKnowledgeTerm"))
         XCTAssertFalse(strings.contains("Everything runs on this Mac; nothing leaves it"))
     }
 

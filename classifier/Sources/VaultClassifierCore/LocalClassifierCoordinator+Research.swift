@@ -1,6 +1,6 @@
 import Foundation
 
-// The research lane's store side: queue wiring and snapshot, subject-extraction scheduling, attempt/knowledge/mutation recording, backfill.
+// The research lane's store side: queue wiring and snapshot, user-chosen term lookup, attempt/knowledge/mutation recording.
 // Split out of LocalStore.swift (CLASSIFIER-INDEPENDENCE §7, Phase 5):
 // same type, same behaviour.
 extension LocalClassifierCoordinator {
@@ -27,48 +27,33 @@ extension LocalClassifierCoordinator {
         }
     }
 
-    static func scheduleResearchSubjectExtraction(
-        llm: any OnDeviceLLM,
-        queue: GroundedResearchQueue,
-        settings: ResearchSettings,
-        classifierTypeID: String,
-        platformID: String,
-        entryID: String,
-        creatorID: String,
-        title: String,
-        summary: String?,
-        urgency: Int = ResearchTask.defaultUrgency,
-        promptParts: ClassificationPromptParts? = nil
-    ) {
-        Task.detached(priority: .utility) {
-            let extractionLLM = llm
-            var subjects: [ResearchSubject] = []
-            // Decode 2 (RESEARCH-REDESIGN §5): over the classification prompt, copy
-            // the named subjects the model does not recognize. Falls back to the
-            // legacy single-subject decode when the parts or the capability are
-            // missing, or when Decode 2 finds nothing (it is conservative).
-            if let promptParts, let needsExtractor = extractionLLM as? any OnDeviceResearchNeedsExtracting,
-               let terms = try? await needsExtractor.researchNeeds(.init(
-                   staticPrefix: promptParts.staticPrefix,
-                   dynamicSuffix: promptParts.dynamicSuffix,
-                   maximumTerms: ResearchTask.maximumSubjects
-               )) {
-                subjects = terms.compactMap { ResearchSubject(kind: .term, subject: $0) }
-            }
-            if subjects.isEmpty, let extractor = extractionLLM as? any OnDeviceResearchSubjectExtracting,
-               let subject = try? await extractor.extractResearchSubject(.init(title: title, summary: summary)) {
-                subjects.append(subject)
-            }
-            guard !subjects.isEmpty else { return }
-            _ = await queue.enqueue(.init(
-                classifierTypeID: classifierTypeID,
-                platformID: platformID,
-                entryID: entryID,
-                creatorID: creatorID,
-                subjects: Array(subjects.prefix(ResearchTask.maximumSubjects)),
-                urgency: urgency
-            ))
+    /// Looks up a term the USER chose (Knowledge → add term) through the same
+    /// grounded research lane a creator uses; the result lands in
+    /// `recordResearchKnowledge`, which re-classifies the weakly tagged videos whose
+    /// title holds the term. Terms are never picked automatically. Returns false
+    /// when research is off / unconfigured, the subject is not a usable term, or
+    /// it is already queued.
+    @discardableResult
+    public func researchTerm(_ rawSubject: String) async -> Bool {
+        let subject = rawSubject.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard KnowledgeEntry.isSpecificTermSubject(subject),
+              let researchSubject = ResearchSubject(kind: .term, subject: subject) else { return false }
+        let target: (queue: GroundedResearchQueue, type: ClassifierTypeAsset)? = lock.withLock {
+            guard let queue = groundedResearchQueue,
+                  let type = state.workspaceCatalog.classifierTypes.first(where: {
+                      Self.effectiveResearchSettings(global: state.settings.research, for: $0) != nil
+                  }) else { return nil }
+            return (queue, type)
         }
+        guard let target else { return false }
+        return await target.queue.enqueue(.init(
+            classifierTypeID: target.type.id,
+            platformID: target.type.applicablePlatformID ?? "",
+            entryID: "",
+            creatorID: "",
+            subjects: [researchSubject],
+            urgency: 5
+        ))
     }
 
     /// Drops every persisted research cooldown so the next classification of
@@ -197,79 +182,6 @@ extension LocalClassifierCoordinator {
     /// .maximumParallelSequences` (and the live pill path's chunk size); it is
     /// a literal here because Core deliberately cannot import the LLM layer.
     static let reclassificationChunkSize = 16
-
-    public func startResearchBackfill(limit requestedLimit: Int = 16) {
-        let snapshot = lock.withLock {
-            (
-                state.workspaceCatalog,
-                state.settings.research,
-                groundedResearchQueue,
-                onDeviceLLM,
-                onDeviceLLMEngineResolver,
-                state.settings.localLLM
-            )
-        }
-        let (catalog, globalSettings, queue, defaultLLM, resolver, localLLMSettings) = snapshot
-        guard globalSettings.enabled, let queue else { return }
-        let limit = min(32, max(1, requestedLimit))
-        let eligible = catalog.videoClassifications
-            .filter { $0.source == .model }
-            .sorted { $0.updatedAtMilliseconds < $1.updatedAtMilliseconds }
-        var seen = Set<String>()
-        let candidates = eligible.compactMap { classification -> (
-            entry: CollectedPlatformEntry,
-            classifierType: ClassifierTypeAsset,
-            settings: ResearchSettings,
-            urgency: Int
-        )? in
-            guard let classifierType = catalog.classifierTypes.first(where: {
-                $0.id == classification.classifierTypeID
-            }), let settings = Self.effectiveResearchSettings(
-                global: globalSettings,
-                for: classifierType
-            ), Self.shouldTriggerResearch(for: classification, settings: settings) else { return nil }
-            let key = "\(classification.classifierTypeID)\u{1F}\(classification.platformID)\u{1F}\(classification.entryID)"
-            guard seen.insert(key).inserted else { return nil }
-            guard let entry = Self.collectedEntry(
-                platformID: classification.platformID,
-                entryID: classification.entryID,
-                catalog: catalog
-            ) else { return nil }
-            return (entry, classifierType, settings, Self.researchUrgency(for: classification))
-        }.prefix(limit)
-
-        Task.detached(priority: .utility) {
-            for candidate in candidates {
-                let entry = candidate.entry
-                let llm = await Self.resolvedLLM(
-                    for: candidate.classifierType,
-                    defaultLLM: defaultLLM,
-                    resolver: resolver,
-                    configuration: localLLMSettings
-                )
-                guard let extractor = llm as? any OnDeviceResearchSubjectExtracting else { continue }
-                var subjects: [ResearchSubject] = []
-                if let subject = try? await extractor.extractResearchSubject(
-                    .init(title: entry.title, summary: entry.summary)
-                ) {
-                    subjects.append(subject)
-                }
-                if subjects.count < ResearchTask.maximumSubjects,
-                   let creator = ResearchSubject(kind: .creator, subject: entry.creatorID) {
-                    subjects.append(creator)
-                }
-                guard !subjects.isEmpty else { continue }
-                _ = await queue.enqueue(.init(
-                    classifierTypeID: candidate.classifierType.id,
-                    platformID: entry.platformID,
-                    entryID: entry.entryID,
-                    creatorID: entry.creatorID,
-                    subjects: Array(subjects.prefix(ResearchTask.maximumSubjects)),
-                    urgency: candidate.urgency
-                ))
-            }
-        }
-    }
 
     static func pruneTokenUsage(_ records: inout [TokenUsageRecord]) {
         let todayStart = Int64(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970 * 1_000)

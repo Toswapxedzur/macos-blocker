@@ -1,6 +1,6 @@
 import Foundation
 
-// The classify path: cached projections, currency checks, batch classification against the resolved per-type engine, research-trigger decisions and tag projections.
+// The classify path: cached projections, currency checks, batch classification against the resolved per-type engine, creator-research accumulation and tag projections.
 // Split out of LocalStore.swift (CLASSIFIER-INDEPENDENCE §7, Phase 5):
 // same type, same behaviour.
 extension LocalClassifierCoordinator {
@@ -106,13 +106,8 @@ extension LocalClassifierCoordinator {
             type: ClassifierTypeAsset,
             classification: VideoClassification,
             settings: ResearchSettings,
-            llm: any OnDeviceLLM,
             input: VideoClassificationPipeline.Input
         )] = []
-        // Decode 2 reuses the classification prompt, so the parts are captured here
-        // (strings only — no decode) for the videos that will trigger research.
-        var researchParts: [String: ClassificationPromptParts] = [:]
-        func partsKey(_ typeID: String, _ entryID: String) -> String { "\(typeID)\u{1F}\(entryID)" }
 
         for type in types {
             guard let tree = catalog.trees.first(where: { $0.id == type.treeID }),
@@ -175,17 +170,7 @@ extension LocalClassifierCoordinator {
                 for: type
             ) else { continue }
             for (input, classification) in zip(pending, results) {
-                researchCandidates.append((type, classification, effectiveResearch, llm, input))
-                if Self.shouldTriggerResearch(for: classification, settings: effectiveResearch) {
-                    researchParts[partsKey(type.id, input.entryID)] = pipeline.primaryPromptParts(
-                        title: input.title, summary: input.summary, text: input.text,
-                        entryID: input.entryID, creatorID: input.creatorID, platformID: platformID,
-                        classifierType: type, tree: tree, catalog: catalog,
-                        houseRules: typeHouseRules,
-                        knowledgeTTLDays: knowledgeSettings.knowledgeTTLDays,
-                        maxKnowledgePerVideo: knowledgeSettings.maxKnowledgePerVideo
-                    )
-                }
+                researchCandidates.append((type, classification, effectiveResearch, input))
             }
         }
 
@@ -234,25 +219,11 @@ extension LocalClassifierCoordinator {
             "tagged": "\(projections.values.filter { !$0.tags.isEmpty }.count)"
         ])
         if let researchQueue {
-            // Author research now comes from the §8 accumulator, not the old
-            // "append the creator handle when the histogram is weak" heuristic.
+            // The §8 accumulator is the ONLY automatic research trigger: a creator
+            // seen often enough whose videos stay hard to classify. Terms are never
+            // picked automatically (the model picked ordinary words, and low
+            // confidence marks vague titles, not unknown names) — the user adds them.
             for task in authorTasks { _ = await researchQueue.enqueue(task) }
-            for candidate in researchCandidates
-            where Self.shouldTriggerResearch(for: candidate.classification, settings: candidate.settings) {
-                Self.scheduleResearchSubjectExtraction(
-                    llm: candidate.llm,
-                    queue: researchQueue,
-                    settings: candidate.settings,
-                    classifierTypeID: candidate.type.id,
-                    platformID: platformID,
-                    entryID: candidate.input.entryID,
-                    creatorID: candidate.input.creatorID,
-                    title: candidate.input.title,
-                    summary: candidate.input.summary,
-                    urgency: Self.researchUrgency(for: candidate.classification),
-                    promptParts: researchParts[partsKey(candidate.type.id, candidate.input.entryID)]
-                )
-            }
         }
         return projections
     }
@@ -304,28 +275,11 @@ extension LocalClassifierCoordinator {
         return (trimmedGlobal?.isEmpty == false) ? trimmedGlobal : nil
     }
 
-    public static func hasExplicitModelDecline(
-        _ classifications: [VideoClassification]
-    ) -> Bool {
-        classifications.contains { $0.source == .model && $0.tags.isEmpty }
-    }
-
     /// The derived research urgency for a model classification (inverse of its
-    /// mean confidence; a decline = 5). Single source of truth for the trigger and
-    /// for the queued task's priority (RESEARCH-REDESIGN §7).
+    /// mean confidence; a decline = 5): the per-video sample the creator
+    /// accumulator averages.
     public static func researchUrgency(for classification: VideoClassification) -> Int {
         ResearchUrgency.fromTagConfidences(classification.tags.map(\.confidence))
-    }
-
-    public static func shouldTriggerResearch(
-        for classification: VideoClassification,
-        settings: ResearchSettings
-    ) -> Bool {
-        // Urgency-driven (replaces the ResearchTrigger modes + confidenceTriggerLevel):
-        // fire when the video's derived urgency reaches the user's floor. A decline
-        // is urgency 5, so it still always triggers.
-        guard classification.source == .model else { return false }
-        return researchUrgency(for: classification) >= settings.urgencyFloor
     }
 
     static func orderedTypes(for platformID: String, in catalog: WorkspaceCatalog) -> [ClassifierTypeAsset] {

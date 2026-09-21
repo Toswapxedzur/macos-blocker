@@ -65,7 +65,6 @@ extension VaultClassifierViewModel {
                 research: updated
             ))
             refreshLocalState()
-            if updated.enabled { coordinator.startResearchBackfill() }
             issue = nil
         } catch {
             issue = error.localizedDescription
@@ -111,10 +110,6 @@ extension VaultClassifierViewModel {
             catalog.classifierTypes[index].updatedAtMilliseconds = WorkspaceCatalog.now()
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
-            if overrideSettings?.enabled == true,
-               localState?.settings.research.enabled == true {
-                coordinator?.startResearchBackfill()
-            }
             issue = nil
         } catch {
             issue = error.localizedDescription
@@ -245,6 +240,10 @@ extension VaultClassifierViewModel {
             return Int(raw.replacingOccurrences(of: ",", with: "")
                 .trimmingCharacters(in: .whitespacesAndNewlines))
         }
+        func optionalDouble(_ key: String) -> Double? {
+            guard let raw = data[key] as? String else { return nil }
+            return Double(raw.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
         return .init(
             typeID: typeID,
             overrideEnabled: true,
@@ -255,9 +254,8 @@ extension VaultClassifierViewModel {
                 requestsPerMinute: optionalInteger("requestsPerMinute") ?? defaults.requestsPerMinute,
                 dailyTokenLimit: optionalInteger("dailyTokenLimit") ?? defaults.dailyTokenLimit,
                 cooldownHours: optionalInteger("cooldownHours") ?? defaults.cooldownHours,
-                urgencyFloor: optionalInteger("urgencyFloor") ?? defaults.urgencyFloor,
                 authorThreshold: AuthorResearchThreshold(
-                    level: optionalInteger("authorLevel") ?? defaults.authorThreshold.level,
+                    level: optionalDouble("authorLevel") ?? defaults.authorThreshold.level,
                     count: optionalInteger("authorCount") ?? defaults.authorThreshold.count,
                     windowDays: optionalInteger("authorWindowDays") ?? defaults.authorThreshold.windowDays
                 ),
@@ -279,6 +277,13 @@ extension VaultClassifierViewModel {
     func positiveInteger(_ raw: String, label: String) throws -> Int {
         let digits = raw.replacingOccurrences(of: ",", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard let value = Int(digits), value > 0 else { throw AppInputError.invalidNumber(label) }
+        return value
+    }
+
+    func positiveNumber(_ raw: String, label: String) throws -> Double {
+        guard let value = Double(raw.trimmingCharacters(in: .whitespacesAndNewlines)), value > 0, value.isFinite else {
+            throw AppInputError.invalidDecimal(label)
+        }
         return value
     }
 

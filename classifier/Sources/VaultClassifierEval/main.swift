@@ -436,80 +436,8 @@ case "calib":
     report("SOFTMAX confidence (production)", softN, softHit)
     print("\nVerdict rule: prefer the signal with lower ECE + monotone precision + larger separation Δ.")
 
-case "needs":
-    // RESEARCH-REDESIGN Phase 2, Decode 2 live smoke: run the classification
-    // decode, then the research-needs decode over the same KV-cached evidence, and
-    // print the emitted terms/urgency + author-urgency. Proves the GBNF compiles
-    // in llama.cpp and the model produces sane, copied terms — not measured, just
-    // eyeballed. `--limit=N` caps how many videos to run (default 12).
-    guard args.count > 1, let data = try? Data(contentsOf: URL(fileURLWithPath: args[1])),
-          let set = try? JSONDecoder().decode(EvalSet.self, from: data) else { die("could not read eval set") }
-    let limit = args.compactMap { $0.hasPrefix("--limit=") ? Int($0.dropFirst(8)) : nil }.first ?? 12
-    // `--all` runs every item (a true no-tag video can need research too);
-    // `--knowledge=none` hides stored research so the model is asked cold.
-    let items = Array((args.contains("--all") ? set.items : set.items.filter { !$0.trueTags.isEmpty }).prefix(limit))
-    guard !items.isEmpty else { die("no labeled items to run") }
-    var catalog = catalog
-    if args.contains("--knowledge=none") { catalog.knowledgeEntries = []; catalog.creatorKnowledge = [] }
-    let needsDumpPath = args.compactMap { $0.hasPrefix("--dump-json=") ? String($0.dropFirst(12)) : nil }.first
-    var needsRows: [[String: Any]] = []
-
-    let modelOverride = args.compactMap { $0.hasPrefix("--model=") ? String($0.dropFirst(8)) : nil }.first
-    guard let modelPath = modelOverride ?? VaultLocalLLMEngine.defaultModelPath(preferredFileName: state.settings.localLLM.modelFileName) else {
-        die("no .gguf model found for this environment")
-    }
-    let engine: VaultLocalLLMEngine
-    do { engine = try VaultLocalLLMEngine(modelPath: modelPath) } catch { die("engine load failed: \(error)") }
-
-    let settings = state.settings.localLLM
-    let research = state.settings.research
-    let overrides = type.localModelOverrides
-    let maxTerms = args.compactMap { $0.hasPrefix("--terms=") ? Int($0.dropFirst(8)) : nil }.first ?? 3
-    let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: settings.maximumTags)
-    print("• model: \((modelPath as NSString).lastPathComponent)  •  \(items.count) items  •  maxTerms \(maxTerms)  •  type \"\(type.name)\"\n")
-
-    for item in items {
-        let parts = pipeline.primaryPromptParts(
-            title: item.title, entryID: item.entryID, creatorID: item.creatorID, platformID: "youtube",
-            classifierType: type, tree: tree, catalog: catalog,
-            houseRules: productionHouseRules,
-            knowledgeTTLDays: research.knowledgeTTLDays,
-            maxKnowledgePerVideo: research.maxKnowledgePerVideo
-        )
-        // Decode 1 first, so Decode 2 reuses its KV-cached evidence prefix.
-        let classification = try await engine.classify(LLMClassificationRequest(
-            staticPrefix: parts.staticPrefix, dynamicSuffix: parts.dynamicSuffix,
-            allowedTagNames: parts.allowedTagNames, maximumTags: settings.maximumTags,
-            allowDecline: overrides?.allowDecline ?? settings.allowDecline,
-            confidenceThresholds: overrides?.confidenceThresholds ?? settings.confidenceThresholds
-        ))
-        let terms = try await engine.researchNeeds(LLMResearchNeedsRequest(
-            staticPrefix: parts.staticPrefix, dynamicSuffix: parts.dynamicSuffix, maximumTerms: maxTerms
-        ))
-        // Urgency is DERIVED from the classification confidences (the reliable
-        // signal), not asked of the model — same value feeds §8's author accumulator.
-        let derivedUrgency = ResearchUrgency.fromTagConfidences(classification.tags.map(\.confidence))
-        needsRows.append([
-            "entryID": item.entryID, "terms": terms, "urgency": derivedUrgency,
-            "tags": classification.tags.map { ["name": $0.name, "confidence": $0.confidence] as [String: Any] },
-        ])
-        let tagStr = classification.tags.isEmpty ? "—(declined)"
-            : classification.tags.map { "\($0.name)·c\($0.confidence)" }.joined(separator: ", ")
-        let termStr = terms.isEmpty ? "(none)" : terms.map { "\"\($0)\"" }.joined(separator: ", ")
-        print(String(format: "• %-46@\n    tags: %@\n    terms: %@   derived-urgency: %d",
-                     String(item.title.prefix(46)) as NSString, tagStr, termStr, derivedUrgency))
-    }
-
-    if let needsDumpPath {
-        try JSONSerialization.data(withJSONObject: needsRows, options: [.prettyPrinted, .sortedKeys])
-            .write(to: URL(fileURLWithPath: needsDumpPath))
-    }
-
 case "latency":
-    // RESEARCH-REDESIGN §10 Experiment 3: per-video wall time of Decode 1
-    // (structured, model confidence) and Decode 2 (term extraction), steady state.
-    // Decode 2 is timed right after Decode 1 (warm KV — the inline cost) — the app
-    // currently runs it detached, so this is the best case for moving it inline.
+    // Per-video wall time of one classification decode, steady state (serial).
     guard args.count > 1, let data = try? Data(contentsOf: URL(fileURLWithPath: args[1])),
           let set = try? JSONDecoder().decode(EvalSet.self, from: data) else { die("could not read eval set") }
     let limit = args.compactMap { $0.hasPrefix("--limit=") ? Int($0.dropFirst(8)) : nil }.first ?? 30
@@ -525,7 +453,7 @@ case "latency":
     let overrides = type.localModelOverrides
     let maxTags = args.compactMap { $0.hasPrefix("--max=") ? Int($0.dropFirst(6)) : nil }.first ?? 1
     let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: maxTags)
-    var decode1: [Double] = [], decode2: [Double] = []
+    var decode1: [Double] = []
     for (index, item) in items.enumerated() {
         let parts = pipeline.primaryPromptParts(
             title: item.title, entryID: item.entryID, creatorID: item.creatorID, platformID: "youtube",
@@ -540,14 +468,8 @@ case "latency":
             allowDecline: overrides?.allowDecline ?? settings.allowDecline,
             confidenceThresholds: overrides?.confidenceThresholds ?? settings.confidenceThresholds
         ))
-        let t1 = Date()
-        _ = try await engine.researchNeeds(LLMResearchNeedsRequest(
-            staticPrefix: parts.staticPrefix, dynamicSuffix: parts.dynamicSuffix, maximumTerms: 3
-        ))
-        let t2 = Date()
         if index > 0 {   // skip the cold first video (static-prefix prefill)
-            decode1.append(t1.timeIntervalSince(t0) * 1_000)
-            decode2.append(t2.timeIntervalSince(t1) * 1_000)
+            decode1.append(Date().timeIntervalSince(t0) * 1_000)
         }
     }
     func stats(_ v: [Double]) -> String {
@@ -556,9 +478,7 @@ case "latency":
         return String(format: "median %.0f ms   p90 %.0f ms   max %.0f ms", s[s.count / 2], s[min(s.count - 1, Int(Double(s.count) * 0.9))], s[s.count - 1])
     }
     print("• model: \((modelPath as NSString).lastPathComponent)  •  \(decode1.count) warm videos  •  maxTags \(maxTags)")
-    print("Decode 1 (classify, model confidence): \(stats(decode1))")
-    print("Decode 2 (term extraction, warm KV):   \(stats(decode2))")
-    print("Both:                                  \(stats(zip(decode1, decode2).map { $0 + $1 }))")
+    print("classify: \(stats(decode1))")
 
 case "batch":
     // LATENCY-REFINEMENT Phase 1: the SAME requests decoded serially and then as
@@ -627,5 +547,5 @@ case "batch":
     print("equivalence: same tags \(sameTags)/\(items.count)   same tags+confidence \(sameAll)/\(items.count)")
 
 default:
-    die("usage: VaultClassifierEval sample <N> [out.json] | score <in.json> | abtest <in.json> | calib <in.json> | needs <in.json> | latency <in.json> | batch <in.json>")
+    die("usage: VaultClassifierEval sample <N> [out.json] | score <in.json> | abtest <in.json> | calib <in.json> | latency <in.json> | batch <in.json>")
 }

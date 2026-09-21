@@ -4,6 +4,19 @@
 > Phases 0–4 are done (see §13 for what changed vs. this text — notably urgency is
 > DERIVED from confidence, not model-emitted). All planned phases, incl. Cut A, are done.
 
+> **SUPERSEDED IN PART — 2026-09-21 (owner decision, measured).** Automatic term
+> research is deleted: Decode 2 (`researchNeeds`), the legacy single-subject decode,
+> the per-video `urgencyFloor` trigger (§7) and the research backfill no longer
+> exist. Measured on the 450-video library (`eval-library.json`): the low-confidence
+> trigger fired on the wrong videos (0 of 82 unknown-term videos got their term
+> researched) and 43% of picked terms were ordinary words — net effect on tagging
+> was zero (5 fixed / 7 broke). What remains: the §8 creator accumulator is the ONLY
+> automatic trigger (default 5 videos, mean urgency ≥ 3.5 — `level` is now a half-step
+> number), and terms are added by the USER in Knowledge (written, or looked up through
+> the same grounded lane via `researchTerm`). Hand-picked correct terms measured
+> +18 pts exact-tag accuracy on the videos that hold one, which is why the term
+> store, title matching and the "Known context" prompt section stay.
+
 ## 1. Why
 
 The research system grew into a tangle: **4 trigger modes**, a
