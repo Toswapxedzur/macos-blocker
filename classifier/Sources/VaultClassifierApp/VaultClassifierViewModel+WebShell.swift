@@ -54,9 +54,8 @@ extension VaultClassifierViewModel {
                 "requestsPerMinute": researchSettings.requestsPerMinute,
                 "dailyTokenLimit": researchSettings.dailyTokenLimit,
                 "cooldownHours": researchSettings.cooldownHours,
-                "authorLevel": researchSettings.authorThreshold.level,
-                "authorCount": researchSettings.authorThreshold.count,
-                "authorWindowDays": researchSettings.authorThreshold.windowDays,
+                "creatorScoreThreshold": researchSettings.authorThreshold.score,
+                "creatorScoreHalfLifeDays": researchSettings.authorThreshold.halfLifeDays,
                 "knowledgeTTLDays": researchSettings.knowledgeTTLDays,
                 "maxKnowledgePerVideo": researchSettings.maxKnowledgePerVideo,
                 "tokensUsedToday": GroundedResearchQueue.usedResearchTokens(in: catalog.tokenUsage, at: Date()),
@@ -148,9 +147,8 @@ extension VaultClassifierViewModel {
                             "requestsPerMinute": research.requestsPerMinute,
                             "dailyTokenLimit": research.dailyTokenLimit,
                             "cooldownHours": research.cooldownHours,
-                            "authorLevel": research.authorThreshold.level,
-                            "authorCount": research.authorThreshold.count,
-                            "authorWindowDays": research.authorThreshold.windowDays,
+                            "creatorScoreThreshold": research.authorThreshold.score,
+                            "creatorScoreHalfLifeDays": research.authorThreshold.halfLifeDays,
                             "knowledgeTTLDays": research.knowledgeTTLDays,
                             "maxKnowledgePerVideo": research.maxKnowledgePerVideo,
                         ] as [String: Any]
@@ -505,17 +503,13 @@ extension VaultClassifierViewModel {
                         label: "Research cooldown hours"
                     ),
                     authorThreshold: AuthorResearchThreshold(
-                        level: try positiveNumber(
-                            try webString(data, key: "authorLevel", limit: 16),
-                            label: "Author research urgency level"
+                        score: try positiveNumber(
+                            try webString(data, key: "creatorScoreThreshold", limit: 16),
+                            label: "Creator research score"
                         ),
-                        count: try positiveInteger(
-                            try webString(data, key: "authorCount", limit: 16),
-                            label: "Author research video count"
-                        ),
-                        windowDays: try positiveInteger(
-                            try webString(data, key: "authorWindowDays", limit: 16),
-                            label: "Author research window days"
+                        halfLifeDays: try positiveNumber(
+                            try webString(data, key: "creatorScoreHalfLifeDays", limit: 16),
+                            label: "Creator score half-life days"
                         )
                     ),
                     knowledgeTTLDays: try nonnegativeInteger(

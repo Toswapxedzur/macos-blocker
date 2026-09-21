@@ -462,28 +462,52 @@ public struct CreatorTagHistogram: Codable, Equatable, Sendable, Identifiable {
 
 // MARK: - Author research accumulator (RESEARCH-REDESIGN §8)
 
-/// One windowed per-video urgency sample for a creator.
-public struct CreatorUrgencySample: Codable, Equatable, Sendable {
-    public var urgency: Int
-    public var atMilliseconds: Int64
-    public init(urgency: Int, atMilliseconds: Int64) {
-        self.urgency = min(5, max(1, urgency))
-        self.atMilliseconds = atMilliseconds
-    }
-}
-
-/// Accumulates a creator's recent derived-urgency samples (per classifier type)
-/// so author research can fire when they are consistently hard to classify.
+/// A creator's research SCORE (per classifier type): how urgently they need a
+/// description. It rises when one of their videos is hard to classify, halves
+/// every `AuthorResearchThreshold.halfLifeDays` while nothing happens, and fires
+/// research when it reaches the threshold. One number and one date per creator.
 public struct CreatorResearchAccumulator: Codable, Equatable, Sendable, Identifiable {
     /// `classifierTypeID\u{1F}creatorID`.
     public var id: String
-    public var samples: [CreatorUrgencySample]
-    public init(id: String, samples: [CreatorUrgencySample] = []) {
+    public var score: Double
+    public var updatedAtMilliseconds: Int64
+
+    public init(id: String, score: Double = 0, updatedAtMilliseconds: Int64 = 0) {
         self.id = id
-        self.samples = samples
+        self.score = max(0, score.isFinite ? score : 0)
+        self.updatedAtMilliseconds = updatedAtMilliseconds
     }
+
     public static func key(classifierTypeID: String, creatorID: String) -> String {
         "\(classifierTypeID)\u{1F}\(creatorID)"
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, score, updatedAtMilliseconds }
+
+    /// Rows written by the retired sample-list rule carry `samples` and no score:
+    /// they decode as an empty score and are dropped at the next update.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decode(String.self, forKey: .id),
+            score: try container.decodeIfPresent(Double.self, forKey: .score) ?? 0,
+            updatedAtMilliseconds: try container.decodeIfPresent(Int64.self, forKey: .updatedAtMilliseconds) ?? 0
+        )
+    }
+
+    /// The score after decaying from its last update to `nowMilliseconds`.
+    public func decayedScore(halfLifeDays: Double, nowMilliseconds: Int64) -> Double {
+        let elapsedDays = Double(max(0, nowMilliseconds - updatedAtMilliseconds)) / 86_400_000
+        return score * pow(0.5, elapsedDays / max(0.01, halfLifeDays))
+    }
+
+    /// How much one classified video adds: a video that could not be tagged
+    /// (urgency 5) adds 1, a shaky tag a fraction, a sure tag nothing. A sure tag
+    /// never SUBTRACTS — the lookup is paid once per creator and helps exactly the
+    /// videos that got no tag, so a prolific creator with some untagged videos is
+    /// still worth it; staleness is handled by the decay alone.
+    public static func step(forUrgency urgency: Int) -> Double {
+        max(0, Double(min(5, max(1, urgency)) - 2) / 3)
     }
 }
 
@@ -496,7 +520,8 @@ public extension WorkspaceCatalog {
     static let maximumCorrectionExamples = 5_000
     static let maximumMatchedKnowledgeEntries = 8
     static let maximumCreatorAccumulators = 20_000
-    static let maximumCreatorUrgencySamples = 512
+    static let minimumRetainedCreatorScore = 0.05
+    static let creatorScoreTolerance = 0.05
 
     /// The current per-video classification for a type + platform + video.
     func videoClassification(classifierTypeID: String, platformID: String, entryID: String) -> VideoClassification? {
@@ -650,11 +675,10 @@ public extension WorkspaceCatalog {
         }
     }
 
-    /// Records one video's derived urgency against a creator's accumulator
-    /// (pruning samples outside the window), and — when the creator now has at
-    /// least `threshold.count` samples averaging at least `threshold.level` — RESETS
-    /// the accumulator and returns the rounded mean urgency to research the author
-    /// with. Returns nil when the threshold is not yet met (RESEARCH-REDESIGN §8).
+    /// Adds one classified video to its creator's research score (decayed to now)
+    /// and, when the score reaches `threshold.score`, RESETS it and returns the
+    /// urgency to research the creator with. nil = not yet. A creator who already
+    /// has a description is never scored: the lookup happens once.
     @discardableResult
     mutating func recordCreatorResearchUrgency(
         classifierTypeID: String,
@@ -664,34 +688,27 @@ public extension WorkspaceCatalog {
         nowMilliseconds: Int64
     ) -> Int? {
         let key = CreatorResearchAccumulator.key(classifierTypeID: classifierTypeID, creatorID: creatorID)
-        let windowMilliseconds = Int64(threshold.windowDays) * 24 * 60 * 60 * 1_000
-        let cutoff = nowMilliseconds - windowMilliseconds
-
-        var accumulator = creatorResearchAccumulators.first(where: { $0.id == key }) ?? .init(id: key)
-        accumulator.samples.removeAll { $0.atMilliseconds < cutoff }
-        accumulator.samples.append(.init(urgency: urgency, atMilliseconds: nowMilliseconds))
-        if accumulator.samples.count > Self.maximumCreatorUrgencySamples {
-            accumulator.samples = Array(accumulator.samples.suffix(Self.maximumCreatorUrgencySamples))
-        }
-
-        var crossed: Int?
-        if accumulator.samples.count >= threshold.count {
-            let mean = Double(accumulator.samples.reduce(0) { $0 + $1.urgency }) / Double(accumulator.samples.count)
-            if mean >= threshold.level {
-                crossed = min(5, max(1, Int(mean.rounded())))
-                accumulator.samples.removeAll()   // reset after firing
-            }
-        }
-
+        let existing = creatorResearchAccumulators.first(where: { $0.id == key })
         creatorResearchAccumulators.removeAll { $0.id == key }
-        // Keep only non-empty accumulators, newest activity first, under the bound.
-        if !accumulator.samples.isEmpty {
-            creatorResearchAccumulators.insert(accumulator, at: 0)
+        guard creatorKnowledgeEntry(for: creatorID) == nil else { return nil }
+
+        let decayed = existing?.decayedScore(halfLifeDays: threshold.halfLifeDays, nowMilliseconds: nowMilliseconds) ?? 0
+        let score = decayed + CreatorResearchAccumulator.step(forUrgency: urgency)
+        // The score never stops fading, so N whole steps taken minutes apart sum to a
+        // hair under N. The tolerance makes "three untaggable videos in one sitting"
+        // (within ~8 hours at a 14-day half-life) reach a threshold of 3, as intended.
+        if score >= threshold.score - Self.creatorScoreTolerance {
+            return min(5, max(3, Int(score.rounded())))   // reset: nothing is stored back
+        }
+        // Keep only scores that still matter, newest activity first, under the bound.
+        if score >= Self.minimumRetainedCreatorScore {
+            creatorResearchAccumulators.insert(
+                .init(id: key, score: score, updatedAtMilliseconds: nowMilliseconds), at: 0)
             if creatorResearchAccumulators.count > Self.maximumCreatorAccumulators {
                 creatorResearchAccumulators = Array(creatorResearchAccumulators.prefix(Self.maximumCreatorAccumulators))
             }
         }
-        return crossed
+        return nil
     }
 
     /// Stores one authoritative correction per classifier type/platform/video.

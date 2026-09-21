@@ -375,30 +375,37 @@ public struct LocalModelOverrides: Codable, Equatable, Sendable {
     }
 }
 
-/// When to research a CREATOR — the ONLY automatic research trigger: once, within
-/// a `windowDays` window, at least `count` of their videos have a mean derived
-/// urgency (1 = sure … 5 = could not tag) of at least `level`. The two numbers
-/// are the research-frequency control: lower either for more research.
+/// When to research a CREATOR — the ONLY automatic research trigger. Every
+/// creator carries a score (`CreatorResearchAccumulator`): a video that could not
+/// be tagged adds 1, a shaky tag a fraction, a sure tag nothing; the score halves
+/// every `halfLifeDays`; reaching `score` researches the creator once.
 ///
-/// `level` is fractional because the mean urgency over a whole history is ≈ 3.0,
-/// so 3 means "average", not "hard to classify" (measured 2026-09-20: of 1,468
-/// creators, count 5 selects 54 at level 3 and 14 at 3.5).
+/// `score` is the research-frequency control (lower = more research). Simulated
+/// 2026-09-21 on 4,999 real videos / 1,464 creators (old-format history, 41%
+/// untagged): 2 → 219 creators, 3 → 70, 4 → 43, 5 → 37.
 public struct AuthorResearchThreshold: Codable, Equatable, Sendable {
-    public static let defaultLevel = 3.5
-    public static let defaultCount = 5
-    public static let defaultWindowDays = 30
-    public static let maximumCount = 512
-    public static let maximumWindowDays = 3_650
+    public static let defaultScore = 3.0
+    public static let defaultHalfLifeDays = 14.0
+    public static let maximumScore = 50.0
+    public static let maximumHalfLifeDays = 365.0
 
-    public var level: Double
-    public var count: Int
-    public var windowDays: Int
+    public var score: Double
+    public var halfLifeDays: Double
 
-    public init(level: Double = defaultLevel, count: Int = defaultCount, windowDays: Int = defaultWindowDays) {
-        // Half steps only: the settings UI offers them and they round-trip exactly.
-        self.level = min(5, max(1, (level * 2).rounded() / 2))
-        self.count = min(Self.maximumCount, max(1, count))
-        self.windowDays = min(Self.maximumWindowDays, max(1, windowDays))
+    public init(score: Double = defaultScore, halfLifeDays: Double = defaultHalfLifeDays) {
+        self.score = score.isFinite ? min(Self.maximumScore, max(0.5, score)) : Self.defaultScore
+        self.halfLifeDays = halfLifeDays.isFinite ? min(Self.maximumHalfLifeDays, max(1, halfLifeDays)) : Self.defaultHalfLifeDays
+    }
+
+    private enum CodingKeys: String, CodingKey { case score, halfLifeDays }
+
+    /// The retired sample-list keys (`level`, `count`, `windowDays`) are ignored.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            score: try container.decodeIfPresent(Double.self, forKey: .score) ?? Self.defaultScore,
+            halfLifeDays: try container.decodeIfPresent(Double.self, forKey: .halfLifeDays) ?? Self.defaultHalfLifeDays
+        )
     }
 }
 

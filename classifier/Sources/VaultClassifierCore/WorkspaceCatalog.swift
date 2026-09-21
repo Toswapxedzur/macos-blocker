@@ -314,7 +314,9 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         researchAttempts = try container.decodeIfPresent([ResearchAttemptRecord].self, forKey: .researchAttempts) ?? []
         correctionExamples = try container.decodeIfPresent([CorrectionExample].self, forKey: .correctionExamples) ?? []
         creatorHistograms = try container.decodeIfPresent([CreatorTagHistogram].self, forKey: .creatorHistograms) ?? []
-        creatorResearchAccumulators = try container.decodeIfPresent([CreatorResearchAccumulator].self, forKey: .creatorResearchAccumulators) ?? []
+        // Rows of the retired sample-list rule decode with an empty score: drop them.
+        creatorResearchAccumulators = (try container.decodeIfPresent([CreatorResearchAccumulator].self, forKey: .creatorResearchAccumulators) ?? [])
+            .filter { $0.score > 0 }
     }
 
     private func unique(_ identifiers: [String]) throws {

@@ -255,9 +255,8 @@ extension VaultClassifierViewModel {
                 dailyTokenLimit: optionalInteger("dailyTokenLimit") ?? defaults.dailyTokenLimit,
                 cooldownHours: optionalInteger("cooldownHours") ?? defaults.cooldownHours,
                 authorThreshold: AuthorResearchThreshold(
-                    level: optionalDouble("authorLevel") ?? defaults.authorThreshold.level,
-                    count: optionalInteger("authorCount") ?? defaults.authorThreshold.count,
-                    windowDays: optionalInteger("authorWindowDays") ?? defaults.authorThreshold.windowDays
+                    score: optionalDouble("creatorScoreThreshold") ?? defaults.authorThreshold.score,
+                    halfLifeDays: optionalDouble("creatorScoreHalfLifeDays") ?? defaults.authorThreshold.halfLifeDays
                 ),
                 knowledgeTTLDays: optionalInteger("knowledgeTTLDays") ?? defaults.knowledgeTTLDays,
                 maxKnowledgePerVideo: optionalInteger("maxKnowledgePerVideo") ?? defaults.maxKnowledgePerVideo
