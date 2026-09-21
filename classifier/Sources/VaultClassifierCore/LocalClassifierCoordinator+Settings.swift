@@ -42,6 +42,23 @@ extension LocalClassifierCoordinator {
         try stateFile.save(state)
     }
 
+    /// Stores a term the user wrote themselves (Knowledge → add term). Returns
+    /// false — storing nothing — when the subject is not a usable term (too short
+    /// or too generic to match titles safely) or the description is empty; a term
+    /// added WITHOUT a description goes through `researchTerm` instead.
+    @discardableResult
+    public func addKnowledgeTerm(subject: String, meaning: String) throws -> Bool {
+        let subject = subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        let meaning = meaning.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard KnowledgeEntry.isSpecificTermSubject(subject), !meaning.isEmpty else { return false }
+        lock.lock()
+        defer { lock.unlock() }
+        state.workspaceCatalog.upsertKnowledgeEntry(
+            KnowledgeEntry(kind: .term, subject: subject, meaning: String(meaning.prefix(KnowledgeEntry.maximumMeaningLength))))
+        try stateFile.save(state)
+        return true
+    }
+
     /// Edits the grounded description of an existing knowledge entry, keeping its
     /// kind, subject, id, and sources. A creator description edited here steers
     /// that creator's low-confidence classifications.

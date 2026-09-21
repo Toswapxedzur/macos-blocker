@@ -43,32 +43,27 @@ public enum VaultPreset: String, Codable, Sendable, CaseIterable, Identifiable {
 
     /// Per-type grounded-research profile. Provider selection stays the user's
     /// choice and the app-wide research consent is still the master gate, so the
-    /// preset only sets intent, the urgency floor (5 = declines only, 4 = also
-    /// low-confidence videos), and budgets — never a provider.
+    /// preset only sets intent and budgets — never a provider.
     public func researchOverrides(base: ResearchSettings = ResearchSettings()) -> ResearchSettings {
         var settings = base
         switch self {
         case .gentle:
             settings.enabled = true
-            settings.urgencyFloor = 5
             settings.requestsPerMinute = 6
             settings.dailyTokenLimit = 5_000
             settings.cooldownHours = 24
         case .balanced:
             settings.enabled = true
-            settings.urgencyFloor = 4
             settings.requestsPerMinute = 6
             settings.dailyTokenLimit = 10_000
             settings.cooldownHours = 24
         case .strict:
             settings.enabled = true
-            settings.urgencyFloor = 4
             settings.requestsPerMinute = 6
             settings.dailyTokenLimit = 20_000
             settings.cooldownHours = 12
         case .localOnly:
             settings.enabled = false
-            settings.urgencyFloor = 5
         }
         return settings
     }
@@ -103,7 +98,6 @@ public enum VaultPreset: String, Codable, Sendable, CaseIterable, Identifiable {
         let targetResearch = researchOverrides()
         let current = research ?? ResearchSettings()
         return current.enabled == targetResearch.enabled
-            && current.urgencyFloor == targetResearch.urgencyFloor
             && current.requestsPerMinute == targetResearch.requestsPerMinute
             && current.dailyTokenLimit == targetResearch.dailyTokenLimit
             && current.cooldownHours == targetResearch.cooldownHours

@@ -50,7 +50,7 @@ public struct LLMCalibrationResult: Sendable, Equatable {
 // The model file is user-provided (catalog/loader phase pending): the
 // `ADAMANCIA_VAULT_LLM_MODEL` environment variable, or the first *.gguf under
 // `<app support>/<environment dir>/models/`.
-public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtracting, OnDeviceResearchNeedsExtracting {
+public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
     public nonisolated let modelVersion: String
 
     private let model: OpaquePointer
@@ -620,153 +620,6 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
         }
     }
 
-    /// A separate tiny constrained decode used only after the name grammar
-    /// returned `none`. It copies one salient named noun phrase from the local
-    /// title/summary; the common classification loop above is untouched.
-    public func extractResearchSubject(
-        _ request: LLMResearchSubjectRequest
-    ) async throws -> ResearchSubject? {
-        let summary = request.summary?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let prompt = """
-        Extract one short named entity or salient noun phrase that would be useful to research before classifying this video. Copy the phrase exactly from the title or summary. Prefer a creator handle, quoted show/game/work name, organization, person, or product. Return \"none\" if no such phrase exists. Return only one quoted phrase or none.
-
-        Title: \(request.title)
-        Summary: \(summary)
-        Answer:
-        """
-        let tokens = try tokenize(prompt)
-        guard tokens.count + 32 <= contextTokenLimit else {
-            throw OnDeviceLLMError.inference("research-subject-prompt-exceeds-context (\(tokens.count) tokens)")
-        }
-
-        var common = 0
-        while common < min(tokens.count, cachedTokens.count), tokens[common] == cachedTokens[common] {
-            common += 1
-        }
-        if common == tokens.count { common = max(0, common - 1) }
-        llama_memory_seq_rm(llama_get_memory(context), 0, llama_pos(common), -1)
-        cachedTokens = Array(tokens.prefix(common))
-
-        var index = common
-        while index < tokens.count {
-            let end = min(index + 512, tokens.count)
-            var chunk = Array(tokens[index..<end])
-            let status = chunk.withUnsafeMutableBufferPointer { buffer in
-                llama_decode(context, llama_batch_get_one(buffer.baseAddress, Int32(buffer.count)))
-            }
-            guard status == 0 else {
-                cachedTokens = []
-                llama_memory_seq_rm(llama_get_memory(context), 0, 0, -1)
-                throw OnDeviceLLMError.inference("research-subject-prompt-decode-failed (\(status))")
-            }
-            cachedTokens.append(contentsOf: tokens[index..<end])
-            index = end
-        }
-
-        let sampler = llama_sampler_chain_init(llama_sampler_chain_default_params())
-        defer { llama_sampler_free(sampler) }
-        llama_sampler_chain_add(sampler, llama_sampler_init_grammar(vocab, Self.researchSubjectGrammar, "root"))
-        llama_sampler_chain_add(sampler, llama_sampler_init_greedy())
-
-        var generated = ""
-        for _ in 0..<24 {
-            let token = llama_sampler_sample(sampler, context, -1)
-            if llama_vocab_is_eog(vocab, token) { break }
-            generated += piece(for: token)
-            var single = [token]
-            let status = single.withUnsafeMutableBufferPointer { buffer in
-                llama_decode(context, llama_batch_get_one(buffer.baseAddress, 1))
-            }
-            guard status == 0 else {
-                cachedTokens = []
-                llama_memory_seq_rm(llama_get_memory(context), 0, 0, -1)
-                throw OnDeviceLLMError.inference("research-subject-generation-decode-failed (\(status))")
-            }
-            cachedTokens.append(token)
-        }
-
-        let value = generated.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard value != Self.declineLiteral else { return nil }
-        return ResearchSubject(kind: .term, subject: value)
-    }
-
-    /// Decode 2 (RESEARCH-REDESIGN §5, revised): after the classification decode,
-    /// ask the model — over the SAME KV-cached evidence prefix — only which named
-    /// subjects it does NOT recognize and would look up. Terms only: urgency is
-    /// derived from the Decode-1 confidences (`ResearchUrgency`), because the live
-    /// smoke showed model-emitted urgency just anchors to the prompt default.
-    /// Grammar-constrained to `{"needs":["Term",…]}`; terms are copied spans.
-    /// Empty in steady state (a recognized video yields `[]`).
-    public func researchNeeds(_ request: LLMResearchNeedsRequest) async throws -> [String] {
-        let maximumTerms = max(1, request.maximumTerms)
-        let grammar = Self.researchNeedsGrammar(maximumTerms: maximumTerms)
-        // The ask + the JSON runway (prefilled, never generated). The evidence
-        // above is reused from Decode 1's KV.
-        let researchAsk = """
-        Now, over the SAME video, list up to \(maximumTerms) named subjects in the evidence above that you do NOT recognize and would look up before trusting the tags — a specific person, creator, work, game, show, organization, product, place, or event whose meaning you are genuinely unsure of. Copy each term exactly from the evidence. Do not list anything you already recognize; if you recognize everything, return an empty list. Reply with one JSON object only, no prose.
-        Research JSON: {"needs":[
-        """
-        let prompt = request.staticPrefix + "\n\n" + request.dynamicSuffix + "\n\n" + researchAsk
-        let tokens = try tokenize(prompt)
-        guard tokens.count + 32 <= contextTokenLimit else {
-            throw OnDeviceLLMError.inference("research-needs-prompt-exceeds-context (\(tokens.count) tokens)")
-        }
-        try prefillReusingCache(tokens, errorLabel: "research-needs-prompt-decode-failed")
-
-        let sampler = llama_sampler_chain_init(llama_sampler_chain_default_params())
-        defer { llama_sampler_free(sampler) }
-        llama_sampler_chain_add(sampler, llama_sampler_init_grammar(vocab, grammar, "root"))
-        llama_sampler_chain_add(sampler, llama_sampler_init_greedy())
-
-        let decodeCap = min(max(1, contextTokenLimit - tokens.count - 1), maximumTerms * 24 + 16)
-        var generated = ""
-        for _ in 0..<decodeCap {
-            let token = llama_sampler_sample(sampler, context, -1)
-            if llama_vocab_is_eog(vocab, token) { break }
-            generated += piece(for: token)
-            var single = [token]
-            let status = single.withUnsafeMutableBufferPointer { buffer in
-                llama_decode(context, llama_batch_get_one(buffer.baseAddress, 1))
-            }
-            guard status == 0 else {
-                cachedTokens = []
-                llama_memory_seq_rm(llama_get_memory(context), 0, 0, -1)
-                throw OnDeviceLLMError.inference("research-needs-generation-decode-failed (\(status))")
-            }
-            cachedTokens.append(token)
-        }
-        return Self.parseResearchTerms(generated)
-    }
-
-    static let researchTermEdgeJunk: CharacterSet = {
-        var set = CharacterSet.whitespacesAndNewlines
-        set.formUnion(.punctuationCharacters)
-        set.formUnion(.symbols)
-        set.remove(charactersIn: "@")
-        return set
-    }()
-
-    /// Extract the quoted term spans out of Decode 2's generated `"A","B"]}` text
-    /// (the grammar guarantees the quoting). Robust to the empty-list case (`]}`
-    /// immediately → no quoted spans). De-duplicates, keeping order.
-    static func parseResearchTerms(_ generated: String) -> [String] {
-        var terms: [String] = []
-        var seen = Set<String>()
-        var rest = Substring(generated)
-        while let open = rest.range(of: "\"") {
-            let afterOpen = rest[open.upperBound...]
-            guard let close = afterOpen.range(of: "\"") else { break }
-            // The open-vocabulary span can pick up stray edge punctuation from the
-            // title (live smoke: `:皇室戰爭` from `【皇室戰爭】`-style brackets) — trim it
-            // so the researched subject is the entity itself. `@` is kept (handles).
-            let term = String(afterOpen[..<close.lowerBound])
-                .trimmingCharacters(in: Self.researchTermEdgeJunk)
-            if !term.isEmpty, seen.insert(term).inserted { terms.append(term) }
-            rest = afterOpen[close.upperBound...]
-        }
-        return terms
-    }
-
     // MARK: - Contract pieces
 
     /// The reserved decline literal: without it the grammar would FORCE a tag
@@ -774,41 +627,6 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM, OnDeviceResearchSubjectExtra
     /// renormalized confidence would degenerate to certainty. If the taxonomy
     /// legitimately contains a tag with this exact name, that tag wins.
     static let declineLiteral = "none"
-
-    /// Quoted non-newline text or `none`; `ResearchSubject` applies the final
-    /// entity-only word/character bounds before anything can be queued.
-    static let researchSubjectGrammar = #"""
-    root ::= "none" | "\"" subject "\""
-    subject ::= character+ (" " character+)*
-    character ::= [^"\\\r\n\t ]
-    """#
-
-    /// Decode 2 grammar (RESEARCH-REDESIGN §5, revised). Continues the prompt's
-    /// `{"needs":[` runway with either an empty list (`]}`) or a bounded chain of
-    /// quoted terms (`"A","B"]}`). Terms only — urgency is derived, not emitted.
-    /// The static term/char rules are a raw-string block (so GBNF's own
-    /// backslash-quote literals need no double-escaping); only the bounded tail
-    /// chain is built by interpolation. `term` is an open-vocabulary copied span
-    /// (same char class as `researchSubjectGrammar`).
-    static func researchNeedsGrammar(maximumTerms: Int) -> String {
-        let bound = max(1, maximumTerms)
-        let extra = bound - 1
-        var lines: [String] = []
-        let rootBody = extra > 0 ? "termobj tail0" : "termobj"
-        // Empty list `]}`, or a bounded chain of quoted terms then `]}`.
-        lines.append(#"root ::= "]}" | \#(rootBody) "]}""#)
-        for i in 0..<extra {
-            let continuation = i == extra - 1 ? "" : " tail\(i + 1)"
-            lines.append(#"tail\#(i) ::= "" | "," termobj\#(continuation)"#)
-        }
-        lines.append(#"""
-        termobj ::= "\"" term "\""
-        term ::= termchar+ (" " termchar+)*
-        termchar ::= [^"\\\r\n\t ]
-        """#)
-        return lines.joined(separator: "\n")
-    }
-
 
     /// The production GBNF: each tag is a full object continuation
     /// `Name","confidence":N` so the model emits its OWN confidence digit — the

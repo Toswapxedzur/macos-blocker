@@ -41,6 +41,8 @@ final class VaultClassifierViewModel: ObservableObject {
     @Published var hasBackupOwnerCode = false
     @Published var backupUnlocked = false
     @Published var backupNotice: String?
+    /// Knowledge → add term: confirms a queued lookup (the entry appears when it lands).
+    @Published var knowledgeNotice: String?
     /// Web actions normally receive a synchronous state refresh. Native sheets
     /// complete later, so they explicitly use this bounded local callback.
     var onWebStateChange: (() -> Void)?
@@ -166,7 +168,6 @@ final class VaultClassifierViewModel: ObservableObject {
                 VaultDevLog.shared.log("llm", "engine-loaded", ["model": (modelPath as NSString).lastPathComponent])
                 await MainActor.run { [weak self] in
                     self?.llmEngineStatus = "loaded"
-                    coordinator.startResearchBackfill()
                     self?.onWebStateChange?()
                 }
             } catch {
@@ -268,11 +269,13 @@ final class VaultClassifierViewModel: ObservableObject {
 
 enum AppInputError: Error, LocalizedError {
     case invalidNumber(String)
+    case invalidDecimal(String)
     case backupLocked
 
     var errorDescription: String? {
         switch self {
         case .invalidNumber(let label): return "\(label) must be a positive whole number."
+        case .invalidDecimal(let label): return "\(label) must be a positive number."
         case .backupLocked: return "Enter the local backup owner code before changing backup mode."
         }
     }

@@ -124,6 +124,32 @@ extension VaultClassifierViewModel {
         }
     }
 
+    /// Knowledge → add term. With a description the term is stored as written;
+    /// without one it is looked up through grounded research and appears when the
+    /// lookup lands. Terms are only ever added by the user.
+    func addKnowledgeTerm(subject: String, meaning: String) {
+        guard let coordinator else { return }
+        let hasMeaning = !meaning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        knowledgeNotice = nil
+        if hasMeaning {
+            do {
+                issue = try coordinator.addKnowledgeTerm(subject: subject, meaning: meaning)
+                    ? nil : "That term is too short or too generic to match titles safely. Use a specific name of at least 3 letters (2 characters for Chinese, Japanese or Korean)."
+                refreshLocalState()
+            } catch {
+                issue = error.localizedDescription
+            }
+            return
+        }
+        Task { @MainActor [weak self] in
+            let queued = await coordinator.researchTerm(subject)
+            let shown = subject.trimmingCharacters(in: .whitespacesAndNewlines)
+            self?.knowledgeNotice = queued ? "Looking up “\(shown)”. It appears under Known terms when the lookup finishes." : nil
+            self?.issue = queued ? nil : "Could not look that term up: research is off or not configured, the term is too short or too generic, or it is already queued. You can write the description yourself instead."
+            self?.onWebStateChange?()
+        }
+    }
+
     /// "Retry failed subjects now": drop every persisted cooldown, then re-queue
     /// the subjects that failed this session.
     func retryFailedResearch() {

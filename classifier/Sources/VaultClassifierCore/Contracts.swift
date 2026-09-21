@@ -363,23 +363,28 @@ public struct LocalModelOverrides: Codable, Equatable, Sendable {
     }
 }
 
-/// When to research a CREATOR (RESEARCH-REDESIGN §8): research the author once,
-/// within a `windowDays` window, at least `count` of their videos have a mean
-/// derived urgency of at least `level`. Replaces the "append the creator handle
-/// when the histogram is weak" heuristic with a graded, accumulating signal.
+/// When to research a CREATOR — the ONLY automatic research trigger: once, within
+/// a `windowDays` window, at least `count` of their videos have a mean derived
+/// urgency (1 = sure … 5 = could not tag) of at least `level`. The two numbers
+/// are the research-frequency control: lower either for more research.
+///
+/// `level` is fractional because the mean urgency over a whole history is ≈ 3.0,
+/// so 3 means "average", not "hard to classify" (measured 2026-09-20: of 1,468
+/// creators, count 5 selects 54 at level 3 and 14 at 3.5).
 public struct AuthorResearchThreshold: Codable, Equatable, Sendable {
-    public static let defaultLevel = 3
+    public static let defaultLevel = 3.5
     public static let defaultCount = 5
     public static let defaultWindowDays = 30
     public static let maximumCount = 512
     public static let maximumWindowDays = 3_650
 
-    public var level: Int
+    public var level: Double
     public var count: Int
     public var windowDays: Int
 
-    public init(level: Int = defaultLevel, count: Int = defaultCount, windowDays: Int = defaultWindowDays) {
-        self.level = min(5, max(1, level))
+    public init(level: Double = defaultLevel, count: Int = defaultCount, windowDays: Int = defaultWindowDays) {
+        // Half steps only: the settings UI offers them and they round-trip exactly.
+        self.level = min(5, max(1, (level * 2).rounded() / 2))
         self.count = min(Self.maximumCount, max(1, count))
         self.windowDays = min(Self.maximumWindowDays, max(1, windowDays))
     }
@@ -390,30 +395,20 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
     public static let maximumDailyTokenLimit = 10_000_000
     public static let defaultCooldownHours = 24
     public static let maximumCooldownHours = 720
-    /// RESEARCH-REDESIGN §7: research fires when a video's DERIVED urgency
-    /// (`ResearchUrgency.fromTagConfidences`, the inverse of its mean confidence;
-    /// a decline = 5) is at least this. The default 5 researches DECLINES ONLY —
-    /// the pre-redesign default (`trigger: .declineOnly`), so research spend does
-    /// not silently grow; lower it (4, 3…) to also research low-confidence videos.
-    public static let defaultUrgencyFloor = 5
     public static let defaultKnowledgeTTLDays = 0
     public static let maximumKnowledgeTTLDays = 3_650
     public static let defaultMaxKnowledgePerVideo = 8
     public static let maximumKnowledgePerVideo = 32
 
-    /// Explicit opt-in. When false, classification performs no extra decode,
-    /// queue work, credential lookup, or network request.
+    /// Explicit opt-in. When false, classification performs no queue work,
+    /// credential lookup, or network request.
     public var enabled: Bool
     public var llmProviderProfileID: String?
     public var llmModelIdentifier: String?
     public var requestsPerMinute: Int
     public var dailyTokenLimit: Int
     public var cooldownHours: Int
-    /// Minimum derived urgency (1–5) that fires research. Replaced the former
-    /// `trigger` modes + `confidenceTriggerLevel` (RESEARCH-REDESIGN §7); legacy
-    /// persisted values migrate on decode.
-    public var urgencyFloor: Int
-    /// When to research the creator itself (RESEARCH-REDESIGN §8).
+    /// When to research a creator — the only automatic trigger.
     public var authorThreshold: AuthorResearchThreshold
     public var knowledgeTTLDays: Int
     public var maxKnowledgePerVideo: Int
@@ -425,7 +420,6 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
         requestsPerMinute: Int = 6,
         dailyTokenLimit: Int = 10_000,
         cooldownHours: Int = Self.defaultCooldownHours,
-        urgencyFloor: Int = Self.defaultUrgencyFloor,
         authorThreshold: AuthorResearchThreshold = AuthorResearchThreshold(),
         knowledgeTTLDays: Int = Self.defaultKnowledgeTTLDays,
         maxKnowledgePerVideo: Int = Self.defaultMaxKnowledgePerVideo
@@ -436,7 +430,6 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
         self.requestsPerMinute = min(Self.maximumRequestsPerMinute, max(1, requestsPerMinute))
         self.dailyTokenLimit = min(Self.maximumDailyTokenLimit, max(1, dailyTokenLimit))
         self.cooldownHours = min(Self.maximumCooldownHours, max(1, cooldownHours))
-        self.urgencyFloor = min(5, max(1, urgencyFloor))
         self.authorThreshold = authorThreshold
         self.knowledgeTTLDays = min(Self.maximumKnowledgeTTLDays, max(0, knowledgeTTLDays))
         self.maxKnowledgePerVideo = min(Self.maximumKnowledgePerVideo, max(1, maxKnowledgePerVideo))
@@ -445,37 +438,18 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case enabled, llmProviderProfileID, llmModelIdentifier
         case requestsPerMinute, dailyTokenLimit, cooldownHours
-        case urgencyFloor, authorThreshold
+        case authorThreshold
         case knowledgeTTLDays, maxKnowledgePerVideo
     }
 
-    /// Retired keys, read only to migrate a pre-redesign state (never re-encoded).
-    /// The raw-search keys (`searchMode`, `webSearchProviderProfileID`,
-    /// `searchResultCount`, `snippetContextChars`) are simply ignored on decode:
-    /// research is provider-grounding only (Cut A).
-    private enum LegacyCodingKeys: String, CodingKey { case trigger, confidenceTriggerLevel }
-
-    /// The urgency floor equivalent to a legacy trigger: decline-only (and the
-    /// live-inert corrections-only) ⇒ 5; "declines + low confidence at/below L" ⇒
-    /// `6 − L`, since a top confidence ≤ L is a derived urgency ≥ 6 − L.
-    static func migratedUrgencyFloor(legacyTrigger: String?, legacyConfidenceTriggerLevel: Int?) -> Int {
-        switch legacyTrigger {
-        case "declineAndLowConfidence", "all":
-            return min(5, max(1, 6 - min(5, max(1, legacyConfidenceTriggerLevel ?? 2))))
-        default:
-            return defaultUrgencyFloor
-        }
-    }
+    // Retired keys (`urgencyFloor`, `trigger`, `confidenceTriggerLevel`, the raw-
+    // search keys) are simply ignored on decode: the per-video term trigger they
+    // configured no longer exists.
 
     /// Settings persisted before granular research controls inherit the exact
     /// defaults that reproduce the former queue and prompt behavior.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let legacy = try decoder.container(keyedBy: LegacyCodingKeys.self)
-        let migratedFloor = Self.migratedUrgencyFloor(
-            legacyTrigger: try? legacy.decodeIfPresent(String.self, forKey: .trigger),
-            legacyConfidenceTriggerLevel: try? legacy.decodeIfPresent(Int.self, forKey: .confidenceTriggerLevel)
-        )
         self.init(
             enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false,
             llmProviderProfileID: try container.decodeIfPresent(String.self, forKey: .llmProviderProfileID),
@@ -483,7 +457,6 @@ public struct ResearchSettings: Codable, Equatable, Sendable {
             requestsPerMinute: try container.decodeIfPresent(Int.self, forKey: .requestsPerMinute) ?? 6,
             dailyTokenLimit: try container.decodeIfPresent(Int.self, forKey: .dailyTokenLimit) ?? 10_000,
             cooldownHours: try container.decodeIfPresent(Int.self, forKey: .cooldownHours) ?? Self.defaultCooldownHours,
-            urgencyFloor: try container.decodeIfPresent(Int.self, forKey: .urgencyFloor) ?? migratedFloor,
             authorThreshold: try container.decodeIfPresent(AuthorResearchThreshold.self, forKey: .authorThreshold) ?? AuthorResearchThreshold(),
             knowledgeTTLDays: try container.decodeIfPresent(Int.self, forKey: .knowledgeTTLDays) ?? Self.defaultKnowledgeTTLDays,
             maxKnowledgePerVideo: try container.decodeIfPresent(Int.self, forKey: .maxKnowledgePerVideo) ?? Self.defaultMaxKnowledgePerVideo

@@ -17,6 +17,7 @@ extension VaultClassifierViewModel {
         let backup = state?.backupConfiguration
         let notices: [String: Any] = [
             "backup": backupNotice ?? NSNull(),
+            "knowledge": knowledgeNotice ?? NSNull(),
         ]
         let catalog = state?.workspaceCatalog ?? .starter()
         let researchSettings = state?.settings.research ?? ResearchSettings()
@@ -52,7 +53,6 @@ extension VaultClassifierViewModel {
                 "requestsPerMinute": researchSettings.requestsPerMinute,
                 "dailyTokenLimit": researchSettings.dailyTokenLimit,
                 "cooldownHours": researchSettings.cooldownHours,
-                "urgencyFloor": researchSettings.urgencyFloor,
                 "authorLevel": researchSettings.authorThreshold.level,
                 "authorCount": researchSettings.authorThreshold.count,
                 "authorWindowDays": researchSettings.authorThreshold.windowDays,
@@ -147,7 +147,6 @@ extension VaultClassifierViewModel {
                             "requestsPerMinute": research.requestsPerMinute,
                             "dailyTokenLimit": research.dailyTokenLimit,
                             "cooldownHours": research.cooldownHours,
-                            "urgencyFloor": research.urgencyFloor,
                             "authorLevel": research.authorThreshold.level,
                             "authorCount": research.authorThreshold.count,
                             "authorWindowDays": research.authorThreshold.windowDays,
@@ -471,6 +470,11 @@ extension VaultClassifierViewModel {
                 deleteModelFile(fileName: try webString(data, key: "fileName", limit: 255))
             case "deleteKnowledgeEntry":
                 deleteKnowledgeEntry(id: try webString(data, key: "id", limit: 512))
+            case "addKnowledgeTerm":
+                addKnowledgeTerm(
+                    subject: try webString(data, key: "subject", limit: 120),
+                    meaning: try webString(data, key: "meaning", limit: KnowledgeEntry.maximumMeaningLength)
+                )
             case "editKnowledgeEntry":
                 editKnowledgeEntry(
                     id: try webString(data, key: "id", limit: 512),
@@ -495,12 +499,8 @@ extension VaultClassifierViewModel {
                         try webString(data, key: "cooldownHours", limit: 16),
                         label: "Research cooldown hours"
                     ),
-                    urgencyFloor: try positiveInteger(
-                        try webString(data, key: "urgencyFloor", limit: 16),
-                        label: "Research urgency floor"
-                    ),
                     authorThreshold: AuthorResearchThreshold(
-                        level: try positiveInteger(
+                        level: try positiveNumber(
                             try webString(data, key: "authorLevel", limit: 16),
                             label: "Author research urgency level"
                         ),

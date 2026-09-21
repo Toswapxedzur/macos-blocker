@@ -117,7 +117,6 @@ final class ClassifierTypeLocalModelWebInputTests: XCTestCase {
             "requestsPerMinute": "999",
             "dailyTokenLimit": "not-a-number",
             "cooldownHours": "900",
-            "urgencyFloor": "9",
             "authorLevel": "0",
             "authorCount": "not-a-number",
             "authorWindowDays": "99999",
@@ -130,7 +129,6 @@ final class ClassifierTypeLocalModelWebInputTests: XCTestCase {
         XCTAssertEqual(input.settings?.requestsPerMinute, ResearchSettings.maximumRequestsPerMinute)
         XCTAssertEqual(input.settings?.dailyTokenLimit, ResearchSettings().dailyTokenLimit)
         XCTAssertEqual(input.settings?.cooldownHours, 720)
-        XCTAssertEqual(input.settings?.urgencyFloor, 5)
         XCTAssertEqual(input.settings?.authorThreshold.level, 1)
         XCTAssertEqual(input.settings?.authorThreshold.count, AuthorResearchThreshold.defaultCount)
         XCTAssertEqual(input.settings?.authorThreshold.windowDays, AuthorResearchThreshold.maximumWindowDays)

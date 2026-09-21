@@ -80,11 +80,10 @@ _ = catalog.datasets[datasetIndex].upsertCollectedEntry(.init(
 do { try coordinator.updateWorkspaceCatalog(catalog) }
 catch { fail("error: seeding catalog failed: \(error)") }
 
-// Research: provider-grounding via the saved Gemini provider. urgencyFloor 1 makes
-// every classification trigger term research, and an author threshold of ONE
-// video at urgency >= 1 makes the §8 accumulator fire immediately — so the loop is
-// deterministic: the creator is always researched, keyed, and then consulted on
-// re-classification. (Production defaults are floor 5 and 5 videos / level 3.)
+// Research: provider-grounding via the saved Gemini provider. An author threshold
+// of ONE video at urgency >= 1 makes the creator accumulator fire immediately — so
+// the loop is deterministic: the creator is always researched, keyed, and then
+// consulted on re-classification. (Production defaults are 5 videos / level 3.5.)
 do {
     try coordinator.updateSettings(ClassifierSettings(research: ResearchSettings(
         enabled: true,
@@ -92,7 +91,6 @@ do {
         llmModelIdentifier: APIKeyProviderType.gemini.defaultModelIdentifier,
         requestsPerMinute: 30,
         dailyTokenLimit: 200_000,
-        urgencyFloor: 1,
         authorThreshold: .init(level: 1, count: 1, windowDays: 30)
     )))
 } catch { fail("error: research settings failed: \(error)") }
