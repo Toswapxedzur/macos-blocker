@@ -52,7 +52,7 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
         for field in [
-            "cooldownHours", "authorCount", "authorLevel", "authorWindowDays",
+            "cooldownHours", "creatorScoreThreshold", "creatorScoreHalfLifeDays",
             "knowledgeTTLDays", "maxKnowledgePerVideo",
         ] {
             XCTAssertGreaterThanOrEqual(script.components(separatedBy: field).count - 1, 2)

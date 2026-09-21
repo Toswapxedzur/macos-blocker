@@ -16,6 +16,18 @@
 > the same grounded lane via `researchTerm`). Hand-picked correct terms measured
 > +18 pts exact-tag accuracy on the videos that hold one, which is why the term
 > store, title matching and the "Known context" prompt section stay.
+>
+> **§8 REPLACED — 2026-09-21 (owner design).** The windowed sample list (count / level / window) is gone.
+> Each creator carries ONE score (`CreatorResearchAccumulator.score` + its date): a video that could not be
+> tagged adds 1, a shaky tag (derived urgency 4 / 3) adds ⅔ / ⅓, a sure tag adds nothing and never
+> subtracts; the score halves every `halfLifeDays` (default 14); at `score` (default 3, with a 0.05 tolerance so
+> three untaggable videos in one sitting fire) the creator is researched once and the score resets. A creator
+> who already has a description is never scored. Why: the reply no longer carries a confidence digit, so a
+> video is mostly "tagged and sure" or "no tag" — a score that rises on "no tag" fits that signal, needs one
+> number per creator instead of a sample list, and its threshold is the single research-frequency setting.
+> Simulated on 4,999 real videos / 1,464 creators (old-format history, 41% untagged — the new format leaves
+> fewer untagged, so real counts will be lower): threshold 2 → 219 creators, 3 → 70, 4 → 43, 5 → 37
+> (without the tolerance: 93 / 53 / 38 / 36).
 
 ## 1. Why
 

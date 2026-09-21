@@ -467,7 +467,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         try coordinator.updateSettings(.init(research: .init(
             enabled: true,
-            authorThreshold: .init(level: 3.5, count: 3, windowDays: 30)
+            authorThreshold: .init(score: 3, halfLifeDays: 14)
         )))
         let recorder = ResearchSubjectRecorder()
         let queue = recordingQueue(recorder)

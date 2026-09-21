@@ -117,9 +117,8 @@ final class ClassifierTypeLocalModelWebInputTests: XCTestCase {
             "requestsPerMinute": "999",
             "dailyTokenLimit": "not-a-number",
             "cooldownHours": "900",
-            "authorLevel": "0",
-            "authorCount": "not-a-number",
-            "authorWindowDays": "99999",
+            "creatorScoreThreshold": "0",
+            "creatorScoreHalfLifeDays": "not-a-number",
             "knowledgeTTLDays": "not-a-number",
             "maxKnowledgePerVideo": "100",
         ])
@@ -129,9 +128,8 @@ final class ClassifierTypeLocalModelWebInputTests: XCTestCase {
         XCTAssertEqual(input.settings?.requestsPerMinute, ResearchSettings.maximumRequestsPerMinute)
         XCTAssertEqual(input.settings?.dailyTokenLimit, ResearchSettings().dailyTokenLimit)
         XCTAssertEqual(input.settings?.cooldownHours, 720)
-        XCTAssertEqual(input.settings?.authorThreshold.level, 1)
-        XCTAssertEqual(input.settings?.authorThreshold.count, AuthorResearchThreshold.defaultCount)
-        XCTAssertEqual(input.settings?.authorThreshold.windowDays, AuthorResearchThreshold.maximumWindowDays)
+        XCTAssertEqual(input.settings?.authorThreshold.score, 0.5)
+        XCTAssertEqual(input.settings?.authorThreshold.halfLifeDays, AuthorResearchThreshold.defaultHalfLifeDays)
         XCTAssertEqual(input.settings?.knowledgeTTLDays, 0)
         XCTAssertEqual(input.settings?.maxKnowledgePerVideo, 32)
     }
