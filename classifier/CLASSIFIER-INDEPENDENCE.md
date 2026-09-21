@@ -23,7 +23,7 @@
 - **Three subsystems fused into one package:** (1) on-device tagging, (2) cloud
   grounded-research (`Provider*Protocol` + `GroundedResearch`, ~2k lines,
   Gemini-backed enrichment), (3) suite-integration glue (local hub server/client,
-  HMAC auth, browser-bridge DTOs, OCR, icon cache).
+  HMAC auth, browser-bridge DTOs, icon cache).
 - **Core was not independent:** it carried `LocalHubAuthentication` (networking +
   secret storage) and the bridge DTOs; policy evaluation lived in Core although
   the owner had ruled policy belongs in the extension.
@@ -98,7 +98,7 @@ verdict plumbing.
 
 What the classifier promises, after Phases 1–4:
 
-- **Input:** title (+ optional summary/text/OCR text), creator id, platform,
+- **Input:** title (+ optional summary/text), creator id, platform,
   classifier type. Evidence added by the pipeline: the creator's counts-only
   prior (total videos + count per tag — nothing else, see memory), matched term
   knowledge, the most similar past corrections.

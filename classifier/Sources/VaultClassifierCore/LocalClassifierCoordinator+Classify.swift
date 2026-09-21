@@ -113,8 +113,6 @@ extension LocalClassifierCoordinator {
             guard let tree = catalog.trees.first(where: { $0.id == type.treeID }),
                   type.treeRevision == tree.revision else { continue }
             let overrides = type.localModelOverrides
-            // `text` carries the thumbnail-OCR evidence; honor the per-type opt-out.
-            let usesOCR = overrides?.effectiveThumbnailOcrEvidence ?? LocalModelOverrides.defaultThumbnailOcrEvidence
             var pending: [VideoClassificationPipeline.Input] = []
             for item in items {
                 // A correction is authoritative for this taxonomy revision. Live
@@ -130,7 +128,7 @@ extension LocalClassifierCoordinator {
                     classifications.append(corrected)
                 } else {
                     pending.append(.init(
-                        title: item.title, summary: item.summary, text: usesOCR ? item.text : nil,
+                        title: item.title, summary: item.summary, text: item.text,
                         entryID: item.entryID, creatorID: item.creatorID))
                 }
             }

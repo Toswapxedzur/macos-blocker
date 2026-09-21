@@ -108,4 +108,14 @@ final class LocalModelOverridesTests: XCTestCase {
         XCTAssertEqual(high.knowledgeTTLDays, 3_650)
         XCTAssertEqual(high.maxKnowledgePerVideo, 32)
     }
+
+    /// Thumbnail OCR evidence was removed (measured on 450 videos: 18 fixed / 15
+    /// broken, +11 prompt tokens per video). Saved overrides that still carry its
+    /// key must keep loading, and the key never re-encodes.
+    func testRetiredThumbnailOcrKeyStillDecodes() throws {
+        let old = #"{"allowDecline":false,"thumbnailOcrEvidence":true,"maximumTags":2}"#
+        let decoded = try JSONDecoder().decode(LocalModelOverrides.self, from: Data(old.utf8))
+        XCTAssertEqual(decoded, LocalModelOverrides(allowDecline: false, maximumTags: 2))
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self).contains("thumbnailOcrEvidence"))
+    }
 }

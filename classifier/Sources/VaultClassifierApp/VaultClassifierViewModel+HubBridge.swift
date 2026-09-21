@@ -61,16 +61,6 @@ extension VaultClassifierViewModel {
             inFlightVideoClassifications.insert(Self.inFlightKey(platformID, $0.entryID)).inserted
         }
         guard !fresh.isEmpty else { return }
-        // OCR the thumbnail as evidence only when a classifier type for this
-        // platform opts in (default on). Local Vision OCR; the per-type gate that
-        // decides whether a type actually consumes the text lives in classifyVideo.
-        // Fetch+OCR concurrently up front (fetch is network-bound) so it overlaps
-        // the wait for the engine; classifyChunk's recognizedText then hits the
-        // warm cache / shared task.
-        if coordinator?.ocrEvidencePlatformIDs().contains(platformID) ?? false {
-            let entries = fresh.map { (entryID: $0.entryID, thumbnailURL: $0.acceptedThumbnailURL(platformID: platformID)) }
-            Task.detached { await ThumbnailOCR.shared.prewarm(platformID: platformID, entries: entries) }
-        }
         // Hand the items to the coalescing queue at the engine boundary. Requests
         // arrive one card at a time; if the engine is busy they wait and are then
         // drained together with everything else waiting, in one multi-sequence
@@ -84,15 +74,9 @@ extension VaultClassifierViewModel {
     func classifyChunk(platformID: String, _ chunk: [NativeVideoTagsBatchItem]) async {
         defer { for item in chunk { inFlightVideoClassifications.remove(Self.inFlightKey(platformID, item.entryID)) } }
         guard let coordinator else { return }
-        let ocrEnabled = coordinator.ocrEvidencePlatformIDs().contains(platformID)
-        var inputs: [VideoClassificationPipeline.Input] = []
-        for item in chunk {
-            let thumbnailText = ocrEnabled
-                ? await ThumbnailOCR.shared.recognizedText(platformID: platformID, entryID: item.entryID, thumbnailURL: item.acceptedThumbnailURL(platformID: platformID))
-                : nil
-            inputs.append(.init(
-                title: item.title, summary: item.summary, text: thumbnailText ?? item.text,
-                entryID: item.entryID, creatorID: item.creatorID))
+        let inputs = chunk.map {
+            VideoClassificationPipeline.Input(
+                title: $0.title, summary: $0.summary, text: $0.text, entryID: $0.entryID, creatorID: $0.creatorID)
         }
         var projections = (try? await coordinator.classifyVideos(platformID: platformID, items: inputs)) ?? [:]
         if projections.isEmpty {
@@ -148,7 +132,7 @@ extension VaultClassifierViewModel {
                 return try sharedHubReply(NativeBridgeInfoResponse())
             case .collectionInfo:
                 _ = try JSONDecoder().decode(NativeCollectionInfoRequest.self, from: request.bodyData)
-                let response = NativeCollectionInfoResponse(enabledPlatformIDs: coordinator.enabledCollectionPlatformIDs(), developmentMode: VaultDevLog.shared.isEnabled, ocrPlatformIDs: coordinator.ocrEvidencePlatformIDs())
+                let response = NativeCollectionInfoResponse(enabledPlatformIDs: coordinator.enabledCollectionPlatformIDs(), developmentMode: VaultDevLog.shared.isEnabled)
                 collectionDiagnostics?.record(event: "collection-info-served", outcome: response.enabledPlatformIDs.isEmpty ? "disabled" : "enabled")
                 return try sharedHubReply(response)
             case .diagnostic:

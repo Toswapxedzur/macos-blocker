@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-// Collection and corrections: platform entry intake, collection metadata, enabled/OCR platform sets, human corrections and the entries they affect.
+// Collection and corrections: platform entry intake, collection metadata, enabled platform set, human corrections and the entries they affect.
 // Split out of LocalStore.swift (CLASSIFIER-INDEPENDENCE §7, Phase 5):
 // same type, same behaviour.
 extension LocalClassifierCoordinator {
@@ -15,24 +15,6 @@ extension LocalClassifierCoordinator {
         lock.lock()
         defer { lock.unlock() }
         return state.workspaceCatalog.classifierTypes.contains { $0.applicablePlatformID == platformID }
-    }
-
-    /// Collection-enabled platforms whose active classifier type(s) want
-    /// thumbnail-OCR evidence (default ON per type). The extension OCRs
-    /// thumbnails and sends their text only for these platforms.
-    public func ocrEvidencePlatformIDs() -> [String] {
-        lock.lock()
-        defer { lock.unlock() }
-        let catalog = state.workspaceCatalog
-        let enabled = Set(catalog.bindings.filter(\.collectionEnabled).map(\.id))
-        var platforms = Set<String>()
-        for type in catalog.classifierTypes {
-            guard let platformID = type.applicablePlatformID, enabled.contains(platformID) else { continue }
-            if type.localModelOverrides?.effectiveThumbnailOcrEvidence ?? LocalModelOverrides.defaultThumbnailOcrEvidence {
-                platforms.insert(platformID)
-            }
-        }
-        return platforms.sorted()
     }
 
     /// Stores an authoritative human correction and updates the cached
@@ -274,9 +256,8 @@ extension LocalClassifierCoordinator {
             if key == "sourceIconURL", !SourceIconURLPolicy.isAccepted(platformID: platformID, value: rendered) {
                 continue
             }
-            if key == "thumbnailURL", !ThumbnailURLPolicy.isAccepted(platformID: platformID, value: rendered) {
-                continue
-            }
+            // Thumbnail URLs were only ever accepted for the retired OCR evidence.
+            if key == "thumbnailURL" { continue }
             output[key] = rendered
         }
         return output

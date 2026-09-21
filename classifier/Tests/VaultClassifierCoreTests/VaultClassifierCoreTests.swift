@@ -80,4 +80,13 @@ final class VaultClassifierCoreTests: XCTestCase {
         XCTAssertEqual(dataset.collectedEntries[0].observationCount, 3)
         XCTAssertEqual(dataset.revision, originalRevision)
     }
+
+    /// An extension that predates the removal still sends `thumbnailURL` with a tag
+    /// request; the app must accept the request and simply ignore the key.
+    func testTagRequestFromAnOlderExtensionStillDecodes() throws {
+        let old = #"{"platformID":"reddit","entryID":"reddit:post:abc","creatorID":"reddit:subreddit:r/x","title":"Hello","thumbnailURL":"https://preview.redd.it/x.jpg"}"#
+        let request = try JSONDecoder().decode(NativeVideoTagsRequest.self, from: Data(old.utf8))
+        XCTAssertNoThrow(try request.validate())
+        XCTAssertEqual(request.title, "Hello")
+    }
 }

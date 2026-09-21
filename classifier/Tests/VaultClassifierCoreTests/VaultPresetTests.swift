@@ -22,10 +22,6 @@ final class VaultPresetTests: XCTestCase {
         for preset in [VaultPreset.gentle, .balanced, .localOnly] {
             XCTAssertEqual(preset.localModelOverrides.allowDecline, true)
         }
-        // Thumbnail OCR evidence is on for all presets.
-        for preset in VaultPreset.allCases {
-            XCTAssertEqual(preset.localModelOverrides.thumbnailOcrEvidence, true)
-        }
     }
 
     func testResearchOverridesProfiles() {
@@ -57,7 +53,7 @@ final class VaultPresetTests: XCTestCase {
         ))
         // A divergent decline setting is drift.
         XCTAssertFalse(preset.matches(
-            localModelOverrides: LocalModelOverrides(allowDecline: false, thumbnailOcrEvidence: true),
+            localModelOverrides: LocalModelOverrides(allowDecline: false),
             researchOverrides: preset.researchOverrides()
         ))
         // Model file and provider IDs are user choices, not drift.
