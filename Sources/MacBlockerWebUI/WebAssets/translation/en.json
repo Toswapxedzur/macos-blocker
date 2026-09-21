@@ -548,5 +548,8 @@
   "sites.addAria": "Add websites",
   "sites.addConfirm": "Add",
   "sites.addCancel": "Cancel",
-  "sites.removeAria": "Remove {name}"
+  "sites.removeAria": "Remove {name}",
+  "scene.vault": "Vault",
+  "scene.classifier": "Classifier",
+  "scene.activity": "Activity"
 }

@@ -548,5 +548,8 @@
   "settings.mcpCopy": "Позволяет ИИ-инструментам, установленным на этом Mac, управлять Vault через локальный сервер MCP. В списке только инструменты, найденные на вашем Mac. Vault добавляется в конфигурацию инструмента, пока он подключён, и удаляется, когда вы его отключаете.",
   "settings.mcpEmpty": "На этом Mac не найдено совместимых ИИ-инструментов.",
   "settings.mcpActivate": "Активировать",
-  "settings.mcpDeactivate": "Деактивировать"
+  "settings.mcpDeactivate": "Деактивировать",
+  "scene.vault": "Vault",
+  "scene.classifier": "Classifier",
+  "scene.activity": "Activity"
 }

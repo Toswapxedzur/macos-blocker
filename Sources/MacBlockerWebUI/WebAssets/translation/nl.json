@@ -548,5 +548,8 @@
   "settings.mcpCopy": "Laat AI-tools op deze Mac Vault bedienen via de lokale MCP-server. Alleen op je Mac gevonden tools worden vermeld. Vault wordt aan de configuratie van een tool toegevoegd zolang die verbonden is, en verwijderd wanneer je die uitschakelt.",
   "settings.mcpEmpty": "Er zijn geen compatibele AI-tools op deze Mac gevonden.",
   "settings.mcpActivate": "Activeren",
-  "settings.mcpDeactivate": "Deactiveren"
+  "settings.mcpDeactivate": "Deactiveren",
+  "scene.vault": "Vault",
+  "scene.classifier": "Classifier",
+  "scene.activity": "Activity"
 }

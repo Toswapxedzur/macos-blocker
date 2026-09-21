@@ -548,5 +548,8 @@
   "settings.mcpCopy": "Permite que ferramentas de IA instaladas neste Mac controlem o Vault através do servidor MCP local. Apenas as ferramentas encontradas no seu Mac são listadas. O Vault é adicionado à configuração de uma ferramenta enquanto está conectada e removido quando você a desativa.",
   "settings.mcpEmpty": "Nenhuma ferramenta de IA compatível foi encontrada neste Mac.",
   "settings.mcpActivate": "Ativar",
-  "settings.mcpDeactivate": "Desativar"
+  "settings.mcpDeactivate": "Desativar",
+  "scene.vault": "Vault",
+  "scene.classifier": "Classifier",
+  "scene.activity": "Activity"
 }
