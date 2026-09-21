@@ -741,11 +741,9 @@
       }${
         field("research.cooldownHours", "research.cooldownHoursHint", "cooldownHours", research.cooldownHours ?? 24, "number", 'min="1" max="720"')
       }</div></section><section class="research-settings-group"><h4>${tx("research.group.author")}</h4><div class="utility-settings-fields">${
-        field("research.authorCount", "research.authorCountHint", "authorCount", research.authorCount ?? 5, "number", 'min="1" max="512"')
+        field("research.creatorScore", "research.creatorScoreHint", "creatorScoreThreshold", research.creatorScoreThreshold ?? 3, "number", 'min="0.5" max="50" step="0.5"')
       }${
-        field("research.authorLevel", "research.authorLevelHint", "authorLevel", research.authorLevel ?? 3.5, "number", 'min="1" max="5" step="0.5"')
-      }${
-        field("research.authorWindowDays", "research.authorWindowDaysHint", "authorWindowDays", research.authorWindowDays ?? 30, "number", 'min="1" max="3650"')
+        field("research.creatorHalfLife", "research.creatorHalfLifeHint", "creatorScoreHalfLifeDays", research.creatorScoreHalfLifeDays ?? 14, "number", 'min="1" max="365"')
       }</div></section><section class="research-settings-group"><h4>${tx("research.group.knowledge")}</h4><div class="utility-settings-fields">${
         field("research.knowledgeTTLDays", "research.knowledgeTTLDaysHint", "knowledgeTTLDays", research.knowledgeTTLDays ?? 0, "number", 'min="0" max="3650"')
       }${
@@ -1091,11 +1089,9 @@
       }${
         field("research.cooldownHours", "research.cooldownHoursHint", "cooldownHours", researchDefaults.cooldownHours ?? 24, "number", 'min="1" max="720"')
       }</div></section><section class="research-settings-group"><h4>${tx("research.group.author")}</h4><div class="utility-settings-fields">${
-        field("research.authorCount", "research.authorCountHint", "authorCount", researchDefaults.authorCount ?? 5, "number", 'min="1" max="512"')
+        field("research.creatorScore", "research.creatorScoreHint", "creatorScoreThreshold", researchDefaults.creatorScoreThreshold ?? 3, "number", 'min="0.5" max="50" step="0.5"')
       }${
-        field("research.authorLevel", "research.authorLevelHint", "authorLevel", researchDefaults.authorLevel ?? 3.5, "number", 'min="1" max="5" step="0.5"')
-      }${
-        field("research.authorWindowDays", "research.authorWindowDaysHint", "authorWindowDays", researchDefaults.authorWindowDays ?? 30, "number", 'min="1" max="3650"')
+        field("research.creatorHalfLife", "research.creatorHalfLifeHint", "creatorScoreHalfLifeDays", researchDefaults.creatorScoreHalfLifeDays ?? 14, "number", 'min="1" max="365"')
       }</div></section><section class="research-settings-group"><h4>${tx("research.group.knowledge")}</h4><div class="utility-settings-fields">${
         field("research.knowledgeTTLDays", "research.knowledgeTTLDaysHint", "knowledgeTTLDays", researchDefaults.knowledgeTTLDays ?? 0, "number", 'min="0" max="3650"')
       }${

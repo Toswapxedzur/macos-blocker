@@ -312,58 +312,115 @@ final class LocalLLMModelTests: XCTestCase {
         XCTAssertNoThrow(try starter.validate())
     }
 
-    // MARK: - Author research accumulator (§8)
+    // MARK: - Creator research score
 
-    func testAuthorAccumulatorFiresAtThresholdWithMeanThenResets() {
+    private let day: Int64 = 24 * 60 * 60 * 1_000
+
+    /// A video that could not be tagged adds 1; a shaky tag a fraction; a sure tag
+    /// nothing (and never subtracts).
+    func testCreatorScoreSteps() {
+        XCTAssertEqual(CreatorResearchAccumulator.step(forUrgency: 5), 1)
+        XCTAssertEqual(CreatorResearchAccumulator.step(forUrgency: 4), 2.0 / 3, accuracy: 1e-9)
+        XCTAssertEqual(CreatorResearchAccumulator.step(forUrgency: 3), 1.0 / 3, accuracy: 1e-9)
+        XCTAssertEqual(CreatorResearchAccumulator.step(forUrgency: 2), 0)
+        XCTAssertEqual(CreatorResearchAccumulator.step(forUrgency: 1), 0)
+    }
+
+    func testCreatorScoreFiresAtTheThresholdThenResets() {
         var catalog = WorkspaceCatalog()
-        let threshold = AuthorResearchThreshold(level: 3, count: 5, windowDays: 30)
+        let rule = AuthorResearchThreshold(score: 3, halfLifeDays: 14)
         let now: Int64 = 1_000_000_000_000
-        // Four uncertain (urgency 4) videos — count not yet met.
-        for i in 0..<4 {
+        // One screenful (same instant, so nothing has faded yet): two untaggable
+        // videos and any number of sure ones are not enough.
+        for _ in 0..<2 {
             XCTAssertNil(catalog.recordCreatorResearchUrgency(
-                classifierTypeID: "t", creatorID: "c", urgency: 4, threshold: threshold, nowMilliseconds: now + Int64(i)))
+                classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: rule, nowMilliseconds: now))
         }
-        // Fifth crosses count; mean 4 ≥ level 3 → fires with the rounded mean, resets.
-        XCTAssertEqual(catalog.recordCreatorResearchUrgency(
-            classifierTypeID: "t", creatorID: "c", urgency: 4, threshold: threshold, nowMilliseconds: now + 5), 4)
-        // After the reset the accumulator is empty, so the next sample does not refire.
+        for _ in 0..<20 {
+            XCTAssertNil(catalog.recordCreatorResearchUrgency(
+                classifierTypeID: "t", creatorID: "c", urgency: 1, threshold: rule, nowMilliseconds: now))
+        }
+        XCTAssertEqual(catalog.creatorResearchAccumulators.first?.score ?? 0, 2, accuracy: 1e-9, "a sure tag never subtracts")
+        // The third untaggable video reaches 3 → research, and the score resets.
+        XCTAssertNotNil(catalog.recordCreatorResearchUrgency(
+            classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: rule, nowMilliseconds: now))
+        XCTAssertTrue(catalog.creatorResearchAccumulators.isEmpty)
         XCTAssertNil(catalog.recordCreatorResearchUrgency(
-            classifierTypeID: "t", creatorID: "c", urgency: 4, threshold: threshold, nowMilliseconds: now + 6))
+            classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: rule, nowMilliseconds: now))
     }
 
-    func testAuthorAccumulatorDoesNotFireWhenMeanBelowLevel() {
+    /// The score is always fading. Three untaggable videos in one sitting (minutes
+    /// apart) still fire at 3 thanks to the small tolerance; spread a day apart they
+    /// reach only ~2.86, so the fourth fires.
+    func testSpreadOutVideosNeedOneMoreThanTheThreshold() {
         var catalog = WorkspaceCatalog()
-        let threshold = AuthorResearchThreshold(level: 3, count: 3, windowDays: 30)
-        let now: Int64 = 1_000_000_000_000
-        // A confidently-classified creator (urgency 1) never crosses even at count.
-        for i in 0..<6 {
-            XCTAssertNil(catalog.recordCreatorResearchUrgency(
-                classifierTypeID: "t", creatorID: "c", urgency: 1, threshold: threshold, nowMilliseconds: now + Int64(i)))
+        let rule = AuthorResearchThreshold(score: 3, halfLifeDays: 14)
+        let base: Int64 = 1_000 * day
+        let minute: Int64 = 60 * 1_000
+        var sitting = WorkspaceCatalog()
+        for index in 0..<2 {
+            XCTAssertNil(sitting.recordCreatorResearchUrgency(
+                classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: rule, nowMilliseconds: base + Int64(index) * 10 * minute))
         }
+        XCTAssertNotNil(sitting.recordCreatorResearchUrgency(
+            classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: rule, nowMilliseconds: base + 20 * minute))
+
+        for index in 0..<3 {
+            XCTAssertNil(catalog.recordCreatorResearchUrgency(
+                classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: rule, nowMilliseconds: base + Int64(index) * day))
+        }
+        XCTAssertNotNil(catalog.recordCreatorResearchUrgency(
+            classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: rule, nowMilliseconds: base + 3 * day))
     }
 
-    func testAuthorAccumulatorPrunesSamplesOutsideWindow() {
+    /// The score halves every half-life, so a creator who is only occasionally hard
+    /// to classify never builds up: one untaggable video a month stays near 1.
+    func testCreatorScoreDecaysOverTime() {
         var catalog = WorkspaceCatalog()
-        let threshold = AuthorResearchThreshold(level: 3, count: 3, windowDays: 1)
-        let day: Int64 = 24 * 60 * 60 * 1_000
-        let base: Int64 = 10 * day
-        // Two samples two days ago — older than the 1-day window.
-        XCTAssertNil(catalog.recordCreatorResearchUrgency(classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: threshold, nowMilliseconds: base - 2 * day))
-        XCTAssertNil(catalog.recordCreatorResearchUrgency(classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: threshold, nowMilliseconds: base - 2 * day + 1))
-        // Three recent samples: the stale two prune out, so only these three count.
-        XCTAssertNil(catalog.recordCreatorResearchUrgency(classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: threshold, nowMilliseconds: base))
-        XCTAssertNil(catalog.recordCreatorResearchUrgency(classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: threshold, nowMilliseconds: base + 1))
-        XCTAssertEqual(catalog.recordCreatorResearchUrgency(classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: threshold, nowMilliseconds: base + 2), 5)
+        let rule = AuthorResearchThreshold(score: 3, halfLifeDays: 14)
+        let base: Int64 = 1_000 * day
+        for month in 0..<12 {
+            XCTAssertNil(catalog.recordCreatorResearchUrgency(
+                classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: rule, nowMilliseconds: base + Int64(month) * 30 * day))
+        }
+        XCTAssertLessThan(catalog.creatorResearchAccumulators.first?.score ?? 9, 1.4)
+        let stored = CreatorResearchAccumulator(id: "x", score: 2, updatedAtMilliseconds: base)
+        XCTAssertEqual(stored.decayedScore(halfLifeDays: 14, nowMilliseconds: base + 14 * day), 1, accuracy: 1e-9)
+        XCTAssertEqual(stored.decayedScore(halfLifeDays: 14, nowMilliseconds: base + 28 * day), 0.5, accuracy: 1e-9)
     }
 
-    func testAuthorAccumulatorIsPerTypeAndCreatorAndSurvivesCodableRoundTrip() throws {
+    /// A creator who already has a description is looked up once: never scored again.
+    func testADescribedCreatorIsNeverScored() {
         var catalog = WorkspaceCatalog()
-        let threshold = AuthorResearchThreshold(level: 3, count: 3, windowDays: 30)
+        catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .creator, subject: "c", meaning: "A Minecraft channel."))
+        let rule = AuthorResearchThreshold(score: 1, halfLifeDays: 14)
+        for i in 0..<5 {
+            XCTAssertNil(catalog.recordCreatorResearchUrgency(
+                classifierTypeID: "t", creatorID: "c", urgency: 5, threshold: rule, nowMilliseconds: Int64(i)))
+        }
+        XCTAssertTrue(catalog.creatorResearchAccumulators.isEmpty)
+    }
+
+    func testCreatorScoreIsPerTypeAndCreatorAndSurvivesCodableRoundTrip() throws {
+        var catalog = WorkspaceCatalog()
+        let rule = AuthorResearchThreshold(score: 3, halfLifeDays: 14)
         let now: Int64 = 2_000_000_000_000
-        _ = catalog.recordCreatorResearchUrgency(classifierTypeID: "t1", creatorID: "c", urgency: 4, threshold: threshold, nowMilliseconds: now)
-        _ = catalog.recordCreatorResearchUrgency(classifierTypeID: "t2", creatorID: "c", urgency: 4, threshold: threshold, nowMilliseconds: now)
+        _ = catalog.recordCreatorResearchUrgency(classifierTypeID: "t1", creatorID: "c", urgency: 4, threshold: rule, nowMilliseconds: now)
+        _ = catalog.recordCreatorResearchUrgency(classifierTypeID: "t2", creatorID: "c", urgency: 4, threshold: rule, nowMilliseconds: now)
         XCTAssertEqual(catalog.creatorResearchAccumulators.count, 2)   // keyed per type+creator
         let decoded = try JSONDecoder().decode(WorkspaceCatalog.self, from: JSONEncoder().encode(catalog))
-        XCTAssertEqual(decoded.creatorResearchAccumulators.count, 2)   // persisted
+        XCTAssertEqual(decoded.creatorResearchAccumulators, catalog.creatorResearchAccumulators)
+    }
+
+    /// Rows written by the retired sample-list rule decode as an empty score (they
+    /// are transient), and the rule's retired settings keys fall back to defaults.
+    func testRetiredSampleListStateStillDecodes() throws {
+        let oldRow = #"{"id":"t\u001Fc","samples":[{"urgency":5,"atMilliseconds":1}]}"#
+        let row = try JSONDecoder().decode(CreatorResearchAccumulator.self, from: Data(oldRow.utf8))
+        XCTAssertEqual(row.score, 0)
+        let oldRule = try JSONDecoder().decode(AuthorResearchThreshold.self, from: Data(#"{"level":3.5,"count":5,"windowDays":30}"#.utf8))
+        XCTAssertEqual(oldRule, AuthorResearchThreshold(score: 3, halfLifeDays: 14))
+        XCTAssertEqual(AuthorResearchThreshold(score: 0, halfLifeDays: 0), AuthorResearchThreshold(score: 0.5, halfLifeDays: 1))
+        XCTAssertEqual(AuthorResearchThreshold(score: 999, halfLifeDays: 9_999), AuthorResearchThreshold(score: 50, halfLifeDays: 365))
     }
 }

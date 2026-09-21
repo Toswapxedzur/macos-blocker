@@ -52,7 +52,7 @@ final class LocalModelOverridesTests: XCTestCase {
             llmModelIdentifier: "model",
             requestsPerMinute: 9,
             dailyTokenLimit: 12_345,
-            authorThreshold: .init(level: 3.5, count: 7, windowDays: 14)
+            authorThreshold: .init(score: 4.5, halfLifeDays: 21)
         ))
         let data = try JSONEncoder().encode(value)
         XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("\"research\""))
@@ -71,24 +71,22 @@ final class LocalModelOverridesTests: XCTestCase {
 
     /// Every per-video trigger key ever persisted (`trigger`, `confidenceTriggerLevel`,
     /// `urgencyFloor`) is retired with the trigger itself: old states still decode,
-    /// the keys never re-encode, and a whole-number creator level reads as before.
+    /// the keys never re-encode; the retired sample-list creator rule falls back to the score defaults.
     func testRetiredTriggerKeysDecodeAndNeverReencode() throws {
         let old = #"{"trigger":"all","confidenceTriggerLevel":5,"urgencyFloor":4,"maxSubjectsPerVideo":2,"authorThreshold":{"level":3,"count":5,"windowDays":30}}"#
         let migrated = try JSONDecoder().decode(ResearchSettings.self, from: Data(old.utf8))
-        XCTAssertEqual(migrated.authorThreshold, AuthorResearchThreshold(level: 3, count: 5, windowDays: 30))
+        XCTAssertEqual(migrated.authorThreshold, AuthorResearchThreshold())
         let reencoded = String(decoding: try JSONEncoder().encode(migrated), as: UTF8.self)
-        for retired in ["\"trigger\"", "confidenceTriggerLevel", "urgencyFloor", "maxSubjectsPerVideo"] {
+        for retired in ["\"trigger\"", "confidenceTriggerLevel", "urgencyFloor", "maxSubjectsPerVideo", "windowDays", "\"level\"", "\"count\""] {
             XCTAssertFalse(reencoded.contains(retired))
         }
     }
 
-    /// The creator level is the research-frequency knob: half steps, 1…5, default
-    /// 3.5 (3 is merely an average creator).
-    func testCreatorLevelIsAHalfStepWithinBounds() {
-        XCTAssertEqual(AuthorResearchThreshold().level, 3.5)
-        XCTAssertEqual(AuthorResearchThreshold(level: 3.3).level, 3.5)
-        XCTAssertEqual(AuthorResearchThreshold(level: 0).level, 1)
-        XCTAssertEqual(AuthorResearchThreshold(level: 9).level, 5)
+    /// The creator score threshold is the research-frequency knob: default 3, fading
+    /// by half every 14 days.
+    func testCreatorRuleDefaults() {
+        XCTAssertEqual(AuthorResearchThreshold().score, 3)
+        XCTAssertEqual(AuthorResearchThreshold().halfLifeDays, 14)
     }
 
     func testResearchSettingsGranularControlsClampAtBothBounds() {
