@@ -123,7 +123,6 @@ extension VaultClassifierViewModel {
         houseRules: String?,
         allowDecline: Bool?,
         confidenceThresholds: [Double]?,
-        thumbnailOcrEvidence: Bool?,
         maximumTags: Int?,
         minimumTags: Int?
     ) {
@@ -138,7 +137,6 @@ extension VaultClassifierViewModel {
                 houseRules: houseRules,
                 allowDecline: allowDecline,
                 confidenceThresholds: confidenceThresholds,
-                thumbnailOcrEvidence: thumbnailOcrEvidence,
                 maximumTags: maximumTags,
                 minimumTags: minimumTags
             ) : nil
@@ -208,7 +206,6 @@ extension VaultClassifierViewModel {
             houseRules: houseRules,
             allowDecline: data["allowDecline"] as? Bool,
             confidenceThresholds: rawThresholds.isEmpty ? nil : rawThresholds,
-            thumbnailOcrEvidence: data["thumbnailOcrEvidence"] as? Bool,
             maximumTags: maximumTags,
             minimumTags: Self.optionalWebInteger(data["minimumTags"])
         )

@@ -313,15 +313,9 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
 /// override. The GGUF choice lives separately on `ClassifierTypeAsset`, while
 /// context/runtime knobs remain app-wide for every resident engine.
 public struct LocalModelOverrides: Codable, Equatable, Sendable {
-    /// Default when a type does not override it: thumbnail OCR evidence is ON.
-    public static let defaultThumbnailOcrEvidence = true
-
     public var houseRules: String?
     public var allowDecline: Bool?
     public var confidenceThresholds: [Double]?
-    /// Per-type: whether the browser extension OCRs the thumbnail and sends its
-    /// text as classification evidence. nil = inherit the default (ON).
-    public var thumbnailOcrEvidence: Bool?
     /// Per-type cap on tags kept per video. nil = inherit the global
     /// `LocalLLMSettings.maximumTags`. Clamped 1–16 when set.
     public var maximumTags: Int?
@@ -332,7 +326,6 @@ public struct LocalModelOverrides: Codable, Equatable, Sendable {
         houseRules: String? = nil,
         allowDecline: Bool? = nil,
         confidenceThresholds: [Double]? = nil,
-        thumbnailOcrEvidence: Bool? = nil,
         maximumTags: Int? = nil,
         minimumTags: Int? = nil
     ) {
@@ -347,14 +340,8 @@ public struct LocalModelOverrides: Codable, Equatable, Sendable {
         } else {
             self.confidenceThresholds = nil
         }
-        self.thumbnailOcrEvidence = thumbnailOcrEvidence
         self.maximumTags = maximumTags.map { min(16, max(1, $0)) }
         self.minimumTags = minimumTags.map { min(16, max(0, $0)) }
-    }
-
-    /// Effective value with the default applied.
-    public var effectiveThumbnailOcrEvidence: Bool {
-        thumbnailOcrEvidence ?? Self.defaultThumbnailOcrEvidence
     }
 
     /// The effective tag cap: the per-type override when set, else the global.
@@ -370,8 +357,7 @@ public struct LocalModelOverrides: Codable, Equatable, Sendable {
 
     public var isEmpty: Bool {
         houseRules == nil && allowDecline == nil && confidenceThresholds == nil
-            && thumbnailOcrEvidence == nil && maximumTags == nil
-            && minimumTags == nil
+            && maximumTags == nil && minimumTags == nil
     }
 }
 
