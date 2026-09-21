@@ -8,7 +8,7 @@ import XCTest
 final class ForcedContinuationTests: XCTestCase {
     private let allowed = ["Music", "Gaming", "Gaming News", "Clash Royale"]
     private func next(_ text: String, cap: Int = 1, decline: Bool = true) -> (forced: String, finished: Bool) {
-        VaultLocalLLMEngine.forcedContinuation(after: text, allowedTagNames: allowed, allowDecline: decline, maximumTags: cap)
+        VaultLocalLLMEngine.forcedContinuation(after: text, allowedTagNames: allowed, allowDecline: decline, maximumTags: cap, format: .json)
     }
 
     func testCompleteUnambiguousNameForcesTheConfidenceBoilerplate() {
@@ -39,9 +39,9 @@ final class ForcedContinuationTests: XCTestCase {
         let decline = VaultLocalLLMEngine.declineLiteral
         let sharing = [decline + "sense"]                      // a tag name that starts like the decline literal
         let first = String(decline.prefix(1))
-        let open = VaultLocalLLMEngine.forcedContinuation(after: first, allowedTagNames: sharing, allowDecline: true, maximumTags: 1)
+        let open = VaultLocalLLMEngine.forcedContinuation(after: first, allowedTagNames: sharing, allowDecline: true, maximumTags: 1, format: .json)
         XCTAssertEqual(open.forced, "", "could still be the decline literal")
-        let closed = VaultLocalLLMEngine.forcedContinuation(after: first, allowedTagNames: sharing, allowDecline: false, maximumTags: 1)
+        let closed = VaultLocalLLMEngine.forcedContinuation(after: first, allowedTagNames: sharing, allowDecline: false, maximumTags: 1, format: .json)
         XCTAssertEqual(closed.forced, String(sharing[0].dropFirst()) + #"","confidence":"#)
     }
 
@@ -73,13 +73,13 @@ final class ForcedContinuationTests: XCTestCase {
         XCTAssertTrue(next("none").finished)
         XCTAssertFalse(next("none", decline: false).finished)
         let shadowed = VaultLocalLLMEngine.forcedContinuation(
-            after: "none", allowedTagNames: ["nonesuch", "Music"], allowDecline: true, maximumTags: 1)
+            after: "none", allowedTagNames: ["nonesuch", "Music"], allowDecline: true, maximumTags: 1, format: .json)
         XCTAssertFalse(shadowed.finished)
     }
 
     func testQuotedTagNamesDisableForcing() {
         let result = VaultLocalLLMEngine.forcedContinuation(
-            after: "Music", allowedTagNames: ["Music", #"Say "hi""#], allowDecline: true, maximumTags: 1)
+            after: "Music", allowedTagNames: ["Music", #"Say "hi""#], allowDecline: true, maximumTags: 1, format: .json)
         XCTAssertEqual(result.forced, "")
         XCTAssertFalse(result.finished)
     }

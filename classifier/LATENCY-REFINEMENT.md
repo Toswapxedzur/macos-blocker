@@ -251,6 +251,47 @@ Dev 7B, cap 1, forced-span feeding on, batched speed on 16 videos:
   55 are "judged no-tag" or "never labeled" (owner) — and the counts-only creator
   line's gain (F1 .54→.60) was measured on all 120 only.
 
+## 6e. Bare tag names became production (2026-09-21) — §6c/§6d are SUPERSEDED
+
+Owner's requirement: the ENTIRE processing of a video under 0.5 s. His idea: drop the scaffold AND the
+confidence digit together. §6c/§6d rejected bare replies, but those experiments (and my first two attempts
+on 2026-09-21) were flawed. What makes a bare reply work:
+
+1. **No leftover instructions** — the "give a confidence 1–5" rule is omitted when no digit is asked for.
+2. **Natural tokens** — runway `Tags:` (no trailing space); every name carries its leading space
+   (`ClassificationReplyFormat.nameLead`), separator `,`.
+3. **A newline terminator in the grammar** (`root ::= core lineend`). A bare line ends with `\n`, not
+   end-of-text; without it the model's "done" is rejected and the separator is the only legal move, so it is
+   FORCED to keep tagging (continue odds read exactly 1.000 on 782 of 782 extra tags).
+4. **A stop rule for extra tags** — `LocalLLMSettings.extraTagMinimumOdds` (default 0.90): generation stops
+   BEFORE a 2nd/3rd tag unless odds(continue) × odds(name) reach it. This replaces what the digit did (the
+   model rated weak extras low and the pipeline dropped them). Extra tags right by joint odds: <0.5 28%,
+   0.5–0.8 41%, 0.8–0.9 51%, 0.9–0.97 59%, ≥0.97 66%. The first tag is always kept (90% right).
+
+450-video library (`eval-library.json`), dev 7B, release, ≤3 tags, research context off, every emitted tag
+counted; time = engine, mean of four 16-video batches:
+
+| setup | ms/video | correct | no tag | wrong tags | tagged videos with no wrong tag |
+|---|---|---|---|---|---|
+| JSON + digit (old production) | 385 | 65.6% | 17.1% | 13.7% | 80% |
+| bare names, no stop rule | 271 | 72–78% | 13.1% | 32–42% | 16–42% |
+| bare names, stop ≥ 0.85 | — | 67.1% | 13.1% | 16.9% | 79% |
+| **bare names, stop ≥ 0.90 (production)** | **260** | 64.4% | 13.1% | 15.9% | 81% |
+| bare names, 1 tag | 237 | 56.2% | 20.4% | 9.2% | 91% |
+
+Where the time is now (16 videos): reading the prompts 3.0–3.4 s whatever the reply; generation 2,172 ms
+(JSON+digit, 8 rounds, 384 tokens) → ~800 ms (bare, 3 tags) → 163 ms (bare, 1 tag). Output is finished as a
+lever; the floor is ~49–62 suffix tokens per video at ~257 tok/s (M1 Pro hardware limit). Real tokenizer
+means: creator counts line 29.7 tokens (p90 63), title 17.4, labels+runway 11.0; static prefix 612 (cached).
+
+Confidence is now derived, not written: first tag = odds of its first token (94% right at 4–5 vs the
+digit's 92%); extra tag = the joint odds. `VAULT_REPLY_FORMAT=json` keeps the old format for A/B;
+`VAULT_NAMES_MIN_JOINT` overrides the setting for sweeps; `VAULT_NAMES_LOG=1` logs every tag's odds.
+Did NOT help: keeping the JSON runway without the digit (slower, over-tags); token-odds alone without the
+newline fix. The prompt line "Most videos need only one tag; add another only when the video is clearly also
+about that topic" does NOT curb extra tags, but it lowers needless declines (no tag 15.3% → 13.1%) and lives
+in the cached prefix, so it stays.
+
 ## 7. Decisions log
 - 2026-09-17 — Measured: 7B generation is bandwidth-bound at ~40 ms/token on M1
   Pro; prefill cached (~3 ms); ~165 ms first-token cost; tagged video ~585 ms

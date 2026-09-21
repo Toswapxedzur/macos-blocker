@@ -34,7 +34,7 @@ public struct CreatorPriorTag: Sendable, Equatable {
 
 /// The shape of the model's reply. Four strings define it: the rule line that
 /// describes it, the prompt RUNWAY the reply continues, the text between a tag name
-/// and its confidence digit, and the text between two items. Production is `.json`;
+/// and its confidence digit, and the text between two items. Production is `.names`;
 /// the others exist to measure how much scaffold the accuracy actually needs
 /// (LATENCY-REFINEMENT §6d) and are selected with `VAULT_REPLY_FORMAT`.
 public struct ClassificationReplyFormat: Sendable, Equatable {
@@ -43,6 +43,23 @@ public struct ClassificationReplyFormat: Sendable, Equatable {
     public let runway: String
     public let nameToDigit: String
     public let itemSeparator: String
+    /// False = the reply is tag NAMES only: no confidence digit is generated and
+    /// confidence is read from the name token's own probability (free).
+    public let emitsConfidence: Bool
+    /// Text generated before EVERY name. A bare reply needs " " here (runway
+    /// `Tags:` then ` Music`), because the model's natural word tokens carry their
+    /// leading space; a runway ending in a space would force unnatural tokens.
+    public let nameLead: String
+
+    public init(id: String, rule: String, runway: String, nameToDigit: String, itemSeparator: String, emitsConfidence: Bool = true, nameLead: String = "") {
+        self.nameLead = nameLead
+        self.id = id
+        self.rule = rule
+        self.runway = runway
+        self.nameToDigit = nameToDigit
+        self.itemSeparator = itemSeparator
+        self.emitsConfidence = emitsConfidence
+    }
 
     /// `{"tags":[{"name":"Music","confidence":4},{"name":"Sports","confidence":2}]}`
     public static let json = ClassificationReplyFormat(
@@ -66,11 +83,25 @@ public struct ClassificationReplyFormat: Sendable, Equatable {
         nameToDigit: "\":",
         itemSeparator: ",\"")
 
+    /// PRODUCTION (2026-09-21): bare tag names, no scaffold and no confidence digit —
+    /// `Tags:` then ` Music, Sports` and a newline. Generation drops to ~10 ms per
+    /// video; weak extra tags are kept out by `LocalLLMSettings.extraTagMinimumOdds`
+    /// and confidence is read from the token odds (first tag: 94% right at 4–5).
+    public static let names = ClassificationReplyFormat(
+        id: "names",
+        rule: "- Reply with the chosen tag names only, separated by commas. Use tag names exactly as written. No prose.",
+        runway: "Tags:",
+        nameToDigit: "",
+        itemSeparator: ",",
+        emitsConfidence: false,
+        nameLead: " ")
+
     public static let current: ClassificationReplyFormat = {
         switch ProcessInfo.processInfo.environment["VAULT_REPLY_FORMAT"] {
         case "pairs": return .pairs
         case "object": return .object
-        default: return .json
+        case "json": return .json
+        default: return .names
         }
     }()
 }
@@ -103,6 +134,13 @@ public enum ClassificationPromptAssembler {
         } else {
             base = "Assign at least \(minimum) and at most \(maximum) tags"
         }
+        // Bare-name replies only. Measured on the 450-video library: this line does not
+        // curb extra tags (the stop rule does that) but it lowers needless declines
+        // (no tag 15.3% → 13.1%), and it sits in the cached prefix, so it is free per video.
+        // (Not when two or more tags are REQUIRED — it would contradict the instruction.)
+        if !ClassificationReplyFormat.current.emitsConfidence, maximum > 1, minimum <= 1 {
+            return "\(base). Most videos need only one tag; add another only when the video is clearly also about that topic."
+        }
         return "\(base)."
     }
 
@@ -113,7 +151,9 @@ public enum ClassificationPromptAssembler {
         lines.append("Rules:")
         lines.append("- Pick the tag(s) that best match the video's topic; prefer specific child tags over broad parents. Infer the topic from the title even when it is short — a named subject (a person, product, game, show, place, event, or theme) is usually enough to place it, so do not decline just because the title is brief.")
         lines.append("- \(Self.tagCountInstruction(minimum: minimumTags, maximum: maximumTags))")
-        lines.append("- For each chosen tag give a confidence from 1 to 5 for how sure you are the tag is correct (not how popular the tag is): 5 = the evidence names a subject you are certain maps to this tag; 4 = strong evidence; 3 = a plausible inference; 2 = a weak guess; 1 = little basis. Reserve 4 and 5 for clear cases, and use 1-2 when you are mostly guessing.")
+        if ClassificationReplyFormat.current.emitsConfidence {
+            lines.append("- For each chosen tag give a confidence from 1 to 5 for how sure you are the tag is correct (not how popular the tag is): 5 = the evidence names a subject you are certain maps to this tag; 4 = strong evidence; 3 = a plausible inference; 2 = a weak guess; 1 = little basis. Reserve 4 and 5 for clear cases, and use 1-2 when you are mostly guessing.")
+        }
         lines.append("- If the title is uninformative, use the creator prior when provided, but treat it as a weak, partial sample of what the creator makes — it may not represent them fully.")
         lines.append(ClassificationReplyFormat.current.rule)
         if minimumTags == 0 {

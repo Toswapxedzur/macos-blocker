@@ -230,6 +230,15 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
     /// Ascending probability thresholds mapping the chosen token's renormalized
     /// softmax onto confidence 2, 3, 4, 5 (below the first threshold = 1).
     public var confidenceThresholds: [Double]
+    /// How sure the model must be before a SECOND or THIRD tag is kept (0…0.999):
+    /// the odds that it chose to continue × the odds of that tag name. The reply
+    /// is bare tag names with no confidence digit, so this is what keeps weak extra
+    /// tags out — generation stops before one that scores lower (which also saves
+    /// its time). Higher = more precise, lower = finds more tags. The first tag is
+    /// never subject to it. Measured 2026-09-21 on 450 videos: 0.90 matches the old
+    /// digit-filtered quality (81% of tagged videos carry no wrong tag).
+    public var extraTagMinimumOdds: Double
+    public static let defaultExtraTagMinimumOdds = 0.90
     /// Free-text tagging preferences appended to the cached static prefix.
     public var houseRules: String
     /// Bound for distinct GGUF engines kept warm by the per-type registry.
@@ -247,6 +256,7 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
         maximumTags: Int = 1,
         minimumTags: Int = 0,
         confidenceThresholds: [Double] = [0.20, 0.40, 0.60, 0.85],
+        extraTagMinimumOdds: Double = Self.defaultExtraTagMinimumOdds,
         houseRules: String = "",
         maxResidentModels: Int = Self.defaultMaxResidentModels
     ) {
@@ -265,6 +275,7 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
             .map { min(0.999, max(0.001, $0)) }
             .sorted()
         self.confidenceThresholds = cleaned.count == 4 ? cleaned : [0.20, 0.40, 0.60, 0.85]
+        self.extraTagMinimumOdds = extraTagMinimumOdds.isFinite ? min(0.999, max(0, extraTagMinimumOdds)) : Self.defaultExtraTagMinimumOdds
         self.houseRules = String(houseRules.prefix(4_000))
         self.maxResidentModels = min(Self.maximumResidentModels, max(1, maxResidentModels))
     }
@@ -272,7 +283,7 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case modelFileName, engineEnabled, contextTokens, batchTokens, gpuOffload
         case maximumOutputTokens, temperature, allowDecline, maximumTags, minimumTags
-        case confidenceThresholds, houseRules, maxResidentModels
+        case confidenceThresholds, extraTagMinimumOdds, houseRules, maxResidentModels
     }
 
     /// Existing installations gain the residency cap without invalidating
@@ -291,6 +302,7 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
             maximumTags: try container.decodeIfPresent(Int.self, forKey: .maximumTags) ?? 1,
             minimumTags: try container.decodeIfPresent(Int.self, forKey: .minimumTags) ?? 0,
             confidenceThresholds: try container.decodeIfPresent([Double].self, forKey: .confidenceThresholds) ?? [0.20, 0.40, 0.60, 0.85],
+            extraTagMinimumOdds: try container.decodeIfPresent(Double.self, forKey: .extraTagMinimumOdds) ?? Self.defaultExtraTagMinimumOdds,
             houseRules: try container.decodeIfPresent(String.self, forKey: .houseRules) ?? "",
             maxResidentModels: try container.decodeIfPresent(Int.self, forKey: .maxResidentModels) ?? Self.defaultMaxResidentModels
         )

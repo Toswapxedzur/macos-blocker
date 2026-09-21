@@ -60,6 +60,7 @@ final class ViewModelCharacterizationTests: XCTestCase {
             Set(llm.keys),
             ["modelFileName", "engineEnabled", "contextTokens", "batchTokens", "gpuOffload", "maximumOutputTokens",
              "temperature", "allowDecline", "maximumTags", "minimumTags", "confidenceThresholds",
+             "extraTagMinimumOdds",
              "houseRules", "maxResidentModels", "engineStatus", "availableModels", "modelLibrary"]
         )
         // Defaults: min-0 (may decline), cap 1.

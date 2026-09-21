@@ -436,6 +436,30 @@ case "calib":
     report("SOFTMAX confidence (production)", softN, softHit)
     print("\nVerdict rule: prefer the signal with lower ECE + monotone precision + larger separation Δ.")
 
+case "suffixes":
+    // Dump every item's real per-video prompt suffix (no engine needed) so its token
+    // cost can be measured with the model's own tokenizer: `suffixes <set> <out.json>`.
+    guard args.count > 2, let data = try? Data(contentsOf: URL(fileURLWithPath: args[1])),
+          let set = try? JSONDecoder().decode(EvalSet.self, from: data) else { die("usage: suffixes <set.json> <out.json>") }
+    let research = state.settings.research
+    let pipeline = VideoClassificationPipeline(llm: StubOnDeviceLLM(), maximumTags: state.settings.localLLM.maximumTags)
+    var rows: [[String: Any]] = []
+    var prefix = ""
+    for item in set.items {
+        let parts = pipeline.primaryPromptParts(
+            title: item.title, entryID: item.entryID, creatorID: item.creatorID, platformID: "youtube",
+            classifierType: type, tree: tree, catalog: catalog, houseRules: productionHouseRules,
+            knowledgeTTLDays: research.knowledgeTTLDays, maxKnowledgePerVideo: research.maxKnowledgePerVideo)
+        prefix = parts.staticPrefix
+        rows.append([
+            "entryID": item.entryID, "suffix": parts.dynamicSuffix,
+            "creatorDescription": catalog.creatorKnowledgeEntry(for: item.creatorID)?.meaning ?? "",
+        ])
+    }
+    try JSONSerialization.data(withJSONObject: ["staticPrefix": prefix, "items": rows], options: [.prettyPrinted])
+        .write(to: URL(fileURLWithPath: args[2]))
+    print("• wrote \(rows.count) suffixes")
+
 case "latency":
     // Per-video wall time of one classification decode, steady state (serial).
     guard args.count > 1, let data = try? Data(contentsOf: URL(fileURLWithPath: args[1])),

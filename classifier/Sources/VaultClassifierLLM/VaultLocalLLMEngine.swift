@@ -224,7 +224,9 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
                 max(configuration.maximumOutputTokens, maximumTags * 24 + 8)
             ),
             allowDecline: allowDecline,
-            candidateFirstTokens: Set(candidateNames.compactMap { try? tokenize($0, addSpecial: false).first }),
+            candidateFirstTokens: Set(candidateNames.compactMap {
+                try? tokenize(ClassificationReplyFormat.current.nameLead + $0, addSpecial: false).first
+            }),
             thresholds: request.confidenceThresholds ?? configuration.confidenceThresholds
         )
     }
@@ -322,7 +324,25 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
             var nameStartProbabilities: [Double] = []
             var awaitingNameStart = true
             var finished = false
+            /// Names-only replies: the running probability that the model chose to
+            /// add every tag so far (vs stopping). A later tag's confidence is this
+            /// times its own name probability — the joint, not the conditional.
+            var continueProbability = 1.0
+            /// (chance of continuing into this tag, chance of this name) per tag — the
+            /// experiment log behind `VAULT_NAMES_LOG=1`.
+            var tagOdds: [(proceed: Double, name: Double)] = []
         }
+        let environment = ProcessInfo.processInfo.environment
+        let logsNameOdds = environment["VAULT_NAMES_LOG"] == "1"
+        // Conservative extra tags (names-only): stop BEFORE an extra tag unless the odds
+        // that the model chose to continue × the odds of that name reach this level.
+        // `VAULT_NAMES_MIN_JOINT` overrides the setting for eval sweeps.
+        let minimumExtraJoint = environment["VAULT_NAMES_MIN_JOINT"].flatMap(Double.init)
+            ?? configuration.extraTagMinimumOdds
+        let namesOnly = !ClassificationReplyFormat.current.emitsConfidence
+        let separatorFirstToken = namesOnly ? (try? tokenize(Self.structuredSeparator, addSpecial: false).first) : nil
+        let newlineToken = namesOnly ? (try? tokenize("\n", addSpecial: false).first) : nil
+        let stopTokens = Set(([llama_vocab_eos(vocab), llama_vocab_eot(vocab)] + [newlineToken].compactMap { $0 }).filter { $0 >= 0 })
         // The sampler holds ONLY the grammar. Greedy selection is done by hand
         // (see sampleGreedyValidated): the grammar is applied to the single
         // greedy pick, not to the whole vocabulary — measured on the release
@@ -407,9 +427,30 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
             for slot in live.indices where !live[slot].finished {
                 let token = sampleGreedyValidated(live[slot].sampler, outputIndex: live[slot].outputIndex)
                 if llama_vocab_is_eog(vocab, token) { live[slot].finished = true; continue }
+                if namesOnly, token == newlineToken { live[slot].finished = true; continue }
+                if namesOnly, !live[slot].awaitingNameStart, token == separatorFirstToken {
+                    let lastItem = live[slot].generated.components(separatedBy: Self.structuredSeparator).last ?? ""
+                    let name = String(lastItem.dropFirst(ClassificationReplyFormat.current.nameLead.count))
+                    if items[slot].request.allowedTagNames.contains(name) {
+                        live[slot].continueProbability = probability(
+                            of: token, among: stopTokens, outputIndex: live[slot].outputIndex)
+                    }
+                }
                 if live[slot].awaitingNameStart {
-                    live[slot].nameStartProbabilities.append(probability(
-                        of: token, among: items[slot].candidateFirstTokens, outputIndex: live[slot].outputIndex))
+                    let nameOdds = probability(
+                        of: token, among: items[slot].candidateFirstTokens, outputIndex: live[slot].outputIndex)
+                    let isExtra = !live[slot].nameStartProbabilities.isEmpty
+                    if namesOnly, isExtra, live[slot].continueProbability * nameOdds < minimumExtraJoint {
+                        // Drop the dangling separator so the parser sees only kept names.
+                        if live[slot].generated.hasSuffix(Self.structuredSeparator) {
+                            live[slot].generated.removeLast(Self.structuredSeparator.count)
+                        }
+                        live[slot].finished = true
+                        continue
+                    }
+                    let proceed = isExtra ? live[slot].continueProbability : 1
+                    live[slot].tagOdds.append((proceed, nameOdds))
+                    live[slot].nameStartProbabilities.append(namesOnly ? proceed * nameOdds : nameOdds)
                     live[slot].awaitingNameStart = false
                 }
                 live[slot].generated += piece(for: token)
@@ -452,6 +493,12 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
             steps += 1
         }
 
+        if logsNameOdds {
+            for state in live {
+                let odds = state.tagOdds.map { String(format: "%.3f/%.3f", $0.proceed, $0.name) }.joined(separator: " ")
+                FileHandle.standardError.write(Data("[names-odds] \(state.generated.replacingOccurrences(of: "\n", with: " ")) | \(odds)\n".utf8))
+            }
+        }
         // 4. Release the per-video sequences; sequence 0 keeps the shared prefix.
         for slot in items.indices { llama_memory_seq_rm(memory, Int32(slot + 1), -1, -1) }
 
@@ -501,14 +548,45 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
         after generated: String,
         allowedTagNames: [String],
         allowDecline: Bool,
-        maximumTags: Int
+        maximumTags: Int,
+        format: ClassificationReplyFormat = .current
     ) -> (forced: String, finished: Bool) {
         // A quote inside a tag name would make the boilerplate ambiguous — don't force.
         guard !allowedTagNames.contains(where: { $0.contains("\"") }) else { return ("", false) }
-        let chunks = generated.components(separatedBy: structuredSeparator)
+        let chunks = generated.components(separatedBy: format.itemSeparator)
         guard let current = chunks.last else { return ("", false) }
 
-        if let boilerplate = current.range(of: confidenceBoilerplate) {
+        if !format.emitsConfidence {
+            // Names-only reply: after a complete name the only choices are "stop"
+            // or the separator; a started separator and a uniquely-determined name
+            // remainder are forced.
+            let lead = format.nameLead
+            guard current.hasPrefix(lead) else { return ("", false) }
+            let current = String(current.dropFirst(lead.count))
+            if chunks.count == 1, allowDecline, current == declineLiteral,
+               !allowedTagNames.contains(where: { $0.hasPrefix(declineLiteral) }) {
+                return ("", true)
+            }
+            for name in allowedTagNames where !name.isEmpty && current.hasPrefix(name) {
+                let tail = String(current.dropFirst(name.count))
+                guard format.itemSeparator.hasPrefix(tail) else { continue }
+                if tail.isEmpty {
+                    if allowedTagNames.contains(where: { $0 != name && $0.hasPrefix(name) }) { continue }
+                    return ("", chunks.count >= max(1, maximumTags))
+                }
+                return (String(format.itemSeparator.dropFirst(tail.count)), false)
+            }
+            if !current.isEmpty {
+                let declineStillPossible = chunks.count == 1 && allowDecline && declineLiteral.hasPrefix(current)
+                let completions = allowedTagNames.filter { $0.hasPrefix(current) }
+                if !declineStillPossible, completions.count == 1, let only = completions.first, only != current {
+                    return (String(only.dropFirst(current.count)), false)
+                }
+            }
+            return ("", false)
+        }
+
+        if let boilerplate = current.range(of: format.nameToDigit) {
             let tail = current[boilerplate.upperBound...]
             guard let digit = tail.first else { return ("", false) }           // the digit is a real choice
             guard ("1"..."5").contains(String(digit)) else { return ("", false) }
@@ -518,8 +596,8 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
                 return ("", chunks.count >= max(1, maximumTags))
             }
             // The model chose to continue: the rest of `},{"name":"` is forced.
-            if structuredSeparator.hasPrefix(afterDigit) {
-                return (String(structuredSeparator.dropFirst(afterDigit.count)), false)
+            if format.itemSeparator.hasPrefix(afterDigit) {
+                return (String(format.itemSeparator.dropFirst(afterDigit.count)), false)
             }
             return ("", false)
         }
@@ -531,10 +609,10 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
         }
         for name in allowedTagNames where !name.isEmpty && current.hasPrefix(name) {
             let tail = String(current.dropFirst(name.count))
-            guard confidenceBoilerplate.hasPrefix(tail) else { continue }
+            guard format.nameToDigit.hasPrefix(tail) else { continue }
             // `name` is complete only if no longer tag name could still be forming.
             if tail.isEmpty, allowedTagNames.contains(where: { $0 != name && $0.hasPrefix(name) }) { continue }
-            return (String(confidenceBoilerplate.dropFirst(tail.count)), false)
+            return (String(format.nameToDigit.dropFirst(tail.count)), false)
         }
         // Mid-name: once the partial name can only become ONE allowed name (and
         // cannot be the decline literal), the grammar leaves no choice about the
@@ -545,7 +623,7 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
             let declineStillPossible = chunks.count == 1 && allowDecline && declineLiteral.hasPrefix(current)
             let completions = allowedTagNames.filter { $0.hasPrefix(current) }
             if !declineStillPossible, completions.count == 1, let only = completions.first, only != current {
-                return (String(only.dropFirst(current.count)) + confidenceBoilerplate, false)
+                return (String(only.dropFirst(current.count)) + format.nameToDigit, false)
             }
         }
         return ("", false)
@@ -564,7 +642,8 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
         _ generated: String,
         nameStartProbabilities: [Double],
         allowedTagNames: [String],
-        thresholds effectiveThresholds: [Double]
+        thresholds effectiveThresholds: [Double],
+        format: ClassificationReplyFormat = .current
     ) -> (tags: [LLMCalibrationTag], declined: Bool) {
         if generated.trimmingCharacters(in: .whitespacesAndNewlines) == Self.declineLiteral {
             return ([], true)
@@ -572,11 +651,22 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
         // Each object continuation is `Name","confidence":N`; split on the
         // inter-object separator, then on the name→confidence boilerplate. Keep
         // only real taxonomy names, de-duplicated (first occurrence wins).
-        let chunks = generated.components(separatedBy: structuredSeparator)
+        let chunks = generated.components(separatedBy: format.itemSeparator)
         var tags: [LLMCalibrationTag] = []
         var seen = Set<String>()
+        if !format.emitsConfidence {
+            for (index, chunk) in chunks.enumerated() {
+                let name = chunk.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard allowedTagNames.contains(name), seen.insert(name).inserted else { continue }
+                let probability = index < nameStartProbabilities.count ? nameStartProbabilities[index] : 0
+                let level = Self.confidence(fromProbability: probability, thresholds: effectiveThresholds)
+                tags.append(LLMCalibrationTag(
+                    name: name, modelConfidence: level, softmaxConfidence: level, softmaxProbability: probability))
+            }
+            return (tags, tags.isEmpty)
+        }
         for (index, chunk) in chunks.enumerated() {
-            guard let range = chunk.range(of: confidenceBoilerplate) else { continue }
+            guard let range = chunk.range(of: format.nameToDigit) else { continue }
             let name = String(chunk[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
             guard allowedTagNames.contains(name), seen.insert(name).inserted else { continue }
             let digit = chunk[range.upperBound...].first.flatMap { Int(String($0)) } ?? 0
@@ -633,7 +723,7 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
     /// structured Decode 1 of RESEARCH-REDESIGN §5. Continues the same prompt
     /// runway (`{"tags":[{"name":"`); the inter-object separator is `},{"name":"`.
     /// Diagnostic-only (calibration eval); returns nil when no name is usable.
-    static func namesWithConfidenceGrammar(allowed: [String], allowDecline: Bool = true, maximumTags: Int = 1, minimumTags: Int = 0) -> String? {
+    static func namesWithConfidenceGrammar(allowed: [String], allowDecline: Bool = true, maximumTags: Int = 1, minimumTags: Int = 0, format: ClassificationReplyFormat = .current) -> String? {
         let literals = allowed
             .filter { !$0.isEmpty && !$0.contains("\n") && !$0.contains("\r") }
             .map { name in
@@ -662,15 +752,38 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
             let continuation = i == optional - 1 ? "" : " tail\(i + 1)"
             lines.append("tail\(i) ::= \"\" | osep obj\(continuation)")
         }
+        if !format.emitsConfidence {
+            func quoted(_ text: String) -> String {
+                "\"" + text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+            }
+            let lead = format.nameLead
+            lines.append(lead.isEmpty ? "obj ::= name" : "obj ::= \(quoted(lead)) name")
+            if !lead.isEmpty, let rootIndex = lines.firstIndex(where: { $0.hasPrefix("root ::= \"\(declineLiteral)\"") }) {
+                lines[rootIndex] = lines[rootIndex].replacingOccurrences(
+                    of: "root ::= \"\(declineLiteral)\"", with: "root ::= \(quoted(lead + declineLiteral))")
+            }
+            lines.append("osep ::= \(quoted(format.itemSeparator))")
+            lines.append("name ::= " + literals.joined(separator: " | "))
+            // A bare line ends with a NEWLINE, not end-of-text. Without this the
+            // grammar rejects the model's "I'm done" and the only legal move left is
+            // the separator — it is forced to keep adding tags (measured: the odds of
+            // "continuing" read 1.000 on all 782 extra tags).
+            if let rootIndex = lines.firstIndex(where: { $0.hasPrefix("root ::= ") }) {
+                lines[rootIndex] = "core ::= " + lines[rootIndex].dropFirst("root ::= ".count)
+                lines.insert("root ::= core lineend", at: rootIndex)
+                lines.append("lineend ::= \"\" | \"\\n\"")
+            }
+            return lines.joined(separator: "\n")
+        }
         lines.append("obj ::= name conf")
         // conf emits `","confidence":` then a single 1–5 digit.
         func literal(_ text: String) -> String {
             "\"" + text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
         }
-        lines.append("conf ::= \(literal(confidenceBoilerplate)) digit")
+        lines.append("conf ::= \(literal(format.nameToDigit)) digit")
         lines.append("digit ::= \"1\" | \"2\" | \"3\" | \"4\" | \"5\"")
         // osep is the boilerplate between two objects: `},{"name":"`.
-        lines.append("osep ::= \(literal(structuredSeparator))")
+        lines.append("osep ::= \(literal(format.itemSeparator))")
         lines.append("name ::= " + literals.joined(separator: " | "))
         return lines.joined(separator: "\n")
     }

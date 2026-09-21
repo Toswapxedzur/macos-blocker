@@ -35,6 +35,7 @@ extension VaultClassifierViewModel {
                     "allowDecline": llmSettings.allowDecline,
                     "maximumTags": llmSettings.maximumTags,
                     "minimumTags": llmSettings.minimumTags,
+                    "extraTagMinimumOdds": llmSettings.extraTagMinimumOdds,
                     "confidenceThresholds": llmSettings.confidenceThresholds,
                     "houseRules": llmSettings.houseRules,
                     "maxResidentModels": llmSettings.maxResidentModels,
@@ -456,6 +457,10 @@ extension VaultClassifierViewModel {
                     maximumTags: try positiveInteger(try webString(data, key: "maximumTags", limit: 16), label: "Maximum tags"),
                     minimumTags: try nonnegativeInteger(try webString(data, key: "minimumTags", limit: 16), label: "Minimum tags"),
                     confidenceThresholds: thresholds,
+                    // Absent from an older shell = keep the default.
+                    extraTagMinimumOdds: (try webOptionalString(data, key: "extraTagMinimumOdds", limit: 16))
+                        .flatMap { Double($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                        ?? LocalLLMSettings.defaultExtraTagMinimumOdds,
                     houseRules: try webString(data, key: "houseRules", limit: 4_000),
                     maxResidentModels: try positiveInteger(
                         try webString(data, key: "maxResidentModels", limit: 16),
