@@ -703,6 +703,8 @@
       }${
         field("localModel.minTags", "localModel.minTagsHint", "minimumTags", llm.minimumTags ?? 0)
       }${
+        field("localModel.extraTagOdds", "localModel.extraTagOddsHint", "extraTagMinimumOdds", llm.extraTagMinimumOdds ?? 0.9, "number", 'min="0" max="0.999" step="0.01"')
+      }${
         field("localModel.temperature", "localModel.temperatureHint", "temperature", llm.temperature ?? 0)
       }${
         field("localModel.maxResidentModels", "localModel.maxResidentModelsHint", "maxResidentModels", llm.maxResidentModels ?? 2, "number", 'min="1" max="4"')

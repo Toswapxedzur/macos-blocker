@@ -25,6 +25,8 @@ window.VaultClassifierStrings = Object.freeze({
   "localModel.maxTagsHint": "1–16",
   "localModel.minTags": "Min tags per video",
   "localModel.minTagsHint": "0 = may decline",
+  "localModel.extraTagOdds": "Sureness needed for extra tags",
+  "localModel.extraTagOddsHint": "a 2nd or 3rd tag is kept only when the model is at least this sure (0–0.999); higher = fewer wrong tags, lower = more tags; the first tag is always kept",
   "localModel.temperature": "Temperature",
   "localModel.temperatureHint": "0 = deterministic (recommended)",
   "localModel.maxResidentModels": "Resident model limit",

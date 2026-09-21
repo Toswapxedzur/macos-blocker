@@ -12,13 +12,13 @@ final class MinimumTagsTests: XCTestCase {
 
     func testMinZeroKeepsDeclineAndOneOptionalItem() throws {
         let g = try XCTUnwrap(VaultLocalLLMEngine.namesWithConfidenceGrammar(
-            allowed: ["A", "B"], allowDecline: true, maximumTags: 1, minimumTags: 0))
+            allowed: ["A", "B"], allowDecline: true, maximumTags: 1, minimumTags: 0, format: .json))
         XCTAssertTrue(g.contains(#"root ::= "none" | obj"#))   // may decline
     }
 
     func testMinOneDropsDeclineAndForcesAnItem() throws {
         let g = try XCTUnwrap(VaultLocalLLMEngine.namesWithConfidenceGrammar(
-            allowed: ["A", "B"], allowDecline: true, maximumTags: 1, minimumTags: 1))
+            allowed: ["A", "B"], allowDecline: true, maximumTags: 1, minimumTags: 1, format: .json))
         XCTAssertEqual(g.components(separatedBy: "\n").first, "root ::= obj")
         XCTAssertFalse(g.contains("none"), "min ≥ 1 must forbid declining")
     }
@@ -26,7 +26,7 @@ final class MinimumTagsTests: XCTestCase {
     func testMinTwoForcesTwoMandatoryItemsThenOptional() throws {
         // max 4, min 2 → obj + one mandatory `osep obj` + a 2-long optional chain.
         let g = try XCTUnwrap(VaultLocalLLMEngine.namesWithConfidenceGrammar(
-            allowed: ["A", "B", "C", "D"], allowDecline: true, maximumTags: 4, minimumTags: 2))
+            allowed: ["A", "B", "C", "D"], allowDecline: true, maximumTags: 4, minimumTags: 2, format: .json))
         XCTAssertTrue(g.contains("root ::= obj osep obj tail0"))
         XCTAssertTrue(g.contains(#"tail0 ::= "" | osep obj tail1"#))
         XCTAssertTrue(g.contains(#"tail1 ::= "" | osep obj"#))
@@ -35,7 +35,7 @@ final class MinimumTagsTests: XCTestCase {
 
     func testMinEqualsMaxIsAllMandatoryNoTail() throws {
         let g = try XCTUnwrap(VaultLocalLLMEngine.namesWithConfidenceGrammar(
-            allowed: ["A", "B"], allowDecline: true, maximumTags: 3, minimumTags: 3))
+            allowed: ["A", "B"], allowDecline: true, maximumTags: 3, minimumTags: 3, format: .json))
         XCTAssertTrue(g.contains("root ::= obj osep obj osep obj"))
         XCTAssertFalse(g.contains("tail0"))
     }
@@ -45,9 +45,11 @@ final class MinimumTagsTests: XCTestCase {
     func testTagCountInstruction() {
         let f = ClassificationPromptAssembler.tagCountInstruction
         XCTAssertEqual(f(0, 1), "Assign at most 1 tag.")
-        XCTAssertEqual(f(0, 3), "Assign at most 3 tags.")
+        // Bare-name replies ask for extra tags sparingly (unless two or more are required).
+        let sparing = " Most videos need only one tag; add another only when the video is clearly also about that topic."
+        XCTAssertEqual(f(0, 3), "Assign at most 3 tags." + sparing)
         XCTAssertEqual(f(1, 1), "Assign exactly 1 tag.")
-        XCTAssertEqual(f(1, 3), "Assign at least 1 and at most 3 tags.")
+        XCTAssertEqual(f(1, 3), "Assign at least 1 and at most 3 tags." + sparing)
         XCTAssertEqual(f(2, 5), "Assign at least 2 and at most 5 tags.")
     }
 
