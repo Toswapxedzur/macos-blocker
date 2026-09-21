@@ -548,5 +548,8 @@
   "settings.mcpCopy": "ให้เครื่องมือ AI ที่ติดตั้งบน Mac นี้ควบคุม Vault ผ่านเซิร์ฟเวอร์ MCP ในเครื่อง มีเฉพาะเครื่องมือที่พบบน Mac ของคุณเท่านั้นที่แสดงในรายการ Vault จะถูกเพิ่มลงในการตั้งค่าของเครื่องมือขณะที่เชื่อมต่ออยู่ และถูกลบออกเมื่อคุณปิด",
   "settings.mcpEmpty": "ไม่พบเครื่องมือ AI ที่รองรับบน Mac นี้",
   "settings.mcpActivate": "เปิดใช้งาน",
-  "settings.mcpDeactivate": "ปิดใช้งาน"
+  "settings.mcpDeactivate": "ปิดใช้งาน",
+  "scene.vault": "Vault",
+  "scene.classifier": "Classifier",
+  "scene.activity": "Activity"
 }

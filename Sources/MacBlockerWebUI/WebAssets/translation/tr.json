@@ -548,5 +548,8 @@
   "settings.mcpCopy": "Bu Mac'te yüklü yapay zekâ araçlarının yerel MCP sunucusu üzerinden Vault'u denetlemesine izin verir. Yalnızca Mac'inizde bulunan araçlar listelenir. Vault, bir araç bağlıyken o aracın yapılandırmasına eklenir ve kapattığınızda kaldırılır.",
   "settings.mcpEmpty": "Bu Mac'te uyumlu bir yapay zekâ aracı bulunamadı.",
   "settings.mcpActivate": "Etkinleştir",
-  "settings.mcpDeactivate": "Devre dışı bırak"
+  "settings.mcpDeactivate": "Devre dışı bırak",
+  "scene.vault": "Vault",
+  "scene.classifier": "Classifier",
+  "scene.activity": "Activity"
 }

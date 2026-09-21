@@ -548,5 +548,8 @@
   "settings.mcpCopy": "يتيح لأدوات الذكاء الاصطناعي المثبتة على هذا الـ Mac التحكم في Vault عبر خادم MCP المحلي. تُدرَج فقط الأدوات الموجودة على جهاز Mac لديك. يُضاف Vault إلى إعدادات الأداة أثناء اتصالها، ويُزال عند إيقاف تشغيلها.",
   "settings.mcpEmpty": "لم يتم العثور على أدوات ذكاء اصطناعي متوافقة على هذا الـ Mac.",
   "settings.mcpActivate": "تنشيط",
-  "settings.mcpDeactivate": "إلغاء التنشيط"
+  "settings.mcpDeactivate": "إلغاء التنشيط",
+  "scene.vault": "Vault",
+  "scene.classifier": "Classifier",
+  "scene.activity": "Activity"
 }
