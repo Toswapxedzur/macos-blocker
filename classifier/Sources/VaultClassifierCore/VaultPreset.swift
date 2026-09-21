@@ -33,11 +33,11 @@ public enum VaultPreset: String, Codable, Sendable, CaseIterable, Identifiable {
     public var localModelOverrides: LocalModelOverrides {
         switch self {
         case .gentle, .balanced, .localOnly:
-            return LocalModelOverrides(allowDecline: true, thumbnailOcrEvidence: true)
+            return LocalModelOverrides(allowDecline: true)
         case .strict:
             // Commit to a tag rather than declining, so borderline content is
             // still caught. More aggressive; trades some confidence calibration.
-            return LocalModelOverrides(allowDecline: false, thumbnailOcrEvidence: true)
+            return LocalModelOverrides(allowDecline: false)
         }
     }
 
@@ -89,8 +89,6 @@ public enum VaultPreset: String, Codable, Sendable, CaseIterable, Identifiable {
         let targetModel = localModelOverrides
         let model = overrides ?? LocalModelOverrides()
         guard (model.allowDecline ?? true) == (targetModel.allowDecline ?? true),
-              (model.thumbnailOcrEvidence ?? LocalModelOverrides.defaultThumbnailOcrEvidence)
-                == (targetModel.thumbnailOcrEvidence ?? LocalModelOverrides.defaultThumbnailOcrEvidence),
               model.confidenceThresholds == targetModel.confidenceThresholds,
               (model.houseRules ?? "") == (targetModel.houseRules ?? "") else {
             return false

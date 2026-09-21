@@ -292,6 +292,25 @@ newline fix. The prompt line "Most videos need only one tag; add another only wh
 about that topic" does NOT curb extra tags, but it lowers needless declines (no tag 15.3% → 13.1%) and lives
 in the cached prefix, so it stays.
 
+## 6f. Thumbnail OCR evidence DELETED (2026-09-22, owner decision, measured)
+
+450-video library, production format, research context off, same Vision settings as the app:
+
+| | correct | no tag | wrong tags | clean tagged videos |
+|---|---|---|---|---|
+| OCR off | 64.2% | 13.3% | 15.7% | 81% |
+| OCR on | 63.3% | 14.4% | 14.7% | 82% |
+
+OCR changed 73 predictions: 18 made fully right, 15 made wrong — a wash (an earlier 65-item test agreed:
+P .81/R .59 with vs .82/.61 without). Wins came from clear captions ("CHESS SLOT MACHINE 8x8"), losses from
+clickbait captions ("Level 100", "WORST GENERATION?") and garbled reads of Chinese thumbnails. Cost: text on
+313/450 thumbnails, +11.2 prompt tokens per video on average (≈48 ms), 52 videos > 0.1 s, 10 > 0.25 s, worst
+288 tokens (≈1.2 s) — plus a thumbnail download and a Vision pass per video. Removed: `ThumbnailOCR`,
+`ThumbnailURLPolicy`, the per-type `thumbnailOcrEvidence` setting and toggle, `ocrPlatformIDs` and
+`thumbnailURL` in the hub messages (old keys are ignored on decode), the extension's thumbnail hand-off,
+eval `--ocr`. §4 Phase 3 (OCR pipelining) is moot. An entry's own body `text` (Reddit/Bilibili) still reaches
+the prompt — that was never OCR.
+
 ## 7. Decisions log
 - 2026-09-17 — Measured: 7B generation is bandwidth-bound at ~40 ms/token on M1
   Pro; prefill cached (~3 ms); ~165 ms first-token cost; tagged video ~585 ms

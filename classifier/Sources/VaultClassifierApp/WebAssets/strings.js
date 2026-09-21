@@ -392,7 +392,6 @@ window.VaultClassifierStrings = Object.freeze({
   "bridge.localModelOverrideEnabled": "Use overrides for this classifier type",
   "bridge.localModelOverrideControls": "Override controls",
   "bridge.localModelAllowDecline": "Allow this type to decline (\"none\") when no tag fits",
-  "bridge.localModelOcrEvidence": "Read thumbnail text (OCR) as extra classification evidence",
   "bridge.localModelMaxTags": "Max tags per video for this type",
   "bridge.localModelMinTags": "Min tags per video for this type",
   "bridge.localModelHouseRules": "Type house rules",

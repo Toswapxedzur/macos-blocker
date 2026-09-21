@@ -4,7 +4,7 @@ import Foundation
 /// that platform's reviewed image delivery hosts. The source may be a creator,
 /// account, subreddit, or server. Collection may contain a URL but never raw
 /// image bytes, post media, or comment-author images. (An entry's own cover
-/// URL travels separately under `ThumbnailURLPolicy` for on-device OCR.)
+/// URL is never sent.)
 public enum SourceIconURLPolicy {
     private static let hostsByPlatform: [String: [String]] = [
         "youtube": ["youtube.com", "yt3.ggpht.com", "yt3.googleusercontent.com", "googleusercontent.com"],

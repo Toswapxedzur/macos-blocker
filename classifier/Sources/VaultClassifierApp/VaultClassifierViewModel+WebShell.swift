@@ -133,7 +133,6 @@ extension VaultClassifierViewModel {
                             "houseRules": overrides.houseRules ?? NSNull(),
                             "allowDecline": overrides.allowDecline ?? NSNull(),
                             "confidenceThresholds": overrides.confidenceThresholds ?? NSNull(),
-                            "thumbnailOcrEvidence": overrides.thumbnailOcrEvidence ?? NSNull(),
                             "maximumTags": overrides.maximumTags ?? NSNull(),
                             "minimumTags": overrides.minimumTags ?? NSNull(),
                         ] as [String: Any]
@@ -543,7 +542,6 @@ extension VaultClassifierViewModel {
                     houseRules: input.overrides?.houseRules,
                     allowDecline: input.overrides?.allowDecline,
                     confidenceThresholds: input.overrides?.confidenceThresholds,
-                    thumbnailOcrEvidence: input.overrides?.thumbnailOcrEvidence,
                     maximumTags: input.overrides?.maximumTags,
                     minimumTags: input.overrides?.minimumTags
                 )

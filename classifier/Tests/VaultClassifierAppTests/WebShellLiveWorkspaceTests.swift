@@ -44,7 +44,7 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         XCTAssertTrue(overrideBody.contains("houseRules"))
         XCTAssertTrue(overrideBody.contains("allowDecline"))
         XCTAssertTrue(overrideBody.contains("confidenceBand"))
-        XCTAssertTrue(overrideBody.contains("thumbnailOcrEvidence"), "per-type thumbnail-OCR toggle missing")
+        XCTAssertFalse(overrideBody.contains("thumbnailOcrEvidence"), "thumbnail OCR was removed (measured: no gain, costs reading time)")
         XCTAssertTrue(overrideBody.contains("maximumTags"), "per-type max-tags field missing")
     }
 
