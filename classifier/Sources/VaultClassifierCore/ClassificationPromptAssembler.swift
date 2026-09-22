@@ -235,8 +235,9 @@ public enum ClassificationPromptAssembler {
             // One compact line: every prompt token is read per video (~4 ms each on a
             // 7B). Measured 2026-09-22 vs "Creator: N videos classified. Tag counts:"
             // + a "Video:" label: same accuracy, 6 fewer tokens, ~26 ms/video faster.
-            // Dropping rows seen only once saved 6 more but cost 2 pts of correct
-            // answers, so every count stays (owner spec: counts only, all of them).
+            // EVERY tag the creator ever got is listed with its count (owner rule
+            // 2026-09-22: "for simplicity, all tag frequency will be included" — no
+            // cap, no minimum; dropping single-count rows measured −2 pts anyway).
             let counts = creatorPrior.map { "\($0.tagName) \($0.count)" }.joined(separator: ", ")
             lines.append("Creator (\(creatorVideoCount) videos): \(counts)")
         }
