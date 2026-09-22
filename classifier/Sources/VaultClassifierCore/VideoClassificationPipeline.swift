@@ -32,11 +32,6 @@ public struct VideoClassificationPipeline: Sendable {
     /// the creator's stored description. A classification constant — it was
     /// formerly borrowed from the research `confidenceTriggerLevel` setting.
     public static let defaultCreatorGroundingConfidenceFloor = 2
-    /// Keep only the creator's top-N history rows in the prompt (nil = all). Every
-    /// row is ~19 prompt tokens that must be PREFILLED per video — compute-bound and
-    /// not amortized by batching — so a prolific creator's 10-row history costs
-    /// ~800 ms on a 7B (LATENCY-REFINEMENT, measured 2026-09-17).
-    public let creatorPriorRowLimit: Int?
 
     public init(
         llm: any OnDeviceLLM,
@@ -47,8 +42,7 @@ public struct VideoClassificationPipeline: Sendable {
         // Cached p1 rows stay valid: the currency check matches the model file only.
         // p3 = compact creator line, no "Video:" label (2026-09-22).
         promptVersion: String = "p3",
-        correctionSimilarityFloor: Double = CorrectionRetriever.defaultMinimumSimilarity,
-        creatorPriorRowLimit: Int? = nil
+        correctionSimilarityFloor: Double = CorrectionRetriever.defaultMinimumSimilarity
     ) {
         self.llm = llm
         self.maximumTags = maximumTags
@@ -56,7 +50,6 @@ public struct VideoClassificationPipeline: Sendable {
         self.secondaryConfidenceFloor = secondaryConfidenceFloor
         self.promptVersion = promptVersion
         self.correctionSimilarityFloor = correctionSimilarityFloor
-        self.creatorPriorRowLimit = creatorPriorRowLimit.map { max(1, $0) }
     }
 
     /// One video's evidence for a batched classification.
@@ -234,7 +227,6 @@ public struct VideoClassificationPipeline: Sendable {
                                            averageConfidence: stat.averageConfidence, confidenceStdev: stat.confidenceStdev)
                 }
                 .sorted { $0.share == $1.share ? $0.tagName < $1.tagName : $0.share > $1.share }
-            if let creatorPriorRowLimit { creatorPrior = Array(creatorPrior.prefix(creatorPriorRowLimit)) }
         }
 
         // Grounded generalization: the user's own past corrections most similar
