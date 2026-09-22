@@ -100,12 +100,20 @@ final class VaultClassifierWebShell {
             },
             makeScript: { [weak self] revision in
                 guard let self else { return nil }
+                let tStart = DispatchTime.now()
                 let payload = self.model.webSnapshot()
+                let tBuilt = DispatchTime.now()
                 Self.layoutLogger.recordNativeSnapshot(payload)
-                return VaultClassifierWebShell.stateUpdateJavaScript(
+                let script = VaultClassifierWebShell.stateUpdateJavaScript(
                     payload: payload,
                     presentationRevision: revision
                 )
+                if ProcessInfo.processInfo.environment["VAULT_DECODE_TIMING"] == "1" {
+                    FileHandle.standardError.write(Data(String(format: "[web-snapshot] build=%.0fms serialize=%.0fms bytes=%d\n",
+                        Double(tBuilt.uptimeNanoseconds - tStart.uptimeNanoseconds) / 1_000_000,
+                        Double(DispatchTime.now().uptimeNanoseconds - tBuilt.uptimeNanoseconds) / 1_000_000, script?.utf8.count ?? 0).utf8))
+                }
+                return script
             },
             evaluate: { [weak self] script, completion in
                 guard let webView = self?.webView else {
