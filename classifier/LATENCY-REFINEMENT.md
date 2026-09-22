@@ -311,6 +311,25 @@ clickbait captions ("Level 100", "WORST GENERATION?") and garbled reads of Chine
 eval `--ocr`. §4 Phase 3 (OCR pipelining) is moot. An entry's own body `text` (Reddit/Bilibili) still reaches
 the prompt — that was never OCR.
 
+## 6g. Reading the prompt is at the hardware limit; the creator line got shorter (2026-09-22)
+
+`llama-bench` on this laptop/model: 261 tok/s prompt reading at any size; the engine: 257 tok/s, all 16
+suffixes in one GPU batch. So only FEWER tokens help. Per-video suffix on the bare-name format ≈ 54 tokens:
+creator counts line ~30 (p90 63), title ~17, labels + `Tags:` runway ~6; the 612-token static prefix is cached
+and free. Measured on the 450-video library (research context off) and four 16-video batches:
+
+| prompt | ms/video | correct | no tag | wrong tags | clean |
+|---|---|---|---|---|---|
+| `Creator: N videos classified. Tag counts: …` + `Video:` label | 250 | 64.4% | 13.3% | 15.8% | 81% |
+| **`Creator (N videos): …`, no `Video:` label (production, p3)** | **224** | 64.2% | 14.4% | 15.0% | 81% |
+| …and drop tags the creator got only once | ≈200 (est.) | 62.4% | 14.9% | 14.0% | 83% |
+
+The compact wording is free (same information, −6 tokens); dropping single-count rows costs 2 pts of correct
+answers, so it stays out. Also folded the separate last-token decode into the suffix batch (−1 GPU pass,
+≈3 ms/video; batched vs serial still 16/16). Remaining floor ≈ 40–45 tokens: the title is the evidence and
+the creator line is the only context; below that means removing the creator line. Untested lever: a Q4_0
+quant reads faster than Q4_K_M on Metal in some setups (a model change → full quality re-check).
+
 ## 7. Decisions log
 - 2026-09-17 — Measured: 7B generation is bandwidth-bound at ~40 ms/token on M1
   Pro; prefill cached (~3 ms); ~165 ms first-token cost; tagged video ~585 ms

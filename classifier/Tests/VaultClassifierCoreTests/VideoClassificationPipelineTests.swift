@@ -64,7 +64,7 @@ final class VideoClassificationPipelineTests: XCTestCase {
         XCTAssertTrue(suffix.contains("HermitCraft: A Minecraft SMP."))
         // Owner spec: total classified videos + a frequency per tag — nothing else
         // (no percentages, no confidence statistics), on one compact line; no framing.
-        XCTAssertTrue(suffix.contains("Creator: 20 videos classified. Tag counts: Games 17"))
+        XCTAssertTrue(suffix.contains("Creator (20 videos): Games 17"))
         XCTAssertFalse(suffix.contains("%"))
         XCTAssertFalse(suffix.contains("±"))
         XCTAssertTrue(suffix.contains("Title: HermitCraft finale"))
@@ -143,7 +143,7 @@ final class VideoClassificationPipelineTests: XCTestCase {
             classifierType: makeType(), tree: makeTree(), catalog: catalog
         )
         let suffix = try XCTUnwrap(recorder.last?.dynamicSuffix)
-        XCTAssertTrue(suffix.contains("Creator: 1 videos classified. Tag counts: Games 1"))
+        XCTAssertTrue(suffix.contains("Creator (1 videos): Games 1"))
     }
 
     func testPipelineCarriesPerTypeRequestOverrides() async throws {
