@@ -109,9 +109,8 @@ case "score":
     let overrides = type.localModelOverrides
     let maxTags = maxOverride ?? settings.maximumTags
     let forceTag = args.contains("--no-decline")   // min-1: the model may not decline
-    let priorRows = args.compactMap { $0.hasPrefix("--prior-rows=") ? Int($0.dropFirst(13)) : nil }.first
     let minTags = args.compactMap { $0.hasPrefix("--min=") ? Int($0.dropFirst(6)) : nil }.first ?? 0
-    let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: maxTags, minimumTags: minTags, creatorPriorRowLimit: priorRows)
+    let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: maxTags, minimumTags: minTags)
 
     // Research A/B: `--knowledge=all|none|terms|creator` chooses which stored
     // research the classifier may read (default all = production). Everything
@@ -496,8 +495,7 @@ case "batch":
     let research = state.settings.research
     let overrides = type.localModelOverrides
     let maxTags = args.compactMap { $0.hasPrefix("--max=") ? Int($0.dropFirst(6)) : nil }.first ?? 1
-    let priorRows = args.compactMap { $0.hasPrefix("--prior-rows=") ? Int($0.dropFirst(13)) : nil }.first
-    let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: maxTags, creatorPriorRowLimit: priorRows)
+    let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: maxTags)
     let requests = items.map { item -> LLMClassificationRequest in
         let parts = pipeline.primaryPromptParts(
             title: item.title, entryID: item.entryID, creatorID: item.creatorID, platformID: "youtube",
