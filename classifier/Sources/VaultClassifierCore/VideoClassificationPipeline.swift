@@ -45,7 +45,8 @@ public struct VideoClassificationPipeline: Sendable {
         secondaryConfidenceFloor: Int = 4,
         // p2 = bare tag-name reply, confidence derived from token odds (2026-09-21).
         // Cached p1 rows stay valid: the currency check matches the model file only.
-        promptVersion: String = "p2",
+        // p3 = compact creator line, no "Video:" label (2026-09-22).
+        promptVersion: String = "p3",
         correctionSimilarityFloor: Double = CorrectionRetriever.defaultMinimumSimilarity,
         creatorPriorRowLimit: Int? = nil
     ) {

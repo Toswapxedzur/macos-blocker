@@ -278,14 +278,27 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
             llama_memory_seq_rm(memory, -1, -1, -1)
             return OnDeviceLLMError.inference("\(label) (\(status))")
         }
-        func run(_ entries: [BatchEntry], _ label: String) throws {
+        /// Decodes `entries` in chunks of at most `batchTokenLimit`. `keepLast`
+        /// entries (the ones whose logits the caller reads) always land in the
+        /// FINAL chunk, because llama only keeps the logits of the last decode.
+        /// Returns the size of that final chunk (logits are read by index in it).
+        @discardableResult
+        func run(_ entries: [BatchEntry], _ label: String, keepLast: Int = 0) throws -> Int {
+            precondition(keepLast <= batchTokenLimit)
+            let tail = min(batchTokenLimit, entries.count)
+            let head = entries.count - tail
             var start = 0
-            while start < entries.count {
-                let end = min(start + batchTokenLimit, entries.count)
+            while start < head {
+                let end = min(start + batchTokenLimit, head)
                 let status = decode(Array(entries[start..<end]), using: &batch)
                 guard status == 0 else { throw fail(label, status) }
                 start = end
             }
+            if tail > 0 {
+                let status = decode(Array(entries[head...]), using: &batch)
+                guard status == 0 else { throw fail(label, status) }
+            }
+            return tail
         }
 
         // 1. Sequence 0 holds the shared prefix (reusing whatever is already cached).
@@ -296,8 +309,9 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
         cachedTokens = prefix
 
         // 2. Every video's sequence shares those prefix cells, then prefills its own
-        //    suffix. The last token of each is held back for one final decode whose
-        //    outputs are, in order, each sequence's first-generation logits.
+        //    suffix. Each sequence's last token is the only one with logits, and
+        //    they come last, so the outputs are, in order, each sequence's
+        //    first-generation logits.
         var suffixEntries: [BatchEntry] = []
         var lastEntries: [BatchEntry] = []
         for (slot, item) in items.enumerated() {
@@ -309,8 +323,12 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
             }
             lastEntries.append((item.tokens[item.tokens.count - 1], Int32(item.tokens.count - 1), sequence, true))
         }
-        try run(suffixEntries, "batch-suffix-decode-failed")
-        try run(lastEntries, "batch-suffix-decode-failed")
+        // One batched prefill: every suffix token, then every sequence's last token
+        // (logits wanted, in slot order = output index), all in the final chunk —
+        // a separate last-token decode cost a whole extra GPU pass (~160 ms per 16).
+        let finalChunk = try run(suffixEntries + lastEntries, "batch-suffix-decode-failed", keepLast: lastEntries.count)
+        // llama indexes logits by the token's position in the last decoded chunk.
+        let firstLogitsIndex = Int32(finalChunk - lastEntries.count)
         if timing { llama_synchronize(context) }   // Metal is async — stamp after the GPU finishes
         let tPrefill = DispatchTime.now()
 
@@ -352,7 +370,7 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
         var live: [Live] = items.enumerated().map { slot, item in
             let sampler = llama_sampler_chain_init(llama_sampler_chain_default_params())!
             llama_sampler_chain_add(sampler, llama_sampler_init_grammar(vocab, item.grammar, "root"))
-            return Live(sampler: sampler, outputIndex: Int32(slot), length: item.tokens.count)
+            return Live(sampler: sampler, outputIndex: firstLogitsIndex + Int32(slot), length: item.tokens.count)
         }
         defer { for state in live { llama_sampler_free(state.sampler) } }
         let vocabSize = Int(llama_vocab_n_tokens(vocab))
