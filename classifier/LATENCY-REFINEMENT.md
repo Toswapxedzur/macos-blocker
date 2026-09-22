@@ -330,6 +330,27 @@ answers, so it stays out. Also folded the separate last-token decode into the su
 the creator line is the only context; below that means removing the creator line. Untested lever: a Q4_0
 quant reads faster than Q4_K_M on Metal in some setups (a model change → full quality re-check).
 
+## 6h. Research text is one sentence, read in the single pass; the second decode is gone (2026-09-22)
+
+Research knowledge was the last thing that could push a video past the 0.5 s budget: a looked-up term or
+creator description was a ~130-token paragraph, and a weak video paid a whole SECOND decode over it.
+Measured on the 450-video library (research on, release):
+
+| creator knowledge | correct | no tag | wrong tags | clean | ms/video |
+|---|---|---|---|---|---|
+| none | 64.2% | 14.4% | 15.0% | 81% | 224 |
+| second decode over the full description (old) | 66.2% | 8.7% | 15.7% | 80% | 224, weak videos ≈ 1 s |
+| **one sentence (≤25 words, ~28 tokens) on the creator line, single pass** | **68.0%** | 11.1% | **14.6%** | 81% | 292, no video > ~0.4 s |
+| ≤10-word topic list on the creator line | 64.4% | 12.4% | 17.2% | 76% | — |
+
+The sentence beats the second decode overall (fixed 25 / broke 19) though it rescues fewer of the 28 videos
+the second decode used to touch (9 vs 12 right). A bare topic list made the model over-tag — it reads like
+a tag list — so the lookup asks for a SENTENCE. Shipped: `GroundedGenerationProtocol.systemPrompt` asks
+for one sentence (creator: "what kind of videos the channel makes"; term: "what or who it is") and
+"unknown" when nothing is found (refused, nothing stored); `ClassificationPromptAssembler` renders it as
+`Creator makes: …`; the weak-video second decode and `creatorGroundingConfidenceFloor` are deleted; the
+906 stored dev descriptions were condensed once with a Gemini batch (no web search, ~cents). Prompt p4.
+
 ## 7. Decisions log
 - 2026-09-17 — Measured: 7B generation is bandwidth-bound at ~40 ms/token on M1
   Pro; prefill cached (~3 ms); ~165 ms first-token cost; tagged video ~585 ms

@@ -17,15 +17,18 @@ public enum GroundedGenerationProtocol {
 
     /// The grounding instruction, tailored by subject kind. It never sends
     /// anything but the sanitized subject and forbids the model from assigning
-    /// classification tags.
+    /// classification tags. ONE sentence: the result is read by the on-device
+    /// model on every video it applies to (~4 ms per token), and a sentence was
+    /// measured (2026-09-22, 450 videos) to tag better than a paragraph — and
+    /// better than a bare topic list, which made the model over-tag.
     static func systemPrompt(for kind: KnowledgeEntryKind) -> String {
         switch kind {
         case .creator:
-            return "Search the public web for the named creator or channel and return a short, factual description of who they are and the kinds of topics, genres, or content they are known for. "
-                + "Never assign, suggest, or mention classification tags. Do not state anything you cannot ground in public sources. Return plain text only."
+            return "Search the public web for the named creator or channel and reply with ONE sentence of at most 25 words saying what kind of videos the channel makes (its topics and genres). No name, no history. "
+                + "If you cannot identify the channel, reply exactly: unknown. Never assign, suggest, or mention classification tags. Do not state anything you cannot ground in public sources. Return plain text only."
         case .term:
-            return "Search the public web for the named subject and return a short, factual description of what or who it is. "
-                + "Never assign, suggest, or mention classification tags. Do not state anything you cannot ground in public sources. Return plain text only."
+            return "Search the public web for the named subject and reply with ONE sentence of at most 25 words saying what or who it is. "
+                + "If you cannot identify it, reply exactly: unknown. Never assign, suggest, or mention classification tags. Do not state anything you cannot ground in public sources. Return plain text only."
         }
     }
 

@@ -49,7 +49,10 @@ public struct GroundedResearchExecutor: Sendable {
             format: request.plan.bodyFormat
         )
         let meaning = parsed.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !meaning.isEmpty else { throw GroundedResearchError.emptyMeaning }
+        // "unknown" is the prompt's own signal that nothing was found: storing it
+        // would put a useless line in every prompt it applies to (119 of 906 stored
+        // creator descriptions once opened with "no such creator found").
+        guard !meaning.isEmpty, !meaning.lowercased().hasPrefix("unknown") else { throw GroundedResearchError.emptyMeaning }
         let knowledge = KnowledgeEntry(
             kind: sanitized.kind,
             subject: sanitized.subject,

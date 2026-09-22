@@ -4,6 +4,7 @@ import XCTest
 // Captures the request the pipeline sent, and returns a scripted result.
 private final class RequestRecorder: @unchecked Sendable {
     var last: LLMClassificationRequest?
+    var count = 0
 }
 
 private struct ScriptedOnDeviceLLM: OnDeviceLLM {
@@ -11,7 +12,7 @@ private struct ScriptedOnDeviceLLM: OnDeviceLLM {
     let result: LLMClassificationResult
     let recorder: RequestRecorder
     func classify(_ request: LLMClassificationRequest) async throws -> LLMClassificationResult {
-        recorder.last = request
+        recorder.count += 1; recorder.last = request
         return result
     }
 }
@@ -165,49 +166,36 @@ final class VideoClassificationPipelineTests: XCTestCase {
         XCTAssertTrue(recorder.last?.staticPrefix.contains("Prefer Politics.") == true)
     }
 
-    func testLowConfidenceCreatorGroundingInfersTagFromCreatorDescription() async throws {
+    /// A researched creator's one sentence rides on the creator line of the ONE
+    /// pass (there is no second decode any more), and the classification records
+    /// that the description was used.
+    func testCreatorSentenceIsReadInTheSinglePass() async throws {
         var catalog = WorkspaceCatalog()
-        // Creator keyed with a description that names an allowed tag.
         catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .creator, subject: "c1", meaning: "A Politics news channel."))
-        let pipeline = VideoClassificationPipeline(llm: StubOnDeviceLLM())
-
-        // Title carries no allowed tag name -> the content-only primary decode
-        // declines. Because the creator is keyed, the pipeline runs a second
-        // decode grounded on the creator description and infers "Politics".
+        let recorder = RequestRecorder()
+        let pipeline = VideoClassificationPipeline(llm: ScriptedOnDeviceLLM(modelVersion: "s/1", result: .init(tags: []), recorder: recorder))
         let result = try await pipeline.classify(
             title: "weekly roundup", entryID: "v1", creatorID: "c1", platformID: "youtube",
             classifierType: makeType(), tree: makeTree(), catalog: catalog
         )
-        XCTAssertEqual(result.tags.map(\.tagID), ["p"])
+        XCTAssertEqual(recorder.count, 1, "one pass per video")
+        XCTAssertTrue(recorder.last?.dynamicSuffix.contains("Creator makes: A Politics news channel.") == true)
         XCTAssertEqual(result.source, .modelKnowledge)
         XCTAssertEqual(result.knowledgeRefs, ["creator:c1"])
     }
 
-    func testConfidentPrimaryDoesNotUseCreatorGrounding() async throws {
-        var catalog = WorkspaceCatalog()
-        catalog.upsertKnowledgeEntry(KnowledgeEntry(kind: .creator, subject: "c1", meaning: "A Politics channel."))
-        let pipeline = VideoClassificationPipeline(llm: StubOnDeviceLLM())
-
-        // Title names "Games" -> the primary decode tags it confidently, so the
-        // creator description is never consulted.
-        let result = try await pipeline.classify(
-            title: "Games highlights", entryID: "v1", creatorID: "c1", platformID: "youtube",
-            classifierType: makeType(), tree: makeTree(), catalog: catalog
-        )
-        XCTAssertEqual(result.tags.map(\.tagID), ["g"])
-        XCTAssertEqual(result.source, .model)
-        XCTAssertTrue(result.knowledgeRefs.isEmpty)
-    }
-
-    func testCreatorGroundingSkippedWhenCreatorNotKeyed() async throws {
-        let catalog = WorkspaceCatalog()   // no creator description
-        let pipeline = VideoClassificationPipeline(llm: StubOnDeviceLLM())
+    func testNoCreatorSentenceWhenCreatorNotKeyed() async throws {
+        let recorder = RequestRecorder()
+        let pipeline = VideoClassificationPipeline(llm: ScriptedOnDeviceLLM(modelVersion: "s/1", result: .init(tags: []), recorder: recorder))
         let result = try await pipeline.classify(
             title: "weekly roundup", entryID: "v1", creatorID: "c1", platformID: "youtube",
-            classifierType: makeType(), tree: makeTree(), catalog: catalog
+            classifierType: makeType(), tree: makeTree(), catalog: WorkspaceCatalog()
         )
-        XCTAssertTrue(result.tags.isEmpty)       // declines, no fallback available
+        XCTAssertEqual(recorder.count, 1)
+        XCTAssertFalse(recorder.last?.dynamicSuffix.contains("Creator makes:") == true)
+        XCTAssertTrue(result.tags.isEmpty)
         XCTAssertEqual(result.source, .model)
+        XCTAssertTrue(result.knowledgeRefs.isEmpty)
     }
 
     func testGranularResearchDefaultsLeaveClassificationRequestByteIdentical() async throws {
