@@ -113,7 +113,8 @@ final class GroundedGenerationProtocolTests: XCTestCase {
         )
         let creatorBody = String(decoding: try XCTUnwrap(creatorRequest.body), as: UTF8.self)
         XCTAssertTrue(creatorBody.contains("creator or channel"))
-        XCTAssertTrue(creatorBody.contains("content they are known for"))
+        XCTAssertTrue(creatorBody.contains("ONE sentence"), "the result is read per video: one sentence")
+        XCTAssertTrue(creatorBody.contains("what kind of videos the channel makes"))
         XCTAssertTrue(creatorBody.contains("@hermitcraft"))
 
         let termRequest = try GroundedGenerationProtocol.prepareGroundedGenerate(

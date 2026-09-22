@@ -192,7 +192,8 @@ public enum ClassificationPromptAssembler {
         creatorPrior: [CreatorPriorTag],
         creatorVideoCount: Int,
         knowledge: [KnowledgeEntry],
-        correctionExemplars: [CorrectionExemplar] = []
+        correctionExemplars: [CorrectionExemplar] = [],
+        creatorSummary: String? = nil
     ) -> String {
         var lines: [String] = []
 
@@ -241,6 +242,14 @@ public enum ClassificationPromptAssembler {
             let counts = creatorPrior.map { "\($0.tagName) \($0.count)" }.joined(separator: ", ")
             lines.append("Creator (\(creatorVideoCount) videos): \(counts)")
         }
+        // The researched creator's one sentence ("what this channel makes"): read in
+        // the ONE pass. Measured 2026-09-22 (450 videos) vs a second decode over the
+        // full description: correct 68.0 vs 66.2%, wrong tags 14.6 vs 15.7%, and no
+        // video pays a whole extra pass. A bare topic list instead of a sentence made
+        // the model over-tag (wrong 17.2%, clean 76%), so it stays a sentence.
+        if let creatorSummary = creatorSummary?.trimmingCharacters(in: .whitespacesAndNewlines), !creatorSummary.isEmpty {
+            lines.append("Creator makes: \(creatorSummary)")
+        }
 
         lines.append("Title: \(title)")
         if let summary = summary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
@@ -271,7 +280,8 @@ public enum ClassificationPromptAssembler {
         creatorPrior: [CreatorPriorTag],
         creatorVideoCount: Int,
         knowledge: [KnowledgeEntry],
-        correctionExemplars: [CorrectionExemplar] = []
+        correctionExemplars: [CorrectionExemplar] = [],
+        creatorSummary: String? = nil
     ) -> ClassificationPromptParts {
         let taxonomy = tagOptions(from: tree)
         // De-duplicate names for the allowed set + mapping (a tree with duplicate
@@ -284,7 +294,7 @@ public enum ClassificationPromptAssembler {
         }
         return ClassificationPromptParts(
             staticPrefix: staticPrefix(taxonomy: taxonomy, houseRules: houseRules, maximumTags: maximumTags, minimumTags: minimumTags),
-            dynamicSuffix: dynamicSuffix(title: title, summary: summary, text: text, creatorPrior: creatorPrior, creatorVideoCount: creatorVideoCount, knowledge: knowledge, correctionExemplars: correctionExemplars),
+            dynamicSuffix: dynamicSuffix(title: title, summary: summary, text: text, creatorPrior: creatorPrior, creatorVideoCount: creatorVideoCount, knowledge: knowledge, correctionExemplars: correctionExemplars, creatorSummary: creatorSummary),
             allowedTagNames: allowedTagNames,
             nameToTagID: nameToTagID
         )

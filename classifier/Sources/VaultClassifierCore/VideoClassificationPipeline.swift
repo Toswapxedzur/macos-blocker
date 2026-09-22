@@ -28,10 +28,6 @@ public struct VideoClassificationPipeline: Sendable {
     /// a per-video exemplar (see CorrectionRetriever). Exposed so the eval A/B can
     /// sweep it; production uses the retriever's tuned default.
     public let correctionSimilarityFloor: Double
-    /// At or below this top confidence (or on a decline) the pipeline retries with
-    /// the creator's stored description. A classification constant — it was
-    /// formerly borrowed from the research `confidenceTriggerLevel` setting.
-    public static let defaultCreatorGroundingConfidenceFloor = 2
 
     public init(
         llm: any OnDeviceLLM,
@@ -40,8 +36,8 @@ public struct VideoClassificationPipeline: Sendable {
         secondaryConfidenceFloor: Int = 4,
         // p2 = bare tag-name reply, confidence derived from token odds (2026-09-21).
         // Cached p1 rows stay valid: the currency check matches the model file only.
-        // p3 = compact creator line, no "Video:" label (2026-09-22).
-        promptVersion: String = "p3",
+        // p4 = researched creator sentence on the creator line, single pass (2026-09-22).
+        promptVersion: String = "p4",
         correctionSimilarityFloor: Double = CorrectionRetriever.defaultMinimumSimilarity
     ) {
         self.llm = llm
@@ -83,23 +79,21 @@ public struct VideoClassificationPipeline: Sendable {
         allowDecline: Bool? = nil,
         confidenceThresholds: [Double]? = nil,
         knowledgeTTLDays: Int = ResearchSettings.defaultKnowledgeTTLDays,
-        maxKnowledgePerVideo: Int = ResearchSettings.defaultMaxKnowledgePerVideo,
-        creatorGroundingConfidenceFloor: Int = VideoClassificationPipeline.defaultCreatorGroundingConfidenceFloor
+        maxKnowledgePerVideo: Int = ResearchSettings.defaultMaxKnowledgePerVideo
     ) async throws -> VideoClassification {
         try await classifyBatch(
             [Input(title: title, summary: summary, text: text, entryID: entryID, creatorID: creatorID)],
             platformID: platformID, classifierType: classifierType, tree: tree, catalog: catalog,
             houseRules: houseRules, allowDecline: allowDecline, confidenceThresholds: confidenceThresholds,
-            knowledgeTTLDays: knowledgeTTLDays, maxKnowledgePerVideo: maxKnowledgePerVideo,
-            creatorGroundingConfidenceFloor: creatorGroundingConfidenceFloor
+            knowledgeTTLDays: knowledgeTTLDays, maxKnowledgePerVideo: maxKnowledgePerVideo
         )[0]
     }
 
     /// Classifies a screenful of videos against one classifier type. All primary
     /// decodes go to the engine as ONE batch (`classifyAll` → a multi-sequence pass
-    /// on engines that support it; LATENCY-REFINEMENT Phase 1); the videos that come
-    /// back weak AND have a keyed creator then share a second, creator-grounded
-    /// batch. Results are positional. Note: videos in one batch do not see each
+    /// on engines that support it; LATENCY-REFINEMENT Phase 1) — one pass per video;
+    /// a researched creator's one-sentence description rides on the creator line.
+    /// Results are positional. Note: videos in one batch do not see each
     /// other in the creator prior (it reflects the catalog before the batch).
     public func classifyBatch(
         _ inputs: [Input],
@@ -111,8 +105,7 @@ public struct VideoClassificationPipeline: Sendable {
         allowDecline: Bool? = nil,
         confidenceThresholds: [Double]? = nil,
         knowledgeTTLDays: Int = ResearchSettings.defaultKnowledgeTTLDays,
-        maxKnowledgePerVideo: Int = ResearchSettings.defaultMaxKnowledgePerVideo,
-        creatorGroundingConfidenceFloor: Int = VideoClassificationPipeline.defaultCreatorGroundingConfidenceFloor
+        maxKnowledgePerVideo: Int = ResearchSettings.defaultMaxKnowledgePerVideo
     ) async throws -> [VideoClassification] {
         guard !inputs.isEmpty else { return [] }
         let timing = ProcessInfo.processInfo.environment["VAULT_DECODE_TIMING"] == "1"
@@ -132,7 +125,8 @@ public struct VideoClassificationPipeline: Sendable {
                 tree: tree, houseRules: houseRules, maximumTags: maximumTags, minimumTags: minimumTags,
                 title: inputs[index].title, summary: inputs[index].summary, text: inputs[index].text,
                 creatorPrior: evidence[index].creatorPrior, creatorVideoCount: evidence[index].creatorVideoCount,
-                knowledge: knowledge, correctionExemplars: evidence[index].correctionExemplars
+                knowledge: knowledge, correctionExemplars: evidence[index].correctionExemplars,
+                creatorSummary: evidence[index].creatorEntry?.meaning
             )
         }
         func request(_ parts: ClassificationPromptParts) -> LLMClassificationRequest {
@@ -154,32 +148,11 @@ public struct VideoClassificationPipeline: Sendable {
                 format: "[pipeline-timing] videos=%d  evidence+assemble=%.0f  classifyAll=%.0fms\n",
                 inputs.count, ms(tStart, tAssembled), ms(tAssembled, DispatchTime.now())).utf8))
         }
-        var tags = zip(primaryResults, primaryParts).map { scoredTags(from: $0, parts: $1) }
-        var knowledgeUsed = evidence.map(\.termKnowledge)
-        var grounded = [Bool](repeating: false, count: inputs.count)
-
-        // Low-confidence creator fallback: when the content signal is weak (a
-        // decline, or a top confidence at/under the floor) and this creator is
-        // already keyed, infer the tag from the creator's stored description.
-        let weak: [(index: Int, knowledge: [KnowledgeEntry])] = inputs.indices.compactMap { index in
-            guard (tags[index].map(\.confidence).max() ?? 0) <= creatorGroundingConfidenceFloor,
-                  let creatorEntry = catalog.creatorKnowledgeEntry(for: inputs[index].creatorID) else { return nil }
-            return (index, evidence[index].termKnowledge + [creatorEntry])
-        }
-        if !weak.isEmpty {
-            let groundedParts = weak.map { parts($0.index, knowledge: $0.knowledge) }
-            let groundedResults = try await llm.classifyAll(groundedParts.map(request))
-            for (slot, candidate) in weak.enumerated() {
-                let groundedTags = scoredTags(from: groundedResults[slot], parts: groundedParts[slot])
-                // Only adopt the creator-grounded result if it actually produced a
-                // tag (or improved confidence); otherwise keep the primary outcome.
-                let primaryTop = tags[candidate.index].map(\.confidence).max() ?? 0
-                guard !groundedTags.isEmpty, (groundedTags.map(\.confidence).max() ?? 0) >= primaryTop else { continue }
-                tags[candidate.index] = groundedTags
-                knowledgeUsed[candidate.index] = candidate.knowledge
-                grounded[candidate.index] = true
-            }
-        }
+        let tags = zip(primaryResults, primaryParts).map { scoredTags(from: $0, parts: $1) }
+        // ONE pass per video. The creator's stored sentence rides on the creator
+        // line above; the former second decode over weak videos (full description,
+        // a whole extra video's time) was measured worse than this on 450 videos.
+        let knowledgeUsed = evidence.map { $0.termKnowledge + ($0.creatorEntry.map { [$0] } ?? []) }
 
         return inputs.indices.map { index in
             VideoClassification(
@@ -191,7 +164,7 @@ public struct VideoClassificationPipeline: Sendable {
                 treeRevision: tree.revision,
                 tags: tags[index],
                 knowledgeRefs: knowledgeUsed[index].map(\.id),
-                source: (grounded[index] || !knowledgeUsed[index].isEmpty) ? .modelKnowledge : .model,
+                source: knowledgeUsed[index].isEmpty ? .model : .modelKnowledge,
                 modelVersion: "\(llm.modelVersion)+\(promptVersion)"
             )
         }
@@ -210,7 +183,7 @@ public struct VideoClassificationPipeline: Sendable {
         catalog: WorkspaceCatalog,
         knowledgeTTLDays: Int,
         maxKnowledgePerVideo: Int
-    ) -> (creatorPrior: [CreatorPriorTag], creatorVideoCount: Int, correctionExemplars: [CorrectionExemplar], termKnowledge: [KnowledgeEntry]) {
+    ) -> (creatorPrior: [CreatorPriorTag], creatorVideoCount: Int, correctionExemplars: [CorrectionExemplar], termKnowledge: [KnowledgeEntry], creatorEntry: KnowledgeEntry?) {
         let nameByID = Dictionary(tree.nodes.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
 
         // Derived creator prior: how often THIS creator's already-classified
@@ -250,7 +223,7 @@ public struct VideoClassificationPipeline: Sendable {
             limit: maxKnowledgePerVideo,
             ttlDays: knowledgeTTLDays
         )
-        return (creatorPrior, creatorVideoCount, correctionExemplars, termKnowledge)
+        return (creatorPrior, creatorVideoCount, correctionExemplars, termKnowledge, catalog.creatorKnowledgeEntry(for: creatorID))
     }
 
     /// The exact prompt parts `classify`'s primary decode would build for one
@@ -287,7 +260,8 @@ public struct VideoClassificationPipeline: Sendable {
             creatorPrior: evidence.creatorPrior,
             creatorVideoCount: evidence.creatorVideoCount,
             knowledge: evidence.termKnowledge,
-            correctionExemplars: evidence.correctionExemplars
+            correctionExemplars: evidence.correctionExemplars,
+            creatorSummary: evidence.creatorEntry?.meaning
         )
     }
 
