@@ -50,6 +50,13 @@ final class VaultClassifierWebShell {
         coordinator.webView?.navigationDelegate = nil
     }
 
+    /// The host tells the shell whether its page is in front. While it is not,
+    /// no snapshot is built or pushed; the newest state lands when it returns.
+    @MainActor
+    func setPresentationVisible(_ visible: Bool) {
+        coordinator.setHostShowsPage(visible)
+    }
+
     /// Builds a data-only native-to-WebKit update. `atob` returns a binary
     /// string, so decode its bytes as UTF-8 before parsing JSON; otherwise
     /// curly quotes and other non-ASCII collected metadata render garbled.
@@ -91,6 +98,10 @@ final class VaultClassifierWebShell {
 
         let model: VaultClassifierViewModel
         weak var webView: WKWebView?
+        /// Whether the host currently shows this page (Mac Vault hides it behind
+        /// its other scenes). Standalone/test contexts never hide it.
+        private var hostShowsPage = true
+        private var occlusionObserver: NSObjectProtocol?
         private lazy var stateDelivery = LatestWebStateDelivery(
             schedule: { action in
                 // Visual state is intentionally slower than authoritative
@@ -126,6 +137,31 @@ final class VaultClassifierWebShell {
 
         init(model: VaultClassifierViewModel) {
             self.model = model
+            super.init()
+            // A closed, minimised or fully covered window is as invisible as a
+            // hidden scene; resume delivery when it can be seen again.
+            occlusionObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didChangeOcclusionStateNotification, object: nil, queue: .main
+            ) { [weak self] note in
+                guard let self, let window = note.object as? NSWindow, window == self.webView?.window else { return }
+                self.updatePresentationSuspension()
+            }
+        }
+
+        deinit {
+            if let occlusionObserver { NotificationCenter.default.removeObserver(occlusionObserver) }
+        }
+
+        @MainActor
+        func setHostShowsPage(_ shows: Bool) {
+            hostShowsPage = shows
+            updatePresentationSuspension()
+        }
+
+        @MainActor
+        private func updatePresentationSuspension() {
+            let windowVisible = webView?.window.map { $0.occlusionState.contains(.visible) } ?? true
+            stateDelivery.setSuspended(!(hostShowsPage && windowVisible))
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -225,6 +261,18 @@ final class LatestWebStateDelivery {
     private var deliveryScheduled = false
     private var deliveryInFlight = false
     private var activeDeliveryRevision: UInt64?
+    /// While the page cannot be seen (another scene is in front, or the window
+    /// is closed / occluded) no snapshot is built: building + serialising one
+    /// costs ~150 ms of main-thread time per classification burst, all for a
+    /// render nobody sees. Requests keep counting; the newest state is delivered
+    /// once, when the page shows again.
+    private(set) var suspended = false
+
+    func setSuspended(_ flag: Bool) {
+        guard flag != suspended else { return }
+        suspended = flag
+        if !flag { scheduleIfNeeded() }
+    }
 
     init(
         schedule: @escaping Scheduler,
@@ -249,7 +297,8 @@ final class LatestWebStateDelivery {
     }
 
     private func scheduleIfNeeded() {
-        guard !deliveryScheduled,
+        guard !suspended,
+              !deliveryScheduled,
               !deliveryInFlight,
               deliveredRevision < requestedRevision else {
             return
@@ -262,7 +311,8 @@ final class LatestWebStateDelivery {
 
     private func beginLatestDelivery() {
         deliveryScheduled = false
-        guard !deliveryInFlight,
+        guard !suspended,
+              !deliveryInFlight,
               deliveredRevision < requestedRevision else {
             return
         }

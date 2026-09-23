@@ -14,6 +14,7 @@ public final class VaultClassifierPage {
     private var model: VaultClassifierViewModel?
     private var webShell: VaultClassifierWebShell?
     private var webView: WKWebView?
+    private var pageVisible = true
 
     /// Installed by the host (Mac Vault) so the classifier's in-page header
     /// switch can ask it to show another scene. The argument is the requested
@@ -41,6 +42,7 @@ public final class VaultClassifierPage {
             let view = shell.makeWebView()
             // The page is designed on Mac Vault's light working surface.
             view.appearance = NSAppearance(named: .aqua)
+            shell.setPresentationVisible(pageVisible)
             webShell = shell
             webView = view
         }
@@ -56,6 +58,16 @@ public final class VaultClassifierPage {
             webView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
         return container
+    }
+
+    /// The host reports whether the page is in front. While hidden, the page
+    /// skips building and pushing its web snapshot (≈150 ms of main-thread work
+    /// per classification burst) and catches up once when shown again.
+    /// `VAULT_SNAPSHOT_ALWAYS=1` keeps the old always-render behaviour for
+    /// latency comparisons.
+    public func setPageVisible(_ visible: Bool) {
+        pageVisible = visible || ProcessInfo.processInfo.environment["VAULT_SNAPSHOT_ALWAYS"] == "1"
+        webShell?.setPresentationVisible(pageVisible)
     }
 
     /// State writes are coalesced onto a background queue; the host calls this

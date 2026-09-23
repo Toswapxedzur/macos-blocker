@@ -192,7 +192,7 @@ final class VaultClassifierViewModel: ObservableObject {
     lazy var classificationCoalescer: ClassificationCoalescer<NativeVideoTagsBatchItem> = {
         let coalescer = ClassificationCoalescer<NativeVideoTagsBatchItem>(
             chunkSize: Self.classificationChunkSize,
-            arrivalWindowNanoseconds: 75_000_000
+            arrivalWindowNanoseconds: Self.classificationArrivalWindowNanoseconds
         ) { [weak self] platformID, chunk in
             await self?.classifyChunk(platformID: platformID, chunk)
         }
@@ -206,6 +206,14 @@ final class VaultClassifierViewModel: ObservableObject {
     /// instead of waiting for the extension's next poll.
     /// Videos handed to the engine together — its parallel-sequence capacity.
     static let classificationChunkSize = 16
+
+    /// How long an idle engine waits for the rest of a screenful before it
+    /// starts (a lone video pays this in full). `VAULT_ARRIVAL_WINDOW_MS`
+    /// overrides it for latency measurements.
+    static let classificationArrivalWindowNanoseconds: UInt64 = {
+        let override = ProcessInfo.processInfo.environment["VAULT_ARRIVAL_WINDOW_MS"].flatMap(UInt64.init)
+        return (override ?? 75) * 1_000_000
+    }()
 
     /// Dev-only pipeline test mode (`ADAMANCIA_VAULT_TAG_TEST=creator-echo`):
     /// every video-tags request is answered instantly with one tag named after
