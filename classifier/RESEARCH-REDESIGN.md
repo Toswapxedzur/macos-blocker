@@ -1,5 +1,7 @@
 # Vault Classifier — Research & Classification Redesign
 
+> **Note 2026-09-23:** presets, per-type research profiles and every research budget/trigger knob mentioned below are gone — research is on/off + provider (per type: follow/on/off) and the numbers are constants. See `package-info.md` ("Settings shape"). Kept as history.
+
 > **Status: APPROVED — build in progress (owner said "proceed with plan", 2026-09-16).**
 > Phases 0–4 are done (see §13 for what changed vs. this text — notably urgency is
 > DERIVED from confidence, not model-emitted). All planned phases, incl. Cut A, are done.
