@@ -40,12 +40,14 @@ public final class VaultMCPHTTPServer: @unchecked Sendable {
         self.requiredToken = requiredToken
     }
 
-    /// Convenience: a server exposing the Vault group tools, gated by `token`.
+    /// Convenience: a server exposing the Vault group tools plus any further
+    /// tool families (the classifier's, since 2026-09-23), gated by `token`.
     public static func vault(
         port: UInt16 = VaultRuntimeEnvironment.current.mcpPort,
-        token: String? = nil
+        token: String? = nil,
+        additionalTools: [MCPTool] = []
     ) -> VaultMCPHTTPServer {
-        VaultMCPHTTPServer(server: MCPServer(tools: VaultMCPTools.groupTools()), port: port, requiredToken: token)
+        VaultMCPHTTPServer(server: MCPServer(tools: VaultMCPTools.groupTools() + additionalTools), port: port, requiredToken: token)
     }
 
     // MARK: Lifecycle

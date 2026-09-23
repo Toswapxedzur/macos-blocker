@@ -64,7 +64,7 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
         // registered tools point at a live, authenticated endpoint. Fail closed:
         // if the token is unavailable we do not expose an unauthenticated server.
         if let token = LocalHubAuthentication.mcpBearerToken() {
-            let mcpServer = VaultMCPHTTPServer.vault(token: token)
+            let mcpServer = VaultMCPHTTPServer.vault(token: token, additionalTools: ClassifierMCPTools.tools())
             mcpServer.start()
             self.mcpServer = mcpServer
             MCPConnectorRegistry.shared.authTokenProvider = { LocalHubAuthentication.mcpBearerToken() }
