@@ -24,7 +24,7 @@ public enum GroundedGenerationProtocol {
     static func systemPrompt(for kind: KnowledgeEntryKind) -> String {
         switch kind {
         case .creator:
-            return "Search the public web for the named creator or channel and reply with ONE sentence of at most 25 words saying what kind of videos the channel makes (its topics and genres). No name, no history. "
+            return "Search the public web for the named creator, channel or community (an r/ name is a Reddit community) and reply with ONE sentence of at most 25 words saying what kind of videos or posts it makes (its topics and genres). No name, no history. "
                 + "If you cannot identify the channel, reply exactly: unknown. Never assign, suggest, or mention classification tags. Do not state anything you cannot ground in public sources. Return plain text only."
         case .term:
             return "Search the public web for the named subject and reply with ONE sentence of at most 25 words saying what or who it is. "
