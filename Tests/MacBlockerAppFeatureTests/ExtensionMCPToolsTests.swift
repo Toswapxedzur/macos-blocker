@@ -25,7 +25,7 @@ final class ExtensionMCPToolsTests: XCTestCase {
         let (server, _) = makeServer { _, _ in .success([:]) }
         let res = try XCTUnwrap(server.handle(["jsonrpc": "2.0", "id": 1, "method": "tools/list"]))
         let names = try XCTUnwrap((res["result"] as? [String: Any])?["tools"] as? [[String: Any]]).compactMap { $0["name"] as? String }
-        XCTAssertEqual(Set(names), ["extension_state", "extension_create_group", "extension_set_group", "extension_delete_group", "extension_set_classifier"])
+        XCTAssertEqual(Set(names), ["extension_state", "extension_create_group", "extension_set_group", "extension_delete_group", "extension_set_classifier", "extension_set_global"])
     }
 
     func testStateRelaysSettingsGetAndReturnsTheBrowserBody() throws {
@@ -59,6 +59,14 @@ final class ExtensionMCPToolsTests: XCTestCase {
         XCTAssertTrue(state.isError); XCTAssertTrue(state.text.contains("no browser with the Vault extension is connected"))
         let deleted = try call(server, "extension_delete_group", ["id": "g1"])
         XCTAssertTrue(deleted.isError); XCTAssertTrue(deleted.text.contains("frozen, strict or parental-locked"))
+    }
+
+    func testSetGlobalRelaysThePatch() throws {
+        let (server, relayed) = makeServer { _, body in .success(["globalSettings": body["patch"] ?? [:]]) }
+        XCTAssertTrue(try call(server, "extension_set_global", [:]).isError)
+        let out = try call(server, "extension_set_global", ["patch": ["debugMode": true]])
+        XCTAssertFalse(out.isError)
+        XCTAssertEqual((relayed().first?.body["patch"] as? [String: Any])?["debugMode"] as? Bool, true)
     }
 
     func testSetClassifierRequiresSomethingToSet() throws {

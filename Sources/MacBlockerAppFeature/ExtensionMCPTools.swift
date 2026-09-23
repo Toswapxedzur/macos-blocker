@@ -92,6 +92,18 @@ public enum ExtensionMCPTools {
                 return relay(bridge, "settings-delete-group", ["id": id], args)
             },
             MCPTool(
+                name: "extension_set_global",
+                description: "Patch the extension's global settings (popup ▸ Settings): debugMode (bool; also enables the content-script trace), showOnPageLogToasts (bool), tickRateMs (100–10000), autosaveDebounceMs (0–10000), defaultSnoozeMinutes (> 0), defaultFallbackUrl (string). Sanitized the way the popup's save is.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": ["patch": ["type": "object", "description": "Global settings fields to change."], "browser": browserProperty],
+                    "required": ["patch"],
+                ]
+            ) { args in
+                guard let patch = args["patch"] as? [String: Any], !patch.isEmpty else { return .failure("Missing 'patch' object.") }
+                return relay(bridge, "settings-set-global", ["patch": patch], args)
+            },
+            MCPTool(
                 name: "extension_set_classifier",
                 description: "Set the extension's classifier settings: collectionEnabled (whether pages are collected at all) and taggingMode ('whenFiltering' = tag only while a tag filter is active, 'always', 'paused').",
                 inputSchema: [
