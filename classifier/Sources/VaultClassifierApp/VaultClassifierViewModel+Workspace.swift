@@ -84,18 +84,13 @@ extension VaultClassifierViewModel {
         onWebStateChange?()
     }
 
-    /// Creates a classifier type (a "group") from a preset the person picks. A
-    /// preset is the *only* way to create a type: it seeds the type's on-device
-    /// model overrides, its grounded-research profile, and a RAM-appropriate model
-    /// (when already downloaded), so nobody hand-tunes the underlying knobs at
-    /// creation. The detailed form stays available afterwards as "Advanced", which
-    /// reports drift as "modified from <preset>". `presetID` must resolve to a
-    /// known `VaultPreset`.
-    func createClassifierType(name: String, platformID: String, presetID: String) {
+    /// Creates a classifier type (a "group") for one platform. It starts with an
+    /// empty tree of its own and follows the global dials, house rules and
+    /// research switch until the person gives it positions of its own.
+    func createClassifierType(name: String, platformID: String) {
         do {
             let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let preset = VaultPreset.resolve(presetID.trimmingCharacters(in: .whitespacesAndNewlines)),
-                  !cleaned.isEmpty,
+            guard !cleaned.isEmpty,
                   cleaned.count <= ClassifierTypeAsset.maximumNameLength,
                   CollectionPlatformRegistry.definition(for: platformID) != nil,
                   var catalog = localState?.workspaceCatalog else {
@@ -111,13 +106,6 @@ extension VaultClassifierViewModel {
             let tree = TagTreeAsset(name: cleaned, nodes: [])
             catalog.trees.append(tree)
             let nextOrder = (catalog.classifierTypes.map(\.order).max() ?? -1) + 1
-            // Apply the preset bundle. Model file is set only when the recommended
-            // model for this machine's RAM is already on disk — a preset must never
-            // point a type at a missing model (nil = inherit the global choice).
-            let modelFileName = preset.modelFileName(
-                systemRAMGB: HardwareProfile.physicalRAMGB(),
-                availableModelFiles: VaultLocalLLMEngine.availableModelFiles()
-            )
             catalog.classifierTypes.append(.init(
                 name: cleaned,
                 treeID: tree.id,
@@ -125,10 +113,6 @@ extension VaultClassifierViewModel {
                 datasetID: dataset.id,
                 datasetRevision: dataset.revision,
                 applicablePlatformID: platformID,
-                localModelOverrides: preset.localModelOverrides,
-                modelFileName: modelFileName,
-                researchOverrides: preset.researchOverrides(),
-                presetID: preset.rawValue,
                 order: nextOrder
             ))
             try coordinator?.updateWorkspaceCatalog(catalog)
@@ -198,9 +182,7 @@ extension VaultClassifierViewModel {
                 datasetRevision: dataset.revision,
                 applicablePlatformID: selectedBinding.id,
                 localModelOverrides: existingClassifierType.localModelOverrides,
-                modelFileName: existingClassifierType.modelFileName,
-                researchOverrides: existingClassifierType.researchOverrides,
-                presetID: existingClassifierType.presetID,
+                researchEnabled: existingClassifierType.researchEnabled,
                 order: catalog.classifierTypes[typeIndex].order
             )
             try coordinator?.updateWorkspaceCatalog(catalog)

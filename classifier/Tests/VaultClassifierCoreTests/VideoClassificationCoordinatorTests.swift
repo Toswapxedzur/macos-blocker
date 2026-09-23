@@ -90,21 +90,19 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
 
         var catalog = coordinator.snapshot().workspaceCatalog
         let index = try XCTUnwrap(catalog.classifierTypes.firstIndex(where: { $0.applicablePlatformID == "youtube" }))
-        catalog.classifierTypes[index].modelFileName = "selected.gguf"
-        catalog.classifierTypes[index].localModelOverrides = .init(
-            allowDecline: false,
-            confidenceThresholds: [0.1, 0.3, 0.6, 0.9]
-        )
+        // The type's own Speed↔Quality tier names the per-type engine; its own
+        // Strict↔Broad position rides on every request.
+        catalog.classifierTypes[index].localModelOverrides = .init(speedQuality: .best, strictness: .strict)
         try coordinator.updateWorkspaceCatalog(catalog)
 
         _ = try await coordinator.classifyVideo(
             platformID: "youtube", entryID: "selected", creatorID: "creator", title: "Title"
         )
         let selectedRequests = await resolver.requestedFiles
-        XCTAssertEqual(selectedRequests, ["selected.gguf"])
+        XCTAssertEqual(selectedRequests, ["Qwen2.5-14B-Instruct-Q4_K_M.gguf"])
         XCTAssertEqual(selectedRecorder.requests.count, 1)
-        XCTAssertEqual(selectedRecorder.requests.first?.allowDecline, false)
-        XCTAssertEqual(selectedRecorder.requests.first?.confidenceThresholds, [0.1, 0.3, 0.6, 0.9])
+        XCTAssertEqual(selectedRecorder.requests.first?.extraTagMinimumOdds, 0.97)
+        XCTAssertEqual(selectedRecorder.requests.first?.maximumTags, 3)
     }
 
     private func temporaryStateFile() -> (root: URL, file: LocalStateFile) {
@@ -204,11 +202,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
                 id: "a", name: "A", treeID: treeA.id, treeRevision: treeA.revision,
                 datasetID: dataset.id, datasetRevision: dataset.revision,
                 applicablePlatformID: "youtube",
-                localModelOverrides: .init(
-                    houseRules: "Type A rule.", allowDecline: false,
-                    confidenceThresholds: [0.1, 0.3, 0.6, 0.9],
-                    maximumTags: 2
-                ), order: 0
+                localModelOverrides: .init(houseRules: "Type A rule.", strictness: .strictest), order: 0
             ),
             // A platform belongs to at most one classifier type, so the second
             // type lives on its own platform (same shared dataset).
@@ -220,7 +214,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         ]
         _ = try catalog.ensurePlatformBinding("bilibili")
         try coordinator.updateWorkspaceCatalog(catalog)
-        coordinator.setClassificationOptions(maximumTags: 3, houseRules: "Global rule.")
+        coordinator.setClassificationOptions(houseRules: "Global rule.")
         let recorder = CoordinatorRequestRecorder()
         coordinator.setOnDeviceLLM(CoordinatorRecordingLLM(recorder: recorder))
 
@@ -234,58 +228,26 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertEqual(recorder.requests.count, 2, "one request per platform's single type")
         XCTAssertTrue(recorder.requests[0].staticPrefix.contains("Type A rule."))
         XCTAssertFalse(recorder.requests[0].staticPrefix.contains("Global rule."))
-        XCTAssertEqual(recorder.requests[0].allowDecline, false)
-        XCTAssertEqual(recorder.requests[0].confidenceThresholds, [0.1, 0.3, 0.6, 0.9])
         XCTAssertTrue(recorder.requests[1].staticPrefix.contains("Global rule."))
-        XCTAssertNil(recorder.requests[1].allowDecline)
-        XCTAssertNil(recorder.requests[1].confidenceThresholds)
-        XCTAssertEqual(recorder.requests.map(\.maximumTags), [2, 3], "type A overrides maximumTags (2); type B inherits the global (3)")
+        XCTAssertEqual(recorder.requests.map(\.maximumTags), [1, 3], "type A holds the Strictest position (one tag); type B follows the global Balanced dial (three)")
+        XCTAssertEqual(recorder.requests.map(\.extraTagMinimumOdds), [0.90, 0.90])
     }
 
     func testEffectiveResearchSettingsInheritOverrideAndRespectMasterGate() {
-        let global = ResearchSettings(
-            enabled: true,
-            llmProviderProfileID: "global-llm",
-            llmModelIdentifier: "global-model",
-            requestsPerMinute: 6,
-            dailyTokenLimit: 10_000
-        )
-        let inherited = ClassifierTypeAsset(
-            id: "inherit", name: "Inherit", treeID: "tree", treeRevision: 1,
-            datasetID: "dataset", datasetRevision: 1
-        )
-        XCTAssertEqual(
-            LocalClassifierCoordinator.effectiveResearchSettings(global: global, for: inherited),
-            global
-        )
-
-        let override = ResearchSettings(
-            enabled: true,
-            llmProviderProfileID: "type-llm",
-            llmModelIdentifier: "type-model",
-            requestsPerMinute: 15,
-            dailyTokenLimit: 20_000
-        )
-        let overridden = ClassifierTypeAsset(
-            id: "override", name: "Override", treeID: "tree", treeRevision: 1,
-            datasetID: "dataset", datasetRevision: 1, researchOverrides: override
-        )
-        XCTAssertEqual(
-            LocalClassifierCoordinator.effectiveResearchSettings(global: global, for: overridden),
-            override
-        )
-
+        let global = ResearchSettings(enabled: true, llmProviderProfileID: "global-llm", llmModelIdentifier: "global-model")
+        func type(_ id: String, researchEnabled: Bool?) -> ClassifierTypeAsset {
+            ClassifierTypeAsset(id: id, name: id, treeID: "tree", treeRevision: 1, datasetID: "dataset", datasetRevision: 1, researchEnabled: researchEnabled)
+        }
+        // Follow / explicitly on → the global settings (provider and model are global).
+        XCTAssertEqual(LocalClassifierCoordinator.effectiveResearchSettings(global: global, for: type("inherit", researchEnabled: nil)), global)
+        XCTAssertEqual(LocalClassifierCoordinator.effectiveResearchSettings(global: global, for: type("on", researchEnabled: true)), global)
+        // A type may switch itself off.
+        XCTAssertNil(LocalClassifierCoordinator.effectiveResearchSettings(global: global, for: type("off", researchEnabled: false)))
+        // But never on while the master gate is off.
         var masterOff = global
         masterOff.enabled = false
-        XCTAssertNil(LocalClassifierCoordinator.effectiveResearchSettings(global: masterOff, for: overridden))
-
-        var typeOff = override
-        typeOff.enabled = false
-        let optedOut = ClassifierTypeAsset(
-            id: "off", name: "Off", treeID: "tree", treeRevision: 1,
-            datasetID: "dataset", datasetRevision: 1, researchOverrides: typeOff
-        )
-        XCTAssertNil(LocalClassifierCoordinator.effectiveResearchSettings(global: global, for: optedOut))
+        XCTAssertNil(LocalClassifierCoordinator.effectiveResearchSettings(global: masterOff, for: type("on", researchEnabled: true)))
+        XCTAssertNil(LocalClassifierCoordinator.effectiveResearchSettings(global: masterOff, for: type("inherit", researchEnabled: nil)))
     }
 
     func testRecordResearchKnowledgeReclassifiesOutsideLockAndCallsBack() async throws {
@@ -341,7 +303,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             ))
         }
         try coordinator.updateWorkspaceCatalog(catalog)
-        coordinator.setClassificationOptions(maximumTags: 3, houseRules: "Global manual rule.")
+        coordinator.setClassificationOptions(houseRules: "Global manual rule.")
 
         // Submitting corrections NEVER mutates the type's house rules — the manual
         // rule stays exactly as authored, at every step (no distilled block).
@@ -465,10 +427,8 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
     func testDeclinedVideosSendNothingUntilTheCreatorThresholdThenOnlyTheHandle() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
         defer { try? FileManager.default.removeItem(at: root) }
-        try coordinator.updateSettings(.init(research: .init(
-            enabled: true,
-            authorThreshold: .init(score: 3, halfLifeDays: 14)
-        )))
+        // The creator trigger is the constant score 3 / half-life 14 days.
+        try coordinator.updateSettings(.init(research: .init(enabled: true)))
         let recorder = ResearchSubjectRecorder()
         let queue = recordingQueue(recorder)
         coordinator.setGroundedResearchQueue(queue)
@@ -650,23 +610,26 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             id: "t", name: "YT", treeID: "tree", treeRevision: 1,
             datasetID: "d", datasetRevision: 1, applicablePlatformID: "youtube"
         )
-        let settings = LocalLLMSettings(modelFileName: "qwen2.5-7b.gguf")
+        // The engine serving the inherited tier (the global dial's file is loaded).
+        let serving = "llamacpp/Qwen2.5-7B-Instruct-Q4_K_M.gguf"
         let current = LocalClassifierCoordinator.isClassificationCurrent
 
         // Current model (with and without the "+<prompt>" suffix) → served.
-        XCTAssertTrue(current(row(.model, "llamacpp/qwen2.5-7b.gguf+prompt-3"), type, settings))
-        XCTAssertTrue(current(row(.model, "llamacpp/qwen2.5-7b.gguf"), type, settings))
-        // Stub-era and a previously-selected model → stale.
-        XCTAssertFalse(current(row(.model, "stub/v1"), type, settings))
-        XCTAssertFalse(current(row(.model, "llamacpp/llama-3.2-3b.gguf+prompt-3"), type, settings))
+        XCTAssertTrue(current(row(.model, "llamacpp/Qwen2.5-7B-Instruct-Q4_K_M.gguf+prompt-3"), type, serving))
+        XCTAssertTrue(current(row(.model, "llamacpp/Qwen2.5-7B-Instruct-Q4_K_M.gguf"), type, serving))
+        // Stub-era and a previously-selected tier → stale.
+        XCTAssertFalse(current(row(.model, "stub/v1"), type, serving))
+        XCTAssertFalse(current(row(.model, "llamacpp/Qwen2.5-3B-Instruct-Q4_K_M.gguf+prompt-3"), type, serving))
         // A human correction is authoritative regardless of its model version.
-        XCTAssertTrue(current(row(.humanCorrected, "stub/v1"), type, settings))
-        // A per-type model overrides the global default.
+        XCTAssertTrue(current(row(.humanCorrected, "stub/v1"), type, serving))
+        // A type's own tier overrides whatever engine serves the inherited route.
         var typeWithModel = type
-        typeWithModel.modelFileName = "gemma-2b.gguf"
-        XCTAssertTrue(current(row(.model, "llamacpp/gemma-2b.gguf+p"), typeWithModel, settings))
-        XCTAssertFalse(current(row(.model, "llamacpp/qwen2.5-7b.gguf+p"), typeWithModel, settings))
-        // No real model configured → serve whatever exists (cannot reclassify).
-        XCTAssertTrue(current(row(.model, "stub/v1"), type, LocalLLMSettings(modelFileName: nil)))
+        typeWithModel.localModelOverrides = .init(speedQuality: .fast)
+        XCTAssertTrue(current(row(.model, "llamacpp/Qwen2.5-3B-Instruct-Q4_K_M.gguf+p"), typeWithModel, serving))
+        XCTAssertFalse(current(row(.model, "llamacpp/Qwen2.5-7B-Instruct-Q4_K_M.gguf+p"), typeWithModel, serving))
+        // The dial's model not downloaded → the stub serves, and its own rows are
+        // served rather than churned (nothing better could replace them).
+        XCTAssertTrue(current(row(.model, "stub/v1+p"), type, "stub/v1"))
+        XCTAssertFalse(current(row(.model, "llamacpp/Qwen2.5-7B-Instruct-Q4_K_M.gguf+p"), type, "stub/v1"))
     }
 }

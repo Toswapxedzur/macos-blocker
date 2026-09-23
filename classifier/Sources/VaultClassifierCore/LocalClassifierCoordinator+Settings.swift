@@ -8,7 +8,6 @@ extension LocalClassifierCoordinator {
         lock.lock()
         defer { lock.unlock() }
         state.settings = settings
-        classificationMaximumTags = settings.localLLM.maximumTags
         let rules = settings.localLLM.houseRules.trimmingCharacters(in: .whitespacesAndNewlines)
         classificationHouseRules = rules.isEmpty ? nil : rules
         try stateFile.save(state)

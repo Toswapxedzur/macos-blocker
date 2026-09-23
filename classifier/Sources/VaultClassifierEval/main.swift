@@ -131,7 +131,8 @@ case "score":
     let overrides = type.localModelOverrides
     let maxTags = maxOverride ?? settings.maximumTags
     let forceTag = args.contains("--no-decline")   // min-1: the model may not decline
-    let minTags = args.compactMap { $0.hasPrefix("--min=") ? Int($0.dropFirst(6)) : nil }.first ?? 0
+    let minTags = args.compactMap { $0.hasPrefix("--min=") ? Int($0.dropFirst(6)) : nil }.first ?? (forceTag ? 1 : 0)
+    let extraTagOdds = (overrides?.strictness ?? settings.strictness).extraTagMinimumOdds
     let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: maxTags, minimumTags: minTags)
 
     // Research A/B: `--knowledge=all|none|terms|creator` chooses which stored
@@ -175,8 +176,7 @@ case "score":
             title: item.title, entryID: item.entryID, creatorID: item.creatorID, platformID: "youtube",
             classifierType: type, tree: evalTree, catalog: catalog,
             houseRules: productionHouseRules,
-            allowDecline: forceTag ? false : (overrides?.allowDecline ?? settings.allowDecline),
-            confidenceThresholds: overrides?.confidenceThresholds ?? settings.confidenceThresholds,
+            extraTagMinimumOdds: extraTagOdds,
             knowledgeTTLDays: research.knowledgeTTLDays,
             maxKnowledgePerVideo: research.maxKnowledgePerVideo
         )
@@ -285,8 +285,7 @@ case "calib":
             dynamicSuffix: parts.dynamicSuffix,
             allowedTagNames: parts.allowedTagNames,
             maximumTags: maxTags,
-            allowDecline: overrides?.allowDecline ?? settings.allowDecline,
-            confidenceThresholds: overrides?.confidenceThresholds ?? settings.confidenceThresholds
+            extraTagMinimumOdds: (overrides?.strictness ?? settings.strictness).extraTagMinimumOdds
         ))
         if result.tags.isEmpty { declined += 1 }
         for tag in result.tags {
@@ -384,8 +383,7 @@ case "latency":
         _ = try await engine.classify(LLMClassificationRequest(
             staticPrefix: parts.staticPrefix, dynamicSuffix: parts.dynamicSuffix,
             allowedTagNames: parts.allowedTagNames, maximumTags: maxTags,
-            allowDecline: overrides?.allowDecline ?? settings.allowDecline,
-            confidenceThresholds: overrides?.confidenceThresholds ?? settings.confidenceThresholds
+            extraTagMinimumOdds: (overrides?.strictness ?? settings.strictness).extraTagMinimumOdds
         ))
         if index > 0 {   // skip the cold first video (static-prefix prefill)
             decode1.append(Date().timeIntervalSince(t0) * 1_000)
@@ -428,8 +426,7 @@ case "batch":
         return LLMClassificationRequest(
             staticPrefix: parts.staticPrefix, dynamicSuffix: parts.dynamicSuffix,
             allowedTagNames: parts.allowedTagNames, maximumTags: maxTags,
-            allowDecline: overrides?.allowDecline ?? settings.allowDecline,
-            confidenceThresholds: overrides?.confidenceThresholds ?? settings.confidenceThresholds)
+            extraTagMinimumOdds: (overrides?.strictness ?? settings.strictness).extraTagMinimumOdds)
     }
     if args.contains("--dump") {
         let sorted = requests.sorted { $0.dynamicSuffix.count > $1.dynamicSuffix.count }

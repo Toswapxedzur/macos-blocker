@@ -4,7 +4,7 @@ import VaultClassifierResearch
 import VaultClassifierBridge
 import VaultClassifierLLM
 
-// Global and per-type settings: package update mode, local-LLM settings (+ engine reinstall), research settings and their enable-validation, per-type local-model/research overrides and the web-input parsers that feed them.
+// Global and per-type settings: package update mode, the two dials + house rules (+ engine reinstall), research on/off + provider and its enable-validation, per-type dial/house-rule/research overrides and the web-input parsers that feed them.
 // Split out of VaultClassifierApp.swift (CLASSIFIER-INDEPENDENCE §7, Phase 5):
 // same type, same behaviour — pinned by ViewModelCharacterizationTests.
 @MainActor
@@ -32,8 +32,8 @@ extension VaultClassifierViewModel {
         }
     }
 
-    /// Persists the local-model settings and rebuilds the engine so every knob
-    /// (model file, context, sampling, decline, thresholds) applies immediately.
+    /// Persists the dials and house rules and rebuilds the engine so a new
+    /// Speed↔Quality tier loads immediately.
     func saveLocalLLMSettings(_ updated: LocalLLMSettings) {
         guard let coordinator else { return }
         do {
@@ -44,7 +44,7 @@ extension VaultClassifierViewModel {
                 research: localState?.settings.research ?? ResearchSettings()
             )
             try coordinator.updateSettings(settings)
-            coordinator.setClassificationOptions(maximumTags: updated.maximumTags, houseRules: updated.houseRules)
+            coordinator.setClassificationOptions(houseRules: updated.houseRules)
             installLocalLLMEngine(coordinator: coordinator)
             refreshLocalState()
             issue = nil
@@ -90,11 +90,9 @@ extension VaultClassifierViewModel {
         }
     }
 
-    func saveClassifierTypeResearch(
-        typeID: String,
-        overrideEnabled: Bool,
-        settings: ResearchSettings?
-    ) {
+    /// Sets a type's own research switch (nil = follow the global switch). The
+    /// global consent stays the master gate.
+    func saveClassifierTypeResearch(typeID: String, researchEnabled: Bool?) {
         do {
             guard var catalog = localState?.workspaceCatalog,
                   let index = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }),
@@ -102,11 +100,7 @@ extension VaultClassifierViewModel {
                     .flatMap(CollectionPlatformRegistry.definition(for:))?.supportsLocalModel == true else {
                 throw WebBridgeInputError.invalidChoice("classifier type research")
             }
-            let overrideSettings = overrideEnabled ? settings : nil
-            if let overrideSettings {
-                try Self.validateResearchSettingsForEnable(overrideSettings, catalog: catalog)
-            }
-            catalog.classifierTypes[index].researchOverrides = overrideSettings
+            catalog.classifierTypes[index].researchEnabled = researchEnabled
             catalog.classifierTypes[index].updatedAtMilliseconds = WorkspaceCatalog.now()
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
@@ -116,16 +110,9 @@ extension VaultClassifierViewModel {
         }
     }
 
-    func saveClassifierTypeLocalModel(
-        typeID: String,
-        overrideEnabled: Bool,
-        modelFileName: String?,
-        houseRules: String?,
-        allowDecline: Bool?,
-        confidenceThresholds: [Double]?,
-        maximumTags: Int?,
-        minimumTags: Int?
-    ) {
+    /// Sets a type's own dial positions and house rules (nil / empty = follow
+    /// the global settings).
+    func saveClassifierTypeLocalModel(typeID: String, overrides: LocalModelOverrides?) {
         do {
             guard var catalog = localState?.workspaceCatalog,
                   let index = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }),
@@ -133,15 +120,7 @@ extension VaultClassifierViewModel {
                     .flatMap(CollectionPlatformRegistry.definition(for:))?.supportsLocalModel == true else {
                 throw WebBridgeInputError.invalidChoice("classifier type local model")
             }
-            let overrides = overrideEnabled ? LocalModelOverrides(
-                houseRules: houseRules,
-                allowDecline: allowDecline,
-                confidenceThresholds: confidenceThresholds,
-                maximumTags: maximumTags,
-                minimumTags: minimumTags
-            ) : nil
             catalog.classifierTypes[index].localModelOverrides = overrides?.isEmpty == false ? overrides : nil
-            catalog.classifierTypes[index].modelFileName = modelFileName
             catalog.classifierTypes[index].updatedAtMilliseconds = WorkspaceCatalog.now()
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
@@ -151,123 +130,63 @@ extension VaultClassifierViewModel {
         }
     }
 
+    /// The per-type local-model form: `speedQuality` ("" or a tier), `strictness`
+    /// ("" or 1–5) and `houseRules` (blank = none). Anything blank follows the
+    /// global setting; an unknown position is refused.
     static func parseClassifierTypeLocalModelWebInput(
         _ data: [String: Any]
     ) throws -> ClassifierTypeLocalModelWebInput {
         guard let typeID = data["typeID"] as? String, !typeID.isEmpty, typeID.count <= 256 else {
             throw WebBridgeInputError.missingValue("typeID")
         }
-        guard let overrideEnabled = data["overrideEnabled"] as? Bool else {
-            throw WebBridgeInputError.missingValue("overrideEnabled")
-        }
-        let modelFileName: String?
-        if let rawModelFileName = data["modelFileName"] as? String {
-            guard rawModelFileName.count <= 255 else {
-                throw WebBridgeInputError.exceedsLimit("modelFileName", 255)
-            }
-            let cleaned = rawModelFileName.trimmingCharacters(in: .whitespacesAndNewlines)
-            modelFileName = cleaned.isEmpty ? nil : cleaned
+        let speedQuality: SpeedQualityDial?
+        if let raw = (data["speedQuality"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+            guard let resolved = SpeedQualityDial.resolve(raw) else { throw WebBridgeInputError.invalidChoice("speedQuality") }
+            speedQuality = resolved
         } else {
-            modelFileName = nil
+            speedQuality = nil
         }
-        guard overrideEnabled else {
-            return .init(
-                typeID: typeID,
-                overrideEnabled: false,
-                modelFileName: modelFileName,
-                overrides: nil
-            )
+        let strictness: StrictnessDial?
+        if let raw = optionalWebInteger(data["strictness"]) {
+            guard let resolved = StrictnessDial.resolve(raw) else { throw WebBridgeInputError.invalidChoice("strictness") }
+            strictness = resolved
+        } else if let raw = (data["strictness"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+            throw WebBridgeInputError.invalidChoice("strictness")
+        } else {
+            strictness = nil
         }
-
         let houseRules: String?
         if let raw = data["houseRules"] as? String {
-            guard raw.count <= 4_000 else { throw WebBridgeInputError.exceedsLimit("houseRules", 4_000) }
-            houseRules = raw
+            guard raw.count <= LocalLLMSettings.maximumHouseRulesLength else {
+                throw WebBridgeInputError.exceedsLimit("houseRules", LocalLLMSettings.maximumHouseRulesLength)
+            }
+            houseRules = raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : raw
         } else {
             houseRules = nil
         }
-        let rawThresholds = ["confidenceBand2", "confidenceBand3", "confidenceBand4", "confidenceBand5"]
-            .compactMap { key -> Double? in
-                guard let raw = data[key] as? String,
-                      let value = Double(raw.trimmingCharacters(in: .whitespacesAndNewlines)),
-                      value.isFinite else { return nil }
-                return value
-            }
-        // Empty/blank/unparseable → nil = inherit the global cap; the struct
-        // clamps a set value to 1–16.
-        let maximumTags: Int?
-        if let raw = data["maximumTags"] as? String {
-            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            maximumTags = trimmed.isEmpty ? nil : Int(trimmed)
-        } else {
-            maximumTags = data["maximumTags"] as? Int
-        }
-        let overrides = LocalModelOverrides(
-            houseRules: houseRules,
-            allowDecline: data["allowDecline"] as? Bool,
-            confidenceThresholds: rawThresholds.isEmpty ? nil : rawThresholds,
-            maximumTags: maximumTags,
-            minimumTags: Self.optionalWebInteger(data["minimumTags"])
-        )
-        return .init(
-            typeID: typeID,
-            overrideEnabled: true,
-            modelFileName: modelFileName,
-            overrides: overrides.isEmpty ? nil : overrides
-        )
+        let overrides = LocalModelOverrides(houseRules: houseRules, speedQuality: speedQuality, strictness: strictness)
+        return .init(typeID: typeID, overrides: overrides.isEmpty ? nil : overrides)
     }
 
+    /// The per-type research form: `researchMode` is "inherit", "on" or "off".
     static func parseClassifierTypeResearchWebInput(
         _ data: [String: Any]
     ) throws -> ClassifierTypeResearchWebInput {
         guard let typeID = data["typeID"] as? String, !typeID.isEmpty, typeID.count <= 256 else {
             throw WebBridgeInputError.missingValue("typeID")
         }
-        guard let overrideEnabled = data["overrideEnabled"] as? Bool else {
-            throw WebBridgeInputError.missingValue("overrideEnabled")
+        switch (data["researchMode"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "inherit", nil, "": return .init(typeID: typeID, researchEnabled: nil)
+        case "on": return .init(typeID: typeID, researchEnabled: true)
+        case "off": return .init(typeID: typeID, researchEnabled: false)
+        default: throw WebBridgeInputError.invalidChoice("researchMode")
         }
-        guard overrideEnabled else {
-            return .init(typeID: typeID, overrideEnabled: false, settings: nil)
-        }
-
-        let defaults = ResearchSettings()
-        func optionalString(_ key: String) -> String? { data[key] as? String }
-        func optionalInteger(_ key: String) -> Int? {
-            guard let raw = data[key] as? String else { return nil }
-            return Int(raw.replacingOccurrences(of: ",", with: "")
-                .trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-        func optionalDouble(_ key: String) -> Double? {
-            guard let raw = data[key] as? String else { return nil }
-            return Double(raw.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-        return .init(
-            typeID: typeID,
-            overrideEnabled: true,
-            settings: ResearchSettings(
-                enabled: data["enabled"] as? Bool ?? defaults.enabled,
-                llmProviderProfileID: optionalString("llmProviderProfileID"),
-                llmModelIdentifier: optionalString("llmModelIdentifier"),
-                requestsPerMinute: optionalInteger("requestsPerMinute") ?? defaults.requestsPerMinute,
-                dailyTokenLimit: optionalInteger("dailyTokenLimit") ?? defaults.dailyTokenLimit,
-                cooldownHours: optionalInteger("cooldownHours") ?? defaults.cooldownHours,
-                authorThreshold: AuthorResearchThreshold(
-                    score: optionalDouble("creatorScoreThreshold") ?? defaults.authorThreshold.score,
-                    halfLifeDays: optionalDouble("creatorScoreHalfLifeDays") ?? defaults.authorThreshold.halfLifeDays
-                ),
-                knowledgeTTLDays: optionalInteger("knowledgeTTLDays") ?? defaults.knowledgeTTLDays,
-                maxKnowledgePerVideo: optionalInteger("maxKnowledgePerVideo") ?? defaults.maxKnowledgePerVideo
-            )
-        )
     }
 
     func loadResourceSettings(from settings: ClassifierSettings) {
         packageUpdateMode = settings.packageUpdateMode
         llmSettings = settings.localLLM
-        coordinator?.setClassificationOptions(
-            maximumTags: settings.localLLM.maximumTags,
-            houseRules: settings.localLLM.houseRules
-        )
+        coordinator?.setClassificationOptions(houseRules: settings.localLLM.houseRules)
     }
 
     func positiveInteger(_ raw: String, label: String) throws -> Int {

@@ -8,7 +8,7 @@ extension LocalClassifierCoordinator {
         lock.lock()
         defer { lock.unlock() }
         let catalog = state.workspaceCatalog
-        let localLLM = state.settings.localLLM
+        let servingModelVersion = onDeviceLLM.modelVersion
         let types = Self.orderedTypes(for: platformID, in: catalog)
         guard !types.isEmpty else { return nil }
         // Only serve a cached projection when every stored classification for this
@@ -22,7 +22,7 @@ extension LocalClassifierCoordinator {
                 classifierTypeID: type.id, platformID: platformID, entryID: entryID
             ) else { continue }
             sawClassification = true
-            guard Self.isClassificationCurrent(classification, forType: type, localLLMSettings: localLLM) else {
+            guard Self.isClassificationCurrent(classification, forType: type, servingModelVersion: servingModelVersion) else {
                 return nil
             }
         }
@@ -32,24 +32,23 @@ extension LocalClassifierCoordinator {
 
     /// Whether a stored classification may be served from cache without
     /// reclassifying. It is current when a human confirmed it, or when it was
-    /// produced by the model the type is configured to use now. The engine
-    /// stamps `modelVersion` as `"llamacpp/<file>"` and the pipeline appends
-    /// `"+<promptVersion>"`, so a prefix match against the configured file is
-    /// exact. When no real model is configured we cannot reclassify anyway, so
-    /// whatever exists is served rather than churned.
-    /// (Edge case: if a type's configured model file was deleted, the engine
-    /// falls back to the default, so its stored token won't match the requested
-    /// file and the entry will reclassify each time it is requested — a bounded,
-    /// self-correcting cost of an already-degraded configuration.)
+    /// produced by the model that would classify it now: the type's own tier when
+    /// it holds one (`"llamacpp/<file>"`), else whatever engine is serving —
+    /// `servingModelVersion`, the loaded engine's `"llamacpp/<file>"` or the
+    /// stub's `"stub/v1"` while the dial's model is not downloaded. The pipeline
+    /// appends `"+<promptVersion>"`, so a prefix match is exact. Serving stub rows
+    /// while the stub is what runs avoids churning rows nothing better can replace.
+    /// (Edge case: if a type's own model file was deleted, the engine falls back
+    /// to the default, so its stored token won't match and the entry reclassifies
+    /// each time it is requested — a bounded, self-correcting cost of an
+    /// already-degraded configuration.)
     static func isClassificationCurrent(
         _ classification: VideoClassification,
         forType type: ClassifierTypeAsset,
-        localLLMSettings: LocalLLMSettings
+        servingModelVersion: String
     ) -> Bool {
         if classification.source == .humanCorrected { return true }
-        guard let expectedFile = type.modelFileName ?? localLLMSettings.modelFileName,
-              !expectedFile.isEmpty else { return true }
-        let expected = "llamacpp/" + expectedFile
+        let expected = type.modelFileName.map { "llamacpp/" + $0 } ?? servingModelVersion
         return classification.modelVersion == expected
             || classification.modelVersion.hasPrefix(expected + "+")
     }
@@ -82,7 +81,6 @@ extension LocalClassifierCoordinator {
                 onDeviceLLM,
                 onDeviceLLMEngineResolver,
                 state.settings.localLLM,
-                classificationMaximumTags,
                 classificationHouseRules,
                 state.settings.research,
                 groundedResearchQueue
@@ -90,7 +88,7 @@ extension LocalClassifierCoordinator {
         }
         let (
             catalog, defaultLLM, engineResolver, localLLMSettings,
-            maximumTags, houseRules, globalResearchSettings, researchQueue
+            houseRules, globalResearchSettings, researchQueue
         ) = snapshot
 
         guard let binding = catalog.bindings.first(where: { $0.id == platformID }), binding.collectionEnabled else {
@@ -134,19 +132,15 @@ extension LocalClassifierCoordinator {
             }
             guard !pending.isEmpty else { continue }
 
-            let knowledgeSettings = type.researchOverrides ?? globalResearchSettings
             let llm = await Self.resolvedLLM(
                 for: type,
                 defaultLLM: defaultLLM,
                 resolver: engineResolver,
                 configuration: localLLMSettings
             )
-            // The max source here is the resolved global cap (classificationMaximumTags),
-            // while the min global comes from the local-LLM settings — each per-type
-            // overridable — so we resolve them together through the one `TagBounds`.
-            let bounds = TagBounds(
-                minimum: overrides?.minimumTags ?? localLLMSettings.minimumTags,
-                maximum: overrides?.maximumTags ?? maximumTags)
+            // The type's own Strict↔Broad position wins over the global dial.
+            let strictness = overrides?.strictness ?? localLLMSettings.strictness
+            let bounds = strictness.tagBounds
             let pipeline = VideoClassificationPipeline(
                 llm: llm, maximumTags: bounds.maximum, minimumTags: bounds.minimum)
             let typeHouseRules = Self.effectiveHouseRules(global: houseRules, perType: overrides?.houseRules)
@@ -157,10 +151,9 @@ extension LocalClassifierCoordinator {
                 tree: tree,
                 catalog: catalog,
                 houseRules: typeHouseRules,
-                allowDecline: overrides?.allowDecline,
-                confidenceThresholds: overrides?.confidenceThresholds,
-                knowledgeTTLDays: knowledgeSettings.knowledgeTTLDays,
-                maxKnowledgePerVideo: knowledgeSettings.maxKnowledgePerVideo
+                extraTagMinimumOdds: strictness.extraTagMinimumOdds,
+                knowledgeTTLDays: globalResearchSettings.knowledgeTTLDays,
+                maxKnowledgePerVideo: globalResearchSettings.maxKnowledgePerVideo
             )
             classifications.append(contentsOf: results)
             guard let effectiveResearch = Self.effectiveResearchSettings(
@@ -251,16 +244,15 @@ extension LocalClassifierCoordinator {
         }
     }
 
-    /// Resolves the type-level defaults without weakening the app-wide consent
-    /// switch. A type may opt itself out, but it can never opt itself in while
-    /// the global master gate is off.
+    /// The research settings a type runs with, or nil when it must not research.
+    /// A type may switch itself off, but it can never switch itself on while the
+    /// app-wide consent (the master gate) is off.
     public static func effectiveResearchSettings(
         global: ResearchSettings,
         for classifierType: ClassifierTypeAsset
     ) -> ResearchSettings? {
-        guard global.enabled else { return nil }
-        let effective = classifierType.researchOverrides ?? global
-        return effective.enabled ? effective : nil
+        guard global.enabled, classifierType.researchEnabled ?? true else { return nil }
+        return global
     }
 
     static func effectiveHouseRules(global: String?, perType: String?) -> String? {

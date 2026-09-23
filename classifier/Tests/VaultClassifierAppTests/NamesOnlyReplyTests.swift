@@ -64,14 +64,17 @@ final class NamesOnlyReplyTests: XCTestCase {
             thresholds: [0.20, 0.40, 0.60, 0.85], format: .names).declined)
     }
 
-    /// The precision knob: default 0.90, clamped, and old states decode to the default.
-    func testExtraTagSurenessSetting() throws {
+    /// The precision knob is the Strict↔Broad dial: 0.90 by default, 0.97 at
+    /// Strict, 0.85 at Broad; a pre-dial stored value decodes to the nearest position.
+    func testExtraTagSurenessFollowsTheStrictnessDial() throws {
         XCTAssertEqual(LocalLLMSettings().extraTagMinimumOdds, 0.90)
-        XCTAssertEqual(LocalLLMSettings(extraTagMinimumOdds: 7).extraTagMinimumOdds, 0.999)
-        XCTAssertEqual(LocalLLMSettings(extraTagMinimumOdds: -1).extraTagMinimumOdds, 0)
+        XCTAssertEqual(LocalLLMSettings(strictness: .strict).extraTagMinimumOdds, 0.97)
+        XCTAssertEqual(LocalLLMSettings(strictness: .broad).extraTagMinimumOdds, 0.85)
         let old = try JSONDecoder().decode(LocalLLMSettings.self, from: Data(#"{"maximumTags":3}"#.utf8))
         XCTAssertEqual(old.extraTagMinimumOdds, 0.90)
-        XCTAssertEqual(try JSONDecoder().decode(LocalLLMSettings.self, from: JSONEncoder().encode(LocalLLMSettings(extraTagMinimumOdds: 0.8))).extraTagMinimumOdds, 0.8)
+        let strict = try JSONDecoder().decode(LocalLLMSettings.self, from: Data(#"{"maximumTags":3,"extraTagMinimumOdds":0.97}"#.utf8))
+        XCTAssertEqual(strict.strictness, .strict)
+        XCTAssertEqual(try JSONDecoder().decode(LocalLLMSettings.self, from: JSONEncoder().encode(LocalLLMSettings(strictness: .broad))).extraTagMinimumOdds, 0.85)
     }
 
     /// No digit is asked for, so the prompt must not describe one.

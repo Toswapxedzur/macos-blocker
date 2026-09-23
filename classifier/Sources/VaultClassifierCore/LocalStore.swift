@@ -171,7 +171,6 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
     var state: LocalClassifierState
     var onDeviceLLM: any OnDeviceLLM = StubOnDeviceLLM()
     var onDeviceLLMEngineResolver: (any OnDeviceLLMEngineResolving)?
-    var classificationMaximumTags: Int
     var classificationHouseRules: String?
     var groundedResearchQueue: GroundedResearchQueue?
     var onVideoReclassifiedCallback: (@Sendable (String, String, VideoTagsProjection) -> Void)?
@@ -252,7 +251,6 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         self.stateFile = stateFile
         self.activeVerifiedPackage = verifiedPackage
         self.state = loaded
-        self.classificationMaximumTags = loaded.settings.localLLM.maximumTags
         let rules = loaded.settings.localLLM.houseRules.trimmingCharacters(in: .whitespacesAndNewlines)
         self.classificationHouseRules = rules.isEmpty ? nil : rules
     }
@@ -269,10 +267,10 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         lock.withLock { onDeviceLLMEngineResolver = resolver }
     }
 
-    public func setClassificationOptions(maximumTags: Int, houseRules: String?) {
+    /// The global house rules (tag counts come from the Strict↔Broad dial).
+    public func setClassificationOptions(houseRules: String?) {
         lock.lock()
         defer { lock.unlock() }
-        classificationMaximumTags = min(16, max(1, maximumTags))
         let trimmed = houseRules?.trimmingCharacters(in: .whitespacesAndNewlines)
         classificationHouseRules = (trimmed?.isEmpty ?? true) ? nil : trimmed
     }

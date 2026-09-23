@@ -102,29 +102,32 @@ final class WorkspaceAssetsTests: XCTestCase {
         let decodedLegacy = try JSONDecoder().decode(ClassifierTypeAsset.self, from: legacy)
         XCTAssertNil(decodedLegacy.localModelOverrides)
         XCTAssertNil(decodedLegacy.modelFileName)
-        XCTAssertNil(decodedLegacy.researchOverrides)
+        XCTAssertNil(decodedLegacy.researchEnabled)
 
         let value = ClassifierTypeAsset(
             id: "type", name: "Type", treeID: "tree", treeRevision: 1,
             datasetID: "dataset", datasetRevision: 1, applicablePlatformID: "youtube",
-            localModelOverrides: .init(
-                houseRules: "Prefer documentaries.",
-                allowDecline: false,
-                confidenceThresholds: [0.1, 0.3, 0.6, 0.9]
-            ),
-            modelFileName: "type-model.gguf",
-            researchOverrides: .init(
-                enabled: true,
-                llmProviderProfileID: "llm",
-                llmModelIdentifier: "model",
-                requestsPerMinute: 12,
-                dailyTokenLimit: 42_000
-            )
+            localModelOverrides: .init(houseRules: "Prefer documentaries.", speedQuality: .best, strictness: .strict),
+            researchEnabled: false
         )
         let roundTrip = try JSONDecoder().decode(ClassifierTypeAsset.self, from: JSONEncoder().encode(value))
         XCTAssertEqual(roundTrip.localModelOverrides, value.localModelOverrides)
-        XCTAssertEqual(roundTrip.modelFileName, "type-model.gguf")
-        XCTAssertEqual(roundTrip.researchOverrides, value.researchOverrides)
+        XCTAssertEqual(roundTrip.modelFileName, "Qwen2.5-14B-Instruct-Q4_K_M.gguf")
+        XCTAssertEqual(roundTrip.researchEnabled, false)
+    }
+
+    /// A type written before the dials (per-type model file, full research profile,
+    /// preset provenance) keeps its tier and research switch; the rest is dropped.
+    func testPreDialClassifierTypeDecodesToDialPositions() throws {
+        let old = #"{"id":"type","name":"Type","treeID":"tree","treeRevision":1,"datasetID":"dataset","datasetRevision":1,"applicablePlatformID":"youtube","order":0,"modelFileName":"Qwen2.5-3B-Instruct-Q4_K_M.gguf","localModelOverrides":{"allowDecline":false,"maximumTags":1},"researchOverrides":{"enabled":false,"requestsPerMinute":6,"dailyTokenLimit":5000,"cooldownHours":24},"presetID":"gentle"}"#
+        let decoded = try JSONDecoder().decode(ClassifierTypeAsset.self, from: Data(old.utf8))
+        XCTAssertEqual(decoded.localModelOverrides, LocalModelOverrides(speedQuality: .fast, strictness: .strictest))
+        XCTAssertEqual(decoded.modelFileName, "Qwen2.5-3B-Instruct-Q4_K_M.gguf")
+        XCTAssertEqual(decoded.researchEnabled, false)
+        let reencoded = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
+        for retired in ["presetID", "researchOverrides", "\"modelFileName\"", "allowDecline", "maximumTags"] {
+            XCTAssertFalse(reencoded.contains(retired), "retired key written back: \(retired)")
+        }
     }
 
     func testCatalogAndBindingDiscardRetiredTrainableModelFields() throws {

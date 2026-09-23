@@ -58,15 +58,14 @@ final class ViewModelCharacterizationTests: XCTestCase {
         let llm = try XCTUnwrap(settings["localLLM"] as? [String: Any])
         XCTAssertEqual(
             Set(llm.keys),
-            ["modelFileName", "engineEnabled", "contextTokens", "batchTokens", "gpuOffload", "maximumOutputTokens",
-             "temperature", "allowDecline", "maximumTags", "minimumTags", "confidenceThresholds",
-             "extraTagMinimumOdds",
-             "houseRules", "maxResidentModels", "engineStatus", "availableModels", "modelLibrary"]
+            ["speedQuality", "strictness", "houseRules", "modelFileName", "systemRAMGB",
+             "engineStatus", "availableModels", "modelLibrary"]
         )
-        // Defaults: min-0 (may decline), cap 1.
-        XCTAssertEqual(llm["minimumTags"] as? Int, 0)
-        XCTAssertEqual(llm["maximumTags"] as? Int, 1)
-        XCTAssertEqual(llm["engineStatus"] as? String, "disabled")
+        // Defaults: the Balanced tier, the Balanced position.
+        XCTAssertEqual(llm["speedQuality"] as? String, "balanced")
+        XCTAssertEqual(llm["strictness"] as? Int, 3)
+        XCTAssertEqual(llm["modelFileName"] as? String, "Qwen2.5-7B-Instruct-Q4_K_M.gguf")
+        XCTAssertEqual((llm["modelLibrary"] as? [[String: Any]])?.count, 3)
     }
 
     // MARK: - Action routing
@@ -98,21 +97,21 @@ final class ViewModelCharacterizationTests: XCTestCase {
     func testSaveLocalLLMSettingsRoundTripsThroughTheSnapshot() throws {
         let vm = try makeViewModel()
         let ok = vm.performWebAction("saveLocalLLMSettings", data: [
-            "modelFileName": "", "engineEnabled": false,
-            "contextTokens": "4096", "batchTokens": "512", "gpuOffload": true,
-            "maximumOutputTokens": "16", "temperature": "0", "allowDecline": true,
-            "maximumTags": "3", "minimumTags": "1",
-            "confidenceBand2": "0.2", "confidenceBand3": "0.4", "confidenceBand4": "0.6", "confidenceBand5": "0.85",
-            "houseRules": "prefer specific tags", "maxResidentModels": "2",
+            "speedQuality": "fast", "strictness": "5", "houseRules": "prefer specific tags",
         ])
         XCTAssertTrue(ok)
         XCTAssertNil(vm.issue)
         let llm = try XCTUnwrap((vm.webSnapshot()["settings"] as? [String: Any])?["localLLM"] as? [String: Any])
-        XCTAssertEqual(llm["maximumTags"] as? Int, 3)
-        XCTAssertEqual(llm["minimumTags"] as? Int, 1)
+        XCTAssertEqual(llm["speedQuality"] as? String, "fast")
+        XCTAssertEqual(llm["strictness"] as? Int, 5)
         XCTAssertEqual(llm["houseRules"] as? String, "prefer specific tags")
         // And it persisted through the coordinator, not just the published mirror.
-        XCTAssertEqual(vm.localState?.settings.localLLM.minimumTags, 1)
+        XCTAssertEqual(vm.localState?.settings.localLLM.strictness, .broadest)
+        XCTAssertEqual(vm.localState?.settings.localLLM.speedQuality, .fast)
+        // Unknown positions are refused and surfaced.
+        XCTAssertTrue(vm.performWebAction("saveLocalLLMSettings", data: ["speedQuality": "turbo", "strictness": "3", "houseRules": ""]))
+        XCTAssertNotNil(vm.issue)
+        XCTAssertEqual(vm.localState?.settings.localLLM.speedQuality, .fast, "a refused save changes nothing")
     }
 
     /// The complete web-action vocabulary. Each is probed with EMPTY data: a

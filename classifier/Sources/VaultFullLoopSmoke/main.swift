@@ -80,18 +80,15 @@ _ = catalog.datasets[datasetIndex].upsertCollectedEntry(.init(
 do { try coordinator.updateWorkspaceCatalog(catalog) }
 catch { fail("error: seeding catalog failed: \(error)") }
 
-// Research: provider-grounding via the saved Gemini provider. A creator score
-// threshold of 0.5 makes the first untaggable video fire creator research — so
-// the loop is deterministic: the creator is always researched, keyed, and then
-// consulted on re-classification. (Production defaults are score 3 / half-life 14 days.)
+// Research: provider-grounding via the saved Gemini provider. The creator
+// trigger is the production constant (score 3, half-life 14 days): an untaggable
+// video adds 1, so stage 2 classifies THREE videos of the obscure creator — the
+// third crosses the threshold and fires creator research deterministically.
 do {
     try coordinator.updateSettings(ClassifierSettings(research: ResearchSettings(
         enabled: true,
         llmProviderProfileID: geminiProfile.id,
-        llmModelIdentifier: APIKeyProviderType.gemini.defaultModelIdentifier,
-        requestsPerMinute: 30,
-        dailyTokenLimit: 200_000,
-        authorThreshold: .init(score: 0.5, halfLifeDays: 14)
+        llmModelIdentifier: APIKeyProviderType.gemini.defaultModelIdentifier
     )))
 } catch { fail("error: research settings failed: \(error)") }
 
@@ -122,8 +119,9 @@ func queueConfiguration(for classifierTypeID: String) -> GroundedResearchQueueCo
             llmCredential: credential,
             llmModelIdentifier: model
         ),
-        requestsPerMinute: r.requestsPerMinute,
-        dailyTokenLimit: r.dailyTokenLimit,
+        // The harness runs faster than the production budget (6/min, 10k tokens/day).
+        requestsPerMinute: 30,
+        dailyTokenLimit: 200_000,
         failureCooldownMilliseconds: Int64(r.cooldownHours) * 60 * 60 * 1_000
     )
 }
@@ -141,15 +139,20 @@ coordinator.setOnVideoReclassified { platformID, entryID, projection in
 
 // MARK: - Drive the loop
 
-stage(2, "classify the video (content-only primary decode)")
+stage(2, "classify the creator's videos (content-only primary decode)")
 line("creator: \(creatorID)")
 line("title:   \(videoTitle)")
-let projection: VideoTagsProjection
-do {
-    projection = try await coordinator.classifyVideo(
-        platformID: "youtube", entryID: "vid1", creatorID: creatorID, title: videoTitle
-    )
-} catch { fail("error: classifyVideo failed: \(error)") }
+var projection = VideoTagsProjection(tags: [], predicted: false)
+// Three distinct entries of the same creator: each untaggable one adds 1 to the
+// creator's research score, and the constant threshold is 3.
+for entryID in ["vid1", "vid2", "vid3"] {
+    do {
+        let result = try await coordinator.classifyVideo(
+            platformID: "youtube", entryID: entryID, creatorID: creatorID, title: videoTitle
+        )
+        if entryID == "vid1" { projection = result }
+    } catch { fail("error: classifyVideo failed: \(error)") }
+}
 
 let firstRow = coordinator.snapshot().workspaceCatalog
     .videoClassification(classifierTypeID: "type", platformID: "youtube", entryID: "vid1")

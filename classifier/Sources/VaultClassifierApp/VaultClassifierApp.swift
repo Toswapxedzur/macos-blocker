@@ -7,16 +7,16 @@ import VaultClassifierLLM
 
 @MainActor
 final class VaultClassifierViewModel: ObservableObject {
+    /// A type's own dial positions and house rules from the web form (nil =
+    /// everything follows the global settings).
     struct ClassifierTypeLocalModelWebInput: Equatable {
         var typeID: String
-        var overrideEnabled: Bool
-        var modelFileName: String?
         var overrides: LocalModelOverrides?
     }
+    /// A type's research switch from the web form (nil = follow the global switch).
     struct ClassifierTypeResearchWebInput: Equatable {
         var typeID: String
-        var overrideEnabled: Bool
-        var settings: ResearchSettings?
+        var researchEnabled: Bool?
     }
     enum Workspace: String, CaseIterable, Identifiable, Hashable {
         case tagTree
@@ -141,17 +141,11 @@ final class VaultClassifierViewModel: ObservableObject {
     /// Loads the in-process llama.cpp engine (final Phase-0 contract) with the
     /// user's settings and installs it as the coordinator's on-device LLM.
     /// Loading is a ~1–2 s mmap, done off the main actor; until it completes
-    /// (or if the engine is disabled / no model file is present) classification
+    /// (or if the chosen tier's model file is not downloaded) classification
     /// stays on the stub.
     func installLocalLLMEngine(coordinator: LocalClassifierCoordinator) {
         let configuration = llmSettings
         coordinator.setOnDeviceLLMEngineResolver(nil)
-        guard configuration.engineEnabled else {
-            coordinator.setOnDeviceLLM(StubOnDeviceLLM())
-            llmEngineStatus = "disabled"
-            VaultDevLog.shared.log("llm", "engine-disabled", [:])
-            return
-        }
         guard let modelPath = VaultLocalLLMEngine.defaultModelPath(preferredFileName: configuration.modelFileName) else {
             coordinator.setOnDeviceLLM(StubOnDeviceLLM())
             llmEngineStatus = "no-model"

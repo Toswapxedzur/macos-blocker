@@ -192,172 +192,161 @@ public struct TagBounds: Equatable, Sendable {
     }
 }
 
-/// User-tunable configuration for the in-process on-device LLM (the final
-/// Phase-0 contract engine). Every knob is clamped into a safe range at init,
-/// so hand-edited or stale persisted values can never produce an unusable
-/// engine. Basic fields sit in the settings panel; the rest live behind the
-/// advanced disclosure.
+/// The local model's settings: the two dials plus house rules. Everything else
+/// the engine needs is a constant here (owner decision 2026-09-23: replace all
+/// parameters with Speed↔Quality and Strict↔Broad). State written before that
+/// day decodes to the nearest dial positions.
 public struct LocalLLMSettings: Codable, Equatable, Sendable {
-    public static let defaultMaxResidentModels = 2
-    public static let maximumResidentModels = 4
-
-    /// Selected model file inside `<support>/models/` (nil = automatic: the
-    /// first *.gguf alphabetically, or `ADAMANCIA_VAULT_LLM_MODEL`).
-    public var modelFileName: String?
-    /// Off = classification falls back to the deterministic stub (debugging).
-    public var engineEnabled: Bool
-    /// llama context window; bounds the static prefix + suffix + output.
-    public var contextTokens: Int
-    /// Logical batch size for prompt prefill.
-    public var batchTokens: Int
-    /// Whether to offload all layers to the GPU (off = CPU-only inference).
-    public var gpuOffload: Bool
-    /// Hard cap on generated tokens per decision (the contract needs ~2).
-    public var maximumOutputTokens: Int
-    /// 0 = greedy (the measured contract); >0 samples with this temperature.
-    public var temperature: Double
-    /// Whether the grammar includes the reserved "none" decline literal.
-    public var allowDecline: Bool
-    /// Most tags a single video may keep after mapping (pipeline cap). Defaults
-    /// to 1 (single most-confident tag — highest precision); the user raises it
-    /// to opt into multi-tag recall. Secondaries above 1 are confidence-gated in
-    /// the pipeline. Clamped 1–16.
-    public var maximumTags: Int
-    /// Fewest tags the model MUST emit (0 = it may decline with "none"). ≥1 drops
-    /// the decline option and forces at least this many best guesses — recall over
-    /// precision, correctable at the policy floor. Clamped to 0…maximumTags.
-    public var minimumTags: Int
-    /// Ascending probability thresholds mapping the chosen token's renormalized
-    /// softmax onto confidence 2, 3, 4, 5 (below the first threshold = 1).
-    public var confidenceThresholds: [Double]
-    /// How sure the model must be before a SECOND or THIRD tag is kept (0…0.999):
-    /// the odds that it chose to continue × the odds of that tag name. The reply
-    /// is bare tag names with no confidence digit, so this is what keeps weak extra
-    /// tags out — generation stops before one that scores lower (which also saves
-    /// its time). Higher = more precise, lower = finds more tags. The first tag is
-    /// never subject to it. Measured 2026-09-21 on 450 videos: 0.90 matches the old
-    /// digit-filtered quality (81% of tagged videos carry no wrong tag).
-    public var extraTagMinimumOdds: Double
-    public static let defaultExtraTagMinimumOdds = 0.90
+    /// Which model tier runs (the GGUF comes from the catalog).
+    public var speedQuality: SpeedQualityDial
+    /// How many tags a video may carry and how sure the model must be to keep an extra one.
+    public var strictness: StrictnessDial
     /// Free-text tagging preferences appended to the cached static prefix.
     public var houseRules: String
-    /// Bound for distinct GGUF engines kept warm by the per-type registry.
-    public var maxResidentModels: Int
+
+    // MARK: Runtime constants (were settings until 2026-09-23)
+
+    /// llama context window; bounds the static prefix + suffix + output.
+    public static let contextTokens = 4_096
+    /// Logical batch size for prompt prefill.
+    public static let batchTokens = 512
+    /// All layers on the GPU.
+    public static let gpuOffload = true
+    /// Hard cap on generated tokens per decision (a three-tag reply needs ~12).
+    public static let maximumOutputTokens = 16
+    /// Greedy decoding (the measured contract).
+    public static let temperature: Double = 0
+    /// The grammar includes the reserved "none" decline literal (position 5 of
+    /// the strictness dial removes it through `minimumTags`).
+    public static let allowDecline = true
+    /// Ascending probability thresholds mapping the chosen token's renormalized
+    /// softmax onto confidence 2, 3, 4, 5 (below the first threshold = 1).
+    public static let confidenceThresholds: [Double] = [0.20, 0.40, 0.60, 0.85]
+    /// Distinct GGUF engines kept warm by the per-type registry (a type on
+    /// another tier than the global one loads a second engine).
+    public static let maxResidentModels = 2
+    public static let maximumResidentModels = 4
+    public static let maximumHouseRulesLength = 4_000
 
     public init(
-        modelFileName: String? = nil,
-        engineEnabled: Bool = true,
-        contextTokens: Int = 4_096,
-        batchTokens: Int = 512,
-        gpuOffload: Bool = true,
-        maximumOutputTokens: Int = 16,
-        temperature: Double = 0,
-        allowDecline: Bool = true,
-        maximumTags: Int = 1,
-        minimumTags: Int = 0,
-        confidenceThresholds: [Double] = [0.20, 0.40, 0.60, 0.85],
-        extraTagMinimumOdds: Double = Self.defaultExtraTagMinimumOdds,
-        houseRules: String = "",
-        maxResidentModels: Int = Self.defaultMaxResidentModels
+        speedQuality: SpeedQualityDial = .default,
+        strictness: StrictnessDial = .default,
+        houseRules: String = ""
     ) {
-        self.modelFileName = modelFileName.flatMap { $0.isEmpty ? nil : String($0.prefix(255)) }
-        self.engineEnabled = engineEnabled
-        self.contextTokens = min(32_768, max(1_024, contextTokens))
-        self.batchTokens = min(2_048, max(64, batchTokens))
-        self.gpuOffload = gpuOffload
-        self.maximumOutputTokens = min(128, max(4, maximumOutputTokens))
-        self.temperature = min(2.0, max(0, temperature))
-        self.allowDecline = allowDecline
-        let bounds = TagBounds(minimum: minimumTags, maximum: maximumTags)
-        self.maximumTags = bounds.maximum
-        self.minimumTags = bounds.minimum
-        let cleaned = confidenceThresholds
-            .map { min(0.999, max(0.001, $0)) }
-            .sorted()
-        self.confidenceThresholds = cleaned.count == 4 ? cleaned : [0.20, 0.40, 0.60, 0.85]
-        self.extraTagMinimumOdds = extraTagMinimumOdds.isFinite ? min(0.999, max(0, extraTagMinimumOdds)) : Self.defaultExtraTagMinimumOdds
-        self.houseRules = String(houseRules.prefix(4_000))
-        self.maxResidentModels = min(Self.maximumResidentModels, max(1, maxResidentModels))
+        self.speedQuality = speedQuality
+        self.strictness = strictness
+        self.houseRules = String(houseRules.prefix(Self.maximumHouseRulesLength))
     }
+
+    // MARK: Derived values the engine and pipeline read
+
+    /// The GGUF file the global tier loads.
+    public var modelFileName: String { speedQuality.ggufFileName }
+    public var maximumTags: Int { strictness.maximumTags }
+    public var minimumTags: Int { strictness.minimumTags }
+    public var extraTagMinimumOdds: Double { strictness.extraTagMinimumOdds }
+    public var contextTokens: Int { Self.contextTokens }
+    public var batchTokens: Int { Self.batchTokens }
+    public var gpuOffload: Bool { Self.gpuOffload }
+    public var maximumOutputTokens: Int { Self.maximumOutputTokens }
+    public var temperature: Double { Self.temperature }
+    public var allowDecline: Bool { Self.allowDecline }
+    public var confidenceThresholds: [Double] { Self.confidenceThresholds }
+    public var maxResidentModels: Int { Self.maxResidentModels }
 
     private enum CodingKeys: String, CodingKey {
-        case modelFileName, engineEnabled, contextTokens, batchTokens, gpuOffload
-        case maximumOutputTokens, temperature, allowDecline, maximumTags, minimumTags
-        case confidenceThresholds, extraTagMinimumOdds, houseRules, maxResidentModels
+        case speedQuality, strictness, houseRules
+        // Pre-dial keys, read only to find the nearest position.
+        case modelFileName, maximumTags, minimumTags, extraTagMinimumOdds
     }
 
-    /// Existing installations gain the residency cap without invalidating
-    /// their hand-authored local-model settings.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let storedSpeed = try container.decodeIfPresent(String.self, forKey: .speedQuality)
+        let legacyModelFileName = try container.decodeIfPresent(String.self, forKey: .modelFileName)
+        let speedQuality = SpeedQualityDial.resolve(storedSpeed)
+            ?? SpeedQualityDial.nearest(modelFileName: legacyModelFileName)
+            ?? .default
+        let storedStrictness = try container.decodeIfPresent(Int.self, forKey: .strictness)
+        let legacyMaximumTags = try container.decodeIfPresent(Int.self, forKey: .maximumTags)
+        let legacyMinimumTags = try container.decodeIfPresent(Int.self, forKey: .minimumTags)
+        let legacyOdds = try container.decodeIfPresent(Double.self, forKey: .extraTagMinimumOdds)
+        let strictness = StrictnessDial.resolve(storedStrictness)
+            ?? StrictnessDial.nearest(maximumTags: legacyMaximumTags, minimumTags: legacyMinimumTags, extraTagMinimumOdds: legacyOdds)
+            ?? .default
         self.init(
-            modelFileName: try container.decodeIfPresent(String.self, forKey: .modelFileName),
-            engineEnabled: try container.decodeIfPresent(Bool.self, forKey: .engineEnabled) ?? true,
-            contextTokens: try container.decodeIfPresent(Int.self, forKey: .contextTokens) ?? 4_096,
-            batchTokens: try container.decodeIfPresent(Int.self, forKey: .batchTokens) ?? 512,
-            gpuOffload: try container.decodeIfPresent(Bool.self, forKey: .gpuOffload) ?? true,
-            maximumOutputTokens: try container.decodeIfPresent(Int.self, forKey: .maximumOutputTokens) ?? 16,
-            temperature: try container.decodeIfPresent(Double.self, forKey: .temperature) ?? 0,
-            allowDecline: try container.decodeIfPresent(Bool.self, forKey: .allowDecline) ?? true,
-            maximumTags: try container.decodeIfPresent(Int.self, forKey: .maximumTags) ?? 1,
-            minimumTags: try container.decodeIfPresent(Int.self, forKey: .minimumTags) ?? 0,
-            confidenceThresholds: try container.decodeIfPresent([Double].self, forKey: .confidenceThresholds) ?? [0.20, 0.40, 0.60, 0.85],
-            extraTagMinimumOdds: try container.decodeIfPresent(Double.self, forKey: .extraTagMinimumOdds) ?? Self.defaultExtraTagMinimumOdds,
-            houseRules: try container.decodeIfPresent(String.self, forKey: .houseRules) ?? "",
-            maxResidentModels: try container.decodeIfPresent(Int.self, forKey: .maxResidentModels) ?? Self.defaultMaxResidentModels
+            speedQuality: speedQuality,
+            strictness: strictness,
+            houseRules: try container.decodeIfPresent(String.self, forKey: .houseRules) ?? ""
         )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(speedQuality, forKey: .speedQuality)
+        try container.encode(strictness, forKey: .strictness)
+        try container.encode(houseRules, forKey: .houseRules)
     }
 }
 
-/// The effective per-request local-model controls a classifier type may
-/// override. The GGUF choice lives separately on `ClassifierTypeAsset`, while
-/// context/runtime knobs remain app-wide for every resident engine.
+/// What a classifier type may set for itself: its own dial positions (nil =
+/// follow the global dial) and its own house rules (which replace the global
+/// rules). Runtime constants are app-wide for every resident engine.
 public struct LocalModelOverrides: Codable, Equatable, Sendable {
     public var houseRules: String?
-    public var allowDecline: Bool?
-    public var confidenceThresholds: [Double]?
-    /// Per-type cap on tags kept per video. nil = inherit the global
-    /// `LocalLLMSettings.maximumTags`. Clamped 1–16 when set.
-    public var maximumTags: Int?
-    /// Per-type fewest tags (see `LocalLLMSettings.minimumTags`). nil = inherit.
-    public var minimumTags: Int?
+    public var speedQuality: SpeedQualityDial?
+    public var strictness: StrictnessDial?
 
     public init(
         houseRules: String? = nil,
-        allowDecline: Bool? = nil,
-        confidenceThresholds: [Double]? = nil,
-        maximumTags: Int? = nil,
-        minimumTags: Int? = nil
+        speedQuality: SpeedQualityDial? = nil,
+        strictness: StrictnessDial? = nil
     ) {
-        self.houseRules = houseRules.map { String($0.prefix(4_000)) }
-        self.allowDecline = allowDecline
-        if let confidenceThresholds {
-            let cleaned = confidenceThresholds
-                .filter(\.isFinite)
-                .map { min(0.999, max(0.001, $0)) }
-                .sorted()
-            self.confidenceThresholds = cleaned.count == 4 ? cleaned : nil
-        } else {
-            self.confidenceThresholds = nil
-        }
-        self.maximumTags = maximumTags.map { min(16, max(1, $0)) }
-        self.minimumTags = minimumTags.map { min(16, max(0, $0)) }
+        self.houseRules = houseRules.map { String($0.prefix(LocalLLMSettings.maximumHouseRulesLength)) }
+        self.speedQuality = speedQuality
+        self.strictness = strictness
     }
 
-    /// The effective tag cap: the per-type override when set, else the global.
-    public func effectiveMaximumTags(global: Int) -> Int {
-        maximumTags ?? global
+    /// The effective strictness: the per-type position when set, else the global.
+    public func effectiveStrictness(global: LocalLLMSettings) -> StrictnessDial {
+        strictness ?? global.strictness
     }
 
-    /// Effective tag-count bounds (0 ≤ min ≤ max), resolved against the global
-    /// settings when unset.
+    /// Effective tag-count bounds (0 ≤ min ≤ max) for the effective strictness.
     public func effectiveTagBounds(global: LocalLLMSettings) -> TagBounds {
-        TagBounds(minimum: minimumTags ?? global.minimumTags, maximum: effectiveMaximumTags(global: global.maximumTags))
+        effectiveStrictness(global: global).tagBounds
     }
 
     public var isEmpty: Bool {
-        houseRules == nil && allowDecline == nil && confidenceThresholds == nil
-            && maximumTags == nil && minimumTags == nil
+        houseRules == nil && speedQuality == nil && strictness == nil
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case houseRules, speedQuality, strictness
+        // Pre-dial keys, read only to find the nearest position.
+        case maximumTags, minimumTags
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let storedStrictness = try container.decodeIfPresent(Int.self, forKey: .strictness)
+        let legacyMaximumTags = try container.decodeIfPresent(Int.self, forKey: .maximumTags)
+        let legacyMinimumTags = try container.decodeIfPresent(Int.self, forKey: .minimumTags)
+        let strictness = StrictnessDial.resolve(storedStrictness)
+            ?? StrictnessDial.nearest(maximumTags: legacyMaximumTags, minimumTags: legacyMinimumTags, extraTagMinimumOdds: nil)
+        let storedSpeed = try container.decodeIfPresent(String.self, forKey: .speedQuality)
+        self.init(
+            houseRules: try container.decodeIfPresent(String.self, forKey: .houseRules),
+            speedQuality: SpeedQualityDial.resolve(storedSpeed),
+            strictness: strictness
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(houseRules, forKey: .houseRules)
+        try container.encodeIfPresent(speedQuality, forKey: .speedQuality)
+        try container.encodeIfPresent(strictness, forKey: .strictness)
     }
 }
 
@@ -366,10 +355,11 @@ public struct LocalModelOverrides: Codable, Equatable, Sendable {
 /// be tagged adds 1, a shaky tag a fraction, a sure tag nothing; the score halves
 /// every `halfLifeDays`; reaching `score` researches the creator once.
 ///
-/// `score` is the research-frequency control (lower = more research). Simulated
-/// 2026-09-21 on 4,999 real videos / 1,464 creators (old-format history, 41%
-/// untagged): 2 → 219 creators, 3 → 70, 4 → 43, 5 → 37.
-public struct AuthorResearchThreshold: Codable, Equatable, Sendable {
+/// Fixed at 3 / 14 days since 2026-09-23 (the values the owner chose on
+/// 2026-09-21; simulated on 4,999 real videos / 1,464 creators, 41% untagged:
+/// 2 → 219 creators, 3 → 70, 4 → 43, 5 → 37). Tests and harnesses may still
+/// pass another threshold to the accumulator directly.
+public struct AuthorResearchThreshold: Equatable, Sendable {
     public static let defaultScore = 3.0
     public static let defaultHalfLifeDays = 14.0
     public static let maximumScore = 50.0
@@ -382,89 +372,67 @@ public struct AuthorResearchThreshold: Codable, Equatable, Sendable {
         self.score = score.isFinite ? min(Self.maximumScore, max(0.5, score)) : Self.defaultScore
         self.halfLifeDays = halfLifeDays.isFinite ? min(Self.maximumHalfLifeDays, max(1, halfLifeDays)) : Self.defaultHalfLifeDays
     }
-
-    private enum CodingKeys: String, CodingKey { case score, halfLifeDays }
-
-    /// The retired sample-list keys (`level`, `count`, `windowDays`) are ignored.
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.init(
-            score: try container.decodeIfPresent(Double.self, forKey: .score) ?? Self.defaultScore,
-            halfLifeDays: try container.decodeIfPresent(Double.self, forKey: .halfLifeDays) ?? Self.defaultHalfLifeDays
-        )
-    }
 }
 
+/// Grounded research: on/off plus the provider and model that answer. The
+/// budgets, cooldown, creator trigger and knowledge limits are constants since
+/// 2026-09-23; keys written before that day are ignored on decode.
 public struct ResearchSettings: Codable, Equatable, Sendable {
-    public static let maximumRequestsPerMinute = 120
-    public static let maximumDailyTokenLimit = 10_000_000
-    public static let defaultCooldownHours = 24
-    public static let maximumCooldownHours = 720
-    public static let defaultKnowledgeTTLDays = 0
-    public static let maximumKnowledgeTTLDays = 3_650
-    public static let defaultMaxKnowledgePerVideo = 8
-    public static let maximumKnowledgePerVideo = 32
-
     /// Explicit opt-in. When false, classification performs no queue work,
     /// credential lookup, or network request.
     public var enabled: Bool
     public var llmProviderProfileID: String?
     public var llmModelIdentifier: String?
-    public var requestsPerMinute: Int
-    public var dailyTokenLimit: Int
-    public var cooldownHours: Int
+
+    // MARK: Constants (were settings until 2026-09-23)
+
+    /// Serialized background request limit.
+    public static let requestsPerMinute = 6
+    /// Persisted daily usage gate.
+    public static let dailyTokenLimit = 10_000
+    /// Hours before a failed subject is retried.
+    public static let cooldownHours = 24
+    public static let maximumCooldownHours = 720
     /// When to research a creator — the only automatic trigger.
-    public var authorThreshold: AuthorResearchThreshold
-    public var knowledgeTTLDays: Int
-    public var maxKnowledgePerVideo: Int
+    public static let authorThreshold = AuthorResearchThreshold()
+    /// 0 = grounded knowledge never expires.
+    public static let knowledgeTTLDays = 0
+    public static let maximumKnowledgeTTLDays = 3_650
+    /// Most matched knowledge entries injected into one prompt.
+    public static let maxKnowledgePerVideo = 8
+    public static let maximumKnowledgePerVideo = 32
+    // Spellings the pipeline's defaults use.
+    public static let defaultCooldownHours = cooldownHours
+    public static let defaultKnowledgeTTLDays = knowledgeTTLDays
+    public static let defaultMaxKnowledgePerVideo = maxKnowledgePerVideo
 
     public init(
         enabled: Bool = false,
         llmProviderProfileID: String? = nil,
-        llmModelIdentifier: String? = nil,
-        requestsPerMinute: Int = 6,
-        dailyTokenLimit: Int = 10_000,
-        cooldownHours: Int = Self.defaultCooldownHours,
-        authorThreshold: AuthorResearchThreshold = AuthorResearchThreshold(),
-        knowledgeTTLDays: Int = Self.defaultKnowledgeTTLDays,
-        maxKnowledgePerVideo: Int = Self.defaultMaxKnowledgePerVideo
+        llmModelIdentifier: String? = nil
     ) {
         self.enabled = enabled
         self.llmProviderProfileID = Self.optionalIdentifier(llmProviderProfileID)
         self.llmModelIdentifier = Self.optionalIdentifier(llmModelIdentifier)
-        self.requestsPerMinute = min(Self.maximumRequestsPerMinute, max(1, requestsPerMinute))
-        self.dailyTokenLimit = min(Self.maximumDailyTokenLimit, max(1, dailyTokenLimit))
-        self.cooldownHours = min(Self.maximumCooldownHours, max(1, cooldownHours))
-        self.authorThreshold = authorThreshold
-        self.knowledgeTTLDays = min(Self.maximumKnowledgeTTLDays, max(0, knowledgeTTLDays))
-        self.maxKnowledgePerVideo = min(Self.maximumKnowledgePerVideo, max(1, maxKnowledgePerVideo))
     }
+
+    public var requestsPerMinute: Int { Self.requestsPerMinute }
+    public var dailyTokenLimit: Int { Self.dailyTokenLimit }
+    public var cooldownHours: Int { Self.cooldownHours }
+    public var authorThreshold: AuthorResearchThreshold { Self.authorThreshold }
+    public var knowledgeTTLDays: Int { Self.knowledgeTTLDays }
+    public var maxKnowledgePerVideo: Int { Self.maxKnowledgePerVideo }
 
     private enum CodingKeys: String, CodingKey {
         case enabled, llmProviderProfileID, llmModelIdentifier
-        case requestsPerMinute, dailyTokenLimit, cooldownHours
-        case authorThreshold
-        case knowledgeTTLDays, maxKnowledgePerVideo
     }
 
-    // Retired keys (`urgencyFloor`, `trigger`, `confidenceTriggerLevel`, the raw-
-    // search keys) are simply ignored on decode: the per-video term trigger they
-    // configured no longer exists.
-
-    /// Settings persisted before granular research controls inherit the exact
-    /// defaults that reproduce the former queue and prompt behavior.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false,
             llmProviderProfileID: try container.decodeIfPresent(String.self, forKey: .llmProviderProfileID),
-            llmModelIdentifier: try container.decodeIfPresent(String.self, forKey: .llmModelIdentifier),
-            requestsPerMinute: try container.decodeIfPresent(Int.self, forKey: .requestsPerMinute) ?? 6,
-            dailyTokenLimit: try container.decodeIfPresent(Int.self, forKey: .dailyTokenLimit) ?? 10_000,
-            cooldownHours: try container.decodeIfPresent(Int.self, forKey: .cooldownHours) ?? Self.defaultCooldownHours,
-            authorThreshold: try container.decodeIfPresent(AuthorResearchThreshold.self, forKey: .authorThreshold) ?? AuthorResearchThreshold(),
-            knowledgeTTLDays: try container.decodeIfPresent(Int.self, forKey: .knowledgeTTLDays) ?? Self.defaultKnowledgeTTLDays,
-            maxKnowledgePerVideo: try container.decodeIfPresent(Int.self, forKey: .maxKnowledgePerVideo) ?? Self.defaultMaxKnowledgePerVideo
+            llmModelIdentifier: try container.decodeIfPresent(String.self, forKey: .llmModelIdentifier)
         )
     }
 
