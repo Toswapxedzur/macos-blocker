@@ -323,7 +323,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertEqual(saved.tokenUsage.first?.tokenCount, 25)
     }
 
-    func testCorrectionsAreAuthoritativeAndRetrievedPerVideoNotDistilledIntoHouseRules() async throws {
+    func testCorrectionsAreAuthoritativeAndNeverShownToTheModel() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
         defer { try? FileManager.default.removeItem(at: root) }
         var catalog = coordinator.snapshot().workspaceCatalog
@@ -377,21 +377,21 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertEqual(correctedProjection.tags.map(\.id), ["g"])
         XCTAssertTrue(recorder.requests.isEmpty, "live and research refreshes preserve human-corrected rows")
 
-        // Classifying a FRESH, related video (same creator) surfaces the user's
-        // corrections as grounded per-video exemplars in the DYNAMIC suffix, while
-        // the manual type house rule stays in the cached static prefix (it
-        // intentionally overrides the global rule), and no distilled "Learned
-        // preferences" block exists anywhere.
+        // Classifying a FRESH video: the manual type house rule is in the cached
+        // prefix (it intentionally overrides the global rule); the stored
+        // corrections appear NOWHERE in the prompt — not as a block, not as
+        // exemplars, not as distilled rules (all measured 2026-09-22/23 as no gain).
         _ = try await coordinator.classifyVideo(
             platformID: "youtube", entryID: "fresh",
             creatorID: "youtube:handle:@creator", title: "Games episode preview"
         )
         let request = try XCTUnwrap(recorder.requests.first)
         XCTAssertTrue(request.staticPrefix.contains("Manual type rule."), "manual house rule reaches the cached prefix")
-        XCTAssertFalse(request.staticPrefix.contains("Learned preferences"))
-        XCTAssertFalse(request.dynamicSuffix.contains("Learned preferences"))
-        XCTAssertTrue(request.dynamicSuffix.contains("past corrections"), "grounded exemplars present per video")
-        XCTAssertTrue(request.dynamicSuffix.contains("Games episode"), "the real corrected titles are the exemplars")
+        for haystack in [request.staticPrefix, request.dynamicSuffix] {
+            XCTAssertFalse(haystack.contains("Learned preferences"))
+            XCTAssertFalse(haystack.contains("past corrections"))
+            XCTAssertFalse(haystack.contains("Games episode 0"), "corrected titles never enter the prompt")
+        }
     }
 
     /// Research is driven by the model's own uncertainty; a human correction is

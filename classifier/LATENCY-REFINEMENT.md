@@ -351,6 +351,26 @@ for one sentence (creator: "what kind of videos the channel makes"; term: "what 
 `Creator makes: …`; the weak-video second decode and `creatorGroundingConfidenceFloor` are deleted; the
 906 stored dev descriptions were condensed once with a Gemini batch (no web search, ~cents). Prompt p4.
 
+## 6i. Corrections never reach the model as text (2026-09-23, owner decision, measured)
+
+A stored correction is that video's authoritative tag (never re-tagged) and counts in its creator's tag
+counts — nothing else. Held-out test (library split 225/225, the other half's labels as "corrections"):
+
+| design | correct | no tag | wrong tags | clean | per-video cost |
+|---|---|---|---|---|---|
+| none | 70.7% | 12.9% | 13.4% | 83% | 0 |
+| per-video retrieval, ≤6 similar exemplars (old production) | 71.6% | 8.4% | 11.5% | 86% | +103 tokens ≈ +440 ms mean, max 1.6 s |
+| static block of 40 + counts line, before the taxonomy | 70.7% | 12.4% | 10.4% | 88% | 0 (cached) |
+| the SAME 40 lines, reversed | 69.3% | 9.8% | 16.2% | 80% | 0 |
+| static block after the taxonomy, no counts | 72.0% | 6.7% | 14.5% | 83% | 0 |
+
+Reordering identical lines swings wrong tags 10.4 ↔ 16.2 and clean 88 ↔ 80 around the no-corrections
+point, so on 225 videos no design is distinguishable from zero, and retrieval's cost is real once a user
+has hundreds of corrections (it never showed with the dev state's 8). Deleted: `CorrectionRetriever`, the
+per-video exemplar section, the static block, the eval `abtest` command. Kept: `CorrectionExample` storage,
+the correction UI, the authoritative-row rule, the creator counts. Lesson: a prompt block needs ≥2 splits
+and ≥2 orderings before it is called a gain.
+
 ## 7. Decisions log
 - 2026-09-17 — Measured: 7B generation is bandwidth-bound at ~40 ms/token on M1
   Pro; prefill cached (~3 ms); ~165 ms first-token cost; tagged video ~585 ms
