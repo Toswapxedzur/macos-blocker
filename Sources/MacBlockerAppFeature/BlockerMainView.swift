@@ -91,10 +91,7 @@ public struct BlockerMainView: View {
             onOpenPermissionSettings: { [weak permission] in permission?.openSettings() },
             connectionStatusJSON: { [weak connection] in connection?.currentStatusJSON() },
             clustersJSON: { [weak connection] in connection?.clustersJSON() },
-            groupRejectionJSON: { [weak connection] in connection?.takeLocalRejectionJSON() },
             onGroupsAnnounce: { [weak connection] json in connection?.announceFromBridge(json: json) },
-            onGroupConnect: { [weak connection] json in connection?.connectFromBridge(json: json) },
-            onGroupDisconnect: { [weak connection] json in connection?.disconnectFromBridge(json: json) },
             onGroupSync: { [weak connection] json in connection?.syncFromBridge(json: json) }
         )
         #else
