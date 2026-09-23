@@ -70,6 +70,30 @@ public final class VaultClassifierPage {
         webShell?.setPresentationVisible(pageVisible)
     }
 
+    // MARK: MCP surface (parity with the page: same snapshot, same actions)
+
+    /// The web actions a process may run, with the data keys each reads.
+    public nonisolated static var mcpActionCatalog: [ClassifierWebActionDescriptor] { ClassifierWebActionCatalog.actions }
+
+    /// The page's state: nil section = compact overview, "all" = the whole
+    /// snapshot, a section name = that part. nil result = unknown section.
+    public func mcpSnapshot(section: String?) -> [String: Any]? {
+        start()
+        return model?.mcpSnapshot(section: section)
+    }
+
+    /// Runs one page action with the page's own validation; returns the issue
+    /// the page would show (nil = success) and whether it would re-render.
+    public func mcpPerform(action: String, data: [String: Any]) -> ClassifierMCPActionOutcome {
+        start()
+        guard let model else { return .init(rerender: false, issue: "classifier not started") }
+        let outcome = model.mcpPerform(action: action, data: data)
+        // The page's own buttons trigger a re-render through the web shell; an
+        // MCP-driven change must reach the open page the same way.
+        if outcome.rerender { model.onWebStateChange?() }
+        return outcome
+    }
+
     /// State writes are coalesced onto a background queue; the host calls this
     /// on a clean quit so the newest write is never dropped.
     public func flushPendingWrites() {
