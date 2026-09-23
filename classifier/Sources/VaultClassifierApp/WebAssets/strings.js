@@ -78,7 +78,6 @@ window.VaultClassifierStrings = Object.freeze({
   "research.failure.invalidConfiguration": "invalid research configuration",
   "research.failure.emptyResponse": "empty provider response",
   "research.failure.unknown": "unknown error",
-  "research.group.providers": "Providers",
   "research.save": "Save research settings",
   "language.label": "Language",
   "language.name.en": "English",

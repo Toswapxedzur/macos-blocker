@@ -59,7 +59,7 @@ final class ViewModelCharacterizationTests: XCTestCase {
         XCTAssertEqual(
             Set(llm.keys),
             ["speedQuality", "strictness", "houseRules", "modelFileName", "systemRAMGB",
-             "engineStatus", "availableModels", "modelLibrary"]
+             "engineStatus", "modelLibrary"]
         )
         // Defaults: the Balanced tier, the Balanced position.
         XCTAssertEqual(llm["speedQuality"] as? String, "balanced")

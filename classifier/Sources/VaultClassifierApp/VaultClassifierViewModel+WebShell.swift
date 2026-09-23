@@ -31,7 +31,6 @@ extension VaultClassifierViewModel {
                     "modelFileName": llmSettings.modelFileName,
                     "systemRAMGB": HardwareProfile.physicalRAMGB(),
                     "engineStatus": llmEngineStatus,
-                    "availableModels": availableModelFiles,
                     "modelLibrary": Self.modelLibraryPayload(
                         availableModelFiles: availableModelFiles,
                         downloadFractions: modelDownloadFractions,

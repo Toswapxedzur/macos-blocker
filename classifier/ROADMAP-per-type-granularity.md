@@ -1,5 +1,7 @@
 # Roadmap B — per-type granularity (research + models + vastly more control)
 
+> **SUPERSEDED 2026-09-23.** The "vastly more granular control" direction was reversed: the classifier now exposes exactly two dials (Speed↔Quality, Strict↔Broad), globally with per-type follow/own, plus house rules, per-type tag trees and research on/off + provider — see `package-info.md` ("Settings shape"). Kept as history.
+
 User direction (2026-08-23): grounded research should be **per classifier type**, not one global switch; expose **much more granular control** — research frequency, research specifics, and **per-type local model types**; chosen model-residency strategy = **(b) multiple resident models** (instant switch, N× memory).
 
 Builds on the A cleanup (dead `LLMAssistConfiguration`/`LocalModelAsset` removed). Everything additive + back-compat (decodeIfPresent); research stays **off by default**; the live pill path unchanged when nothing is overridden.
