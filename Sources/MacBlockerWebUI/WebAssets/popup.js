@@ -382,14 +382,6 @@ const localFolderRevokeButton = document.getElementById("localFolderRevokeButton
 const localFolderStatus = document.getElementById("localFolderStatus");
 const settingsResetButton = document.getElementById("settingsResetButton");
 const settingsStatus = document.getElementById("settingsStatus");
-const connectionGroupSection = document.getElementById("connectionGroupSection");
-const connectionGroupHint = document.getElementById("connectionGroupHint");
-const connectionGroupDisconnected = document.getElementById("connectionGroupDisconnected");
-const connectionGroupConnected = document.getElementById("connectionGroupConnected");
-const connectionGroupProgram = document.getElementById("connectionGroupProgram");
-const connectionGroupConnectButton = document.getElementById("connectionGroupConnectButton");
-const connectionGroupDisconnectButton = document.getElementById("connectionGroupDisconnectButton");
-const connectionGroupMembers = document.getElementById("connectionGroupMembers");
 const deviceControlButton = document.getElementById("deviceControlButton");
 const deviceControlCopy = document.getElementById("deviceControlCopy");
 const deviceControlStatus = document.getElementById("deviceControlStatus");
@@ -804,8 +796,8 @@ function applyConnectionStatus(raw) {
     error: typeof incoming.error === "string" ? incoming.error : "",
     hubProgram: window.CBBridgeProtocol.hubProgramFromStatus(incoming)
   };
-  // The per-group panel lives in the editor (always visible), so keep it fresh.
-  refreshConnectionGroupPanel();
+  // The bridge mirror lives in the editor (always visible), so keep it fresh.
+  refreshBridgeMirror();
   if (!wasOnline && bridgeIsOnline()) {
     announceGroups();
     requestClusters();
@@ -835,106 +827,12 @@ function requestConnectionStatus() {
 // and let the user connect/disconnect the local Vault MCP server into each. The
 // native host is the source of truth; this layer renders state and sends intents.
 // ---------------------------------------------------------------------------
-const mcpConnectorsList = document.getElementById("mcpConnectorsList");
-const mcpConnectorsEmpty = document.getElementById("mcpConnectorsEmpty");
-
-function requestMcpConnectors() {
-  try {
-    chrome.runtime.sendMessage({ type: "mcp-connectors-status" }).catch(() => {});
-  } catch (_) {}
-}
-
-function setMcpConnector(id, connected) {
-  try {
-    chrome.runtime
-      .sendMessage({ type: connected ? "mcp-connect" : "mcp-disconnect", id })
-      .catch(() => {});
-  } catch (_) {}
-}
-
-function renderMcpConnectors(payload) {
-  if (!mcpConnectorsList) return;
-  const connectors = Array.isArray(payload && payload.connectors) ? payload.connectors : [];
-  if (mcpConnectorsEmpty) mcpConnectorsEmpty.classList.toggle("hidden", connectors.length > 0);
-  mcpConnectorsList.textContent = "";
-  for (const connector of connectors) {
-    if (!connector || typeof connector.id !== "string") continue;
-    const connected = connector.connected === true;
-    const displayName = String(connector.name || connector.id);
-
-    const row = document.createElement("div");
-    row.className = "mcp-connector-row";
-    row.setAttribute("role", "listitem");
-
-    // App icon, or a lettered fallback badge for CLI/extension tools.
-    const iconWrap = document.createElement("span");
-    iconWrap.className = "mcp-connector-icon";
-    if (connector.icon) {
-      const img = document.createElement("img");
-      img.src = connector.icon;
-      img.alt = "";
-      iconWrap.appendChild(img);
-    } else {
-      iconWrap.classList.add("is-fallback");
-      iconWrap.textContent = displayName.trim().charAt(0).toUpperCase() || "?";
-    }
-
-    const name = document.createElement("span");
-    name.className = "mcp-connector-name";
-    name.textContent = displayName;
-
-    // Toggle switch whose position reflects the real (native) connected state.
-    const toggleLabel = document.createElement("label");
-    toggleLabel.className = "mcp-switch";
-    const toggle = document.createElement("input");
-    toggle.type = "checkbox";
-    toggle.checked = connected;
-    toggle.setAttribute(
-      "aria-label",
-      (connected ? t("settings.mcpDeactivate") : t("settings.mcpActivate")) + " " + displayName
-    );
-    toggle.addEventListener("change", () => setMcpConnector(connector.id, toggle.checked));
-    const slider = document.createElement("span");
-    slider.className = "mcp-switch-track";
-    toggleLabel.appendChild(toggle);
-    toggleLabel.appendChild(slider);
-
-    row.appendChild(iconWrap);
-    row.appendChild(name);
-    row.appendChild(toggleLabel);
-    mcpConnectorsList.appendChild(row);
-  }
-}
-
-window.__cbMcpConnectors = function (json) {
-  try {
-    const incoming = typeof json === "string" ? JSON.parse(json) : json;
-    renderMcpConnectors(incoming);
-  } catch (_) {}
-};
-
 // ---------------------------------------------------------------------------
-// Per-group web-app bridge: link a Default/Custom group with the same-named
-// group on another connected program (a "cluster"). The hub is the single
-// source of truth for cluster membership; this layer only renders it and sends
-// connect/disconnect intents.
+// Web-app bridge: same-named Default/Custom groups auto-link into one shared
+// "cluster" across every connected program whenever a peer is present. The hub
+// is the single source of truth for cluster membership; there is no manual
+// link/unlink — this layer only renders the read-only mirror of a cluster.
 // ---------------------------------------------------------------------------
-
-const CONNECTION_PROGRAM_LABELS = {
-  macapp: "Mac Vault",
-  windowsapp: "Windows Vault",
-  classifier: "Vault Classifier",
-  chrome: "Chrome",
-  edge: "Edge",
-  firefox: "Firefox",
-  safari: "Safari",
-  opera: "Opera",
-  browser: "Browser"
-};
-
-function connectionProgramLabel(programId) {
-  return CONNECTION_PROGRAM_LABELS[programId] || programId || "?";
-}
 
 function bridgeIsOnline() {
   const s = state.connectionStatus || {};
@@ -958,17 +856,6 @@ function clusterAllOnline(cluster) {
   return members.every((m) => m && m.online !== false);
 }
 
-// Offline member programs in this group's cluster (for the UI indicator).
-function clusterOfflineMembers(cluster) {
-  if (!cluster) return [];
-  const members = Array.isArray(cluster.members) ? cluster.members : [];
-  return members.filter((m) => {
-    if (!m) return false;
-    if (m.program === LOCAL_PROGRAM_ID) return false; // we are obviously here
-    return m.online === false || !bridgeIsOnline();
-  });
-}
-
 // The cluster (if any) this group currently belongs to, matched by this
 // endpoint's program id + the member's pinned group id. Membership is pinned to
 // the specific group instance that was linked, so deleting a group and later
@@ -982,104 +869,6 @@ function groupConnectionCluster(group) {
 // group id (falling back to the saved name for pre-id-pinning hubs).
 function clusterLocalGroup(cluster) {
   return window.CBBridgeProtocol.groupForCluster(state.groups, cluster, LOCAL_PROGRAM_ID);
-}
-
-// Programs the user can link to right now (other connected endpoints). A client
-// is always implicitly connected to the Mac hub; the hub sees its peers.
-function bridgeConnectablePrograms() {
-  if (!bridgeIsOnline()) return [];
-  const status = state.connectionStatus || {};
-  const peers = Array.isArray(status.peers) ? status.peers : [];
-  const programs = new Set();
-  for (const peer of peers) {
-    if (peer && peer.connected !== false && peer.program) programs.add(peer.program);
-  }
-  if (!IS_NATIVE_DESKTOP) {
-    const hubProgram = window.CBBridgeProtocol.hubProgramFromStatus(status);
-    if (hubProgram) programs.add(hubProgram);
-  }
-  programs.delete(LOCAL_PROGRAM_ID);
-  programs.delete("browser");
-  programs.delete("");
-  return Array.from(programs);
-}
-
-function renderConnectionGroupPanel(group, freezeStatus) {
-  if (!connectionGroupSection) return;
-  if (!isBridgeEligibleGroup(group)) {
-    connectionGroupSection.classList.add("hidden");
-    return;
-  }
-  connectionGroupSection.classList.remove("hidden");
-
-  const cluster = groupConnectionCluster(group);
-  connectionGroupSection.classList.toggle("bridge-linked", Boolean(cluster));
-
-  if (connectionGroupConnected) connectionGroupConnected.classList.toggle("hidden", !cluster);
-  if (connectionGroupDisconnected) connectionGroupDisconnected.classList.toggle("hidden", Boolean(cluster));
-
-  if (cluster) {
-    const allOnline = clusterAllOnline(cluster);
-    connectionGroupSection.classList.toggle("bridge-offline", !allOnline);
-    if (connectionGroupMembers) {
-      connectionGroupMembers.textContent = "";
-      const members = Array.isArray(cluster.members) ? cluster.members : [];
-      for (const member of members) {
-        const isSelf = member.program === LOCAL_PROGRAM_ID;
-        // We always know our own side is present; remote members are online
-        // only when the hub says so AND our link to the hub is live.
-        const memberOnline = isSelf
-          ? true
-          : member.online !== false && bridgeIsOnline();
-        const row = document.createElement("div");
-        row.className = "connection-peer" + (memberOnline ? "" : " offline");
-        const dot = document.createElement("span");
-        dot.className = "connection-dot " + (memberOnline ? "connected" : "error");
-        const label = document.createElement("span");
-        const self = isSelf ? " (this app)" : "";
-        const offlineTag = memberOnline ? "" : " — " + t("connectionGroup.memberOffline");
-        label.textContent =
-          connectionProgramLabel(member.program) + ": " + (member.groupName || group.name) + self + offlineTag;
-        row.appendChild(dot);
-        row.appendChild(label);
-        connectionGroupMembers.appendChild(row);
-      }
-    }
-    if (connectionGroupHint) {
-      connectionGroupHint.textContent = allOnline ? "" : t("connectionGroup.clusterOffline");
-    }
-    return;
-  }
-  connectionGroupSection.classList.remove("bridge-offline");
-
-  const online = bridgeIsOnline();
-  const frozen = Boolean(freezeStatus && freezeStatus.isFrozen);
-  const programs = bridgeConnectablePrograms();
-
-  if (connectionGroupProgram) {
-    const previous = connectionGroupProgram.value;
-    connectionGroupProgram.textContent = "";
-    for (const programId of programs) {
-      const option = document.createElement("option");
-      option.value = programId;
-      option.textContent = connectionProgramLabel(programId);
-      connectionGroupProgram.appendChild(option);
-    }
-    if (programs.includes(previous)) connectionGroupProgram.value = previous;
-  }
-
-  const disabled = !online || frozen || programs.length === 0;
-  if (connectionGroupConnectButton) connectionGroupConnectButton.disabled = disabled;
-  if (connectionGroupProgram) connectionGroupProgram.disabled = disabled;
-  if (connectionGroupHint) {
-    connectionGroupHint.textContent = !online
-      ? t("connectionGroup.offline")
-      : frozen
-        ? t("connectionGroup.frozen")
-        : programs.length === 0
-          ? t("connectionGroup.noPrograms")
-          : t("connectionGroup.ready");
-  }
 }
 
 // For a clustered Default (site) group, renders the blocked-list type this
@@ -1165,11 +954,8 @@ function renderBridgeMirror(group) {
   }
 }
 
-function refreshConnectionGroupPanel() {
-  const group = getSelectedGroup();
-  const now = Date.now();
-  renderConnectionGroupPanel(group, group ? getFreezeStatus(group, now) : null);
-  renderBridgeMirror(group);
+function refreshBridgeMirror() {
+  renderBridgeMirror(getSelectedGroup());
 }
 
 // Re-tag group cards with the bridge-linked cluster indicator without a full rebuild.
@@ -1234,7 +1020,7 @@ function applyClusters(list) {
   if (getSelectedGroup() && !editing) {
     renderEditor();
   } else {
-    refreshConnectionGroupPanel();
+    refreshBridgeMirror();
   }
   // Warn once per offline episode: if we're linked but a cluster member is
   // offline (e.g. the Mac app isn't open), shared changes won't sync until it's
@@ -1255,25 +1041,12 @@ function applyClusters(list) {
   syncAllClusters();
 }
 
-function applyGroupRejection(reason) {
-  if (connectionGroupHint) {
-    connectionGroupHint.textContent = t("connectionGroup.rejected") + (reason || "");
-  }
-}
-
 // Native (macOS) pushes cluster membership here; the browser uses the
 // "clusters-push" runtime message instead.
 window.__cbClustersState = function (json) {
   try {
     const incoming = typeof json === "string" ? JSON.parse(json) : json;
     applyClusters(incoming);
-  } catch (_) {}
-};
-
-window.__cbGroupRejected = function (json) {
-  try {
-    const incoming = typeof json === "string" ? JSON.parse(json) : json;
-    applyGroupRejection(incoming && incoming.reason);
   } catch (_) {}
 };
 
@@ -1519,7 +1292,6 @@ function openSettings() {
   state.isSettingsOpen = true;
   syncSettingsFormFromState();
   requestConnectionStatus();
-  requestMcpConnectors();
   settingsModal.classList.remove("hidden");
   renderLocalFolderStatus().catch((error) => {
     if (localFolderStatus) localFolderStatus.textContent = String(error?.message ?? error);
@@ -4899,7 +4671,6 @@ function renderEditor(now = Date.now()) {
     updateSnoozeUI(null, now);
     setSnoozeWarning("");
     updateBlockingRulesEditor();
-    if (connectionGroupSection) connectionGroupSection.classList.add("hidden");
     return;
   }
 
@@ -5090,7 +4861,6 @@ function renderEditor(now = Date.now()) {
   updateUsageSummary(group, draft, now);
   updateFreezeUI(group, now);
   updateSnoozeUI(group, now);
-  renderConnectionGroupPanel(group, freezeStatus);
   renderBridgeMirror(group);
   updateBlockingRulesEditor();
 }
@@ -7278,43 +7048,6 @@ if (settingsModal) {
     if (!field) continue;
     field.addEventListener("change", autoSaveSettings);
   }
-}
-
-if (connectionGroupConnectButton) {
-  connectionGroupConnectButton.addEventListener("click", () => {
-    const group = getSelectedGroup();
-    if (!group || !isBridgeEligibleGroup(group)) return;
-    const toProgram = connectionGroupProgram?.value || "";
-    if (!toProgram) return;
-    // The initiator's settings win the first merge for this group.
-    state.pendingPriorityGroups.add(group.id);
-    try {
-      chrome.runtime.sendMessage({
-        type: "group-connect",
-        groupName: group.name,
-        groupType: group.groupType,
-        fromProgram: LOCAL_PROGRAM_ID,
-        toProgram
-      });
-    } catch (_) {}
-    if (connectionGroupHint) connectionGroupHint.textContent = t("connectionGroup.connecting");
-  });
-}
-
-if (connectionGroupDisconnectButton) {
-  connectionGroupDisconnectButton.addEventListener("click", () => {
-    const group = getSelectedGroup();
-    const cluster = group ? groupConnectionCluster(group) : null;
-    if (!cluster) return;
-    try {
-      chrome.runtime.sendMessage({
-        type: "group-disconnect",
-        clusterId: cluster.id,
-        groupName: group.name,
-        program: LOCAL_PROGRAM_ID
-      });
-    } catch (_) {}
-  });
 }
 
 if (localFolderChooseButton) {

@@ -21,10 +21,7 @@ public struct BlockerWebPanel: View {
     private let onOpenPermissionSettings: (() -> Void)?
     private let connectionStatusJSON: (() -> String?)?
     private let clustersJSON: (() -> String?)?
-    private let groupRejectionJSON: (() -> String?)?
     private let onGroupsAnnounce: ((String) -> Void)?
-    private let onGroupConnect: ((String) -> Void)?
-    private let onGroupDisconnect: ((String) -> Void)?
     private let onGroupSync: ((String) -> Void)?
 
     public init(
@@ -43,10 +40,7 @@ public struct BlockerWebPanel: View {
         onOpenPermissionSettings: (() -> Void)? = nil,
         connectionStatusJSON: (() -> String?)? = nil,
         clustersJSON: (() -> String?)? = nil,
-        groupRejectionJSON: (() -> String?)? = nil,
         onGroupsAnnounce: ((String) -> Void)? = nil,
-        onGroupConnect: ((String) -> Void)? = nil,
-        onGroupDisconnect: ((String) -> Void)? = nil,
         onGroupSync: ((String) -> Void)? = nil
     ) {
         self.store = store
@@ -64,10 +58,7 @@ public struct BlockerWebPanel: View {
         self.onOpenPermissionSettings = onOpenPermissionSettings
         self.connectionStatusJSON = connectionStatusJSON
         self.clustersJSON = clustersJSON
-        self.groupRejectionJSON = groupRejectionJSON
         self.onGroupsAnnounce = onGroupsAnnounce
-        self.onGroupConnect = onGroupConnect
-        self.onGroupDisconnect = onGroupDisconnect
         self.onGroupSync = onGroupSync
     }
 
@@ -88,10 +79,7 @@ public struct BlockerWebPanel: View {
             onOpenPermissionSettings: onOpenPermissionSettings,
             connectionStatusJSON: connectionStatusJSON,
             clustersJSON: clustersJSON,
-            groupRejectionJSON: groupRejectionJSON,
             onGroupsAnnounce: onGroupsAnnounce,
-            onGroupConnect: onGroupConnect,
-            onGroupDisconnect: onGroupDisconnect,
             onGroupSync: onGroupSync
         )
         .ignoresSafeArea()

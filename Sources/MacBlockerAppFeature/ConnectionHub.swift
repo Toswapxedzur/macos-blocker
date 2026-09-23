@@ -292,8 +292,6 @@ final class ConnectionHub: ObservableObject {
     private var rosters: [String: [GroupInfo]] = [:]
     /// Active clusters keyed by cluster id.
     private var clusters: [String: ClusterState] = [:]
-    /// A rejection reason for a Mac-initiated link, drained by the web layer.
-    private var pendingLocalRejection: String?
 
     /// UserDefaults key for the persisted cluster registry. Bumping the suffix
     /// invalidates older on-disk shapes.
@@ -462,10 +460,6 @@ final class ConnectionHub: ObservableObject {
             replaceBrokerClusters(object["clusters"] as? [[String: Any]] ?? [])
         case "cluster-updated":
             if let cluster = object["cluster"] as? [String: Any] { applyBrokerCluster(cluster) }
-        case "connect-group-rejected":
-            lock.lock()
-            pendingLocalRejection = (object["reason"] as? String) ?? ""
-            lock.unlock()
         case "rejected":
             let reason = (object["reason"] as? String) ?? "rejected"
             brokerDisconnected(reason, retry: reason == "hub-yield-to-macapp")
@@ -644,25 +638,6 @@ final class ConnectionHub: ObservableObject {
             let prog = peers[key]?.program ?? ((obj["program"] as? String) ?? "")
             lock.unlock()
             setRoster(program: prog, groups: (obj["groups"] as? [[String: Any]]) ?? [])
-        case "connect-group":
-            lock.lock()
-            let fromProg = peers[key]?.program ?? ((obj["fromProgram"] as? String) ?? "")
-            lock.unlock()
-            connectGroup(
-                from: fromProg,
-                to: (obj["toProgram"] as? String) ?? "",
-                groupName: (obj["groupName"] as? String) ?? "",
-                groupType: (obj["groupType"] as? String) ?? ""
-            )
-        case "disconnect-group":
-            lock.lock()
-            let prog = peers[key]?.program ?? ((obj["program"] as? String) ?? "")
-            lock.unlock()
-            disconnectGroup(
-                clusterId: (obj["clusterId"] as? String) ?? "",
-                groupName: (obj["groupName"] as? String) ?? "",
-                program: prog
-            )
         case "group-sync":
             lock.lock()
             let prog = peers[key]?.program ?? ((obj["program"] as? String) ?? "")
@@ -1206,6 +1181,13 @@ final class ConnectionHub: ObservableObject {
             changed = true
             snapshots.append(clusterJSONObject(cluster))
         }
+        // Auto-link: after pruning, (re)form clusters for same-named groups now
+        // present on two or more programs. There is no manual connect step.
+        let added = autoLinkClustersLocked()
+        if !added.isEmpty {
+            changed = true
+            snapshots.append(contentsOf: added)
+        }
         if changed { persistClustersLocked() }
         lock.unlock()
         for snapshot in snapshots { broadcastCluster(snapshot) }
@@ -1218,59 +1200,42 @@ final class ConnectionHub: ObservableObject {
         return clusters.values.filter { $0.members.count >= 2 }.count
     }
 
-    /// Links the same-named group on two programs into one cluster. Requires both
-    /// to have a matching, unfrozen group of the same type; otherwise rejects.
-    func connectGroup(from: String, to: String, groupName: String, groupType: String) {
-        guard !from.isEmpty, !to.isEmpty, !groupName.isEmpty, from != to else { return }
-        lock.lock()
-        let fromOk = rosterHasEligibleLocked(from, name: groupName, type: groupType)
-        let toOk = rosterHasEligibleLocked(to, name: groupName, type: groupType)
-        if !(fromOk && toOk) {
-            lock.unlock()
-            let reason = !fromOk
-                ? "this group must be unfrozen to connect"
-                : "no matching unfrozen \"\(groupName)\" group on \(to)"
-            rejectTo(program: from, reason: reason)
-            return
+    /// Caller must hold `lock`. Auto-forms clusters: every (name, type) present on
+    /// two or more programs becomes one cluster containing all programs that have
+    /// that group. Same-named groups link with no manual step; membership is pinned
+    /// to the specific instance so a delete/re-create can't silently re-join.
+    /// Returns snapshots of the clusters it changed.
+    private func autoLinkClustersLocked() -> [[String: Any]] {
+        struct NameType: Hashable { let name: String; let type: String }
+        // (name, type) -> program -> pinned group id (first instance per program).
+        var byKey: [NameType: [String: String]] = [:]
+        for (program, infos) in rosters {
+            for info in infos where !info.name.isEmpty {
+                let key = NameType(name: info.name, type: info.type)
+                if byKey[key]?[program] == nil {
+                    byKey[key, default: [:]][program] = info.id
+                }
+            }
         }
-        let cluster = clusters.values.first { $0.groupName == groupName && $0.groupType == groupType }
-            ?? {
-                let created = ClusterState(id: UUID().uuidString, groupName: groupName, groupType: groupType)
-                clusters[created.id] = created
-                return created
-            }()
-        cluster.members.insert(from)
-        cluster.members.insert(to)
-        // Pin each member to the specific local group instance it linked, so a
-        // later delete + same-name re-create can't silently re-join this cluster.
-        if let fromId = rosterGroupIdLocked(from, name: groupName, type: groupType), !fromId.isEmpty {
-            cluster.memberGroupIds[from] = fromId
+        var snapshots: [[String: Any]] = []
+        for (key, programIds) in byKey where programIds.count >= 2 {
+            let cluster = clusters.values.first { $0.groupName == key.name && $0.groupType == key.type }
+                ?? {
+                    let created = ClusterState(id: UUID().uuidString, groupName: key.name, groupType: key.type)
+                    clusters[created.id] = created
+                    return created
+                }()
+            var mutated = false
+            for (program, gid) in programIds {
+                if cluster.members.insert(program).inserted { mutated = true }
+                if !gid.isEmpty && cluster.memberGroupIds[program] != gid {
+                    cluster.memberGroupIds[program] = gid
+                    mutated = true
+                }
+            }
+            if mutated { snapshots.append(clusterJSONObject(cluster)) }
         }
-        if let toId = rosterGroupIdLocked(to, name: groupName, type: groupType), !toId.isEmpty {
-            cluster.memberGroupIds[to] = toId
-        }
-        persistClustersLocked()
-        let snapshot = clusterJSONObject(cluster)
-        lock.unlock()
-        broadcastCluster(snapshot)
-    }
-
-    func disconnectGroup(clusterId: String, groupName: String, program: String) {
-        lock.lock()
-        var target = clusters[clusterId]
-        if target == nil { target = clusters.values.first { $0.groupName == groupName } }
-        guard let cluster = target else { lock.unlock(); return }
-        cluster.members.remove(program)
-        cluster.memberGroupIds.removeValue(forKey: program)
-        cluster.contributions.removeValue(forKey: program)
-        if cluster.members.count < 2 {
-            clusters.removeValue(forKey: cluster.id)
-            cluster.members.removeAll()
-        }
-        persistClustersLocked()
-        let snapshot = clusterJSONObject(cluster)
-        lock.unlock()
-        broadcastCluster(snapshot)
+        return snapshots
     }
 
     /// Folds one member's contribution into the cluster's shared state and, if the
@@ -1433,35 +1398,11 @@ final class ConnectionHub: ObservableObject {
         return json
     }
 
-    /// Returns and clears any pending Mac-initiated rejection, as JSON.
-    func takeLocalRejectionJSON() -> String? {
-        lock.lock()
-        let reason = pendingLocalRejection
-        pendingLocalRejection = nil
-        lock.unlock()
-        guard let reason else { return nil }
-        guard let data = try? JSONSerialization.data(withJSONObject: ["reason": reason]),
-              let json = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-        return json
-    }
-
     // MARK: Cluster registry — JSON-string entry points for the web bridge
 
     func announceFromBridge(json: String) {
         guard let obj = decode(json) else { return }
         lastBridgeAnnouncement = obj
-        submitBridgeFrame(obj)
-    }
-
-    func connectFromBridge(json: String) {
-        guard let obj = decode(json) else { return }
-        submitBridgeFrame(obj)
-    }
-
-    func disconnectFromBridge(json: String) {
-        guard let obj = decode(json) else { return }
         submitBridgeFrame(obj)
     }
 
@@ -1479,19 +1420,6 @@ final class ConnectionHub: ObservableObject {
         switch frame["kind"] as? String {
         case "groups-announce":
             setRoster(program: Self.localProgram, groups: frame["groups"] as? [[String: Any]] ?? [])
-        case "connect-group":
-            connectGroup(
-                from: Self.localProgram,
-                to: frame["toProgram"] as? String ?? "",
-                groupName: frame["groupName"] as? String ?? "",
-                groupType: frame["groupType"] as? String ?? ""
-            )
-        case "disconnect-group":
-            disconnectGroup(
-                clusterId: frame["clusterId"] as? String ?? "",
-                groupName: frame["groupName"] as? String ?? "",
-                program: Self.localProgram
-            )
         case "group-sync":
             applySync(
                 program: Self.localProgram,
@@ -1652,19 +1580,6 @@ final class ConnectionHub: ObservableObject {
         }
     }
 
-    /// Caller must hold `lock`.
-    private func rosterHasEligibleLocked(_ program: String, name: String, type: String) -> Bool {
-        guard let infos = rosters[program] else { return false }
-        return infos.contains { $0.name == name && $0.type == type && !$0.frozen }
-    }
-
-    /// Caller must hold `lock`. The local group id for an eligible (unfrozen)
-    /// same-named group, used to pin cluster membership to a specific instance.
-    private func rosterGroupIdLocked(_ program: String, name: String, type: String) -> String? {
-        guard let infos = rosters[program] else { return nil }
-        return infos.first { $0.name == name && $0.type == type && !$0.frozen }?.id
-    }
-
     /// Caller must hold `lock`. Programs with a live connected peer, plus the Mac
     /// host itself (always online while the hub runs). Used to flag cluster
     /// members online/offline.
@@ -1755,21 +1670,6 @@ final class ConnectionHub: ObservableObject {
         let arr = clusters.values.map { clusterJSONObject($0) }
         lock.unlock()
         send(conn, dict: ["kind": "clusters", "clusters": arr])
-    }
-
-    private func rejectTo(program: String, reason: String) {
-        if program == Self.localProgram {
-            lock.lock()
-            pendingLocalRejection = reason
-            lock.unlock()
-            return
-        }
-        lock.lock()
-        let conn = peers.values.first { $0.connected && $0.program == program }?.connection
-        lock.unlock()
-        if let conn {
-            send(conn, dict: ["kind": "connect-group-rejected", "reason": reason])
-        }
     }
 
 }
