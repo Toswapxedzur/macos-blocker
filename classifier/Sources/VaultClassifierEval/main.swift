@@ -22,7 +22,10 @@ let environment = VaultRuntimeEnvironment.current
 guard let directory = try? environment.classifierSupportDirectoryURL() else { die("no support directory") }
 let stateURL = directory.appendingPathComponent("state.json", isDirectory: false)
 guard let state = try? LocalStateFile(url: stateURL).load() else { die("could not load state.json at \(stateURL.path)") }
-let catalog = state.workspaceCatalog
+var catalog = state.workspaceCatalog
+// `--house-rules-file=<path>`: replaces the production house rules (cached static prefix).
+let houseRulesOverride: String? = args.compactMap({ $0.hasPrefix("--house-rules-file=") ? String($0.dropFirst(19)) : nil }).first
+    .flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
 
 // The evaluated classifier type + its tree (first youtube type, or the first type).
 guard let type = catalog.classifierTypes.first(where: { $0.applicablePlatformID == "youtube" })
@@ -32,10 +35,29 @@ else { die("no classifier type / bound tree in state") }
 let tagNameByID = Dictionary(tree.nodes.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
 let tagIDByName = Dictionary(tree.nodes.map { ($0.name.lowercased(), $0.id) }, uniquingKeysWith: { a, _ in a })
 let allowedNames = tree.nodes.filter { !$0.isRetired }.map(\.name).sorted()
+// `--corrections-from=<set.json>`: every labelled item of that set becomes a stored
+// human correction (title → its tags), so retrieval can be measured on another set.
+if let path = args.compactMap({ $0.hasPrefix("--corrections-from=") ? String($0.dropFirst(19)) : nil }).first {
+    guard let raw = try? Data(contentsOf: URL(fileURLWithPath: path)),
+          let set = try? JSONDecoder().decode(EvalSet.self, from: raw) else { die("could not read corrections set") }
+    var added = 0
+    // Distinct timestamps, newest LAST in file order, so "the newest 40" is the file's
+    // first 40 reversed — a deterministic subset.
+    for item in set.items.reversed() where !item.trueTags.isEmpty {
+        let ids = item.trueTags.compactMap { tagIDByName[$0.lowercased()] }
+        guard !ids.isEmpty else { continue }
+        catalog.appendCorrectionExample(CorrectionExample(
+            classifierTypeID: type.id, platformID: "youtube", entryID: item.entryID, creatorID: item.creatorID,
+            title: item.title, correctTagIDs: ids, createdAtMilliseconds: 1_000_000 + Int64(added)))
+        added += 1
+    }
+    print("• corrections loaded: \(added)")
+}
 
 // The house rules PRODUCTION would use for this type — identical to the
 // coordinator's `effectiveHouseRules`: a type's own rules replace the global ones.
 let productionHouseRules: String? = {
+    if let houseRulesOverride { return houseRulesOverride }
     let perType = type.localModelOverrides?.houseRules?.trimmingCharacters(in: .whitespacesAndNewlines)
     if let perType, !perType.isEmpty { return perType }
     let trimmed = state.settings.localLLM.houseRules.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -208,105 +230,6 @@ case "score":
         let f = fpByConf[c] ?? 0, t = tpByConf[c] ?? 0
         print(String(format: "  conf%d  correct %-4d  WRONG %-4d  (precision %.2f)", c, t, f, rate(t, t + f)))
     }
-
-case "abtest":
-    // Grounded-generalization A/B: does injecting the user's own past corrections
-    // as per-video retrieval exemplars improve accuracy? Leave-one-out — every
-    // labeled item is seeded as a correction, and the retriever excludes each
-    // test item's OWN correction by entryID, so a video is only ever helped by
-    // OTHER corrections (same creator, or lexically similar title). Arm A runs
-    // with an empty correction store; Arm B with the full pool. Everything else
-    // (model, tree, house rules, thresholds) is identical between arms.
-    guard args.count > 1, let data = try? Data(contentsOf: URL(fileURLWithPath: args[1])),
-          let set = try? JSONDecoder().decode(EvalSet.self, from: data) else { die("could not read eval set") }
-    let labeled = set.items
-    guard labeled.contains(where: { !$0.trueTags.isEmpty }) else { die("no items labeled yet — fill in trueTags") }
-    let verbose = args.contains("-v") || args.contains("--dump")
-
-    let modelOverride = args.compactMap { $0.hasPrefix("--model=") ? String($0.dropFirst(8)) : nil }.first
-    guard let modelPath = modelOverride ?? VaultLocalLLMEngine.defaultModelPath(preferredFileName: state.settings.localLLM.modelFileName) else {
-        die("no .gguf model found for this environment")
-    }
-    let engine: VaultLocalLLMEngine
-    do { engine = try VaultLocalLLMEngine(modelPath: modelPath) } catch { die("engine load failed: \(error)") }
-
-    let settings = state.settings.localLLM
-    let research = state.settings.research
-    let overrides = type.localModelOverrides
-    let maxTags = args.compactMap { $0.hasPrefix("--max=") ? Int($0.dropFirst(6)) : nil }.first ?? settings.maximumTags
-    let floor = args.compactMap { $0.hasPrefix("--floor=") ? Double($0.dropFirst(8)) : nil }.first ?? CorrectionRetriever.defaultMinimumSimilarity
-    let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: maxTags, correctionSimilarityFloor: floor)
-    let evalTree = tree
-
-    // The correction pool: every labeled item as an on-taxonomy correction.
-    let pool: [CorrectionExample] = labeled.compactMap { item in
-        let ids = item.trueTags.compactMap { tagIDByName[$0.lowercased()] }
-        // A decline-truth item (no tags) is a valid "no tag" correction exemplar.
-        guard item.trueTags.isEmpty || !ids.isEmpty else { return nil }
-        return CorrectionExample(
-            classifierTypeID: type.id, platformID: "youtube", entryID: item.entryID,
-            creatorID: item.creatorID, title: item.title, correctTagIDs: ids
-        )
-    }
-    print("• model: \((modelPath as NSString).lastPathComponent)  •  \(labeled.count) items  •  pool \(pool.count) corrections  •  floor \(String(format: "%.3f", floor))  •  type \"\(type.name)\"\n")
-
-    func classifyItem(_ item: EvalItem, corrections: [CorrectionExample]) async throws -> Set<String> {
-        var c = catalog
-        c.correctionExamples = corrections
-        let r = try await pipeline.classify(
-            title: item.title, entryID: item.entryID, creatorID: item.creatorID, platformID: "youtube",
-            classifierType: type, tree: evalTree, catalog: c,
-            houseRules: productionHouseRules,
-            allowDecline: overrides?.allowDecline ?? settings.allowDecline,
-            confidenceThresholds: overrides?.confidenceThresholds ?? settings.confidenceThresholds,
-            knowledgeTTLDays: research.knowledgeTTLDays,
-            maxKnowledgePerVideo: research.maxKnowledgePerVideo
-        )
-        return Set(r.tags.map(\.tagID))
-    }
-
-    var baseExact = 0, groundedExact = 0
-    var baseExactFired = 0, groundedExactFired = 0, firedCount = 0
-    var wins: [(String, [String])] = [], regressions: [(String, [String])] = []
-
-    for item in labeled {
-        let truth = Set(item.trueTags.compactMap { tagIDByName[$0.lowercased()] })
-        let fired = CorrectionRetriever.retrieve(
-            title: item.title, creatorID: item.creatorID, excludingEntryID: item.entryID,
-            from: pool, tree: evalTree, minimumSimilarity: floor
-        )
-        let base = try await classifyItem(item, corrections: [])
-        let grounded = try await classifyItem(item, corrections: pool)
-        let baseOK = base == truth, groundedOK = grounded == truth
-        if baseOK { baseExact += 1 }
-        if groundedOK { groundedExact += 1 }
-        if !fired.isEmpty {
-            firedCount += 1
-            if baseOK { baseExactFired += 1 }
-            if groundedOK { groundedExactFired += 1 }
-            let exemplarLabels = fired.map { "\"\($0.title.prefix(28))\"→\($0.tagNames.isEmpty ? "none" : $0.tagNames.joined(separator: ","))" }
-            if !baseOK && groundedOK { wins.append((item.title, exemplarLabels)) }
-            if baseOK && !groundedOK { regressions.append((item.title, exemplarLabels)) }
-        }
-        if verbose {
-            let mark = base == grounded ? " " : (groundedOK ? "▲" : (baseOK ? "▼" : "≠"))
-            let names = { (s: Set<String>) in s.isEmpty ? "—" : s.map { tagNameByID[$0] ?? $0 }.sorted().joined(separator: ",") }
-            print(String(format: "%@ fired:%d  base:%-16@ grounded:%-16@ truth:%@  | %@", mark, fired.count,
-                         names(base) as NSString, names(grounded) as NSString,
-                         (truth.isEmpty ? "[]" : truth.map { tagNameByID[$0] ?? $0 }.sorted().joined(separator: ",")),
-                         String(item.title.prefix(46))))
-        }
-    }
-
-    func pct(_ a: Int, _ b: Int) -> String { b == 0 ? "n/a" : String(format: "%.0f%% (%d/%d)", 100 * Double(a) / Double(b), a, b) }
-    print("\n=== grounded generalization A/B (leave-one-out) ===")
-    print("ALL items       baseline \(pct(baseExact, labeled.count))   grounded \(pct(groundedExact, labeled.count))   Δ \(groundedExact - baseExact)")
-    print("retrieval FIRED baseline \(pct(baseExactFired, firedCount))   grounded \(pct(groundedExactFired, firedCount))   Δ \(groundedExactFired - baseExactFired)")
-    print("  (retrieval surfaced ≥1 exemplar for \(firedCount)/\(labeled.count) items; the rest are unaffected by design)")
-    print("\nwins (baseline wrong → grounded right): \(wins.count)")
-    for (t, ex) in wins.prefix(20) { print("  ▲ \(t.prefix(50))\n      via \(ex.joined(separator: "  "))") }
-    print("\nregressions (baseline right → grounded wrong): \(regressions.count)")
-    for (t, ex) in regressions.prefix(20) { print("  ▼ \(t.prefix(50))\n      via \(ex.joined(separator: "  "))") }
 
 case "calib":
     // RESEARCH-REDESIGN Phase 0, Experiment 1: does model-EMITTED confidence beat
@@ -542,5 +465,5 @@ case "batch":
     print("equivalence: same tags \(sameTags)/\(items.count)   same tags+confidence \(sameAll)/\(items.count)")
 
 default:
-    die("usage: VaultClassifierEval sample <N> [out.json] | score <in.json> | abtest <in.json> | calib <in.json> | latency <in.json> | batch <in.json>")
+    die("usage: VaultClassifierEval sample <N> [out.json] | score <in.json> | calib <in.json> | latency <in.json> | batch <in.json>")
 }

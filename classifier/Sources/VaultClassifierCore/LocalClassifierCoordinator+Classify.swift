@@ -265,8 +265,7 @@ extension LocalClassifierCoordinator {
 
     static func effectiveHouseRules(global: String?, perType: String?) -> String? {
         // A type's own house rules REPLACE the global rules (intentional override).
-        // Both are the user's own text; corrections reach the model only as
-        // per-video retrieved exemplars (CorrectionRetriever), never as rules.
+        // Both are the user's own text; corrections never reach the model as text.
         let trimmedPerType = perType?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let trimmedPerType, !trimmedPerType.isEmpty { return trimmedPerType }
         let trimmedGlobal = global?.trimmingCharacters(in: .whitespacesAndNewlines)

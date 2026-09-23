@@ -62,12 +62,12 @@ extension LocalClassifierCoordinator {
                 note: note
             )
             state.workspaceCatalog.appendCorrectionExample(example)
-            // The correction is now stored. It is NOT distilled into a static
-            // per-type house-rules block anymore: corrections drive classification
-            // through per-video retrieval (CorrectionRetriever) instead, so each
-            // video sees the corrections most relevant to IT rather than a
-            // recency-ordered block shared across every video. Manual house rules
-            // (the user's typed preferences) remain untouched in localModelOverrides.
+            // The correction is now stored as this video's authoritative tags (never
+            // re-tagged by the model; it counts in the creator's tag counts). It is
+            // NOT shown to the model: every way of teaching from corrections
+            // (per-video retrieval, a verbatim prefix block, a counts line, an LLM
+            // rule summary) measured as noise or worse on 2026-09-22/23. Manual
+            // house rules stay untouched in localModelOverrides.
 
             let previous = state.workspaceCatalog.videoClassification(
                 classifierTypeID: classifierTypeID,
@@ -102,8 +102,8 @@ extension LocalClassifierCoordinator {
         }
 
         saved.callback?(platformID, entryID, saved.projection)
-        // Corrections are surfaced to the classifier by per-video retrieval
-        // (CorrectionRetriever), not a static distilled block, and never by a
+        // Corrections are authoritative tags for their own video only; they are
+        // not surfaced to the classifier at all (measured as noise), and never by a
         // local-LLM free-text "re-summary" — a small model asked to generalize a
         // handful of corrections fabricates spurious rules ("tag Samsung as
         // Sports") that poison classification. Grounded exemplars beat invented
