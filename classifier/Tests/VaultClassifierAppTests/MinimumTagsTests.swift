@@ -64,27 +64,27 @@ final class MinimumTagsTests: XCTestCase {
 
     // MARK: - Settings clamping
 
-    func testSettingsClampMinIntoRange() {
-        let s = LocalLLMSettings(maximumTags: 3, minimumTags: 9)
-        XCTAssertEqual(s.maximumTags, 3)
-        XCTAssertEqual(s.minimumTags, 3)                 // clamped to max
+    func testBroadestPositionForbidsDeclining() {
+        XCTAssertEqual(LocalLLMSettings(strictness: .broadest).minimumTags, 1)
+        XCTAssertEqual(LocalLLMSettings(strictness: .broadest).maximumTags, 3)
         XCTAssertEqual(LocalLLMSettings().minimumTags, 0)          // default: may decline
     }
 
-    func testRetiredExpectedTagsKeyInStoredSettingsIsIgnored() throws {
-        // State written while the (removed) soft target existed must still load.
+    func testPreDialMinimumTagsStateDecodesToTheBroadestPosition() throws {
+        // State written while min/max/expected tags were settings must still load.
         let stored = #"{"maximumTags":3,"minimumTags":1,"expectedTags":2}"#
         let decoded = try JSONDecoder().decode(LocalLLMSettings.self, from: Data(stored.utf8))
+        XCTAssertEqual(decoded.strictness, .broadest)
         XCTAssertEqual(decoded.maximumTags, 3); XCTAssertEqual(decoded.minimumTags, 1)
         let overrides = try JSONDecoder().decode(LocalModelOverrides.self, from: Data(#"{"minimumTags":1,"expectedTags":2}"#.utf8))
-        XCTAssertEqual(overrides.minimumTags, 1)
+        XCTAssertEqual(overrides.strictness, .broadest)
     }
 
     func testPerTypeBoundsInheritAndOverride() {
-        let global = LocalLLMSettings(maximumTags: 4, minimumTags: 1)
+        let global = LocalLLMSettings(strictness: .broadest)
         let inherit = LocalModelOverrides().effectiveTagBounds(global: global)
-        XCTAssertEqual(inherit.minimum, 1); XCTAssertEqual(inherit.maximum, 4)
-        let override = LocalModelOverrides(maximumTags: 2, minimumTags: 0).effectiveTagBounds(global: global)
-        XCTAssertEqual(override.minimum, 0); XCTAssertEqual(override.maximum, 2)
+        XCTAssertEqual(inherit.minimum, 1); XCTAssertEqual(inherit.maximum, 3)
+        let override = LocalModelOverrides(strictness: .strictest).effectiveTagBounds(global: global)
+        XCTAssertEqual(override.minimum, 0); XCTAssertEqual(override.maximum, 1)
     }
 }

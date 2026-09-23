@@ -32,12 +32,9 @@
   let activeTagPanel = null;
   // Advanced local-model settings disclosure. Toggled without a re-render so
   // the CSS grid transition can play; re-renders rebuild from this flag.
-  let advancedSettingsOpen = false;
   // Per-type local-model request overrides have their own disclosure state;
   // they must not expand/collapse the app-wide engine settings modal.
-  let localModelAdvancedOpen = false;
   // Per-type research defaults have a separate disclosure for the same reason.
-  let researchAdvancedOpen = false;
   let tagDrag = null;
   let suppressTagClick = false;
   let connectionSource = null;
@@ -59,8 +56,8 @@
   // renders; the detail pane reads it during its targeted refreshes too.
   const suppliedTagNodeByPlatform = new Map();
   let pendingDeletion = null;
-  // Non-null while the "create a group" dialog is open: { presetID, platformID }.
-  // A group can only be created through this dialog, and only from a preset.
+  // Non-null while the "create a group" dialog is open: { platformID, name? }.
+  // A group can only be created through this dialog.
   let pendingCreateType = null;
   let utilityPanel = null;
   // Which classifier type is open in the left-panel list (client-only UI state).
@@ -638,39 +635,44 @@
     return `<label class="header-language"><span class="visually-hidden">${tx("language.label")}</span><select class="select-control" data-language-selection aria-label="${tx("language.label")}">${languageChoices.map(([identifier, nameKey]) => `<option value="${esc(identifier)}"${selected(selectedLanguage, identifier)}>${tx(nameKey)}</option>`).join("")}</select></label>`;
   }
 
-  function localModelOptions(availableNames, selectedName, emptyLabel) {
-    const names = [...new Set((availableNames || []).filter((name) => typeof name === "string" && name))].sort();
-    const options = [["", emptyLabel], ...names.map((name) => [name, name])];
-    if (selectedName && !names.includes(selectedName)) {
-      options.splice(1, 0, [selectedName, t("localModel.modelMissing", { file: selectedName })]);
-    }
-    return options;
+  // The two dials of the local model (2026-09-23): Speed ↔ Quality picks a
+  // model tier, Strict ↔ Broad picks a tag-count position. Everything else
+  // is a constant on the Swift side.
+  const SPEED_TIERS = ["fast", "balanced", "best"];
+  const STRICTNESS_POSITIONS = [1, 2, 3, 4, 5];
+
+  function tierEntry(llm, tier) {
+    return (llm?.modelLibrary || []).find((entry) => entry.tier === tier) || null;
   }
 
-  function modelLibraryContent(entries) {
-    const groups = [
-      ["small", (entry) => Number(entry.downloadSizeBytes) < 1_500_000_000],
-      ["medium", (entry) => Number(entry.downloadSizeBytes) >= 1_500_000_000 && Number(entry.downloadSizeBytes) < 3_000_000_000],
-      ["large", (entry) => Number(entry.downloadSizeBytes) >= 3_000_000_000],
-    ];
-    const latencyBands = new Set(["green", "danger", "reject"]);
-    const row = (entry) => {
-      const stateKind = entry.state?.kind || "available";
-      const fraction = Math.min(1, Math.max(0, Number(entry.state?.fraction) || 0));
-      let controls = `<button class="primary" data-action="downloadModel" data-id="${esc(entry.id)}">${tx("modelLibrary.download")}</button>`;
-      if (stateKind === "downloading") {
-        controls = `<div class="model-download-state"><span class="model-download-label">${tx("modelLibrary.downloading", { progress: percent(fraction) })}</span><div class="model-download-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(fraction * 100)}"><span style="width:${Math.round(fraction * 100)}%"></span></div></div><button class="secondary" data-action="cancelModelDownload" data-id="${esc(entry.id)}">${tx("modelLibrary.cancel")}</button>`;
-      } else if (stateKind === "downloaded") {
-        controls = `${statusPill(t("modelLibrary.downloaded"), "cyan")}<button class="danger" data-action="deleteModelFile" data-file-name="${esc(entry.ggufFileName)}">${tx("modelLibrary.delete")}</button>`;
+  // One card per tier, carrying that tier's download state and controls.
+  function speedQualityCards(llm, selectedTier) {
+    const systemRAMGB = Number(llm.systemRAMGB) || 0;
+    return `<div class="dial-card-grid" role="radiogroup" aria-label="${esc(t("localModel.speedQuality"))}">${SPEED_TIERS.map((tier) => {
+      const entry = tierEntry(llm, tier);
+      const active = tier === selectedTier;
+      const stateKind = entry?.state?.kind || "available";
+      const fraction = Math.min(1, Math.max(0, Number(entry?.state?.fraction) || 0));
+      let controls = entry ? `<button type="button" class="primary" data-action="downloadModel" data-id="${esc(entry.id)}">${tx("modelLibrary.download")}</button>` : "";
+      if (entry && stateKind === "downloading") {
+        controls = `<div class="model-download-state"><span class="model-download-label">${tx("modelLibrary.downloading", { progress: percent(fraction) })}</span><div class="model-download-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(fraction * 100)}"><span style="width:${Math.round(fraction * 100)}%"></span></div></div><button type="button" class="secondary" data-action="cancelModelDownload" data-id="${esc(entry.id)}">${tx("modelLibrary.cancel")}</button>`;
+      } else if (entry && stateKind === "downloaded") {
+        controls = `${statusPill(t("modelLibrary.downloaded"), "cyan")}<button type="button" class="danger" data-action="deleteModelFile" data-file-name="${esc(entry.ggufFileName)}">${tx("modelLibrary.delete")}</button>`;
       }
-      const latencyBand = latencyBands.has(entry.latencyBand) ? entry.latencyBand : "unmeasured";
-      return `<article class="model-library-row"><div class="model-library-copy"><div class="model-library-title"><strong>${esc(entry.displayName)}</strong><span>${esc(entry.family)}</span>${entry.recommended ? `<span class="model-recommended-badge">${tx("modelLibrary.recommended")}</span>` : ""}</div><div class="model-library-meta"><span>${tx("modelLibrary.params", { params: Number(entry.paramsB).toLocaleString(undefined, { maximumFractionDigits: 2 }) })}</span><span>${tx("modelLibrary.size", { size: modelSizeGB(entry.downloadSizeBytes) })}</span><span>${tx("modelLibrary.minimumRAM", { ram: entry.minimumRAMGB })}</span>${statusPill(t(`modelLibrary.latency.${latencyBand}`), latencyBand === "unmeasured" ? "muted" : latencyBand)}</div></div><div class="model-library-controls">${controls}</div></article>`;
-    };
-    return groups.map(([group, includes]) => {
-      const models = entries.filter(includes).sort((lhs, rhs) => Number(lhs.downloadSizeBytes) - Number(rhs.downloadSizeBytes));
-      if (!models.length) return "";
-      return `<section class="model-library-group"><h4>${tx(`modelLibrary.group.${group}`)}</h4><div class="model-library-rows">${models.map(row).join("")}</div></section>`;
-    }).join("");
+      const meta = entry ? `<span class="dial-card-meta">${tx("localModel.tier.model", { model: entry.displayName, size: modelSizeGB(entry.downloadSizeBytes), ram: entry.minimumRAMGB })}</span>` : "";
+      const ramShort = entry && systemRAMGB && Number(entry.minimumRAMGB) > systemRAMGB
+        ? `<span class="dial-card-warning">${tx("localModel.tier.ramShort", { ram: entry.minimumRAMGB })}</span>` : "";
+      const badge = entry?.recommended ? `<span class="dial-card-badge">${tx("localModel.tier.recommended")}</span>` : "";
+      return `<label class="dial-card${active ? " active" : ""}"><input type="radio" name="speedQuality" data-field="speedQuality" value="${tier}"${active ? " checked" : ""}><span class="dial-card-head"><span class="dial-card-name">${tx(`localModel.tier.${tier}.name`)}</span>${badge}</span><span class="dial-card-desc">${tx(`localModel.tier.${tier}.desc`)}</span>${meta}${ramShort}<span class="dial-card-controls">${controls}</span></label>`;
+    }).join("")}</div>`;
+  }
+
+  // Five positions from Strictest to Broadest, each with what it does.
+  function strictnessOptions(selected) {
+    return `<div class="strictness-options" role="radiogroup" aria-label="${esc(t("localModel.strictness"))}">${STRICTNESS_POSITIONS.map((position) => {
+      const active = Number(selected) === position;
+      return `<label class="strictness-option${active ? " active" : ""}"><input type="radio" name="strictness" data-field="strictness" value="${position}"${active ? " checked" : ""}><span class="strictness-option-name">${position} · ${tx(`localModel.strictness.${position}.name`)}</span><span class="strictness-option-desc">${tx(`localModel.strictness.${position}.desc`)}</span></label>`;
+    }).join("")}</div>`;
   }
 
   function utilityPanelContent() {
@@ -684,45 +686,13 @@
       const profiles = assets.providerProfiles || [];
       const protocols = assets.providerProtocols || {};
       const statusToneByState = { loaded: "cyan", loading: "navy", disabled: "navy", "no-model": "pink", failed: "red" };
-      const modelOptions = localModelOptions(
-        llm.availableModels,
-        llm.modelFileName || "",
-        t("localModel.modelAuto")
-      );
-      const thresholds = Array.isArray(llm.confidenceThresholds) && llm.confidenceThresholds.length === 4
-        ? llm.confidenceThresholds
-        : [0.2, 0.4, 0.6, 0.85];
-      const advancedBody = `<div class="utility-settings-fields">${
-        valueSelectField("localModel.contextTokens", "localModel.contextTokensHint", "contextTokens", String(llm.contextTokens ?? 4096), [["1024", "1,024"], ["2048", "2,048"], ["4096", "4,096"], ["8192", "8,192"], ["16384", "16,384"]])
-      }${
-        valueSelectField("localModel.batchTokens", "localModel.batchTokensHint", "batchTokens", String(llm.batchTokens ?? 512), [["128", "128"], ["256", "256"], ["512", "512"], ["1024", "1,024"], ["2048", "2,048"]])
-      }${
-        field("localModel.maxOutputTokens", "localModel.maxOutputTokensHint", "maximumOutputTokens", llm.maximumOutputTokens ?? 16)
-      }${
-        field("localModel.maxTags", "localModel.maxTagsHint", "maximumTags", llm.maximumTags ?? 1)
-      }${
-        field("localModel.minTags", "localModel.minTagsHint", "minimumTags", llm.minimumTags ?? 0)
-      }${
-        field("localModel.extraTagOdds", "localModel.extraTagOddsHint", "extraTagMinimumOdds", llm.extraTagMinimumOdds ?? 0.9, "number", 'min="0" max="0.999" step="0.01"')
-      }${
-        field("localModel.temperature", "localModel.temperatureHint", "temperature", llm.temperature ?? 0)
-      }${
-        field("localModel.maxResidentModels", "localModel.maxResidentModelsHint", "maxResidentModels", llm.maxResidentModels ?? 2, "number", 'min="1" max="4"')
-      }</div><div class="utility-toggles">${
-        toggle("localModel.gpuOffload", "gpuOffload", llm.gpuOffload !== false)
-      }${
-        toggle("localModel.allowDecline", "allowDecline", llm.allowDecline !== false)
-      }</div><div class="field wide"><span class="field-label">${tx("localModel.confidence")}<span class="field-hint"> · ${tx("localModel.confidenceHint")}</span></span><div class="confidence-band-row">${
-        [2, 3, 4, 5].map((level, index) => `<label class="confidence-band"><span class="confidence-band-label">≥ ${level}</span><input type="text" data-field="confidenceBand${level}" value="${esc(String(thresholds[index]))}"></label>`).join("")
-      }</div></div>${
+      const llmSection = `<section class="utility-settings-section utility-llm-section" data-form-id="utility-llm-form"><h3 class="utility-settings-section-title">${tx("localModel.title")} ${statusPill(tx(`localModel.status.${llm.engineStatus || "loading"}`), statusToneByState[llm.engineStatus] || "navy")}</h3><p class="section-copy">${tx("localModel.copy")}</p><div class="field wide"><span class="field-label">${tx("localModel.speedQuality")}<span class="field-hint"> · ${tx("localModel.speedQualityHint")}</span></span>${
+        speedQualityCards(llm, llm.speedQuality || "balanced")
+      }<p class="model-library-source-note">${tx("localModel.tier.sourceNote")}</p></div><div class="field wide"><span class="field-label">${tx("localModel.strictness")}<span class="field-hint"> · ${tx("localModel.strictnessHint")}</span></span>${
+        strictnessOptions(llm.strictness ?? 3)
+      }</div>${
         textareaField("localModel.houseRules", "localModel.houseRulesHint", "houseRules", llm.houseRules || "", 'rows="4"')
-      }`;
-      const llmSection = `<section class="utility-settings-section utility-llm-section" data-form-id="utility-llm-form"><h3 class="utility-settings-section-title">${tx("localModel.title")} ${statusPill(tx(`localModel.status.${llm.engineStatus || "loading"}`), statusToneByState[llm.engineStatus] || "navy")}</h3><p class="section-copy">${tx("localModel.copy")}</p><div class="utility-toggles">${
-        toggle("localModel.engineEnabled", "engineEnabled", llm.engineEnabled !== false)
-      }</div><div class="utility-settings-fields">${
-        valueSelectField("localModel.model", "localModel.modelHint", "modelFileName", llm.modelFileName || "", modelOptions)
-      }</div><div class="utility-advanced${advancedSettingsOpen ? " open" : ""}" data-advanced-settings><button type="button" class="secondary advanced-toggle" data-action="toggleAdvancedSettings" aria-expanded="${advancedSettingsOpen}"><span>${tx("localModel.advanced")}</span><span class="advanced-chevron" aria-hidden="true">⌄</span></button><div class="advanced-settings-body"><div class="advanced-settings-inner">${advancedBody}</div></div></div><div class="action-row"><button class="primary" data-action="saveLocalLLMSettings" data-form="utility-llm-form">${tx("localModel.save")}</button></div></section>`;
-      const modelLibrarySection = `<section class="utility-settings-section utility-model-library-section"><div><h3 class="utility-settings-section-title">${tx("modelLibrary.title")}</h3><p class="section-copy">${tx("modelLibrary.copy")}</p></div><p class="model-library-source-note">${tx("modelLibrary.sourceNote")}</p><div class="model-library-groups">${modelLibraryContent(llm.modelLibrary || [])}</div></section>`;
+      }<div class="action-row"><button class="primary" data-action="saveLocalLLMSettings" data-form="utility-llm-form">${tx("localModel.save")}</button></div></section>`;
       const generationProfiles = profiles.filter((profile) => protocols[profile.type]?.supportsGenerateText === true);
       const isGroundingCapable = (profile) => protocols[profile.type]?.supportsGenerateText === true && protocols[profile.type]?.supportsNativeWebSearch === true;
       // Research is provider-grounding only, so only grounding-capable providers are offered.
@@ -730,27 +700,13 @@
       const modelSuggestions = assets.providerModelCatalogs?.[research.llmProviderProfileID] || [];
       const researchSection = `<section class="utility-settings-section utility-research-section" data-form-id="utility-research-form"><h3 class="utility-settings-section-title">${tx("research.title")} ${statusPill(tx(research.enabled ? "research.status.on" : "research.status.off"), research.enabled ? "cyan" : "muted")}</h3><p class="section-copy">${tx("research.copy")}</p><div class="notice navy research-data-flow">${tx("research.disclosure")}</div><div class="utility-toggles">${
         toggle("research.consent", "enabled", research.enabled === true)
-      }</div><div class="research-settings-groups"><section class="research-settings-group"><h4>${tx("research.group.providers")}</h4><div class="utility-settings-fields">${
+      }</div><div class="utility-settings-fields">${
         valueSelectField("research.llmProvider", "research.llmProviderHint", "llmProviderProfileID", research.llmProviderProfileID || "", llmProviderOptions)
       }${
         field("research.model", "research.modelHint", "llmModelIdentifier", research.llmModelIdentifier || "", "text", 'list="research-model-suggestions" maxlength="256"')
-      }<datalist id="research-model-suggestions">${modelSuggestions.map((model) => `<option value="${esc(model)}"></option>`).join("")}</datalist></div></section><section class="research-settings-group"><h4>${tx("research.group.frequency")}</h4><div class="utility-settings-fields">${
-        field("research.requestsPerMinute", "research.requestsPerMinuteHint", "requestsPerMinute", research.requestsPerMinute ?? 6, "number", 'min="1" max="120"')
-      }${
-        field("research.dailyTokenLimit", "research.dailyTokenLimitHint", "dailyTokenLimit", research.dailyTokenLimit ?? 10000, "number", 'min="1" max="10000000"')
-      }${
-        field("research.cooldownHours", "research.cooldownHoursHint", "cooldownHours", research.cooldownHours ?? 24, "number", 'min="1" max="720"')
-      }</div></section><section class="research-settings-group"><h4>${tx("research.group.author")}</h4><div class="utility-settings-fields">${
-        field("research.creatorScore", "research.creatorScoreHint", "creatorScoreThreshold", research.creatorScoreThreshold ?? 3, "number", 'min="0.5" max="50" step="0.5"')
-      }${
-        field("research.creatorHalfLife", "research.creatorHalfLifeHint", "creatorScoreHalfLifeDays", research.creatorScoreHalfLifeDays ?? 14, "number", 'min="1" max="365"')
-      }</div></section><section class="research-settings-group"><h4>${tx("research.group.knowledge")}</h4><div class="utility-settings-fields">${
-        field("research.knowledgeTTLDays", "research.knowledgeTTLDaysHint", "knowledgeTTLDays", research.knowledgeTTLDays ?? 0, "number", 'min="0" max="3650"')
-      }${
-        field("research.maxKnowledgePerVideo", "research.maxKnowledgePerVideoHint", "maxKnowledgePerVideo", research.maxKnowledgePerVideo ?? 8, "number", 'min="1" max="32"')
-      }</div></section></div><p class="small-copy">${tx("research.usageToday", { used: research.tokensUsedToday ?? 0 })}</p>${researchStatusBlock(research.status)}<div class="action-row"><button class="primary" data-action="saveResearchSettings" data-form="utility-research-form">${tx("research.save")}</button></div></section>`;
+      }<datalist id="research-model-suggestions">${modelSuggestions.map((model) => `<option value="${esc(model)}"></option>`).join("")}</datalist></div><p class="small-copy">${tx("research.constantsNote")}</p><p class="small-copy">${tx("research.usageToday", { used: research.tokensUsedToday ?? 0, limit: research.dailyTokenLimit ?? 10000 })}</p>${researchStatusBlock(research.status)}<div class="action-row"><button class="primary" data-action="saveResearchSettings" data-form="utility-research-form">${tx("research.save")}</button></div></section>`;
       const packageSection = `<section class="utility-settings-section utility-resource-section" data-form-id="utility-package-form"><h3 class="utility-settings-section-title">${tx("settings.packageUpdates")}</h3><div class="utility-settings-fields">${selectField("settings.packageUpdates", "settings.packageUpdatesCopy", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div><div class="action-row"><button class="primary" data-action="savePackageSettings" data-form="utility-package-form">${tx("common.save")}</button></div></section>`;
-      content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${llmSection}${modelLibrarySection}${researchSection}${packageSection}</div></section>`;
+      content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${llmSection}${researchSection}${packageSection}</div></section>`;
     }
     if (!content) return "";
     return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}"></button><div class="utility-popover" role="dialog" aria-modal="true" aria-label="${esc(tx("utility.settings.title"))}">${content}</div></div>`;
@@ -1059,57 +1015,22 @@
             : t("bridge.platformDataMissingKey", { platform: applicablePlatform.name });
       const typeStatus = applicablePlatformID ? t("bridge.configured") : t("bridge.needsSource");
       const localOverrides = classifierType.localModelOverrides || null;
-      const localOverrideThresholds = Array.isArray(localOverrides?.confidenceThresholds) && localOverrides.confidenceThresholds.length === 4
-        ? localOverrides.confidenceThresholds
-        : [0.2, 0.4, 0.6, 0.85];
       const localModelFormID = `classifier-local-model-form-${classifierType.id}`;
-      const typeModelOptions = localModelOptions(
-        state.settings?.localLLM?.availableModels,
-        classifierType.modelFileName || "",
-        t("bridge.localModelInheritGlobal")
-      );
-      const localModelOverrideBody = `<div class="utility-toggles">${toggle("bridge.localModelAllowDecline", "allowDecline", localOverrides?.allowDecline ?? true)}</div>${field("bridge.localModelMaxTags", "localModel.maxTagsHint", "maximumTags", localOverrides?.maximumTags ?? (state.settings?.localLLM?.maximumTags ?? 1))}${field("bridge.localModelMinTags", "localModel.minTagsHint", "minimumTags", localOverrides?.minimumTags ?? "")}<div class="field wide"><span class="field-label">${tx("localModel.confidence")}<span class="field-hint"> · ${tx("localModel.confidenceHint")}</span></span><div class="confidence-band-row">${[2, 3, 4, 5].map((level, index) => `<label class="confidence-band"><span class="confidence-band-label">≥ ${level}</span><input type="text" data-field="confidenceBand${level}" value="${esc(String(localOverrideThresholds[index]))}"></label>`).join("")}</div></div>${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", localOverrides?.houseRules ?? "", 'rows="4"')}`;
-      const localModelOverrideSection = supportsLocalModel ? `<section class="classifier-type-section classifier-local-model-overrides" data-local-model-section><div class="section-header"><div><h3>${tx("bridge.localModelOverrides")}</h3><p class="section-copy">${tx("bridge.localModelOverridesCopy")}</p></div></div><div data-form-id="${esc(localModelFormID)}"><div class="utility-settings-fields">${valueSelectField("bridge.localModelFile", "bridge.localModelFileCopy", "modelFileName", classifierType.modelFileName || "", typeModelOptions)}</div><p class="small-copy resident-model-note">${tx("bridge.localModelResidentNote", { count: state.settings?.localLLM?.maxResidentModels ?? 2 })}</p>${toggle("bridge.localModelOverrideEnabled", "overrideEnabled", Boolean(localOverrides))}<div class="utility-advanced${localModelAdvancedOpen ? " open" : ""}" data-local-model-advanced><button type="button" class="secondary advanced-toggle" data-action="toggleLocalModelAdvanced" aria-expanded="${localModelAdvancedOpen}"><span>${tx("bridge.localModelOverrideControls")}</span><span class="advanced-chevron" aria-hidden="true">⌄</span></button><div class="advanced-settings-body"><div class="advanced-settings-inner">${localModelOverrideBody}</div></div></div><div class="action-row"><button type="button" class="primary" data-action="saveClassifierTypeLocalModel" data-form="${esc(localModelFormID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div></div></section>` : "";
-      const researchOverrides = classifierType.researchOverrides || null;
-      const researchDefaults = researchOverrides || state.settings?.research || {};
+      const globalLLM = state.settings?.localLLM || {};
+      const tierName = (tier) => t(`localModel.tier.${tier}.name`);
+      const typeSpeedOptions = [["", t("localModel.speedQuality.followGlobal", { name: tierName(globalLLM.speedQuality || "balanced") })]].concat(SPEED_TIERS.map((tier) => {
+        const downloaded = tierEntry(globalLLM, tier)?.state?.kind === "downloaded";
+        return [tier, downloaded ? tierName(tier) : t("localModel.tier.notDownloaded", { name: tierName(tier) })];
+      }));
+      const positionName = (position) => `${position} · ${t(`localModel.strictness.${position}.name`)}`;
+      const typeStrictnessOptions = [["", t("localModel.strictness.followGlobal", { name: positionName(globalLLM.strictness ?? 3) })]]
+        .concat(STRICTNESS_POSITIONS.map((position) => [String(position), positionName(position)]));
+      const localModelOverrideSection = supportsLocalModel ? `<section class="classifier-type-section classifier-local-model-overrides" data-local-model-section><div class="section-header"><div><h3>${tx("bridge.localModelOverrides")}</h3><p class="section-copy">${tx("bridge.localModelOverridesCopy")}</p></div></div><div data-form-id="${esc(localModelFormID)}"><div class="utility-settings-fields">${valueSelectField("localModel.speedQuality", "localModel.speedQualityHint", "speedQuality", localOverrides?.speedQuality || "", typeSpeedOptions)}${valueSelectField("localModel.strictness", "localModel.strictnessHint", "strictness", localOverrides?.strictness != null ? String(localOverrides.strictness) : "", typeStrictnessOptions)}</div><p class="small-copy resident-model-note">${tx("bridge.localModelResidentNote")}</p>${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", localOverrides?.houseRules ?? "", 'rows="4"')}<div class="action-row"><button type="button" class="primary" data-action="saveClassifierTypeLocalModel" data-form="${esc(localModelFormID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div></div></section>` : "";
       const researchFormID = `classifier-research-form-${classifierType.id}`;
-      const generationProfiles = profiles.filter((profile) => assets.providerProtocols?.[profile.type]?.supportsGenerateText === true);
-      const typeIsGroundingCapable = (profile) => assets.providerProtocols?.[profile.type]?.supportsGenerateText === true && assets.providerProtocols?.[profile.type]?.supportsNativeWebSearch === true;
-      const typeLLMProviderOptions = [["", tx("research.chooseProvider")]].concat(generationProfiles.filter(typeIsGroundingCapable).map((profile) => [profile.id, profile.name]));
-      const typeModelSuggestions = assets.providerModelCatalogs?.[researchDefaults.llmProviderProfileID] || [];
-      const typeResearchModelListID = `research-model-suggestions-${classifierType.id}`;
-      const researchOverrideBody = `<div class="utility-toggles">${toggle("bridge.researchEnabled", "enabled", researchDefaults.enabled === true)}</div><div class="research-settings-groups"><section class="research-settings-group"><h4>${tx("research.group.providers")}</h4><div class="utility-settings-fields">${
-        valueSelectField("research.llmProvider", "research.llmProviderHint", "llmProviderProfileID", researchDefaults.llmProviderProfileID || "", typeLLMProviderOptions)
-      }${
-        field("research.model", "research.modelHint", "llmModelIdentifier", researchDefaults.llmModelIdentifier || "", "text", `list="${esc(typeResearchModelListID)}" maxlength="256"`)
-      }<datalist id="${esc(typeResearchModelListID)}">${typeModelSuggestions.map((model) => `<option value="${esc(model)}"></option>`).join("")}</datalist></div></section><section class="research-settings-group"><h4>${tx("research.group.frequency")}</h4><div class="utility-settings-fields">${
-        field("research.requestsPerMinute", "research.requestsPerMinuteHint", "requestsPerMinute", researchDefaults.requestsPerMinute ?? 6, "number", 'min="1" max="120"')
-      }${
-        field("research.dailyTokenLimit", "research.dailyTokenLimitHint", "dailyTokenLimit", researchDefaults.dailyTokenLimit ?? 10000, "number", 'min="1" max="10000000"')
-      }${
-        field("research.cooldownHours", "research.cooldownHoursHint", "cooldownHours", researchDefaults.cooldownHours ?? 24, "number", 'min="1" max="720"')
-      }</div></section><section class="research-settings-group"><h4>${tx("research.group.author")}</h4><div class="utility-settings-fields">${
-        field("research.creatorScore", "research.creatorScoreHint", "creatorScoreThreshold", researchDefaults.creatorScoreThreshold ?? 3, "number", 'min="0.5" max="50" step="0.5"')
-      }${
-        field("research.creatorHalfLife", "research.creatorHalfLifeHint", "creatorScoreHalfLifeDays", researchDefaults.creatorScoreHalfLifeDays ?? 14, "number", 'min="1" max="365"')
-      }</div></section><section class="research-settings-group"><h4>${tx("research.group.knowledge")}</h4><div class="utility-settings-fields">${
-        field("research.knowledgeTTLDays", "research.knowledgeTTLDaysHint", "knowledgeTTLDays", researchDefaults.knowledgeTTLDays ?? 0, "number", 'min="0" max="3650"')
-      }${
-        field("research.maxKnowledgePerVideo", "research.maxKnowledgePerVideoHint", "maxKnowledgePerVideo", researchDefaults.maxKnowledgePerVideo ?? 8, "number", 'min="1" max="32"')
-      }</div></section></div>`;
-      const researchOverrideSection = supportsLocalModel ? `<section class="classifier-type-section classifier-research-overrides"><div class="section-header"><div><h3>${tx("bridge.researchOverrides")}</h3><p class="section-copy">${tx("bridge.researchOverridesCopy")}</p></div></div><div data-form-id="${esc(researchFormID)}">${toggle("bridge.researchOverrideEnabled", "overrideEnabled", Boolean(researchOverrides))}<div class="utility-advanced${researchAdvancedOpen ? " open" : ""}" data-research-advanced><button type="button" class="secondary advanced-toggle" data-action="toggleResearchAdvanced" aria-expanded="${researchAdvancedOpen}"><span>${tx("bridge.researchOverrideControls")}</span><span class="advanced-chevron" aria-hidden="true">⌄</span></button><div class="advanced-settings-body"><div class="advanced-settings-inner">${researchOverrideBody}</div></div></div><p class="small-copy research-master-note">${tx("bridge.researchMasterGate")}</p><div class="action-row"><button type="button" class="primary" data-action="saveClassifierTypeResearch" data-form="${esc(researchFormID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div></div></section>` : "";
-      // Preset provenance: every type is created from a preset. Show which one,
-      // and flag drift ("Modified from <preset>") once its overrides diverge from
-      // what the preset writes — the detailed form below is the "Advanced" surface.
-      const presetName = classifierType.presetNameKey ? t(classifierType.presetNameKey) : "";
-      const presetBadge = presetName
-        ? statusPill(
-            t(classifierType.modifiedFromPreset ? "preset.modifiedFrom" : "preset.basedOn", { name: presetName }),
-            classifierType.modifiedFromPreset ? "gold" : "muted"
-          )
-        : "";
+      const researchMode = classifierType.researchEnabled === true ? "on" : classifierType.researchEnabled === false ? "off" : "inherit";
+      const researchOverrideSection = supportsLocalModel ? `<section class="classifier-type-section classifier-research-overrides"><div class="section-header"><div><h3>${tx("bridge.researchOverrides")}</h3><p class="section-copy">${tx("bridge.researchOverridesCopy")}</p></div></div><div data-form-id="${esc(researchFormID)}"><div class="utility-settings-fields">${valueSelectField("bridge.researchMode", "", "researchMode", researchMode, [["inherit", t("bridge.researchMode.inherit")], ["on", t("bridge.researchMode.on")], ["off", t("bridge.researchMode.off")]])}</div><p class="small-copy research-master-note">${tx("bridge.researchMasterGate")}</p><div class="action-row"><button type="button" class="primary" data-action="saveClassifierTypeResearch" data-form="${esc(researchFormID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div></div></section>` : "";
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}">
-        <div class="classifier-type-head"><div><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div><div class="classifier-type-head-pills">${presetBadge}${statusPill(typeStatus, applicablePlatformID ? "navy" : "muted")}</div></div>
+        <div class="classifier-type-head"><div><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div><div class="classifier-type-head-pills">${statusPill(typeStatus, applicablePlatformID ? "navy" : "muted")}</div></div>
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}<button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("bridge.saveType")}</button><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}" data-name="${esc(classifierType.name)}">${tx("bridge.deleteType")}</button></div>
         <section class="classifier-type-section classifier-applicable-platform-section"><div class="section-header"><div><h3>${tx("bridge.applicablePlatform")}</h3><p class="section-copy">${tx("bridge.assetSelectionCopy")}</p></div></div><div class="classifier-applicable-platform-row">${valueSelectField("bridge.applicablePlatform", "bridge.applicablePlatformCopy", "applicablePlatformID", applicablePlatformID, applicablePlatformOptions)}<div class="classifier-platform-data-status"><span class="eyebrow">${tx("bridge.platformData")}</span><p class="small-copy">${esc(platformDataStatus)}</p></div></div>${applicablePlatform && !supportsLocalModel ? `<p class="small-copy" data-collection-only-platform-note>${tx("bridge.collectionOnlyCopy")}</p>` : ""}</section>
         ${localModelOverrideSection}
@@ -1479,23 +1400,15 @@
     return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelPendingDeletion" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog" role="dialog" aria-modal="true"><h3>${tx("trash.confirmTitle")}</h3><p class="section-copy">${tx("trash.confirmCopy", { name: pendingDeletion.name })}</p><label class="field"><span class="field-label">${tx("trash.typeNameLabel")}</span><input type="text" data-deletion-name-input autocomplete="off" spellcheck="false"></label><div class="action-row"><button class="secondary" data-action="cancelPendingDeletion">${tx("common.cancel")}</button><button class="danger" data-action="confirmPendingDeletion" disabled>${tx("trash.confirmDelete")}</button></div></div></div>`;
   }
 
-  // Create-a-group dialog. A classifier group can only be created here, and only
-  // from a preset — the preset seeds the model + research settings so nobody
-  // hand-tunes them at creation. Platform and name are also chosen here.
+  // Create-a-group dialog: platform and name. The new group follows the global
+  // dials, house rules and research switch until given its own.
   function createTypeModal() {
     if (!pendingCreateType) return "";
-    const presets = state.assets?.presets || [];
     const platforms = state.assets?.collectionPlatforms || [];
-    if (!presets.length || !platforms.length) return "";
-    const selectedPresetID = pendingCreateType.presetID || state.assets?.defaultPresetID || presets[0].id;
+    if (!platforms.length) return "";
     const selectedPlatformID = pendingCreateType.platformID || platforms[0].id;
-    const presetCards = presets.map((preset) => {
-      const active = preset.id === selectedPresetID;
-      const badge = preset.isDefault ? `<span class="preset-card-badge">${tx("preset.default.badge")}</span>` : "";
-      return `<button type="button" class="preset-card${active ? " active" : ""}" role="radio" aria-checked="${active}" data-action="selectCreatePreset" data-preset-id="${esc(preset.id)}"><span class="preset-card-head"><span class="preset-card-name">${tx(preset.nameKey)}</span>${badge}</span><span class="preset-card-desc">${tx(preset.descKey)}</span></button>`;
-    }).join("");
     const platformOptions = platforms.map((platform) => `<option value="${esc(platform.id)}"${platform.id === selectedPlatformID ? " selected" : ""}>${esc(platform.name)} · ${esc(platform.browser)}</option>`).join("");
-    return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelCreateType" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog create-type-dialog" role="dialog" aria-modal="true"><h3>${tx("createType.title")}</h3><p class="section-copy">${tx("createType.copy")}</p><div class="field"><span class="field-label">${tx("createType.presetLabel")}</span><div class="preset-card-grid" role="radiogroup" aria-label="${tx("createType.presetLabel")}">${presetCards}</div></div><label class="field"><span class="field-label">${tx("createType.platformLabel")}</span><select data-create-type-platform>${platformOptions}</select></label><label class="field"><span class="field-label">${tx("createType.nameLabel")}</span><input type="text" data-create-type-name autocomplete="off" spellcheck="false" value="${esc(pendingCreateType.name != null ? pendingCreateType.name : t("createType.defaultName"))}"></label><div class="action-row"><button class="secondary" data-action="cancelCreateType">${tx("common.cancel")}</button><button class="primary" data-action="confirmCreateType">${tx("createType.create")}</button></div></div></div>`;
+    return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelCreateType" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog create-type-dialog" role="dialog" aria-modal="true"><h3>${tx("createType.title")}</h3><p class="section-copy">${tx("createType.copy")}</p><label class="field"><span class="field-label">${tx("createType.platformLabel")}</span><select data-create-type-platform>${platformOptions}</select></label><label class="field"><span class="field-label">${tx("createType.nameLabel")}</span><input type="text" data-create-type-name autocomplete="off" spellcheck="false" value="${esc(pendingCreateType.name != null ? pendingCreateType.name : t("createType.defaultName"))}"></label><div class="action-row"><button class="secondary" data-action="cancelCreateType">${tx("common.cancel")}</button><button class="primary" data-action="confirmCreateType">${tx("createType.create")}</button></div></div></div>`;
   }
 
   // Keyed list: rendered as an empty container in the shell (so its row data is
@@ -1665,35 +1578,6 @@
       if (button.dataset.scene) send("switch-scene", { scene: button.dataset.scene });
       return;
     }
-    if (action === "toggleAdvancedSettings") {
-      // Class toggle only — a full render would replace the node and kill the
-      // expand/collapse transition mid-flight.
-      advancedSettingsOpen = !advancedSettingsOpen;
-      const wrap = button.closest("[data-advanced-settings]");
-      if (wrap) {
-        wrap.classList.toggle("open", advancedSettingsOpen);
-        button.setAttribute("aria-expanded", String(advancedSettingsOpen));
-      }
-      return;
-    }
-    if (action === "toggleLocalModelAdvanced") {
-      localModelAdvancedOpen = !localModelAdvancedOpen;
-      const wrap = button.closest("[data-local-model-advanced]");
-      if (wrap) {
-        wrap.classList.toggle("open", localModelAdvancedOpen);
-        button.setAttribute("aria-expanded", String(localModelAdvancedOpen));
-      }
-      return;
-    }
-    if (action === "toggleResearchAdvanced") {
-      researchAdvancedOpen = !researchAdvancedOpen;
-      const wrap = button.closest("[data-research-advanced]");
-      if (wrap) {
-        wrap.classList.toggle("open", researchAdvancedOpen);
-        button.setAttribute("aria-expanded", String(researchAdvancedOpen));
-      }
-      return;
-    }
     if (action === "workspace") {
       const nextWorkspace = button.dataset.workspace;
       if (!state || !workspaceNames.has(nextWorkspace) || state.workspace === nextWorkspace) return;
@@ -1720,29 +1604,10 @@
     }
     if (action === "newType") {
       const platforms = state.assets?.collectionPlatforms || [];
-      const presets = state.assets?.presets || [];
-      if (!platforms.length || !presets.length) return;
-      // Open the create-a-group dialog. A group can only be created from a preset,
-      // so there is no direct-create path any more.
-      pendingCreateType = {
-        presetID: state.assets?.defaultPresetID || presets[0].id,
-        platformID: platforms[0].id,
-      };
+      if (!platforms.length) return;
+      // Open the create-a-group dialog; there is no direct-create path.
+      pendingCreateType = { platformID: platforms[0].id };
       render();
-      return;
-    }
-    if (action === "selectCreatePreset") {
-      if (pendingCreateType) {
-        // Preserve the platform/name the person may have already chosen.
-        const nameInput = root.querySelector("[data-create-type-name]");
-        const platformSelect = root.querySelector("[data-create-type-platform]");
-        pendingCreateType = {
-          presetID: button.dataset.presetId,
-          platformID: platformSelect?.value || pendingCreateType.platformID,
-          name: nameInput ? nameInput.value : pendingCreateType.name,
-        };
-        render();
-      }
       return;
     }
     if (action === "cancelCreateType") {
@@ -1756,12 +1621,11 @@
       const platformSelect = root.querySelector("[data-create-type-platform]");
       const name = ((nameInput?.value) || t("createType.defaultName")).trim() || t("createType.defaultName");
       const platformID = platformSelect?.value || pendingCreateType.platformID;
-      const presetID = pendingCreateType.presetID;
-      if (!platformID || !presetID) return;
+      if (!platformID) return;
       pendingSelectNewType = new Set((state.assets?.classifierTypes || []).map((type) => type.id));
       pendingCreateType = null;
       render();
-      send("createClassifierType", { name, platformID, presetID });
+      send("createClassifierType", { name, platformID });
       return;
     }
     if (action === "confirmDeleteClassifierType" || action === "confirmDeleteCollectionPlatform") {

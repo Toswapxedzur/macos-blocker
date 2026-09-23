@@ -58,10 +58,10 @@ public struct LLMClassificationRequest: Sendable, Equatable {
     public let maximumTags: Int
     /// Fewest tags the grammar must emit (0 = decline allowed). ≥1 forbids "none".
     public let minimumTags: Int
-    /// Nil falls back to the app-wide engine configuration.
-    public let allowDecline: Bool?
-    /// Nil falls back to the app-wide engine configuration.
-    public let confidenceThresholds: [Double]?
+    /// How sure the model must be before a second or third tag is kept (the
+    /// Strict↔Broad position of the type being classified). Nil falls back to
+    /// the app-wide engine configuration.
+    public let extraTagMinimumOdds: Double?
 
     public init(
         staticPrefix: String,
@@ -69,16 +69,14 @@ public struct LLMClassificationRequest: Sendable, Equatable {
         allowedTagNames: [String],
         maximumTags: Int,
         minimumTags: Int = 0,
-        allowDecline: Bool? = nil,
-        confidenceThresholds: [Double]? = nil
+        extraTagMinimumOdds: Double? = nil
     ) {
         self.staticPrefix = staticPrefix
         self.dynamicSuffix = dynamicSuffix
         self.allowedTagNames = allowedTagNames
         self.maximumTags = maximumTags
         self.minimumTags = min(maximumTags, max(0, minimumTags))
-        self.allowDecline = allowDecline
-        self.confidenceThresholds = confidenceThresholds
+        self.extraTagMinimumOdds = extraTagMinimumOdds
     }
 }
 

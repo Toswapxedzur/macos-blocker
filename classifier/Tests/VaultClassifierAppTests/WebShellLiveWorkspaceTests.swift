@@ -30,36 +30,41 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         XCTAssertTrue(script.contains("classificationDataWorkspace"))
     }
 
-    func testShellContainsOnlyEffectivePerTypeLocalModelOverrides() throws {
+    /// The per-type local-model form holds the two dials (follow global / own
+    /// position) and house rules — nothing else survived the 2026-09-23 cut.
+    func testShellPerTypeFormHoldsOnlyTheTwoDialsAndHouseRules() throws {
         let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
         XCTAssertTrue(script.contains("saveClassifierTypeLocalModel"))
-        XCTAssertTrue(script.contains("toggleLocalModelAdvanced"))
         XCTAssertTrue(script.contains("classifier-local-model-form-"))
-        XCTAssertTrue(script.contains("modelFileName"))
         XCTAssertTrue(script.contains("localModelResidentNote"))
-        let overrideStart = try XCTUnwrap(script.range(of: "const localModelOverrideBody"))
-        let overrideEnd = try XCTUnwrap(script.range(of: "const localModelOverrideSection", range: overrideStart.upperBound..<script.endIndex))
-        let overrideBody = String(script[overrideStart.lowerBound..<overrideEnd.lowerBound])
-        XCTAssertTrue(overrideBody.contains("houseRules"))
-        XCTAssertTrue(overrideBody.contains("allowDecline"))
-        XCTAssertTrue(overrideBody.contains("confidenceBand"))
-        XCTAssertFalse(overrideBody.contains("thumbnailOcrEvidence"), "thumbnail OCR was removed (measured: no gain, costs reading time)")
-        XCTAssertTrue(overrideBody.contains("maximumTags"), "per-type max-tags field missing")
+        let sectionStart = try XCTUnwrap(script.range(of: "const localOverrides = classifierType.localModelOverrides"))
+        let sectionEnd = try XCTUnwrap(script.range(of: "const researchFormID", range: sectionStart.upperBound..<script.endIndex))
+        let section = String(script[sectionStart.lowerBound..<sectionEnd.lowerBound])
+        for field in ["\"speedQuality\"", "\"strictness\"", "\"houseRules\"", "localModel.speedQuality.followGlobal", "localModel.strictness.followGlobal"] {
+            XCTAssertTrue(section.contains(field), "per-type field missing: \(field)")
+        }
+        for retired in ["allowDecline", "confidenceBand", "maximumTags", "minimumTags", "modelFileName", "thumbnailOcrEvidence", "toggleLocalModelAdvanced"] {
+            XCTAssertFalse(script.contains(retired), "retired control still in the shell: \(retired)")
+        }
     }
 
-    func testShellGroupsGranularResearchControlsGloballyAndPerType() throws {
+    /// Research is on/off + provider; every budget, cooldown, trigger and knowledge
+    /// field is a constant and must be gone from both forms.
+    func testShellResearchFormIsOnOffPlusProvider() throws {
         let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
-        for field in [
-            "cooldownHours", "creatorScoreThreshold", "creatorScoreHalfLifeDays",
-            "knowledgeTTLDays", "maxKnowledgePerVideo",
+        let stringsURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "strings", extension: "js"))
+        let strings = try String(contentsOf: stringsURL, encoding: .utf8)
+        for retired in [
+            "requestsPerMinute", "dailyTokenLimit\"", "cooldownHours", "creatorScoreThreshold", "creatorScoreHalfLifeDays",
+            "knowledgeTTLDays", "maxKnowledgePerVideo", "research.group.frequency", "research.group.author", "research.group.knowledge",
         ] {
-            XCTAssertGreaterThanOrEqual(script.components(separatedBy: field).count - 1, 2)
+            XCTAssertFalse(script.contains(retired), "retired research control still in the shell: \(retired)")
         }
-        for group in ["research.group.frequency", "research.group.author", "research.group.knowledge"] {
-            XCTAssertGreaterThanOrEqual(script.components(separatedBy: group).count - 1, 2)
-        }
+        XCTAssertTrue(script.contains("research.constantsNote"))
+        XCTAssertTrue(strings.contains("\"research.constantsNote\""))
+        XCTAssertTrue(strings.contains("score 3, fading by half every 14 days"))
     }
 
     func testShellSurfacesResearchLaneStatusAndRetryAction() throws {
@@ -149,10 +154,9 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         ] {
             XCTAssertFalse(strings.contains("\"\(retiredString)"), "\(retiredString) string should be gone")
         }
-        // Both research forms filter the provider list to grounding-capable profiles.
-        XCTAssertGreaterThanOrEqual(script.components(separatedBy: "supportsNativeWebSearch").count - 1, 2)
+        // The research form filters the provider list to grounding-capable profiles.
+        XCTAssertTrue(script.contains("supportsNativeWebSearch"))
         XCTAssertTrue(script.contains(".filter(isGroundingCapable)"))
-        XCTAssertTrue(script.contains(".filter(typeIsGroundingCapable)"))
         // Existing search-only profiles are flagged retired, not silently inert.
         XCTAssertTrue(script.contains("retiredSearchProvider"))
         XCTAssertTrue(strings.contains("\"llm.retiredSearchProvider\""))
@@ -184,9 +188,12 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         let strings = try String(contentsOf: stringsURL, encoding: .utf8)
 
         XCTAssertTrue(script.contains("saveClassifierTypeResearch"))
-        XCTAssertTrue(script.contains("toggleResearchAdvanced"))
         XCTAssertTrue(script.contains("classifier-research-form-"))
-        XCTAssertTrue(script.contains("researchOverrides"))
+        XCTAssertTrue(script.contains("\"researchMode\""))
+        for mode in ["bridge.researchMode.inherit", "bridge.researchMode.on", "bridge.researchMode.off"] {
+            XCTAssertTrue(script.contains(mode)); XCTAssertTrue(strings.contains("\"\(mode)\""))
+        }
+        XCTAssertFalse(script.contains("classifierType.researchOverrides"), "the per-type research profile payload is gone")
         XCTAssertTrue(strings.contains("global Research consent in Settings is the master gate"))
     }
 
@@ -196,16 +203,23 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         let script = try String(contentsOf: appURL, encoding: .utf8)
         let strings = try String(contentsOf: stringsURL, encoding: .utf8)
 
-        XCTAssertTrue(script.contains("modelLibraryContent"))
+        // The Speed↔Quality cards carry each tier's download controls.
+        XCTAssertTrue(script.contains("speedQualityCards"))
+        XCTAssertTrue(script.contains("strictnessOptions"))
         XCTAssertTrue(script.contains("downloadModel"))
         XCTAssertTrue(script.contains("cancelModelDownload"))
         XCTAssertTrue(script.contains("deleteModelFile"))
         XCTAssertTrue(script.contains("role=\"progressbar\""))
-        XCTAssertTrue(script.contains("localModelOptions"))
-        XCTAssertTrue(script.contains("localModel.modelMissing"))
+        for tier in ["fast", "balanced", "best"] {
+            XCTAssertTrue(strings.contains("\"localModel.tier.\(tier).name\""))
+            XCTAssertTrue(strings.contains("\"localModel.tier.\(tier).desc\""))
+        }
+        for position in 1...5 {
+            XCTAssertTrue(strings.contains("\"localModel.strictness.\(position).name\""))
+            XCTAssertTrue(strings.contains("\"localModel.strictness.\(position).desc\""))
+        }
         XCTAssertTrue(strings.contains("Models download from Hugging Face only when you press Download."))
-        XCTAssertTrue(strings.contains("LATENCY NOT MEASURED"))
-        XCTAssertTrue(strings.contains("missing — re-download"))
+        XCTAssertFalse(strings.contains("LATENCY NOT MEASURED"))
     }
 
     func testCollectionEntriesExposeCorrectionEditorWithoutANewHubOperation() throws {
@@ -218,34 +232,28 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         XCTAssertFalse(script.contains("research-tags-updated"))
     }
 
-    func testCreateGroupFlowGoesThroughPresetPicker() throws {
+    func testCreateGroupFlowAsksOnlyForPlatformAndName() throws {
         let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
-        // Creating a group opens the preset dialog; there is no direct-create path.
+        // Creating a group opens the dialog; there is no direct-create path.
         XCTAssertTrue(script.contains("createTypeModal"))
         XCTAssertTrue(script.contains("pendingCreateType"))
-        XCTAssertTrue(script.contains("selectCreatePreset"))
         XCTAssertTrue(script.contains("confirmCreateType"))
         XCTAssertTrue(script.contains("cancelCreateType"))
-        // The create action must carry a presetID (a group can only be made from a preset).
         let confirmStart = try XCTUnwrap(script.range(of: "action === \"confirmCreateType\""))
         let confirmBody = String(script[confirmStart.lowerBound...].prefix(1000))
-        XCTAssertTrue(confirmBody.contains("presetID"), "confirmCreateType must send a presetID")
-        XCTAssertTrue(confirmBody.contains("send(\"createClassifierType\""))
-        // The old direct newType create (default name + first platform, no preset) is gone.
+        XCTAssertTrue(confirmBody.contains("send(\"createClassifierType\", { name, platformID })"))
         XCTAssertFalse(script.contains("send(\"createClassifierType\", { name: t(\"navigation.newType\")"))
-        // Drift indicator + preset badge are wired.
-        XCTAssertTrue(script.contains("modifiedFromPreset"))
-        XCTAssertTrue(script.contains("presetNameKey"))
+        // Presets are gone: no picker, no provenance badge.
+        for retired in ["preset", "selectCreatePreset", "modifiedFromPreset", "presetNameKey"] {
+            XCTAssertFalse(script.lowercased().contains(retired.lowercased()), "preset remnant in the shell: \(retired)")
+        }
 
         let stringsURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "strings", extension: "js"))
         let strings = try String(contentsOf: stringsURL, encoding: .utf8)
-        for key in [
-            "createType.title", "createType.presetLabel", "createType.create",
-            "preset.gentle.name", "preset.balanced.name", "preset.strict.name",
-            "preset.localOnly.name", "preset.modifiedFrom", "preset.basedOn",
-        ] {
-            XCTAssertTrue(strings.contains(key), "missing preset string: \(key)")
+        for key in ["createType.title", "createType.platformLabel", "createType.nameLabel", "createType.create"] {
+            XCTAssertTrue(strings.contains(key), "missing create string: \(key)")
         }
+        XCTAssertFalse(strings.contains("\"preset."))
     }
 }

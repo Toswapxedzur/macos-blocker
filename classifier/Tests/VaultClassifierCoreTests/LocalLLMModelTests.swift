@@ -413,13 +413,11 @@ final class LocalLLMModelTests: XCTestCase {
     }
 
     /// Rows written by the retired sample-list rule decode as an empty score (they
-    /// are transient), and the rule's retired settings keys fall back to defaults.
+    /// are transient); the rule itself is a constant (3 / 14 days) with clamped inputs.
     func testRetiredSampleListStateStillDecodes() throws {
         let oldRow = #"{"id":"t\u001Fc","samples":[{"urgency":5,"atMilliseconds":1}]}"#
         let row = try JSONDecoder().decode(CreatorResearchAccumulator.self, from: Data(oldRow.utf8))
         XCTAssertEqual(row.score, 0)
-        let oldRule = try JSONDecoder().decode(AuthorResearchThreshold.self, from: Data(#"{"level":3.5,"count":5,"windowDays":30}"#.utf8))
-        XCTAssertEqual(oldRule, AuthorResearchThreshold(score: 3, halfLifeDays: 14))
         XCTAssertEqual(AuthorResearchThreshold(score: 0, halfLifeDays: 0), AuthorResearchThreshold(score: 0.5, halfLifeDays: 1))
         XCTAssertEqual(AuthorResearchThreshold(score: 999, halfLifeDays: 9_999), AuthorResearchThreshold(score: 50, halfLifeDays: 365))
     }

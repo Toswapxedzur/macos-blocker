@@ -206,8 +206,8 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
     /// name (nothing to decode).
     private func makeParallelItem(index: Int, request: LLMClassificationRequest) throws -> ParallelItem? {
         let maximumTags = max(1, request.maximumTags)
-        // minimumTags ≥ 1 forbids declining, whatever the allowDecline flag says.
-        let allowDecline = (request.allowDecline ?? configuration.allowDecline) && request.minimumTags == 0
+        // minimumTags ≥ 1 (Strict↔Broad position 5) forbids declining.
+        let allowDecline = configuration.allowDecline && request.minimumTags == 0
         guard let grammar = Self.namesWithConfidenceGrammar(
             allowed: request.allowedTagNames, allowDecline: allowDecline, maximumTags: maximumTags, minimumTags: request.minimumTags
         ) else { return nil }
@@ -227,7 +227,7 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
             candidateFirstTokens: Set(candidateNames.compactMap {
                 try? tokenize(ClassificationReplyFormat.current.nameLead + $0, addSpecial: false).first
             }),
-            thresholds: request.confidenceThresholds ?? configuration.confidenceThresholds
+            thresholds: configuration.confidenceThresholds
         )
     }
 
@@ -353,10 +353,13 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
         let environment = ProcessInfo.processInfo.environment
         let logsNameOdds = environment["VAULT_NAMES_LOG"] == "1"
         // Conservative extra tags (names-only): stop BEFORE an extra tag unless the odds
-        // that the model chose to continue × the odds of that name reach this level.
-        // `VAULT_NAMES_MIN_JOINT` overrides the setting for eval sweeps.
-        let minimumExtraJoint = environment["VAULT_NAMES_MIN_JOINT"].flatMap(Double.init)
-            ?? configuration.extraTagMinimumOdds
+        // that the model chose to continue × the odds of that name reach the level the
+        // request's Strict↔Broad position asks for. `VAULT_NAMES_MIN_JOINT` overrides
+        // it for eval sweeps.
+        let environmentExtraJoint = environment["VAULT_NAMES_MIN_JOINT"].flatMap(Double.init)
+        func minimumExtraJoint(_ slot: Int) -> Double {
+            environmentExtraJoint ?? items[slot].request.extraTagMinimumOdds ?? configuration.extraTagMinimumOdds
+        }
         let namesOnly = !ClassificationReplyFormat.current.emitsConfidence
         let separatorFirstToken = namesOnly ? (try? tokenize(Self.structuredSeparator, addSpecial: false).first) : nil
         let newlineToken = namesOnly ? (try? tokenize("\n", addSpecial: false).first) : nil
@@ -458,7 +461,7 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
                     let nameOdds = probability(
                         of: token, among: items[slot].candidateFirstTokens, outputIndex: live[slot].outputIndex)
                     let isExtra = !live[slot].nameStartProbabilities.isEmpty
-                    if namesOnly, isExtra, live[slot].continueProbability * nameOdds < minimumExtraJoint {
+                    if namesOnly, isExtra, live[slot].continueProbability * nameOdds < minimumExtraJoint(slot) {
                         // Drop the dangling separator so the parser sees only kept names.
                         if live[slot].generated.hasSuffix(Self.structuredSeparator) {
                             live[slot].generated.removeLast(Self.structuredSeparator.count)

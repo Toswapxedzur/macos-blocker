@@ -5,73 +5,78 @@ import VaultClassifierCore
 @MainActor
 final class ClassifierTypeLocalModelWebInputTests: XCTestCase {
     func testModelLibraryPayloadMarksDownloadedCatalogFileAndProgress() throws {
-        let downloadedEntry = try XCTUnwrap(LocalModelCatalog.curated.first)
-        let downloadingEntry = try XCTUnwrap(LocalModelCatalog.curated.dropFirst().first)
+        let downloadedEntry = LocalModelCatalog.entry(for: .fast)
+        let downloadingEntry = LocalModelCatalog.entry(for: .balanced)
         let payload = VaultClassifierViewModel.modelLibraryPayload(
             availableModelFiles: ["manual.gguf", downloadedEntry.ggufFileName],
             downloadFractions: [downloadingEntry.id: 0.4],
             systemRAMGB: 16
         )
 
+        XCTAssertEqual(payload.count, 3, "one row per Speed↔Quality tier")
         let downloaded = try XCTUnwrap(payload.first { ($0["id"] as? String) == downloadedEntry.id })
         XCTAssertEqual((downloaded["state"] as? [String: Any])?["kind"] as? String, "downloaded")
+        XCTAssertEqual(downloaded["tier"] as? String, "fast")
         let downloading = try XCTUnwrap(payload.first { ($0["id"] as? String) == downloadingEntry.id })
         XCTAssertEqual((downloading["state"] as? [String: Any])?["kind"] as? String, "downloading")
         XCTAssertEqual((downloading["state"] as? [String: Any])?["fraction"] as? Double, 0.4)
-        XCTAssertTrue(downloaded["latencyBand"] is NSNull)
-        XCTAssertTrue(downloading["latencyBand"] is NSNull)
-        XCTAssertEqual(payload.filter { ($0["recommended"] as? Bool) == true }.count, 1)
+        XCTAssertEqual(downloading["tier"] as? String, "balanced")
+        XCTAssertNil(downloaded["latencyBand"], "the unmeasured latency band was retired")
+        XCTAssertEqual(payload.filter { ($0["recommended"] as? Bool) == true }.map { $0["tier"] as? String }, ["balanced"])
     }
 
-    func testDisabledOverrideDoesNotParseHiddenOrEmptyFields() throws {
+    // MARK: - Per-type local model form
+
+    func testBlankFormFollowsTheGlobalDials() throws {
         let input = try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
-            "typeID": "type",
-            "overrideEnabled": false,
-            "modelFileName": "selected.gguf",
-            "confidenceBand2": "",
-            "allowDecline": "not-a-bool",
+            "typeID": "type", "speedQuality": "", "strictness": "", "houseRules": "   ",
         ])
-        XCTAssertFalse(input.overrideEnabled)
-        XCTAssertEqual(input.modelFileName, "selected.gguf")
-        XCTAssertNil(input.overrides)
+        XCTAssertEqual(input.typeID, "type")
+        XCTAssertNil(input.overrides, "nothing set → the type follows the global dials and rules")
     }
 
-    func testPartialOverrideParsesLenientlyAndLetsInitializerDropInvalidBand() throws {
+    func testOwnPositionsAndRulesParse() throws {
         let input = try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
-            "typeID": "type",
-            "overrideEnabled": true,
-            "modelFileName": "",
-            "houseRules": "Type rule.",
-            "confidenceBand2": "0.2",
-            "confidenceBand3": "",
+            "typeID": "type", "speedQuality": "best", "strictness": "2", "houseRules": "Type rule.",
         ])
-        XCTAssertEqual(input.overrides?.houseRules, "Type rule.")
-        XCTAssertNil(input.modelFileName)
-        XCTAssertNil(input.overrides?.confidenceThresholds)
-        XCTAssertNil(input.overrides?.allowDecline)
-        XCTAssertNil(input.overrides?.maximumTags)
+        XCTAssertEqual(input.overrides, LocalModelOverrides(houseRules: "Type rule.", speedQuality: .best, strictness: .strict))
     }
 
-    func testPerTypeMaximumTagsParsesAndClampsElseInherits() throws {
-        func parse(_ value: String) throws -> LocalModelOverrides? {
-            try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
-                "typeID": "type", "overrideEnabled": true, "maximumTags": value,
-            ]).overrides
-        }
-        XCTAssertEqual(try parse("3")?.maximumTags, 3)
-        XCTAssertEqual(try parse("99")?.maximumTags, 16)   // clamped high
-        XCTAssertEqual(try parse("0")?.maximumTags, 1)     // clamped low
-        // Blank / unparseable → nil = inherit the global cap; with nothing else
-        // set the whole override collapses to nil.
-        XCTAssertNil(try parse("  "))
-        XCTAssertNil(try parse("not-a-number"))
+    func testOnlyOneDialSetKeepsTheOtherFollowingGlobal() throws {
+        let strictOnly = try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
+            "typeID": "type", "strictness": 5,
+        ])
+        XCTAssertEqual(strictOnly.overrides, LocalModelOverrides(strictness: .broadest))
+        XCTAssertNil(strictOnly.overrides?.speedQuality)
+        let speedOnly = try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
+            "typeID": "type", "speedQuality": "fast", "strictness": "",
+        ])
+        XCTAssertEqual(speedOnly.overrides, LocalModelOverrides(speedQuality: .fast))
     }
 
-    func testEffectiveMaximumTagsPrefersOverrideElseGlobal() {
-        XCTAssertEqual(LocalModelOverrides(maximumTags: 2).effectiveMaximumTags(global: 5), 2)
-        XCTAssertEqual(LocalModelOverrides().effectiveMaximumTags(global: 5), 5)
-        XCTAssertEqual(LocalModelOverrides(maximumTags: 99).maximumTags, 16)
-        XCTAssertEqual(LocalModelOverrides(maximumTags: 0).maximumTags, 1)
+    func testUnknownPositionsAreRefused() {
+        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
+            "typeID": "type", "speedQuality": "turbo",
+        ]))
+        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
+            "typeID": "type", "strictness": "9",
+        ]))
+        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
+            "typeID": "type", "strictness": "not-a-number",
+        ]))
+        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
+            "typeID": "", "strictness": "3",
+        ]))
+    }
+
+    // MARK: - Per-type research switch
+
+    func testResearchModeParsesInheritOnOff() throws {
+        XCTAssertNil(try VaultClassifierViewModel.parseClassifierTypeResearchWebInput(["typeID": "type", "researchMode": "inherit"]).researchEnabled)
+        XCTAssertNil(try VaultClassifierViewModel.parseClassifierTypeResearchWebInput(["typeID": "type"]).researchEnabled)
+        XCTAssertEqual(try VaultClassifierViewModel.parseClassifierTypeResearchWebInput(["typeID": "type", "researchMode": "on"]).researchEnabled, true)
+        XCTAssertEqual(try VaultClassifierViewModel.parseClassifierTypeResearchWebInput(["typeID": "type", "researchMode": "off"]).researchEnabled, false)
+        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeResearchWebInput(["typeID": "type", "researchMode": "maybe"]))
     }
 
     func testDeletingProviderNullsResearchReferencesWithoutReenablingOrDisabling() {
@@ -95,42 +100,5 @@ final class ClassifierTypeLocalModelWebInputTests: XCTestCase {
         )
         XCTAssertEqual(withoutOther.llmProviderProfileID, "llm")
         XCTAssertEqual(withoutOther.llmModelIdentifier, "model")
-    }
-
-    func testDisabledResearchOverrideDoesNotParseHiddenOrEmptyFields() throws {
-        let input = try VaultClassifierViewModel.parseClassifierTypeResearchWebInput([
-            "typeID": "type",
-            "overrideEnabled": false,
-            "enabled": "not-a-bool",
-            "requestsPerMinute": "",
-        ])
-        XCTAssertFalse(input.overrideEnabled)
-        XCTAssertNil(input.settings)
-    }
-
-    func testResearchOverrideParsingIsLenientAndInitializerClampsValues() throws {
-        let input = try VaultClassifierViewModel.parseClassifierTypeResearchWebInput([
-            "typeID": "type",
-            "overrideEnabled": true,
-            "enabled": false,
-            "llmProviderProfileID": " llm ",
-            "requestsPerMinute": "999",
-            "dailyTokenLimit": "not-a-number",
-            "cooldownHours": "900",
-            "creatorScoreThreshold": "0",
-            "creatorScoreHalfLifeDays": "not-a-number",
-            "knowledgeTTLDays": "not-a-number",
-            "maxKnowledgePerVideo": "100",
-        ])
-        XCTAssertTrue(input.overrideEnabled)
-        XCTAssertFalse(input.settings?.enabled ?? true)
-        XCTAssertEqual(input.settings?.llmProviderProfileID, "llm")
-        XCTAssertEqual(input.settings?.requestsPerMinute, ResearchSettings.maximumRequestsPerMinute)
-        XCTAssertEqual(input.settings?.dailyTokenLimit, ResearchSettings().dailyTokenLimit)
-        XCTAssertEqual(input.settings?.cooldownHours, 720)
-        XCTAssertEqual(input.settings?.authorThreshold.score, 0.5)
-        XCTAssertEqual(input.settings?.authorThreshold.halfLifeDays, AuthorResearchThreshold.defaultHalfLifeDays)
-        XCTAssertEqual(input.settings?.knowledgeTTLDays, 0)
-        XCTAssertEqual(input.settings?.maxKnowledgePerVideo, 32)
     }
 }

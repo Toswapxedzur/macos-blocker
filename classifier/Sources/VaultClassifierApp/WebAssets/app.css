@@ -503,22 +503,22 @@ h3 { font-size: 13px; }
   width: 100%; padding: 8px 10px; border-radius: 9px;
   border: 1px solid var(--hairline, #e2e8f0); background: #fff; color: var(--ink); font-size: 13px;
 }
-.preset-card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.preset-card {
+.dial-card-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.dial-card {
   display: flex; flex-direction: column; gap: 4px; align-items: flex-start;
   padding: 10px 12px; border-radius: 11px; text-align: left; cursor: pointer;
   border: 1px solid var(--hairline, #e2e8f0); background: var(--surface-2, #f8fafc);
   transition: border-color .12s ease, background .12s ease;
 }
-.preset-card:hover { border-color: var(--navy-40, #94a3b8); }
-.preset-card.active { border-color: var(--navy, #1e3a8a); background: var(--navy-50, #eef2ff); box-shadow: inset 0 0 0 1px var(--navy, #1e3a8a); }
-.preset-card-head { display: flex; align-items: center; gap: 6px; width: 100%; }
-.preset-card-name { font-size: 13px; font-weight: 600; color: var(--ink); }
-.preset-card-badge {
+.dial-card:hover { border-color: var(--navy-40, #94a3b8); }
+.dial-card.active { border-color: var(--navy, #1e3a8a); background: var(--navy-50, #eef2ff); box-shadow: inset 0 0 0 1px var(--navy, #1e3a8a); }
+.dial-card-head { display: flex; align-items: center; gap: 6px; width: 100%; }
+.dial-card-name { font-size: 13px; font-weight: 600; color: var(--ink); }
+.dial-card-badge {
   margin-left: auto; font-size: 10px; font-weight: 600; letter-spacing: .02em;
   padding: 2px 6px; border-radius: 6px; color: var(--green-text, #166534); background: var(--green-50, #dcfce7);
 }
-.preset-card-desc { font-size: 11.5px; line-height: 1.4; color: var(--muted-ink, #64748b); }
+.dial-card-desc { font-size: 11.5px; line-height: 1.4; color: var(--muted-ink, #64748b); }
 .classifier-type-head-pills { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 
 .incremental-list-sentinel {
@@ -1850,3 +1850,20 @@ textarea:focus {
 @media (prefers-reduced-motion: reduce) {
   .advanced-settings-body, .advanced-chevron { transition: none; }
 }
+
+/* Two-dial local model settings (2026-09-23). */
+.dial-card { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; text-align: left; }
+.dial-card-meta { font-size: 11px; color: var(--muted, #64748b); }
+.dial-card-warning { font-size: 11px; color: var(--pink, #be185d); }
+.dial-card-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.dial-card-controls .primary, .dial-card-controls .secondary, .dial-card-controls .danger { padding: 6px 9px; font-size: 10px; }
+.dial-card input[type="radio"] { position: absolute; opacity: 0; pointer-events: none; }
+.dial-card:has(input:checked) { border-color: var(--navy, #1e3a8a); background: var(--navy-50, #eef2ff); }
+.strictness-options { display: grid; gap: 6px; margin-top: 6px; }
+.strictness-option { display: grid; gap: 2px; padding: 8px 10px; border: 1px solid var(--line, #e2e8f0); border-radius: 10px; cursor: pointer; }
+.strictness-option:hover { border-color: var(--navy-40, #94a3b8); }
+.strictness-option.active, .strictness-option:has(input:checked) { border-color: var(--navy, #1e3a8a); background: var(--navy-50, #eef2ff); }
+.strictness-option input[type="radio"] { position: absolute; opacity: 0; pointer-events: none; }
+.strictness-option-name { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.strictness-option-desc { font-size: 11px; line-height: 1.4; color: var(--muted-ink, #64748b); }
+@media (max-width: 760px) { .dial-card-grid { grid-template-columns: 1fr; } }
