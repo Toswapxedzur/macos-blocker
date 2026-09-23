@@ -24,10 +24,6 @@ public struct VideoClassificationPipeline: Sendable {
     /// exactly preserved at cap 1, or when no secondary clears the floor).
     public let secondaryConfidenceFloor: Int
     public let promptVersion: String
-    /// Minimum cross-creator title similarity for a correction to be retrieved as
-    /// a per-video exemplar (see CorrectionRetriever). Exposed so the eval A/B can
-    /// sweep it; production uses the retriever's tuned default.
-    public let correctionSimilarityFloor: Double
 
     public init(
         llm: any OnDeviceLLM,
@@ -37,15 +33,13 @@ public struct VideoClassificationPipeline: Sendable {
         // p2 = bare tag-name reply, confidence derived from token odds (2026-09-21).
         // Cached p1 rows stay valid: the currency check matches the model file only.
         // p4 = researched creator sentence on the creator line, single pass (2026-09-22).
-        promptVersion: String = "p4",
-        correctionSimilarityFloor: Double = CorrectionRetriever.defaultMinimumSimilarity
+        promptVersion: String = "p4"
     ) {
         self.llm = llm
         self.maximumTags = maximumTags
         self.minimumTags = TagBounds(minimum: minimumTags, maximum: maximumTags).minimum
         self.secondaryConfidenceFloor = secondaryConfidenceFloor
         self.promptVersion = promptVersion
-        self.correctionSimilarityFloor = correctionSimilarityFloor
     }
 
     /// One video's evidence for a batched classification.
@@ -125,7 +119,7 @@ public struct VideoClassificationPipeline: Sendable {
                 tree: tree, houseRules: houseRules, maximumTags: maximumTags, minimumTags: minimumTags,
                 title: inputs[index].title, summary: inputs[index].summary, text: inputs[index].text,
                 creatorPrior: evidence[index].creatorPrior, creatorVideoCount: evidence[index].creatorVideoCount,
-                knowledge: knowledge, correctionExemplars: evidence[index].correctionExemplars,
+                knowledge: knowledge,
                 creatorSummary: evidence[index].creatorEntry?.meaning
             )
         }
@@ -170,7 +164,7 @@ public struct VideoClassificationPipeline: Sendable {
         }
     }
 
-    /// The creator prior + correction exemplars + matched term knowledge for one
+    /// The creator prior + matched term knowledge + creator sentence for one
     /// video — the evidence that `classify`'s primary decode and `primaryPromptParts`
     /// both build on. Extracted so the two paths can never drift apart.
     private func gatherEvidence(
@@ -183,7 +177,7 @@ public struct VideoClassificationPipeline: Sendable {
         catalog: WorkspaceCatalog,
         knowledgeTTLDays: Int,
         maxKnowledgePerVideo: Int
-    ) -> (creatorPrior: [CreatorPriorTag], creatorVideoCount: Int, correctionExemplars: [CorrectionExemplar], termKnowledge: [KnowledgeEntry], creatorEntry: KnowledgeEntry?) {
+    ) -> (creatorPrior: [CreatorPriorTag], creatorVideoCount: Int, termKnowledge: [KnowledgeEntry], creatorEntry: KnowledgeEntry?) {
         let nameByID = Dictionary(tree.nodes.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
 
         // Derived creator prior: how often THIS creator's already-classified
@@ -202,19 +196,6 @@ public struct VideoClassificationPipeline: Sendable {
                 .sorted { $0.share == $1.share ? $0.tagName < $1.tagName : $0.share > $1.share }
         }
 
-        // Grounded generalization: the user's own past corrections most similar
-        // to THIS video, as concrete few-shot exemplars (see CorrectionRetriever).
-        // Relevance-ranked per video, not a static recency block — so the model
-        // generalizes from the corrections that actually bear on this title.
-        let correctionExemplars = CorrectionRetriever.retrieve(
-            title: title,
-            creatorID: creatorID,
-            excludingEntryID: entryID,
-            from: catalog.correctionExamples.filter { $0.classifierTypeID == classifierType.id },
-            tree: tree,
-            minimumSimilarity: correctionSimilarityFloor
-        )
-
         // Matched term knowledge. The creator description is deliberately withheld
         // here (it enters only via the low-confidence creator fallback).
         let termKnowledge = catalog.matchedKnowledge(
@@ -223,7 +204,7 @@ public struct VideoClassificationPipeline: Sendable {
             limit: maxKnowledgePerVideo,
             ttlDays: knowledgeTTLDays
         )
-        return (creatorPrior, creatorVideoCount, correctionExemplars, termKnowledge, catalog.creatorKnowledgeEntry(for: creatorID))
+        return (creatorPrior, creatorVideoCount, termKnowledge, catalog.creatorKnowledgeEntry(for: creatorID))
     }
 
     /// The exact prompt parts `classify`'s primary decode would build for one
@@ -260,7 +241,6 @@ public struct VideoClassificationPipeline: Sendable {
             creatorPrior: evidence.creatorPrior,
             creatorVideoCount: evidence.creatorVideoCount,
             knowledge: evidence.termKnowledge,
-            correctionExemplars: evidence.correctionExemplars,
             creatorSummary: evidence.creatorEntry?.meaning
         )
     }
