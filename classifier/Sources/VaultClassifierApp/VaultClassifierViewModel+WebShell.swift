@@ -25,20 +25,11 @@ extension VaultClassifierViewModel {
         let settingsPayload: [String: Any] = [
             "packageUpdateMode": packageUpdateMode.rawValue,
             "localLLM": [
-                    "modelFileName": llmSettings.modelFileName ?? "",
-                    "engineEnabled": llmSettings.engineEnabled,
-                    "contextTokens": llmSettings.contextTokens,
-                    "batchTokens": llmSettings.batchTokens,
-                    "gpuOffload": llmSettings.gpuOffload,
-                    "maximumOutputTokens": llmSettings.maximumOutputTokens,
-                    "temperature": llmSettings.temperature,
-                    "allowDecline": llmSettings.allowDecline,
-                    "maximumTags": llmSettings.maximumTags,
-                    "minimumTags": llmSettings.minimumTags,
-                    "extraTagMinimumOdds": llmSettings.extraTagMinimumOdds,
-                    "confidenceThresholds": llmSettings.confidenceThresholds,
+                    "speedQuality": llmSettings.speedQuality.rawValue,
+                    "strictness": llmSettings.strictness.rawValue,
                     "houseRules": llmSettings.houseRules,
-                    "maxResidentModels": llmSettings.maxResidentModels,
+                    "modelFileName": llmSettings.modelFileName,
+                    "systemRAMGB": HardwareProfile.physicalRAMGB(),
                     "engineStatus": llmEngineStatus,
                     "availableModels": availableModelFiles,
                     "modelLibrary": Self.modelLibraryPayload(
@@ -51,13 +42,7 @@ extension VaultClassifierViewModel {
                 "enabled": researchSettings.enabled,
                 "llmProviderProfileID": researchSettings.llmProviderProfileID ?? "",
                 "llmModelIdentifier": researchSettings.llmModelIdentifier ?? "",
-                "requestsPerMinute": researchSettings.requestsPerMinute,
-                "dailyTokenLimit": researchSettings.dailyTokenLimit,
-                "cooldownHours": researchSettings.cooldownHours,
-                "creatorScoreThreshold": researchSettings.authorThreshold.score,
-                "creatorScoreHalfLifeDays": researchSettings.authorThreshold.halfLifeDays,
-                "knowledgeTTLDays": researchSettings.knowledgeTTLDays,
-                "maxKnowledgePerVideo": researchSettings.maxKnowledgePerVideo,
+                "dailyTokenLimit": ResearchSettings.dailyTokenLimit,
                 "tokensUsedToday": GroundedResearchQueue.usedResearchTokens(in: catalog.tokenUsage, at: Date()),
                 "status": Self.researchStatusPayload(
                     queue: researchQueueStatus,
@@ -106,65 +91,27 @@ extension VaultClassifierViewModel {
             "terms": knowledgePayload(catalog.knowledgeEntries),
         ]
         assets["classifierTypes"] = catalog.classifierTypes.map { classifierType in
-                // Drift: a type shows "modified from <preset>" once its overrides
-                // diverge from what the preset writes. Unknown/absent preset → not
-                // modified (nothing to compare against).
-                let preset = VaultPreset.resolve(classifierType.presetID)
-                let modifiedFromPreset = preset.map {
-                    !$0.matches(
-                        localModelOverrides: classifierType.localModelOverrides,
-                        researchOverrides: classifierType.researchOverrides
-                    )
-                } ?? false
-                return [
+                [
                     "id": classifierType.id,
                     "name": classifierType.name,
                     "order": classifierType.order,
-                    "presetID": classifierType.presetID ?? NSNull(),
-                    "presetNameKey": preset?.displayNameKey ?? NSNull(),
-                    "modifiedFromPreset": modifiedFromPreset,
                     "treeID": classifierType.treeID,
                     "treeRevision": classifierType.treeRevision,
                     "datasetID": classifierType.datasetID,
                     "datasetRevision": classifierType.datasetRevision,
                     "applicablePlatformID": classifierType.applicablePlatformID ?? NSNull(),
+                    // nil / absent = the type follows the global dials and rules.
                     "localModelOverrides": classifierType.localModelOverrides.map { overrides in
                         [
                             "houseRules": overrides.houseRules ?? NSNull(),
-                            "allowDecline": overrides.allowDecline ?? NSNull(),
-                            "confidenceThresholds": overrides.confidenceThresholds ?? NSNull(),
-                            "maximumTags": overrides.maximumTags ?? NSNull(),
-                            "minimumTags": overrides.minimumTags ?? NSNull(),
+                            "speedQuality": overrides.speedQuality?.rawValue ?? NSNull(),
+                            "strictness": overrides.strictness?.rawValue ?? NSNull(),
                         ] as [String: Any]
                     } ?? NSNull(),
-                    "modelFileName": classifierType.modelFileName ?? "",
-                    "researchOverrides": classifierType.researchOverrides.map { research in
-                        [
-                            "enabled": research.enabled,
-                            "llmProviderProfileID": research.llmProviderProfileID ?? "",
-                            "llmModelIdentifier": research.llmModelIdentifier ?? "",
-                            "requestsPerMinute": research.requestsPerMinute,
-                            "dailyTokenLimit": research.dailyTokenLimit,
-                            "cooldownHours": research.cooldownHours,
-                            "creatorScoreThreshold": research.authorThreshold.score,
-                            "creatorScoreHalfLifeDays": research.authorThreshold.halfLifeDays,
-                            "knowledgeTTLDays": research.knowledgeTTLDays,
-                            "maxKnowledgePerVideo": research.maxKnowledgePerVideo,
-                        ] as [String: Any]
-                    } ?? NSNull(),
+                    // nil = follow the global research switch.
+                    "researchEnabled": classifierType.researchEnabled ?? NSNull(),
                 ] as [String: Any]
             }
-        // The preset catalog for the "create a group" picker. A preset is the only
-        // way to create a classifier type; the order here is the display order.
-        assets["presets"] = VaultPreset.allCases.map { preset in
-            [
-                "id": preset.rawValue,
-                "nameKey": preset.displayNameKey,
-                "descKey": preset.descriptionKey,
-                "isDefault": preset == VaultPreset.default,
-            ] as [String: Any]
-        }
-        assets["defaultPresetID"] = VaultPreset.default.rawValue
         assets["providerProfiles"] = catalog.providerProfiles.map { profile in
                 let descriptor = ProviderProtocolRegistry.descriptor(for: profile.type)
                 return [
@@ -303,11 +250,8 @@ extension VaultClassifierViewModel {
                     "ggufFileName": entry.ggufFileName,
                     "downloadSizeBytes": entry.downloadSizeBytes,
                     "minimumRAMGB": entry.minimumRAMGB,
+                    "tier": entry.tier.rawValue,
                     "downloadURL": (try? entry.downloadURL.absoluteString) ?? "",
-                    // Latency is deliberately nil until this exact artifact is
-                    // benchmarked on the current Mac. Model size is not a
-                    // substitute for a measured decision time.
-                    "latencyBand": NSNull(),
                     "recommended": entry.id == recommendedID,
                     "state": state,
                 ] as [String: Any]
@@ -356,8 +300,7 @@ extension VaultClassifierViewModel {
             case "createClassifierType":
                 createClassifierType(
                     name: try webString(data, key: "name", limit: ClassifierTypeAsset.maximumNameLength),
-                    platformID: try webString(data, key: "platformID", limit: 64),
-                    presetID: try webString(data, key: "presetID", limit: 64)
+                    platformID: try webString(data, key: "platformID", limit: 64)
                 )
             case "reorderClassifierTypes":
                 reorderClassifierTypes(orderedIDs: try webStringArray(data, key: "orderedIDs", limit: 256, elementLimit: 256))
@@ -431,38 +374,16 @@ extension VaultClassifierViewModel {
                 packageUpdateMode = updateMode
                 savePackageSettings()
             case "saveLocalLLMSettings":
-                let thresholds = try ["confidenceBand2", "confidenceBand3", "confidenceBand4", "confidenceBand5"].map { key -> Double in
-                    let raw = try webString(data, key: key, limit: 16)
-                    guard let value = Double(raw), value > 0, value < 1 else {
-                        throw WebBridgeInputError.invalidChoice("confidence threshold")
-                    }
-                    return value
+                guard let speedQuality = SpeedQualityDial.resolve(try webString(data, key: "speedQuality", limit: 16)) else {
+                    throw WebBridgeInputError.invalidChoice("speedQuality")
                 }
-                let rawTemperature = try webString(data, key: "temperature", limit: 16)
-                guard let temperature = Double(rawTemperature), temperature >= 0 else {
-                    throw WebBridgeInputError.invalidChoice("temperature")
+                guard let strictness = StrictnessDial.resolve(Int(try webString(data, key: "strictness", limit: 4))) else {
+                    throw WebBridgeInputError.invalidChoice("strictness")
                 }
                 saveLocalLLMSettings(LocalLLMSettings(
-                    modelFileName: try webString(data, key: "modelFileName", limit: 255),
-                    engineEnabled: try webBool(data, key: "engineEnabled"),
-                    contextTokens: try positiveInteger(try webString(data, key: "contextTokens", limit: 16), label: "Context tokens"),
-                    batchTokens: try positiveInteger(try webString(data, key: "batchTokens", limit: 16), label: "Batch tokens"),
-                    gpuOffload: try webBool(data, key: "gpuOffload"),
-                    maximumOutputTokens: try positiveInteger(try webString(data, key: "maximumOutputTokens", limit: 16), label: "Output tokens"),
-                    temperature: temperature,
-                    allowDecline: try webBool(data, key: "allowDecline"),
-                    maximumTags: try positiveInteger(try webString(data, key: "maximumTags", limit: 16), label: "Maximum tags"),
-                    minimumTags: try nonnegativeInteger(try webString(data, key: "minimumTags", limit: 16), label: "Minimum tags"),
-                    confidenceThresholds: thresholds,
-                    // Absent from an older shell = keep the default.
-                    extraTagMinimumOdds: (try webOptionalString(data, key: "extraTagMinimumOdds", limit: 16))
-                        .flatMap { Double($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
-                        ?? LocalLLMSettings.defaultExtraTagMinimumOdds,
-                    houseRules: try webString(data, key: "houseRules", limit: 4_000),
-                    maxResidentModels: try positiveInteger(
-                        try webString(data, key: "maxResidentModels", limit: 16),
-                        label: "Resident models"
-                    )
+                    speedQuality: speedQuality,
+                    strictness: strictness,
+                    houseRules: try webString(data, key: "houseRules", limit: LocalLLMSettings.maximumHouseRulesLength)
                 ))
             case "downloadModel":
                 downloadModel(id: try webString(data, key: "id", limit: 128))
@@ -488,37 +409,7 @@ extension VaultClassifierViewModel {
                 saveResearchSettings(ResearchSettings(
                     enabled: try webBool(data, key: "enabled"),
                     llmProviderProfileID: try webOptionalString(data, key: "llmProviderProfileID", limit: 256),
-                    llmModelIdentifier: try webOptionalString(data, key: "llmModelIdentifier", limit: 256),
-                    requestsPerMinute: try positiveInteger(
-                        try webString(data, key: "requestsPerMinute", limit: 16),
-                        label: "Research requests per minute"
-                    ),
-                    dailyTokenLimit: try positiveInteger(
-                        try webString(data, key: "dailyTokenLimit", limit: 16),
-                        label: "Research daily token limit"
-                    ),
-                    cooldownHours: try positiveInteger(
-                        try webString(data, key: "cooldownHours", limit: 16),
-                        label: "Research cooldown hours"
-                    ),
-                    authorThreshold: AuthorResearchThreshold(
-                        score: try positiveNumber(
-                            try webString(data, key: "creatorScoreThreshold", limit: 16),
-                            label: "Creator research score"
-                        ),
-                        halfLifeDays: try positiveNumber(
-                            try webString(data, key: "creatorScoreHalfLifeDays", limit: 16),
-                            label: "Creator score half-life days"
-                        )
-                    ),
-                    knowledgeTTLDays: try nonnegativeInteger(
-                        try webString(data, key: "knowledgeTTLDays", limit: 16),
-                        label: "Research knowledge TTL"
-                    ),
-                    maxKnowledgePerVideo: try positiveInteger(
-                        try webString(data, key: "maxKnowledgePerVideo", limit: 16),
-                        label: "Research knowledge per video"
-                    )
+                    llmModelIdentifier: try webOptionalString(data, key: "llmModelIdentifier", limit: 256)
                 ))
             case "submitCorrection":
                 submitCorrection(
@@ -535,23 +426,10 @@ extension VaultClassifierViewModel {
                 )
             case "saveClassifierTypeLocalModel":
                 let input = try Self.parseClassifierTypeLocalModelWebInput(data)
-                saveClassifierTypeLocalModel(
-                    typeID: input.typeID,
-                    overrideEnabled: input.overrideEnabled,
-                    modelFileName: input.modelFileName,
-                    houseRules: input.overrides?.houseRules,
-                    allowDecline: input.overrides?.allowDecline,
-                    confidenceThresholds: input.overrides?.confidenceThresholds,
-                    maximumTags: input.overrides?.maximumTags,
-                    minimumTags: input.overrides?.minimumTags
-                )
+                saveClassifierTypeLocalModel(typeID: input.typeID, overrides: input.overrides)
             case "saveClassifierTypeResearch":
                 let input = try Self.parseClassifierTypeResearchWebInput(data)
-                saveClassifierTypeResearch(
-                    typeID: input.typeID,
-                    overrideEnabled: input.overrideEnabled,
-                    settings: input.settings
-                )
+                saveClassifierTypeResearch(typeID: input.typeID, researchEnabled: input.researchEnabled)
             case "setBackupOwnerCode":
                 backupOwnerCode = try webString(data, key: "ownerCode", limit: 512)
                 setBackupOwnerCode()

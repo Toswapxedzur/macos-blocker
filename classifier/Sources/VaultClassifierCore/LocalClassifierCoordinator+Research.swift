@@ -10,9 +10,7 @@ extension LocalClassifierCoordinator {
 
     public func groundedResearchQueueSnapshot(for task: ResearchTask) -> GroundedResearchQueueSnapshot {
         lock.withLock {
-            let settings = state.workspaceCatalog.classifierTypes.first(where: {
-                $0.id == task.classifierTypeID
-            }).map { $0.researchOverrides ?? state.settings.research } ?? state.settings.research
+            let settings = state.settings.research
             // Dedup research against both maps: keyed creators (permanent) and
             // active term knowledge. A creator already keyed is never re-fetched.
             let knownKeys = (state.workspaceCatalog.knowledgeEntries

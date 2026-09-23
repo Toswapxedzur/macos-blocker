@@ -36,13 +36,10 @@ extension VaultClassifierViewModel {
                     guard let self else { return }
                     self.modelDownloadFractions.removeValue(forKey: id)
                     self.issue = nil
-                    // No silent default exists anymore, so the FIRST model the user
-                    // downloads becomes the active one (loads the engine); a later
-                    // download never overrides an already-chosen model.
-                    if (self.llmSettings.modelFileName ?? "").isEmpty {
-                        var updated = self.llmSettings
-                        updated.modelFileName = entry.ggufFileName
-                        self.saveLocalLLMSettings(updated)
+                    // The Speed↔Quality dial already names the model; if this download
+                    // is the dial's tier, load it now.
+                    if entry.tier == self.llmSettings.speedQuality, let coordinator = self.coordinator {
+                        self.installLocalLLMEngine(coordinator: coordinator)
                     }
                     self.onWebStateChange?()
                 }

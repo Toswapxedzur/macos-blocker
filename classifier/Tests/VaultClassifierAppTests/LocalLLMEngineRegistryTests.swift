@@ -97,15 +97,16 @@ final class LocalLLMEngineRegistryTests: XCTestCase {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let global = directory.appendingPathComponent("global.gguf")
+        let globalFileName = LocalLLMSettings(speedQuality: .balanced).modelFileName
+        let global = directory.appendingPathComponent(globalFileName)
         XCTAssertTrue(FileManager.default.createFile(atPath: global.path, contents: Data()))
 
         let resolved = try LocalLLMEngineRegistry.resolvedModelPath(
             requestedFileName: "missing.gguf",
-            configuration: .init(modelFileName: "global.gguf"),
+            configuration: .init(speedQuality: .balanced),
             modelsDirectory: directory,
             environment: [:],
-            availableModelFiles: ["global.gguf"]
+            availableModelFiles: [globalFileName]
         )
 
         XCTAssertEqual(resolved, global.path)

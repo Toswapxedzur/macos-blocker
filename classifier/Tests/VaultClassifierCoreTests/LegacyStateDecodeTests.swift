@@ -50,17 +50,19 @@ final class LegacyStateDecodeTests: XCTestCase {
 
         let decoded = try JSONDecoder().decode(LocalClassifierState.self, from: JSONSerialization.data(withJSONObject: state))
         XCTAssertEqual(decoded.schemaVersion, 2, "an older schema version is lifted, not rejected")
+        XCTAssertEqual(decoded.settings.localLLM.strictness, .broadest, "max 3 / min 1 → the Broadest position")
         XCTAssertEqual(decoded.settings.localLLM.maximumTags, 3)
         XCTAssertEqual(decoded.settings.localLLM.minimumTags, 1)
         let type = try XCTUnwrap(decoded.workspaceCatalog.classifierTypes.first)
         XCTAssertEqual(type.applicablePlatformID, "youtube")
-        XCTAssertEqual(type.localModelOverrides?.minimumTags, 1)
+        XCTAssertEqual(type.localModelOverrides?.strictness, .broadest)
         XCTAssertNoThrow(try decoded.workspaceCatalog.validate())
 
         let rewritten = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
         for retired in ["sourceProfiles", "personalModel", "trainingCorpus", "auditState", "cacheBackfill", "\"ledger\"", "\"policies\"",
                         "policyID", "activeModelID", "localModelID", "llmAssistConfiguration", "decisionPriority", "platformLocked",
-                        "dataSourcePlatformIDs", "\"records\"", "\"models\"", "expectedTags"] {
+                        "dataSourcePlatformIDs", "\"records\"", "\"models\"", "expectedTags",
+                        "\"maximumTags\"", "\"minimumTags\"", "presetID", "researchOverrides", "\"modelFileName\""] {
             XCTAssertFalse(rewritten.contains(retired), "retired key was written back: \(retired)")
         }
     }

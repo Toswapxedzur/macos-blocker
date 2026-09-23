@@ -158,11 +158,9 @@ final class VideoClassificationPipelineTests: XCTestCase {
         _ = try await pipeline.classify(
             title: "Unclear title", entryID: "v1", creatorID: "c1", platformID: "youtube",
             classifierType: makeType(), tree: makeTree(), catalog: WorkspaceCatalog(),
-            houseRules: "Prefer Politics.", allowDecline: false,
-            confidenceThresholds: [0.1, 0.3, 0.6, 0.9]
+            houseRules: "Prefer Politics.", extraTagMinimumOdds: 0.97
         )
-        XCTAssertEqual(recorder.last?.allowDecline, false)
-        XCTAssertEqual(recorder.last?.confidenceThresholds, [0.1, 0.3, 0.6, 0.9])
+        XCTAssertEqual(recorder.last?.extraTagMinimumOdds, 0.97)
         XCTAssertTrue(recorder.last?.staticPrefix.contains("Prefer Politics.") == true)
     }
 

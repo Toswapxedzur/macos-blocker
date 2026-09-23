@@ -70,15 +70,14 @@ public struct VideoClassificationPipeline: Sendable {
         tree: TagTreeAsset,
         catalog: WorkspaceCatalog,
         houseRules: String? = nil,
-        allowDecline: Bool? = nil,
-        confidenceThresholds: [Double]? = nil,
+        extraTagMinimumOdds: Double? = nil,
         knowledgeTTLDays: Int = ResearchSettings.defaultKnowledgeTTLDays,
         maxKnowledgePerVideo: Int = ResearchSettings.defaultMaxKnowledgePerVideo
     ) async throws -> VideoClassification {
         try await classifyBatch(
             [Input(title: title, summary: summary, text: text, entryID: entryID, creatorID: creatorID)],
             platformID: platformID, classifierType: classifierType, tree: tree, catalog: catalog,
-            houseRules: houseRules, allowDecline: allowDecline, confidenceThresholds: confidenceThresholds,
+            houseRules: houseRules, extraTagMinimumOdds: extraTagMinimumOdds,
             knowledgeTTLDays: knowledgeTTLDays, maxKnowledgePerVideo: maxKnowledgePerVideo
         )[0]
     }
@@ -96,8 +95,7 @@ public struct VideoClassificationPipeline: Sendable {
         tree: TagTreeAsset,
         catalog: WorkspaceCatalog,
         houseRules: String? = nil,
-        allowDecline: Bool? = nil,
-        confidenceThresholds: [Double]? = nil,
+        extraTagMinimumOdds: Double? = nil,
         knowledgeTTLDays: Int = ResearchSettings.defaultKnowledgeTTLDays,
         maxKnowledgePerVideo: Int = ResearchSettings.defaultMaxKnowledgePerVideo
     ) async throws -> [VideoClassification] {
@@ -127,7 +125,7 @@ public struct VideoClassificationPipeline: Sendable {
             LLMClassificationRequest(
                 staticPrefix: parts.staticPrefix, dynamicSuffix: parts.dynamicSuffix,
                 allowedTagNames: parts.allowedTagNames, maximumTags: maximumTags, minimumTags: minimumTags,
-                allowDecline: allowDecline, confidenceThresholds: confidenceThresholds
+                extraTagMinimumOdds: extraTagMinimumOdds
             )
         }
 
