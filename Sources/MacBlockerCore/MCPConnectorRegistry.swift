@@ -57,24 +57,26 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
         }
 
         /// True when we can BOTH detect and write this client without touching a
-        /// TCC-guarded location — i.e. it's safe to auto-register at launch with no
-        /// prompt. Clients whose only home is another app's data container (VS
-        /// Code, Claude Desktop, Cline) are false here and are deferred to an
-        /// explicit user toggle, where the one-time prompt is in context.
+        /// real sandbox container — i.e. safe to auto-register at launch with no
+        /// prompt. Since this app is not sandboxed and no catalog client lives in a
+        /// container, every installed client qualifies.
         var isSilentlyRegisterable: Bool {
             !MCPConnectorRegistry.isProtectedAppDataPath(configPath)
                 && !unprotectedDetectionPaths.isEmpty
         }
     }
 
-    /// A home-relative path macOS Sequoia guards behind the "access data from
-    /// other apps" (App Data) prompt. Even a `fileExists` probe of one of these
-    /// pops that dialog, so the launch-time sweep must never touch them — that
-    /// storm (once per guarded app, every launch) is exactly what this avoids.
+    /// A home-relative path macOS guards behind the "access data from other apps"
+    /// prompt for THIS (non-sandboxed) app: only another app's sandbox container.
+    /// Mac Vault ships non-sandboxed (`macosBlockerApp.entitlements` has no
+    /// `app-sandbox` key), so writing a client's config under plain
+    /// `Library/Application Support/<client>/` pops no prompt — that is exactly how
+    /// other MCP installers register silently. Only real sandbox containers
+    /// (`Library/Containers/`, `Library/Group Containers/`) still gate access, and
+    /// no catalog client lives there, so every installed client auto-registers.
     static func isProtectedAppDataPath(_ relativePath: String) -> Bool {
         let path = relativePath.hasPrefix("/") ? String(relativePath.dropFirst()) : relativePath
-        return path.hasPrefix("Library/Application Support/")
-            || path.hasPrefix("Library/Containers/")
+        return path.hasPrefix("Library/Containers/")
             || path.hasPrefix("Library/Group Containers/")
     }
 
@@ -183,16 +185,12 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
     /// (with the server) to make "default to connect" fire at launch.
     public static var isLaunchAutoConnectEnabled = false
 
-    /// Connects, at launch, every SILENTLY-registerable installed client the user
-    /// has not explicitly turned off. "Silently registerable" = detectable and
-    /// writable without touching a TCC-guarded app-data container (the CLI/home
-    /// clients: Claude Code, Codex, Cursor, Windsurf, Zed). Clients that live only
-    /// inside another app's data (VS Code, Claude Desktop, Cline) are intentionally
-    /// skipped here — auto-registering them would pop the "access data from other
-    /// apps" dialog on every launch. They stay available in Settings, where the
-    /// user connects them explicitly and the one-time prompt is in context.
-    /// New/undecided silent clients default to connected. No-op until the
-    /// integration is live (see `isLaunchAutoConnectEnabled`).
+    /// Connects, at launch, every installed client. The AI Tool Connections UI was
+    /// removed on 2026-09-23: connection is automatic with no prompt, because the
+    /// app is non-sandboxed and every catalog client's config lives outside a
+    /// sandbox container (so `isSilentlyRegisterable` is now true for all of them).
+    /// A client is skipped only when a prior explicit disconnect remembered it.
+    /// No-op until the integration is live (see `isLaunchAutoConnectEnabled`).
     public func applyDefaultConnections() {
         guard Self.isLaunchAutoConnectEnabled else { return }
         let disconnected = userDisconnectedIDs()

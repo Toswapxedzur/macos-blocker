@@ -55,15 +55,8 @@ public struct BlockerWebView: _CBViewRepresentable {
     /// Supplies current per-group bridge clusters as a JSON array; pushed each
     /// second to `window.__cbClustersState`.
     private let clustersJSON: (() -> String?)?
-    /// Supplies a pending group-link rejection as JSON, drained each second to
-    /// `window.__cbGroupRejected`.
-    private let groupRejectionJSON: (() -> String?)?
     /// Web announced this Mac's eligible groups (JSON {program, groups}).
     private let onGroupsAnnounce: ((String) -> Void)?
-    /// Web asked to link a group (JSON {groupName, groupType, fromProgram, toProgram}).
-    private let onGroupConnect: ((String) -> Void)?
-    /// Web asked to unlink a group (JSON {clusterId, groupName, program}).
-    private let onGroupDisconnect: ((String) -> Void)?
     /// Web pushed this group's syncable settings (JSON {groupName, groupType, ts, scalars, sites?, apps?, usageMs, usageResetAtMs}).
     private let onGroupSync: ((String) -> Void)?
 
@@ -83,10 +76,7 @@ public struct BlockerWebView: _CBViewRepresentable {
         onOpenPermissionSettings: (() -> Void)? = nil,
         connectionStatusJSON: (() -> String?)? = nil,
         clustersJSON: (() -> String?)? = nil,
-        groupRejectionJSON: (() -> String?)? = nil,
         onGroupsAnnounce: ((String) -> Void)? = nil,
-        onGroupConnect: ((String) -> Void)? = nil,
-        onGroupDisconnect: ((String) -> Void)? = nil,
         onGroupSync: ((String) -> Void)? = nil
     ) {
         self.store = store
@@ -104,15 +94,12 @@ public struct BlockerWebView: _CBViewRepresentable {
         self.onOpenPermissionSettings = onOpenPermissionSettings
         self.connectionStatusJSON = connectionStatusJSON
         self.clustersJSON = clustersJSON
-        self.groupRejectionJSON = groupRejectionJSON
         self.onGroupsAnnounce = onGroupsAnnounce
-        self.onGroupConnect = onGroupConnect
-        self.onGroupDisconnect = onGroupDisconnect
         self.onGroupSync = onGroupSync
     }
 
     public func makeCoordinator() -> Coordinator {
-        Coordinator(store: store, ruleLogJSON: ruleLogJSON, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup, onSnoozePress: onSnoozePress, onPanelEvent: onPanelEvent, onShowSystemPanel: onShowSystemPanel, onDismissSystemPanel: onDismissSystemPanel, systemPanelEventsJSON: systemPanelEventsJSON, permissionStateJSON: permissionStateJSON, onRequestAppBlockingPermission: onRequestAppBlockingPermission, onOpenPermissionSettings: onOpenPermissionSettings, connectionStatusJSON: connectionStatusJSON, clustersJSON: clustersJSON, groupRejectionJSON: groupRejectionJSON, onGroupsAnnounce: onGroupsAnnounce, onGroupConnect: onGroupConnect, onGroupDisconnect: onGroupDisconnect, onGroupSync: onGroupSync)
+        Coordinator(store: store, ruleLogJSON: ruleLogJSON, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup, onSnoozePress: onSnoozePress, onPanelEvent: onPanelEvent, onShowSystemPanel: onShowSystemPanel, onDismissSystemPanel: onDismissSystemPanel, systemPanelEventsJSON: systemPanelEventsJSON, permissionStateJSON: permissionStateJSON, onRequestAppBlockingPermission: onRequestAppBlockingPermission, onOpenPermissionSettings: onOpenPermissionSettings, connectionStatusJSON: connectionStatusJSON, clustersJSON: clustersJSON, onGroupsAnnounce: onGroupsAnnounce, onGroupSync: onGroupSync)
     }
 
     private func makeWebView(context: Context) -> WKWebView {
@@ -286,10 +273,7 @@ public struct BlockerWebView: _CBViewRepresentable {
         private let onOpenPermissionSettings: (() -> Void)?
         private let connectionStatusJSON: (() -> String?)?
         private let clustersJSON: (() -> String?)?
-        private let groupRejectionJSON: (() -> String?)?
         private let onGroupsAnnounce: ((String) -> Void)?
-        private let onGroupConnect: ((String) -> Void)?
-        private let onGroupDisconnect: ((String) -> Void)?
         private let onGroupSync: ((String) -> Void)?
 
         private var usagePushTimer: Timer?
@@ -316,10 +300,7 @@ public struct BlockerWebView: _CBViewRepresentable {
             onOpenPermissionSettings: (() -> Void)?,
             connectionStatusJSON: (() -> String?)?,
             clustersJSON: (() -> String?)?,
-            groupRejectionJSON: (() -> String?)?,
             onGroupsAnnounce: ((String) -> Void)?,
-            onGroupConnect: ((String) -> Void)?,
-            onGroupDisconnect: ((String) -> Void)?,
             onGroupSync: ((String) -> Void)?
         ) {
             self.store = store
@@ -336,10 +317,7 @@ public struct BlockerWebView: _CBViewRepresentable {
             self.onOpenPermissionSettings = onOpenPermissionSettings
             self.connectionStatusJSON = connectionStatusJSON
             self.clustersJSON = clustersJSON
-            self.groupRejectionJSON = groupRejectionJSON
             self.onGroupsAnnounce = onGroupsAnnounce
-            self.onGroupConnect = onGroupConnect
-            self.onGroupDisconnect = onGroupDisconnect
             self.onGroupSync = onGroupSync
         }
 
@@ -362,7 +340,6 @@ public struct BlockerWebView: _CBViewRepresentable {
                 self?.pushPermissionState()
                 self?.pushConnectionState()
                 self?.pushClusters()
-                self?.pushGroupRejection()
             }
             usagePushTimer = timer
 
@@ -429,41 +406,6 @@ public struct BlockerWebView: _CBViewRepresentable {
                   let json = provider(), !json.isEmpty else { return }
             webView.evaluateJavaScript(
                 "window.__cbClustersState && window.__cbClustersState(\(json));",
-                completionHandler: nil
-            )
-        }
-
-        /// Pushes the installed MCP client connectors (and their connected state)
-        /// to the settings UI. Requested on demand when the settings panel opens
-        /// and after each connect/disconnect, not on the per-second timer.
-        private func pushMcpConnectors() {
-            guard let webView else { return }
-            let registry = MCPConnectorRegistry.shared
-            let connectors: [[String: Any]] = registry.installedConnectors().map { connector in
-                var entry: [String: Any] = [
-                    "id": connector.id,
-                    "name": connector.displayName,
-                    "transport": connector.transport.rawValue,
-                    "connected": registry.isConnected(connector),
-                ]
-                if let icon = MCPConnectorIcons.iconDataURL(connectorID: connector.id) {
-                    entry["icon"] = icon
-                }
-                return entry
-            }
-            guard let data = try? JSONSerialization.data(withJSONObject: ["connectors": connectors]),
-                  let json = String(data: data, encoding: .utf8) else { return }
-            webView.evaluateJavaScript(
-                "window.__cbMcpConnectors && window.__cbMcpConnectors(\(json));",
-                completionHandler: nil
-            )
-        }
-
-        private func pushGroupRejection() {
-            guard let webView, let provider = groupRejectionJSON,
-                  let json = provider(), !json.isEmpty else { return }
-            webView.evaluateJavaScript(
-                "window.__cbGroupRejected && window.__cbGroupRejected(\(json));",
                 completionHandler: nil
             )
         }
@@ -556,28 +498,10 @@ public struct BlockerWebView: _CBViewRepresentable {
                 pushConnectionState()
             case "groups-announce":
                 if let json = messageJSON(body) { onGroupsAnnounce?(json) }
-            case "group-connect":
-                if let json = messageJSON(body) { onGroupConnect?(json) }
-            case "group-disconnect":
-                if let json = messageJSON(body) { onGroupDisconnect?(json) }
             case "group-sync":
                 if let json = messageJSON(body) { onGroupSync?(json) }
             case "clusters-status":
                 pushClusters()
-            case "mcp-connectors-status":
-                pushMcpConnectors()
-            case "mcp-connect":
-                if let payload = body["message"] as? [String: Any],
-                   let id = payload["id"] as? String {
-                    MCPConnectorRegistry.shared.connectByID(id)
-                }
-                pushMcpConnectors()
-            case "mcp-disconnect":
-                if let payload = body["message"] as? [String: Any],
-                   let id = payload["id"] as? String {
-                    MCPConnectorRegistry.shared.disconnectByID(id)
-                }
-                pushMcpConnectors()
             case "local-folder-reveal":
                 revealLocalFolder()
             case "switch-scene":

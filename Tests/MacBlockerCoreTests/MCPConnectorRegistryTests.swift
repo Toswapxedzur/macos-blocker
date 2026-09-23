@@ -201,7 +201,9 @@ final class MCPConnectorRegistryTests: XCTestCase {
     // MARK: App Data (TCC) — launch sweep must not pop "access data from other apps"
 
     func testProtectedAppDataPathClassification() {
-        XCTAssertTrue(MCPConnectorRegistry.isProtectedAppDataPath("Library/Application Support/Code"))
+        // Non-sandboxed app: plain Application Support is NOT guarded — only real
+        // sandbox containers are.
+        XCTAssertFalse(MCPConnectorRegistry.isProtectedAppDataPath("Library/Application Support/Code"))
         XCTAssertTrue(MCPConnectorRegistry.isProtectedAppDataPath("Library/Containers/com.foo"))
         XCTAssertTrue(MCPConnectorRegistry.isProtectedAppDataPath("Library/Group Containers/group.foo"))
         XCTAssertFalse(MCPConnectorRegistry.isProtectedAppDataPath(".cursor/mcp.json"))
@@ -209,48 +211,44 @@ final class MCPConnectorRegistryTests: XCTestCase {
         XCTAssertFalse(MCPConnectorRegistry.isProtectedAppDataPath(".config/zed/mcp.json"))
     }
 
-    func testSilentlyRegisterableExcludesAppDataOnlyClients() {
-        let byID = Dictionary(uniqueKeysWithValues: MCPConnectorRegistry.defaultCatalog.map { ($0.id, $0) })
-        // Home/CLI clients: detectable and writable without a TCC-guarded path, so
-        // safe to auto-register at launch with no prompt.
-        for id in ["claude-code", "codex", "cursor", "windsurf", "zed"] {
-            XCTAssertEqual(byID[id]?.isSilentlyRegisterable, true, "\(id) should be silently registerable")
-        }
-        // App-data-only clients: deferred to an explicit Settings toggle.
-        for id in ["vscode", "vscode-insiders", "claude-desktop", "cline"] {
-            XCTAssertEqual(byID[id]?.isSilentlyRegisterable, false, "\(id) must not be auto-registered at launch")
+    func testEveryCatalogClientIsSilentlyRegisterable() {
+        // No catalog client lives in a sandbox container, and the app is not
+        // sandboxed, so every installed client auto-registers at launch with no
+        // prompt (the AI Tool Connections UI was removed 2026-09-23).
+        for connector in MCPConnectorRegistry.defaultCatalog {
+            XCTAssertTrue(connector.isSilentlyRegisterable, "\(connector.id) should be silently registerable")
         }
     }
 
-    func testIsInstalledSilentlyIgnoresProtectedDetectionPaths() throws {
-        // Cursor present ONLY via its App-Support container, not its ~/.cursor dir.
+    func testIsInstalledSilentlySeesAppSupportPaths() throws {
+        // App Support is no longer a guarded path, so silent detection sees a
+        // client present only via its App-Support directory.
         try mkdir("Library/Application Support/Cursor")
         let registry = registry()
         let cursor = try XCTUnwrap(registry.connector(id: "cursor"))
         XCTAssertTrue(registry.isInstalled(cursor), "full detection sees the App-Support path")
-        XCTAssertFalse(registry.isInstalledSilently(cursor), "silent detection ignores the protected path")
+        XCTAssertTrue(registry.isInstalledSilently(cursor), "silent detection now sees the App-Support path")
     }
 
-    func testLaunchSweepNeverTouchesProtectedAppDataClients() throws {
+    func testLaunchSweepConnectsAppSupportClients() throws {
         MCPConnectorRegistry.isLaunchAutoConnectEnabled = true
         defer { MCPConnectorRegistry.isLaunchAutoConnectEnabled = false }
-        // VS Code and Claude Desktop live only inside another app's data container;
-        // detecting or writing them pops the macOS App Data dialog. Both "installed".
+        // VS Code and Claude Desktop store their config under Application Support,
+        // which a non-sandboxed app writes with no prompt — so the launch sweep
+        // now connects them automatically.
         try mkdir("Library/Application Support/Code")
         try mkdir("Library/Application Support/Claude")
         let registry = registry()
 
         registry.applyDefaultConnections()
 
-        // The launch sweep must not have written either protected config — those
-        // are deferred to an explicit Settings toggle, so no launch-time prompt.
-        XCTAssertFalse(
+        XCTAssertTrue(
             FileManager.default.fileExists(
                 atPath: home.appendingPathComponent("Library/Application Support/Code/User/mcp.json").path),
-            "launch sweep must not write VS Code's protected config"
+            "launch sweep writes VS Code's config automatically"
         )
-        XCTAssertFalse(registry.isConnected(try XCTUnwrap(registry.connector(id: "vscode"))))
-        XCTAssertFalse(registry.isConnected(try XCTUnwrap(registry.connector(id: "claude-desktop"))))
+        XCTAssertTrue(registry.isConnected(try XCTUnwrap(registry.connector(id: "vscode"))))
+        XCTAssertTrue(registry.isConnected(try XCTUnwrap(registry.connector(id: "claude-desktop"))))
     }
 
     // MARK: WebView projection
