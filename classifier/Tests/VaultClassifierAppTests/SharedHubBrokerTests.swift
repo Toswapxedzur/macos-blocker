@@ -116,6 +116,44 @@ final class SharedHubBrokerTests: XCTestCase {
         XCTAssertEqual(evaluations.map(\.script), ["render-53"])
     }
 
+    /// While the page is hidden nothing is built or pushed; showing it again
+    /// delivers the newest state exactly once.
+    func testWebStateDeliveryIsSuspendedWhileHiddenAndCatchesUpOnceWhenShown() {
+        var scheduled = [() -> Void]()
+        var evaluations = [(script: String, completion: () -> Void)]()
+        var builtRevisions = [UInt64]()
+        let delivery = LatestWebStateDelivery(
+            schedule: { scheduled.append($0) },
+            makeScript: { revision in
+                builtRevisions.append(revision)
+                return "render-\(revision)"
+            },
+            evaluate: { script, completion in evaluations.append((script, completion)) }
+        )
+
+        delivery.setSuspended(true)
+        for _ in 0..<20 { delivery.request() }
+        XCTAssertTrue(scheduled.isEmpty, "a hidden page schedules no render")
+        XCTAssertTrue(builtRevisions.isEmpty)
+
+        delivery.setSuspended(false)
+        XCTAssertEqual(scheduled.count, 1, "showing the page schedules one catch-up render")
+        scheduled.removeFirst()()
+        XCTAssertEqual(builtRevisions, [20], "the catch-up carries the newest revision only")
+        XCTAssertEqual(evaluations.count, 1)
+
+        // Hidden again while a render is in flight: its completion must not
+        // start another one.
+        delivery.setSuspended(true)
+        delivery.request()
+        evaluations.removeFirst().completion()
+        XCTAssertTrue(scheduled.isEmpty)
+        delivery.setSuspended(false)
+        XCTAssertEqual(scheduled.count, 1)
+        scheduled.removeFirst()()
+        XCTAssertEqual(builtRevisions, [20, 21])
+    }
+
     func testWebStateDeliveryRecoversFromAStuckWebContentProcess() {
         var scheduled = [() -> Void]()
         var completions = [() -> Void]()

@@ -54,11 +54,16 @@ public struct BlockerMainView: View {
                 .allowsHitTesting(page == .activity)
                 .zIndex(page == .activity ? 1 : 0)
         }
-        .onAppear { enforcement.start() }
+        .onAppear {
+            enforcement.start()
+            VaultClassifierPage.shared.setPageVisible(page == .classifier)
+        }
         .onDisappear { enforcement.stop() }
         .onReceive(NotificationCenter.default.publisher(for: .vaultSwitchScene)) { note in
             guard let raw = note.userInfo?["scene"] as? String, let next = Page(rawValue: raw) else { return }
             page = next
+            // The hidden classifier page stops rebuilding its web snapshot.
+            VaultClassifierPage.shared.setPageVisible(next == .classifier)
         }
         #else
         VStack(spacing: 0) {
