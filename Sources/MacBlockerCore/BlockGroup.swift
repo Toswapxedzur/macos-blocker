@@ -68,8 +68,17 @@ public struct BlockGroup: Codable, Identifiable, Equatable, Sendable {
     public var name: String
     public var enabled: Bool
     public var mode: BlockingMode
-    public var allowedMinutes: Int
-    public var resetIntervalHours: Int
+    public var allowedMinutes: Double
+    /// Budget reset interval (fractional hours allowed, e.g. 2.5). Also the
+    /// window length when `rollingLimit` is on.
+    public var resetIntervalHours: Double
+    /// Re-anchor the budget periods at local midnight every day (the last
+    /// period of the day is cut short). With `rollingLimit`, midnight also
+    /// clears the rolling window.
+    public var resetAtMidnight: Bool
+    /// Genuine sliding-window limit: used time counts until it is
+    /// `resetIntervalHours` old, then comes back gradually.
+    public var rollingLimit: Bool
     public var allowSnooze: Bool
     public var snoozeMinutes: Int
     public var snoozeActivationDelayMinutes: Int
@@ -93,8 +102,10 @@ public struct BlockGroup: Codable, Identifiable, Equatable, Sendable {
         name: String = "Block Group",
         enabled: Bool = true,
         mode: BlockingMode = .instant,
-        allowedMinutes: Int = 15,
-        resetIntervalHours: Int = 24,
+        allowedMinutes: Double = 15,
+        resetIntervalHours: Double = 24,
+        resetAtMidnight: Bool = false,
+        rollingLimit: Bool = false,
         allowSnooze: Bool = true,
         snoozeMinutes: Int = 30,
         snoozeActivationDelayMinutes: Int = 0,
@@ -119,6 +130,8 @@ public struct BlockGroup: Codable, Identifiable, Equatable, Sendable {
         self.mode = mode
         self.allowedMinutes = allowedMinutes
         self.resetIntervalHours = resetIntervalHours
+        self.resetAtMidnight = resetAtMidnight
+        self.rollingLimit = rollingLimit
         self.allowSnooze = allowSnooze
         self.snoozeMinutes = snoozeMinutes
         self.snoozeActivationDelayMinutes = snoozeActivationDelayMinutes

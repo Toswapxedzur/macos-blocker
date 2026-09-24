@@ -136,7 +136,7 @@
       var incoming = typeof json === "string" ? JSON.parse(json) : json;
       if (!incoming || typeof incoming !== "object") return;
       var changes = {};
-      ["usageTimersMs", "usageResetAtMs"].forEach(function (key) {
+      ["usageTimersMs", "usageResetAtMs", "usageBucketsMs"].forEach(function (key) {
         if (incoming[key] && typeof incoming[key] === "object") {
           var oldValue = store[key];
           store[key] = incoming[key];
