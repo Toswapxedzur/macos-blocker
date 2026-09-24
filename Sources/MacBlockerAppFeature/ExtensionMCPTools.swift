@@ -46,7 +46,7 @@ public enum ExtensionMCPTools {
             },
             MCPTool(
                 name: "extension_create_group",
-                description: "Create an extension block group of a type (youtube, tiktok, facebook, instagram, twitch, reddit, discord, twitter, bilibili, …, site, custom) with the popup's defaults, then apply an optional patch of group fields (e.g. name, platformTagMode 'include'|'exclude', platformTags [{name, confidence?, also?, except?}], platformTagBlockPage, platformTagCoverUntilTagged, platformTagEffect 'dim'|'block', platformAuthorMode, platformAuthors, redditMode, redditSubreddits, mode, allowedMinutes, activeDays, timeWindowsText, sites, blockingRulesText). Fields pass the extension's own sanitizer.",
+                description: "Create an extension block group of a type (youtube, tiktok, facebook, instagram, twitch, reddit, discord, twitter, bilibili, …, site, custom) with the popup's defaults, then apply an optional patch of group fields (e.g. name, platformTagMode 'include'|'exclude', platformTags [{name, confidence?, also?, except?}], platformTagBlockPage, platformTagCoverUntilTagged, platformTagEffect 'dim'|'block', sourceMode 'all'|'include'|'exclude'|'nobody' with sources [creators, accounts or subreddits] (the legacy platformAuthorMode/platformAuthors and redditMode/redditSubreddits pairs are still accepted and migrated), discordMode with discordTargets, mode, allowedMinutes, activeDays, timeWindowsText, sites, blockingRulesText). Fields pass the extension's own sanitizer.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
