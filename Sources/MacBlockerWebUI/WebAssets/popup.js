@@ -183,17 +183,21 @@ const cbDialog = (function () {
 // Extension-wide preferences. Keep these defaults in sync with the
 // placeholder text in popup.html's Settings modal.
 const DEFAULT_GLOBAL_SETTINGS = {
+  tickRateMs: 1000,
   autosaveDebounceMs: 400,
-  // Debug mode is off by default. When on it emits the
+  // Debug mode is off by default. When on it (a) shows the on-page
+  // debug log overlay for custom rules and (b) emits the
   // [CustomBlocker:trace] / [CustomBlocker] dispatch console lines.
   // The user-facing helpers.log() output continues to flow regardless.
   debugMode: false,
+  showOnPageLogToasts: true,
   defaultSnoozeMinutes: 30
 };
+const TICK_RATE_MIN_MS = 250;
+const TICK_RATE_MAX_MS = 60_000;
 const AUTOSAVE_DEBOUNCE_MAX_MS = 5_000;
 
-// Both endpoint types connect out; this remains only for macOS app-rule
-// ownership when displaying shared group state.
+// Native and browser clients both connect out to the shared broker.
 function isNativeHost() {
   try {
     return !!(window.chrome && window.chrome.__cbShim);
@@ -220,6 +224,9 @@ function detectProgramId() {
 
 const LOCAL_PROGRAM_ID = detectProgramId();
 const IS_NATIVE_DESKTOP = isNativeHost();
+// The desktop app hosts this same editor; `.desktop-only` / `.browser-only`
+// markup is shown or hidden by this one class (see popup.css).
+document.body.classList.toggle("is-native-desktop", IS_NATIVE_DESKTOP);
 
 const DEFAULT_ALLOWED_MINUTES = 15;
 const DEFAULT_RESET_INTERVAL_HOURS = 24;
@@ -228,6 +235,7 @@ const DEFAULT_SNOOZE_MINUTES = 30;
 const DEFAULT_SNOOZE_ACTIVATION_DELAY_MINUTES = 0;
 const DEFAULT_SNOOZE_COOLDOWN_MINUTES = 0;
 const DEFAULT_GROUP_TYPE = "site";
+const DEFAULT_PLATFORM_RULE_GROUP_TYPE = "youtube";
 const MAX_STRICT_FREEZE_HOURS = 72;
 const MAX_SNOOZE_COOLDOWN_MINUTES = 5;
 const MS_PER_SECOND = 1000;
@@ -285,6 +293,26 @@ const blockingRulesHighlight = document.getElementById("blockingRulesHighlight")
 const blockingRulesField = document.getElementById("blockingRules");
 const blockingRulesLint = document.getElementById("blockingRulesLint");
 const platformRulesCard = document.getElementById("platformRulesCard");
+const groupScopesSection = document.getElementById("groupScopesSection");
+const appsSettingsSection = document.getElementById("appsSettingsSection");
+const appsHelp = document.getElementById("appsHelp");
+const blockedAppsData = document.getElementById("blockedAppsData");
+const blockedAppsList = document.getElementById("blockedAppsList");
+const clearAppsButton = document.getElementById("clearAppsButton");
+const appPickerModal = document.getElementById("appPickerModal");
+const appPickerSearch = document.getElementById("appPickerSearch");
+const appPickerResults = document.getElementById("appPickerResults");
+const appPickerEmpty = document.getElementById("appPickerEmpty");
+const appPickerCloseButton = document.getElementById("appPickerCloseButton");
+const deviceControlButton = document.getElementById("deviceControlButton");
+const deviceControlCopy = document.getElementById("deviceControlCopy");
+const deviceControlStatus = document.getElementById("deviceControlStatus");
+const permissionModal = document.getElementById("permissionModal");
+const permissionGrantButton = document.getElementById("permissionGrantButton");
+const permissionCancelButton = document.getElementById("permissionCancelButton");
+let blockedAppsEditable = false;
+const groupScopesList = document.getElementById("groupScopesList");
+const groupScopesAdd = document.getElementById("groupScopesAdd");
 const platformVideoCard = document.getElementById("platformVideoFields");
 const platformVideoTitle = document.getElementById("platformRulesTitle");
 const platformVideoCopy = document.getElementById("platformRulesCopy");
@@ -303,19 +331,26 @@ const platformAuthorsBlock = document.getElementById("platformAuthorsBlock");
 const platformAuthorsLabel = document.getElementById("platformAuthorsLabel");
 const platformAuthorsField = document.getElementById("platformAuthors");
 const platformVideoHelp = document.getElementById("platformVideoHelp");
+// Content-tag filter (platform rules).
+const platformTagFields = document.getElementById("platformTagFields");
+const platformTagModeField = document.getElementById("platformTagMode");
+const platformTagListBlock = document.getElementById("platformTagListBlock");
+const platformTagsField = document.getElementById("platformTags");
+const platformTagDefaultConfidenceField = document.getElementById("platformTagDefaultConfidence");
+const platformTagEffectField = document.getElementById("platformTagEffect");
+const platformTagBlockUntaggedRow = document.getElementById("platformTagBlockUntaggedRow");
+const platformTagBlockUntaggedField = document.getElementById("platformTagBlockUntagged");
+const platformTagBlockPageField = document.getElementById("platformTagBlockPage");
+const platformTagCoverUntilTaggedField = document.getElementById("platformTagCoverUntilTagged");
 const platformBlockHomePageField = document.getElementById("platformBlockHomePage");
-const skipToNextOnBlockRow = document.getElementById("skipToNextOnBlockRow");
-const skipToNextOnBlockField = document.getElementById("skipToNextOnBlock");
-const redditSettingsCard = document.getElementById("redditFields");
-const redditModeField = document.getElementById("redditMode");
-const redditSubredditsField = document.getElementById("redditSubreddits");
-const redditBlockHomePageField = document.getElementById("redditBlockHomePage");
 const discordSettingsCard = document.getElementById("discordFields");
 const discordModeField = document.getElementById("discordMode");
 const discordTargetsField = document.getElementById("discordTargets");
 const discordBlockHomePageField = document.getElementById("discordBlockHomePage");
 const surfaceHidesSection = document.getElementById("surfaceHidesSection");
 const surfaceHidesList = document.getElementById("surfaceHidesList");
+const surfaceHidesTitle = document.getElementById("surfaceHidesTitle");
+const surfaceHidesHelp = document.getElementById("surfaceHidesHelp");
 const fallbackUrlSection = document.getElementById("fallbackUrlSection");
 const fallbackUrlField = document.getElementById("fallbackUrl");
 const freezeSummary = document.getElementById("freezeSummary");
@@ -339,18 +374,19 @@ const endSnoozeButton = document.getElementById("endSnoozeButton");
 const snoozeNumericFields = document.getElementById("snoozeNumericFields");
 const snoozeCustomCopy = document.getElementById("snoozeCustomCopy");
 const siteSettingsSection = document.getElementById("siteSettingsSection");
-const blockedAppsData = document.getElementById("blockedAppsData");
-const blockedAppsList = document.getElementById("blockedAppsList");
+const siteSettingsLabel = document.getElementById("siteSettingsLabel");
+const siteAllowlistField = document.getElementById("siteAllowlist");
+const blockedSitesField = document.getElementById("blockedSites");
+const blockedSitesList = document.getElementById("blockedSitesList");
+const siteAddPanel = document.getElementById("siteAddPanel");
+const siteAddInput = document.getElementById("siteAddInput");
+const siteAddConfirmButton = document.getElementById("siteAddConfirmButton");
+const siteAddCancelButton = document.getElementById("siteAddCancelButton");
 const clearSitesButton = document.getElementById("clearSitesButton");
-const appPickerModal = document.getElementById("appPickerModal");
-const appPickerSearch = document.getElementById("appPickerSearch");
-const appPickerResults = document.getElementById("appPickerResults");
-const appPickerEmpty = document.getElementById("appPickerEmpty");
-const appPickerCloseButton = document.getElementById("appPickerCloseButton");
-let blockedAppsEditable = false;
 const runCustomGroupButton = document.getElementById("runCustomGroupButton");
 const checkSyntaxButton = document.getElementById("checkSyntaxButton");
 const runCustomGroupStatus = document.getElementById("runCustomGroupStatus");
+// No-code content-tag rule builder (inside the custom editor).
 const aiPromptPanel = document.getElementById("aiPromptPanel");
 const aiPromptInput = document.getElementById("aiPromptInput");
 const aiPromptCopyButton = document.getElementById("aiPromptCopyButton");
@@ -374,14 +410,11 @@ const settingsDefaultSnoozeMinutesField = document.getElementById("settingsDefau
 const localFolderChooseButton = document.getElementById("localFolderChooseButton");
 const localFolderRevokeButton = document.getElementById("localFolderRevokeButton");
 const localFolderStatus = document.getElementById("localFolderStatus");
+let localFolderHandle = null;
 const settingsResetButton = document.getElementById("settingsResetButton");
 const settingsStatus = document.getElementById("settingsStatus");
-const deviceControlButton = document.getElementById("deviceControlButton");
-const deviceControlCopy = document.getElementById("deviceControlCopy");
-const deviceControlStatus = document.getElementById("deviceControlStatus");
-const permissionModal = document.getElementById("permissionModal");
-const permissionGrantButton = document.getElementById("permissionGrantButton");
-const permissionCancelButton = document.getElementById("permissionCancelButton");
+const classifierCollectionToggle = document.getElementById("classifierCollectionToggle");
+const classifierTaggingModeField = document.getElementById("classifierTaggingMode");
 const dayCheckboxes = Array.from(daysGrid.querySelectorAll('input[type="checkbox"]'));
 
 const state = {
@@ -411,8 +444,8 @@ const state = {
   language: "en",
   translationMessages: {},
   translationLoadPromises: {},
-  // Runtime web-app bridge status, pushed by the transport layer (native server
-  // on macOS via window.__cbConnectionState). Never persisted.
+  // Runtime web-app bridge status, pushed by the transport layer (background
+  // service worker in the browser, native server on macOS). Never persisted.
   connectionStatus: {
     running: false,
     state: "off",
@@ -428,7 +461,6 @@ const state = {
   clusters: [],
   // Read-only mirror of the shared pools per clustered group:
   //   { [groupId]: { sites: [...], apps: [...] } }
-  clusterMirror: {},
   // Hub's shared cumulative snooze total per clustered group (display only). We
   // show max(local total, this) so the figure reflects snoozes accrued on any
   // member without merging into — and thus double-counting — the local counter.
@@ -444,6 +476,53 @@ const state = {
   // hub re-pushes every second) don't trigger needless re-renders.
   clustersLastJSON: ""
 };
+
+// This remains separate from the group-sync connection. Its browser evidence
+// requests share the public broker but never receive a group definition.
+const CLASSIFIER_BRIDGE_SETTINGS_KEY = "vaultClassifierSettings";
+const CLASSIFIER_TAGGING_MODES = ["whenFiltering", "always", "paused"];
+const DEFAULT_CLASSIFIER_BRIDGE_SETTINGS = Object.freeze({
+  collectionEnabled: true,
+  taggingMode: "whenFiltering"
+});
+let classifierBridgeSettings = { ...DEFAULT_CLASSIFIER_BRIDGE_SETTINGS };
+
+function sanitizeClassifierBridgeSettings(raw) {
+  return {
+    // Existing deliberate opt-outs stay off; new extension settings collect by
+    // default once the matching local app platform is enabled.
+    collectionEnabled: !raw || raw.collectionEnabled !== false,
+    taggingMode: raw && CLASSIFIER_TAGGING_MODES.includes(raw.taggingMode) ? raw.taggingMode : "whenFiltering"
+  };
+}
+
+function classifierBridgeStorageGet() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get([CLASSIFIER_BRIDGE_SETTINGS_KEY], (result) => {
+      resolve(sanitizeClassifierBridgeSettings(result && result[CLASSIFIER_BRIDGE_SETTINGS_KEY]));
+    });
+  });
+}
+
+function classifierBridgeStorageSet(next) {
+  classifierBridgeSettings = sanitizeClassifierBridgeSettings(next);
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.set({ [CLASSIFIER_BRIDGE_SETTINGS_KEY]: classifierBridgeSettings }, () => {
+      const error = chrome.runtime.lastError;
+      error ? reject(new Error(error.message)) : resolve(classifierBridgeSettings);
+    });
+  });
+}
+
+function renderClassifierBridgeSettings() {
+  if (classifierCollectionToggle) classifierCollectionToggle.checked = classifierBridgeSettings.collectionEnabled;
+  if (classifierTaggingModeField) classifierTaggingModeField.value = classifierBridgeSettings.taggingMode;
+}
+
+async function loadClassifierBridgeSettings() {
+  classifierBridgeSettings = await classifierBridgeStorageGet();
+  renderClassifierBridgeSettings();
+}
 
 function getAiPromptStorageKey(groupId) {
   return `${AI_PROMPT_STORAGE_PREFIX}${groupId}`;
@@ -495,11 +574,6 @@ function getTranslationDirectory() {
 }
 
 async function fetchLanguageMessages(languageCode) {
-  const inlineMessages = window.CUSTOM_BLOCKER_INLINE_MESSAGES?.[languageCode];
-  if (inlineMessages && typeof inlineMessages === "object") {
-    return inlineMessages;
-  }
-
   const response = await fetch(
     chrome.runtime.getURL(`${getTranslationDirectory()}/${languageCode}.json`)
   );
@@ -567,11 +641,6 @@ async function fetchManualMarkdown(languageCode) {
   const candidates = languageCode === "en" ? ["en"] : [languageCode, "en"];
   for (const candidate of candidates) {
     if (state.manualCache[candidate]) return state.manualCache[candidate];
-    const inlineManual = window.CUSTOM_BLOCKER_INLINE_MANUALS?.[candidate];
-    if (typeof inlineManual === "string" && inlineManual) {
-      state.manualCache[candidate] = inlineManual;
-      return inlineManual;
-    }
     try {
       const response = await fetch(chrome.runtime.getURL(`manual/${candidate}.md`));
       if (!response.ok) continue;
@@ -675,24 +744,12 @@ async function localFolderDbDelete(key) {
   });
 }
 
-// True when running inside the macOS app's WKWebView (native bridge present).
-// There the File System Access API doesn't exist; custom rules instead use a
-// fixed, always-granted native folder managed by the app.
-function cbHasNativeBridge() {
-  try {
-    return !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.cbBridge);
-  } catch (_) {
-    return false;
-  }
+function setLocalFolderChooseButtonLabel(key) {
+  if (!localFolderChooseButton) return;
+  localFolderChooseButton.textContent = t(key);
 }
 
-function requestLocalFolderStatusNative() {
-  try {
-    window.webkit.messageHandlers.cbBridge.postMessage({ kind: "local-folder-status" });
-  } catch (_) {}
-}
-
-// Native (macOS) pushes the local-folder grant state here (connected + name).
+// The desktop host pushes the local-folder grant state here (connected + name).
 window.__cbLocalFolderStatus = function (payload) {
   if (!localFolderStatus) return;
   const connected = Boolean(payload && payload.connected);
@@ -712,27 +769,31 @@ window.__cbLocalFolderStatus = function (payload) {
 
 async function renderLocalFolderStatus() {
   if (!localFolderStatus) return;
-  // macOS: a user-chosen native folder grant (Choose / Revoke), mirroring the
-  // extension. Ask native for the current grant; __cbLocalFolderStatus renders it.
-  if (cbHasNativeBridge()) {
-    requestLocalFolderStatusNative();
+  // Desktop: the folder grant is native (the web view has no directory picker);
+  // ask the host for the current grant and let __cbLocalFolderStatus render it.
+  if (IS_NATIVE_DESKTOP) {
+    postToNativeShell({ kind: "local-folder-status" });
     return;
   }
   if (!("showDirectoryPicker" in window)) {
+    localFolderHandle = null;
     localFolderStatus.textContent = t("settings.localFolderUnsupported");
     if (localFolderChooseButton) localFolderChooseButton.disabled = true;
     if (localFolderRevokeButton) localFolderRevokeButton.disabled = true;
     return;
   }
   if (localFolderChooseButton) localFolderChooseButton.disabled = false;
+  setLocalFolderChooseButtonLabel("settings.localFolderChoose");
   try {
     const handle = await localFolderDbGet(LOCAL_FOLDER_ROOT_KEY);
     const metadata = await localFolderDbGet(LOCAL_FOLDER_META_KEY);
     if (!handle || handle.kind !== "directory") {
+      localFolderHandle = null;
       localFolderStatus.textContent = t("settings.localFolderStatusNone");
       if (localFolderRevokeButton) localFolderRevokeButton.disabled = true;
       return;
     }
+    localFolderHandle = handle;
     if (localFolderRevokeButton) localFolderRevokeButton.disabled = false;
     const name = handle.name || metadata?.name || t("settings.localFolderUnknownName");
     let permission = "granted";
@@ -742,9 +803,11 @@ async function renderLocalFolderStatus() {
     if (permission === "granted") {
       localFolderStatus.textContent = t("settings.localFolderStatusConnected").replace("{name}", name);
     } else {
+      setLocalFolderChooseButtonLabel("settings.localFolderReconnect");
       localFolderStatus.textContent = t("settings.localFolderStatusNeedsPermission").replace("{name}", name);
     }
   } catch (error) {
+    localFolderHandle = null;
     localFolderStatus.textContent = String(error?.message ?? error);
     if (localFolderRevokeButton) localFolderRevokeButton.disabled = true;
   }
@@ -757,6 +820,20 @@ async function chooseLocalFolder() {
   }
   if (localFolderStatus) localFolderStatus.textContent = t("settings.localFolderChoosing");
   try {
+    // A stored handle commonly becomes "prompt" after Chrome restarts. Ask
+    // for that same handle first, from this button's user gesture, so a user
+    // can restore access without selecting the folder all over again.
+    const existingHandle = localFolderHandle;
+    if (existingHandle?.kind === "directory" && typeof existingHandle.requestPermission === "function") {
+      const existingPermission = await existingHandle.requestPermission({ mode: "readwrite" });
+      if (existingPermission === "granted") {
+        await renderLocalFolderStatus();
+        return;
+      }
+      if (localFolderStatus) localFolderStatus.textContent = t("settings.localFolderPermissionDenied");
+      return;
+    }
+
     const handle = await window.showDirectoryPicker({ mode: "readwrite" });
     let permission = "granted";
     if (typeof handle.requestPermission === "function") {
@@ -770,6 +847,7 @@ async function chooseLocalFolder() {
       name: handle.name || "",
       grantedAt: Date.now()
     });
+    localFolderHandle = handle;
     await renderLocalFolderStatus();
   } catch (error) {
     if (localFolderStatus) {
@@ -783,11 +861,12 @@ async function chooseLocalFolder() {
 async function revokeLocalFolder() {
   await localFolderDbDelete(LOCAL_FOLDER_ROOT_KEY);
   await localFolderDbDelete(LOCAL_FOLDER_META_KEY);
+  localFolderHandle = null;
   await renderLocalFolderStatus();
 }
 
 // The transport layer pushes the live connection status here (native server on
-// macOS via window.__cbConnectionState).
+// macOS via window.__cbConnectionState, background worker in the browser).
 function applyConnectionStatus(raw) {
   const incoming = raw && typeof raw === "object" ? raw : {};
   const wasOnline = bridgeIsOnline();
@@ -799,8 +878,6 @@ function applyConnectionStatus(raw) {
     error: typeof incoming.error === "string" ? incoming.error : "",
     hubProgram: window.CBBridgeProtocol.hubProgramFromStatus(incoming)
   };
-  // The bridge mirror lives in the editor (always visible), so keep it fresh.
-  refreshBridgeMirror();
   if (!wasOnline && bridgeIsOnline()) {
     announceGroups();
     requestClusters();
@@ -826,11 +903,6 @@ function requestConnectionStatus() {
 }
 
 // ---------------------------------------------------------------------------
-// AI Tool Connections (MCP): list the desktop MCP clients installed on this Mac
-// and let the user connect/disconnect the local Vault MCP server into each. The
-// native host is the source of truth; this layer renders state and sends intents.
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
 // Web-app bridge: same-named Default/Custom groups auto-link into one shared
 // "cluster" across every connected program whenever a peer is present. The hub
 // is the single source of truth for cluster membership; there is no manual
@@ -839,11 +911,13 @@ function requestConnectionStatus() {
 
 function bridgeIsOnline() {
   const s = state.connectionStatus || {};
-  return s.state === "connected" || s.state === "running" || s.state === "hosting" || s.state === "joined";
+  return s.state === "connected" || s.state === "running";
 }
 
+// Every group can link with a same-named group on another program (owner
+// 2026-09-24: the whole definition — policy and every entry — is shared).
 function isBridgeEligibleGroup(group) {
-  return Boolean(group) && (group.groupType === "site" || group.groupType === "custom");
+  return Boolean(group);
 }
 
 // A cluster is "fully online" only when our own bridge link is live AND every
@@ -874,92 +948,6 @@ function clusterLocalGroup(cluster) {
   return window.CBBridgeProtocol.groupForCluster(state.groups, cluster, LOCAL_PROGRAM_ID);
 }
 
-// For a clustered Default (site) group, renders the blocked-list type this
-// endpoint does NOT own as a read-only, translucent mirror beside the editable
-// list. Browsers own websites and mirror the shared apps; the Mac owns apps and
-// mirrors the shared websites. Both platforms use the same chip styling so the
-// linked group looks identical on either side.
-function renderBridgeMirror(group) {
-  const section = document.getElementById("bridgeMirrorSection");
-  if (!section) return;
-  const cluster = group ? groupConnectionCluster(group) : null;
-  if (!group || group.groupType !== "site" || !cluster) {
-    section.classList.add("hidden");
-    return;
-  }
-  const shared = (cluster && cluster.shared) || state.clusterMirror[group.id] || {};
-  const showApps = !bridgeOwnsApps(); // the Mac owns apps, so it mirrors sites
-  const items = showApps
-    ? (Array.isArray(shared.apps) ? shared.apps : [])
-    : (Array.isArray(shared.sites) ? shared.sites : []);
-
-  const labelEl = document.getElementById("bridgeMirrorLabel");
-  const hintEl = document.getElementById("bridgeMirrorHint");
-  if (labelEl) {
-    labelEl.textContent = showApps
-      ? t("connectionGroup.mirrorApps")
-      : t("connectionGroup.mirrorSites");
-  }
-  if (hintEl) {
-    hintEl.textContent = showApps
-      ? t("connectionGroup.mirrorAppsHint")
-      : t("connectionGroup.mirrorSitesHint");
-  }
-
-  section.classList.remove("hidden");
-  const list = document.getElementById("bridgeMirrorList");
-  if (!list) return;
-  list.innerHTML = "";
-  if (items.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "bridge-mirror-empty";
-    empty.textContent = t("connectionGroup.mirrorEmpty");
-    list.appendChild(empty);
-    return;
-  }
-  for (const item of items) {
-    const isObj = item && typeof item === "object";
-    const name = typeof item === "string" ? item : (isObj && item.name) || "";
-    if (!name) continue;
-    const chip = document.createElement("div");
-    chip.className = "bridge-mirror-chip";
-    chip.setAttribute("role", "listitem");
-    chip.title = name;
-
-    // Icon: app mirrors carry a shared icon data URL from the owning Mac (fall
-    // back to a monogram); site mirrors resolve a favicon locally where a helper
-    // exists. Keeps the mirror visually consistent with the native lists.
-    let iconEl = null;
-    if (showApps) {
-      const iconUrl = isObj && typeof item.icon === "string" ? item.icon : "";
-      if (iconUrl) {
-        iconEl = document.createElement("img");
-        iconEl.className = "bridge-mirror-icon";
-        iconEl.src = iconUrl;
-        iconEl.alt = "";
-      } else {
-        iconEl = document.createElement("span");
-        iconEl.className = "bridge-mirror-icon bridge-mirror-monogram";
-        iconEl.textContent = name.charAt(0).toUpperCase();
-      }
-    } else if (typeof makeSiteIconElement === "function") {
-      iconEl = makeSiteIconElement(name);
-      iconEl.classList.add("bridge-mirror-icon");
-    }
-    if (iconEl) chip.appendChild(iconEl);
-
-    const label = document.createElement("span");
-    label.className = "bridge-mirror-name";
-    label.textContent = name;
-    chip.appendChild(label);
-
-    list.appendChild(chip);
-  }
-}
-
-function refreshBridgeMirror() {
-  renderBridgeMirror(getSelectedGroup());
-}
 
 // Re-tag group cards with the bridge-linked cluster indicator without a full rebuild.
 function updateGroupCardBridgeBadges() {
@@ -983,6 +971,11 @@ function clearBridgeWarn(key) {
   bridgeWarned.delete(key);
 }
 
+function isUserEditing() {
+  const active = document.activeElement;
+  return Boolean(active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT"));
+}
+
 function applyClusters(list) {
   const incoming = Array.isArray(list) ? list : Array.isArray(list?.clusters) ? list.clusters : [];
   const incomingJSON = JSON.stringify(incoming);
@@ -999,31 +992,23 @@ function applyClusters(list) {
       applyClusterShared(group, cluster.shared);
     } else {
       // Freshly-formed cluster: the hub's first snapshot carries no `shared`
-      // until each member has contributed its owned list. Force our owned-list
-      // contribution to be (re)sent so the peer's mirror fills on the FIRST
-      // connect instead of staying blank until a later edit.
+      // until a member has contributed. Force our contribution to be (re)sent
+      // so the group definition is shared on the FIRST connect.
       delete state.clusterSyncSent[group.id];
     }
-  }
-  // Drop mirrors for groups no longer clustered.
-  for (const groupId of Object.keys(state.clusterMirror)) {
-    const group = state.groups.find((g) => g.id === groupId);
-    if (!group || !groupConnectionCluster(group)) delete state.clusterMirror[groupId];
   }
   for (const groupId of Object.keys(state.clusterSnoozeTotalsMs)) {
     const group = state.groups.find((g) => g.id === groupId);
     if (!group || !groupConnectionCluster(group)) delete state.clusterSnoozeTotalsMs[groupId];
   }
   updateGroupCardBridgeBadges();
-  // Re-render the editor so synced scalar changes show, unless the user is
-  // actively typing in a field (don't clobber in-progress input).
-  const active = document.activeElement;
-  const editing =
-    active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT");
+  // Re-render the editor so synced changes show, unless the user is actively
+  // typing in a field (don't clobber in-progress input).
+  const editing = isUserEditing();
   if (getSelectedGroup() && !editing) {
     renderEditor();
   } else {
-    refreshBridgeMirror();
+    renderGroupList();
   }
   // Warn once per offline episode: if we're linked but a cluster member is
   // offline (e.g. the Mac app isn't open), shared changes won't sync until it's
@@ -1064,9 +1049,9 @@ function requestClusters() {
   } catch (_) {}
 }
 
-// Tell the hub which Default/Custom groups exist here (by saved name + type +
-// freeze state) so it can validate connection requests against same-named
-// groups. Sent on load, after group edits, and when the bridge comes online.
+// Tell the hub which groups exist here (by saved name + freeze state) so it
+// links same-named groups. Sent on load, after group edits, and when the
+// bridge comes online.
 function announceGroups() {
   const groups = (Array.isArray(state.groups) ? state.groups : [])
     .filter(isBridgeEligibleGroup)
@@ -1075,7 +1060,6 @@ function announceGroups() {
       // instance, so a same-named group created after a delete won't re-join.
       id: g.id,
       name: g.name,
-      type: g.groupType,
       frozen: getFreezeStatus(g, Date.now()).isFrozen
     }));
   try {
@@ -1110,47 +1094,19 @@ const SYNC_SCALAR_FIELDS = [
   "freezeModeChoice",
   "strictFreezeHours",
   "frozenAtMs",
-  "blockHomePage",
-  "fallbackUrl",
-  "skipToNextOnBlock"
+  "fallbackUrl"
 ];
 
-// This endpoint owns (can edit + contributes) one blocked-list type: the Mac
-// owns apps, browsers own domains. The other type is a read-only mirror.
-function bridgeOwnsApps() {
-  return IS_NATIVE_DESKTOP;
-}
-
+// A member's contribution is the whole group definition: the policy scalars and
+// every entry's lines (websites, apps, platforms). Each member enforces the
+// lines it can and forwards the rest. The live usage budget is NOT in here: it
+// is reported as deltas by the accrual owner only (the browser's background
+// heartbeat, the Mac's frontmost-app sampler), and the popup only folds the
+// hub's shared total back into the local counter (applyClusterShared).
 function buildSyncContribution(group) {
   const scalars = {};
   for (const field of SYNC_SCALAR_FIELDS) scalars[field] = group[field];
-  const contribution = { scalars };
-  if (group.groupType === "site") {
-    if (bridgeOwnsApps()) {
-      // The Mac owns apps as { id, name } objects. The shared pool carries
-      // { name, icon } so the browser mirror can show real app icons (browsers
-      // can't resolve macOS app icons themselves). icon is a data URL resolved
-      // from the local app inventory; "" when unknown (mirror shows a monogram).
-      contribution.apps = (Array.isArray(group.apps) ? group.apps : [])
-        .map((app) => {
-          if (typeof app === "string") return { name: app, icon: "" };
-          if (!app) return null;
-          const inv = findInventoryApp(app.id) || app;
-          const name = appDisplayName(app) || app.name || app.id || "";
-          const icon = inv && typeof inv.icon === "string" ? inv.icon : "";
-          return name ? { name, icon } : null;
-        })
-        .filter(Boolean);
-    } else {
-      contribution.sites = Array.isArray(group.sites) ? group.sites : [];
-    }
-    // NOTE: the live usage budget is reported as deltas by the accrual owner
-    // only — the browser's background heartbeat (cbReportClusterUsage) and the
-    // Mac's in-process frontmost-app sampler (reportLocalUsage). The popup is
-    // display-only for usage: it folds the hub's shared total back into the
-    // local counter (applyClusterShared) but never reports it, so the popup and
-    // background can't double-count the same accrual.
-  }
+  const contribution = { scalars, scopes: toStoredGroup(group).scopes };
   // Active snooze runtime is shared so a snooze started on any member applies to
   // every linked member (newest start wins). The entry carries all of its own
   // timing (start/until/cooldown), so each side enforces and expires it
@@ -1180,15 +1136,16 @@ function adoptSharedSnooze(group, raw, now = Date.now()) {
   return entry;
 }
 
-// Writes the hub's shared settings onto a local member group (scalars + freeze)
-// and records the shared list pools as a read-only mirror. The owned list is
-// never overwritten (the user keeps editing their own type).
+// Writes the hub's shared definition onto a local member group: the policy
+// scalars and, when the hub carries them, every entry's lines. The lines
+// replace ours wholesale (every member edits the one shared definition, so a
+// deletion elsewhere is a deletion here); the entry in view is re-read.
 function applyClusterShared(group, shared) {
   if (!group || !shared || typeof shared !== "object") return;
   const scalars = shared.scalars && typeof shared.scalars === "object" ? shared.scalars : {};
   const idx = state.groups.findIndex((g) => g.id === group.id);
   if (idx < 0) return;
-  const next = { ...state.groups[idx] };
+  let next = { ...state.groups[idx] };
   let changed = false;
   for (const field of SYNC_SCALAR_FIELDS) {
     if (
@@ -1199,11 +1156,23 @@ function applyClusterShared(group, shared) {
       changed = true;
     }
   }
+  // The hub carries lines only once a member has contributed them; an empty
+  // list is "nothing shared yet", never "delete every entry" (a group always
+  // keeps at least one entry), so it is not adopted.
+  if (Array.isArray(shared.scopes) && shared.scopes.length > 0) {
+    const stored = toStoredGroup(next);
+    const incoming = CBGroupScopes.sanitizeScopeLines(shared.scopes, stored.groupType, cbScopeNormalizers);
+    if (JSON.stringify(incoming) !== JSON.stringify(stored.scopes)) {
+      next = viewGroupOnPlatform({ ...stored, scopes: incoming }, activeEntryKey(next));
+      changed = true;
+      // The form's draft describes the entry in view; refresh it unless the
+      // user is typing in it right now (their edit then wins, latest-edit-wins).
+      if (!(group.id === state.selectedGroupId && isUserEditing())) {
+        state.drafts[group.id] = groupToDraft(next);
+      }
+    }
+  }
   state.groups[idx] = next;
-  state.clusterMirror[group.id] = {
-    sites: Array.isArray(shared.sites) ? shared.sites : [],
-    apps: Array.isArray(shared.apps) ? shared.apps : []
-  };
   if (Number.isFinite(shared.ts)) state.groupEditTs[group.id] = shared.ts;
 
   // Display-only shared snooze total (max across the cluster). Never written
@@ -1215,9 +1184,9 @@ function applyClusterShared(group, shared) {
 
   // Fold the hub's shared usage budget into our local counter so the live
   // elapsed timer (display + enforcement) reflects time spent on every member.
-  // We never overwrite our own future accrual — the native app keeps adding to
+  // We never overwrite our own future accrual — the background keeps adding to
   // this value and reporting it back, and the hub measures only the new delta.
-  if (next.groupType === "site" && !next.rollingLimit && Number.isFinite(shared.usageMs)) {
+  if (!next.rollingLimit && Number.isFinite(shared.usageMs)) {
     const incomingUsage = Math.max(0, Number(shared.usageMs) || 0);
     if ((Number(state.usageTimersMs[group.id]) || 0) !== incomingUsage) {
       state.usageTimersMs[group.id] = incomingUsage;
@@ -1251,7 +1220,7 @@ function applyClusterShared(group, shared) {
   // Mark our contribution as up to date so we don't echo it back to the hub.
   state.clusterSyncSent[group.id] = JSON.stringify(buildSyncContribution(next));
   if (changed) {
-    chrome.storage.local.set({ [BLOCKED_GROUPS_KEY]: state.groups }).catch(() => {});
+    chrome.storage.local.set({ [BLOCKED_GROUPS_KEY]: toStoredGroups(state.groups) }).catch(() => {});
   }
 }
 
@@ -1295,6 +1264,7 @@ function openSettings() {
   state.isSettingsOpen = true;
   syncSettingsFormFromState();
   requestConnectionStatus();
+  loadClassifierBridgeSettings().catch(() => renderClassifierBridgeSettings());
   settingsModal.classList.remove("hidden");
   renderLocalFolderStatus().catch((error) => {
     if (localFolderStatus) localFolderStatus.textContent = String(error?.message ?? error);
@@ -1309,10 +1279,13 @@ function closeSettings() {
 
 async function saveSettingsFromForm() {
   const draft = {
-    // Dev/engine values are no longer surfaced in the UI (debug + debounce are
-    // dev-only / fixed defaults); carry the stored values through a save.
+    // Dev/engine values are no longer surfaced in the UI (debug + tick/debounce
+    // are dev-only / fixed defaults); carry the stored values through a save so a
+    // developer's storage-set debug flag is not reset.
+    tickRateMs: state.globalSettings?.tickRateMs,
     autosaveDebounceMs: state.globalSettings?.autosaveDebounceMs,
     debugMode: state.globalSettings?.debugMode,
+    showOnPageLogToasts: state.globalSettings?.showOnPageLogToasts,
     defaultSnoozeMinutes: settingsDefaultSnoozeMinutesField?.value
   };
   const sanitized = sanitizeGlobalSettings(draft);
@@ -1372,6 +1345,7 @@ function applyStaticTranslations() {
   layoutResizer.setAttribute("aria-label", t("layout.resizeAria"));
   manualButton.setAttribute("aria-label", t("manual.button"));
   manualCloseButton.setAttribute("aria-label", t("manual.close"));
+
 }
 
 function populateLanguageOptions() {
@@ -1499,10 +1473,19 @@ function normalizeSiteInput(value) {
       hostname = hostname.slice(4);
     }
 
-    return hostname;
+    // A path prefix scopes the entry to that path and everything under it
+    // ("youtube.com/shorts"); a bare host covers the host and its subdomains.
+    const path = parsedUrl.pathname.replace(/\/+$/, "");
+    return path && path !== "/" ? hostname + path : hostname;
   } catch {
     return null;
   }
+}
+
+function siteEntryHost(entry) {
+  const text = String(entry ?? "");
+  const slash = text.indexOf("/");
+  return slash < 0 ? text : text.slice(0, slash);
 }
 
 // normalizeYouTubeCreatorInput now comes from platform-profiles.js.
@@ -1533,84 +1516,106 @@ function parseSiteTextareaValue(value) {
   };
 }
 
-// ----- Blocked applications (macOS app blocker) -----
-//
-// The "site" group type is the Default Block Mode and now blocks native
-// applications instead of websites. Each blocked app is stored as
-// { id: <bundleIdentifier>, name: <displayName> }. The installed-app inventory
-// (id + name + icon) is seeded by the native host into window.__cbAppInventory.
+// --- Blocked-site chips -----------------------------------------------------
+// The chip list is the visible editing surface for "site" groups. The hidden
+// #blockedSites textarea stays the backing store (newline-separated hostnames)
+// so the draft / autosave / save pipeline is unchanged; these helpers keep the
+// chip list and that field in sync.
+
+let siteAddPanelGroupId = null;
+
+// Inline grey globe shown when a favicon can't be resolved: always on Safari
+// (no `_favicon` provider) and for sites the browser hasn't cached yet.
+const SITE_GLOBE_ICON =
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.6 2.5 15.4 0 18M12 3c-2.5 2.6-2.5 15.4 0 18"/></svg>'
+  );
+
+function siteFaviconUrl(host) {
+  try {
+    return chrome.runtime.getURL(
+      "/_favicon/?pageUrl=" + encodeURIComponent("https://" + host) + "&size=32"
+    );
+  } catch (_) {
+    return "";
+  }
+}
+
+function makeSiteIconElement(host) {
+  const img = document.createElement("img");
+  img.className = "site-chip-icon";
+  img.alt = "";
+  img.width = 16;
+  img.height = 16;
+  const url = siteFaviconUrl(host);
+  img.src = url || SITE_GLOBE_ICON;
+  img.addEventListener("error", () => {
+    if (img.src !== SITE_GLOBE_ICON) {
+      img.src = SITE_GLOBE_ICON;
+    }
+  });
+  return img;
+}
+
+function getDraftSites() {
+  return parseSiteTextareaValue(blockedSitesField.value).validSites;
+}
+
+// Writes the working hostname list into the hidden backing field and runs the
+// same stash + autosave path the textarea input handler used to drive.
+function commitBlockedSites(sites) {
+  blockedSitesField.value = [...new Set(sites)].join("\n");
+  stashCurrentDraft();
+  renderGroupList();
+  scheduleAutosave();
+  renderBlockedSites();
+}
+
+// ── Apps entry (desktop applications) ───────────────────────────────────────
+// An app is { id: <bundle id>, name: <display name> }. The list is editable only
+// where an installed-app inventory exists (the desktop app seeds
+// window.__cbAppInventory: id + name + icon); elsewhere the chips are read-only
+// and the entry arrives through a linked group.
 
 function getAppInventory() {
   return Array.isArray(window.__cbAppInventory) ? window.__cbAppInventory : [];
 }
 
 function findInventoryApp(bundleId) {
-  if (!bundleId) {
-    return null;
-  }
+  if (!bundleId) return null;
   return getAppInventory().find((entry) => entry && entry.id === bundleId) || null;
 }
 
 function appDisplayName(app) {
-  if (!app) {
-    return "";
-  }
-  if (typeof app.name === "string" && app.name.trim()) {
-    return app.name.trim();
-  }
+  if (!app) return "";
+  if (typeof app.name === "string" && app.name.trim()) return app.name.trim();
   const fromInventory = findInventoryApp(app.id);
-  if (fromInventory && fromInventory.name) {
-    return fromInventory.name;
-  }
+  if (fromInventory && fromInventory.name) return fromInventory.name;
   return app.id || "";
 }
 
-function sanitizeApps(value) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const seen = new Set();
-  const result = [];
-  for (const entry of value) {
-    let id = "";
-    let name = "";
-    if (typeof entry === "string") {
-      id = entry.trim();
-    } else if (entry && typeof entry === "object") {
-      id = typeof entry.id === "string" ? entry.id.trim() : "";
-      name = typeof entry.name === "string" ? entry.name.trim() : "";
-    }
-    if (!id || seen.has(id)) {
-      continue;
-    }
-    seen.add(id);
-    result.push({ id, name });
-  }
-  return result;
-}
-
 function parseAppsData(value) {
-  if (typeof value !== "string" || !value.trim()) {
-    return [];
-  }
+  if (typeof value !== "string" || !value.trim()) return [];
   try {
-    return sanitizeApps(JSON.parse(value));
+    return CBGroupScopes.normalizeAppList(JSON.parse(value));
   } catch {
     return [];
   }
 }
 
 function serializeApps(apps) {
-  return JSON.stringify(sanitizeApps(apps));
+  return JSON.stringify(CBGroupScopes.normalizeAppList(apps));
 }
 
 function getDraftApps() {
-  return parseAppsData(blockedAppsData.value);
+  return blockedAppsData ? parseAppsData(blockedAppsData.value) : [];
 }
 
 // Writes the working app list into the hidden backing field and runs the same
-// stash + autosave path the textarea used to drive.
+// stash + autosave path the site list uses.
 function commitBlockedApps(apps) {
+  if (!blockedAppsData) return;
   blockedAppsData.value = serializeApps(apps);
   stashCurrentDraft();
   renderBlockedApps();
@@ -1628,7 +1633,6 @@ function makeAppIconElement(app) {
     img.alt = "";
     return img;
   }
-  // Fallback monogram from the first character of the display name.
   const monogram = document.createElement("span");
   monogram.className = "app-chip-icon app-chip-monogram";
   monogram.textContent = (appDisplayName(app) || "?").charAt(0).toUpperCase();
@@ -1636,56 +1640,44 @@ function makeAppIconElement(app) {
 }
 
 function renderBlockedApps() {
-  if (!blockedAppsList) {
-    return;
-  }
+  if (!blockedAppsList) return;
   blockedAppsList.innerHTML = "";
-  const apps = getDraftApps();
-
-  for (const app of apps) {
+  for (const app of getDraftApps()) {
     const chip = document.createElement("div");
     chip.className = "app-chip";
     chip.setAttribute("role", "listitem");
     chip.title = app.id;
-
     chip.appendChild(makeAppIconElement(app));
-
     const label = document.createElement("span");
     label.className = "app-chip-name";
     label.textContent = appDisplayName(app);
     chip.appendChild(label);
-
     if (blockedAppsEditable) {
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "app-chip-remove";
       remove.setAttribute("aria-label", t("apps.removeAria", { name: appDisplayName(app) }));
-      remove.textContent = "\u2212"; // minus sign
+      remove.textContent = "−"; // minus sign
       remove.addEventListener("click", (event) => {
         event.stopPropagation();
         commitBlockedApps(getDraftApps().filter((item) => item.id !== app.id));
       });
       chip.appendChild(remove);
     }
-
     blockedAppsList.appendChild(chip);
   }
-
-  // Trailing "+" tile to open the picker.
+  if (!blockedAppsEditable) return;
   const addTile = document.createElement("button");
   addTile.type = "button";
   addTile.className = "app-chip-add";
   addTile.setAttribute("aria-label", t("apps.addAria"));
   addTile.textContent = "+";
-  addTile.disabled = !blockedAppsEditable;
   addTile.addEventListener("click", () => openAppPicker());
   blockedAppsList.appendChild(addTile);
 }
 
 function openAppPicker() {
-  if (!blockedAppsEditable || !appPickerModal) {
-    return;
-  }
+  if (!blockedAppsEditable || !appPickerModal) return;
   appPickerSearch.value = "";
   renderAppPickerResults("");
   appPickerModal.classList.remove("hidden");
@@ -1693,39 +1685,28 @@ function openAppPicker() {
 }
 
 function closeAppPicker() {
-  if (appPickerModal) {
-    appPickerModal.classList.add("hidden");
-  }
+  if (appPickerModal) appPickerModal.classList.add("hidden");
 }
 
 function renderAppPickerResults(query) {
-  if (!appPickerResults) {
-    return;
-  }
+  if (!appPickerResults) return;
   const normalizedQuery = String(query || "").trim().toLowerCase();
   const alreadyBlocked = new Set(getDraftApps().map((app) => app.id));
   const matches = getAppInventory()
     .filter((app) => {
-      if (!app || !app.id || alreadyBlocked.has(app.id)) {
-        return false;
-      }
-      if (!normalizedQuery) {
-        return true;
-      }
+      if (!app || !app.id || alreadyBlocked.has(app.id)) return false;
+      if (!normalizedQuery) return true;
       const name = (app.name || "").toLowerCase();
       return name.includes(normalizedQuery) || app.id.toLowerCase().includes(normalizedQuery);
     })
     .slice(0, 60);
-
   appPickerResults.innerHTML = "";
   for (const app of matches) {
     const row = document.createElement("button");
     row.type = "button";
     row.className = "app-picker-row";
     row.setAttribute("role", "option");
-
     row.appendChild(makeAppIconElement(app));
-
     const text = document.createElement("span");
     text.className = "app-picker-row-text";
     const name = document.createElement("span");
@@ -1737,17 +1718,13 @@ function renderAppPickerResults(query) {
     text.appendChild(name);
     text.appendChild(sub);
     row.appendChild(text);
-
     row.addEventListener("click", () => {
       commitBlockedApps([...getDraftApps(), { id: app.id, name: app.name || app.id }]);
       closeAppPicker();
     });
     appPickerResults.appendChild(row);
   }
-
-  if (appPickerEmpty) {
-    appPickerEmpty.classList.toggle("hidden", matches.length > 0);
-  }
+  if (appPickerEmpty) appPickerEmpty.classList.toggle("hidden", matches.length > 0);
 }
 
 if (appPickerSearch) {
@@ -1758,18 +1735,195 @@ if (appPickerCloseButton) {
 }
 if (appPickerModal) {
   appPickerModal.addEventListener("click", (event) => {
-    if (event.target === appPickerModal) {
-      closeAppPicker();
-    }
+    if (event.target === appPickerModal) closeAppPicker();
   });
 }
-// Re-render chips when the native host (re)seeds the app inventory so icons /
-// names resolve once the data arrives.
+if (clearAppsButton) {
+  clearAppsButton.addEventListener("click", () => {
+    if (blockedAppsEditable) commitBlockedApps([]);
+  });
+}
+// Re-render chips when the desktop host (re)seeds the app inventory so icons
+// and names resolve once the data arrives.
 window.__cbOnAppInventory = function () {
   try {
     renderBlockedApps();
   } catch (_) {}
 };
+
+// ── Desktop shell (the desktop app hosts this editor in a web view) ─────────
+// Scene tabs (Vault / Classifier / Activity), the app-blocking permission gate
+// and the Device Control settings section exist only there; the markup is
+// `.desktop-only` and these hooks are no-ops in a browser.
+
+function postToNativeShell(payload) {
+  try {
+    window.webkit.messageHandlers.cbBridge.postMessage(payload);
+  } catch (_) {}
+}
+
+let __cbAppBlockingGranted = null;
+
+function applyPermissionState(granted) {
+  __cbAppBlockingGranted = granted;
+  const isGranted = granted === true;
+  // The native host is the authority: once macOS granted Accessibility, clear
+  // the request modal instead of leaving a stale prompt.
+  if (isGranted && permissionModal) permissionModal.classList.add("hidden");
+  if (deviceControlCopy) {
+    deviceControlCopy.textContent = t(isGranted ? "settings.deviceControlCopyGranted" : "settings.deviceControlCopyMissing");
+  }
+  if (deviceControlStatus) {
+    deviceControlStatus.textContent = t(isGranted ? "settings.deviceControlStatusGranted" : "settings.deviceControlStatusMissing");
+  }
+}
+
+// Shows the grant modal only when permission is currently missing. Invoked by
+// the native host when the app is opened/activated.
+window.__cbPromptPermissionOnOpen = function () {
+  if (permissionModal && __cbAppBlockingGranted === false) permissionModal.classList.remove("hidden");
+};
+
+// The native host pushes the current permission state here (~1x/second).
+window.__cbPermissionState = (payload) => {
+  try {
+    const data = typeof payload === "string" ? JSON.parse(payload) : payload;
+    applyPermissionState(data?.appBlockingGranted === true ? true : data?.appBlockingGranted === false ? false : null);
+  } catch (error) {
+    console.error("Failed to apply permission state.", error);
+  }
+};
+
+if (permissionGrantButton) {
+  permissionGrantButton.addEventListener("click", () => {
+    chrome.runtime.sendMessage({ type: "request-app-blocking-permission" });
+  });
+}
+if (permissionCancelButton) {
+  permissionCancelButton.addEventListener("click", () => {
+    if (permissionModal) permissionModal.classList.add("hidden");
+  });
+}
+if (deviceControlButton) {
+  deviceControlButton.addEventListener("click", () => {
+    chrome.runtime.sendMessage({ type: "open-permission-settings" });
+  });
+}
+
+// Scene switch in the hero header: tapping another scene posts to the native
+// shell, which swaps the visible web view. The underline tracks the active tab.
+(function initSceneTabs() {
+  const tabs = document.getElementById("sceneTabs");
+  if (!tabs || !IS_NATIVE_DESKTOP) return;
+  const underline = tabs.querySelector(".scene-underline");
+  function position() {
+    const active = tabs.querySelector(".scene-tab.is-active");
+    if (!active || !underline) return;
+    underline.style.width = active.offsetWidth + "px";
+    underline.style.transform = "translateX(" + active.offsetLeft + "px)";
+  }
+  tabs.addEventListener("click", (event) => {
+    const button = event.target.closest(".scene-tab");
+    if (!button || button.classList.contains("is-active")) return;
+    postToNativeShell({ kind: "switch-scene", scene: button.dataset.scene });
+  });
+  position();
+  window.addEventListener("resize", position);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(position);
+  setTimeout(position, 60);
+})();
+
+function renderBlockedSites() {
+  if (!blockedSitesList) {
+    return;
+  }
+  const editable = !blockedSitesField.disabled;
+
+  // Drop a stale add panel left open from a different group.
+  if (
+    siteAddPanel &&
+    !siteAddPanel.classList.contains("hidden") &&
+    siteAddPanelGroupId !== state.selectedGroupId
+  ) {
+    closeSiteAddPanel();
+  }
+
+  blockedSitesList.innerHTML = "";
+
+  for (const host of getDraftSites()) {
+    const chip = document.createElement("div");
+    chip.className = "site-chip";
+    chip.setAttribute("role", "listitem");
+    chip.title = host;
+
+    chip.appendChild(makeSiteIconElement(siteEntryHost(host)));
+
+    const label = document.createElement("span");
+    label.className = "site-chip-name";
+    label.textContent = host;
+    chip.appendChild(label);
+
+    if (editable) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "site-chip-remove";
+      remove.setAttribute("aria-label", t("sites.removeAria", { name: host }));
+      remove.textContent = "\u2212"; // minus sign
+      remove.addEventListener("click", (event) => {
+        event.stopPropagation();
+        commitBlockedSites(getDraftSites().filter((item) => item !== host));
+      });
+      chip.appendChild(remove);
+    }
+
+    blockedSitesList.appendChild(chip);
+  }
+
+  // Trailing "+" tile to reveal the multi-line add panel.
+  const addTile = document.createElement("button");
+  addTile.type = "button";
+  addTile.className = "site-chip-add";
+  addTile.setAttribute("aria-label", t("sites.addAria"));
+  addTile.textContent = "+";
+  addTile.disabled = !editable;
+  addTile.addEventListener("click", () => openSiteAddPanel());
+  blockedSitesList.appendChild(addTile);
+}
+
+function openSiteAddPanel() {
+  if (!siteAddPanel || blockedSitesField.disabled) {
+    return;
+  }
+  siteAddPanelGroupId = state.selectedGroupId;
+  siteAddPanel.classList.remove("hidden");
+  if (siteAddInput) {
+    siteAddInput.value = "";
+    window.setTimeout(() => siteAddInput.focus(), 0);
+  }
+}
+
+function closeSiteAddPanel() {
+  siteAddPanelGroupId = null;
+  if (siteAddPanel) {
+    siteAddPanel.classList.add("hidden");
+  }
+  if (siteAddInput) {
+    siteAddInput.value = "";
+  }
+}
+
+// Parses the multi-line add field (one entry per line; bulk paste supported),
+// merges valid hostnames into the list, then closes the panel.
+function confirmSiteAdd() {
+  if (!siteAddInput) {
+    return;
+  }
+  const added = parseSiteTextareaValue(siteAddInput.value).validSites;
+  if (added.length > 0) {
+    commitBlockedSites([...getDraftSites(), ...added]);
+  }
+  closeSiteAddPanel();
+}
 
 // ── Entry chip inputs ──────────────────────────────────────────────────────
 // Turns a backing <textarea> (one entry per line) into a row of small, removable
@@ -1888,14 +2042,86 @@ function refreshChipField(field) {
 
 function setupPlatformChipInputs() {
   setupChipField(platformAuthorsField, {
-    normalize: (value) => normalizePlatformAuthorInput(value, chipsGroupType)
-  });
-  setupChipField(redditSubredditsField, {
-    normalize: (value) => normalizeRedditSubredditInput(value)
+    normalize: (value) => normalizeSourceInput(value, chipsGroupType)
   });
   setupChipField(discordTargetsField, {
     normalize: (value) => normalizeDiscordTargetInput(value)
   });
+}
+
+// ── Content-tag filter helpers (platform rules) ──────────────────────────
+// Platforms whose feed-card pipeline can act on content tags (the three
+// parity platforms plus the video platforms that share YouTube's card model).
+const TAG_FILTER_PLATFORMS = new Set(["youtube", "tiktok", "instagram", "facebook", "twitch", "reddit", "bilibili", "twitter"]);
+function isTagFilterCompatible(groupType) {
+  return TAG_FILTER_PLATFORMS.has(String(groupType || ""));
+}
+function normalizeTagFilterModeChoice(value) {
+  return value === "include" || value === "exclude" ? value : "all";
+}
+function clampTagFilterConfidence(value, fallback) {
+  const c = Number(value);
+  return Number.isFinite(c) ? Math.min(5, Math.max(1, Math.round(c))) : fallback;
+}
+// One rule per line:
+//   Gaming            a tag
+//   Gaming @3         …with its own minimum confidence ("@N", ">=N", ">N", ":N")
+//   Gaming + Drama    AND — every tag on the line must be present (" + ", spaced;
+//                     "&" is left alone because real tag names contain it)
+//   !Tutorial         a carve-out — the list matches only if no "!" line does
+function parseTagListTextarea(value) {
+  if (typeof value !== "string") return [];
+  const seen = new Set();
+  const out = [];
+  for (const rawLine of value.split(/\r?\n/)) {
+    let line = rawLine.trim();
+    if (!line) continue;
+    let except = false;
+    if (line.startsWith("!")) {
+      except = true;
+      line = line.slice(1).trim();
+    }
+    let confidence;
+    const m = line.match(/\s*(?:@|>=?|:)\s*([1-5])\s*$/);
+    if (m) {
+      confidence = Number(m[1]);
+      line = line.slice(0, m.index).trim();
+    }
+    // A dangling AND operator ("Gaming +", a lone "+") is not a tag.
+    line = line.replace(/^(?:\+\s*)+|(?:\s*\+)+$/g, "").trim();
+    if (!line) continue;
+    const names = [];
+    const nameKeys = new Set();
+    for (const part of line.split(/\s+\+\s+/)) {
+      const partName = part.trim().slice(0, 100);
+      if (!partName || nameKeys.has(partName.toLowerCase())) continue;
+      nameKeys.add(partName.toLowerCase());
+      names.push(partName);
+      if (names.length >= 6) break;
+    }
+    if (!names.length) continue;
+    const key = (except ? "!" : "") + [...nameKeys].sort().join("+");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const entry = { name: names[0] };
+    if (confidence) entry.confidence = confidence;
+    if (names.length > 1) entry.also = names.slice(1);
+    if (except) entry.except = true;
+    out.push(entry);
+    if (out.length >= 100) break;
+  }
+  return out;
+}
+function tagListToText(list) {
+  if (!Array.isArray(list)) return "";
+  return list
+    .map((e) => {
+      if (!e || typeof e.name !== "string") return "";
+      const names = [e.name, ...(Array.isArray(e.also) ? e.also : [])].join(" + ");
+      return (e.except ? "!" : "") + names + (e.confidence ? ` @${e.confidence}` : "");
+    })
+    .filter(Boolean)
+    .join("\n");
 }
 
 function parsePlatformAuthorsTextarea(groupType, value) {
@@ -1909,7 +2135,7 @@ function parsePlatformAuthorsTextarea(groupType, value) {
       continue;
     }
 
-    const normalized = normalizePlatformAuthorInput(trimmedLine, groupType);
+    const normalized = normalizeSourceInput(trimmedLine, groupType);
 
     if (normalized) {
       validAuthors.push(normalized);
@@ -1973,6 +2199,9 @@ function clampNumber(value, min, max, fallback) {
 
 function sanitizeGlobalSettings(raw) {
   const src = raw && typeof raw === "object" ? raw : {};
+  const tickRateMs = Math.round(
+    clampNumber(src.tickRateMs, TICK_RATE_MIN_MS, TICK_RATE_MAX_MS, DEFAULT_GLOBAL_SETTINGS.tickRateMs)
+  );
   const autosaveDebounceMs = Math.round(
     clampNumber(src.autosaveDebounceMs, 0, AUTOSAVE_DEBOUNCE_MAX_MS, DEFAULT_GLOBAL_SETTINGS.autosaveDebounceMs)
   );
@@ -1987,11 +2216,15 @@ function sanitizeGlobalSettings(raw) {
   const debugMode =
     src.debugMode === true ||
     (src.debugMode === undefined && src.showDebugOverlay === true);
-  return {
+  const showOnPageLogToasts = src.showOnPageLogToasts !== false;
+  const out = {
+    tickRateMs,
     autosaveDebounceMs,
     debugMode,
+    showOnPageLogToasts,
     defaultSnoozeMinutes
   };
+  return out;
 }
 
 function normalizeTimeWindowLine(line) {
@@ -2082,6 +2315,9 @@ function isTimedBlockingMode(mode) {
 }
 
 function getGroupTypeLabel(groupType) {
+  const profile = PLATFORM_PROFILES?.[normalizeGroupType(groupType)];
+  if (profile?.displayName) return profile.displayName;
+
   if (groupType === "youtube") {
     return t("groupType.youtube");
   }
@@ -2122,6 +2358,10 @@ function getGroupTypeLabel(groupType) {
 }
 
 function getEditorTypeSummary(groupType) {
+  if (isPlatformFeedGroupType(groupType) && normalizeGroupType(groupType) !== "twitter") {
+    return t("platform.rulesCopy", { platform: getPlatformDisplayName(groupType) });
+  }
+
   if (groupType === "youtube") {
     return t("editor.typeSummaryYouTube");
   }
@@ -2162,6 +2402,9 @@ function getEditorTypeSummary(groupType) {
 }
 
 function getPlatformDisplayName(groupType) {
+  const profile = PLATFORM_PROFILES?.[normalizeGroupType(groupType)];
+  if (profile?.displayName) return profile.displayName;
+
   if (groupType === "youtube") {
     return t("groupType.youtube");
   }
@@ -2250,7 +2493,9 @@ function getPlatformTypeLabel(groupType, type) {
 }
 
 function getPlatformAuthorsPlaceholder(groupType) {
-  return t(`platform.placeholder.${normalizeGroupType(groupType)}`);
+  const key = `platform.placeholder.${normalizeGroupType(groupType)}`;
+  const translated = t(key);
+  return translated === key ? "" : translated;
 }
 
 // Sets the unified "Platform rules" card header (title + one-line copy). Runs
@@ -2266,7 +2511,7 @@ function applyPlatformRulesHeader(groupType) {
 // Builds the author/account mode dropdown for the current platform.
 function rebuildAuthorModeOptions(type) {
   const isTwitter = type === "twitter";
-  const noun = isTwitter ? t("platform.nounAccounts") : t("platform.nounAuthors");
+  const noun = type === "reddit" ? t("platform.nounSubreddits") : isTwitter ? t("platform.nounAccounts") : t("platform.nounAuthors");
   const modes = ["all", "include", "exclude", "nobody"];
 
   const previous = platformAuthorModeField.value;
@@ -2289,9 +2534,12 @@ function applyPlatformVideoUi(groupType) {
   const isYouTube = type === "youtube";
   const isTwitter = type === "twitter";
 
-  // Twitter/X has no video-form axis — hide the content-type selector and
-  // present account (handle) controls only.
-  platformVideoModeRow.classList.toggle("hidden", isTwitter);
+  const isReddit = type === "reddit";
+  const isFeedPlatform = isPlatformFeedGroupType(type);
+
+  // Feed platforms and Reddit have no video-form axis. Twitter/X keeps its
+  // account wording, Reddit its subreddit wording; the rest say "authors".
+  platformVideoModeRow.classList.toggle("hidden", isFeedPlatform || isReddit);
 
   platformVideoModeLabel.textContent = t("platform.videoMode");
   if (platformVideoModeHelp) platformVideoModeHelp.textContent = t("platform.videoModeHelp");
@@ -2300,26 +2548,32 @@ function applyPlatformVideoUi(groupType) {
   platformVideoModeLongOption.textContent = t("platform.videoModeLong", { content: longLabel });
   platformVideoModePostOption.textContent = t("platform.videoModePost", { content: postLabel });
 
-  platformAuthorModeLabel.textContent = isTwitter ? t("platform.accountMode") : t("platform.authorMode");
+  platformAuthorModeLabel.textContent = isReddit
+    ? t("reddit.mode")
+    : isTwitter ? t("platform.accountMode") : t("platform.authorMode");
   rebuildAuthorModeOptions(type);
-  platformAuthorModeHelp.textContent = isTwitter
-    ? t("platform.accountModeHelp")
-    : t("platform.authorModeHelp");
+  platformAuthorModeHelp.textContent = isReddit
+    ? t("platform.sourceModeHelp.reddit")
+    : isTwitter ? t("platform.accountModeHelp") : t("platform.authorModeHelp");
 
-  platformAuthorsLabel.textContent = isTwitter ? t("platform.accounts") : t("platform.authors");
+  platformAuthorsLabel.textContent = isReddit
+    ? t("reddit.subreddits")
+    : isTwitter ? t("platform.accounts") : t("platform.authors");
   platformAuthorsField.setAttribute("placeholder", getPlatformAuthorsPlaceholder(type));
   platformVideoHelp.textContent = isYouTube
     ? t("platform.help.youtube", { platform })
+    : isReddit
+      ? t("platform.help.reddit", { platform })
     : isTwitter
       ? t("platform.help.twitter", { platform })
+      : isFeedPlatform
+        ? t("platform.rulesCopy", { platform })
       : t("platform.help.generic", { platform, shortLabel, longLabel, postLabel });
 
 }
 
 function getProfileSurfaceHideEntries(groupType) {
-  const profile =
-    typeof PLATFORM_PROFILES !== "undefined" ? PLATFORM_PROFILES[normalizeGroupType(groupType)] : null;
-  return Array.isArray(profile?.surfaceHides) ? profile.surfaceHides : [];
+  return getSurfaceHideEntries(groupType);
 }
 
 function getDraftSurfaceHides(group, draft) {
@@ -2335,9 +2589,8 @@ function readSurfaceHidesFromForm() {
     .map((input) => input.value);
 }
 
-// Render the opt-in "Hide elements" checklist for the selected platform group.
-// Each entry maps to a registry surfaceHides id; toggling persists into the
-// group's draft (same auto-save path as the other platform fields).
+// Render the platform's verified content-control matrix. Each entry maps to a
+// registry surfaceHides id; toggling persists into the group's draft.
 function renderSurfaceHides(group, draft, editable) {
   if (!surfaceHidesSection || !surfaceHidesList) {
     return;
@@ -2352,6 +2605,8 @@ function renderSurfaceHides(group, draft, editable) {
   }
 
   surfaceHidesSection.classList.remove("hidden");
+  if (surfaceHidesTitle) surfaceHidesTitle.textContent = t("surfaceHide.contentTitle");
+  if (surfaceHidesHelp) surfaceHidesHelp.textContent = t("surfaceHide.contentHelp");
   const enabled = new Set(getDraftSurfaceHides(group, draft));
 
   for (const entry of entries) {
@@ -2410,36 +2665,10 @@ function handleSurfaceHideChange(groupId) {
   scheduleAutosave();
 }
 
-// normalizePlatformAuthorMode, normalizeRedditMode, normalizeDiscordMode,
-// isPlatformVideoGroupType, normalizePlatformAuthorInput, normalizeVideoMode,
+// normalizeSourceMode, normalizeDiscordMode,
+// isPlatformVideoGroupType, normalizeSourceInput, normalizeVideoMode,
 // normalizeRedditSubredditInput and normalizeDiscordTargetInput now come from
 // platform-profiles.js (loaded before this script).
-
-function parseRedditSubredditsTextarea(value) {
-  const validSubreddits = [];
-  const invalidSubreddits = [];
-
-  for (const rawLine of String(value ?? "").split(/\r?\n/)) {
-    const trimmedLine = rawLine.trim();
-
-    if (!trimmedLine) {
-      continue;
-    }
-
-    const normalized = normalizeRedditSubredditInput(trimmedLine);
-
-    if (normalized) {
-      validSubreddits.push(normalized);
-    } else {
-      invalidSubreddits.push(trimmedLine);
-    }
-  }
-
-  return {
-    validSubreddits: [...new Set(validSubreddits)],
-    invalidSubreddits
-  };
-}
 
 function parseDiscordTargetsTextarea(value) {
   const validTargets = [];
@@ -2468,7 +2697,7 @@ function parseDiscordTargetsTextarea(value) {
 }
 
 function describePlatformVideoScope(groupLike) {
-  const authors = Array.isArray(groupLike.platformAuthors) ? groupLike.platformAuthors : [];
+  const authors = Array.isArray(groupLike.sources) ? groupLike.sources : [];
   const scopes = [];
   const videoMode = normalizeVideoMode(groupLike.platformVideoMode);
   const groupType = normalizeGroupType(groupLike.groupType);
@@ -2477,7 +2706,7 @@ function describePlatformVideoScope(groupLike) {
     scopes.push(getPlatformTypeLabel(groupType, videoMode));
   }
 
-  const authorMode = normalizePlatformAuthorMode(groupLike.platformAuthorMode);
+  const authorMode = normalizeSourceMode(groupLike.sourceMode, groupLike.sources);
   if (authorMode === "include") {
     scopes.push(`${authors.length} ${t("meta.creators")}`);
   } else if (authorMode === "exclude") {
@@ -2501,8 +2730,8 @@ function describePlatformVideoScope(groupLike) {
 }
 
 function describeTwitterScope(groupLike) {
-  const accounts = Array.isArray(groupLike.platformAuthors) ? groupLike.platformAuthors : [];
-  const mode = normalizePlatformAuthorMode(groupLike.platformAuthorMode);
+  const accounts = Array.isArray(groupLike.sources) ? groupLike.sources : [];
+  const mode = normalizeSourceMode(groupLike.sourceMode, groupLike.sources);
 
   if (mode === "include") {
     return `${accounts.length} ${t("meta.creators")}`;
@@ -2516,9 +2745,18 @@ function describeTwitterScope(groupLike) {
   return t("meta.allTwitter");
 }
 
+function describeFeedPlatformScope(groupLike) {
+  const authors = Array.isArray(groupLike.sources) ? groupLike.sources : [];
+  const mode = normalizeSourceMode(groupLike.sourceMode, groupLike.sources);
+  if (mode === "include") return `${authors.length} ${t("meta.creators")}`;
+  if (mode === "exclude") return t("meta.allExceptCreators", { count: authors.length });
+  if (mode === "nobody") return t("meta.noAuthors");
+  return getPlatformDisplayName(groupLike.groupType);
+}
+
 function describeRedditScope(groupLike) {
-  const subreddits = Array.isArray(groupLike.redditSubreddits) ? groupLike.redditSubreddits : [];
-  const mode = normalizeRedditMode(groupLike.redditMode, subreddits);
+  const subreddits = Array.isArray(groupLike.sources) ? groupLike.sources : [];
+  const mode = normalizeSourceMode(groupLike.sourceMode, subreddits);
 
   if (mode === "all") {
     return t("meta.allReddit");
@@ -2955,7 +3193,11 @@ function createDefaultGroup(groupType = DEFAULT_GROUP_TYPE) {
   const twitterCount = state.groups.filter((group) => group.groupType === "twitter").length + 1;
   const customCount = state.groups.filter((group) => group.groupType === "custom").length + 1;
   const siteCount = state.groups.filter((group) => group.groupType === "site").length + 1;
-  const normalizedGroupType = normalizeGroupType(groupType);
+  // The add menu offers one unified Platform rule. It starts with YouTube only
+  // as a safe first profile; the cyan Rule box owns the actual platform choice.
+  const normalizedGroupType = normalizeGroupType(
+    groupType === "platform" ? DEFAULT_PLATFORM_RULE_GROUP_TYPE : groupType
+  );
 
   return {
     id: createGroupId(),
@@ -2997,10 +3239,15 @@ function createDefaultGroup(groupType = DEFAULT_GROUP_TYPE) {
     activeDays: createDefaultDays(),
     timeWindowsText: "",
     platformVideoMode: "all",
-    platformAuthorMode: "all",
-    platformAuthors: [],
-    redditMode: "all",
-    redditSubreddits: [],
+    sourceMode: "all",
+    sources: [],
+    platformTagMode: "all",
+    platformTags: [],
+    platformTagDefaultConfidence: 4,
+    platformTagBlockUntagged: false,
+    platformTagBlockPage: true,
+    platformTagCoverUntilTagged: false,
+    platformTagEffect: "dim",
     discordMode: "all",
     discordTargets: [],
     surfaceHides: [],
@@ -3013,11 +3260,17 @@ function createDefaultGroup(groupType = DEFAULT_GROUP_TYPE) {
     parentalPasswordHash: null,
     parentalPasswordSalt: null,
     sites: [],
+    // false → `sites` is a blocklist; true → `sites` is an allowlist
+    // ("block everything except these").
+    allowlist: false,
     apps: [],
+    // The entry the cards edit: a new Default group opens on its Websites
+    // entry in the browser and on its Apps entry in the desktop app.
+    entryView: normalizedGroupType === "custom"
+      ? "custom"
+      : normalizedGroupType === "site" && IS_NATIVE_DESKTOP ? "apps" : normalizedGroupType,
     blockHomePage: false,
-    effect: "block",
-    fallbackUrl: "",
-    skipToNextOnBlock: false
+    fallbackUrl: ""
   };
 }
 
@@ -3059,7 +3312,21 @@ function sanitizeGroups(groups) {
     return [];
   }
 
-  const sanitized = groups.map((group) => {
+  const sanitized = groups.map((input) => {
+    // Stored groups are canonical (policy + scope lines, see group-scopes.js);
+    // the editor works on the flat form model, so lines are flattened here and
+    // re-lined by toStoredGroup() on every save.
+    // The entry in view ("site" | "apps" | platform): in-memory only, defaults
+    // to the stored type (the desktop opens a Default group on its Apps entry).
+    const rawType = normalizeGroupType(input?.groupType);
+    const entryView = rawType === "custom"
+      ? "custom"
+      : typeof input?.entryView === "string" && input.entryView
+        ? CBGroupScopes.normalizeEntryKey(input.entryView)
+        : rawType === "site" && IS_NATIVE_DESKTOP
+          ? "apps"
+          : rawType;
+    const group = CBGroupScopes.hasScopeLines(input) ? { ...CBGroupScopes.flatFromScopes(input, entryView), ...input } : input;
     const baseGroup = createDefaultGroup(normalizeGroupType(group?.groupType));
     const normalizedGroupType = normalizeGroupType(group?.groupType);
     const rawTimeWindowsText =
@@ -3074,18 +3341,29 @@ function sanitizeGroups(groups) {
     const activeDays = rawDays
       .map((day) => String(day).trim().toLowerCase())
       .filter((day, index, array) => DAY_NAMES.includes(day) && array.indexOf(day) === index);
-    const rawAuthors = Array.isArray(group?.platformAuthors) ? group.platformAuthors : [];
-    const rawRedditSubreddits = Array.isArray(group?.redditSubreddits) ? group.redditSubreddits : [];
+    // Sources (creators / accounts / subreddits): read the legacy pairs once.
+    const legacySources = normalizedGroupType === "reddit" ? group?.redditSubreddits : group?.platformAuthors;
+    const legacyMode = normalizedGroupType === "reddit" ? group?.redditMode : group?.platformAuthorMode;
+    // The legacy pair only exists in old stores and old-style patches, so when
+    // it is present it wins over a default-valued modern pair merged underneath.
+    const hasLegacy = Array.isArray(legacySources) || typeof legacyMode === "string";
+    const rawSources = hasLegacy
+      ? (Array.isArray(legacySources) ? legacySources : [])
+      : Array.isArray(group?.sources) ? group.sources : [];
+    const rawSourceMode = hasLegacy ? legacyMode : group?.sourceMode;
     const rawDiscordTargets = Array.isArray(group?.discordTargets) ? group.discordTargets : [];
+    const ownsSiteList = true;
 
-    return {
+    const normalized = {
       ...baseGroup,
       id: typeof group?.id === "string" && group.id ? group.id : baseGroup.id,
       name:
         typeof group?.name === "string" && group.name.trim()
           ? group.name.trim()
           : baseGroup.name,
-      enabled: Boolean(group?.enabled),
+      // Legacy "allow" exception groups stay disabled rather than turning
+      // into blocking groups (the effect was removed 2026-09-24).
+      enabled: Boolean(group?.enabled) && group?.effect !== "allow",
       groupType: normalizedGroupType,
       mode: normalizeBlockingMode(group?.mode),
       allowedMinutes:
@@ -3109,18 +3387,23 @@ function sanitizeGroups(groups) {
       activeDays: hasStoredDays ? activeDays : createDefaultDays(),
       timeWindowsText: parsedTimeWindows.normalizedLines.join("\n"),
       platformVideoMode: normalizeVideoMode(group?.platformVideoMode),
-      platformAuthorMode: normalizePlatformAuthorMode(group?.platformAuthorMode),
-      platformAuthors: [
+      sourceMode: normalizeSourceMode(rawSourceMode, rawSources),
+      sources: [
         ...new Set(
-          rawAuthors
-            .map((author) => normalizePlatformAuthorInput(author, normalizedGroupType))
+          rawSources
+            .map((source) => normalizeSourceInput(source, normalizedGroupType))
             .filter(Boolean)
         )
       ],
-      redditSubreddits: [
-        ...new Set(rawRedditSubreddits.map(normalizeRedditSubredditInput).filter(Boolean))
-      ],
-      redditMode: normalizeRedditMode(group?.redditMode, rawRedditSubreddits),
+      platformTagMode: normalizeTagFilterModeChoice(group?.platformTagMode),
+      platformTags: parseTagListTextarea(
+        Array.isArray(group?.platformTags) ? tagListToText(group.platformTags) : String(group?.platformTags ?? "")
+      ),
+      platformTagDefaultConfidence: clampTagFilterConfidence(group?.platformTagDefaultConfidence, 4),
+      platformTagBlockUntagged: Boolean(group?.platformTagBlockUntagged),
+      platformTagBlockPage: group?.platformTagBlockPage !== false,
+      platformTagCoverUntilTagged: group?.platformTagCoverUntilTagged === true,
+      platformTagEffect: group?.platformTagEffect === "block" ? "block" : "dim",
       discordTargets: [
         ...new Set(
           rawDiscordTargets
@@ -3161,18 +3444,62 @@ function sanitizeGroups(groups) {
         typeof group?.parentalPasswordSalt === "string" && group.parentalPasswordSalt
           ? group.parentalPasswordSalt
           : null,
-      sites: Array.isArray(group?.sites)
+      sites: ownsSiteList && Array.isArray(group?.sites)
         ? [...new Set(group.sites.map(normalizeSiteInput).filter(Boolean))]
         : [],
-      apps: sanitizeApps(group?.apps),
+      allowlist: ownsSiteList && Boolean(group?.allowlist),
+      apps: CBGroupScopes.normalizeAppList(group?.apps),
       blockHomePage: Boolean(group?.blockHomePage),
-      effect: group?.effect === "allow" ? "allow" : "block",
-      fallbackUrl: typeof group?.fallbackUrl === "string" ? group.fallbackUrl.trim() : "",
-      skipToNextOnBlock: Boolean(group?.skipToNextOnBlock)
+      fallbackUrl: typeof group?.fallbackUrl === "string" ? group.fallbackUrl.trim() : ""
     };
+    // Every entry's lines. A stored group carries them; a flat group (an older
+    // store, an import) gets its type's lines plus an Apps entry when it has a
+    // legacy app list — nothing a legacy shape held is lost. The flat fields
+    // above are then re-read as the view of the entry in view, so the form and
+    // the lines always agree (toStoredGroup merges the form back).
+    const scopes = CBGroupScopes.hasScopeLines(input)
+      ? CBGroupScopes.sanitizeScopeLines(input.scopes, normalizedGroupType, cbScopeNormalizers)
+      : normalized.apps.length > 0 && normalizedGroupType !== "custom"
+        ? CBGroupScopes.mergeFlatIntoScopes(CBGroupScopes.scopeLinesFromFlat(normalized, normalizedGroupType), normalized, "apps")
+        : CBGroupScopes.scopeLinesFromFlat(normalized, normalizedGroupType);
+    const view = entryView === "custom" ? {} : CBGroupScopes.flatFromScopes({ scopes }, entryView);
+    return { ...normalized, ...view, scopes, entryView };
   });
 
   return dedupeGroupNames(sanitized);
+}
+
+// The popup's own normalizers for the line fields whose normalization differs
+// between the worker and the popup (see group-scopes.js).
+const cbScopeNormalizers = {
+  normalizeSiteInput: (value) => normalizeSiteInput(value),
+  normalizeTagFilterMode: (value) => normalizeTagFilterModeChoice(value),
+  normalizeTagList: (value) => parseTagListTextarea(Array.isArray(value) ? tagListToText(value) : String(value ?? "")),
+  clampTagConfidence: (value, fallback) => clampTagFilterConfidence(value, fallback)
+};
+
+// Flat form model → the canonical stored shape (policy fields + scope lines).
+// The form describes the platform in view (group.groupType); its lines replace
+// that platform's, the group's other platforms keep theirs.
+function toStoredGroup(group) {
+  const scopes = CBGroupScopes.mergeFlatIntoScopes(group.scopes, group, activeEntryKey(group));
+  const { entryView, ...rest } = CBGroupScopes.withoutFlatScopeFields(group);
+  return {
+    ...rest,
+    groupType: CBGroupScopes.deriveGroupType(scopes, group.groupType),
+    scopes
+  };
+}
+
+// The entry whose lines the cards edit: "site", "apps", a platform id, or
+// "custom" (custom groups have no entries).
+function activeEntryKey(group) {
+  if (!group || group.groupType === "custom") return "custom";
+  return CBGroupScopes.normalizeEntryKey(group.entryView || group.groupType);
+}
+
+function toStoredGroups(groups) {
+  return (Array.isArray(groups) ? groups : []).map(toStoredGroup);
 }
 
 function sanitizeUsageTimers(value, groups) {
@@ -3249,11 +3576,15 @@ function sanitizeSnoozeTotals(value, groups) {
   return totals;
 }
 
+// The transfer string carries the canonical shape: the policy and every
+// platform's lines (an older flat string still imports through the sanitizer).
 function getSerializableGroupSnapshot(group) {
+  const stored = toStoredGroup(group);
   return {
+    scopes: stored.scopes,
     name: group.name,
     enabled: group.enabled,
-    groupType: group.groupType,
+    groupType: stored.groupType,
     mode: group.mode,
     allowedMinutes: group.allowedMinutes,
     resetIntervalHours: group.resetIntervalHours,
@@ -3267,14 +3598,6 @@ function getSerializableGroupSnapshot(group) {
     snoozeConfirmations: group.snoozeConfirmations ?? DEFAULT_SNOOZE_CONFIRMATIONS,
     activeDays: [...group.activeDays],
     timeWindowsText: group.timeWindowsText,
-    platformVideoMode: group.platformVideoMode,
-    platformAuthorMode: group.platformAuthorMode,
-    platformAuthors: [...group.platformAuthors],
-    redditMode: group.redditMode,
-    redditSubreddits: [...group.redditSubreddits],
-    discordMode: group.discordMode,
-    discordTargets: [...group.discordTargets],
-    surfaceHides: [...(group.surfaceHides ?? [])],
     blockingRulesText: group.blockingRulesText,
     freezeMode: group.freezeMode,
     freezeModeChoice: normalizeFreezeModeChoice(group),
@@ -3282,11 +3605,7 @@ function getSerializableGroupSnapshot(group) {
     frozenAtMs: group.freezeMode === "none" ? null : group.frozenAtMs,
     parentalPasswordHash: group.parentalPasswordHash ?? null,
     parentalPasswordSalt: group.parentalPasswordSalt ?? null,
-    sites: [...group.sites],
-    apps: (group.apps || []).map((app) => ({ id: app.id, name: app.name })),
-    blockHomePage: Boolean(group.blockHomePage),
-    fallbackUrl: group.fallbackUrl ?? "",
-    skipToNextOnBlock: Boolean(group.skipToNextOnBlock)
+    fallbackUrl: group.fallbackUrl ?? ""
   };
 }
 
@@ -3393,17 +3712,22 @@ function groupToDraft(group) {
     sitesText: group.sites.join("\n"),
     appsData: serializeApps(group.apps || []),
     platformVideoMode: normalizeVideoMode(group.platformVideoMode),
-    platformAuthorMode: normalizePlatformAuthorMode(group.platformAuthorMode),
-    platformAuthorsText: group.platformAuthors.join("\n"),
-    redditMode: normalizeRedditMode(group.redditMode, group.redditSubreddits),
-    redditSubredditsText: group.redditSubreddits.join("\n"),
+    sourceMode: normalizeSourceMode(group.sourceMode, group.sources),
+    sourcesText: group.sources.join("\n"),
+    platformTagMode: normalizeTagFilterModeChoice(group.platformTagMode),
+    platformTagsText: tagListToText(group.platformTags),
+    platformTagDefaultConfidence: clampTagFilterConfidence(group.platformTagDefaultConfidence, 4),
+    platformTagBlockUntagged: Boolean(group.platformTagBlockUntagged),
+    platformTagBlockPage: group.platformTagBlockPage !== false,
+    platformTagCoverUntilTagged: group.platformTagCoverUntilTagged === true,
+    platformTagEffect: group.platformTagEffect === "block" ? "block" : "dim",
     discordMode: normalizeDiscordMode(group.discordMode, group.discordTargets),
     discordTargetsText: group.discordTargets.join("\n"),
     surfaceHides: normalizeSurfaceHides(group.surfaceHides, group.groupType),
     blockingRulesText: group.blockingRulesText,
     blockHomePage: Boolean(group.blockHomePage),
+    allowlist: Boolean(group.allowlist),
     fallbackUrl: group.fallbackUrl ?? "",
-    skipToNextOnBlock: Boolean(group.skipToNextOnBlock),
     freezeModeChoice: normalizeFreezeModeChoice(group)
   };
 }
@@ -3653,12 +3977,6 @@ async function setGroupParentalPin(group, pin) {
   group.parentalPasswordSalt = salt;
   group.parentalPasswordHash = await hashParentalPin(pin, salt);
   return true;
-}
-
-function clearGroupParentalPin(group) {
-  if (!group) return;
-  group.parentalPasswordHash = null;
-  group.parentalPasswordSalt = null;
 }
 
 async function verifyGroupParentalPin(group, pin) {
@@ -3935,30 +4253,33 @@ function getGroupMetaText(group, draft, now = Date.now()) {
   const snooze = getCurrentSnooze(group.id, now);
   const snoozePhase = getSnoozePhase(snooze, now);
   const freezeStatus = getFreezeStatus(group, now);
-  const pieces = [getGroupTypeLabel(group.groupType)];
+  const platformKeys = group.groupType === "custom" ? [] : groupPlatformKeys(group);
+  const pieces = [
+    platformKeys.length > 1 ? platformKeys.map(platformKeyLabel).join(" + ") : getGroupTypeLabel(group.groupType)
+  ];
 
   if (isPlatformVideoGroupType(group.groupType)) {
     const draftAuthors = parsePlatformAuthorsTextarea(
       group.groupType,
-      draft?.platformAuthorsText ?? ""
+      draft?.sourcesText ?? ""
     ).validAuthors;
     pieces.push(
       describePlatformVideoScope({
         groupType: group.groupType,
         platformVideoMode: draft?.platformVideoMode ?? group.platformVideoMode,
-        platformAuthorMode: draft?.platformAuthorMode ?? group.platformAuthorMode,
-        platformAuthors: draftAuthors.length > 0 ? draftAuthors : group.platformAuthors
+        sourceMode: draft?.sourceMode ?? group.sourceMode,
+        sources: draftAuthors.length > 0 ? draftAuthors : group.sources
       })
     );
   } else if (group.groupType === "reddit") {
-    const draftSubreddits = parseRedditSubredditsTextarea(
-      draft?.redditSubredditsText ?? ""
-    ).validSubreddits;
+    const draftSubreddits = parsePlatformAuthorsTextarea(
+      "reddit",
+      draft?.sourcesText ?? ""
+    ).validAuthors;
     pieces.push(
       describeRedditScope({
-        redditMode: draft?.redditMode ?? group.redditMode,
-        redditSubreddits:
-          draftSubreddits.length > 0 ? draftSubreddits : group.redditSubreddits
+        sourceMode: draft?.sourceMode ?? group.sourceMode,
+        sources: draftSubreddits.length > 0 ? draftSubreddits : group.sources
       })
     );
   } else if (group.groupType === "discord") {
@@ -3971,24 +4292,31 @@ function getGroupMetaText(group, draft, now = Date.now()) {
         discordTargets: draftTargets.length > 0 ? draftTargets : group.discordTargets
       })
     );
-  } else if (group.groupType === "twitter") {
-    const draftAccounts = parsePlatformAuthorsTextarea(
+  } else if (isPlatformFeedGroupType(group.groupType)) {
+    const draftAuthors = parsePlatformAuthorsTextarea(
       group.groupType,
-      draft?.platformAuthorsText ?? ""
+      draft?.sourcesText ?? ""
     ).validAuthors;
+    const scopeGroup = {
+      groupType: group.groupType,
+        sourceMode: draft?.sourceMode ?? group.sourceMode,
+        sources: draftAuthors.length > 0 ? draftAuthors : group.sources
+    };
     pieces.push(
-      describeTwitterScope({
-        platformAuthorMode: draft?.platformAuthorMode ?? group.platformAuthorMode,
-        platformAuthors: draftAccounts.length > 0 ? draftAccounts : group.platformAuthors
-      })
+      group.groupType === "twitter"
+        ? describeTwitterScope(scopeGroup)
+        : describeFeedPlatformScope(scopeGroup)
     );
   } else if (group.groupType === "custom") {
     pieces.push(t("meta.customRules"));
-  } else {
-    const appCount = draft
-      ? parseAppsData(draft.appsData).length
-      : (group.apps || []).length;
+  } else if (activeEntryKey(group) === "apps") {
+    const appCount = draft ? parseAppsData(draft.appsData).length : (group.apps || []).length;
     pieces.push(`${appCount} ${t("meta.appCount", { suffix: appCount === 1 ? "" : "s" })}`);
+  } else {
+    const siteCount = draft
+      ? parseSiteTextareaValue(draft.sitesText).validSites.length
+      : group.sites.length;
+    pieces.push(`${siteCount} ${t("meta.siteCount", { suffix: siteCount === 1 ? "" : "s" })}`);
   }
 
   const blockHomePage = draft?.blockHomePage ?? group.blockHomePage;
@@ -4377,15 +4705,13 @@ function renderEditor(now = Date.now()) {
     snoozeCooldownField.value = "";
     snoozeConfirmationsField.value = "";
     scheduleWindowsField.value = "";
-    blockedAppsData.value = "[]";
-    blockedAppsEditable = false;
-    renderBlockedApps();
+    blockedSitesField.value = "";
+    if (siteAllowlistField) siteAllowlistField.checked = false;
+    if (siteSettingsLabel) siteSettingsLabel.textContent = t("sites.label");
     blockingRulesField.value = "";
     platformAuthorsField.value = "";
     platformVideoModeField.value = "all";
-    platformAuthorModeField.value = "none";
-    redditModeField.value = "all";
-    redditSubredditsField.value = "";
+    platformAuthorModeField.value = "all";
     discordModeField.value = "all";
     discordTargetsField.value = "";
     allowSnoozeField.checked = true;
@@ -4393,17 +4719,16 @@ function renderEditor(now = Date.now()) {
     strictFreezeHoursField.value = "";
     usageSummary.textContent = "";
     platformBlockHomePageField.checked = false;
-    redditBlockHomePageField.checked = false;
     discordBlockHomePageField.checked = false;
     fallbackUrlField.value = "";
-    skipToNextOnBlockField.checked = false;
-    skipToNextOnBlockRow.classList.add("hidden");
     blockModeSection.classList.remove("hidden");
     timedSettings.classList.add("hidden");
     customSettingsCard.classList.add("hidden");
     if (platformRulesCard) platformRulesCard.classList.add("hidden");
+    if (groupScopesSection) groupScopesSection.classList.add("hidden");
+    if (appsSettingsSection) appsSettingsSection.classList.add("hidden");
+    blockedAppsEditable = false;
     platformVideoCard.classList.add("hidden");
-    redditSettingsCard.classList.add("hidden");
     discordSettingsCard.classList.add("hidden");
     if (surfaceHidesSection) surfaceHidesSection.classList.add("hidden");
     scheduleSection.classList.remove("hidden");
@@ -4424,12 +4749,11 @@ function renderEditor(now = Date.now()) {
     snoozeCooldownField.disabled = true;
     snoozeConfirmationsField.disabled = true;
     scheduleWindowsField.disabled = true;
+    blockedSitesField.disabled = true;
     blockingRulesField.disabled = true;
     platformAuthorsField.disabled = true;
     platformVideoModeField.disabled = true;
     platformAuthorModeField.disabled = true;
-    redditModeField.disabled = true;
-    redditSubredditsField.disabled = true;
     discordModeField.disabled = true;
     discordTargetsField.disabled = true;
     allowSnoozeField.disabled = true;
@@ -4440,10 +4764,8 @@ function renderEditor(now = Date.now()) {
     importGroupButton.disabled = true;
     applyFreezeButton.disabled = true;
     platformBlockHomePageField.disabled = true;
-    redditBlockHomePageField.disabled = true;
     discordBlockHomePageField.disabled = true;
     fallbackUrlField.disabled = true;
-    skipToNextOnBlockField.disabled = true;
     state.aiPromptGroupId = null;
     if (aiPromptPanel) {
       aiPromptPanel.classList.add("hidden");
@@ -4463,6 +4785,7 @@ function renderEditor(now = Date.now()) {
     updateSnoozeUI(null, now);
     setSnoozeWarning("");
     updateBlockingRulesEditor();
+    renderBlockedSites();
     return;
   }
 
@@ -4472,13 +4795,14 @@ function renderEditor(now = Date.now()) {
   const selectedMode = normalizeBlockingMode(draft?.mode ?? group.mode);
   const isTimedMode = isTimedBlockingMode(selectedMode);
   const isPlatformVideoGroup = isPlatformVideoGroupType(group.groupType);
-  const isTwitterGroup = normalizeGroupType(group.groupType) === "twitter";
-  // Twitter/X reuses the account (author) controls, minus the video-form axis.
-  const usesAuthorAxis = isPlatformVideoGroup || isTwitterGroup;
+  const usesAuthorAxis = isPlatformAuthorGroupType(group.groupType);
   const isRedditGroup = group.groupType === "reddit";
   const isDiscordGroup = group.groupType === "discord";
   const isCustomGroup = group.groupType === "custom";
   const isPlatformProfileGroup = isPlatformProfileGroupType(group.groupType);
+  const entryKey = activeEntryKey(group);
+  const isSiteView = entryKey === "site";
+  const isAppsView = entryKey === "apps";
 
   if (aiPromptInput) {
     if (isCustomGroup) {
@@ -4522,18 +4846,42 @@ function renderEditor(now = Date.now()) {
   snoozeConfirmationsField.value =
     draft?.snoozeConfirmations ?? String(group.snoozeConfirmations ?? DEFAULT_SNOOZE_CONFIRMATIONS);
   scheduleWindowsField.value = draft?.timeWindowsText ?? group.timeWindowsText;
-  blockedAppsData.value = draft?.appsData ?? serializeApps(group.apps || []);
+  blockedSitesField.value = draft?.sitesText ?? group.sites.join("\n");
+  if (blockedAppsData) blockedAppsData.value = draft?.appsData ?? serializeApps(group.apps || []);
   blockingRulesField.value = draft?.blockingRulesText ?? group.blockingRulesText;
-  platformAuthorsField.value = draft?.platformAuthorsText ?? group.platformAuthors.join("\n");
+  platformAuthorsField.value = draft?.sourcesText ?? group.sources.join("\n");
   platformVideoModeField.value = draft?.platformVideoMode ?? group.platformVideoMode;
-  platformAuthorModeField.value = normalizePlatformAuthorMode(
-    draft?.platformAuthorMode ?? group.platformAuthorMode
+  platformAuthorModeField.value = normalizeSourceMode(
+    draft?.sourceMode ?? group.sourceMode,
+    group.sources
   );
-  redditSubredditsField.value = draft?.redditSubredditsText ?? group.redditSubreddits.join("\n");
-  redditModeField.value = normalizeRedditMode(
-    draft?.redditMode ?? group.redditMode,
-    group.redditSubreddits
+  // Content-tag filter fields.
+  const tagCompatible = isTagFilterCompatible(group.groupType);
+  const tagMode = normalizeTagFilterModeChoice(draft?.platformTagMode ?? group.platformTagMode);
+  platformTagModeField.value = tagMode;
+  platformTagsField.value = draft?.platformTagsText ?? tagListToText(group.platformTags);
+  platformTagDefaultConfidenceField.value = String(
+    clampTagFilterConfidence(draft?.platformTagDefaultConfidence ?? group.platformTagDefaultConfidence, 4)
   );
+  platformTagEffectField.value =
+    (draft?.platformTagEffect ?? group.platformTagEffect) === "block" ? "block" : "dim";
+  platformTagBlockUntaggedField.checked = Boolean(
+    draft?.platformTagBlockUntagged ?? group.platformTagBlockUntagged
+  );
+  if (platformTagBlockPageField) {
+    platformTagBlockPageField.checked = (draft?.platformTagBlockPage ?? group.platformTagBlockPage) !== false;
+  }
+  if (platformTagCoverUntilTaggedField) {
+    platformTagCoverUntilTaggedField.checked = (draft?.platformTagCoverUntilTagged ?? group.platformTagCoverUntilTagged) === true;
+  }
+  if (platformTagFields) platformTagFields.classList.toggle("hidden", !tagCompatible);
+  if (platformTagListBlock) platformTagListBlock.classList.toggle("hidden", tagMode === "all");
+  refreshTagSuggestions(
+    document.getElementById("platformTagSuggestions"), platformTagsField,
+    tagCompatible && tagMode !== "all" ? group.groupType : ""
+  );
+  // Honoured in both modes now (it lives inside the list block, hidden for "all").
+  if (platformTagBlockUntaggedRow) platformTagBlockUntaggedRow.classList.remove("hidden");
   discordModeField.value = normalizeDiscordMode(
     draft?.discordMode ?? group.discordMode,
     group.discordTargets
@@ -4542,14 +4890,10 @@ function renderEditor(now = Date.now()) {
 
   const blockHomePageValue = Boolean(draft?.blockHomePage ?? group.blockHomePage);
   platformBlockHomePageField.checked = blockHomePageValue;
-  redditBlockHomePageField.checked = blockHomePageValue;
   discordBlockHomePageField.checked = blockHomePageValue;
 
   fallbackUrlField.value = draft?.fallbackUrl ?? group.fallbackUrl ?? "";
 
-  const isScrollPlatform = ["youtube", "tiktok", "instagram"].includes(group.groupType);
-  skipToNextOnBlockRow.classList.toggle("hidden", !isPlatformVideoGroup || !isScrollPlatform);
-  skipToNextOnBlockField.checked = Boolean(draft?.skipToNextOnBlock ?? group.skipToNextOnBlock);
 
   freezeModeField.value = freezeStatus.isFrozen
     ? freezeStatus.isParental
@@ -4568,18 +4912,28 @@ function renderEditor(now = Date.now()) {
   if (platformRulesCard) {
     platformRulesCard.classList.toggle("hidden", !isPlatformProfileGroup);
   }
+  renderGroupScopes(group, editable);
   platformVideoCard.classList.toggle("hidden", !usesAuthorAxis);
-  redditSettingsCard.classList.toggle("hidden", !isRedditGroup);
   discordSettingsCard.classList.toggle("hidden", !isDiscordGroup);
   renderSurfaceHides(group, draft, editable);
   if (fallbackUrlSection) {
     fallbackUrlSection.classList.toggle("hidden", isCustomGroup);
   }
   scheduleSection.classList.toggle("hidden", isCustomGroup);
-  siteSettingsSection.classList.toggle(
-    "hidden",
-    isPlatformProfileGroup || isCustomGroup
-  );
+  // The cards show the entry in view: the website list, the app list, or the
+  // platform card. Custom rules define their own behavior and have no entries.
+  siteSettingsSection.classList.toggle("hidden", !isSiteView);
+  if (appsSettingsSection) appsSettingsSection.classList.toggle("hidden", !isAppsView);
+  blockedAppsEditable = editable && isAppsView && IS_NATIVE_DESKTOP;
+  if (appsHelp) appsHelp.textContent = t(IS_NATIVE_DESKTOP ? "apps.help" : "apps.readOnlyHint");
+  if (clearAppsButton) clearAppsButton.disabled = !blockedAppsEditable;
+  renderBlockedApps();
+
+  const allowlistOn = Boolean(draft?.allowlist ?? group.allowlist);
+  if (siteAllowlistField) siteAllowlistField.checked = allowlistOn;
+  if (siteSettingsLabel) {
+    siteSettingsLabel.textContent = allowlistOn ? t("sites.allowlistedLabel") : t("sites.label");
+  }
 
   groupNameField.disabled = !editable;
   groupEnabledField.disabled = !editable;
@@ -4593,35 +4947,31 @@ function renderEditor(now = Date.now()) {
   snoozeCooldownField.disabled = !editable || !allowSnoozeField.checked || freezeStatus.isFrozen;
   snoozeConfirmationsField.disabled = !editable || !allowSnoozeField.checked;
   scheduleWindowsField.disabled = !editable || isCustomGroup;
-  blockedAppsEditable = editable && group.groupType === "site";
-  renderBlockedApps();
+  blockedSitesField.disabled = !editable || !isSiteView;
+  if (siteAllowlistField) {
+    siteAllowlistField.disabled = !editable || !isSiteView;
+  }
   blockingRulesField.disabled = !editable || !isCustomGroup;
-  const currentAuthorMode = normalizePlatformAuthorMode(platformAuthorModeField.value);
-  const authorModeUsesList = platformAuthorModeUsesList(currentAuthorMode); // include/exclude
-  // Show the author list only for include/exclude; show it for neither
-  // "all" nor "no authors".
+  const currentAuthorMode = normalizeSourceMode(platformAuthorModeField.value);
+  const authorModeUsesList = sourceModeUsesList(currentAuthorMode); // include/exclude
+  // Show the author list only for include/exclude.
   platformAuthorsBlock.classList.toggle("hidden", !usesAuthorAxis || !authorModeUsesList);
   platformAuthorsField.disabled = !editable || !usesAuthorAxis || !authorModeUsesList;
   platformVideoModeField.disabled = !editable || !isPlatformVideoGroup;
   platformAuthorModeField.disabled = !editable || !usesAuthorAxis;
-  redditModeField.disabled = !editable || !isRedditGroup;
-  redditSubredditsField.disabled =
-    !editable || !isRedditGroup || redditModeField.value === "all";
   discordModeField.disabled = !editable || !isDiscordGroup;
   discordTargetsField.disabled = !editable || !isDiscordGroup || discordModeField.value === "all";
   clearSitesButton.disabled =
-    !editable || isPlatformProfileGroup || isCustomGroup;
+    !editable || !isSiteView;
+  renderBlockedSites();
   refreshChipField(platformAuthorsField);
-  refreshChipField(redditSubredditsField);
   refreshChipField(discordTargetsField);
   deleteGroupButton.disabled = !editable;
   exportGroupButton.disabled = false;
   importGroupButton.disabled = !editable;
   platformBlockHomePageField.disabled = !editable || !usesAuthorAxis;
-  redditBlockHomePageField.disabled = !editable || !isRedditGroup;
   discordBlockHomePageField.disabled = !editable || !isDiscordGroup;
   fallbackUrlField.disabled = !editable;
-  skipToNextOnBlockField.disabled = !editable || !isPlatformVideoGroup || !isScrollPlatform;
   if (runCustomGroupButton) {
     runCustomGroupButton.disabled = !editable || !isCustomGroup;
   }
@@ -4654,7 +5004,6 @@ function renderEditor(now = Date.now()) {
   updateUsageSummary(group, draft, now);
   updateFreezeUI(group, now);
   updateSnoozeUI(group, now);
-  renderBridgeMirror(group);
   updateBlockingRulesEditor();
 }
 
@@ -4758,8 +5107,7 @@ function stashCurrentDraft() {
   }
 
   const isPlatformVideoGroup = isPlatformVideoGroupType(group.groupType);
-  const isTwitterGroup = normalizeGroupType(group.groupType) === "twitter";
-  const usesAuthorAxis = isPlatformVideoGroup || isTwitterGroup;
+  const usesAuthorAxis = isPlatformAuthorGroupType(group.groupType);
   const isRedditGroup = group.groupType === "reddit";
   const isDiscordGroup = group.groupType === "discord";
 
@@ -4778,25 +5126,29 @@ function stashCurrentDraft() {
     snoozeConfirmations: snoozeConfirmationsField.value,
     activeDays: collectSelectedDays(),
     timeWindowsText: scheduleWindowsField.value,
-    appsData: blockedAppsData.value,
+    sitesText: blockedSitesField.value,
+    allowlist: siteAllowlistField.checked,
+    appsData: blockedAppsData ? blockedAppsData.value : "[]",
     blockingRulesText: blockingRulesField.value,
     platformVideoMode: platformVideoModeField.value,
-    platformAuthorMode: platformAuthorModeField.value,
-    platformAuthorsText: platformAuthorsField.value,
-    redditMode: redditModeField.value,
-    redditSubredditsText: redditSubredditsField.value,
+    sourceMode: platformAuthorModeField.value,
+    sourcesText: platformAuthorsField.value,
+    platformTagMode: platformTagModeField.value,
+    platformTagsText: platformTagsField.value,
+    platformTagDefaultConfidence: platformTagDefaultConfidenceField.value,
+    platformTagBlockUntagged: platformTagBlockUntaggedField.checked,
+    platformTagBlockPage: platformTagBlockPageField ? platformTagBlockPageField.checked : true,
+    platformTagCoverUntilTagged: platformTagCoverUntilTaggedField ? platformTagCoverUntilTaggedField.checked : false,
+    platformTagEffect: platformTagEffectField.value,
     discordMode: discordModeField.value,
     discordTargetsText: discordTargetsField.value,
     blockHomePage: usesAuthorAxis
       ? platformBlockHomePageField.checked
-      : isRedditGroup
-        ? redditBlockHomePageField.checked
-        : isDiscordGroup
-          ? discordBlockHomePageField.checked
-          : false,
+      : isDiscordGroup
+        ? discordBlockHomePageField.checked
+        : false,
     surfaceHides: readSurfaceHidesFromForm(),
-    fallbackUrl: fallbackUrlField.value,
-    skipToNextOnBlock: skipToNextOnBlockField.checked
+    fallbackUrl: fallbackUrlField.value
   };
 }
 
@@ -4819,19 +5171,24 @@ function flushAutosaveOnExit() {
     window.clearTimeout(state.autosaveTimeoutId);
     state.autosaveTimeoutId = null;
   }
+  // Closing the popup before the store was read must not write the empty
+  // in-memory list back (that erased every group).
+  if (!state.groupsLoaded) return;
 
   const group = getSelectedGroup();
   const draft = group ? getDraftForGroup(group.id) : null;
   if (group && draft && isGroupEditable(group)) {
     try {
-      const result = buildUpdatedGroupFromDraft(group, draft);
+      // Non-strict: commit every valid field (tags included) on teardown even
+      // if a sibling field is mid-edit/invalid.
+      const result = buildUpdatedGroupFromDraft(group, draft, { strict: false });
       if (result && result.updatedGroup) {
         state.groups = state.groups.map((item) =>
           item.id === group.id ? result.updatedGroup : item
         );
       }
     } catch (_) {
-      // Validation failed — persist current state.groups anyway.
+      // Unexpected error — persist current state.groups anyway.
     }
   }
 
@@ -4840,7 +5197,7 @@ function flushAutosaveOnExit() {
     // settings modal's Save button, and re-emitting on every teardown
     // would race two open popups against each other.
     chrome.storage.local.set({
-      [BLOCKED_GROUPS_KEY]: state.groups,
+      [BLOCKED_GROUPS_KEY]: toStoredGroups(state.groups),
       [USAGE_TIMERS_KEY]: state.usageTimersMs,
       [USAGE_RESET_AT_KEY]: state.usageResetAtMs,
       [USAGE_BUCKETS_KEY]: state.usageBucketsMs,
@@ -4914,7 +5271,7 @@ async function persistState(message) {
   state.suppressGroupStorageUpdatesUntil = Date.now() + 1000;
 
   await chrome.storage.local.set({
-    [BLOCKED_GROUPS_KEY]: state.groups,
+    [BLOCKED_GROUPS_KEY]: toStoredGroups(state.groups),
     [USAGE_TIMERS_KEY]: state.usageTimersMs,
     [USAGE_RESET_AT_KEY]: state.usageResetAtMs,
     [USAGE_BUCKETS_KEY]: state.usageBucketsMs,
@@ -4935,6 +5292,7 @@ async function persistState(message) {
 async function loadGroups() {
   const loaded = await loadStoredState();
   state.groups = loaded.groups;
+  state.groupsLoaded = true;
   state.usageTimersMs = loaded.usageTimersMs;
   state.usageResetAtMs = loaded.usageResetAtMs;
   state.usageBucketsMs = loaded.usageBucketsMs;
@@ -4990,6 +5348,174 @@ async function addGroup(groupType = DEFAULT_GROUP_TYPE) {
   render();
   groupNameField.focus();
   groupNameField.select();
+}
+
+// ── "Applies to": the platforms a group names ──────────────────────────────
+// A group's lines may name several platforms and a site list; the group acts
+// on their union. The cards edit ONE of them at a time: group.groupType is
+// the platform in view and the flat form fields are that platform's lines
+// (group-scopes.js flatFromScopes). Switching the view first folds the form
+// into the group's lines, then reads the next platform's lines into the form.
+
+function groupPlatformKeys(group) {
+  const keys = CBGroupScopes.groupPlatforms(group);
+  const active = activeEntryKey(group);
+  if (active !== "custom" && !keys.includes(active)) keys.push(active);
+  return keys;
+}
+
+function platformKeyLabel(key) {
+  if (key === "site") return t("scopes.websites");
+  if (key === "apps") return t("scopes.apps");
+  return getGroupTypeLabel(key);
+}
+
+// The stored (canonical) group seen through one entry: its policy, every
+// entry's lines, and the flat form fields of `key`.
+function viewGroupOnPlatform(stored, key) {
+  const entry = CBGroupScopes.normalizeEntryKey(key);
+  return {
+    ...stored,
+    groupType: entry === "site" || entry === "apps" ? "site" : entry,
+    entryView: entry,
+    ...CBGroupScopes.flatFromScopes(stored, entry)
+  };
+}
+
+// Fold the form into the selected group (as autosave does) and return the
+// group in its canonical shape: policy + every platform's lines.
+async function commitSelectedGroupLines() {
+  stashCurrentDraft();
+  await flushAutosave();
+  const group = getSelectedGroup();
+  if (!group || !isGroupEditable(group)) return null;
+  const draft = getDraftForGroup(group.id);
+  const current = draft ? buildUpdatedGroupFromDraft(group, draft, { strict: false }).updatedGroup : group;
+  return toStoredGroup(current);
+}
+
+// Show the entry `key` in the cards; an entry the group does not name yet is
+// added with the same defaults a new group of that kind would get.
+async function setGroupPlatformView(key) {
+  const entry = CBGroupScopes.normalizeEntryKey(key);
+  const stored = await commitSelectedGroupLines();
+  if (!stored || stored.groupType === "custom") {
+    render();
+    return;
+  }
+  const known = CBGroupScopes.groupPlatforms(stored).includes(entry);
+  let next = viewGroupOnPlatform(stored, entry);
+  if (!known && entry !== "site" && entry !== "apps") {
+    const defaults = createDefaultGroup(entry);
+    for (const field of CBGroupScopes.FLAT_SCOPE_FIELDS) {
+      if (Object.prototype.hasOwnProperty.call(defaults, field)) next[field] = defaults[field];
+    }
+  }
+  state.groups = state.groups.map((item) => (item.id === stored.id ? next : item));
+  state.drafts[stored.id] = groupToDraft(next);
+  await persistState();
+  render();
+}
+
+// Drop every line of `platform`; the view moves to a platform that remains.
+async function removeGroupPlatform(platform) {
+  const group = getSelectedGroup();
+  if (!group || !isGroupEditable(group) || groupPlatformKeys(group).length <= 1) {
+    render();
+    return;
+  }
+  // No confirmation (owner 2026-09-24): removing an entry drops its filters,
+  // like removing a site chip.
+  const stored = await commitSelectedGroupLines();
+  if (!stored) {
+    render();
+    return;
+  }
+  const scopes = stored.scopes.filter((line) => !CBGroupScopes.lineBelongsTo(line, platform));
+  const remaining = [...new Set(scopes.map((line) => CBGroupScopes.linePlatformKey(line)))];
+  if (remaining.length === 0) {
+    render();
+    return;
+  }
+  const current = activeEntryKey(group);
+  const nextKey = remaining.includes(current) ? current : remaining[0];
+  const next = viewGroupOnPlatform({ ...stored, scopes }, nextKey);
+  state.groups = state.groups.map((item) => (item.id === stored.id ? next : item));
+  state.drafts[stored.id] = groupToDraft(next);
+  await persistState();
+  render();
+}
+
+function renderGroupScopes(group, editable) {
+  if (!groupScopesSection || !groupScopesList || !groupScopesAdd) return;
+  const isCustom = group.groupType === "custom";
+  groupScopesSection.classList.toggle("hidden", isCustom);
+  if (isCustom) return;
+
+  const keys = groupPlatformKeys(group);
+  const active = activeEntryKey(group);
+  groupScopesList.innerHTML = "";
+  for (const key of keys) {
+    const chip = document.createElement("div");
+    chip.className = `site-chip scope-chip${key === active ? " active" : ""}`;
+    chip.setAttribute("role", "listitem");
+    chip.tabIndex = 0;
+    chip.setAttribute("aria-pressed", key === active ? "true" : "false");
+    const label = document.createElement("span");
+    label.className = "site-chip-name";
+    label.textContent = platformKeyLabel(key);
+    chip.appendChild(label);
+    const open = () => {
+      if (key === active) return;
+      setGroupPlatformView(key).catch((error) => {
+        console.error("Failed to switch the group's platform view.", error);
+        setStatus(t("status.errorSaveGroup"), true);
+        render();
+      });
+    };
+    chip.addEventListener("click", open);
+    chip.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        open();
+      }
+    });
+    if (editable && keys.length > 1) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "site-chip-remove";
+      remove.setAttribute("aria-label", t("scopes.removeAria", { name: platformKeyLabel(key) }));
+      remove.textContent = "\u2212"; // minus sign
+      remove.addEventListener("click", (event) => {
+        event.stopPropagation();
+        removeGroupPlatform(key).catch((error) => {
+          console.error("Failed to remove the platform from the group.", error);
+          setStatus(t("status.errorSaveGroup"), true);
+          render();
+        });
+      });
+      chip.appendChild(remove);
+    }
+    groupScopesList.appendChild(chip);
+  }
+
+  // Entries the group does not name yet. Apps can only be edited where an
+  // app inventory exists (the desktop app), so only the desktop offers them.
+  groupScopesAdd.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = t("scopes.add");
+  placeholder.selected = true;
+  groupScopesAdd.appendChild(placeholder);
+  for (const key of ["site", ...(IS_NATIVE_DESKTOP ? ["apps"] : []), ...PLATFORM_GROUP_TYPES]) {
+    if (keys.includes(key)) continue;
+    const option = document.createElement("option");
+    option.value = key;
+    option.textContent = platformKeyLabel(key);
+    groupScopesAdd.appendChild(option);
+  }
+  groupScopesAdd.value = "";
+  groupScopesAdd.disabled = !editable || groupScopesAdd.options.length <= 1;
 }
 
 async function deleteAllGroups() {
@@ -5150,11 +5676,24 @@ async function importIntoSelectedGroup() {
   }
 }
 
-function buildUpdatedGroupFromDraft(group, draft) {
-  const name = draft.name.trim();
+function buildUpdatedGroupFromDraft(group, draft, { strict = true } = {}) {
+  // Strict mode (export/transfer) throws on the first invalid field, as before.
+  // Non-strict mode (autosave / exit flush) never throws: invalid fields keep
+  // their last-valid value while every valid field — crucially the Tags field —
+  // still gets committed. The first error is returned so the UI can surface it.
+  // This is what makes tags as durable as the other fields: an unrelated
+  // mid-edit field (e.g. a blank name) can no longer discard the whole update.
+  let firstError = null;
+  const fail = (error) => {
+    if (strict) throw error;
+    if (!firstError) firstError = error;
+  };
+
+  let name = draft.name.trim();
 
   if (!name) {
-    throw new Error(t("status.invalidName"));
+    fail(new Error(t("status.invalidName")));
+    name = group.name;
   }
 
   // Names must be unique per endpoint (the web-app bridge links groups by name).
@@ -5163,7 +5702,8 @@ function buildUpdatedGroupFromDraft(group, draft) {
       other.id !== group.id && (other.name || "").trim().toLowerCase() === name.toLowerCase()
   );
   if (nameClash) {
-    throw new Error(t("status.duplicateName"));
+    fail(new Error(t("status.duplicateName")));
+    name = group.name;
   }
 
   const mode = normalizeBlockingMode(draft.mode);
@@ -5178,10 +5718,8 @@ function buildUpdatedGroupFromDraft(group, draft) {
   const snoozeConfirmations = parseSnoozeConfirmations(draft.snoozeConfirmations);
   const timeWindows = parseTimeWindowsText(draft.timeWindowsText);
   const siteResults = parseSiteTextareaValue(draft.sitesText);
-  const authorResults = parsePlatformAuthorsTextarea(group.groupType, draft.platformAuthorsText);
-  const authorMode = normalizePlatformAuthorMode(draft.platformAuthorMode);
-  const redditResults = parseRedditSubredditsTextarea(draft.redditSubredditsText);
-  const redditMode = normalizeRedditMode(draft.redditMode, redditResults.validSubreddits);
+  const authorResults = parsePlatformAuthorsTextarea(group.groupType, draft.sourcesText);
+  const authorMode = normalizeSourceMode(draft.sourceMode, authorResults.validAuthors);
   const discordResults = parseDiscordTargetsTextarea(draft.discordTargetsText);
   const discordMode = normalizeDiscordMode(draft.discordMode, discordResults.validTargets);
   const blockingRulesText = draft.blockingRulesText?.trim() ?? "";
@@ -5189,41 +5727,44 @@ function buildUpdatedGroupFromDraft(group, draft) {
   const nextMode = isCustomGroup ? "instant" : mode;
 
   if (nextMode === "after-minutes" && allowedMinutes === null) {
-    throw new Error(t("status.invalidAllowedMinutes"));
+    fail(new Error(t("status.invalidAllowedMinutes")));
   }
 
   if (isTimedBlockingMode(nextMode) && resetIntervalHours === null) {
-    throw new Error(t("status.invalidResetHours"));
+    fail(new Error(t("status.invalidResetHours")));
   }
 
   if (snoozeMinutes === null) {
-    throw new Error(t("status.invalidSnoozeMinutes"));
+    fail(new Error(t("status.invalidSnoozeMinutes")));
   }
 
   if (snoozeActivationDelayMinutes === null) {
-    throw new Error(t("status.invalidSnoozeActivationDelay"));
+    fail(new Error(t("status.invalidSnoozeActivationDelay")));
   }
 
   if (snoozeCooldownMinutes === null) {
-    throw new Error(
-      t("status.invalidSnoozeCooldown", { max: formatHours(MAX_SNOOZE_COOLDOWN_MINUTES) })
+    fail(
+      new Error(t("status.invalidSnoozeCooldown", { max: formatHours(MAX_SNOOZE_COOLDOWN_MINUTES) }))
     );
   }
 
   if (snoozeConfirmations === null) {
-    throw new Error(t("status.invalidSnoozeConfirmations"));
+    fail(new Error(t("status.invalidSnoozeConfirmations")));
   }
 
   if (timeWindows.invalidLines.length > 0) {
-    throw new Error(t("status.invalidTimeWindows", { list: timeWindows.invalidLines.join(", ") }));
+    fail(new Error(t("status.invalidTimeWindows", { list: timeWindows.invalidLines.join(", ") })));
   }
 
-  if (group.groupType === "site" && siteResults.invalidSites.length > 0) {
-    throw new Error(t("status.invalidSites", { list: siteResults.invalidSites.join(", ") }));
+  // The website list belongs to the Websites entry, the app list to Apps.
+  const entryKey = activeEntryKey(group);
+  const usesSiteList = entryKey === "site";
+
+  if (usesSiteList && siteResults.invalidSites.length > 0) {
+    fail(new Error(t("status.invalidSites", { list: siteResults.invalidSites.join(", ") })));
   }
 
-  const usesAuthorAxis =
-    isPlatformVideoGroupType(group.groupType) || normalizeGroupType(group.groupType) === "twitter";
+  const usesAuthorAxis = isPlatformAuthorGroupType(group.groupType);
 
   // Invalid platform entries are surfaced inline as red chips in the editor, so
   // we no longer abort the save — valid entries persist and the bad chips stay
@@ -5255,23 +5796,37 @@ function buildUpdatedGroupFromDraft(group, draft) {
       activeDays: isCustomGroup
         ? group.activeDays
         : draft.activeDays.filter((day) => DAY_NAMES.includes(day)),
-      timeWindowsText: isCustomGroup ? group.timeWindowsText : timeWindows.normalizedLines.join("\n"),
+      timeWindowsText: isCustomGroup
+        ? group.timeWindowsText
+        : timeWindows.invalidLines.length > 0
+          ? group.timeWindowsText
+          : timeWindows.normalizedLines.join("\n"),
       platformVideoMode: normalizeVideoMode(draft.platformVideoMode),
-      platformAuthorMode: authorMode,
-      platformAuthors: usesAuthorAxis ? authorResults.validAuthors : group.platformAuthors,
+      sourceMode: authorMode,
+      sources: usesAuthorAxis ? authorResults.validAuthors : group.sources,
+      platformTagMode: isTagFilterCompatible(group.groupType)
+        ? normalizeTagFilterModeChoice(draft.platformTagMode)
+        : group.platformTagMode,
+      platformTags: isTagFilterCompatible(group.groupType)
+        ? parseTagListTextarea(draft.platformTagsText)
+        : group.platformTags,
+      platformTagDefaultConfidence: clampTagFilterConfidence(draft.platformTagDefaultConfidence, 4),
+      platformTagBlockUntagged: Boolean(draft.platformTagBlockUntagged),
+      platformTagBlockPage: draft.platformTagBlockPage !== false,
+      platformTagCoverUntilTagged: draft.platformTagCoverUntilTagged === true,
+      platformTagEffect: draft.platformTagEffect === "block" ? "block" : "dim",
       surfaceHides: normalizeSurfaceHides(
         Array.isArray(draft.surfaceHides) ? draft.surfaceHides : group.surfaceHides,
         group.groupType
       ),
-      redditSubreddits:
-        group.groupType === "reddit" ? redditResults.validSubreddits : group.redditSubreddits,
-      redditMode: group.groupType === "reddit" ? redditMode : group.redditMode,
       discordTargets:
         group.groupType === "discord" ? discordResults.validTargets : group.discordTargets,
       discordMode: group.groupType === "discord" ? discordMode : group.discordMode,
       blockingRulesText: isCustomGroup ? blockingRulesText : group.blockingRulesText,
-      sites: group.groupType === "site" ? siteResults.validSites : [],
-      apps: group.groupType === "site" ? parseAppsData(draft.appsData) : [],
+      sites: usesSiteList ? siteResults.validSites : [],
+      // Blocklist (false) vs "block all except" (true).
+      allowlist: usesSiteList ? Boolean(draft.allowlist) : false,
+      apps: entryKey === "apps" ? parseAppsData(draft.appsData) : [],
       blockHomePage: Boolean(draft.blockHomePage),
       // Custom groups redirect via setRedirectLink() inside the rule;
       // strip any legacy fallbackUrl on save.
@@ -5280,7 +5835,6 @@ function buildUpdatedGroupFromDraft(group, draft) {
         : typeof draft.fallbackUrl === "string"
         ? draft.fallbackUrl.trim()
         : "",
-      skipToNextOnBlock: Boolean(draft.skipToNextOnBlock),
       freezeModeChoice: normalizeFreezeModeChoice({
         freezeModeChoice: draft.freezeModeChoice,
         freezeMode: group.freezeMode,
@@ -5293,7 +5847,8 @@ function buildUpdatedGroupFromDraft(group, draft) {
       !isCustomGroup &&
       ((resetIntervalHours ?? group.resetIntervalHours) !== group.resetIntervalHours ||
         resetAtMidnight !== (group.resetAtMidnight === true) ||
-        rollingLimit !== (group.rollingLimit === true))
+        rollingLimit !== (group.rollingLimit === true)),
+    validationError: firstError
   };
 }
 
@@ -5303,26 +5858,32 @@ async function autosaveSelectedGroup() {
   let validationError = null;
   let updatedGroup = null;
 
-  // Fold the draft into state.groups. We never bail on failure: optimistic
-  // edits to OTHER groups (e.g. sidebar toggles) still need to be persisted
-  // even when the currently-selected group's draft is invalid.
+  // Fold the draft into state.groups. Non-strict build never throws, so every
+  // valid field (including Tags) is committed even when an unrelated field is
+  // mid-edit/invalid. The draft is only re-normalized when the whole group is
+  // valid, so in-progress invalid text the user is still typing isn't reverted.
   if (group && draft && isGroupEditable(group)) {
     try {
-      const result = buildUpdatedGroupFromDraft(group, draft);
+      const result = buildUpdatedGroupFromDraft(group, draft, { strict: false });
       updatedGroup = result.updatedGroup;
 
       state.groups = state.groups.map((item) =>
         item.id === group.id ? result.updatedGroup : item
       );
-      state.drafts[group.id] = groupToDraft(result.updatedGroup);
 
-      if (
-        isTimedBlockingMode(result.updatedGroup.mode) &&
-        (result.modeChanged || result.resetIntervalChanged)
-      ) {
-        state.usageResetAtMs[group.id] = Date.now();
-        state.usageTimersMs[group.id] = 0;
-        delete state.usageBucketsMs[group.id];
+      if (result.validationError) {
+        validationError = result.validationError;
+      } else {
+        state.drafts[group.id] = groupToDraft(result.updatedGroup);
+
+        if (
+          isTimedBlockingMode(result.updatedGroup.mode) &&
+          (result.modeChanged || result.resetIntervalChanged)
+        ) {
+          state.usageResetAtMs[group.id] = Date.now();
+          state.usageTimersMs[group.id] = 0;
+          delete state.usageBucketsMs[group.id];
+        }
       }
     } catch (error) {
       validationError = error;
@@ -5377,7 +5938,11 @@ function clearSelectedSites() {
     return;
   }
 
-  commitBlockedApps([]);
+  blockedSitesField.value = "";
+  stashCurrentDraft();
+  renderGroupList();
+  scheduleAutosave();
+  renderBlockedSites();
 }
 
 async function reorderGroups(draggedGroupId, insertIndex) {
@@ -6338,6 +6903,24 @@ scheduleWindowsField.addEventListener("input", () => {
   scheduleAutosave();
 });
 
+if (siteAddConfirmButton) {
+  siteAddConfirmButton.addEventListener("click", () => confirmSiteAdd());
+}
+if (siteAddCancelButton) {
+  siteAddCancelButton.addEventListener("click", () => closeSiteAddPanel());
+}
+if (siteAddInput) {
+  siteAddInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      confirmSiteAdd();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      closeSiteAddPanel();
+    }
+  });
+}
+
 blockingRulesField.addEventListener("input", () => {
   updateBlockingRulesEditor();
   stashCurrentDraft();
@@ -6424,30 +7007,26 @@ async function requestCustomGroupSyntaxCheck(source) {
 function buildCustomRuleAiPrompt(userRequest, currentRule) {
   const demand = String(userRequest || "").trim() || "(No extra user request was provided.)";
   const existingRule = String(currentRule || "").trim() || "(No current rule.)";
+  const reference =
+    typeof globalThis.CUSTOM_RULE_AI_REFERENCE === "string" &&
+    globalThis.CUSTOM_RULE_AI_REFERENCE.trim()
+      ? globalThis.CUSTOM_RULE_AI_REFERENCE
+      : "CUSTOM_RULE_API_REFERENCE_UNAVAILABLE";
 
   return [
-    "TASK: generate custom-rule JavaScript for the native desktop Adamancia Vault app (Mac Vault or Windows Vault). This is application-level blocking, not browser website blocking.",
-    "OUTPUT_CONTRACT: put only the final valid JavaScript source inside one copyable fenced code block labeled javascript; no prose before or after the code block.",
-    "TOP_LEVEL_SHAPE: (event, helpers) => { /* register handlers here */ }",
-    "EXECUTION_MODEL: the top-level function runs once when the rule loads and must register persistent handlers. Handlers remain until Run again, disable, or delete. Keep registration and every handler synchronous and bounded. A deadline terminates non-returning code. Do not use network access, external packages, eval/new Function, DOM or chrome APIs, worker/message APIs, setTimeout/setInterval, or browser/page globals.",
-    "IDENTITIES: use the exact identity shown by the desktop app picker. On macOS this is normally a bundle ID such as com.apple.Safari. On Windows it may be an AUMID or executable path. Do not invent or normalize identities.",
+    "TASK: Generate a Custom-rule source for Adamancia Vault.",
+    "OUTPUT_CONTRACT: Return exactly one fenced javascript code block containing the complete source. Do not include prose, pseudocode, placeholders, imports, or markdown outside that one code block.",
+    "QUALITY_CONTRACT: Implement the user's request with the current API reference below. Preserve useful behaviour from the current rule only when it does not conflict with the user's request. Never invent API methods.",
+    "CUSTOM_RULE_API_REFERENCE_BEGIN",
+    reference,
+    "CUSTOM_RULE_API_REFERENCE_END",
     "USER_REQUEST_BEGIN",
     demand,
     "USER_REQUEST_END",
-    "EVENT_REGISTRY: event.on(type,id,handler,options?) registers or replaces by type+id; event.off(type,id); event.emit(type,data?,options?) is inert at top level. Aliases: register, unregister, unregisterAll, getEvent, getEvents, countRegistered, post. options.priority sorts higher first; options.intervalMs throttles frequent handlers. Typed registerX aliases exist, but event.on with the raw event name is preferred.",
-    "NATIVE_EVENTS: tickEvent every ~1 second; timerEnded; snoozePress; panelEvent; localFileEvent; openAppEvent; closeAppEvent; focusEvent; unfocusEvent; minimizeEvent; unminimizeEvent; switchAppEvent; appChangedEvent. Lifecycle events expose data.bundleId. switchAppEvent exposes data.previousAppId/currentAppId. appChangedEvent adds data.reason. tick/focus context exposes data.appId, data.appName, data.groupName, data.isBrowser='false', and data.allApps (JSON string).",
-    "EVENT_OBJECT: ev.type, groupId/groupID, target, url ('app://'+focused identity), hostname (focused identity), time:{now,month,dayOfMonth,dayName,hour,minute}, data. ev.stopPropagation(); ev.setResult(-1) shields the focused/target app, 0 is neutral, 1 allows; ev.getResult(); ev.setShieldMessage(text); ev.allow(reason); ev.close(appId?); ev.block(appId?); ev.unblock(appId?); ev.open(appId); ev.post(type,data,options?). panelEvent and localFileEvent also expose their data as direct ev fields.",
-    "LOGGING: helpers.log/warn/error and *Screen/*Popup variants; helpers.getLogHelper() exposes the same methods. Logs are capped and rate-limited.",
-    "WINDOW_HELPER: w=helpers.getWindowHelper(); w.current()->{id,name,isBrowser:false}; w.all()->running app array; w.close(appId); w.block(appId); w.unblock(appId); w.isBlocked(appId); w.getBlocked(). Dynamic blocks are owned by this rule group and are cleared when the group reloads, disables, or is deleted. ev.open(appId) launches an app.",
-    "TIMER_HELPER: tm=helpers.getTimerHelper(); tm.create(config); tm.getOrCreateTimer(config); delete/pause/resume; setDirection/setCurrentMs/addMs/subMs/setBounds/setStep/setOverlayStyle/setDisplayName; getCurrentMs/isExpired/isPaused/getDirection/getDisplayName/exists/getState/list. config includes id, displayName, direction ('forward'|'backward'), currentMs, minMs, maxMs, stepMs, scope, domain, accrueWhen. On native desktop, scope/domain/accrueWhen receive the focused application identity; a string scope is exact identity matching. Timers do not block by themselves, so check isExpired in a handler and call ev.block/ev.setResult.",
-    "PERSISTENCE_AND_STORAGE: p=helpers.getPersistenceHelper(); p.get(key,default?), set(key,jsonValue), delete, has, keys, entries, clear, size. helpers.getStorageHelper() offers the same synchronous group-scoped operations. State is removed when the rule group is unloaded.",
-    "PANELS: pn=helpers.getPanelHelper(); create/getOrCreatePanel/update/delete/show/hide, control value/update/enable/disable/options/text methods, theme/title/description reads and list. Controls include text, checkbox, select, textInput, textarea, button, section, timer, numberInput, range, toggle, radio, date, time, color, pin, html. panelEvent provides panelId, controlId, eventName, value, values, key, and code.",
-    "LOCAL_FILES: lf=helpers.getLocalFolderHelper(); requestRead, requestWrite, requestAppend, requestList, requestExists, requestReadJson, requestWriteJson return request IDs. Results arrive through localFileEvent with requestId, eventName/action, ok, path, text/value/entries/exists/bytes/error. Only app-managed .txt/.csv/.json files are available.",
-    "URL_CLASSIFIERS_ONLY: helpers.getDomainHelper()/getDomainUtility() and helpers.platform(name) retain URL classification helpers for synthetic/app strings, but platform feed mutation is inert. getDOMHelper, getNavigationHelper, getRedirectionHelper, and getTabHelper are browser-only and unavailable on native desktop. Never generate website, tab, redirect, DOM, feed-card, or browser-navigation rules here.",
-    "COMMON_PATTERNS: permanent app block -> tickEvent/focusEvent checks data.appId then ev.block(id)+ev.setResult(-1). Launch close -> openAppEvent checks data.bundleId then ev.close(id). Scheduled block -> tickEvent uses ev.time.hour and calls ev.block(id) inside the window and ev.unblock(id) outside. Daily budget -> backward timer scoped to the app plus persistence for the local date; block once tm.isExpired(id).",
     "CURRENT_RULE_BEGIN",
     existingRule,
-    "CURRENT_RULE_END"
+    "CURRENT_RULE_END",
+    "Return the final JavaScript source now."
   ].join("\n");
 }
 
@@ -6516,9 +7095,6 @@ async function runSelectedCustomGroup() {
       const lr = response.loadResult;
       if (lr.ok) {
         markCustomGroupSourceActive(group.id, source);
-        chrome.storage.local.set({
-          [BLOCKED_GROUPS_KEY]: state.groups
-        });
         if (runCustomGroupStatus) {
           // Append a reload reminder so the user knows that already-
           // open tabs need a refresh before content-script-driven
@@ -6572,49 +7148,93 @@ if (runCustomGroupButton) {
   });
 }
 
-async function checkSelectedCustomGroupSyntax() {
-  const group = getSelectedGroup();
-  if (!group || group.groupType !== "custom") return;
-  const source = String(blockingRulesField?.value ?? "").trim();
-  if (runCustomGroupStatus) {
-    runCustomGroupStatus.textContent = t("custom.checkSyntaxRunning");
-    runCustomGroupStatus.className = "run-status";
+// Platforms whose feed-predicate engine can act on content tags (helpers.js
+// PLATFORM_LIST): the no-code builder emits `<platform>().dim|hide(...)` for these.
+const CONTENT_TAG_PLATFORMS = new Set(["youtube", "tiktok", "instagram", "facebook", "twitch", "reddit", "bilibili", "twitter"]);
+
+// Turn the no-code builder fields into a custom-rule source. Uses the platform
+// predicate's dim() (thumbnail blackout, correctable) or hide() (remove card).
+// Supports a LIST of tags (each with an optional per-tag confidence over the
+// default), "block certain tags" (include) / "block all except" (exclude), and
+// a configurable untagged behavior for the exclude case.
+// ── Classifier tag-name suggestions ──────────────────────────────────────
+// Clickable chips under a tag-list textarea, fed by the classifier's own
+// taxonomy for that platform (so a filter names tags that actually exist — a
+// typo'd tag silently never matches). Hidden when the classifier is unreachable.
+const tagNameCache = new Map(); // platform -> { at, names }
+const TAG_NAME_CACHE_MS = 60_000;
+function fetchClassifierTagNames(platform) {
+  const cached = tagNameCache.get(platform);
+  if (cached && Date.now() - cached.at < TAG_NAME_CACHE_MS) return Promise.resolve(cached.names);
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage({ type: "vault-classifier-tag-names", platform }, (response) => {
+        const failed = chrome.runtime.lastError || !response || response.ok !== true;
+        const names = !failed && Array.isArray(response.names) ? response.names.filter((n) => typeof n === "string" && n) : [];
+        if (!failed) tagNameCache.set(platform, { at: Date.now(), names });
+        resolve(names);
+      });
+    } catch (_) {
+      resolve([]);
+    }
+  });
+}
+function usedTagNames(textarea) {
+  const used = new Set();
+  for (const entry of parseTagListTextarea(textarea?.value || "")) {
+    for (const name of [entry.name, ...(entry.also || [])]) used.add(name.toLowerCase());
   }
-  try {
-    const syntaxResult = await requestCustomGroupSyntaxCheck(source);
-    if (syntaxResult.ok) {
-      if (runCustomGroupStatus) {
-        runCustomGroupStatus.textContent = syntaxResult.text;
-        runCustomGroupStatus.className = "run-status success";
-      }
-      setStatus(syntaxResult.text);
-      return;
-    }
-
-    if (syntaxResult.statusKey) {
-      if (runCustomGroupStatus) {
-        runCustomGroupStatus.textContent = syntaxResult.text;
-        runCustomGroupStatus.className = "run-status error";
-      }
-      setStatus(t(syntaxResult.statusKey), true);
-      return;
-    }
-
-    if (runCustomGroupStatus) {
-      runCustomGroupStatus.textContent = syntaxResult.text;
-      runCustomGroupStatus.className = "run-status error";
-    }
-    setStatus(syntaxResult.text, true);
-  } catch (error) {
-    const text = String(error && error.message ? error.message : error);
-    if (runCustomGroupStatus) {
-      runCustomGroupStatus.textContent = text;
-      runCustomGroupStatus.className = "run-status error";
-    }
-    setStatus(text, true);
+  return used;
+}
+function renderTagSuggestions(container, textarea, names) {
+  if (!container || !textarea) return;
+  container.replaceChildren();
+  container.classList.toggle("hidden", names.length === 0);
+  if (names.length === 0) return;
+  const label = document.createElement("span");
+  label.className = "tag-suggestions-label";
+  label.textContent = t("tagFilter.available");
+  container.appendChild(label);
+  const used = usedTagNames(textarea);
+  for (const name of names) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.textContent = name;
+    const isUsed = used.has(name.toLowerCase());
+    chip.classList.toggle("used", isUsed);
+    chip.disabled = isUsed;
+    chip.addEventListener("click", () => {
+      const current = textarea.value.replace(/\s+$/, "");
+      textarea.value = current ? `${current}\n${name}` : name;
+      // Fire the same event typing would, so drafts/autosave react.
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      renderTagSuggestions(container, textarea, names);
+    });
+    container.appendChild(chip);
   }
 }
+const tagSuggestionRequests = new WeakMap(); // container -> latest request token
+function refreshTagSuggestions(container, textarea, platform) {
+  if (!container || !textarea) return;
+  const token = {};
+  tagSuggestionRequests.set(container, token);
+  if (!platform) { renderTagSuggestions(container, textarea, []); return; }
+  fetchClassifierTagNames(platform).then((names) => {
+    if (tagSuggestionRequests.get(container) !== token) return; // a newer request won
+    renderTagSuggestions(container, textarea, names);
+  });
+}
 
+// Keep chip "used" state live while typing.
+function bindTagSuggestions(containerId, textarea, platformOf) {
+  const container = document.getElementById(containerId);
+  if (!container || !textarea) return;
+  textarea.addEventListener("input", () => {
+    const cached = tagNameCache.get(platformOf());
+    if (cached) renderTagSuggestions(container, textarea, cached.names);
+  });
+}
+bindTagSuggestions("platformTagSuggestions", platformTagsField, () => String(getSelectedGroup()?.groupType || ""));
 function toggleAiPromptPanel() {
   const group = getSelectedGroup();
   if (!group || group.groupType !== "custom") return;
@@ -6682,6 +7302,18 @@ platformVideoModeField.addEventListener("change", () => {
   scheduleAutosave();
 });
 
+if (groupScopesAdd) {
+  groupScopesAdd.addEventListener("change", () => {
+    const key = groupScopesAdd.value;
+    if (!key) return;
+    setGroupPlatformView(key).catch((error) => {
+      console.error("Failed to add the platform to the group.", error);
+      setStatus(t("status.errorSaveGroup"), true);
+      render();
+    });
+  });
+}
+
 platformAuthorModeField.addEventListener("change", () => {
   if (platformAuthorModeField.value === "exclude") {
     setStatus(t("status.allowlistWarning"));
@@ -6692,21 +7324,30 @@ platformAuthorModeField.addEventListener("change", () => {
   scheduleAutosave();
 });
 
-redditSubredditsField.addEventListener("input", () => {
-  stashCurrentDraft();
-  renderGroupList();
-  scheduleAutosave();
-});
-
-redditModeField.addEventListener("change", () => {
-  if (redditModeField.value === "exclude") {
-    setStatus(t("status.redditAllowlistWarning"));
-  }
-  stashCurrentDraft();
-  render();
-  renderGroupList();
-  scheduleAutosave();
-});
+// Content-tag filter fields.
+if (platformTagModeField) {
+  platformTagModeField.addEventListener("change", () => {
+    stashCurrentDraft();
+    render(); // re-toggles the tag list + untagged row for the new mode
+    renderGroupList();
+    scheduleAutosave();
+  });
+}
+for (const field of [platformTagsField, platformTagDefaultConfidenceField, platformTagEffectField]) {
+  if (!field) continue;
+  field.addEventListener("input", () => {
+    stashCurrentDraft();
+    renderGroupList();
+    scheduleAutosave();
+  });
+}
+for (const field of [platformTagBlockUntaggedField, platformTagBlockPageField, platformTagCoverUntilTaggedField]) {
+  if (!field) continue;
+  field.addEventListener("change", () => {
+    stashCurrentDraft();
+    scheduleAutosave();
+  });
+}
 
 discordTargetsField.addEventListener("input", () => {
   stashCurrentDraft();
@@ -6724,9 +7365,19 @@ discordModeField.addEventListener("change", () => {
   scheduleAutosave();
 });
 
-for (const field of [platformBlockHomePageField, redditBlockHomePageField, discordBlockHomePageField, skipToNextOnBlockField]) {
+for (const field of [platformBlockHomePageField, discordBlockHomePageField]) {
   field.addEventListener("change", () => {
     stashCurrentDraft();
+    renderGroupList();
+    scheduleAutosave();
+  });
+}
+
+if (siteAllowlistField) {
+  siteAllowlistField.addEventListener("change", () => {
+    stashCurrentDraft();
+    // re-render so the "Blocked websites" / "Allowed websites" label flips.
+    render();
     renderGroupList();
     scheduleAutosave();
   });
@@ -6794,9 +7445,7 @@ if (settingsModal) {
 
 // Global settings auto-save: persist on every committed edit (no Save button).
 {
-  const settingsAutoSaveFields = [
-    settingsDefaultSnoozeMinutesField
-  ];
+  const settingsAutoSaveFields = [settingsDefaultSnoozeMinutesField];
   const autoSaveSettings = () => {
     saveSettingsFromForm().catch((error) => {
       console.error("Failed to save global settings.", error);
@@ -6808,11 +7457,21 @@ if (settingsModal) {
   }
 }
 
+if (classifierCollectionToggle) {
+  classifierCollectionToggle.addEventListener("change", () => {
+    classifierBridgeStorageSet({ ...classifierBridgeSettings, collectionEnabled: classifierCollectionToggle.checked }).catch(() => {});
+  });
+}
+if (classifierTaggingModeField) {
+  classifierTaggingModeField.addEventListener("change", () => {
+    classifierBridgeStorageSet({ ...classifierBridgeSettings, taggingMode: classifierTaggingModeField.value }).catch(() => {});
+  });
+}
+
 if (localFolderChooseButton) {
   localFolderChooseButton.addEventListener("click", () => {
-    // On macOS the picker is native (WKWebView has no showDirectoryPicker).
-    if (cbHasNativeBridge()) {
-      try { window.webkit.messageHandlers.cbBridge.postMessage({ kind: "local-folder-choose" }); } catch (_) {}
+    if (IS_NATIVE_DESKTOP) {
+      postToNativeShell({ kind: "local-folder-choose" });
       return;
     }
     chooseLocalFolder().catch((error) => {
@@ -6823,8 +7482,8 @@ if (localFolderChooseButton) {
 
 if (localFolderRevokeButton) {
   localFolderRevokeButton.addEventListener("click", () => {
-    if (cbHasNativeBridge()) {
-      try { window.webkit.messageHandlers.cbBridge.postMessage({ kind: "local-folder-revoke" }); } catch (_) {}
+    if (IS_NATIVE_DESKTOP) {
+      postToNativeShell({ kind: "local-folder-revoke" });
       return;
     }
     revokeLocalFolder().catch((error) => {
@@ -6836,74 +7495,6 @@ if (localFolderRevokeButton) {
 if (settingsResetButton) {
   settingsResetButton.addEventListener("click", () => {
     resetSettingsToDefaults();
-  });
-}
-
-// --- App-blocking (Accessibility) permission gate ---------------------------
-// The native host pushes the current permission state (~1x/second) via
-// window.__cbPermissionState(json), which only keeps the Device Control section
-// (description + status line) in sync. The grant modal is NOT shown on every
-// push: it is opened only when the app is (re)opened, via the native
-// window.__cbPromptPermissionOnOpen() hook below.
-let __cbAppBlockingGranted = null;
-
-function applyPermissionState(granted) {
-  __cbAppBlockingGranted = granted;
-  const isGranted = granted === true;
-  // The native host is the authority here. Once it observes that macOS granted
-  // Accessibility, clear the request modal instead of leaving a stale prompt.
-  if (isGranted && permissionModal) permissionModal.classList.add("hidden");
-  if (deviceControlCopy) {
-    deviceControlCopy.textContent = isGranted
-      ? t("settings.deviceControlCopyGranted")
-      : t("settings.deviceControlCopyMissing");
-  }
-  if (deviceControlStatus) {
-    deviceControlStatus.textContent = isGranted
-      ? t("settings.deviceControlStatusGranted")
-      : t("settings.deviceControlStatusMissing");
-  }
-}
-
-// Shows the grant modal only when permission is currently missing. Invoked by
-// the native host when the app is opened/activated (see BlockerWebView).
-function showPermissionModalIfMissing() {
-  if (permissionModal && __cbAppBlockingGranted === false) {
-    permissionModal.classList.remove("hidden");
-  }
-}
-window.__cbPromptPermissionOnOpen = showPermissionModalIfMissing;
-
-window.__cbPermissionState = (payload) => {
-  try {
-    const data = typeof payload === "string" ? JSON.parse(payload) : payload;
-    const granted =
-      data?.appBlockingGranted === true
-        ? true
-        : data?.appBlockingGranted === false
-          ? false
-          : null;
-    applyPermissionState(granted);
-  } catch (error) {
-    console.error("Failed to apply permission state.", error);
-  }
-};
-
-if (permissionGrantButton) {
-  permissionGrantButton.addEventListener("click", () => {
-    chrome.runtime.sendMessage({ type: "request-app-blocking-permission" });
-  });
-}
-
-if (permissionCancelButton) {
-  permissionCancelButton.addEventListener("click", () => {
-    if (permissionModal) permissionModal.classList.add("hidden");
-  });
-}
-
-if (deviceControlButton) {
-  deviceControlButton.addEventListener("click", () => {
-    chrome.runtime.sendMessage({ type: "open-permission-settings" });
   });
 }
 
@@ -7180,8 +7771,19 @@ if (logFeedDownload) {
 
 if (chrome.runtime && chrome.runtime.onMessage) {
   chrome.runtime.onMessage.addListener((message) => {
-    if (!message || message.type !== "log-feed-entry") return;
-    renderLogFeedEntry(message.entry);
+    if (!message) return;
+    if (message.type === "log-feed-entry") {
+      renderLogFeedEntry(message.entry);
+      return;
+    }
+    if (message.type === "connection-status-push") {
+      applyConnectionStatus(message.status);
+      return;
+    }
+    if (message.type === "clusters-push") {
+      applyClusters(message.clusters);
+      return;
+    }
   });
 }
 
@@ -7284,6 +7886,10 @@ async function initializePopupApp() {
   applyPanelWidth(loadPanelWidth());
 
   await loadGroups();
+  await chrome.storage.local.set({
+    [BLOCKED_GROUPS_KEY]: toStoredGroups(state.groups),
+    [GLOBAL_SETTINGS_KEY]: state.globalSettings
+  });
   await loadLogFeedSnapshot();
   // Banner runs after translations are applied so the labels read in
   // the user's language, and runs after loadGroups so the popup is in a
@@ -7306,39 +7912,3 @@ initializePopupApp().catch((error) => {
   console.error("Failed to initialize popup.", error);
   setStatus(t("status.errorLoadGroups"), true);
 });
-
-// Scene switch (Vault / Classifier / Activity) in the hero header. Vault is the
-// active scene on this page; tapping another posts to the native shell, which
-// swaps the visible web view. The blue underline tracks the active label.
-(function initSceneTabs() {
-  function setup() {
-    var tabs = document.getElementById("sceneTabs");
-    if (!tabs) return;
-    var underline = tabs.querySelector(".scene-underline");
-    function position() {
-      var active = tabs.querySelector(".scene-tab.is-active");
-      if (!active || !underline) return;
-      underline.style.width = active.offsetWidth + "px";
-      underline.style.transform = "translateX(" + active.offsetLeft + "px)";
-    }
-    tabs.addEventListener("click", function (e) {
-      var btn = e.target.closest(".scene-tab");
-      if (!btn || btn.classList.contains("is-active")) return;
-      var scene = btn.dataset.scene;
-      try {
-        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.cbBridge) {
-          window.webkit.messageHandlers.cbBridge.postMessage({ kind: "switch-scene", scene: scene });
-        }
-      } catch (_) {}
-    });
-    position();
-    window.addEventListener("resize", position);
-    if (document.fonts && document.fonts.ready) { document.fonts.ready.then(position); }
-    setTimeout(position, 60);
-  }
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", setup);
-  } else {
-    setup();
-  }
-})();

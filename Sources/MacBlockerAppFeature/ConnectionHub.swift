@@ -233,7 +233,6 @@ final class ConnectionHub: ObservableObject {
     private struct GroupInfo {
         let id: String
         let name: String
-        let type: String
         let frozen: Bool
     }
 
@@ -242,7 +241,6 @@ final class ConnectionHub: ObservableObject {
     private final class ClusterState {
         let id: String
         let groupName: String
-        let groupType: String
         var members: Set<String> = []
         /// Live peer presence comes from the broker snapshot. It is deliberately
         /// not inferred from a local listener because Mac Vault is only a
@@ -255,13 +253,14 @@ final class ConnectionHub: ObservableObject {
         /// before id pinning; those fall back to name+type matching and are
         /// backfilled from the roster on the next announce.
         var memberGroupIds: [String: String] = [:]
-        /// Per-program contribution: { scalars: {...}, sites?: [...], apps?: [...] }.
+        /// Per-program contribution: { scalars: {...}, scopes: [...] } — the
+        /// member's whole group definition (policy + every entry's lines).
         var contributions: [String: [String: Any]] = [:]
-        // Hub-authoritative shared state.
+        // Hub-authoritative shared state: the one group definition every
+        // member adopts. Scalars and scopes are latest-edit-wins (see applySync).
         var sharedScalars: [String: Any] = [:]
         var sharedTs: Double = 0
-        var sharedSites: [String] = []
-        var sharedApps: [[String: Any]] = []
+        var sharedScopes: [[String: Any]] = []
         /// Shared live usage budget. Members report *increments* (usageDeltaMs)
         /// from their own accrual, never absolutes, so folding this total back
         /// into each member's local counter can never double count. Before any
@@ -286,10 +285,9 @@ final class ConnectionHub: ObservableObject {
         /// max is safe and monotonic.
         var sharedSnoozeTotalMs: Double = 0
 
-        init(id: String, groupName: String, groupType: String) {
+        init(id: String, groupName: String) {
             self.id = id
             self.groupName = groupName
-            self.groupType = groupType
         }
     }
 
@@ -650,7 +648,6 @@ final class ConnectionHub: ObservableObject {
             applySync(
                 program: prog,
                 groupName: (obj["groupName"] as? String) ?? "",
-                groupType: (obj["groupType"] as? String) ?? "",
                 contribution: obj,
                 ts: (obj["ts"] as? Double) ?? 0
             )
@@ -1138,7 +1135,6 @@ final class ConnectionHub: ObservableObject {
             GroupInfo(
                 id: ($0["id"] as? String) ?? "",
                 name: ($0["name"] as? String) ?? "",
-                type: ($0["type"] as? String) ?? "",
                 frozen: ($0["frozen"] as? Bool) ?? false
             )
         }
@@ -1155,30 +1151,24 @@ final class ConnectionHub: ObservableObject {
             // from disk) by matching name+type once; this auto-migrates old links.
             var pinnedId = cluster.memberGroupIds[program] ?? ""
             if pinnedId.isEmpty,
-               let legacy = infos.first(where: {
-                   $0.name == cluster.groupName && $0.type == cluster.groupType
-               }), !legacy.id.isEmpty {
+               let legacy = infos.first(where: { $0.name == cluster.groupName }), !legacy.id.isEmpty {
                 pinnedId = legacy.id
                 cluster.memberGroupIds[program] = pinnedId
                 changed = true
             }
             // Keep the member only if its pinned instance is still present under
-            // the same name+type. A delete removes the id; a re-create under the
-            // same name yields a NEW id (so it can't silently re-join); a rename
+            // the same name. A delete removes the id; a re-create under the same
+            // name yields a NEW id (so it can't silently re-join); a rename
             // changes the name (so it decouples, matching the name-based UX).
             // Frozen groups stay in the roster, so a freeze never decouples.
+            // Groups link by name alone: one group may span several platforms,
+            // a site list and an app list, so a "type" no longer identifies it.
             let stillPresent: Bool
             if pinnedId.isEmpty {
-                // No id to pin against (pre-id-pinning client): name+type only.
-                stillPresent = infos.contains {
-                    $0.name == cluster.groupName && $0.type == cluster.groupType
-                }
+                // No id to pin against (pre-id-pinning client): name only.
+                stillPresent = infos.contains { $0.name == cluster.groupName }
             } else {
-                stillPresent = infos.contains {
-                    $0.id == pinnedId &&
-                    $0.name == cluster.groupName &&
-                    $0.type == cluster.groupType
-                }
+                stillPresent = infos.contains { $0.id == pinnedId && $0.name == cluster.groupName }
             }
             if stillPresent { continue }
             cluster.members.remove(program)
@@ -1210,28 +1200,26 @@ final class ConnectionHub: ObservableObject {
         return clusters.values.filter { $0.members.count >= 2 }.count
     }
 
-    /// Caller must hold `lock`. Auto-forms clusters: every (name, type) present on
+    /// Caller must hold `lock`. Auto-forms clusters: every group name present on
     /// two or more programs becomes one cluster containing all programs that have
     /// that group. Same-named groups link with no manual step; membership is pinned
     /// to the specific instance so a delete/re-create can't silently re-join.
     /// Returns snapshots of the clusters it changed.
     private func autoLinkClustersLocked() -> [[String: Any]] {
-        struct NameType: Hashable { let name: String; let type: String }
-        // (name, type) -> program -> pinned group id (first instance per program).
-        var byKey: [NameType: [String: String]] = [:]
+        // name -> program -> pinned group id (first instance per program).
+        var byName: [String: [String: String]] = [:]
         for (program, infos) in rosters {
             for info in infos where !info.name.isEmpty {
-                let key = NameType(name: info.name, type: info.type)
-                if byKey[key]?[program] == nil {
-                    byKey[key, default: [:]][program] = info.id
+                if byName[info.name]?[program] == nil {
+                    byName[info.name, default: [:]][program] = info.id
                 }
             }
         }
         var snapshots: [[String: Any]] = []
-        for (key, programIds) in byKey where programIds.count >= 2 {
-            let cluster = clusters.values.first { $0.groupName == key.name && $0.groupType == key.type }
+        for (name, programIds) in byName where programIds.count >= 2 {
+            let cluster = clusters.values.first { $0.groupName == name }
                 ?? {
-                    let created = ClusterState(id: UUID().uuidString, groupName: key.name, groupType: key.type)
+                    let created = ClusterState(id: UUID().uuidString, groupName: name)
                     clusters[created.id] = created
                     return created
                 }()
@@ -1250,9 +1238,11 @@ final class ConnectionHub: ObservableObject {
 
     /// Folds one member's contribution into the cluster's shared state and, if the
     /// shared snapshot changed, broadcasts it. This is the heart of the sync
-    /// engine: scalars are last-writer-wins, lists are a union of owned lists, and
-    /// the usage counter is a delta accumulator (the Mac is the budget authority).
-    func applySync(program: String, groupName: String, groupType: String, contribution: [String: Any], ts: Double) {
+    /// engine: scalars and scope lines are latest-edit-wins (a member's FIRST
+    /// contribution unions its entries into the shared lines, so two groups that
+    /// existed separately keep both sides' entries when they link), and the usage
+    /// counter is a delta accumulator (the Mac is the budget authority).
+    func applySync(program: String, groupName: String, contribution: [String: Any], ts: Double) {
         guard !program.isEmpty, !groupName.isEmpty else { return }
         lock.lock()
         guard let cluster = clusters.values.first(where: {
@@ -1264,27 +1254,23 @@ final class ConnectionHub: ObservableObject {
 
         let before = clusterJSONObject(cluster)
 
-        // Block-list / scalar contributions only update when the message
-        // actually carries them. Lightweight usage-only pings (sent by the
-        // browser background when its popup is closed) must NOT clobber the
-        // member's stored sites/apps/scalars contribution.
+        // Definition contributions (scalars / scopes) only update when the
+        // message actually carries them. Lightweight usage-only pings (sent by
+        // the browser background when its popup is closed) must NOT clobber the
+        // member's stored contribution.
         let scalarsPayload = contribution["scalars"] as? [String: Any]
-        let carriesConfig =
-            scalarsPayload != nil ||
-            contribution["sites"] != nil ||
-            contribution["apps"] != nil
+        let scopesPayload = contribution["scopes"] as? [[String: Any]]
+        let carriesConfig = scalarsPayload != nil || scopesPayload != nil
         if carriesConfig {
+            let firstContribution = cluster.contributions[program] == nil
+            let priority = (contribution["priority"] as? Bool) ?? false
+            let wins = priority || ts >= cluster.sharedTs
             var stored: [String: Any] = ["scalars": scalarsPayload ?? [:]]
-            if let sites = contribution["sites"] as? [String] { stored["sites"] = sites }
-            // Apps may arrive as plain name strings (legacy) or as { name, icon }
-            // objects (so the browser mirror can show app icons). Store whatever
-            // shape we got; clusterJSONObject normalizes on read.
-            if let apps = contribution["apps"] { stored["apps"] = apps }
+            if let scopes = scopesPayload { stored["scopes"] = scopes }
             cluster.contributions[program] = stored
 
             // Scalars: last writer wins, except the link initiator forces its
             // settings to win the first merge (priority flag).
-            let priority = (contribution["priority"] as? Bool) ?? false
             if let scalars = scalarsPayload {
                 if priority {
                     cluster.sharedScalars = scalars
@@ -1292,6 +1278,17 @@ final class ConnectionHub: ObservableObject {
                 } else if ts >= cluster.sharedTs {
                     cluster.sharedScalars = scalars
                     cluster.sharedTs = ts
+                }
+            }
+            // Entries: a member's first contribution brings its own entries into
+            // the shared definition (union by entry, the newcomer's version of a
+            // shared entry wins); afterwards the whole line list is latest-edit-
+            // wins, since every member edits the one shared definition.
+            if let scopes = scopesPayload {
+                if firstContribution {
+                    cluster.sharedScopes = Self.unionScopes(cluster.sharedScopes, incoming: scopes)
+                } else if wins {
+                    cluster.sharedScopes = scopes
                 }
             }
 
@@ -1344,7 +1341,7 @@ final class ConnectionHub: ObservableObject {
             cluster.sharedSnoozeTotalMs = total
         }
 
-        // Persist only on config-bearing syncs (scalars/sites/apps/snooze), not
+        // Persist only on config-bearing syncs (scalars/scopes/snooze), not
         // on per-tick usage pings, so the on-disk registry tracks structural and
         // settings changes without hammering the disk every second.
         if carriesConfig { persistClustersLocked() }
@@ -1355,6 +1352,38 @@ final class ConnectionHub: ObservableObject {
         if !NSDictionary(dictionary: before).isEqual(to: after) {
             broadcastCluster(after)
         }
+    }
+
+    /// The entry a scope line belongs to: "apps" for the app list, "site" for
+    /// the website list, else its platform id.
+    static func scopeEntryKey(_ line: [String: Any]) -> String {
+        if (line["surface"] as? String) == "apps" { return "apps" }
+        if let platform = line["platform"] as? String, !platform.isEmpty { return platform }
+        return "site"
+    }
+
+    /// Union of two line lists by entry: entries only `existing` names are kept,
+    /// entries `incoming` names come from `incoming`. Line ids are renumbered per
+    /// surface so the merged list has unique ids.
+    static func unionScopes(_ existing: [[String: Any]], incoming: [[String: Any]]) -> [[String: Any]] {
+        let incomingKeys = Set(incoming.map(scopeEntryKey))
+        let merged = existing.filter { !incomingKeys.contains(scopeEntryKey($0)) } + incoming
+        var counters: [String: Int] = [:]
+        return merged.map { line in
+            let surface = (line["surface"] as? String) ?? "site"
+            counters[surface, default: 0] += 1
+            var copy = line
+            copy["id"] = "\(surface)-\(counters[surface]!)"
+            return copy
+        }
+    }
+
+    /// The shared line list of the cluster this Mac's `groupName` belongs to
+    /// (nil when not linked).
+    func sharedScopes(groupName: String) -> [[String: Any]]? {
+        lock.lock()
+        defer { lock.unlock() }
+        return clusters.values.first(where: { $0.groupName == groupName && $0.members.contains(Self.localProgram) })?.sharedScopes
     }
 
     /// Called by the in-process macOS enforcer when it accrues (or rolls over)
@@ -1381,7 +1410,6 @@ final class ConnectionHub: ObservableObject {
         contribution["kind"] = "group-sync"
         contribution["program"] = Self.localProgram
         contribution["groupName"] = groupName
-        contribution["groupType"] = "site"
         contribution["ts"] = 0
         submitBridgeFrame(contribution)
     }
@@ -1442,7 +1470,16 @@ final class ConnectionHub: ObservableObject {
 
     func syncFromBridge(json: String) {
         guard let obj = decode(json) else { return }
-        submitBridgeFrame(obj)
+        submitBridgeFrame(Self.bridgeFrame(obj))
+    }
+
+    /// The Mac's web editor sends the extension popup's runtime messages
+    /// (`{type: "group-sync" | "groups-announce", …}`); hub frames are keyed by
+    /// `kind`, exactly as the browser's service worker re-keys them.
+    static func bridgeFrame(_ message: [String: Any]) -> [String: Any] {
+        var frame = message
+        if frame["kind"] == nil, let type = message["type"] as? String { frame["kind"] = type }
+        return frame
     }
 
     /// JSON array of all clusters, pushed to the Mac's own web editor each tick.
@@ -1461,8 +1498,9 @@ final class ConnectionHub: ObservableObject {
 
     func announceFromBridge(json: String) {
         guard let obj = decode(json) else { return }
-        lastBridgeAnnouncement = obj
-        submitBridgeFrame(obj)
+        let frame = Self.bridgeFrame(obj)
+        lastBridgeAnnouncement = frame
+        submitBridgeFrame(frame)
     }
 
     /// The hosting Mac is itself a local endpoint, so its editor frames are
@@ -1483,7 +1521,6 @@ final class ConnectionHub: ObservableObject {
             applySync(
                 program: Self.localProgram,
                 groupName: frame["groupName"] as? String ?? "",
-                groupType: frame["groupType"] as? String ?? "",
                 contribution: frame,
                 ts: frame["ts"] as? Double ?? 0
             )
@@ -1512,9 +1549,8 @@ final class ConnectionHub: ObservableObject {
 
     private func installBrokerClusterLocked(_ snapshot: [String: Any]) {
         guard let identifier = snapshot["id"] as? String,
-              let groupName = snapshot["groupName"] as? String,
-              let groupType = snapshot["groupType"] as? String else { return }
-        let cluster = ClusterState(id: identifier, groupName: groupName, groupType: groupType)
+              let groupName = snapshot["groupName"] as? String else { return }
+        let cluster = ClusterState(id: identifier, groupName: groupName)
         for member in (snapshot["members"] as? [[String: Any]] ?? []) {
             guard let program = member["program"] as? String else { continue }
             cluster.members.insert(program)
@@ -1524,8 +1560,7 @@ final class ConnectionHub: ObservableObject {
         if let shared = snapshot["shared"] as? [String: Any] {
             cluster.sharedScalars = shared["scalars"] as? [String: Any] ?? [:]
             cluster.sharedTs = (shared["ts"] as? NSNumber)?.doubleValue ?? 0
-            cluster.sharedSites = shared["sites"] as? [String] ?? []
-            cluster.sharedApps = shared["apps"] as? [[String: Any]] ?? []
+            cluster.sharedScopes = shared["scopes"] as? [[String: Any]] ?? []
             cluster.sharedUsageMs = (shared["usageMs"] as? NSNumber)?.doubleValue ?? 0
             cluster.sharedUsageResetAtMs = (shared["usageResetAtMs"] as? NSNumber)?.doubleValue ?? 0
             cluster.sharedBuckets = Self.parseBuckets(shared["usageBuckets"]) ?? [:]
@@ -1597,11 +1632,11 @@ final class ConnectionHub: ObservableObject {
             [
                 "id": c.id,
                 "groupName": c.groupName,
-                "groupType": c.groupType,
                 "members": Array(c.members),
                 "memberGroupIds": c.memberGroupIds,
                 "contributions": c.contributions,
                 "sharedScalars": c.sharedScalars,
+                "sharedScopes": c.sharedScopes,
                 "sharedTs": c.sharedTs,
                 "sharedSnooze": c.sharedSnooze,
                 "sharedSnoozeTs": c.sharedSnoozeTs,
@@ -1621,15 +1656,18 @@ final class ConnectionHub: ObservableObject {
               let arr = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else { return }
         for obj in arr {
             guard let id = obj["id"] as? String,
-                  let groupName = obj["groupName"] as? String,
-                  let groupType = obj["groupType"] as? String else { continue }
-            let cluster = ClusterState(id: id, groupName: groupName, groupType: groupType)
+                  let groupName = obj["groupName"] as? String else { continue }
+            // Registries written before 2026-09-24 carry a `groupType` and
+            // per-member sites/apps pools; both are ignored (the definition is
+            // re-shared by the members' next contribution).
+            let cluster = ClusterState(id: id, groupName: groupName)
             if let members = obj["members"] as? [String] { cluster.members = Set(members) }
             if let ids = obj["memberGroupIds"] as? [String: String] { cluster.memberGroupIds = ids }
             if let contributions = obj["contributions"] as? [String: [String: Any]] {
                 cluster.contributions = contributions
             }
             if let scalars = obj["sharedScalars"] as? [String: Any] { cluster.sharedScalars = scalars }
+            if let scopes = obj["sharedScopes"] as? [[String: Any]] { cluster.sharedScopes = scopes }
             cluster.sharedTs = (obj["sharedTs"] as? Double) ?? 0
             if let snooze = obj["sharedSnooze"] as? [String: Any] { cluster.sharedSnooze = snooze }
             cluster.sharedSnoozeTs = (obj["sharedSnoozeTs"] as? Double) ?? 0
@@ -1652,43 +1690,15 @@ final class ConnectionHub: ObservableObject {
         return set
     }
 
-    /// Caller must hold `lock`. Serializes a cluster including the shared state
-    /// and the union of owned lists (sites from browsers, apps from Macs).
+    /// Caller must hold `lock`. Serializes a cluster including the shared
+    /// definition (scalars + scope lines) and the shared runtime (usage, snooze).
     private func clusterJSONObject(_ cluster: ClusterState) -> [String: Any] {
-        var sites = Set(cluster.sharedSites)
-        // App pool keyed by display name → icon data URL. A non-empty icon from
-        // any member wins so a name contributed without an icon (legacy string)
-        // still picks up the icon when another member supplies it.
-        var appIcons: [String: String] = [:]
-        for entry in cluster.sharedApps {
-            guard let name = entry["name"] as? String, !name.isEmpty else { continue }
-            appIcons[name] = (entry["icon"] as? String) ?? ""
-        }
-        for contribution in cluster.contributions.values {
-            if let list = contribution["sites"] as? [String] { sites.formUnion(list) }
-            if let list = contribution["apps"] as? [[String: Any]] {
-                for entry in list {
-                    let name = (entry["name"] as? String) ?? ""
-                    guard !name.isEmpty else { continue }
-                    let icon = (entry["icon"] as? String) ?? ""
-                    if (appIcons[name] ?? "").isEmpty { appIcons[name] = icon }
-                }
-            } else if let list = contribution["apps"] as? [String] {
-                for name in list where !name.isEmpty {
-                    if appIcons[name] == nil { appIcons[name] = "" }
-                }
-            }
-        }
-        let appsArray: [[String: Any]] = appIcons.keys.sorted().map {
-            ["name": $0, "icon": appIcons[$0] ?? ""]
-        }
         let online = cluster.onlineMembers
         let allOnline = cluster.members.allSatisfy { online.contains($0) }
-        let hasShared = !cluster.sharedScalars.isEmpty || cluster.sharedTs > 0
+        let hasShared = !cluster.sharedScalars.isEmpty || !cluster.sharedScopes.isEmpty || cluster.sharedTs > 0
         var dict: [String: Any] = [
             "id": cluster.id,
             "groupName": cluster.groupName,
-            "groupType": cluster.groupType,
             "allOnline": allOnline,
             "members": cluster.members.sorted().map {
                 [
@@ -1699,21 +1709,23 @@ final class ConnectionHub: ObservableObject {
                 ] as [String: Any]
             }
         ]
-        if hasShared || !sites.isEmpty || !appsArray.isEmpty || cluster.sharedUsageMs > 0
+        if hasShared || cluster.sharedUsageMs > 0
             || !cluster.sharedBuckets.isEmpty
             || cluster.sharedSnoozeTs > 0 || cluster.sharedSnoozeTotalMs > 0 {
-            dict["shared"] = [
+            var shared: [String: Any] = [
                 "scalars": cluster.sharedScalars,
                 "ts": cluster.sharedTs,
-                "sites": sites.sorted(),
-                "apps": appsArray,
                 "usageMs": cluster.sharedUsageMs,
                 "usageResetAtMs": cluster.sharedUsageResetAtMs,
                 "usageBuckets": Self.bucketJSON(cluster.sharedBuckets),
                 "snooze": cluster.sharedSnooze,
                 "snoozeTs": cluster.sharedSnoozeTs,
                 "snoozeTotalMs": cluster.sharedSnoozeTotalMs
-            ] as [String: Any]
+            ]
+            // Lines appear once a member contributed them: an empty list is
+            // "nothing shared yet", which members must not adopt as a deletion.
+            if !cluster.sharedScopes.isEmpty { shared["scopes"] = cluster.sharedScopes }
+            dict["shared"] = shared
         }
         return dict
     }

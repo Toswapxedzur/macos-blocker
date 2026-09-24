@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title data-i18n="app.title">Screen Time Limiter: Custom Application Blocker & Focus Timer</title>
+    <title data-i18n="app.title">Adamancia Vault — Website Blocker & Focus Timer</title>
     <link rel="icon" media="(prefers-color-scheme: light)" href="icons/adamancia-vault-lock-v3-128.png" />
     <link rel="icon" media="(prefers-color-scheme: dark)" href="icons/adamancia-vault-lock-inverse-dark-128.png?v=20260712b" />
     <link rel="stylesheet" href="popup.css" />
@@ -12,12 +12,16 @@
     <main class="popup">
       <header class="hero">
         <div class="hero-topbar">
-          <nav class="scene-tabs" id="sceneTabs" aria-label="Scene">
+          <!-- Desktop host: scene switch (Vault / Classifier / Activity) replaces the title. -->
+          <nav class="scene-tabs desktop-only" id="sceneTabs" aria-label="Scene">
             <button type="button" class="scene-tab is-active" data-scene="vault" data-i18n="scene.vault">Vault</button>
             <button type="button" class="scene-tab" data-scene="classifier" data-i18n="scene.classifier">Classifier</button>
             <button type="button" class="scene-tab" data-scene="activity" data-i18n="scene.activity">Activity</button>
             <span class="scene-underline" aria-hidden="true"></span>
           </nav>
+          <div class="browser-only">
+            <h1 data-i18n="app.shortTitle">Adamancia Vault</h1>
+          </div>
           <div class="hero-actions">
             <button id="settingsButton" type="button" class="secondary" data-i18n="settings.button">
               Settings
@@ -94,6 +98,7 @@
             <div class="add-group-controls">
               <select id="addGroupType" aria-label="Block group type to add" data-i18n-aria-label="groups.addTypeAria">
                 <option value="site" data-i18n="groupType.site">Default</option>
+                <option value="platform" data-i18n="groupType.platform">Platform</option>
                 <option value="custom" data-i18n="groupType.custom">Custom</option>
               </select>
               <div class="add-group-buttons">
@@ -122,7 +127,7 @@
             <div>
               <h2 id="editorTitle" data-i18n="editor.title">Edit Group</h2>
               <p id="editorCopy" class="panel-copy" data-i18n="editor.copy">
-                Add the applications you want this group to block.
+                Add one website per line. Domains and full URLs are both accepted.
               </p>
               <p id="groupTypeSummary" class="panel-copy"></p>
             </div>
@@ -153,6 +158,7 @@
             <span data-i18n="editor.enableGroup">Enable this block group</span>
           </label>
 
+
           <div id="blockModeSection">
             <label class="label" for="blockMode" data-i18n="editor.blockMode">Blocking behavior</label>
             <select id="blockMode">
@@ -162,42 +168,88 @@
             </select>
           </div>
 
-          <!-- Redirection removed: app blocking has no URL to redirect to.
-               A hidden field is retained only so the shared editor pipeline
-               keeps working; it is always empty and ignored by enforcement. -->
-          <input id="fallbackUrl" type="hidden" value="" />
+          <div id="fallbackUrlSection">
+            <label class="label" for="fallbackUrl" data-i18n="filter.fallbackUrl">When blocked: redirect address or message</label>
+            <input
+              id="fallbackUrl"
+              type="text"
+              placeholder="https://example.com — or a message to show"
+              data-i18n-placeholder="filter.fallbackUrlPlaceholder"
+              spellcheck="false"
+            />
+            <p class="field-help" data-i18n="filter.fallbackUrlHelp">
+              A web address sends the blocked tab there. Any other text is shown on Vault's block page instead — a reminder, a quote, a motivation speech. Leave empty for the plain block.
+            </p>
+          </div>
+
+          <!-- Where the group applies: one chip per platform (and "Websites"
+               for its site list). The cards below edit the selected chip's
+               lines; the group acts on the union of every chip. -->
+          <section id="groupScopesSection" class="hidden">
+            <label class="label" for="groupScopesAdd" data-i18n="scopes.label">Applies to</label>
+            <div id="groupScopesList" class="site-chip-list" role="list"></div>
+            <select id="groupScopesAdd" class="scope-add-select"></select>
+          </section>
 
           <section id="siteSettingsSection">
-            <label class="label" data-i18n="apps.label">Blocked applications</label>
-            <p class="field-help" data-i18n="apps.help">
-              Add the applications you want this group to block. Click the plus tile to search your installed apps.
+            <label class="label" id="siteSettingsLabel" data-i18n="sites.label">Blocked websites</label>
+
+            <label class="checkbox-row compact" for="siteAllowlist">
+              <input id="siteAllowlist" type="checkbox" />
+              <span data-i18n="sites.allowlistLabel">Block everything except these sites</span>
+            </label>
+            <p class="field-help" data-i18n="sites.allowlistHelp">
+              When on, this group blocks the entire web except the sites listed below
+              (an allowlist). When off, it blocks only the listed sites.
             </p>
 
-            <!-- Hidden backing store: newline-free JSON array of { id, name }.
-                 The chips UI below is the editable surface; this field keeps the
-                 existing draft/autosave pipeline working unchanged. -->
-            <input id="blockedAppsData" type="hidden" />
+            <!-- Hidden backing store: newline-separated hostnames. The chip list
+                 below is the editable surface; this field keeps the existing
+                 draft / autosave / save pipeline working unchanged. -->
+            <textarea id="blockedSites" hidden></textarea>
 
-            <div id="blockedAppsList" class="app-chip-list" role="list"></div>
+            <div id="blockedSitesList" class="site-chip-list" role="list"></div>
+
+            <div id="siteAddPanel" class="site-add-panel hidden">
+              <textarea
+                id="siteAddInput"
+                rows="3"
+                placeholder="facebook.com&#10;youtube.com&#10;news.ycombinator.com"
+                data-i18n-placeholder="sites.placeholder"
+                spellcheck="false"
+              ></textarea>
+              <div class="site-add-actions">
+                <button id="siteAddCancelButton" type="button" class="secondary" data-i18n="sites.addCancel">
+                  Cancel
+                </button>
+                <button id="siteAddConfirmButton" type="button" data-i18n="sites.addConfirm">
+                  Add
+                </button>
+              </div>
+            </div>
 
             <div class="actions">
-              <button id="clearSitesButton" type="button" class="secondary danger" data-i18n="apps.clearButton">
-                Clear Apps
+              <button id="clearSitesButton" type="button" class="secondary danger" data-i18n="sites.clearButton">
+                Clear Sites
               </button>
             </div>
 
-            <!-- Read-only mirror of the blocked-list type owned by the linked
-                 browser (websites here on the Mac). Shown only for clustered
-                 Default groups; styled translucent because it is not editable
-                 from this side. -->
-            <div id="bridgeMirrorSection" class="bridge-mirror-section hidden">
-              <label class="label" id="bridgeMirrorLabel" data-i18n="connectionGroup.mirrorSites">
-                Blocked websites
-              </label>
-              <p class="field-help" id="bridgeMirrorHint" data-i18n="connectionGroup.mirrorSitesHint">
-                Managed on the linked app. Shown here read-only.
-              </p>
-              <div id="bridgeMirrorList" class="bridge-mirror-list" role="list"></div>
+          </section>
+
+          <!-- The Apps entry: desktop applications ({ id, name }). Editable only
+               in the desktop app (it knows the installed apps); read-only
+               chips here when a linked group carries the entry. -->
+          <section id="appsSettingsSection" class="hidden">
+            <label class="label" data-i18n="apps.label">Blocked applications</label>
+            <p id="appsHelp" class="field-help" data-i18n="apps.help">
+              Add the applications you want this group to block. Click the plus tile to search your installed apps.
+            </p>
+            <input id="blockedAppsData" type="hidden" />
+            <div id="blockedAppsList" class="app-chip-list" role="list"></div>
+            <div class="actions desktop-only">
+              <button id="clearAppsButton" type="button" class="secondary danger" data-i18n="apps.clearButton">
+                Clear Apps
+              </button>
             </div>
           </section>
 
@@ -252,6 +304,7 @@
               </div>
             </div>
 
+
             <div id="blockingRulesEditor" class="code-editor">
               <pre id="blockingRulesHighlight" class="code-editor-highlight" aria-hidden="true"></pre>
               <textarea
@@ -293,19 +346,6 @@
               </p>
             </div>
 
-            <details id="logFeedSection" class="log-feed">
-              <summary>
-                <span data-i18n="logFeed.title">Log</span>
-                <span id="logFeedCount" class="log-feed-count">0</span>
-              </summary>
-              <div class="log-feed-toolbar">
-                <button id="logFeedDownload" type="button" class="weird" title="Download logs" aria-label="Download logs">⬇</button>
-                <span class="log-feed-hint" data-i18n="logFeed.hint">Live feed of helpers.getLogHelper() output from every event dispatch.</span>
-                <button id="logFeedClear" type="button" class="weird" data-i18n="logFeed.clear">Clear</button>
-              </div>
-              <div id="logFeedList" class="log-feed-list" aria-live="polite"></div>
-              <p id="logFeedEmpty" class="log-feed-empty" data-i18n="logFeed.empty">No activity yet. Trigger an event (e.g. press Start Snooze, switch tabs, or click Run) to see logs here.</p>
-            </details>
           </section>
 
           <!-- Unified, data-driven platform-rules card. Which sub-blocks show
@@ -317,6 +357,17 @@
                 <h3 id="platformRulesTitle"></h3>
                 <p id="platformRulesCopy" class="section-copy"></p>
               </div>
+            </div>
+
+            <!-- Verified card/content controls. Kept immediately below the
+                 platform choice so each platform's actual available card
+                 controls are visible before author and feed-scope settings. -->
+            <div id="surfaceHidesSection" class="platform-fields hidden">
+              <label id="surfaceHidesTitle" class="label" data-i18n="surfaceHide.contentTitle">Content controls</label>
+              <p id="surfaceHidesHelp" class="field-help" data-i18n="surfaceHide.contentHelp">
+                Hide only the verified card types you choose. Combine controls to clear a feed.
+              </p>
+              <div id="surfaceHidesList" class="surface-hides-list"></div>
             </div>
 
             <!-- Creator / account fields (video platforms + Twitter/X) -->
@@ -348,47 +399,66 @@
                 <p id="platformVideoHelp" class="field-help"></p>
               </div>
 
+              <!-- Content-tag filter: block by what the Vault classifier tagged
+                   the content. Shown only for tag-compatible platforms. -->
               <label class="checkbox-row compact" for="platformBlockHomePage">
                 <input id="platformBlockHomePage" type="checkbox" />
                 <span data-i18n="filter.blockHomePage">Block home/feed pages</span>
               </label>
 
-              <!-- Redirection removed on macOS: "skip to next" was a
-                   redirect-style behavior. Hidden field retained only for
-                   pipeline stability. -->
-              <div id="skipToNextOnBlockRow" class="hidden">
-                <input id="skipToNextOnBlock" type="checkbox" hidden />
-              </div>
             </div>
 
-            <!-- Reddit (subreddit) fields -->
-            <div id="redditFields" class="platform-fields hidden">
-              <label class="label" for="redditMode" data-i18n="reddit.mode">Subreddit filter</label>
-              <select id="redditMode">
-                <option value="all" data-i18n="reddit.modeAll">Apply to all Reddit pages</option>
-                <option value="include" data-i18n="reddit.modeInclude">Apply to certain subreddits</option>
-                <option value="exclude" data-i18n="reddit.modeExclude">Apply to all except certain subreddits</option>
+            <!-- Content-tag filter: shown for any platform whose feed cards
+                 carry classifier tags (youtube, bilibili, reddit, …). Sibling
+                 of the per-platform field groups so it shows for all of them. -->
+            <div id="platformTagFields" class="platform-tag-fields hidden">
+              <label class="label" for="platformTagMode" data-i18n="tagFilter.mode">Content tag filter</label>
+              <select id="platformTagMode">
+                <option value="all" data-i18n="tagFilter.modeAll">Apply to all content</option>
+                <option value="include" data-i18n="tagFilter.modeInclude">Block certain tags</option>
+                <option value="exclude" data-i18n="tagFilter.modeExclude">Block all except certain tags</option>
               </select>
-
-              <label class="label" for="redditSubreddits" data-i18n="reddit.subreddits">Subreddits</label>
-              <textarea
-                id="redditSubreddits"
-                rows="6"
-                placeholder="productivity&#10;programming&#10;r/focus"
-                data-i18n-placeholder="reddit.subredditsPlaceholder"
-                spellcheck="false"
-              ></textarea>
-              <p class="field-help" data-i18n="reddit.help">
-                Use one subreddit per line. Plain names like `productivity` and paths like `r/productivity` are both accepted.
+              <p class="field-help" data-i18n="tagFilter.help">
+                Block videos by what the Vault classifier tagged them. One rule per line: "Gaming" · "Gaming @3" sets its own minimum confidence · "Gaming + Drama" needs both · "!Tutorial" is an exception.
               </p>
-
-              <label class="checkbox-row compact" for="redditBlockHomePage">
-                <input id="redditBlockHomePage" type="checkbox" />
-                <span data-i18n="filter.blockHomePage">Block home/feed pages</span>
-              </label>
-              <p class="field-help" data-i18n="filter.blockHomePageRedditHelp">
-                Blocks the Reddit home feed, r/popular, and r/all when enabled.
-              </p>
+              <div id="platformTagListBlock">
+                <label class="label" for="platformTags" data-i18n="tagFilter.tags">Tags</label>
+                <textarea
+                  id="platformTags"
+                  rows="4"
+                  placeholder="Gaming&#10;Drama @3"
+                  data-i18n-placeholder="tagFilter.tagsPlaceholder"
+                  spellcheck="false"
+                ></textarea>
+                <div id="platformTagSuggestions" class="tag-suggestions hidden"></div>
+                <div class="content-tag-row">
+                  <label class="label" for="platformTagDefaultConfidence" data-i18n="tagFilter.defaultConfidence">Default minimum confidence</label>
+                  <select id="platformTagDefaultConfidence">
+                    <option value="3">&#8805; 3</option>
+                    <option value="4" selected>&#8805; 4</option>
+                    <option value="5">&#8805; 5</option>
+                  </select>
+                </div>
+                <div class="content-tag-row">
+                  <label class="label" for="platformTagEffect" data-i18n="tagFilter.effect">When it matches</label>
+                  <select id="platformTagEffect">
+                    <option value="dim" data-i18n="tagFilter.effectDim">Black out the thumbnail (correctable)</option>
+                    <option value="block" data-i18n="tagFilter.effectHide">Hide the video entirely</option>
+                  </select>
+                </div>
+                <label class="checkbox-row compact" for="platformTagBlockPage">
+                  <input id="platformTagBlockPage" type="checkbox" checked />
+                  <span data-i18n="tagFilter.blockPage">Also black out a matching video's own page</span>
+                </label>
+                <label class="checkbox-row compact" for="platformTagCoverUntilTagged">
+                  <input id="platformTagCoverUntilTagged" type="checkbox" />
+                  <span data-i18n="tagFilter.coverUntilTagged">Cover content until it has been tagged</span>
+                </label>
+                <label id="platformTagBlockUntaggedRow" class="checkbox-row compact" for="platformTagBlockUntagged">
+                  <input id="platformTagBlockUntagged" type="checkbox" />
+                  <span data-i18n="tagFilter.blockUntagged">Also block content with no confident tag</span>
+                </label>
+              </div>
             </div>
 
             <!-- Discord (server/channel) fields -->
@@ -421,14 +491,6 @@
               </p>
             </div>
 
-            <!-- Hide elements (surface hides): chrome + content-type toggles -->
-            <div id="surfaceHidesSection" class="platform-fields hidden">
-              <label class="label" data-i18n="surfaceHide.title">Hide elements</label>
-              <p class="field-help" data-i18n="surfaceHide.help">
-                Hide specific buttons or content surfaces on this platform, independent of blocking.
-              </p>
-              <div id="surfaceHidesList" class="surface-hides-list"></div>
-            </div>
           </section>
 
           <section id="scheduleSection" class="section-card">
@@ -617,6 +679,7 @@
       </div>
     </div>
 
+    <!-- Desktop host only: the app-blocking permission gate and the app picker. -->
     <div id="permissionModal" class="modal hidden">
       <div class="modal-card">
         <h3 data-i18n="permission.title">Enable necessary control</h3>
@@ -627,107 +690,6 @@
           <button id="permissionCancelButton" type="button" class="secondary" data-i18n="permission.cancel">Cancel</button>
           <button id="permissionGrantButton" type="button" data-i18n="permission.grant">Grant access</button>
         </div>
-      </div>
-    </div>
-
-    <div id="manualModal" class="modal hidden">
-      <div class="modal-card manual-modal-card">
-        <div class="manual-modal-header">
-          <div>
-            <h3 data-i18n="manual.title">Instruction Manual</h3>
-            <p id="manualStatus" class="modal-copy" data-i18n="manual.loading">
-              Loading manual...
-            </p>
-          </div>
-          <button id="manualCloseButton" type="button" class="secondary" data-i18n="manual.close">
-            Close
-          </button>
-        </div>
-        <div id="manualContent" class="manual-content"></div>
-      </div>
-    </div>
-
-    <div id="settingsModal" class="modal hidden">
-      <div class="modal-card">
-        <div class="manual-modal-header">
-          <div>
-            <h3 data-i18n="settings.title">Global Settings</h3>
-            <p class="modal-copy" data-i18n="settings.copy">
-              These preferences apply across all block groups.
-            </p>
-          </div>
-          <button id="settingsCloseButton" type="button" class="secondary" data-i18n="manual.close">
-            Close
-          </button>
-        </div>
-
-        <div class="settings-grid">
-          <div>
-            <label class="label" for="settingsDefaultSnoozeMinutes" data-i18n="settings.defaultSnoozeMinutes">
-              Default snooze duration (minutes)
-            </label>
-            <input
-              id="settingsDefaultSnoozeMinutes"
-              type="number"
-              min="0.1"
-              step="0.1"
-              inputmode="decimal"
-              placeholder="30"
-              data-i18n-placeholder="settings.defaultSnoozeMinutesPlaceholder"
-            />
-            <p class="field-help" data-i18n="settings.defaultSnoozeMinutesHelp">
-              Snooze length used when creating new non-custom groups.
-            </p>
-          </div>
-        </div>
-
-        <section class="section-card settings-section-card">
-          <div class="section-header">
-            <div>
-              <h3 data-i18n="settings.localFolderTitle">Local File Folder</h3>
-              <p class="section-copy" data-i18n="settings.localFolderCopy">
-                Grant a folder for custom rules to read and write .txt, .csv, and .json files. Paths stay inside this folder.
-              </p>
-            </div>
-          </div>
-          <div class="field-actions">
-            <button id="localFolderChooseButton" type="button" class="secondary" data-i18n="settings.localFolderChoose">
-              Choose folder
-            </button>
-            <button id="localFolderRevokeButton" type="button" class="secondary danger" data-i18n="settings.localFolderRevoke">
-              Revoke folder
-            </button>
-          </div>
-          <p id="localFolderStatus" class="field-help" data-i18n="settings.localFolderStatusNone">
-            No folder connected.
-          </p>
-        </section>
-
-        <section class="section-card settings-section-card">
-          <div class="section-header">
-            <div>
-              <h3 data-i18n="settings.deviceControlTitle">Device Control</h3>
-              <p id="deviceControlCopy" class="section-copy" data-i18n="settings.deviceControlCopyMissing">
-                App blocking needs Accessibility permission. Grant it so blocking can run.
-              </p>
-            </div>
-          </div>
-          <div class="field-actions">
-            <button id="deviceControlButton" type="button" class="secondary" data-i18n="settings.deviceControlManage">
-              Manage permission
-            </button>
-          </div>
-          <p id="deviceControlStatus" class="field-help" data-i18n="settings.deviceControlStatusMissing">
-            Accessibility permission missing. App blocking cannot run.
-          </p>
-        </section>
-
-        <div class="modal-actions">
-          <button id="settingsResetButton" type="button" class="secondary danger" data-i18n="settings.reset">
-            Reset to defaults
-          </button>
-        </div>
-        <p id="settingsStatus" class="inline-warning"></p>
       </div>
     </div>
 
@@ -759,17 +721,166 @@
       </div>
     </div>
 
-    <!--
-      macosBlocker port: chrome-shim.js MUST load first. It defines a minimal
-      chrome.* surface (storage/runtime/permissions/i18n) backed by
-      localStorage and a native WKWebView bridge so the unmodified editor
-      runs outside a Chrome extension.
-    -->
+    <div id="manualModal" class="modal hidden">
+      <div class="modal-card manual-modal-card">
+        <div class="manual-modal-header">
+          <div>
+            <h3 data-i18n="manual.title">Instruction Manual</h3>
+            <p id="manualStatus" class="modal-copy" data-i18n="manual.loading">
+              Loading manual...
+            </p>
+          </div>
+          <button id="manualCloseButton" type="button" class="secondary" data-i18n="manual.close">
+            Close
+          </button>
+        </div>
+        <div id="manualContent" class="manual-content"></div>
+      </div>
+    </div>
+
+    <div id="settingsModal" class="modal hidden">
+      <div class="modal-card settings-modal-card">
+        <div class="manual-modal-header">
+          <div>
+            <h3 data-i18n="settings.title">Global Settings</h3>
+            <p class="modal-copy" data-i18n="settings.copy">
+              These preferences apply across all block groups.
+            </p>
+          </div>
+          <button id="settingsCloseButton" type="button" class="secondary" data-i18n="manual.close">
+            Close
+          </button>
+        </div>
+
+        <div class="settings-body">
+          <div class="settings-cols">
+            <section class="settings-col">
+              <h4 class="settings-col-title" data-i18n="settings.colBehavior">Behavior</h4>
+        <div class="settings-grid">
+          <div>
+            <label class="label" for="settingsDefaultSnoozeMinutes" data-i18n="settings.defaultSnoozeMinutes">
+              Default snooze duration (minutes)
+            </label>
+            <input
+              id="settingsDefaultSnoozeMinutes"
+              type="number"
+              min="0.1"
+              step="0.1"
+              inputmode="decimal"
+              placeholder="30"
+              data-i18n-placeholder="settings.defaultSnoozeMinutesPlaceholder"
+            />
+            <p class="field-help" data-i18n="settings.defaultSnoozeMinutesHelp">
+              Snooze length used when creating new non-custom groups.
+            </p>
+          </div>
+
+        </div>
+
+            </section>
+
+            <section class="settings-col">
+              <h4 class="settings-col-title" data-i18n="settings.colConnections">Data &amp; files</h4>
+
+        <section id="classifierBridgeSection" class="section-card settings-section-card browser-only">
+          <div class="section-header">
+            <div>
+              <h3 data-i18n="classifierBridge.title">Vault Classifier</h3>
+            </div>
+          </div>
+          <label class="checkbox-row compact" for="classifierCollectionToggle">
+            <input id="classifierCollectionToggle" type="checkbox" checked />
+            <span data-i18n="classifierBridge.collection">Collect supported platform entries</span>
+          </label>
+          <p class="field-help" data-i18n="classifierBridge.collectionHelp">
+            Only rendered public content is sent while collection is on. Ads and page entries are not retained by the extension.
+          </p>
+          <label class="label" for="classifierTaggingMode" data-i18n="classifierBridge.taggingMode">Tag videos</label>
+          <select id="classifierTaggingMode">
+            <option value="whenFiltering" data-i18n="classifierBridge.taggingWhenFiltering">Only while a tag filter is active</option>
+            <option value="always" data-i18n="classifierBridge.taggingAlways">Always</option>
+            <option value="paused" data-i18n="classifierBridge.taggingPaused">Paused</option>
+          </select>
+          <p class="field-help" data-i18n="classifierBridge.taggingModeHelp">
+            Tagging runs the local model. "Only while a tag filter is active" follows your groups' schedules, so nothing runs outside the hours you block. Paused: tag filters see everything as untagged.
+          </p>
+          <details id="logFeedSection" class="log-feed">
+            <summary>
+              <span data-i18n="logFeed.title">Log</span>
+              <span id="logFeedCount" class="log-feed-count">0</span>
+            </summary>
+            <div class="log-feed-toolbar">
+              <button id="logFeedDownload" type="button" class="weird" title="Download logs" aria-label="Download logs">⬇</button>
+              <span class="log-feed-hint" data-i18n="logFeed.hint">Live feed of helpers.getLogHelper() output from every event dispatch.</span>
+              <button id="logFeedClear" type="button" class="weird" data-i18n="logFeed.clear">Clear</button>
+            </div>
+            <div id="logFeedList" class="log-feed-list" aria-live="polite"></div>
+            <p id="logFeedEmpty" class="log-feed-empty" data-i18n="logFeed.empty">No activity yet. Trigger an event (e.g. press Start Snooze, switch tabs, or click Run) to see logs here.</p>
+          </details>
+        </section>
+
+        <section class="section-card settings-section-card">
+          <div class="section-header">
+            <div>
+              <h3 data-i18n="settings.localFolderTitle">Local File Folder</h3>
+              <p class="section-copy" data-i18n="settings.localFolderCopy">
+                Grant a folder for custom rules to read and write .txt, .csv, and .json files. Paths stay inside this folder.
+              </p>
+            </div>
+          </div>
+          <div class="field-actions">
+            <button id="localFolderChooseButton" type="button" class="secondary" data-i18n="settings.localFolderChoose">
+              Choose folder
+            </button>
+            <button id="localFolderRevokeButton" type="button" class="secondary danger" data-i18n="settings.localFolderRevoke">
+              Revoke folder
+            </button>
+          </div>
+          <p id="localFolderStatus" class="field-help" data-i18n="settings.localFolderStatusNone">
+            No folder connected.
+          </p>
+        </section>
+            </section>
+          </div>
+        </div>
+
+        <section class="section-card settings-section-card desktop-only">
+          <div class="section-header">
+            <div>
+              <h3 data-i18n="settings.deviceControlTitle">Device Control</h3>
+              <p id="deviceControlCopy" class="section-copy" data-i18n="settings.deviceControlCopyMissing">
+                App blocking needs Accessibility permission. Grant it so blocking can run.
+              </p>
+            </div>
+          </div>
+          <div class="field-actions">
+            <button id="deviceControlButton" type="button" class="secondary" data-i18n="settings.deviceControlManage">
+              Manage permission
+            </button>
+          </div>
+          <p id="deviceControlStatus" class="field-help" data-i18n="settings.deviceControlStatusMissing">
+            Accessibility permission missing. App blocking cannot run.
+          </p>
+        </section>
+
+        <div class="modal-actions">
+          <button id="settingsResetButton" type="button" class="secondary danger" data-i18n="settings.reset">
+            Reset to defaults
+          </button>
+        </div>
+        <p id="settingsStatus" class="inline-warning"></p>
+      </div>
+    </div>
+
+    <!-- Mac Vault: chrome-shim.js provides chrome.* over the native bridge; it must load first. -->
     <script src="chrome-shim.js"></script>
+    <script src="browser-compat.js"></script>
     <script src="bridge-protocol.js"></script>
     <script src="platform-profiles.js"></script>
+    <script src="group-scopes.js"></script>
     <script src="translations.js"></script>
     <script src="popup-markdown.js"></script>
+    <script src="custom-rule-ai-reference.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>
