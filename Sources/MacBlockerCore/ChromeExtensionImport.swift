@@ -34,8 +34,17 @@ public enum ChromeExtensionImporter {
         let groupType = BlockGroupType(rawValue: string(object["groupType"]) ?? "site") ?? .site
         let id = string(object["id"]) ?? UUID().uuidString
         let scheduleText = string(object["timeWindowsText"]) ?? ""
-        let sites = (object["sites"] as? [Any] ?? [])
-            .compactMap { normalizeHost(string($0)) }
+        // The extension scopes an entry to a path when it carries one
+        // ("youtube.com/shorts"). This app blocks whole hosts, so such an
+        // entry is skipped (with a warning) rather than widened to its host.
+        let siteStrings = (object["sites"] as? [Any] ?? []).compactMap { string($0) }
+        let pathScoped = siteStrings.filter { isPathScopedSite($0) }
+        if !pathScoped.isEmpty {
+            warnings.append("\(string(object["name"]) ?? id): path-scoped site entries apply only in the browser extension and were skipped: \(pathScoped.joined(separator: ", "))")
+        }
+        let sites = siteStrings
+            .filter { !isPathScopedSite($0) }
+            .compactMap { normalizeHost($0) }
             .map {
                 BlockTarget(
                     kind: .webDomain,
@@ -155,6 +164,17 @@ public enum ChromeExtensionImporter {
     /// Normalizes a user-typed site/URL to a bare host (scheme- and `www.`-
     /// stripped, lowercased) for enforcement and for `GroupStore` dedupe. Kept
     /// module-internal so there is one normalization, not a drifting copy.
+    /// True when a site entry names a path under its host ("youtube.com/shorts",
+    /// "https://reddit.com/r/all/"): the extension scopes such entries to that
+    /// path, which a host-level blocker cannot express.
+    static func isPathScopedSite(_ value: String) -> Bool {
+        var text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.contains("://") { text = "https://" + text }
+        guard let url = URL(string: text) else { return false }
+        let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return !path.isEmpty
+    }
+
     static func normalizeHost(_ value: String?) -> String? {
         guard var value = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
               !value.isEmpty
