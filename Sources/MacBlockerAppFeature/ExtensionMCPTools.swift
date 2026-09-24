@@ -93,7 +93,7 @@ public enum ExtensionMCPTools {
             },
             MCPTool(
                 name: "extension_set_global",
-                description: "Patch the extension's global settings (popup ▸ Settings): debugMode (bool; also enables the content-script trace), showOnPageLogToasts (bool), tickRateMs (100–10000), autosaveDebounceMs (0–10000), defaultSnoozeMinutes (> 0), defaultFallbackUrl (string). Sanitized the way the popup's save is.",
+                description: "Patch the extension's global settings (popup ▸ Settings): debugMode (bool; also enables the content-script trace), showOnPageLogToasts (bool), tickRateMs (100–10000), autosaveDebounceMs (0–10000), defaultSnoozeMinutes (> 0). Sanitized the way the popup's save is.",
                 inputSchema: [
                     "type": "object",
                     "properties": ["patch": ["type": "object", "description": "Global settings fields to change."], "browser": browserProperty],
