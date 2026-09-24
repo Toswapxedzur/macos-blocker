@@ -374,8 +374,6 @@ const templateApplyButton = document.getElementById("templateApplyButton");
 const settingsButton = document.getElementById("settingsButton");
 const settingsModal = document.getElementById("settingsModal");
 const settingsCloseButton = document.getElementById("settingsCloseButton");
-const settingsAutosaveDebounceField = document.getElementById("settingsAutosaveDebounce");
-const settingsDebugModeField = document.getElementById("settingsDebugMode");
 const settingsDefaultSnoozeMinutesField = document.getElementById("settingsDefaultSnoozeMinutes");
 const localFolderChooseButton = document.getElementById("localFolderChooseButton");
 const localFolderRevokeButton = document.getElementById("localFolderRevokeButton");
@@ -1294,8 +1292,6 @@ function syncAllClusters() {
 
 function syncSettingsFormFromState() {
   const s = state.globalSettings || DEFAULT_GLOBAL_SETTINGS;
-  if (settingsAutosaveDebounceField) settingsAutosaveDebounceField.value = String(s.autosaveDebounceMs);
-  if (settingsDebugModeField) settingsDebugModeField.checked = Boolean(s.debugMode);
   if (settingsDefaultSnoozeMinutesField) settingsDefaultSnoozeMinutesField.value = String(s.defaultSnoozeMinutes);
   if (settingsStatus) settingsStatus.textContent = "";
 }
@@ -1318,8 +1314,10 @@ function closeSettings() {
 
 async function saveSettingsFromForm() {
   const draft = {
-    autosaveDebounceMs: settingsAutosaveDebounceField?.value,
-    debugMode: settingsDebugModeField?.checked ?? false,
+    // Dev/engine values are no longer surfaced in the UI (debug + debounce are
+    // dev-only / fixed defaults); carry the stored values through a save.
+    autosaveDebounceMs: state.globalSettings?.autosaveDebounceMs,
+    debugMode: state.globalSettings?.debugMode,
     defaultSnoozeMinutes: settingsDefaultSnoozeMinutesField?.value
   };
   const sanitized = sanitizeGlobalSettings(draft);
@@ -7047,8 +7045,6 @@ if (settingsModal) {
 // Global settings auto-save: persist on every committed edit (no Save button).
 {
   const settingsAutoSaveFields = [
-    settingsAutosaveDebounceField,
-    settingsDebugModeField,
     settingsDefaultSnoozeMinutesField
   ];
   const autoSaveSettings = () => {
