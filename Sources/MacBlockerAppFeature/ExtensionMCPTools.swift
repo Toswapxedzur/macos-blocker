@@ -35,7 +35,7 @@ public enum ExtensionMCPTools {
     static let waitSeconds = 35.0
 
     public static func tools(bridge: Bridge = .liveHub) -> [MCPTool] {
-        let browserProperty: [String: Any] = ["type": "string", "description": "Which connected browser (chrome, edge, brave, …); required only when more than one is connected."]
+        let browserProperty: [String: Any] = ["type": "string", "description": "Which connected browser: a program name (chrome, edge, brave, …) or a peer id from vault_status when two instances of one program are connected; required only when more than one browser is connected."]
         return [
             MCPTool(
                 name: "extension_state",
@@ -156,6 +156,10 @@ public enum ExtensionMCPTools {
     }
 
     static func explain(_ reason: String) -> String {
+        if reason.hasPrefix("browser-ambiguous: ") {
+            let choices = reason.dropFirst("browser-ambiguous: ".count)
+            return "more than one browser is connected; pass 'browser' as one of: \(choices)."
+        }
         switch reason {
         case "browser-unavailable": return "no browser with the Vault extension is connected to Mac Vault."
         case "browser-ambiguous": return "more than one browser is connected; pass 'browser'."

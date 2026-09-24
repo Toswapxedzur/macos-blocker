@@ -11,13 +11,23 @@ private let nativeHostEnvironment = VaultRuntimeEnvironment.development
 private let nativeHostEnvironment = VaultRuntimeEnvironment.production
 #endif
 private let nativeHostOrigin = nativeHostEnvironment.chromeExtensionOrigin
-private let allowedParentIdentifiers: Set<String> = [
-    "com.google.Chrome", "com.google.Chrome.helper",
-    "com.microsoft.edgemac", "com.microsoft.edgemac.helper",
-    "org.chromium.Chromium", "org.chromium.Chromium.helper",
-    "com.brave.Browser", "com.brave.Browser.helper",
-    "com.operasoftware.Opera", "com.operasoftware.Opera.helper",
-]
+private let allowedParentIdentifiers: Set<String> = {
+    var identifiers: Set<String> = [
+        "com.google.Chrome", "com.google.Chrome.helper",
+        "com.microsoft.edgemac", "com.microsoft.edgemac.helper",
+        "org.chromium.Chromium", "org.chromium.Chromium.helper",
+        "com.brave.Browser", "com.brave.Browser.helper",
+        "com.operasoftware.Opera", "com.operasoftware.Opera.helper",
+    ]
+    // Development builds also serve the automation browsers the test rigs drive
+    // (Chrome for Testing, and the ad-hoc-signed Chromium that Playwright ships,
+    // whose code identifier is the bare "Chromium"). The development host only
+    // ever answers the development extension origin and the development hub.
+    if nativeHostEnvironment == .development {
+        identifiers.formUnion(["com.google.chrome.for.testing", "com.google.chrome.for.testing.helper", "Chromium", "Chromium Helper"])
+    }
+    return identifiers
+}()
 
 @main
 struct VaultLocalHubNativeHost {
@@ -58,7 +68,7 @@ struct VaultLocalHubNativeHost {
         var code: SecStaticCode?
         guard SecStaticCodeCreateWithPath(URL(fileURLWithPath: String(cString: path)) as CFURL, [], &code) == errSecSuccess,
               let code,
-              SecStaticCodeCheckValidity(code, [], nil) == errSecSuccess else {
+              isValidParentCode(code) else {
             return false
         }
         var information: CFDictionary?
@@ -68,6 +78,16 @@ struct VaultLocalHubNativeHost {
             return false
         }
         return allowedParentIdentifiers.contains(identifier)
+    }
+
+    /// Production requires a fully sealed, valid signature. Development builds
+    /// also accept a parent whose signature is valid but whose bundle carries no
+    /// resource seal: the ad-hoc, linker-signed Chromium that Playwright ships
+    /// fails the sealed check with errSecCSUnsealedFrameworkRoot (-67056).
+    private static func isValidParentCode(_ code: SecStaticCode) -> Bool {
+        if SecStaticCodeCheckValidity(code, [], nil) == errSecSuccess { return true }
+        guard nativeHostEnvironment == .development else { return false }
+        return SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSDoNotValidateResources), nil) == errSecSuccess
     }
 
     private static func readFrame() -> Data? {

@@ -901,9 +901,13 @@ final class ConnectionHub: ObservableObject {
             completion(.failure("browser-relay-requires-host"))
             return
         }
+        // `targetProgram` names a browser program (chrome, edge, …) or, when two
+        // instances of the same program are connected (the owner's Chrome and a
+        // test rig's Chromium), one peer id.
         let browsers = peers.values.filter {
             $0.connected && Self.browserPrograms.contains($0.program)
-                && (targetProgram == nil || $0.program == targetProgram)
+                && (targetProgram == nil || $0.program == targetProgram
+                    || $0.id.caseInsensitiveCompare(targetProgram ?? "") == .orderedSame)
         }
         guard let target = browsers.first else {
             lock.unlock()
@@ -913,8 +917,9 @@ final class ConnectionHub: ObservableObject {
         // With two browsers connected the caller must name one, so a request is
         // never silently answered by an arbitrary browser.
         guard browsers.count == 1 else {
+            let choices = browsers.map { "\($0.program) \($0.id)" }.sorted().joined(separator: ", ")
             lock.unlock()
-            completion(.failure("browser-ambiguous"))
+            completion(.failure("browser-ambiguous: \(choices)"))
             return
         }
         guard browserRequests.count < Self.maxBrowserRequests else {
