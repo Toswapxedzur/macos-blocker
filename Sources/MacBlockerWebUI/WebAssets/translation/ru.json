@@ -37,8 +37,6 @@
   "settings.localFolderTitle": "Локальная папка файлов",
   "settings.localFolderCopy": "Разрешите папку, чтобы правила читали и записывали .txt, .csv и .json внутри неё.",
   "settings.localFolderChoose": "Выбрать папку",
-  "settings.localFolderReveal": "Показать в Finder",
-  "settings.localFolderStatusManaged": "Подключено — с помощью управляемой папки приложения (Поддержка приложений › MacBlocker › LocalFiles).",
   "settings.localFolderRevoke": "Отозвать папку",
   "settings.localFolderStatusNone": "Папка не подключена.",
   "settings.localFolderStatusConnected": "Подключенная папка: {name}",

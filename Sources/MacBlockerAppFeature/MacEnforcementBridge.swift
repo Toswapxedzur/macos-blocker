@@ -839,17 +839,10 @@ public final class MacEnforcementBridge: ObservableObject {
 
     // MARK: - Local File I/O
 
-    private lazy var localFileBroker: LocalFileBroker = {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let folder = appSupport
-            .appendingPathComponent(
-                VaultRuntimeEnvironment.current.localFilesDirectoryName,
-                isDirectory: true
-            )
-            .appendingPathComponent("LocalFiles", isDirectory: true)
-        return LocalFileBroker(baseURL: folder)
-    }()
-
+    /// Custom-rule file I/O is rooted at the user-granted folder (`LocalFolderGrant`),
+    /// matching the browser extension's "choose a folder" model: with no folder
+    /// granted every operation fails `local-folder-not-available` until the user
+    /// picks one in Settings.
     private func processLocalFileIntent(_ intent: WindowIntent) {
         guard let groupId = intent.groupId, !groupId.isEmpty,
               let requestId = intent.requestId, !requestId.isEmpty else { return }
@@ -857,12 +850,27 @@ public final class MacEnforcementBridge: ObservableObject {
         let path = intent.path ?? ""
 
         Task { @MainActor in
-            let resultData = localFileBroker.handle(
-                action: action,
-                path: path,
-                text: intent.text,
-                requestID: requestId
-            )
+            let resultData: [String: String]
+            if let folder = LocalFolderGrant.resolvedFolderURL() {
+                let scoped = folder.startAccessingSecurityScopedResource()
+                defer { if scoped { folder.stopAccessingSecurityScopedResource() } }
+                resultData = LocalFileBroker(baseURL: folder).handle(
+                    action: action,
+                    path: path,
+                    text: intent.text,
+                    requestID: requestId
+                )
+            } else {
+                resultData = [
+                    "ok": "false",
+                    "eventName": "error",
+                    "action": action,
+                    "path": path,
+                    "directoryPath": "",
+                    "requestId": requestId,
+                    "error": "local-folder-not-available"
+                ]
+            }
             fireLocalFileEvent(groupID: groupId, data: resultData)
         }
     }

@@ -37,8 +37,6 @@
   "settings.localFolderTitle": "Lokale bestandsmap",
   "settings.localFolderCopy": "Sta een map toe zodat regels .txt-, .csv- en .json-bestanden daarin kunnen lezen en schrijven.",
   "settings.localFolderChoose": "Map kiezen",
-  "settings.localFolderReveal": "Onthul in Finder",
-  "settings.localFolderStatusManaged": "Verbonden — met behulp van de beheerde map van de app (Applicatieondersteuning › MacBlocker › LocalFiles).",
   "settings.localFolderRevoke": "Map intrekken",
   "settings.localFolderStatusNone": "Geen map verbonden.",
   "settings.localFolderStatusConnected": "Verbonden map: {name}",

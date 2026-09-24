@@ -37,8 +37,6 @@
   "settings.localFolderTitle": "ਲੋਕਲ ਫ਼ਾਇਲ ਫੋਲਡਰ",
   "settings.localFolderCopy": "ਨਿਯਮਾਂ ਨੂੰ .txt, .csv ਅਤੇ .json ਪੜ੍ਹਣ/ਲਿਖਣ ਲਈ ਇੱਕ ਫੋਲਡਰ ਦਿਓ।",
   "settings.localFolderChoose": "ਫੋਲਡਰ ਚੁਣੋ",
-  "settings.localFolderReveal": "ਫਾਈਂਡਰ ਵਿੱਚ ਪ੍ਰਗਟ ਕਰੋ",
-  "settings.localFolderStatusManaged": "ਕਨੈਕਟ ਕੀਤਾ — ਐਪ ਦੇ ਪ੍ਰਬੰਧਿਤ ਫੋਲਡਰ ਦੀ ਵਰਤੋਂ ਕਰਦੇ ਹੋਏ (ਐਪਲੀਕੇਸ਼ਨ ਸਪੋਰਟ › MacBlocker › LocalFiles)।",
   "settings.localFolderRevoke": "ਫੋਲਡਰ ਵਾਪਸ ਲਓ",
   "settings.localFolderStatusNone": "ਕੋਈ ਫੋਲਡਰ ਜੁੜਿਆ ਨਹੀਂ।",
   "settings.localFolderStatusConnected": "ਜੁੜਿਆ ਫੋਲਡਰ: {name}",

@@ -37,8 +37,6 @@
   "settings.localFolderTitle": "โฟลเดอร์ไฟล์ในเครื่อง",
   "settings.localFolderCopy": "อนุญาตโฟลเดอร์ให้กฎอ่านและเขียนไฟล์ .txt, .csv และ .json ภายในนั้น",
   "settings.localFolderChoose": "เลือกโฟลเดอร์",
-  "settings.localFolderReveal": "เปิดเผยใน Finder",
-  "settings.localFolderStatusManaged": "เชื่อมต่อแล้ว — ใช้โฟลเดอร์ที่ได้รับการจัดการของแอป (รองรับแอปพลิเคชัน › MacBlocker › LocalFiles)",
   "settings.localFolderRevoke": "ถอนสิทธิ์โฟลเดอร์",
   "settings.localFolderStatusNone": "ไม่มีโฟลเดอร์ที่เชื่อมต่อ",
   "settings.localFolderStatusConnected": "โฟลเดอร์ที่เชื่อมต่อ: {name}",

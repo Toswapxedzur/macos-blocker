@@ -37,8 +37,6 @@
   "settings.localFolderTitle": "স্থানীয় ফাইল ফোল্ডার",
   "settings.localFolderCopy": "নিয়মগুলোকে .txt, .csv ও .json পড়া/লেখার জন্য একটি ফোল্ডার দিন।",
   "settings.localFolderChoose": "ফোল্ডার নির্বাচন করুন",
-  "settings.localFolderReveal": "ফাইন্ডারে প্রকাশ করুন",
-  "settings.localFolderStatusManaged": "সংযুক্ত — অ্যাপের পরিচালিত ফোল্ডার ব্যবহার করে (অ্যাপ্লিকেশন সমর্থন › MacBlocker › LocalFiles)।",
   "settings.localFolderRevoke": "ফোল্ডার প্রত্যাহার করুন",
   "settings.localFolderStatusNone": "কোনো ফোল্ডার যুক্ত নেই।",
   "settings.localFolderStatusConnected": "যুক্ত ফোল্ডার: {name}",

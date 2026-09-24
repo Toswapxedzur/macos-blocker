@@ -37,8 +37,6 @@
   "settings.localFolderTitle": "مجلد ملفات محلي",
   "settings.localFolderCopy": "اسمح بمجلد لتقرأ القواعد وتكتب ملفات .txt و.csv و.json داخله.",
   "settings.localFolderChoose": "اختيار مجلد",
-  "settings.localFolderReveal": "كشف في الباحث",
-  "settings.localFolderStatusManaged": "متصل - باستخدام المجلد المُدار للتطبيق (دعم التطبيقات › MacBlocker › LocalFiles).",
   "settings.localFolderRevoke": "إلغاء المجلد",
   "settings.localFolderStatusNone": "لا يوجد مجلد متصل.",
   "settings.localFolderStatusConnected": "المجلد المتصل: {name}",
