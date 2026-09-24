@@ -50,6 +50,13 @@ final class ConnectionHubProtocolTests: XCTestCase {
         )
     }
 
+    func testASecondInstanceOfABrowserIsRefusedWhileTheFirstIsConnected() {
+        XCTAssertTrue(ConnectionHub.isDuplicateBrowser("chrome", connectedPrograms: ["classifier", "chrome"]))
+        XCTAssertFalse(ConnectionHub.isDuplicateBrowser("edge", connectedPrograms: ["classifier", "chrome"]))
+        XCTAssertFalse(ConnectionHub.isDuplicateBrowser("chrome", connectedPrograms: ["classifier"]), "after the first drops, the next hello wins")
+        XCTAssertFalse(ConnectionHub.isDuplicateBrowser("classifier", connectedPrograms: ["classifier"]), "the classifier is not a browser")
+    }
+
     func testAuthenticatedClassifierPeerMayJoinTheSharedBroker() throws {
         XCTAssertNil(ConnectionHub.helloRejectionReason(
             try authenticatedHello(program: "classifier"),

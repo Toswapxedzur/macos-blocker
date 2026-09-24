@@ -114,6 +114,17 @@ final class ConnectionHub: ObservableObject {
         return nil
     }
 
+    /// One connection per browser (owner 2026-09-25): a second instance of a
+    /// browser program (two Chromes, a test rig beside the real browser) is
+    /// refused while the first is connected, so two instances can never take
+    /// turns overwriting each other's roster and contributions. A dead first
+    /// connection is dropped by the ping timeout, after which the next hello
+    /// wins. The classifier is not a browser and is exempt.
+    static func isDuplicateBrowser(_ program: String, connectedPrograms: [String]) -> Bool {
+        guard program != "classifier" else { return false }
+        return connectedPrograms.contains(program)
+    }
+
     static func classifierRequestRejectionReason(_ obj: [String: Any]) -> String? {
         guard let requestID = obj["requestID"] as? String,
               isVisibleBridgeIdentifier(requestID, maximumLength: 128),
@@ -625,9 +636,17 @@ final class ConnectionHub: ObservableObject {
             }
             let program = (obj["program"] as? String) ?? "browser"
             lock.lock()
-            peers[key]?.program = program
-            peers[key]?.connected = true
+            let connectedPrograms = peers.values.filter { $0.connected }.map(\.program)
+            let duplicate = Self.isDuplicateBrowser(program, connectedPrograms: connectedPrograms)
+            if !duplicate {
+                peers[key]?.program = program
+                peers[key]?.connected = true
+            }
             lock.unlock()
+            if duplicate {
+                rejectAndClose(conn, reason: "duplicate-program")
+                return
+            }
             send(conn, dict: [
                 "kind": "welcome",
                 "v": Self.protocolVersion,
