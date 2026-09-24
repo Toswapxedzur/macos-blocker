@@ -115,7 +115,7 @@ final class MCPServerTests: XCTestCase {
             "jsonrpc": "2.0", "id": 3, "method": "tools/call",
             "params": ["name": "add_website", "arguments": ["id": "g1", "host": "news.ycombinator.com"]],
         ])
-        XCTAssertEqual((store.load().group(id: "g1")?["sites"] as? [String])?.contains("news.ycombinator.com"), true)
+        XCTAssertEqual(WebStoreDocument.sites(of: try XCTUnwrap(store.load().group(id: "g1"))).contains("news.ycombinator.com"), true)
 
         // An unknown group id is a tool error (isError), not a protocol error.
         let errRes = try XCTUnwrap(s.handle([

@@ -38,13 +38,9 @@ public enum ChromeExtensionImporter {
         // ("youtube.com/shorts"). This app blocks whole hosts, so such an
         // entry is skipped (with a warning) rather than widened to its host.
         // A stored group carries its website list as a "site" scope line
-        // ({surface: "site", sites, sitesExcept}) since 2026-09-24, and may
-        // name platforms besides; older stores and flat exports carry `sites`
-        // at the top level. Read both.
-        let scopeSites = (object["scopes"] as? [[String: Any]] ?? [])
-            .filter { string($0["surface"]) == "site" }
-            .flatMap { ($0["sites"] as? [Any] ?? []).compactMap { string($0) } }
-        let siteStrings = (object["sites"] as? [Any] ?? []).compactMap { string($0) } + scopeSites
+        // since 2026-09-24 (older stores: a top-level `sites`); it may name
+        // platforms and an app list besides.
+        let siteStrings = WebStoreDocument.sites(of: object)
         let pathScoped = siteStrings.filter { isPathScopedSite($0) }
         if !pathScoped.isEmpty {
             warnings.append("\(string(object["name"]) ?? id): path-scoped site entries apply only in the browser extension and were skipped: \(pathScoped.joined(separator: ", "))")
@@ -64,7 +60,8 @@ public enum ChromeExtensionImporter {
         // Default Block Mode now blocks native applications. Each app entry is
         // { id: <bundleIdentifier>, name: <displayName> } and maps to an
         // application BlockTarget keyed on its bundle id.
-        let apps = (object["apps"] as? [[String: Any]] ?? [])
+        // Apps live in the group's "apps" scope line (older stores: top-level).
+        let apps = WebStoreDocument.apps(of: object)
             .compactMap { entry -> BlockTarget? in
                 guard let bundleID = string(entry["id"])?
                     .trimmingCharacters(in: .whitespacesAndNewlines),

@@ -177,7 +177,54 @@ public struct WebStoreDocument {
         try mutateGroup(id: id) { $0["name"] = trimmed }
     }
 
-    /// Adds a website to a group's `sites`, idempotently. Dedupe compares
+    /// Since 2026-09-24 a group's website list and app list are scope lines
+    /// ({surface: "site", sites, sitesExcept} / {surface: "apps", apps}), the
+    /// same shape the extension stores. A mutation edits that line, creating it
+    /// when missing and folding a legacy top-level `sites` / `apps` field into
+    /// it on the way (older stores written by the previous editor).
+    private static func mutateScopeLine(
+        _ group: inout [String: Any],
+        surface: String,
+        _ body: (inout [String: Any]) -> Void
+    ) {
+        var scopes = group["scopes"] as? [[String: Any]] ?? []
+        var index = scopes.firstIndex { ($0["surface"] as? String) == surface }
+        if index == nil {
+            var line: [String: Any] = ["id": "\(surface)-1", "surface": surface, "platform": NSNull(), "action": "block"]
+            if surface == "site" {
+                line["sites"] = group["sites"] as? [String] ?? []
+                line["sitesExcept"] = (group["allowlist"] as? Bool) ?? false
+            } else {
+                line["apps"] = group["apps"] as? [[String: Any]] ?? []
+            }
+            scopes.append(line)
+            index = scopes.count - 1
+        }
+        body(&scopes[index!])
+        group["scopes"] = scopes
+        group.removeValue(forKey: surface == "site" ? "sites" : "apps")
+        if surface == "site" { group.removeValue(forKey: "allowlist") }
+    }
+
+    /// The website list of a stored group (its site line, else a legacy field).
+    public static func sites(of group: [String: Any]) -> [String] {
+        let scopes = group["scopes"] as? [[String: Any]] ?? []
+        if let line = scopes.first(where: { ($0["surface"] as? String) == "site" }) {
+            return line["sites"] as? [String] ?? []
+        }
+        return group["sites"] as? [String] ?? []
+    }
+
+    /// The app list of a stored group (its apps line, else a legacy field).
+    public static func apps(of group: [String: Any]) -> [[String: Any]] {
+        let scopes = group["scopes"] as? [[String: Any]] ?? []
+        if let line = scopes.first(where: { ($0["surface"] as? String) == "apps" }) {
+            return line["apps"] as? [[String: Any]] ?? []
+        }
+        return group["apps"] as? [[String: Any]] ?? []
+    }
+
+    /// Adds a website to a group's Websites entry, idempotently. Dedupe compares
     /// normalized hosts (the same normalization enforcement uses) so `www.x.com`,
     /// `x.com`, and `https://x.com/p` are one entry; the caller's original text is
     /// stored so the editor still shows what the user typed.
@@ -186,14 +233,16 @@ public struct WebStoreDocument {
         guard !trimmed.isEmpty else { throw GroupStoreError.invalidInput("host") }
         let key = ChromeExtensionImporter.normalizeHost(trimmed)
         try mutateGroup(id: id) { group in
-            var sites = group["sites"] as? [String] ?? []
-            let alreadyPresent = sites.contains {
-                if let key { return ChromeExtensionImporter.normalizeHost($0) == key }
-                return $0 == trimmed
+            Self.mutateScopeLine(&group, surface: "site") { line in
+                var sites = line["sites"] as? [String] ?? []
+                let alreadyPresent = sites.contains {
+                    if let key { return ChromeExtensionImporter.normalizeHost($0) == key }
+                    return $0 == trimmed
+                }
+                guard !alreadyPresent else { return }
+                sites.append(trimmed)
+                line["sites"] = sites
             }
-            guard !alreadyPresent else { return }
-            sites.append(trimmed)
-            group["sites"] = sites
         }
     }
 
@@ -201,32 +250,38 @@ public struct WebStoreDocument {
         let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
         let key = ChromeExtensionImporter.normalizeHost(trimmed) ?? trimmed
         try mutateGroup(id: id) { group in
-            guard var sites = group["sites"] as? [String] else { return }
-            sites.removeAll { (ChromeExtensionImporter.normalizeHost($0) ?? $0) == key }
-            group["sites"] = sites
+            Self.mutateScopeLine(&group, surface: "site") { line in
+                var sites = line["sites"] as? [String] ?? []
+                sites.removeAll { (ChromeExtensionImporter.normalizeHost($0) ?? $0) == key }
+                line["sites"] = sites
+            }
         }
     }
 
     /// Adds an application target `{ id: <bundleId>, name: <displayName> }` to a
-    /// group's `apps`, idempotently by bundle id.
+    /// group's Apps entry, idempotently by bundle id.
     public mutating func addApplication(id: String, bundleID: String, name: String?) throws {
         let bundle = bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !bundle.isEmpty else { throw GroupStoreError.invalidInput("bundleID") }
         let display = name?.trimmingCharacters(in: .whitespacesAndNewlines)
         try mutateGroup(id: id) { group in
-            var apps = group["apps"] as? [[String: Any]] ?? []
-            guard !apps.contains(where: { ($0["id"] as? String) == bundle }) else { return }
-            apps.append(["id": bundle, "name": (display?.isEmpty == false) ? display! : bundle])
-            group["apps"] = apps
+            Self.mutateScopeLine(&group, surface: "apps") { line in
+                var apps = line["apps"] as? [[String: Any]] ?? []
+                guard !apps.contains(where: { ($0["id"] as? String) == bundle }) else { return }
+                apps.append(["id": bundle, "name": (display?.isEmpty == false) ? display! : bundle])
+                line["apps"] = apps
+            }
         }
     }
 
     public mutating func removeApplication(id: String, bundleID: String) throws {
         let bundle = bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
         try mutateGroup(id: id) { group in
-            guard var apps = group["apps"] as? [[String: Any]] else { return }
-            apps.removeAll { ($0["id"] as? String) == bundle }
-            group["apps"] = apps
+            Self.mutateScopeLine(&group, surface: "apps") { line in
+                var apps = line["apps"] as? [[String: Any]] ?? []
+                apps.removeAll { ($0["id"] as? String) == bundle }
+                line["apps"] = apps
+            }
         }
     }
 

@@ -103,11 +103,12 @@ final class GroupStoreTests: XCTestCase {
         // Same host as the seeded "https://www.example.com/path".
         try document.addWebsite(id: "g1", host: "example.com")
         try document.addWebsite(id: "g1", host: "https://www.example.com")
-        var sites = try XCTUnwrap(document.group(id: "g1")?["sites"] as? [String])
+        var sites = WebStoreDocument.sites(of: try XCTUnwrap(document.group(id: "g1")))
         XCTAssertEqual(sites.count, 1, "normalized-duplicate hosts must not stack")
+        XCTAssertNil(document.group(id: "g1")?["sites"], "the legacy top-level list is folded into the site line")
 
         try document.addWebsite(id: "g1", host: "news.ycombinator.com")
-        sites = try XCTUnwrap(document.group(id: "g1")?["sites"] as? [String])
+        sites = WebStoreDocument.sites(of: try XCTUnwrap(document.group(id: "g1")))
         XCTAssertEqual(sites.count, 2)
         XCTAssertTrue(sites.contains("news.ycombinator.com"))
     }
@@ -115,24 +116,24 @@ final class GroupStoreTests: XCTestCase {
     func testRemoveWebsiteMatchesByNormalizedHost() throws {
         var document = WebStoreDocument(raw: sampleEnvelope())
         try document.removeWebsite(id: "g1", host: "https://example.com")
-        let sites = try XCTUnwrap(document.group(id: "g1")?["sites"] as? [String])
+        let sites = WebStoreDocument.sites(of: try XCTUnwrap(document.group(id: "g1")))
         XCTAssertTrue(sites.isEmpty)
     }
 
     func testAddRemoveApplication() throws {
         var document = WebStoreDocument(raw: sampleEnvelope())
         try document.addApplication(id: "g1", bundleID: "com.apple.Safari", name: "Safari")
-        var apps = try XCTUnwrap(document.group(id: "g1")?["apps"] as? [[String: Any]])
+        var apps = WebStoreDocument.apps(of: try XCTUnwrap(document.group(id: "g1")))
         XCTAssertEqual(apps.count, 1, "duplicate bundle id must not stack")
 
         try document.addApplication(id: "g1", bundleID: "com.tinyspeck.slackmacgap", name: nil)
-        apps = try XCTUnwrap(document.group(id: "g1")?["apps"] as? [[String: Any]])
+        apps = WebStoreDocument.apps(of: try XCTUnwrap(document.group(id: "g1")))
         XCTAssertEqual(apps.count, 2)
         let slack = try XCTUnwrap(apps.first { ($0["id"] as? String) == "com.tinyspeck.slackmacgap" })
         XCTAssertEqual(slack["name"] as? String, "com.tinyspeck.slackmacgap") // falls back to id
 
         try document.removeApplication(id: "g1", bundleID: "com.apple.Safari")
-        apps = try XCTUnwrap(document.group(id: "g1")?["apps"] as? [[String: Any]])
+        apps = WebStoreDocument.apps(of: try XCTUnwrap(document.group(id: "g1")))
         XCTAssertEqual(apps.map { $0["id"] as? String }, ["com.tinyspeck.slackmacgap"])
     }
 

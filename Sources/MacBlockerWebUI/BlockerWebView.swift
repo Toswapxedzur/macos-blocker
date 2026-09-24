@@ -57,7 +57,7 @@ public struct BlockerWebView: _CBViewRepresentable {
     private let clustersJSON: (() -> String?)?
     /// Web announced this Mac's eligible groups (JSON {program, groups}).
     private let onGroupsAnnounce: ((String) -> Void)?
-    /// Web pushed this group's syncable settings (JSON {groupName, groupType, ts, scalars, sites?, apps?, usageMs, usageResetAtMs}).
+    /// Web pushed this group's shared definition (JSON {groupName, ts, scalars, scopes, snooze…}).
     private let onGroupSync: ((String) -> Void)?
 
     public init(

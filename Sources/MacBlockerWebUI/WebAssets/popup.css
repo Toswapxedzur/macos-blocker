@@ -7,7 +7,9 @@
   --navy-100: #eef2ff;
   --navy-ring: rgba(30, 58, 138, 0.18);
 
-  /* Gold / yellow accent for custom/AI/experimental surfaces. */
+  /* Gold / yellow accent for custom/AI/experimental surfaces. A true golden
+     amber rather than the old olive-brown, for better synergy with the cream
+     gold-50/100/200 tints. */
   --gold-700: #ca8a04;
   --gold-200: #fde68a;
   --gold-100: #fef3c7;
@@ -103,49 +105,6 @@ h2 {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-}
-
-/* Scene switch (Vault / Classifier / Activity) — three text labels with a
-   sliding blue underline. Borderless; the underline is the only chrome. */
-.scene-tabs {
-  position: relative;
-  display: flex;
-  align-items: flex-end;
-  gap: 24px;
-  padding-bottom: 8px;
-}
-.scene-tab {
-  appearance: none;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  margin: 0;
-  font: inherit;
-  font-size: 22px;
-  font-weight: 700;
-  line-height: 1.1;
-  letter-spacing: -0.01em;
-  color: #94a3b8;
-  cursor: pointer;
-  transition: color 0.2s ease;
-}
-.scene-tab:hover {
-  color: #64748b;
-}
-.scene-tab.is-active {
-  color: #1f2937;
-}
-.scene-underline {
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  height: 3px;
-  width: 0;
-  border-radius: 3px;
-  background: #2563eb;
-  transform: translateX(0);
-  transition: transform 0.26s cubic-bezier(0.4, 0, 0.2, 1),
-    width 0.26s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .language-picker {
@@ -398,11 +357,7 @@ textarea {
   border: none;
   border-radius: 10px;
   box-sizing: border-box;
-  /* Inherit only the family (Arial), NOT the full `font` shorthand. Using
-     `font: inherit` here reset the size back to the inherited 16px and
-     clobbered the 12px rule above, which is why control text rendered too big
-     in WKWebView. */
-  font-family: inherit;
+  font: inherit;
   background: #ffffff;
   box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.45);
 }
@@ -414,32 +369,6 @@ textarea {
 
 input[type="text"] {
   margin-bottom: 12px;
-}
-
-/* Normalize <select> across WebKit. Without this the native macOS control
-   takes over: it ignores our padding/border-radius/box-shadow and renders at a
-   different height, which is what made the dropdowns look "weird" and the
-   sizing inconsistent next to text inputs. Reset the appearance and draw our
-   own chevron so selects match the rest of the form controls. */
-select {
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  appearance: none;
-  padding-right: 34px;
-  cursor: pointer;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4.5l4 4 4-4' stroke='%23475569' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 12px center;
-  background-size: 12px 12px;
-}
-
-select::-ms-expand {
-  display: none;
-}
-
-.language-picker select {
-  padding-right: 30px;
-  background-position: right 9px center;
 }
 
 input[type="text"]:focus,
@@ -693,74 +622,6 @@ textarea:focus {
    translucent + non-interactive so it is visibly "view only" on this side, and
    styled identically on every platform so a linked Default group looks the
    same in the browser and the Mac app. */
-.bridge-mirror-section {
-  margin-top: 12px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--gold-50);
-  box-shadow: inset 3px 0 0 var(--gold-700);
-  opacity: 0.62;
-  pointer-events: none;
-  filter: saturate(0.85);
-}
-
-.bridge-mirror-section .label {
-  margin-bottom: 2px;
-}
-
-.bridge-mirror-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.bridge-mirror-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  padding: 5px 10px;
-  border-radius: 999px;
-  background: #ffffff;
-  box-shadow: inset 0 0 0 1px rgba(161, 98, 7, 0.35);
-  color: var(--gold-text);
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.bridge-mirror-icon {
-  flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  object-fit: contain;
-}
-
-.bridge-mirror-monogram {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--gold-200);
-  color: var(--gold-text);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.bridge-mirror-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.bridge-mirror-empty {
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--gold-text);
-}
-
 .ai-prompt-panel {
   margin-top: 10px;
   padding: 10px;
@@ -836,9 +697,6 @@ textarea:focus {
 .code-editor-highlight,
 #blockingRules {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  /* Both layers MUST share an identical size or the highlight overlay drifts
-     out of alignment with the transparent textarea text underneath it. */
-  font-size: 12px;
   line-height: 1.55;
   tab-size: 2;
 }
@@ -952,6 +810,13 @@ textarea:focus {
   color: color-mix(in srgb, var(--cyan-text) 34%, #334155);
 }
 
+.platform-rule-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+  margin: 0 0 14px;
+}
+
 #platformRulesCard select:focus,
 #platformRulesCard textarea:focus {
   outline: none;
@@ -1045,17 +910,22 @@ textarea:focus {
 }
 
 .surface-hides-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 8px;
   margin-top: 6px;
 }
 
 .surface-hide-row {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 10px;
   font-weight: 700;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--cyan-text) 18%, white);
+  border-radius: 10px;
+  background: color-mix(in srgb, white 72%, var(--cyan-surface));
 }
 
 .surface-hide-row input[type="checkbox"] {
@@ -1334,71 +1204,42 @@ textarea:disabled {
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.22);
 }
 
-/* Keep the existing Mac controls, but give Settings the same spacious
-   three-column shell as the extension. The grid is presentation-only: each
-   control keeps its original DOM position and behavior. */
-#settingsModal .modal-card {
-  width: min(1100px, 100%);
-  max-height: min(90vh, 880px);
+.contribution-consent-card {
+  width: min(560px, 100%);
+}
+
+.contribution-consent-eyebrow {
+  margin: 0 0 8px;
+  color: #3159a6;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.contribution-consent-list {
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid #dbe5f5;
+}
+
+.contribution-consent-list li {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  grid-template-rows: auto auto auto 1fr auto auto;
-  gap: 14px;
-  overflow: auto;
+  grid-template-columns: minmax(116px, auto) 1fr;
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 1px solid #dbe5f5;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
-#settingsModal .manual-modal-header,
-#settingsModal .modal-actions,
-#settingsModal #settingsStatus {
-  grid-column: 1 / -1;
+.contribution-consent-list strong {
+  color: #172554;
 }
 
-#settingsModal .manual-modal-header {
-  margin: 0;
-  padding-bottom: 14px;
-  border-bottom: 1px solid #e2e8f0;
-}
-
-#settingsModal .settings-grid {
-  grid-column: 1;
-  align-self: start;
-  grid-template-columns: 1fr;
-  margin: 0;
-}
-
-#settingsModal > .modal-card > label[for="settingsDebugMode"],
-#settingsModal > .modal-card > label[for="settingsDebugMode"] + .field-help {
-  grid-column: 1;
-  margin: 0;
-}
-
-#settingsModal > .modal-card > .settings-section-card:nth-of-type(1) {
-  grid-column: 2;
-  grid-row: 2;
-  margin: 0;
-}
-
-#settingsModal > .modal-card > .settings-section-card:nth-of-type(2) {
-  grid-column: 3;
-  grid-row: 2;
-  margin: 0;
-}
-
-#settingsModal .modal-actions {
-  margin: 0;
-  padding-top: 14px;
-  border-top: 1px solid #e2e8f0;
-}
-
-@media (max-width: 900px) {
-  #settingsModal .modal-card {
-    display: flex;
-    max-height: min(90vh, 880px);
-  }
-
-  #settingsModal > .modal-card > .settings-section-card {
-    margin-top: 14px;
-  }
+.contribution-consent-actions {
+  margin-top: 18px;
 }
 
 .manual-modal-card {
@@ -1409,10 +1250,67 @@ textarea:disabled {
   overflow: hidden;
 }
 
-.manual-modal-header {
+/* Settings: three horizontal, independently-scrollable sub-panels. */
+.settings-modal-card {
+  width: min(1100px, 100%);
+  max-height: min(90vh, 880px);
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.settings-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+}
+
+.settings-cols {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.settings-col {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 10px 12px 2px;
+  border-right: 1px solid var(--border, #e2e8f0);
+  scrollbar-width: thin;
+}
+
+.settings-col:last-child {
+  border-right: none;
+}
+
+.settings-col-title {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted, #64748b);
+  position: sticky;
+  top: 0;
+  background: #ffffff;
+  padding: 2px 0 6px;
+  z-index: 1;
+}
+
+/* In a narrow column, the 2-up grid collapses to a single column. */
+.settings-col .settings-grid {
+  grid-template-columns: 1fr;
+}
+
+.settings-col .settings-section-card {
+  margin-top: 14px;
+}
+
   gap: 12px;
   margin-bottom: 12px;
 }
@@ -1686,73 +1584,74 @@ code {
   display: none;
 }
 
-/* ----- Blocked applications (app blocker) ----- */
+/* ----- Blocked-site chips ----- */
 
-.app-chip-list {
+.site-chip-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
   margin-top: 8px;
   align-content: flex-start;
 }
 
-.app-chip {
+.site-chip {
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px 8px 8px;
+  gap: 6px;
+  padding: 3px 9px 3px 6px;
   background: #ffffff;
-  border-radius: 12px;
+  border-radius: 9px;
   box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.45);
-  max-width: 220px;
-  transition: box-shadow 120ms ease, transform 120ms ease;
+  transition: box-shadow 120ms ease;
 }
 
-.app-chip:hover {
-  box-shadow: inset 0 0 0 1px var(--navy-300), 0 6px 16px rgba(30, 58, 138, 0.12);
+.site-chip:hover {
+  box-shadow: inset 0 0 0 1px var(--navy-300), 0 4px 12px rgba(30, 58, 138, 0.12);
 }
 
-.app-chip-icon {
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
+/* "Applies to" chips: the selected platform's lines are the ones the cards edit. */
+.site-chip.scope-chip {
+  cursor: pointer;
+}
+
+.site-chip.scope-chip.active {
+  background: var(--navy-100);
+  box-shadow: inset 0 0 0 1.5px var(--navy-700);
+}
+
+.scope-add-select {
+  margin-top: 8px;
+}
+
+.site-chip-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
   flex: 0 0 auto;
   object-fit: contain;
 }
 
-.app-chip-monogram {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--navy-100);
-  color: var(--navy-700);
-  font-weight: 700;
-  font-size: 14px;
-}
-
-.app-chip-name {
+.site-chip-name {
   font-size: 12px;
   font-weight: 600;
   color: #1f2937;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.app-chip-remove {
+.site-chip-remove {
   position: absolute;
-  top: -7px;
-  right: -7px;
-  width: 20px;
-  height: 20px;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
   min-width: 0;
   padding: 0;
   border-radius: 999px;
   border: none;
-  background: var(--red-text, #991b1b);
+  background: var(--red-text);
   color: #ffffff;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1;
   display: none;
   align-items: center;
@@ -1761,62 +1660,226 @@ code {
   cursor: pointer;
 }
 
-.app-chip:hover .app-chip-remove,
-.app-chip:focus-within .app-chip-remove {
+.site-chip:hover .site-chip-remove,
+.site-chip:focus-within .site-chip-remove {
   display: inline-flex;
 }
 
-.app-chip-add {
+.site-chip-add {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 46px;
-  height: 46px;
+  width: 28px;
+  height: 28px;
   min-width: 0;
   padding: 0;
-  border-radius: 12px;
+  border-radius: 9px;
   border: 1.5px dashed rgba(30, 58, 138, 0.4);
   background: var(--navy-100);
   color: var(--navy-700);
-  font-size: 24px;
+  font-size: 18px;
   line-height: 1;
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
 }
 
-.app-chip-add:hover:not(:disabled) {
+.site-chip-add:hover:not(:disabled) {
   background: #dbeafe;
   border-color: var(--navy-700);
   transform: translateY(-1px);
 }
 
-.app-chip-add:disabled {
+.site-chip-add:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 
+.site-add-panel {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.site-add-panel.hidden {
+  display: none;
+}
+
+.site-add-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Content-tag filter (platform rules). */
+.platform-tag-fields {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--navy-100, #eef2ff);
+}
+
+/* Classifier tag-name suggestions under a tag-list textarea. */
+.tag-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.tag-suggestions .tag-suggestions-label {
+  flex-basis: 100%;
+  font-size: 11px;
+  opacity: 0.7;
+}
+.tag-suggestions button {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  opacity: 0.75;
+  cursor: pointer;
+}
+.tag-suggestions button:hover,
+.tag-suggestions button:focus-visible {
+  opacity: 1;
+}
+.tag-suggestions button.used {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* The tag filter's option checkboxes stack, one per line. */
+#platformTagListBlock > .checkbox-row.compact {
+  display: flex;
+  width: 100%;
+  margin: 0 0 6px;
+}
+
+/* Vault Classifier reachability indicator (functional gap #1). */
+.classifier-status {
+  align-self: center;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.classifier-status:empty { display: none; }
+.classifier-status::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.classifier-status.is-online { color: #157347; background: #e6f4ea; }
+.classifier-status.is-offline { color: #b02a37; background: #fbe9eb; }
+.classifier-status-help { color: #b02a37; margin-top: 6px; }
+
+/* ── Desktop host ────────────────────────────────────────────────────────────
+   The desktop app hosts this same editor in a web view. `.desktop-only`
+   markup (scene tabs, Apps entry controls, permission gate, Device Control)
+   shows only there; `.browser-only` markup only in a browser. */
+body:not(.is-native-desktop) .desktop-only {
+  display: none !important;
+}
+
+body.is-native-desktop .browser-only {
+  display: none !important;
+}
+
+/* Scene switch (Vault / Classifier / Activity) — three text labels with a
+   sliding blue underline. Borderless; the underline is the only chrome. */
+.scene-tabs {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 24px;
+  padding-bottom: 8px;
+}
+.scene-tab {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+.scene-tab:hover {
+  color: #64748b;
+}
+.scene-tab.is-active {
+  color: #1f2937;
+}
+.scene-underline {
+.app-chip-list {
+  gap: 10px;
+.app-chip {
+  gap: 8px;
+  padding: 8px 12px 8px 8px;
+  border-radius: 12px;
+  max-width: 220px;
+  transition: box-shadow 120ms ease, transform 120ms ease;
+.app-chip:hover {
+  box-shadow: inset 0 0 0 1px var(--navy-300), 0 6px 16px rgba(30, 58, 138, 0.12);
+.app-chip-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  flex: 0 0 auto;
+  object-fit: contain;
+.app-chip-monogram {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--navy-700);
+  font-weight: 700;
+  font-size: 14px;
+.app-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+.app-chip-remove {
+  top: -7px;
+  right: -7px;
+  width: 20px;
+  height: 20px;
+  background: var(--red-text, #991b1b);
+  font-size: 14px;
+.app-chip:hover .app-chip-remove,
+.app-chip:focus-within .app-chip-remove {
+.app-chip-add {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  font-size: 24px;
+.app-chip-add:hover:not(:disabled) {
+.app-chip-add:disabled {
 /* ----- App picker modal ----- */
 
 .app-picker-card {
   width: min(520px, 100%);
   max-height: min(82vh, 720px);
-  display: flex;
-  flex-direction: column;
   overflow: hidden;
-}
-
 #appPickerSearch {
   margin: 4px 0 12px;
-}
-
 .app-picker-results {
   overflow-y: auto;
-  display: flex;
   flex-direction: column;
   gap: 6px;
   padding-right: 4px;
-}
-
 .app-picker-row {
   display: flex;
   align-items: center;
@@ -1830,18 +1893,14 @@ code {
   box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.35);
   cursor: pointer;
   transition: background 120ms ease, box-shadow 120ms ease;
-}
-
 .app-picker-row:hover {
   background: #eef2ff;
   box-shadow: inset 0 0 0 1px var(--navy-300);
 }
 
 .app-picker-row-text {
-  display: flex;
   flex-direction: column;
   min-width: 0;
-}
 
 .app-picker-row-name {
   font-size: 13px;
@@ -1850,102 +1909,6 @@ code {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
 
 .app-picker-row-id {
-  font-size: 11px;
-  color: #64748b;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
-/* AI Tool Connections (MCP) list: icon + name + activate/deactivate switch. */
-.mcp-connectors-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 10px;
-}
-.mcp-connector-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 9px 12px;
-  border: 1px solid var(--navy-ring);
-  border-radius: 12px;
-  background: #ffffff;
-}
-.mcp-connector-icon {
-  width: 30px;
-  height: 30px;
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 7px;
-  overflow: hidden;
-}
-.mcp-connector-icon img {
-  width: 30px;
-  height: 30px;
-  border-radius: 7px;
-  display: block;
-}
-.mcp-connector-icon.is-fallback {
-  background: var(--navy-100);
-  color: var(--navy-700);
-  font-weight: 700;
-  font-size: 14px;
-}
-.mcp-connector-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-weight: 600;
-  color: #0f172a;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.mcp-switch {
-  position: relative;
-  display: inline-block;
-  width: 42px;
-  height: 24px;
-  flex: none;
-  cursor: pointer;
-}
-.mcp-switch input {
-  position: absolute;
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-.mcp-switch-track {
-  position: absolute;
-  inset: 0;
-  background: #cbd5e1;
-  border-radius: 999px;
-  transition: background 0.15s ease;
-}
-.mcp-switch-track::before {
-  content: "";
-  position: absolute;
-  height: 18px;
-  width: 18px;
-  left: 3px;
-  top: 3px;
-  background: #ffffff;
-  border-radius: 50%;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.25);
-  transition: transform 0.15s ease;
-}
-.mcp-switch input:checked + .mcp-switch-track {
-  background: var(--navy-700);
-}
-.mcp-switch input:checked + .mcp-switch-track::before {
-  transform: translateX(18px);
-}
-.mcp-switch input:focus-visible + .mcp-switch-track {
-  box-shadow: 0 0 0 3px var(--navy-ring);
-}
