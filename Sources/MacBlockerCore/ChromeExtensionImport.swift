@@ -37,7 +37,14 @@ public enum ChromeExtensionImporter {
         // The extension scopes an entry to a path when it carries one
         // ("youtube.com/shorts"). This app blocks whole hosts, so such an
         // entry is skipped (with a warning) rather than widened to its host.
-        let siteStrings = (object["sites"] as? [Any] ?? []).compactMap { string($0) }
+        // A stored group carries its website list as a "site" scope line
+        // ({surface: "site", sites, sitesExcept}) since 2026-09-24, and may
+        // name platforms besides; older stores and flat exports carry `sites`
+        // at the top level. Read both.
+        let scopeSites = (object["scopes"] as? [[String: Any]] ?? [])
+            .filter { string($0["surface"]) == "site" }
+            .flatMap { ($0["sites"] as? [Any] ?? []).compactMap { string($0) } }
+        let siteStrings = (object["sites"] as? [Any] ?? []).compactMap { string($0) } + scopeSites
         let pathScoped = siteStrings.filter { isPathScopedSite($0) }
         if !pathScoped.isEmpty {
             warnings.append("\(string(object["name"]) ?? id): path-scoped site entries apply only in the browser extension and were skipped: \(pathScoped.joined(separator: ", "))")

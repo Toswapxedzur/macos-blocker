@@ -27,6 +27,32 @@ final class ChromeExtensionImporterTests: XCTestCase {
         XCTAssertEqual(result.groups[0].timeWindows.count, 1)
     }
 
+    func testImportsSiteLineFromScopes() throws {
+        // The scoped shape (policy + lines): the site list lives in a "site" line
+        // and the group may name platforms as well.
+        let json = """
+        [
+          {
+            "id": "group-2",
+            "groupType": "youtube",
+            "name": "Union",
+            "enabled": true,
+            "mode": "instant",
+            "scopes": [
+              {"id": "items-1", "surface": "items", "platform": "youtube", "action": "hide", "form": "all", "sourceMode": "all", "sources": [], "tagFilter": null},
+              {"id": "site-1", "surface": "site", "platform": null, "action": "block", "sites": ["example.com", "news.ycombinator.com/best"], "sitesExcept": false}
+            ]
+          }
+        ]
+        """.data(using: .utf8)!
+
+        let result = try ChromeExtensionImporter.importGroups(from: json)
+
+        XCTAssertEqual(result.groups.count, 1)
+        XCTAssertEqual(result.groups[0].targets.map(\.normalizedValue), ["example.com"])
+        XCTAssertTrue(result.warnings.contains { $0.contains("path-scoped") })
+    }
+
     func testImportsFractionalIntervalAndResetFlags() throws {
         let json = """
         [{"id": "g", "groupType": "site", "mode": "after-minutes", "allowedMinutes": 7.5,
