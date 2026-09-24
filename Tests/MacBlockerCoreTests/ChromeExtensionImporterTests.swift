@@ -11,7 +11,7 @@ final class ChromeExtensionImporterTests: XCTestCase {
             "name": "Blocked Sites",
             "enabled": true,
             "mode": "instant",
-            "sites": ["https://www.example.com/path"],
+            "sites": ["https://www.example.com/", "https://www.example.com/docs"],
             "activeDays": ["monday", "tuesday"],
             "timeWindowsText": "0900-1000"
           }
@@ -21,7 +21,8 @@ final class ChromeExtensionImporterTests: XCTestCase {
         let result = try ChromeExtensionImporter.importGroups(from: json)
 
         XCTAssertEqual(result.groups.count, 1)
-        XCTAssertEqual(result.groups[0].targets.first?.normalizedValue, "example.com")
+        XCTAssertEqual(result.groups[0].targets.map(\.normalizedValue), ["example.com"], "the path-scoped entry is skipped, not widened to its host")
+        XCTAssertTrue(result.warnings.contains { $0.contains("path-scoped") && $0.contains("example.com/docs") })
         XCTAssertEqual(result.groups[0].activeDays, [.monday, .tuesday])
         XCTAssertEqual(result.groups[0].timeWindows.count, 1)
     }
