@@ -21,6 +21,12 @@ final class ExtensionMCPToolsTests: XCTestCase {
         return (try XCTUnwrap((result["content"] as? [[String: Any]])?.first?["text"] as? String), result["isError"] as? Bool ?? false)
     }
 
+    func testAmbiguousBrowserErrorListsTheChoices() {
+        let text = ExtensionMCPTools.explain("browser-ambiguous: chrome AAAA, chrome BBBB")
+        XCTAssertEqual(text, "more than one browser is connected; pass 'browser' as one of: chrome AAAA, chrome BBBB.")
+        XCTAssertEqual(ExtensionMCPTools.explain("browser-unavailable"), "no browser with the Vault extension is connected to Mac Vault.")
+    }
+
     func testToolsAreAdvertised() throws {
         let (server, _) = makeServer { _, _ in .success([:]) }
         let res = try XCTUnwrap(server.handle(["jsonrpc": "2.0", "id": 1, "method": "tools/list"]))
