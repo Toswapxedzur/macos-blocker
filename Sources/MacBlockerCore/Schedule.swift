@@ -50,11 +50,26 @@ public struct TimeWindow: Codable, Equatable, Sendable {
         self.end = end
     }
 
+    /// A window whose end is before its start (e.g. 2300-0100) runs past midnight
+    /// into the next day. Start == end is never a valid window.
+    public var crossesMidnight: Bool {
+        end < start
+    }
+
+    /// Time-of-day membership, ignoring which day the window belongs to. A
+    /// window crossing midnight covers [start, 24:00) and [00:00, end).
     public func contains(_ date: Date, calendar: Calendar = .current) -> Bool {
+        let current = Self.minutesSinceMidnight(date, calendar: calendar)
+        if crossesMidnight {
+            return current >= start.minutesSinceMidnight || current < end.minutesSinceMidnight
+        }
+        return current >= start.minutesSinceMidnight && current < end.minutesSinceMidnight
+    }
+
+    static func minutesSinceMidnight(_ date: Date, calendar: Calendar) -> Int {
         let hour = calendar.component(.hour, from: date)
         let minute = calendar.component(.minute, from: date)
-        let current = TimeOfDay(hour: hour, minute: minute).minutesSinceMidnight
-        return current >= start.minutesSinceMidnight && current < end.minutesSinceMidnight
+        return TimeOfDay(hour: hour, minute: minute).minutesSinceMidnight
     }
 }
 
@@ -73,7 +88,7 @@ public enum ScheduleParser {
         guard parts.count == 2,
               let start = parseTime(String(parts[0])),
               let end = parseTime(String(parts[1])),
-              start < end
+              start != end
         else {
             return nil
         }
@@ -102,12 +117,23 @@ public extension BlockGroup {
         guard enabled else {
             return false
         }
-        guard activeDays.contains(Weekday(date: date, calendar: calendar)) else {
-            return false
-        }
+        let todayActive = activeDays.contains(Weekday(date: date, calendar: calendar))
         guard !timeWindows.isEmpty else {
-            return true
+            return todayActive
         }
-        return timeWindows.contains { $0.contains(date, calendar: calendar) }
+        // The part of a window after midnight belongs to the day the window
+        // starts: Monday's 2300-0100 still runs at 00:30 on Tuesday even when
+        // Tuesday is not an active day, and needs Monday to be active.
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: date) ?? date
+        let yesterdayActive = activeDays.contains(Weekday(date: yesterday, calendar: calendar))
+        let current = TimeWindow.minutesSinceMidnight(date, calendar: calendar)
+        return timeWindows.contains { window in
+            let start = window.start.minutesSinceMidnight
+            let end = window.end.minutesSinceMidnight
+            if window.crossesMidnight {
+                return (todayActive && current >= start) || (yesterdayActive && current < end)
+            }
+            return todayActive && current >= start && current < end
+        }
     }
 }

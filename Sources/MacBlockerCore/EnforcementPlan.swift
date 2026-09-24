@@ -10,8 +10,8 @@ public struct EnforcementPlanEntry: Codable, Equatable, Sendable {
     public var mode: BlockingMode
     public var weekdays: Set<Weekday>
     public var windows: [TimeWindow]
-    public var allowedMinutes: Int
-    public var thresholdMinutes: Int?
+    public var allowedMinutes: Double
+    public var thresholdMinutes: Double?
     public var applicationTargetIDs: Set<String>
     public var categoryTargetIDs: Set<String>
     public var webDomainTargetIDs: Set<String>
@@ -28,8 +28,8 @@ public struct EnforcementPlanEntry: Codable, Equatable, Sendable {
         mode: BlockingMode,
         weekdays: Set<Weekday>,
         windows: [TimeWindow],
-        allowedMinutes: Int,
-        thresholdMinutes: Int?,
+        allowedMinutes: Double,
+        thresholdMinutes: Double?,
         applicationTargetIDs: Set<String>,
         categoryTargetIDs: Set<String>,
         webDomainTargetIDs: Set<String>,

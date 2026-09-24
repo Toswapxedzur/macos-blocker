@@ -73,6 +73,8 @@ public final class BlockerWebStore: @unchecked Sendable {
     public struct UsageTimers: Sendable {
         public var timersMs: [String: Double]
         public var resetAtMs: [String: Double]
+        /// Rolling-limit usage per group: minute-start ms -> ms used in that minute.
+        public var bucketsMs: [String: [Double: Double]] = [:]
     }
 
     public func loadUsageTimers() -> UsageTimers {
@@ -81,8 +83,30 @@ public final class BlockerWebStore: @unchecked Sendable {
         }
         return UsageTimers(
             timersMs: doubleMap(object["usageTimersMs"]),
-            resetAtMs: doubleMap(object["usageResetAtMs"])
+            resetAtMs: doubleMap(object["usageResetAtMs"]),
+            bucketsMs: bucketMaps(object["usageBucketsMs"])
         )
+    }
+
+    /// `{groupId: {"<minuteStartMs>": ms}}` -> typed buckets; malformed entries dropped.
+    private func bucketMaps(_ value: Any?) -> [String: [Double: Double]] {
+        guard let groups = value as? [String: Any] else { return [:] }
+        var result: [String: [Double: Double]] = [:]
+        for (groupID, raw) in groups {
+            guard let minutes = raw as? [String: Any] else { continue }
+            var buckets: [Double: Double] = [:]
+            for (key, ms) in minutes {
+                guard let start = Double(key), let used = (ms as? NSNumber)?.doubleValue,
+                      start.isFinite, used.isFinite, used > 0 else { continue }
+                buckets[start] = used
+            }
+            result[groupID] = buckets
+        }
+        return result
+    }
+
+    static func bucketJSON(_ buckets: [Double: Double]) -> [String: Double] {
+        Dictionary(uniqueKeysWithValues: buckets.map { (String(Int64($0.key)), $0.value) })
     }
 
     /// Overwrites the given per-group `usageTimersMs` / `usageResetAtMs` entries
@@ -90,9 +114,19 @@ public final class BlockerWebStore: @unchecked Sendable {
     /// other key). Used by the enforcement bridge to accrue time and to apply
     /// reset-interval rollovers, keeping the popup and native enforcement on one
     /// source of truth. A no-op write when both maps are empty.
-    public func writeUsage(timersMs: [String: Double], resetAtMs: [String: Double]) {
-        guard !timersMs.isEmpty || !resetAtMs.isEmpty, var object = loadStoreObject() else {
+    public func writeUsage(
+        timersMs: [String: Double],
+        resetAtMs: [String: Double],
+        bucketsMs: [String: [Double: Double]] = [:]
+    ) {
+        guard !timersMs.isEmpty || !resetAtMs.isEmpty || !bucketsMs.isEmpty,
+              var object = loadStoreObject() else {
             return
+        }
+        if !bucketsMs.isEmpty {
+            var stored = object["usageBucketsMs"] as? [String: Any] ?? [:]
+            for (groupID, buckets) in bucketsMs { stored[groupID] = Self.bucketJSON(buckets) }
+            object["usageBucketsMs"] = stored
         }
         if !timersMs.isEmpty {
             var stored = doubleMap(object["usageTimersMs"])

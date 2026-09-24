@@ -86,8 +86,10 @@ public enum ChromeExtensionImporter {
             name: string(object["name"]) ?? defaultName(for: groupType),
             enabled: bool(object["enabled"]) ?? true,
             mode: BlockingMode(rawValue: string(object["mode"]) ?? "") ?? .instant,
-            allowedMinutes: int(object["allowedMinutes"]) ?? 15,
-            resetIntervalHours: int(object["resetIntervalHours"]) ?? 24,
+            allowedMinutes: double(object["allowedMinutes"]) ?? 15,
+            resetIntervalHours: double(object["resetIntervalHours"]) ?? 24,
+            resetAtMidnight: bool(object["resetAtMidnight"]) ?? false,
+            rollingLimit: bool(object["rollingLimit"]) ?? false,
             allowSnooze: bool(object["allowSnooze"]) ?? true,
             snoozeMinutes: int(object["snoozeMinutes"]) ?? 30,
             snoozeActivationDelayMinutes: int(object["snoozeActivationDelayMinutes"]) ?? 0,
@@ -186,6 +188,15 @@ public enum ChromeExtensionImporter {
         }
         if let number = value as? NSNumber {
             return number.intValue
+        }
+        return nil
+    }
+
+    /// Keeps fractions (a 2.5 h interval must not truncate to 2, nor 0.5 h to 0).
+    private static func double(_ value: Any?) -> Double? {
+        if let number = value as? NSNumber {
+            let double = number.doubleValue
+            return double.isFinite ? double : nil
         }
         return nil
     }

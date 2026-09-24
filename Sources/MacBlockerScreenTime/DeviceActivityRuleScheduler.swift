@@ -6,14 +6,14 @@ public struct DeviceActivityScheduleRequest: Codable, Equatable, Sendable {
     public var name: String
     public var weekdays: Set<Weekday>
     public var windows: [TimeWindow]
-    public var thresholdMinutes: Int?
+    public var thresholdMinutes: Double?
 
     public init(
         groupID: String,
         name: String,
         weekdays: Set<Weekday>,
         windows: [TimeWindow],
-        thresholdMinutes: Int?
+        thresholdMinutes: Double?
     ) {
         self.groupID = groupID
         self.name = name
