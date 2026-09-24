@@ -37,8 +37,6 @@
   "settings.localFolderTitle": "Dossier de fichiers local",
   "settings.localFolderCopy": "Autorisez un dossier pour que les règles personnalisées lisent et écrivent des fichiers .txt, .csv et .json. Les chemins restent dans ce dossier.",
   "settings.localFolderChoose": "Choisir un dossier",
-  "settings.localFolderReveal": "Révéler dans le Finder",
-  "settings.localFolderStatusManaged": "Connecté : à l'aide du dossier géré de l'application (Application Support > MacBlocker > LocalFiles).",
   "settings.localFolderRevoke": "Révoquer le dossier",
   "settings.localFolderStatusNone": "Aucun dossier connecté.",
   "settings.localFolderStatusConnected": "Dossier connecté : {name}",

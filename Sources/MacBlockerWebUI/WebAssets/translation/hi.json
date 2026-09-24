@@ -37,8 +37,6 @@
   "settings.localFolderTitle": "स्थानीय फ़ाइल फ़ोल्डर",
   "settings.localFolderCopy": "नियमों को .txt, .csv और .json पढ़ने/लिखने के लिए एक फ़ोल्डर दें।",
   "settings.localFolderChoose": "फ़ोल्डर चुनें",
-  "settings.localFolderReveal": "खोजक में प्रकट करें",
-  "settings.localFolderStatusManaged": "कनेक्टेड - ऐप के प्रबंधित फ़ोल्डर का उपयोग करना (एप्लिकेशन सपोर्ट › मैकब्लॉकर › लोकलफाइल्स)।",
   "settings.localFolderRevoke": "फ़ोल्डर हटाएँ",
   "settings.localFolderStatusNone": "कोई फ़ोल्डर जुड़ा नहीं।",
   "settings.localFolderStatusConnected": "जुड़ा फ़ोल्डर: {name}",

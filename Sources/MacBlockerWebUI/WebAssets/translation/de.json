@@ -37,8 +37,6 @@
   "settings.localFolderTitle": "Lokaler Dateiordner",
   "settings.localFolderCopy": "Gib einen Ordner frei, damit benutzerdefinierte Regeln .txt-, .csv- und .json-Dateien lesen und schreiben können. Pfade bleiben in diesem Ordner.",
   "settings.localFolderChoose": "Ordner wählen",
-  "settings.localFolderReveal": "Im Finder anzeigen",
-  "settings.localFolderStatusManaged": "Verbunden – über den verwalteten Ordner der App (Anwendungsunterstützung › MacBlocker › LocalFiles).",
   "settings.localFolderRevoke": "Ordner widerrufen",
   "settings.localFolderStatusNone": "Kein Ordner verbunden.",
   "settings.localFolderStatusConnected": "Verbundener Ordner: {name}",

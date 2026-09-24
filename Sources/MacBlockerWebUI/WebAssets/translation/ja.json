@@ -37,8 +37,6 @@
   "settings.localFolderTitle": "ローカルファイルフォルダー",
   "settings.localFolderCopy": "ルールが .txt、.csv、.json を読み書きするフォルダーを許可します。",
   "settings.localFolderChoose": "フォルダーを選択",
-  "settings.localFolderReveal": "ファインダーで表示",
-  "settings.localFolderStatusManaged": "接続済み — アプリの管理フォルダーを使用します (Application Support › MacBlocker › LocalFiles)。",
   "settings.localFolderRevoke": "フォルダーを解除",
   "settings.localFolderStatusNone": "フォルダー未接続。",
   "settings.localFolderStatusConnected": "接続フォルダー: {name}",

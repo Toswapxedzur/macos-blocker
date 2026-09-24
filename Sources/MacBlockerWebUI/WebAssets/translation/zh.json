@@ -37,8 +37,6 @@
   "settings.localFolderTitle": "本地文件文件夹",
   "settings.localFolderCopy": "授权一个文件夹，让自定义规则读写 .txt、.csv 和 .json 文件。路径始终限制在此文件夹内。",
   "settings.localFolderChoose": "选择文件夹",
-  "settings.localFolderReveal": "在 Finder 中显示",
-  "settings.localFolderStatusManaged": "已连接 — 使用应用程序的托管文件夹（应用程序支持 › MacBlocker › LocalFiles）。",
   "settings.localFolderRevoke": "撤销文件夹",
   "settings.localFolderStatusNone": "未连接文件夹。",
   "settings.localFolderStatusConnected": "已连接文件夹：{name}",

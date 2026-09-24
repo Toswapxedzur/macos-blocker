@@ -37,8 +37,6 @@
   "settings.localFolderTitle": "Carpeta de archivos local",
   "settings.localFolderCopy": "Concede una carpeta para que las reglas personalizadas lean y escriban archivos .txt, .csv y .json. Las rutas permanecen dentro de esta carpeta.",
   "settings.localFolderChoose": "Elegir carpeta",
-  "settings.localFolderReveal": "Revelar en Finder",
-  "settings.localFolderStatusManaged": "Conectado: utilizando la carpeta administrada de la aplicación (Soporte de aplicaciones › MacBlocker › LocalFiles).",
   "settings.localFolderRevoke": "Revocar carpeta",
   "settings.localFolderStatusNone": "No hay ninguna carpeta conectada.",
   "settings.localFolderStatusConnected": "Carpeta conectada: {name}",
