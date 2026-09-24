@@ -199,7 +199,7 @@ final class GuardEngineTests: XCTestCase {
         id: String,
         bundleID: String,
         mode: BlockingMode,
-        allowedMinutes: Int = 30,
+        allowedMinutes: Double = 30,
         enabled: Bool = true
     ) -> BlockGroup {
         BlockGroup(

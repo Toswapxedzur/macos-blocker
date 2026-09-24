@@ -270,6 +270,11 @@ final class ConnectionHub: ObservableObject {
         var sharedUsageMs: Double = 0
         var sharedUsageResetAtMs: Double = 0
         var usageSeeded = false
+        /// Rolling-limit groups share per-minute usage (minute-start ms -> ms)
+        /// instead of one total: a sliding window needs to know WHEN time was
+        /// used so old minutes can age out. Deltas only, like `sharedUsageMs`.
+        var sharedBuckets: [Double: Double] = [:]
+        var bucketsSeeded = false
         /// Active snooze runtime shared across members (newest start wins). The
         /// entry carries its own timing so each side enforces + expires it
         /// identically; `sharedSnoozeTs` is the originating start time.
@@ -1322,6 +1327,7 @@ final class ConnectionHub: ObservableObject {
             // counter so a group that already had usage keeps it when it links.
             cluster.sharedUsageMs = seed
         }
+        applyBucketContributionLocked(cluster, contribution)
 
         // Active snooze: newest start wins. A member only carries `snoozeTs` when
         // it actually has an active/cooling snooze entry, so usage-only pings and
@@ -1356,9 +1362,18 @@ final class ConnectionHub: ObservableObject {
     /// in a cluster (applySync ignores unknown clusters). `deltaMs` is the time
     /// just accrued for the frontmost blocked app; `resetAtMs` is the group's
     /// current reset anchor (a newer anchor rolls the shared budget over).
-    func reportLocalUsage(groupName: String, deltaMs: Double, resetAtMs: Double, seedMs: Double? = nil) {
+    func reportLocalUsage(
+        groupName: String,
+        deltaMs: Double,
+        resetAtMs: Double,
+        seedMs: Double? = nil,
+        bucketDeltas: [Double: Double] = [:],
+        seedBuckets: [Double: Double]? = nil
+    ) {
         var contribution: [String: Any] = ["usageResetAtMs": resetAtMs]
         if deltaMs != 0 { contribution["usageDeltaMs"] = deltaMs }
+        if !bucketDeltas.isEmpty { contribution["usageBuckets"] = Self.bucketJSON(bucketDeltas) }
+        if let seedBuckets { contribution["usageBucketsSeed"] = Self.bucketJSON(seedBuckets) }
         // A seed is the Mac's absolute local total, used by the hub only until the
         // first real delta arrives (it adopts the largest member total) so prior
         // Mac usage survives joining a cluster.
@@ -1376,14 +1391,53 @@ final class ConnectionHub: ObservableObject {
     /// enforcer folds this total back into its local timer so the Mac display +
     /// enforcement reflect time spent on every linked member (e.g. browser
     /// website time), not just the Mac's own frontmost-app time.
-    func sharedUsage(groupName: String) -> (ms: Double, resetAtMs: Double)? {
+    func sharedUsage(groupName: String) -> (ms: Double, resetAtMs: Double, buckets: [Double: Double])? {
         guard !groupName.isEmpty else { return nil }
         lock.lock()
         defer { lock.unlock() }
         guard let cluster = clusters.values.first(where: {
             $0.groupName == groupName && $0.members.contains(Self.localProgram)
         }) else { return nil }
-        return (cluster.sharedUsageMs, cluster.sharedUsageResetAtMs)
+        return (cluster.sharedUsageMs, cluster.sharedUsageResetAtMs, cluster.sharedBuckets)
+    }
+
+    /// Folds a member's rolling usage into the cluster: `usageBuckets` are
+    /// per-minute increments; `usageBucketsSeed` is a member's absolute history,
+    /// used (max per minute) only until the first real increment arrives so a
+    /// group that already had rolling usage keeps it when it links. Minutes older
+    /// than any window the group can use (its interval, at least a day) are pruned.
+    private func applyBucketContributionLocked(_ cluster: ClusterState, _ contribution: [String: Any]) {
+        if let deltas = Self.parseBuckets(contribution["usageBuckets"]), !deltas.isEmpty {
+            for (minute, delta) in deltas {
+                let next = (cluster.sharedBuckets[minute] ?? 0) + delta
+                cluster.sharedBuckets[minute] = next > 0 ? next : nil
+            }
+            cluster.bucketsSeeded = true
+        } else if !cluster.bucketsSeeded, let seed = Self.parseBuckets(contribution["usageBucketsSeed"]) {
+            for (minute, used) in seed where used > (cluster.sharedBuckets[minute] ?? 0) {
+                cluster.sharedBuckets[minute] = used
+            }
+        }
+        guard !cluster.sharedBuckets.isEmpty else { return }
+        let intervalHours = (cluster.sharedScalars["resetIntervalHours"] as? NSNumber)?.doubleValue ?? 24
+        let horizonMs = max(intervalHours, 24) * 3_600_000 + 60_000
+        let cutoff = Date().timeIntervalSince1970 * 1000 - horizonMs
+        cluster.sharedBuckets = cluster.sharedBuckets.filter { $0.key > cutoff }
+    }
+
+    static func parseBuckets(_ value: Any?) -> [Double: Double]? {
+        guard let object = value as? [String: Any] else { return nil }
+        var buckets: [Double: Double] = [:]
+        for (key, raw) in object {
+            guard let minute = Double(key), let ms = (raw as? NSNumber)?.doubleValue,
+                  minute.isFinite, ms.isFinite else { continue }
+            buckets[minute] = ms
+        }
+        return buckets
+    }
+
+    static func bucketJSON(_ buckets: [Double: Double]) -> [String: Double] {
+        Dictionary(uniqueKeysWithValues: buckets.map { (String(Int64($0.key)), $0.value) })
     }
 
     func syncFromBridge(json: String) {
@@ -1474,6 +1528,7 @@ final class ConnectionHub: ObservableObject {
             cluster.sharedApps = shared["apps"] as? [[String: Any]] ?? []
             cluster.sharedUsageMs = (shared["usageMs"] as? NSNumber)?.doubleValue ?? 0
             cluster.sharedUsageResetAtMs = (shared["usageResetAtMs"] as? NSNumber)?.doubleValue ?? 0
+            cluster.sharedBuckets = Self.parseBuckets(shared["usageBuckets"]) ?? [:]
             cluster.sharedSnooze = shared["snooze"] as? [String: Any] ?? [:]
             cluster.sharedSnoozeTs = (shared["snoozeTs"] as? NSNumber)?.doubleValue ?? 0
             cluster.sharedSnoozeTotalMs = (shared["snoozeTotalMs"] as? NSNumber)?.doubleValue ?? 0
@@ -1645,6 +1700,7 @@ final class ConnectionHub: ObservableObject {
             }
         ]
         if hasShared || !sites.isEmpty || !appsArray.isEmpty || cluster.sharedUsageMs > 0
+            || !cluster.sharedBuckets.isEmpty
             || cluster.sharedSnoozeTs > 0 || cluster.sharedSnoozeTotalMs > 0 {
             dict["shared"] = [
                 "scalars": cluster.sharedScalars,
@@ -1653,6 +1709,7 @@ final class ConnectionHub: ObservableObject {
                 "apps": appsArray,
                 "usageMs": cluster.sharedUsageMs,
                 "usageResetAtMs": cluster.sharedUsageResetAtMs,
+                "usageBuckets": Self.bucketJSON(cluster.sharedBuckets),
                 "snooze": cluster.sharedSnooze,
                 "snoozeTs": cluster.sharedSnoozeTs,
                 "snoozeTotalMs": cluster.sharedSnoozeTotalMs

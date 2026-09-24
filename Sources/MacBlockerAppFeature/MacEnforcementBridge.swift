@@ -915,35 +915,73 @@ public final class MacEnforcementBridge: ObservableObject {
 
         var timerWrites: [String: Double] = [:]
         var resetWrites: [String: Double] = [:]
+        var bucketWrites: [String: [Double: Double]] = [:]
 
         for group in groups where group.enabled {
             guard group.mode == .timer || group.mode == .afterMinutes else { continue }
             let gid = group.id
 
-            var anchor = resetAt[gid]
-            if anchor == nil {
-                anchor = nowMs
-                resetAt[gid] = nowMs
-                resetWrites[gid] = nowMs
-            }
-
-            let intervalMs = Double(max(0, group.resetIntervalHours)) * 3_600_000
-            if intervalMs > 0, let start = anchor {
-                let sinceReset = nowMs - start
-                if sinceReset >= intervalMs {
-                    let elapsedIntervals = floor(sinceReset / intervalMs)
-                    let newStart = start + elapsedIntervals * intervalMs
-                    timers[gid] = 0
-                    resetAt[gid] = newStart
-                    timerWrites[gid] = 0
-                    resetWrites[gid] = newStart
-                }
-            }
-
             var addedMs: Double = 0
             if let frontmost, elapsed > 0, group.isActive(at: now),
                group.targets.contains(where: { $0.kind == .application && $0.id == frontmost }) {
                 addedMs = elapsed * 1000
+            }
+
+            if group.rollingLimit {
+                // Rolling limit: time is kept per minute and counts until it is
+                // resetIntervalHours old (or cleared at midnight); the timer holds
+                // the in-window total so the block decision + display stay as-is.
+                let stored = current.bucketsMs[gid] ?? [:]
+                var buckets = stored
+                if addedMs > 0 {
+                    buckets[UsageBudget.bucketStartMs(nowMs), default: 0] += addedMs
+                }
+                if let shared = ConnectionHub.shared.sharedUsage(groupName: group.name) {
+                    // Linked group: report this tick's minute (or seed our history
+                    // once), then adopt the hub's shared per-minute usage.
+                    if clusterSeededGroups.contains(gid) {
+                        if addedMs > 0 {
+                            ConnectionHub.shared.reportLocalUsage(
+                                groupName: group.name, deltaMs: 0, resetAtMs: 0,
+                                bucketDeltas: [UsageBudget.bucketStartMs(nowMs): addedMs]
+                            )
+                        }
+                    } else {
+                        ConnectionHub.shared.reportLocalUsage(
+                            groupName: group.name, deltaMs: 0, resetAtMs: 0, seedBuckets: buckets
+                        )
+                        clusterSeededGroups.insert(gid)
+                    }
+                    buckets = ConnectionHub.shared.sharedUsage(groupName: group.name)?.buckets ?? shared.buckets
+                } else {
+                    clusterSeededGroups.remove(gid)
+                }
+                buckets = UsageBudget.pruneBuckets(buckets, group: group, nowMs: nowMs)
+                if buckets != stored { bucketWrites[gid] = buckets }
+                let used = UsageBudget.usedMs(buckets)
+                if timers[gid] != used {
+                    timers[gid] = used
+                    timerWrites[gid] = used
+                }
+                continue
+            }
+
+            // Fixed budget: resets every resetIntervalHours from the anchor, or
+            // on the midnight-aligned grid when resetAtMidnight is on.
+            var anchor = resetAt[gid] ?? nowMs
+            if resetAt[gid] == nil {
+                resetAt[gid] = nowMs
+                resetWrites[gid] = nowMs
+            }
+            let periodStart = UsageBudget.periodStartMs(anchorMs: anchor, group: group, nowMs: nowMs)
+            if periodStart != anchor {
+                timers[gid] = 0
+                resetAt[gid] = periodStart
+                timerWrites[gid] = 0
+                resetWrites[gid] = periodStart
+                anchor = periodStart
+            }
+            if addedMs > 0 {
                 timers[gid, default: 0] += addedMs
                 timerWrites[gid] = timers[gid]
             }
@@ -999,7 +1037,7 @@ public final class MacEnforcementBridge: ObservableObject {
             }
         }
 
-        webStore.writeUsage(timersMs: timerWrites, resetAtMs: resetWrites)
+        webStore.writeUsage(timersMs: timerWrites, resetAtMs: resetWrites, bucketsMs: bucketWrites)
         return timers
     }
 
