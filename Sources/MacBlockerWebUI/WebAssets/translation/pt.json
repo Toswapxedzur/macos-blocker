@@ -37,8 +37,6 @@
   "settings.localFolderTitle": "Pasta de arquivos local",
   "settings.localFolderCopy": "Permita uma pasta para regras lerem e gravarem .txt, .csv e .json dentro dela.",
   "settings.localFolderChoose": "Escolher pasta",
-  "settings.localFolderReveal": "Revelar no Finder",
-  "settings.localFolderStatusManaged": "Conectado — usando a pasta gerenciada do aplicativo (Suporte a aplicativos › MacBlocker › LocalFiles).",
   "settings.localFolderRevoke": "Revogar pasta",
   "settings.localFolderStatusNone": "Nenhuma pasta conectada.",
   "settings.localFolderStatusConnected": "Pasta conectada: {name}",

@@ -37,8 +37,6 @@
   "settings.localFolderTitle": "Folder file lokal",
   "settings.localFolderCopy": "Izinkan folder agar aturan dapat membaca dan menulis .txt, .csv, dan .json di dalamnya.",
   "settings.localFolderChoose": "Pilih folder",
-  "settings.localFolderReveal": "Buka di Finder",
-  "settings.localFolderStatusManaged": "Terhubung — menggunakan folder terkelola aplikasi (Dukungan Aplikasi › MacBlocker › LocalFiles).",
   "settings.localFolderRevoke": "Cabut folder",
   "settings.localFolderStatusNone": "Tidak ada folder terhubung.",
   "settings.localFolderStatusConnected": "Folder terhubung: {name}",

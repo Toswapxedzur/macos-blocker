@@ -37,8 +37,6 @@
   "settings.localFolderTitle": "Cartella file locale",
   "settings.localFolderCopy": "Concedi una cartella per leggere e scrivere file .txt, .csv e .json dalle regole personalizzate. I percorsi restano dentro questa cartella.",
   "settings.localFolderChoose": "Scegli cartella",
-  "settings.localFolderReveal": "Rivela nel Finder",
-  "settings.localFolderStatusManaged": "Connesso: utilizzando la cartella gestita dell'app (Supporto applicazioni › MacBlocker › LocalFiles).",
   "settings.localFolderRevoke": "Revoca cartella",
   "settings.localFolderStatusNone": "Nessuna cartella collegata.",
   "settings.localFolderStatusConnected": "Cartella collegata: {name}",

@@ -37,8 +37,6 @@
   "settings.localFolderTitle": "Thư mục tệp cục bộ",
   "settings.localFolderCopy": "Cho phép một thư mục để quy tắc đọc và ghi .txt, .csv và .json bên trong đó.",
   "settings.localFolderChoose": "Chọn thư mục",
-  "settings.localFolderReveal": "Tiết lộ trong Finder",
-  "settings.localFolderStatusManaged": "Đã kết nối — sử dụng thư mục được quản lý của ứng dụng (Hỗ trợ ứng dụng > MacBlocker > LocalFiles).",
   "settings.localFolderRevoke": "Thu hồi thư mục",
   "settings.localFolderStatusNone": "Chưa kết nối thư mục.",
   "settings.localFolderStatusConnected": "Thư mục đã kết nối: {name}",

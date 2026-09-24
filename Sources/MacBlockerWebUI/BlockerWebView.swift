@@ -502,6 +502,13 @@ public struct BlockerWebView: _CBViewRepresentable {
                 if let json = messageJSON(body) { onGroupSync?(json) }
             case "clusters-status":
                 pushClusters()
+            case "local-folder-status":
+                pushLocalFolderStatus()
+            case "local-folder-choose":
+                chooseLocalFolderNative()
+            case "local-folder-revoke":
+                LocalFolderGrant.clear()
+                pushLocalFolderStatus()
             case "local-folder-reveal":
                 revealLocalFolder()
             case "switch-scene":
@@ -516,19 +523,53 @@ public struct BlockerWebView: _CBViewRepresentable {
             }
         }
 
-        /// Reveals the fixed native local-files folder (used by custom rules) in
-        /// Finder. macOS has no web directory picker, so the Settings panel uses
-        /// this managed folder instead. Path mirrors MacEnforcementBridge.
+        /// Native folder-grant picker (macOS has no web directory picker). Mirrors
+        /// the browser extension's "Choose folder": the user grants one folder,
+        /// stored as a security-scoped bookmark, and custom-rule file I/O is rooted
+        /// there. Nothing is available until a folder is chosen.
+        private func chooseLocalFolderNative() {
+            #if os(macOS)
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.canCreateDirectories = true
+            panel.allowsMultipleSelection = false
+            panel.message = "Grant a folder for custom rules to read and write .txt, .csv, and .json files."
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            if let bookmark = try? url.bookmarkData(
+                options: [.withSecurityScope],
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            ) {
+                LocalFolderGrant.store(bookmark: bookmark)
+            }
+            pushLocalFolderStatus()
+            #endif
+        }
+
+        /// Pushes the current grant state to the Settings panel so it can render
+        /// Choose / Revoke and the connected folder's name.
+        private func pushLocalFolderStatus() {
+            guard let webView else { return }
+            let connected = LocalFolderGrant.isConnected
+            let payload: [String: Any] = [
+                "connected": connected,
+                "name": connected ? LocalFolderGrant.folderName : ""
+            ]
+            guard let data = try? JSONSerialization.data(withJSONObject: payload),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            webView.evaluateJavaScript(
+                "window.__cbLocalFolderStatus && window.__cbLocalFolderStatus(\(json));",
+                completionHandler: nil
+            )
+        }
+
+        /// Reveals the user-granted folder in Finder. No-op when none is granted.
         private func revealLocalFolder() {
             #if os(macOS)
-            guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
-            let folder = appSupport
-                .appendingPathComponent(
-                    VaultRuntimeEnvironment.current.localFilesDirectoryName,
-                    isDirectory: true
-                )
-                .appendingPathComponent("LocalFiles", isDirectory: true)
-            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            guard let folder = LocalFolderGrant.resolvedFolderURL() else { return }
+            let scoped = folder.startAccessingSecurityScopedResource()
+            defer { if scoped { folder.stopAccessingSecurityScopedResource() } }
             NSWorkspace.shared.activateFileViewerSelecting([folder])
             #endif
         }

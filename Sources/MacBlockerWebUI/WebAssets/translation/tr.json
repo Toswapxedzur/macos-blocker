@@ -37,8 +37,6 @@
   "settings.localFolderTitle": "Yerel dosya klasörü",
   "settings.localFolderCopy": "Kuralların .txt, .csv ve .json dosyalarını okuması/yazması için bir klasöre izin verin.",
   "settings.localFolderChoose": "Klasör seç",
-  "settings.localFolderReveal": "Finder'da Göster",
-  "settings.localFolderStatusManaged": "Bağlandı — uygulamanın yönetilen klasörünü kullanarak (Uygulama Desteği › MacBlocker › LocalFiles).",
   "settings.localFolderRevoke": "Klasörü kaldır",
   "settings.localFolderStatusNone": "Bağlı klasör yok.",
   "settings.localFolderStatusConnected": "Bağlı klasör: {name}",

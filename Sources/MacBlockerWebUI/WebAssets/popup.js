@@ -695,24 +695,36 @@ function cbHasNativeBridge() {
   }
 }
 
-function revealLocalFolderNative() {
+function requestLocalFolderStatusNative() {
   try {
-    window.webkit.messageHandlers.cbBridge.postMessage({ kind: "local-folder-reveal" });
+    window.webkit.messageHandlers.cbBridge.postMessage({ kind: "local-folder-status" });
   } catch (_) {}
 }
 
+// Native (macOS) pushes the local-folder grant state here (connected + name).
+window.__cbLocalFolderStatus = function (payload) {
+  if (!localFolderStatus) return;
+  const connected = Boolean(payload && payload.connected);
+  const name = payload && typeof payload.name === "string" ? payload.name : "";
+  if (localFolderChooseButton) {
+    localFolderChooseButton.disabled = false;
+    localFolderChooseButton.textContent = t("settings.localFolderChoose");
+  }
+  if (localFolderRevokeButton) {
+    localFolderRevokeButton.classList.remove("hidden");
+    localFolderRevokeButton.disabled = !connected;
+  }
+  localFolderStatus.textContent = connected
+    ? t("settings.localFolderStatusConnected").replace("{name}", name || t("settings.localFolderUnknownName"))
+    : t("settings.localFolderStatusNone");
+};
+
 async function renderLocalFolderStatus() {
   if (!localFolderStatus) return;
-  // macOS: the local folder is a fixed native folder that is always available.
-  // Present it as connected with a Reveal-in-Finder action instead of the
-  // (unsupported in WKWebView) directory picker.
+  // macOS: a user-chosen native folder grant (Choose / Revoke), mirroring the
+  // extension. Ask native for the current grant; __cbLocalFolderStatus renders it.
   if (cbHasNativeBridge()) {
-    localFolderStatus.textContent = t("settings.localFolderStatusManaged");
-    if (localFolderChooseButton) {
-      localFolderChooseButton.disabled = false;
-      localFolderChooseButton.textContent = t("settings.localFolderReveal");
-    }
-    if (localFolderRevokeButton) localFolderRevokeButton.classList.add("hidden");
+    requestLocalFolderStatusNative();
     return;
   }
   if (!("showDirectoryPicker" in window)) {
@@ -7052,9 +7064,9 @@ if (settingsModal) {
 
 if (localFolderChooseButton) {
   localFolderChooseButton.addEventListener("click", () => {
-    // On macOS the folder is fixed/native — the button reveals it in Finder.
+    // On macOS the picker is native (WKWebView has no showDirectoryPicker).
     if (cbHasNativeBridge()) {
-      revealLocalFolderNative();
+      try { window.webkit.messageHandlers.cbBridge.postMessage({ kind: "local-folder-choose" }); } catch (_) {}
       return;
     }
     chooseLocalFolder().catch((error) => {
@@ -7065,6 +7077,10 @@ if (localFolderChooseButton) {
 
 if (localFolderRevokeButton) {
   localFolderRevokeButton.addEventListener("click", () => {
+    if (cbHasNativeBridge()) {
+      try { window.webkit.messageHandlers.cbBridge.postMessage({ kind: "local-folder-revoke" }); } catch (_) {}
+      return;
+    }
     revokeLocalFolder().catch((error) => {
       if (localFolderStatus) localFolderStatus.textContent = String(error?.message ?? error);
     });
