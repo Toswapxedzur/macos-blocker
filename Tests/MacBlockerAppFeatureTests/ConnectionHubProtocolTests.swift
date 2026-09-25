@@ -50,6 +50,11 @@ final class ConnectionHubProtocolTests: XCTestCase {
         )
     }
 
+    func testTheHostingHubReportsItsConnectedPeersAndItselfOnline() {
+        XCTAssertEqual(ConnectionHub.onlineMembers(hosting: true, connectedPrograms: ["chrome", "classifier"], brokerOnline: []), ["chrome", "classifier", "macapp"])
+        XCTAssertEqual(ConnectionHub.onlineMembers(hosting: false, connectedPrograms: ["chrome"], brokerOnline: ["macapp"]), ["macapp"], "a joined hub trusts the broker's snapshot")
+    }
+
     func testASecondInstanceOfABrowserIsRefusedWhileTheFirstIsConnected() {
         XCTAssertTrue(ConnectionHub.isDuplicateBrowser("chrome", connectedPrograms: ["classifier", "chrome"]))
         XCTAssertFalse(ConnectionHub.isDuplicateBrowser("edge", connectedPrograms: ["classifier", "chrome"]))
