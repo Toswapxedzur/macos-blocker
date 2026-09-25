@@ -1,4 +1,5 @@
 import Foundation
+import MacBlockerCore
 
 /// The cross-process, JavaScript-free block policy shared between the control
 /// plane (the editor app) and the always-on enforcement core (the Endpoint
@@ -144,9 +145,7 @@ public struct GuardAllowlist: Codable, Equatable, Sendable {
     /// An allowed app's helpers (`<id>.helper`) are allowed with it, like the
     /// prefix match on a blocked `GuardTarget`.
     public func allows(bundleIdentifier: String) -> Bool {
-        let id = bundleIdentifier.lowercased()
-        return allowedBundleIdentifiers.contains(id) ||
-            allowedBundleIdentifiers.contains { id.hasPrefix($0 + ".") }
+        BlockGroup.allowlist(allowedBundleIdentifiers, allows: bundleIdentifier)
     }
 }
 

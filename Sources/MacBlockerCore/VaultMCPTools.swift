@@ -62,15 +62,15 @@ public enum VaultMCPTools {
 
             MCPTool(
                 name: "set_blocking_mode",
-                description: "Set a group's blocking mode: 'instant', 'after-minutes', or 'timer'.",
+                description: "Set a group's blocking mode: 'instant' or 'after-minutes'.",
                 inputSchema: objectSchema([
                     ("id", "string", "The group id."),
-                    ("mode", "string", "One of: instant, after-minutes, timer."),
+                    ("mode", "string", "One of: instant, after-minutes."),
                 ], required: ["id", "mode"])
             ) { args in
                 guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
                 guard let raw = string(args, "mode"), let mode = BlockingMode(rawValue: raw) else {
-                    return .failure("Invalid 'mode'. Use instant, after-minutes, or timer.")
+                    return .failure("Invalid 'mode'. Use instant or after-minutes.")
                 }
                 return run(store) { try $0.setGroupMode(id: id, mode) }
                     ?? .ok("Group \(id) mode set to \(mode.rawValue).")
