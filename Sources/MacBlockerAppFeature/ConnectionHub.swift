@@ -96,6 +96,9 @@ final class ConnectionHub: ObservableObject {
     private var brokerTask: URLSessionWebSocketTask?
     private var reconnectWorkItem: DispatchWorkItem?
     private var pingTimer: DispatchSourceTimer?
+    /// While hosting: starts each linked group's new budget period on time,
+    /// even when no member is reporting usage (the hub owns the period).
+    private var budgetTimer: DispatchSourceTimer?
     private var wantsBrokerConnection = false
     private var hostingLocalHub = false
     private var lastBridgeAnnouncement: [String: Any]?
@@ -326,6 +329,8 @@ final class ConnectionHub: ObservableObject {
         reconnectWorkItem = nil
         pingTimer?.cancel()
         pingTimer = nil
+        budgetTimer?.cancel()
+        budgetTimer = nil
         brokerTask?.cancel(with: .goingAway, reason: nil)
         brokerTask = nil
         brokerSession?.invalidateAndCancel()
@@ -367,6 +372,7 @@ final class ConnectionHub: ObservableObject {
                     self.brokerPeers = []
                     self.joinedHubProgram = ""
                     self.lock.unlock()
+                    self.startBudgetTimer()
                 case .failed:
                     self.listener?.cancel()
                     self.listener = nil
@@ -514,6 +520,62 @@ final class ConnectionHub: ObservableObject {
         target.send(.string(text)) { [weak self] error in
             if let error { self?.brokerDisconnected(error.localizedDescription) }
         }
+    }
+
+    private func startBudgetTimer() {
+        budgetTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + 10, repeating: 10)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            let hosting = self.hostingLocalHub
+            self.lock.unlock()
+            if hosting { self.rollSharedBudgets(nowMs: Date().timeIntervalSince1970 * 1000) }
+        }
+        budgetTimer = timer
+        timer.resume()
+    }
+
+    /// Starts a new period for every linked fixed budget whose period ended,
+    /// and tells the members (they adopt the reset total like any other).
+    func rollSharedBudgets(nowMs: Double) {
+        lock.lock()
+        var changed: [[String: Any]] = []
+        for cluster in clusters.values where rollBudgetLocked(cluster, nowMs: nowMs) {
+            changed.append(clusterJSONObject(cluster))
+        }
+        lock.unlock()
+        for snapshot in changed { broadcastCluster(snapshot) }
+    }
+
+    /// Caller must hold `lock`. The hub is the only authority over a linked
+    /// group's budget period (members adopt it; they never reset it). When the
+    /// shared period has ended, the total restarts at 0 from the next grid
+    /// start — the same rule every program uses locally (UsageBudget). A rolling
+    /// limit has no period (its minutes age out), so it is left alone.
+    @discardableResult
+    private func rollBudgetLocked(_ cluster: ClusterState, nowMs: Double) -> Bool {
+        guard cluster.sharedUsageResetAtMs > 0,
+              (cluster.sharedScalars["rollingLimit"] as? Bool) != true else { return false }
+        let start = Self.sharedPeriodStartMs(anchorMs: cluster.sharedUsageResetAtMs, scalars: cluster.sharedScalars, nowMs: nowMs)
+        guard start > cluster.sharedUsageResetAtMs else { return false }
+        cluster.sharedUsageMs = 0
+        cluster.sharedUsageResetAtMs = start
+        // A fresh period: a member's absolute total from the old one must not
+        // seed it back.
+        cluster.usageSeeded = true
+        return true
+    }
+
+    static func sharedPeriodStartMs(anchorMs: Double, scalars: [String: Any], nowMs: Double) -> Double {
+        let policy = BlockGroup(
+            id: "", groupType: .site, name: "", enabled: true, mode: .afterMinutes,
+            allowedMinutes: 0,
+            resetIntervalHours: (scalars["resetIntervalHours"] as? NSNumber)?.doubleValue ?? 24,
+            resetAtMidnight: (scalars["resetAtMidnight"] as? Bool) == true
+        )
+        return UsageBudget.periodStartMs(anchorMs: anchorMs, group: policy, nowMs: nowMs)
     }
 
     private func startBrokerPings() {
@@ -1328,11 +1390,12 @@ final class ConnectionHub: ObservableObject {
         // total back into each member's local counter produces no echo and no
         // double counting, and there is no "decrease == reset" race. A newer
         // reset anchor rolls the whole budget over.
-        if let anchor = contribution["usageResetAtMs"] as? Double, anchor > cluster.sharedUsageResetAtMs {
-            cluster.sharedUsageMs = 0
+        // The hub owns the shared period: a member's anchor only seeds it when
+        // the hub has none yet; from then on only the hub starts a new period.
+        if cluster.sharedUsageResetAtMs == 0, let anchor = contribution["usageResetAtMs"] as? Double, anchor > 0 {
             cluster.sharedUsageResetAtMs = anchor
-            cluster.usageSeeded = false
         }
+        rollBudgetLocked(cluster, nowMs: Date().timeIntervalSince1970 * 1000)
         if let delta = contribution["usageDeltaMs"] as? Double, delta != 0 {
             cluster.sharedUsageMs = max(0, cluster.sharedUsageMs + delta)
             cluster.usageSeeded = true
