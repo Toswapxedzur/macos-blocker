@@ -145,6 +145,26 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
     /// Pure decision: the "block every application except these" groups that
     /// block right now, each with its allowed set. Same activity rules as
     /// `blockedApplicationModes`. Exposed for testing.
+    /// Whether `bundleID` is blocked right now by these groups: the same
+    /// decision the guard policy is built from, protections included (Apple,
+    /// browsers, Vault). The bridge uses it to stop counting time in an app
+    /// that is blocked yet still in front (a shield or a suspended app), as a
+    /// covered browser page counts no time.
+    public static func blocksApplication(
+        _ bundleID: String,
+        groups: [BlockGroup],
+        usage: UsageSnapshot,
+        now: Date,
+        calendar: Calendar = .current
+    ) -> Bool {
+        var protected = MacProcessTerminator.browserBundleIdentifiers
+        if let own = Bundle.main.bundleIdentifier { protected.insert(own) }
+        let modes = blockedApplicationModes(groups: groups, usage: usage, now: now, calendar: calendar, mode: .forceTerminate)
+        let lists = applicationAllowlists(groups: groups, usage: usage, now: now, calendar: calendar, mode: .forceTerminate)
+        let policy = GuardPolicy(targets: buildTargets(from: modes), protectedBundleIdentifiers: protected, allowOnly: lists)
+        return policy.match(bundleIdentifier: bundleID) != nil
+    }
+
     static func applicationAllowlists(
         groups: [BlockGroup],
         usage: UsageSnapshot,

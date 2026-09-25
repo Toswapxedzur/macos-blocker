@@ -162,6 +162,20 @@ final class GuardEngineTests: XCTestCase {
         XCTAssertTrue(inExempt.visibleTimerItems.isEmpty)
     }
 
+    func testBlocksApplicationMatchesTheGuardDecision() {
+        let instant = appGroup(id: "i", bundleID: "com.hnc.Discord", mode: .instant)
+        XCTAssertTrue(EndpointSecurityPolicyAdapter.blocksApplication("com.hnc.Discord", groups: [instant], usage: UsageSnapshot(), now: Date()))
+        XCTAssertFalse(EndpointSecurityPolicyAdapter.blocksApplication("com.example.Other", groups: [instant], usage: UsageSnapshot(), now: Date()))
+        let timed = appGroup(id: "t", bundleID: "com.hnc.Discord", mode: .afterMinutes, allowedMinutes: 30)
+        XCTAssertFalse(EndpointSecurityPolicyAdapter.blocksApplication("com.hnc.Discord", groups: [timed], usage: UsageSnapshot(), now: Date()),
+                       "an unspent budget blocks nothing, so its time still counts")
+        var allow = appGroup(id: "a", bundleID: "com.example.Editor", mode: .instant)
+        allow.applicationAllowlist = true
+        XCTAssertTrue(EndpointSecurityPolicyAdapter.blocksApplication("com.hnc.Discord", groups: [allow], usage: UsageSnapshot(), now: Date()))
+        XCTAssertFalse(EndpointSecurityPolicyAdapter.blocksApplication("com.example.Editor", groups: [allow], usage: UsageSnapshot(), now: Date()))
+        XCTAssertFalse(EndpointSecurityPolicyAdapter.blocksApplication("com.google.Chrome", groups: [allow], usage: UsageSnapshot(), now: Date()))
+    }
+
     func testPolicyWithoutAllowlistsStillDecodes() throws {
         let json = """
         {"version":1,"generatedAt":0,"targets":[],"protectedBundleIdentifiers":[]}
