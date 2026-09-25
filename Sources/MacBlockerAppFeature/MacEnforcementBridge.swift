@@ -359,6 +359,7 @@ public final class MacEnforcementBridge: ObservableObject {
             now: now,
             target: nil,
             activeTargetIDs: activeTargetIDs,
+            exemptTargetIDs: frontmost.map { Self.isExemptApplication($0) ? [$0] : [] } ?? [],
             platform: .macOS
         )
         let result = evaluator.evaluate(groups: groups, usage: usage, context: context)
@@ -923,7 +924,7 @@ public final class MacEnforcementBridge: ObservableObject {
 
             var addedMs: Double = 0
             if let frontmost, elapsed > 0, group.isActive(at: now),
-               group.targets.contains(where: { $0.kind == .application && $0.id == frontmost }) {
+               group.countsApplication(frontmost, exempt: Self.isExemptApplication(frontmost)) {
                 addedMs = elapsed * 1000
             }
 
@@ -1062,13 +1063,16 @@ public final class MacEnforcementBridge: ObservableObject {
 
     private func matchingTargetIDs(groups: [BlockGroup], frontmost: String?) -> Set<String> {
         guard let frontmost else { return [] }
-        var ids: Set<String> = []
-        for group in groups {
-            for target in group.targets where target.kind == .application && target.id == frontmost {
-                ids.insert(target.id)
-            }
-        }
-        return ids
+        let exempt = Self.isExemptApplication(frontmost)
+        return groups.contains { $0.countsApplication(frontmost, exempt: exempt) } ? [frontmost] : []
+    }
+
+    /// Apps no group can block: Apple, browsers (the extension's business) and
+    /// Vault itself, exactly the guard policy's protections.
+    static func isExemptApplication(_ bundleID: String) -> Bool {
+        MacProcessTerminator.isBrowserBundleIdentifier(bundleID) ||
+            GuardPolicy(protectedBundleIdentifiers: Bundle.main.bundleIdentifier.map { [$0] } ?? [])
+                .isProtected(bundleIdentifier: bundleID)
     }
     #endif
 }

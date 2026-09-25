@@ -124,6 +124,44 @@ final class GuardEngineTests: XCTestCase {
         XCTAssertTrue(plain.isEmpty, "a plain blocklist group contributes no allowlist")
     }
 
+    func testAllowlistGroupNeverBlocksItsOwnListedApps() {
+        var group = appGroup(id: "g", bundleID: "com.example.Editor", mode: .instant)
+        group.applicationAllowlist = true
+        let modes = EndpointSecurityPolicyAdapter.blockedApplicationModes(
+            groups: [group], usage: UsageSnapshot(), now: Date(), mode: .forceTerminate
+        )
+        XCTAssertTrue(modes.isEmpty, "the listed apps are the ALLOWED ones")
+        let lists = EndpointSecurityPolicyAdapter.applicationAllowlists(
+            groups: [group], usage: UsageSnapshot(), now: Date(), mode: .forceTerminate
+        )
+        let policy = GuardPolicy(targets: EndpointSecurityPolicyAdapter.buildTargets(from: modes), allowOnly: lists)
+        XCTAssertNil(policy.match(bundleIdentifier: "com.example.Editor"))
+        XCTAssertNotNil(policy.match(bundleIdentifier: "com.hnc.Discord"))
+    }
+
+    func testAllowlistBudgetCountsTheAppsItWouldBlock() {
+        var group = appGroup(id: "g", bundleID: "com.example.Editor", mode: .afterMinutes)
+        XCTAssertTrue(group.countsApplication("com.example.Editor", exempt: false), "a blocklist counts its listed app")
+        XCTAssertFalse(group.countsApplication("com.hnc.Discord", exempt: false))
+        group.applicationAllowlist = true
+        XCTAssertFalse(group.countsApplication("com.example.Editor", exempt: false), "an allowed app spends nothing")
+        XCTAssertFalse(group.countsApplication("com.example.editor.Helper", exempt: false))
+        XCTAssertTrue(group.countsApplication("com.hnc.Discord", exempt: false), "a blocked app spends the budget")
+        XCTAssertFalse(group.countsApplication("com.google.Chrome", exempt: true), "exempt apps (browsers, Apple, Vault) never count")
+    }
+
+    func testAllowlistTimerShowsInTheAppsItWouldBlock() {
+        var group = appGroup(id: "g", bundleID: "com.example.Editor", mode: .afterMinutes, allowedMinutes: 30)
+        group.applicationAllowlist = true
+        let evaluator = PolicyEvaluator()
+        let inBlocked = evaluator.evaluate(groups: [group], usage: UsageSnapshot(), context: ActivityContext(activeTargetIDs: ["com.hnc.Discord"], platform: .macOS))
+        XCTAssertEqual(inBlocked.visibleTimerItems.map(\.groupID), ["g"])
+        let inAllowed = evaluator.evaluate(groups: [group], usage: UsageSnapshot(), context: ActivityContext(activeTargetIDs: ["com.example.Editor"], platform: .macOS))
+        XCTAssertTrue(inAllowed.visibleTimerItems.isEmpty)
+        let inExempt = evaluator.evaluate(groups: [group], usage: UsageSnapshot(), context: ActivityContext(activeTargetIDs: ["com.apple.Finder"], exemptTargetIDs: ["com.apple.Finder"], platform: .macOS))
+        XCTAssertTrue(inExempt.visibleTimerItems.isEmpty)
+    }
+
     func testPolicyWithoutAllowlistsStillDecodes() throws {
         let json = """
         {"version":1,"generatedAt":0,"targets":[],"protectedBundleIdentifiers":[]}
