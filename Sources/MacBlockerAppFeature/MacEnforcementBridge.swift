@@ -320,7 +320,20 @@ public final class MacEnforcementBridge: ObservableObject {
         let elapsed = elapsedSinceLastSample(now: now)
         lastSampleAt = now
         let snoozes = webStore.loadSnoozes()
-        let timersMs = reconcileUsage(groups: groups, frontmost: frontmost, elapsed: elapsed, now: now, snoozes: snoozes)
+        // A blocked app still in front (shielded or suspended) is not time in
+        // that app: no group counts it, as a covered browser page counts none.
+        let frontBlocked = frontmost.map { app in
+            blockedAppBundleIDs.contains(app) || EndpointSecurityPolicyAdapter.blocksApplication(
+                app,
+                groups: groups,
+                usage: UsageSnapshot(
+                    usageByGroupSeconds: webStore.loadUsageTimers().timersMs.mapValues { $0 / 1000 },
+                    snoozesByGroup: snoozes
+                ),
+                now: now
+            )
+        } ?? false
+        let timersMs = reconcileUsage(groups: groups, frontmost: frontBlocked ? nil : frontmost, elapsed: elapsed, now: now, snoozes: snoozes)
         let usage = UsageSnapshot(
             usageByGroupSeconds: timersMs.mapValues { $0 / 1000 },
             snoozesByGroup: snoozes
