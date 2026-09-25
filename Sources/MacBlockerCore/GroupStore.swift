@@ -215,6 +215,14 @@ public struct WebStoreDocument {
         return group["sites"] as? [String] ?? []
     }
 
+    /// True when the group's website list uses the extension's "pause" page
+    /// action (a countdown before the page is let through) rather than a block.
+    public static func siteListPauses(_ group: [String: Any]) -> Bool {
+        let scopes = group["scopes"] as? [[String: Any]] ?? []
+        guard let line = scopes.first(where: { ($0["surface"] as? String) == "site" }) else { return false }
+        return (line["action"] as? String) == "pause"
+    }
+
     /// The app list of a stored group (its apps line, else a legacy field).
     public static func apps(of group: [String: Any]) -> [[String: Any]] {
         let scopes = group["scopes"] as? [[String: Any]] ?? []

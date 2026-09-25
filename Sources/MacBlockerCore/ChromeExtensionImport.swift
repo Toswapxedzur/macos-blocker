@@ -40,7 +40,15 @@ public enum ChromeExtensionImporter {
         // A stored group carries its website list as a "site" scope line
         // since 2026-09-24 (older stores: a top-level `sites`); it may name
         // platforms and an app list besides.
-        let siteStrings = WebStoreDocument.sites(of: object)
+        // The "pause" page action (a countdown, then the page is let through)
+        // exists only in the browser: this app cannot hold a page, so a paused
+        // website list is not enforced here (with a warning) rather than
+        // turned into a hard block.
+        let siteListPauses = WebStoreDocument.siteListPauses(object)
+        let siteStrings = siteListPauses ? [] : WebStoreDocument.sites(of: object)
+        if siteListPauses, !WebStoreDocument.sites(of: object).isEmpty {
+            warnings.append("\(string(object["name"]) ?? id): the website list uses the pause action, which applies only in the browser extension; it is not blocked here.")
+        }
         let pathScoped = siteStrings.filter { isPathScopedSite($0) }
         if !pathScoped.isEmpty {
             warnings.append("\(string(object["name"]) ?? id): path-scoped site entries apply only in the browser extension and were skipped: \(pathScoped.joined(separator: ", "))")
