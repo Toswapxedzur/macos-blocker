@@ -107,10 +107,15 @@ public struct BlockerWebView: _CBViewRepresentable {
         controller.add(context.coordinator, name: "cbBridge")
 
         // Seed the editor's storage from the native snapshot before any
-        // extension script reads chrome.storage.
+        // extension script reads chrome.storage. At document start the shim
+        // has not loaded yet (it is a body script), so the seed is parked on
+        // `window` and the shim picks it up as it starts — calling
+        // __cbApplyNativeStore here threw, the shim fell back to its stale
+        // localStorage copy and wrote that back over the file (bug fixed
+        // 2026-09-25).
         if let seed = store.loadRawJSON() {
             let escaped = Self.javaScriptStringLiteral(seed)
-            let js = "window.__cbApplyNativeStore(\(escaped));"
+            let js = "window.__cbNativeStoreSeed = \(escaped);"
             let userScript = WKUserScript(
                 source: js,
                 injectionTime: .atDocumentStart,

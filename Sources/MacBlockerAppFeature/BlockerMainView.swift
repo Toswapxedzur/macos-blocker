@@ -79,7 +79,7 @@ public struct BlockerMainView: View {
             store: enforcement.webStore,
             appInventoryJSON: { MacAppInventoryJSON.make() },
             ruleLogJSON: { [weak enforcement] in enforcement?.drainLogJSON() },
-            onStorePersisted: { enforcement.refresh() },
+            onStorePersisted: { enforcement.refresh(); QuickAddPanel.shared.reload() },
             onRunCustomGroup: { [weak enforcement] groupID, _ in enforcement?.runRule(groupID: groupID) },
             onSnoozePress: { [weak enforcement] groupID in enforcement?.fireSnoozePress(groupID: groupID) },
             onPanelEvent: { [weak enforcement] groupID, data in enforcement?.firePanelEvent(groupID: groupID, data: data) },
