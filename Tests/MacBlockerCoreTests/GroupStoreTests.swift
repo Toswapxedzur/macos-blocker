@@ -176,18 +176,11 @@ final class GroupStoreTests: XCTestCase {
         XCTAssertEqual(document.groupCount, 1)
     }
 
-    func testBlockApplicationOnlyTightensEvenWhenLocked() throws {
-        var blocklist = WebStoreDocument(raw: lockedEnvelope(appsExcept: false))
-        XCTAssertTrue(try blocklist.blockApplication(id: "L", bundleID: "com.hnc.Discord", name: "Discord"))
-        XCTAssertEqual(WebStoreDocument.apps(of: blocklist.group(id: "L")!).compactMap { $0["id"] as? String },
-                       ["com.example.Editor", "com.hnc.Discord"], "a blocklist gains the app")
-
-        var allowlist = WebStoreDocument(raw: lockedEnvelope(appsExcept: true))
-        XCTAssertFalse(try allowlist.blockApplication(id: "L", bundleID: "com.hnc.Discord", name: "Discord"),
-                       "an app outside the allowlist is already blocked")
-        XCTAssertTrue(try allowlist.blockApplication(id: "L", bundleID: "com.example.Editor", name: "Editor"))
-        XCTAssertTrue(WebStoreDocument.apps(of: allowlist.group(id: "L")!).isEmpty, "the allowlist loses the app instead of gaining it")
-        XCTAssertTrue(WebStoreDocument.appsExcept(of: allowlist.group(id: "L")!))
+    func testALockedGroupRefusesQuickAddToo() {
+        var document = WebStoreDocument(raw: lockedEnvelope(appsExcept: true))
+        XCTAssertThrowsError(try document.addApplication(id: "L", bundleID: "com.hnc.Discord", name: "Discord")) { error in
+            XCTAssertEqual(error as? GroupStoreError, .groupLocked("L"), "adding to a locked allowlist would loosen it")
+        }
     }
 
     func testDeleteMissingGroupThrows() {
