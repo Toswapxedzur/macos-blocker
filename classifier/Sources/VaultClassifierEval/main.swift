@@ -143,6 +143,8 @@ case "score":
     var catalog = catalog
     if knowledgeArm == "none" || knowledgeArm == "creator" { catalog.knowledgeEntries = [] }
     if knowledgeArm == "none" || knowledgeArm == "terms" { catalog.creatorKnowledge = [] }
+    // TEMP (external-model benchmark 2026-09-25, not for commit): title + creator name only.
+    if args.contains("--no-creator-history") { catalog.creatorHistograms = [] }
     // `--knowledge-file=path` REPLACES the stored term knowledge with a hand-written
     // `[{"subject":…,"meaning":…}]` list — the oracle arm: what classification does
     // when it is handed the right term with a correct meaning.
