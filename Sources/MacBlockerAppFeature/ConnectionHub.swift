@@ -1701,18 +1701,24 @@ final class ConnectionHub: ObservableObject {
     /// host itself (always online while the hub runs). Used to flag cluster
     /// members online/offline.
     private func onlineProgramsLocked() -> Set<String> {
-        var set = Set<String>()
-        for peer in peers.values where peer.connected && !peer.program.isEmpty {
-            set.insert(peer.program)
-        }
-        set.insert(Self.localProgram)
-        return set
+        Self.onlineMembers(
+            hosting: hostingLocalHub,
+            connectedPrograms: Set(peers.values.filter { $0.connected && !$0.program.isEmpty }.map(\.program)),
+            brokerOnline: []
+        )
+    }
+
+    /// Which cluster members are online. The hosting hub knows: its connected
+    /// peers plus itself. A hub that joined another broker only knows what that
+    /// broker's snapshot said.
+    static func onlineMembers(hosting: Bool, connectedPrograms: Set<String>, brokerOnline: Set<String>) -> Set<String> {
+        hosting ? connectedPrograms.union([localProgram]) : brokerOnline
     }
 
     /// Caller must hold `lock`. Serializes a cluster including the shared
     /// definition (scalars + scope lines) and the shared runtime (usage, snooze).
     private func clusterJSONObject(_ cluster: ClusterState) -> [String: Any] {
-        let online = cluster.onlineMembers
+        let online = hostingLocalHub ? onlineProgramsLocked() : cluster.onlineMembers
         let allOnline = cluster.members.allSatisfy { online.contains($0) }
         let hasShared = !cluster.sharedScalars.isEmpty || !cluster.sharedScopes.isEmpty || cluster.sharedTs > 0
         var dict: [String: Any] = [
