@@ -53,6 +53,28 @@ final class ChromeExtensionImporterTests: XCTestCase {
         XCTAssertTrue(result.warnings.contains { $0.contains("path-scoped") })
     }
 
+    func testAPausedWebsiteListIsNotEnforcedNatively() throws {
+        let json = """
+        [
+          {
+            "id": "group-3",
+            "groupType": "site",
+            "name": "Pause news",
+            "enabled": true,
+            "mode": "instant",
+            "scopes": [
+              {"id": "site-1", "surface": "site", "platform": null, "action": "pause", "sites": ["news.example.com"], "sitesExcept": false}
+            ]
+          }
+        ]
+        """.data(using: .utf8)!
+
+        let result = try ChromeExtensionImporter.importGroups(from: json)
+
+        XCTAssertEqual(result.groups[0].targets.count, 0, "a pause action is browser-only; the Mac must not hard-block the site")
+        XCTAssertTrue(result.warnings.contains { $0.contains("pause") })
+    }
+
     func testImportsFractionalIntervalAndResetFlags() throws {
         let json = """
         [{"id": "g", "groupType": "site", "mode": "after-minutes", "allowedMinutes": 7.5,
