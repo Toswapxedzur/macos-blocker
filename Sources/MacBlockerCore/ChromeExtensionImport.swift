@@ -170,8 +170,9 @@ public enum ChromeExtensionImporter {
         guard let values = value as? [Any] else {
             return Set(Weekday.allCases)
         }
-        let days = values.compactMap { Weekday(rawValue: string($0) ?? "") }
-        return days.isEmpty ? Set(Weekday.allCases) : Set(days)
+        // A stored empty list means "no day" (never active), as in the extension;
+        // only a missing list defaults to every day.
+        return Set(values.compactMap { Weekday(rawValue: string($0) ?? "") })
     }
 
     /// Normalizes a user-typed site/URL to a bare host (scheme- and `www.`-

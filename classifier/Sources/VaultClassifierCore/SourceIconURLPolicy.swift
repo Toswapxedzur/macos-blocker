@@ -8,7 +8,6 @@ import Foundation
 public enum SourceIconURLPolicy {
     private static let hostsByPlatform: [String: [String]] = [
         "youtube": ["youtube.com", "yt3.ggpht.com", "yt3.googleusercontent.com", "googleusercontent.com"],
-        "tiktok": ["tiktok.com", "tiktokcdn.com", "tiktokcdn-us.com", "muscdn.com", "ibytedtos.com"],
         "facebook": ["facebook.com", "fbcdn.net", "fbsbx.com"],
         "instagram": ["instagram.com", "cdninstagram.com", "fbcdn.net"],
         "twitch": ["twitch.tv", "jtvnw.net"],

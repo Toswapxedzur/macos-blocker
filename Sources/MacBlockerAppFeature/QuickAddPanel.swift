@@ -107,7 +107,8 @@ public final class QuickAddPanel {
               let bundleID = app.bundleIdentifier,
               bundleID != Bundle.main.bundleIdentifier else { return }
         do {
-            try store.mutate { try $0.addApplication(id: groupID, bundleID: bundleID, name: app.localizedName) }
+            // "+" means "block this app" (it only tightens, so a locked group accepts it).
+            try store.mutate { try $0.blockApplication(id: groupID, bundleID: bundleID, name: app.localizedName) }
         } catch {
             NSSound.beep()
         }

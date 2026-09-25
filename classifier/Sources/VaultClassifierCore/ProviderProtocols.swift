@@ -19,7 +19,6 @@ public enum ProviderProtocolFamily: String, Codable, Equatable, Sendable, CaseIt
     case twitchHelixV1
     case redditOAuthV1
     case xAPIV2
-    case tikTokDisplayV2
     case metaGraphV1
     case soundCloudV2
     case steamWebV1
@@ -277,8 +276,6 @@ public enum ProviderProtocolRegistry {
             return external(type, .redditOAuthV1, "https://oauth.reddit.com", "/r/{contentID}/new", .readPublicContent, configuration: [.init(.userAgent, defaultValue: "VaultClassifier/1.0")])
         case .xPlatform:
             return external(type, .xAPIV2, "https://api.x.com/2", "/tweets/{contentID}", .readPublicContent)
-        case .tikTok:
-            return external(type, .tikTokDisplayV2, "https://open.tiktokapis.com/v2", "/video/query/", .readPublicContent, method: "POST", body: .customJSON)
         case .instagramGraph, .facebookGraph:
             return external(type, .metaGraphV1, "https://graph.facebook.com", "/{apiVersion}/{contentID}", .readPublicContent, configuration: [.init(.apiVersion, defaultValue: "v24.0")])
         case .serper:

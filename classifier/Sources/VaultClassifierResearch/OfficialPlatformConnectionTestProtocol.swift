@@ -57,9 +57,6 @@ public enum OfficialPlatformConnectionTestProtocol {
         func get(_ path: [String], _ queryItems: [URLQueryItem] = []) -> Route {
             .init(method: "GET", path: path, queryItems: queryItems, body: nil)
         }
-        func post(_ path: [String], _ queryItems: [URLQueryItem] = [], _ body: [String: Any]) -> Route {
-            .init(method: "POST", path: path, queryItems: queryItems, body: body)
-        }
         switch type {
         case .youtubeData:
             return get(["videos"], [.init(name: "part", value: "snippet"), .init(name: "id", value: "dQw4w9WgXcQ")])
@@ -69,8 +66,6 @@ public enum OfficialPlatformConnectionTestProtocol {
             return get(["r", "all", "hot"], [.init(name: "limit", value: "1"), .init(name: "raw_json", value: "1")])
         case .xPlatform:
             return get(["users", "by", "username", "XDevelopers"])
-        case .tikTok:
-            return post(["video", "list"], [.init(name: "fields", value: "id")], ["max_count": 1])
         case .instagramGraph, .facebookGraph:
             let version = try metaAPIVersion(profile)
             return get([version, "me"], [.init(name: "fields", value: "id")])
