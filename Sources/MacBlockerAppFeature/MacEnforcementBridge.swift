@@ -319,10 +319,11 @@ public final class MacEnforcementBridge: ObservableObject {
         // 1. Reconcile reset windows + accrue time spent in the frontmost app.
         let elapsed = elapsedSinceLastSample(now: now)
         lastSampleAt = now
-        let timersMs = reconcileUsage(groups: groups, frontmost: frontmost, elapsed: elapsed, now: now)
+        let snoozes = webStore.loadSnoozes()
+        let timersMs = reconcileUsage(groups: groups, frontmost: frontmost, elapsed: elapsed, now: now, snoozes: snoozes)
         let usage = UsageSnapshot(
             usageByGroupSeconds: timersMs.mapValues { $0 / 1000 },
-            snoozesByGroup: webStore.loadSnoozes()
+            snoozesByGroup: snoozes
         )
 
         // Enforce persistent app blocklist: kill any blocked app that's running.
@@ -907,7 +908,8 @@ public final class MacEnforcementBridge: ObservableObject {
         groups: [BlockGroup],
         frontmost: String?,
         elapsed: TimeInterval,
-        now: Date
+        now: Date,
+        snoozes: [String: SnoozeState] = [:]
     ) -> [String: Double] {
         let current = webStore.loadUsageTimers()
         var timers = current.timersMs
@@ -923,7 +925,9 @@ public final class MacEnforcementBridge: ObservableObject {
             let gid = group.id
 
             var addedMs: Double = 0
+            // A snoozed group spends nothing, as in the extension.
             if let frontmost, elapsed > 0, group.isActive(at: now),
+               snoozes[gid]?.phase(at: now) != .active,
                group.countsApplication(frontmost, exempt: Self.isExemptApplication(frontmost)) {
                 addedMs = elapsed * 1000
             }
@@ -995,18 +999,19 @@ public final class MacEnforcementBridge: ObservableObject {
             // (browser website time included). reportLocalUsage is a no-op when
             // the group isn't clustered, so the gate keeps non-bridge groups
             // entirely local.
-            if ConnectionHub.shared.sharedUsage(groupName: group.name) != nil {
-                // We report resetAtMs:0 (no rollover signal) because the Mac's
-                // local window anchor (nowMs-based) is NOT comparable to the
-                // browser's; letting it drive the hub's rollover would wipe the
-                // shared budget on first report. The browser is the reset
-                // authority; we just adopt the hub's anchor on fold so our local
-                // enforcement window stays aligned.
+            if let hub = ConnectionHub.shared.sharedUsage(groupName: group.name) {
+                // Never report our LOCAL anchor (nowMs-based, not comparable to
+                // the browser's; it would wipe the shared budget). But when the
+                // SHARED anchor's period has ended, report the rollover computed
+                // from that shared anchor — every member computes the same value,
+                // and it can only move forward. Otherwise a budget spent mostly
+                // in apps stayed spent until the browser next accrued time.
+                let rolloverMs = Self.sharedRolloverMs(sharedAnchorMs: hub.resetAtMs, group: group, nowMs: nowMs)
                 if clusterSeededGroups.contains(gid) {
                     ConnectionHub.shared.reportLocalUsage(
                         groupName: group.name,
                         deltaMs: addedMs,
-                        resetAtMs: 0
+                        resetAtMs: rolloverMs
                     )
                 } else {
                     // First report since joining: seed our current local total
@@ -1015,7 +1020,7 @@ public final class MacEnforcementBridge: ObservableObject {
                     ConnectionHub.shared.reportLocalUsage(
                         groupName: group.name,
                         deltaMs: 0,
-                        resetAtMs: 0,
+                        resetAtMs: rolloverMs,
                         seedMs: timers[gid] ?? 0
                     )
                     clusterSeededGroups.insert(gid)
@@ -1067,9 +1072,19 @@ public final class MacEnforcementBridge: ObservableObject {
         return groups.contains { $0.countsApplication(frontmost, exempt: exempt) } ? [frontmost] : []
     }
 
+    /// The new period start to report when the SHARED budget's period (anchored
+    /// on the hub's anchor, which every member adopts) has ended, else 0 (no
+    /// rollover). Computed from the shared anchor only, so it is the same value
+    /// on every member and never moves the anchor backwards.
+    nonisolated static func sharedRolloverMs(sharedAnchorMs: Double, group: BlockGroup, nowMs: Double) -> Double {
+        guard sharedAnchorMs > 0 else { return 0 }
+        let start = UsageBudget.periodStartMs(anchorMs: sharedAnchorMs, group: group, nowMs: nowMs)
+        return start > sharedAnchorMs ? start : 0
+    }
+
     /// Apps no group can block: Apple, browsers (the extension's business) and
     /// Vault itself, exactly the guard policy's protections.
-    static func isExemptApplication(_ bundleID: String) -> Bool {
+    nonisolated static func isExemptApplication(_ bundleID: String) -> Bool {
         MacProcessTerminator.isBrowserBundleIdentifier(bundleID) ||
             GuardPolicy(protectedBundleIdentifiers: Bundle.main.bundleIdentifier.map { [$0] } ?? [])
                 .isProtected(bundleIdentifier: bundleID)

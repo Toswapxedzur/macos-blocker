@@ -235,7 +235,6 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
     case twitch
     case reddit
     case xPlatform
-    case tikTok
     case instagramGraph
     case facebookGraph
     case serper
@@ -296,7 +295,6 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
         case .twitch: return "Twitch credential"
         case .reddit: return "Reddit credential"
         case .xPlatform: return "X API credential"
-        case .tikTok: return "TikTok credential"
         case .instagramGraph: return "Instagram Graph API credential"
         case .facebookGraph: return "Facebook Graph API credential"
         case .serper: return "Serper key"
@@ -317,7 +315,7 @@ public enum APIKeyProviderType: String, Codable, Sendable, CaseIterable {
         case .groq: return "llama-3.3-70b-versatile"
         case .openRouter: return "openai/gpt-4.1-mini"
         case .ollama: return "llama3.3"
-        case .youtubeData, .twitch, .reddit, .xPlatform, .tikTok,
+        case .youtubeData, .twitch, .reddit, .xPlatform,
              .instagramGraph, .facebookGraph, .serper, .youSearch: return ""
         case .custom: return "custom-model"
         }
