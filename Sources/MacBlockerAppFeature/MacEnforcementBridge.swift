@@ -985,14 +985,17 @@ public final class MacEnforcementBridge: ObservableObject {
             }
 
             // Fixed budget: resets every resetIntervalHours from the anchor, or
-            // on the midnight-aligned grid when resetAtMidnight is on.
+            // on the midnight-aligned grid when resetAtMidnight is on. A linked
+            // group's period belongs to the hub: it resets there, and we adopt
+            // its total and anchor below instead of resetting on our own clock.
+            let linked = ConnectionHub.shared.sharedUsage(groupName: group.name) != nil
             var anchor = resetAt[gid] ?? nowMs
             if resetAt[gid] == nil {
                 resetAt[gid] = nowMs
                 resetWrites[gid] = nowMs
             }
             let periodStart = UsageBudget.periodStartMs(anchorMs: anchor, group: group, nowMs: nowMs)
-            if periodStart != anchor {
+            if !linked, periodStart != anchor {
                 timers[gid] = 0
                 resetAt[gid] = periodStart
                 timerWrites[gid] = 0
@@ -1004,27 +1007,16 @@ public final class MacEnforcementBridge: ObservableObject {
                 timerWrites[gid] = timers[gid]
             }
 
-            // Web-app bridge: a clustered Default group shares ONE live budget.
-            // We are the accrual owner for app-time, so report this tick's
-            // increment to the hub (the single accumulator) and fold the
-            // authoritative shared total back into the local timer so the Mac
-            // display + enforcement reflect time spent on every linked member
-            // (browser website time included). reportLocalUsage is a no-op when
-            // the group isn't clustered, so the gate keeps non-bridge groups
-            // entirely local.
-            if let hub = ConnectionHub.shared.sharedUsage(groupName: group.name) {
-                // Never report our LOCAL anchor (nowMs-based, not comparable to
-                // the browser's; it would wipe the shared budget). But when the
-                // SHARED anchor's period has ended, report the rollover computed
-                // from that shared anchor — every member computes the same value,
-                // and it can only move forward. Otherwise a budget spent mostly
-                // in apps stayed spent until the browser next accrued time.
-                let rolloverMs = Self.sharedRolloverMs(sharedAnchorMs: hub.resetAtMs, group: group, nowMs: nowMs)
+            // Linked group: ONE live budget, kept by the hub. Report this tick's
+            // increment (our anchor only seeds the hub's period when it has
+            // none) and fold the hub's total + anchor back into the local timer,
+            // so enforcement reflects time spent on every member.
+            if linked {
                 if clusterSeededGroups.contains(gid) {
                     ConnectionHub.shared.reportLocalUsage(
                         groupName: group.name,
                         deltaMs: addedMs,
-                        resetAtMs: rolloverMs
+                        resetAtMs: anchor
                     )
                 } else {
                     // First report since joining: seed our current local total
@@ -1033,7 +1025,7 @@ public final class MacEnforcementBridge: ObservableObject {
                     ConnectionHub.shared.reportLocalUsage(
                         groupName: group.name,
                         deltaMs: 0,
-                        resetAtMs: rolloverMs,
+                        resetAtMs: anchor,
                         seedMs: timers[gid] ?? 0
                     )
                     clusterSeededGroups.insert(gid)
@@ -1083,16 +1075,6 @@ public final class MacEnforcementBridge: ObservableObject {
         guard let frontmost else { return [] }
         let exempt = Self.isExemptApplication(frontmost)
         return groups.contains { $0.countsApplication(frontmost, exempt: exempt) } ? [frontmost] : []
-    }
-
-    /// The new period start to report when the SHARED budget's period (anchored
-    /// on the hub's anchor, which every member adopts) has ended, else 0 (no
-    /// rollover). Computed from the shared anchor only, so it is the same value
-    /// on every member and never moves the anchor backwards.
-    nonisolated static func sharedRolloverMs(sharedAnchorMs: Double, group: BlockGroup, nowMs: Double) -> Double {
-        guard sharedAnchorMs > 0 else { return 0 }
-        let start = UsageBudget.periodStartMs(anchorMs: sharedAnchorMs, group: group, nowMs: nowMs)
-        return start > sharedAnchorMs ? start : 0
     }
 
     /// Apps no group can block: Apple, browsers (the extension's business) and
