@@ -215,6 +215,13 @@ public struct WebStoreDocument {
         return group["sites"] as? [String] ?? []
     }
 
+    /// "Block every application except these" on the group's Apps entry.
+    public static func appsExcept(of group: [String: Any]) -> Bool {
+        let scopes = group["scopes"] as? [[String: Any]] ?? []
+        guard let line = scopes.first(where: { ($0["surface"] as? String) == "apps" }) else { return false }
+        return (line["appsExcept"] as? Bool) == true
+    }
+
     /// True when the group's website list uses the extension's "pause" page
     /// action (a countdown before the page is let through) rather than a block.
     public static func siteListPauses(_ group: [String: Any]) -> Bool {

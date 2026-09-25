@@ -17,17 +17,33 @@ public struct GuardPolicy: Codable, Equatable, Sendable {
     /// hard-allow). Apple platform binaries are always protected (see
     /// `isProtected`) independent of this set.
     public var protectedBundleIdentifiers: Set<String>
+    /// "Block every application except these" groups that block right now: a
+    /// candidate not in a list's allowed set matches that list (and is blocked
+    /// with its mode). Protected and browser processes are never matched.
+    public var allowOnly: [GuardAllowlist]
 
     public init(
         version: Int = 1,
         generatedAt: Date = Date(),
         targets: [GuardTarget] = [],
-        protectedBundleIdentifiers: Set<String> = []
+        protectedBundleIdentifiers: Set<String> = [],
+        allowOnly: [GuardAllowlist] = []
     ) {
         self.version = version
         self.generatedAt = generatedAt
         self.targets = targets
         self.protectedBundleIdentifiers = protectedBundleIdentifiers
+        self.allowOnly = allowOnly
+    }
+
+    // Policies written before allowlists existed decode with none.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decode(Int.self, forKey: .version)
+        generatedAt = try c.decode(Date.self, forKey: .generatedAt)
+        targets = try c.decode([GuardTarget].self, forKey: .targets)
+        protectedBundleIdentifiers = try c.decode(Set<String>.self, forKey: .protectedBundleIdentifiers)
+        allowOnly = try c.decodeIfPresent([GuardAllowlist].self, forKey: .allowOnly) ?? []
     }
 
     /// Bundle-id prefixes that are structurally off-limits. Killing these as
@@ -47,6 +63,10 @@ public struct GuardPolicy: Codable, Equatable, Sendable {
             return true
         }
         let lowered = bundleID.lowercased()
+        // A protected app's helpers (`<id>.helper`) are protected with it.
+        if protectedBundleIdentifiers.contains(where: { lowered.hasPrefix($0.lowercased() + ".") }) {
+            return true
+        }
         return Self.alwaysProtectedPrefixes.contains { lowered.hasPrefix($0) }
     }
 
@@ -61,14 +81,29 @@ public struct GuardPolicy: Codable, Equatable, Sendable {
         if isProtected(bundleIdentifier: bundleIdentifier) {
             return nil
         }
-        return targets.first {
+        if let target = targets.first(where: {
             $0.matches(
                 bundleIdentifier: bundleIdentifier,
                 teamIdentifier: teamIdentifier,
                 signingIdentifier: signingIdentifier,
                 executablePath: executablePath
             )
+        }) {
+            return target
         }
+        // An allowlist group blocks whatever it does not name. Browsers stay
+        // the extension's business, as everywhere else in the native policy.
+        guard let bundleID = bundleIdentifier, !bundleID.isEmpty,
+              !MacProcessTerminator.isBrowserBundleIdentifier(bundleID) else { return nil }
+        for list in allowOnly where !list.allows(bundleIdentifier: bundleID) {
+            return GuardTarget(
+                bundleIdentifier: bundleID,
+                bundleIdentifierPrefixes: [],
+                enforcementMode: list.enforcementMode,
+                displayName: list.displayName
+            )
+        }
+        return nil
     }
 
     /// Whether any target matches on code-signing identity. When false, the
@@ -91,6 +126,27 @@ public struct GuardPolicy: Codable, Equatable, Sendable {
             signingIdentifier: signingIdentifier,
             executablePath: executablePath
         )?.enforcementMode.preventsLaunch ?? false
+    }
+}
+
+/// One "block every application except these" group that blocks right now.
+public struct GuardAllowlist: Codable, Equatable, Sendable {
+    public var allowedBundleIdentifiers: Set<String>
+    public var enforcementMode: MacEnforcementMode
+    public var displayName: String
+
+    public init(allowedBundleIdentifiers: Set<String>, enforcementMode: MacEnforcementMode, displayName: String) {
+        self.allowedBundleIdentifiers = Set(allowedBundleIdentifiers.map { $0.lowercased() })
+        self.enforcementMode = enforcementMode
+        self.displayName = displayName
+    }
+
+    /// An allowed app's helpers (`<id>.helper`) are allowed with it, like the
+    /// prefix match on a blocked `GuardTarget`.
+    public func allows(bundleIdentifier: String) -> Bool {
+        let id = bundleIdentifier.lowercased()
+        return allowedBundleIdentifiers.contains(id) ||
+            allowedBundleIdentifiers.contains { id.hasPrefix($0 + ".") }
     }
 }
 

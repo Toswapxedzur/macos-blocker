@@ -13,6 +13,9 @@ public struct EnforcementPlanEntry: Codable, Equatable, Sendable {
     public var allowedMinutes: Double
     public var thresholdMinutes: Double?
     public var applicationTargetIDs: Set<String>
+    /// When true, `applicationTargetIDs` are the ALLOWED applications and every
+    /// other one is blocked while the entry blocks.
+    public var applicationAllowlist: Bool
     public var categoryTargetIDs: Set<String>
     public var webDomainTargetIDs: Set<String>
     public var shieldTitle: String
@@ -31,6 +34,7 @@ public struct EnforcementPlanEntry: Codable, Equatable, Sendable {
         allowedMinutes: Double,
         thresholdMinutes: Double?,
         applicationTargetIDs: Set<String>,
+        applicationAllowlist: Bool = false,
         categoryTargetIDs: Set<String>,
         webDomainTargetIDs: Set<String>,
         shieldTitle: String,
@@ -45,11 +49,31 @@ public struct EnforcementPlanEntry: Codable, Equatable, Sendable {
         self.allowedMinutes = allowedMinutes
         self.thresholdMinutes = thresholdMinutes
         self.applicationTargetIDs = applicationTargetIDs
+        self.applicationAllowlist = applicationAllowlist
         self.categoryTargetIDs = categoryTargetIDs
         self.webDomainTargetIDs = webDomainTargetIDs
         self.shieldTitle = shieldTitle
         self.shieldMessage = shieldMessage
         self.requiresHostEvaluation = requiresHostEvaluation
+    }
+
+    // Plans written before the allowlist existed decode with it off.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        groupID = try c.decode(String.self, forKey: .groupID)
+        name = try c.decode(String.self, forKey: .name)
+        mode = try c.decode(BlockingMode.self, forKey: .mode)
+        weekdays = try c.decode(Set<Weekday>.self, forKey: .weekdays)
+        windows = try c.decode([TimeWindow].self, forKey: .windows)
+        allowedMinutes = try c.decode(Double.self, forKey: .allowedMinutes)
+        thresholdMinutes = try c.decodeIfPresent(Double.self, forKey: .thresholdMinutes)
+        applicationTargetIDs = try c.decode(Set<String>.self, forKey: .applicationTargetIDs)
+        applicationAllowlist = try c.decodeIfPresent(Bool.self, forKey: .applicationAllowlist) ?? false
+        categoryTargetIDs = try c.decode(Set<String>.self, forKey: .categoryTargetIDs)
+        webDomainTargetIDs = try c.decode(Set<String>.self, forKey: .webDomainTargetIDs)
+        shieldTitle = try c.decode(String.self, forKey: .shieldTitle)
+        shieldMessage = try c.decode(String.self, forKey: .shieldMessage)
+        requiresHostEvaluation = try c.decode(Bool.self, forKey: .requiresHostEvaluation)
     }
 
     public var allTargetIDs: Set<String> {
@@ -124,6 +148,7 @@ public enum EnforcementPlanBuilder {
                     allowedMinutes: group.allowedMinutes,
                     thresholdMinutes: group.mode.isTimed ? group.allowedMinutes : nil,
                     applicationTargetIDs: appIDs,
+                    applicationAllowlist: group.applicationAllowlist,
                     categoryTargetIDs: categoryIDs,
                     webDomainTargetIDs: webIDs,
                     shieldTitle: group.name,
