@@ -22,6 +22,7 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
 
     /// Active blocks keyed by bundle id → chosen enforcement mode.
     private var activeModes: [String: MacEnforcementMode] = [:]
+    private var activeAllowlists: [GuardAllowlist] = []
     private var lastPolicy = GuardPolicy()
 
     /// Metadata key a `PolicyDecision` can set to override the enforcement mode
@@ -38,7 +39,11 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
         self.store = store
         self.client = client
         self.defaultMode = defaultMode
-        self.protectedBundleIdentifiers = protectedBundleIdentifiers.union(MacProcessTerminator.browserBundleIdentifiers)
+        // Vault never enforces against itself: matters once an allowlist group
+        // blocks "everything except" (a blocklist only names other apps).
+        var protected = protectedBundleIdentifiers.union(MacProcessTerminator.browserBundleIdentifiers)
+        if let own = Bundle.main.bundleIdentifier { protected.insert(own) }
+        self.protectedBundleIdentifiers = protected
         self.runTerminationSweep = runTerminationSweep
     }
 
@@ -105,8 +110,16 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
             modes[bundleID] = resolved
         }
 
+        let allowlists = Self.applicationAllowlists(
+            groups: groups,
+            usage: usage,
+            now: now,
+            calendar: calendar,
+            mode: resolved
+        )
+
         // Unchanged set → no rebuild/inventory scan; just keep enforcing.
-        if modes == activeModes {
+        if modes == activeModes && allowlists == activeAllowlists {
             #if os(macOS)
             if runTerminationSweep {
                 MacProcessTerminator.enforce(policy: lastPolicy)
@@ -116,6 +129,7 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
         }
 
         activeModes = modes
+        activeAllowlists = allowlists
         let policy = buildPolicy()
         lastPolicy = policy
         try store.save(policy)
@@ -126,6 +140,36 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
             MacProcessTerminator.enforce(policy: policy)
         }
         #endif
+    }
+
+    /// Pure decision: the "block every application except these" groups that
+    /// block right now, each with its allowed set. Same activity rules as
+    /// `blockedApplicationModes`. Exposed for testing.
+    static func applicationAllowlists(
+        groups: [BlockGroup],
+        usage: UsageSnapshot,
+        now: Date,
+        calendar: Calendar = .current,
+        mode: MacEnforcementMode
+    ) -> [GuardAllowlist] {
+        var lists: [GuardAllowlist] = []
+        for group in groups where group.enabled && group.applicationAllowlist {
+            guard group.isActive(at: now, calendar: calendar) else { continue }
+            if usage.snoozesByGroup[group.id]?.phase(at: now) == .active { continue }
+            let shouldBlock: Bool
+            switch group.mode {
+            case .instant:
+                shouldBlock = true
+            case .afterMinutes, .timer:
+                let used = usage.usageByGroupSeconds[group.id] ?? 0
+                let allowed = TimeInterval(max(0, group.allowedMinutes) * 60)
+                shouldBlock = (allowed - used) <= 0
+            }
+            guard shouldBlock else { continue }
+            let allowed = Set(group.targets.filter { $0.kind == .application }.map(\.id))
+            lists.append(GuardAllowlist(allowedBundleIdentifiers: allowed, enforcementMode: mode, displayName: group.name))
+        }
+        return lists.sorted { $0.displayName < $1.displayName }
     }
 
     /// Pure decision: which application bundle ids should be blocked *right now*,
@@ -198,7 +242,8 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
             version: 1,
             generatedAt: Date(),
             targets: Self.buildTargets(from: activeModes),
-            protectedBundleIdentifiers: protectedBundleIdentifiers
+            protectedBundleIdentifiers: protectedBundleIdentifiers,
+            allowOnly: activeAllowlists
         )
     }
 

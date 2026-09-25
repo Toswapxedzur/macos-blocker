@@ -75,6 +75,27 @@ final class ChromeExtensionImporterTests: XCTestCase {
         XCTAssertTrue(result.warnings.contains { $0.contains("pause") })
     }
 
+    func testImportsAppsEverythingExcept() throws {
+        let json = """
+        [
+          {
+            "id": "group-4",
+            "name": "Deep work",
+            "enabled": true,
+            "mode": "instant",
+            "scopes": [
+              {"id": "apps-1", "surface": "apps", "platform": null, "action": "block", "apps": [{"id": "com.example.Editor", "name": "Editor"}], "appsExcept": true}
+            ]
+          }
+        ]
+        """.data(using: .utf8)!
+
+        let result = try ChromeExtensionImporter.importGroups(from: json)
+
+        XCTAssertTrue(result.groups[0].applicationAllowlist)
+        XCTAssertEqual(result.groups[0].targets.map(\.id), ["com.example.Editor"], "the listed apps are the allowed ones")
+    }
+
     func testImportsFractionalIntervalAndResetFlags() throws {
         let json = """
         [{"id": "g", "groupType": "site", "mode": "after-minutes", "allowedMinutes": 7.5,

@@ -94,6 +94,10 @@ public struct BlockGroup: Codable, Identifiable, Equatable, Sendable {
     public var fallbackMessage: String
     public var customRuleSource: String
     public var targets: [BlockTarget]
+    /// "Block every application except these": the group's application targets
+    /// are the allowed ones; every other (non-protected, non-browser) app is
+    /// blocked while the group blocks. Mirrors the website list's allowlist.
+    public var applicationAllowlist: Bool
     public var unsupportedLegacyFeatures: [String]
 
     public init(
@@ -121,6 +125,7 @@ public struct BlockGroup: Codable, Identifiable, Equatable, Sendable {
         fallbackMessage: String = "",
         customRuleSource: String = "",
         targets: [BlockTarget] = [],
+        applicationAllowlist: Bool = false,
         unsupportedLegacyFeatures: [String] = []
     ) {
         self.id = id
@@ -147,6 +152,7 @@ public struct BlockGroup: Codable, Identifiable, Equatable, Sendable {
         self.fallbackMessage = fallbackMessage
         self.customRuleSource = customRuleSource
         self.targets = targets
+        self.applicationAllowlist = applicationAllowlist
         self.unsupportedLegacyFeatures = unsupportedLegacyFeatures
     }
 }

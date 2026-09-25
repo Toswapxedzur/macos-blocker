@@ -80,6 +80,58 @@ final class GuardEngineTests: XCTestCase {
         XCTAssertEqual(plan.map(\.bundleIdentifier), ["com.example.FocusApp"])
     }
 
+    // MARK: - "Block every application except these"
+
+    func testAllowlistBlocksEverythingItDoesNotName() {
+        let policy = GuardPolicy(
+            protectedBundleIdentifiers: ["com.adamancia.vault"],
+            allowOnly: [GuardAllowlist(
+                allowedBundleIdentifiers: ["com.example.Editor"],
+                enforcementMode: .forceTerminate,
+                displayName: "Deep work"
+            )]
+        )
+        XCTAssertNil(policy.match(bundleIdentifier: "com.example.editor"), "listed apps pass, case-insensitively")
+        XCTAssertNil(policy.match(bundleIdentifier: "com.example.Editor.Helper"), "an allowed app's helpers pass with it")
+        XCTAssertEqual(policy.match(bundleIdentifier: "com.hnc.Discord")?.enforcementMode, .forceTerminate)
+        XCTAssertEqual(policy.match(bundleIdentifier: "com.hnc.Discord")?.displayName, "Deep work")
+        XCTAssertTrue(policy.shouldDenyLaunch(bundleIdentifier: "com.hnc.Discord"))
+        // Guardrails still win: Apple, Vault itself, browsers and unidentified processes.
+        XCTAssertNil(policy.match(bundleIdentifier: "com.apple.Finder"))
+        XCTAssertNil(policy.match(bundleIdentifier: "com.adamancia.vault"))
+        XCTAssertNil(policy.match(bundleIdentifier: "com.adamancia.vault.Helper"), "a protected app's helpers are protected with it")
+        XCTAssertNil(policy.match(bundleIdentifier: "com.google.Chrome"))
+        XCTAssertNil(policy.match(bundleIdentifier: nil))
+    }
+
+    func testAllowlistDecisionFollowsGroupActivity() {
+        var group = appGroup(id: "g", bundleID: "com.example.Editor", mode: .timer, allowedMinutes: 30)
+        group.applicationAllowlist = true
+        let fresh = EndpointSecurityPolicyAdapter.applicationAllowlists(
+            groups: [group], usage: UsageSnapshot(), now: Date(), mode: .forceTerminate
+        )
+        XCTAssertTrue(fresh.isEmpty, "a timed allowlist group blocks nothing before its allowance is spent")
+
+        let spent = EndpointSecurityPolicyAdapter.applicationAllowlists(
+            groups: [group], usage: UsageSnapshot(usageByGroupSeconds: ["g": TimeInterval(30 * 60)]), now: Date(), mode: .suspend
+        )
+        XCTAssertEqual(spent, [GuardAllowlist(allowedBundleIdentifiers: ["com.example.editor"], enforcementMode: .suspend, displayName: "g")])
+
+        group.applicationAllowlist = false
+        let plain = EndpointSecurityPolicyAdapter.applicationAllowlists(
+            groups: [group], usage: UsageSnapshot(usageByGroupSeconds: ["g": TimeInterval(30 * 60)]), now: Date(), mode: .suspend
+        )
+        XCTAssertTrue(plain.isEmpty, "a plain blocklist group contributes no allowlist")
+    }
+
+    func testPolicyWithoutAllowlistsStillDecodes() throws {
+        let json = """
+        {"version":1,"generatedAt":0,"targets":[],"protectedBundleIdentifiers":[]}
+        """.data(using: .utf8)!
+        let policy = try JSONDecoder().decode(GuardPolicy.self, from: json)
+        XCTAssertTrue(policy.allowOnly.isEmpty)
+    }
+
     // MARK: - preventsLaunch / runningAction layering
 
     func testEnforcementModeLayers() {

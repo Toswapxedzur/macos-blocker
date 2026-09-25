@@ -126,6 +126,7 @@ public enum ChromeExtensionImporter {
             fallbackMessage: "",
             customRuleSource: string(object["blockingRulesText"]) ?? "",
             targets: sites + apps,
+            applicationAllowlist: WebStoreDocument.appsExcept(of: object),
             unsupportedLegacyFeatures: unsupported
         )
     }
