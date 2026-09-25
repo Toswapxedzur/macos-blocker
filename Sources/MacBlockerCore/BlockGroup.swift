@@ -18,10 +18,17 @@ public enum BlockGroupType: String, Codable, CaseIterable, Sendable {
 public enum BlockingMode: String, Codable, Sendable {
     case instant
     case afterMinutes = "after-minutes"
-    case timer
 
     public var isTimed: Bool {
-        self == .afterMinutes || self == .timer
+        self == .afterMinutes
+    }
+
+    /// Reads a stored mode. Crash guard: the count-up "timer" mode was removed
+    /// on 2026-09-25 (Activity tracks usage by itself); a group stored with it
+    /// carries on as a normal timed group. Anything unknown is instant.
+    public static func reconcile(_ raw: String?) -> BlockingMode {
+        if let raw, let mode = BlockingMode(rawValue: raw) { return mode }
+        return raw == "timer" ? .afterMinutes : .instant
     }
 }
 

@@ -106,7 +106,7 @@ public enum ChromeExtensionImporter {
             groupType: mapGroupType(groupType),
             name: string(object["name"]) ?? defaultName(for: groupType),
             enabled: bool(object["enabled"]) ?? true,
-            mode: BlockingMode(rawValue: string(object["mode"]) ?? "") ?? .instant,
+            mode: BlockingMode.reconcile(string(object["mode"])),
             allowedMinutes: double(object["allowedMinutes"]) ?? 15,
             resetIntervalHours: double(object["resetIntervalHours"]) ?? 24,
             resetAtMidnight: bool(object["resetAtMidnight"]) ?? false,

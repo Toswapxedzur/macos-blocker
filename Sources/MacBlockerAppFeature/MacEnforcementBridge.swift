@@ -918,7 +918,7 @@ public final class MacEnforcementBridge: ObservableObject {
         var bucketWrites: [String: [Double: Double]] = [:]
 
         for group in groups where group.enabled {
-            guard group.mode == .timer || group.mode == .afterMinutes else { continue }
+            guard group.mode.isTimed else { continue }
             let gid = group.id
 
             var addedMs: Double = 0
