@@ -160,7 +160,7 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
             switch group.mode {
             case .instant:
                 shouldBlock = true
-            case .afterMinutes, .timer:
+            case .afterMinutes:
                 let used = usage.usageByGroupSeconds[group.id] ?? 0
                 let allowed = TimeInterval(max(0, group.allowedMinutes) * 60)
                 shouldBlock = (allowed - used) <= 0
@@ -192,7 +192,7 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
             switch group.mode {
             case .instant:
                 shouldBlock = true
-            case .afterMinutes, .timer:
+            case .afterMinutes:
                 // Timed groups only block once the daily allowance is spent.
                 let used = usage.usageByGroupSeconds[group.id] ?? 0
                 let allowed = TimeInterval(max(0, group.allowedMinutes) * 60)

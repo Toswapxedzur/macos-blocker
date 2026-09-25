@@ -96,6 +96,15 @@ final class ChromeExtensionImporterTests: XCTestCase {
         XCTAssertEqual(result.groups[0].targets.map(\.id), ["com.example.Editor"], "the listed apps are the allowed ones")
     }
 
+    func testRetiredTimerModeBecomesTimedGroup() throws {
+        let json = """
+        [{"id": "g", "name": "Old stopwatch", "enabled": true, "mode": "timer", "allowedMinutes": 20, "scopes": []}]
+        """.data(using: .utf8)!
+        let result = try ChromeExtensionImporter.importGroups(from: json)
+        XCTAssertEqual(result.groups[0].mode, .afterMinutes, "the removed count-up mode carries on as a normal timed group")
+        XCTAssertEqual(result.groups[0].allowedMinutes, 20)
+    }
+
     func testImportsFractionalIntervalAndResetFlags() throws {
         let json = """
         [{"id": "g", "groupType": "site", "mode": "after-minutes", "allowedMinutes": 7.5,

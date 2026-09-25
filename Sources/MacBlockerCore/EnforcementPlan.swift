@@ -62,7 +62,7 @@ public struct EnforcementPlanEntry: Codable, Equatable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         groupID = try c.decode(String.self, forKey: .groupID)
         name = try c.decode(String.self, forKey: .name)
-        mode = try c.decode(BlockingMode.self, forKey: .mode)
+        mode = BlockingMode.reconcile(try c.decode(String.self, forKey: .mode))
         weekdays = try c.decode(Set<Weekday>.self, forKey: .weekdays)
         windows = try c.decode([TimeWindow].self, forKey: .windows)
         allowedMinutes = try c.decode(Double.self, forKey: .allowedMinutes)
