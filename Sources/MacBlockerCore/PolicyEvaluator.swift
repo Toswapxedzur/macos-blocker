@@ -28,7 +28,7 @@ public struct PolicyEvaluator: Sendable {
             switch group.mode {
             case .instant:
                 decisions.append(shieldDecision(for: group, targetIDs: matchingTargets))
-            case .afterMinutes, .timer:
+            case .afterMinutes:
                 let usedSeconds = usage.usageByGroupSeconds[group.id] ?? 0
                 let allowedSeconds = TimeInterval(max(0, group.allowedMinutes) * 60)
                 let remaining = max(0, allowedSeconds - usedSeconds)

@@ -105,7 +105,7 @@ final class GuardEngineTests: XCTestCase {
     }
 
     func testAllowlistDecisionFollowsGroupActivity() {
-        var group = appGroup(id: "g", bundleID: "com.example.Editor", mode: .timer, allowedMinutes: 30)
+        var group = appGroup(id: "g", bundleID: "com.example.Editor", mode: .afterMinutes, allowedMinutes: 30)
         group.applicationAllowlist = true
         let fresh = EndpointSecurityPolicyAdapter.applicationAllowlists(
             groups: [group], usage: UsageSnapshot(), now: Date(), mode: .forceTerminate
@@ -283,17 +283,17 @@ final class GuardEngineTests: XCTestCase {
         XCTAssertTrue(modes.isEmpty)
     }
 
-    func testTimerGroupDoesNotBlockBeforeLimit() {
+    func testTimedGroupDoesNotBlockBeforeLimit() {
         // The reported bug: a timer group must NOT insta-block.
-        let group = appGroup(id: "g", bundleID: "com.hnc.Discord", mode: .timer, allowedMinutes: 30)
+        let group = appGroup(id: "g", bundleID: "com.hnc.Discord", mode: .afterMinutes, allowedMinutes: 30)
         let modes = EndpointSecurityPolicyAdapter.blockedApplicationModes(
             groups: [group], usage: UsageSnapshot(), now: Date(), mode: .forceTerminate
         )
         XCTAssertTrue(modes.isEmpty)
     }
 
-    func testTimerGroupBlocksOnceLimitExhausted() {
-        let group = appGroup(id: "g", bundleID: "com.hnc.Discord", mode: .timer, allowedMinutes: 30)
+    func testTimedGroupBlocksOnceLimitExhausted() {
+        let group = appGroup(id: "g", bundleID: "com.hnc.Discord", mode: .afterMinutes, allowedMinutes: 30)
         let usage = UsageSnapshot(usageByGroupSeconds: ["g": TimeInterval(30 * 60)])
         let modes = EndpointSecurityPolicyAdapter.blockedApplicationModes(
             groups: [group], usage: usage, now: Date(), mode: .forceTerminate
