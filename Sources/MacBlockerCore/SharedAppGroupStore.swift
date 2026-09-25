@@ -37,14 +37,26 @@ public final class SharedAppGroupStore: @unchecked Sendable {
     public func readData(_ fileName: String, silent: Bool = false) -> Data? {
         queue.sync {
             let target = url(for: fileName)
-            do {
-                let data = try Data(contentsOf: target)
-                return data
-            } catch {
-                if !silent {
-                    print("[SharedAppGroupStore] readData FAILED for \(target.path): \(error)")
+            // A read interrupted by a signal (EINTR, seen at launch while the
+            // process is still starting up) is transient: retry briefly rather
+            // than report "no store", which made the editor fall back to its
+            // stale local copy and write that back over the file.
+            var attempt = 0
+            while true {
+                do {
+                    return try Data(contentsOf: target)
+                } catch {
+                    let posixCode = ((error as NSError).userInfo[NSUnderlyingErrorKey] as? NSError)?.code
+                    if posixCode == Int(EINTR), attempt < 5 {
+                        attempt += 1
+                        usleep(20_000)
+                        continue
+                    }
+                    if !silent {
+                        print("[SharedAppGroupStore] readData FAILED for \(target.path): \(error)")
+                    }
+                    return nil
                 }
-                return nil
             }
         }
     }

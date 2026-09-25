@@ -47,6 +47,9 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
             VaultClassifierPage.shared.start()
         }
 
+        // The floating quick-add "+" (off by default; follows the editor's switch).
+        MainActor.assumeIsolated { QuickAddPanel.shared.reload() }
+
         // The Activity log records app-usage time (native) and browser activity
         // (flushed by the extension over the hub). One store is shared by the
         // recorder and the hub; each category records only while enabled (default
