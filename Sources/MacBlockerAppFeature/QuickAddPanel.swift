@@ -37,8 +37,10 @@ public final class QuickAddPanel {
         guard settings["quickAddEnabled"] as? Bool == true,
               let groupID = raw["quickAddGroupId"] as? String, !groupID.isEmpty else { return nil }
         let groups = raw["blockedGroups"] as? [[String: Any]] ?? []
+        // "+" is an edit, and a locked group takes no edits (as in the editor).
         guard let group = groups.first(where: { ($0["id"] as? String) == groupID }),
-              (group["groupType"] as? String) != "custom" else { return nil }
+              (group["groupType"] as? String) != "custom",
+              !WebStoreDocument.isLocked(group) else { return nil }
         return groupID
     }
 
@@ -107,8 +109,7 @@ public final class QuickAddPanel {
               let bundleID = app.bundleIdentifier,
               bundleID != Bundle.main.bundleIdentifier else { return }
         do {
-            // "+" means "block this app" (it only tightens, so a locked group accepts it).
-            try store.mutate { try $0.blockApplication(id: groupID, bundleID: bundleID, name: app.localizedName) }
+            try store.mutate { try $0.addApplication(id: groupID, bundleID: bundleID, name: app.localizedName) }
         } catch {
             NSSound.beep()
         }

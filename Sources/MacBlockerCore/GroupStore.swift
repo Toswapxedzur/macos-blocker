@@ -124,7 +124,7 @@ public enum GroupStoreError: Error, Equatable {
     case groupNotFound(String)
     case invalidInput(String)
     /// The group is frozen, strict or parental-locked; like the editor, the
-    /// store refuses edits to it (only "block this app" may tighten it).
+    /// store refuses edits to it.
     case groupLocked(String)
 }
 
@@ -303,37 +303,6 @@ public struct WebStoreDocument {
         }
     }
 
-    /// Quick add's "block this app": a blocklist gains the app, an "everything
-    /// except" list loses the entries that allow it. It can only tighten a
-    /// group, so it is the one edit a locked group accepts. Returns false when
-    /// the app was already blocked by the list.
-    @discardableResult
-    public mutating func blockApplication(id: String, bundleID: String, name: String?) throws -> Bool {
-        let bundle = bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !bundle.isEmpty else { throw GroupStoreError.invalidInput("bundleID") }
-        let display = name?.trimmingCharacters(in: .whitespacesAndNewlines)
-        var changed = false
-        try mutateGroup(id: id, allowLocked: true) { group in
-            let except = Self.appsExcept(of: group)
-            Self.mutateScopeLine(&group, surface: "apps") { line in
-                var apps = line["apps"] as? [[String: Any]] ?? []
-                if except {
-                    let before = apps.count
-                    apps.removeAll { entry in
-                        guard let listed = entry["id"] as? String else { return false }
-                        return BlockGroup.allowlist([listed], allows: bundle)
-                    }
-                    changed = apps.count != before
-                } else if !apps.contains(where: { ($0["id"] as? String) == bundle }) {
-                    apps.append(["id": bundle, "name": (display?.isEmpty == false) ? display! : bundle])
-                    changed = true
-                }
-                line["apps"] = apps
-            }
-        }
-        return changed
-    }
-
     /// Same rule as the extension (`cbGroupIsLocked`): any freeze mode locks.
     public static func isLocked(_ group: [String: Any]) -> Bool {
         guard let mode = group["freezeMode"] as? String else { return false }
@@ -363,7 +332,6 @@ public struct WebStoreDocument {
 
     private mutating func mutateGroup(
         id: String,
-        allowLocked: Bool = false,
         _ body: (inout [String: Any]) throws -> Void
     ) throws {
         var list = groups
@@ -371,7 +339,7 @@ public struct WebStoreDocument {
             throw GroupStoreError.groupNotFound(id)
         }
         var group = list[index]
-        if !allowLocked, Self.isLocked(group) { throw GroupStoreError.groupLocked(id) }
+        if Self.isLocked(group) { throw GroupStoreError.groupLocked(id) }
         try body(&group)
         list[index] = group
         groups = list
