@@ -96,6 +96,17 @@ final class ChromeExtensionImporterTests: XCTestCase {
         XCTAssertEqual(result.groups[0].targets.map(\.id), ["com.example.Editor"], "the listed apps are the allowed ones")
     }
 
+    func testEmptyDaysMeanNeverAsInTheExtension() throws {
+        let json = """
+        [{"id": "g", "name": "No days", "enabled": true, "mode": "instant", "activeDays": [], "scopes": []},
+         {"id": "h", "name": "Default days", "enabled": true, "mode": "instant", "scopes": []}]
+        """.data(using: .utf8)!
+        let result = try ChromeExtensionImporter.importGroups(from: json)
+        XCTAssertTrue(result.groups[0].activeDays.isEmpty, "a stored empty list is 'no day', never 'every day'")
+        XCTAssertFalse(result.groups[0].isActive(at: Date()))
+        XCTAssertEqual(result.groups[1].activeDays.count, 7, "only a missing list defaults to every day")
+    }
+
     func testRetiredTimerModeBecomesTimedGroup() throws {
         let json = """
         [{"id": "g", "name": "Old stopwatch", "enabled": true, "mode": "timer", "allowedMinutes": 20, "scopes": []}]

@@ -273,7 +273,6 @@ window.VaultClassifierStrings = Object.freeze({
   "llm.provider.twitch": "Twitch",
   "llm.provider.reddit": "Reddit",
   "llm.provider.xPlatform": "X API",
-  "llm.provider.tikTok": "TikTok",
   "llm.provider.instagramGraph": "Instagram Graph API",
   "llm.provider.facebookGraph": "Facebook Graph API",
   "llm.retiredSearchProvider": "Web-search APIs are no longer used: research now searches through your grounding-capable model provider. This saved profile is kept but inactive — you can delete it.",

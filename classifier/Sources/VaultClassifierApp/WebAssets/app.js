@@ -899,7 +899,6 @@
       twitch: "llm.provider.twitch",
       reddit: "llm.provider.reddit",
       xPlatform: "llm.provider.xPlatform",
-      tikTok: "llm.provider.tikTok",
       instagramGraph: "llm.provider.instagramGraph",
       facebookGraph: "llm.provider.facebookGraph",
       serper: "llm.provider.serper",
@@ -930,7 +929,7 @@
     const protocols = state.assets.providerProtocols || {};
     const profileTypeGroups = [
       ["llm.providerGroup.models", ["openAI", "deepSeek", "gemini", "anthropic", "mistral", "cohere", "groq", "openRouter", "ollama"].map((type) => [type, t(providerTypeLabelKey(type))])],
-      ["llm.providerGroup.platform", ["youtubeData", "twitch", "reddit", "xPlatform", "tikTok", "instagramGraph", "facebookGraph"].map((type) => [type, t(providerTypeLabelKey(type))])],
+      ["llm.providerGroup.platform", ["youtubeData", "twitch", "reddit", "xPlatform", "instagramGraph", "facebookGraph"].map((type) => [type, t(providerTypeLabelKey(type))])],
       ["llm.providerGroup.custom", ["openAICompatible", "custom"].map((type) => [type, t(providerTypeLabelKey(type))])],
     ];
     const panel = (profile) => {

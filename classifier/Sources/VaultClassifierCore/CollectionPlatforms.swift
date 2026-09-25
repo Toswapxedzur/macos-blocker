@@ -31,7 +31,6 @@ public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
     public var apiProviderType: APIKeyProviderType? {
         switch id {
         case "youtube": return .youtubeData
-        case "tiktok": return .tikTok
         case "facebook": return .facebookGraph
         case "instagram": return .instagramGraph
         case "twitch": return .twitch
@@ -62,7 +61,6 @@ public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
 public enum CollectionPlatformRegistry {
     public static let definitions: [CollectionPlatformDefinition] = [
         .init(id: "youtube", name: "YouTube", collectorAvailable: true),
-        .init(id: "tiktok", name: "TikTok", collectorAvailable: true),
         .init(id: "facebook", name: "Facebook", collectorAvailable: true),
         .init(id: "instagram", name: "Instagram", collectorAvailable: true),
         .init(id: "twitch", name: "Twitch", collectorAvailable: true, supportsLocalModel: false),
