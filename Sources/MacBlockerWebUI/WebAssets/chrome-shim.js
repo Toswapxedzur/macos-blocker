@@ -41,7 +41,18 @@
     return null;
   }
 
+  // The native host parks its store snapshot on `window` at document start
+  // (see BlockerWebView): it is the truth and wins over the localStorage mirror,
+  // which may be stale when a native writer changed the file while the editor
+  // was closed.
   function loadStore() {
+    try {
+      if (typeof window.__cbNativeStoreSeed === "string") {
+        var seeded = JSON.parse(window.__cbNativeStoreSeed) || {};
+        try { window.localStorage.setItem(STORE_KEY, JSON.stringify(seeded)); } catch (_) {}
+        return seeded;
+      }
+    } catch (_) {}
     try {
       return JSON.parse(window.localStorage.getItem(STORE_KEY) || "{}") || {};
     } catch (_) {
