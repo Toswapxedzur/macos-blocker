@@ -184,7 +184,9 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
         mode: MacEnforcementMode
     ) -> [String: MacEnforcementMode] {
         var modes: [String: MacEnforcementMode] = [:]
-        for group in groups where group.enabled {
+        // An "everything except" group's apps are the ALLOWED ones; that group
+        // blocks through `applicationAllowlists`, never through its list.
+        for group in groups where group.enabled && !group.applicationAllowlist {
             guard group.isActive(at: now, calendar: calendar) else { continue }
             if usage.snoozesByGroup[group.id]?.phase(at: now) == .active { continue }
 

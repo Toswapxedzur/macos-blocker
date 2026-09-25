@@ -55,6 +55,12 @@ public struct PolicyEvaluator: Sendable {
     }
 
     private func matchingTargetIDs(in group: BlockGroup, context: ActivityContext) -> Set<String> {
+        if group.applicationAllowlist {
+            // "Everything except": the active app matches when the list would block it.
+            return context.activeTargetIDs.filter {
+                group.countsApplication($0, exempt: context.exemptTargetIDs.contains($0))
+            }
+        }
         let candidates = Set(group.targets.map(\.id))
         if candidates.isEmpty {
             return []
