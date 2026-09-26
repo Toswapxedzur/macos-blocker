@@ -225,6 +225,55 @@ public enum VaultMCPTools {
             },
 
             MCPTool(
+                name: "snooze_group",
+                description: "Snooze a group, as the editor's Snooze does: its saved snooze length, delay and cooldown; the group's own confirmations (call again with confirm: true every 5 s until none is left). Refused when the group doesn't allow snoozing or a snooze (or its cooldown) is running. A frozen group can be snoozed; its snooze settings are frozen with it.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": ["id": ["type": "string", "description": "The group id."], "confirm": ["type": "boolean"]],
+                    "required": ["id"],
+                ]
+            ) { args in
+                guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
+                let now = clock()
+                let nowMs = (now.timeIntervalSince1970 * 1000).rounded()
+                let key = "snooze:\(id)"
+                if args["confirm"] as? Bool == true, let request = unlockRequests.request(id: key, now: now) {
+                    let step = GroupActionsRuntime.shared.call("confirmStep", [request.state, nowMs]) as? [String: Any] ?? [:]
+                    let waitMs = (step["waitMs"] as? NSNumber)?.doubleValue ?? 0
+                    if waitMs > 0 { return .failure("Confirm again in \(Int((waitMs / 1000).rounded(.up))) s (the editor's confirmation waits 5 s).") }
+                    let state = step["state"] as? [String: Any] ?? [:]
+                    guard step["done"] as? Bool == true else {
+                        unlockRequests.save(id: key, lockVersion: 0, state: state, now: now)
+                        return .ok("Confirmation counted: \((state["left"] as? NSNumber)?.intValue ?? 0) left. Call again with confirm: true in 5 seconds.")
+                    }
+                    unlockRequests.clear(id: key)
+                } else {
+                    let plan: (confirmations: Int, refusal: String?)
+                    do { plan = try store.load().snoozePlan(id: id, now: now) } catch { return .failure(describe(error)) }
+                    if let refusal = plan.refusal { return .failure(explain(.refused(refusal))) }
+                    if plan.confirmations > 0 {
+                        let state = GroupActionsRuntime.shared.call("confirmStart", [nowMs, plan.confirmations]) as? [String: Any] ?? [:]
+                        unlockRequests.save(id: key, lockVersion: 0, state: state, now: now)
+                        return .ok("Snooze asked: \(plan.confirmations) confirmations. Call snooze_group with confirm: true every 5 seconds (within 5 minutes).")
+                    }
+                }
+                var outcome = WebStoreDocument.LockOutcome.done
+                if let failure = run(store, { outcome = try $0.startSnooze(id: id, now: clock()) }) { return failure }
+                return outcome == .done ? .ok("Group \(id) is snoozed.") : .failure(explain(outcome))
+            },
+
+            MCPTool(
+                name: "end_snooze",
+                description: "End a group's running (or scheduled) snooze early, as the editor's End Snooze does. Linked devices end it too.",
+                inputSchema: objectSchema([("id", "string", "The group id.")], required: ["id"])
+            ) { args in
+                guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
+                var outcome = WebStoreDocument.LockOutcome.done
+                if let failure = run(store, { outcome = try $0.endSnooze(id: id, now: clock()) }) { return failure }
+                return outcome == .done ? .ok("Group \(id)'s snooze ended.") : .failure(explain(outcome))
+            },
+
+            MCPTool(
                 name: "move_group",
                 description: "Move a group to a position in the group list (0 = top), as dragging it in the editor does. The first blocking group from the top decides how a page it blocks looks. A locked group cannot be moved. The order is this device's own.",
                 inputSchema: [
@@ -264,6 +313,9 @@ public enum VaultMCPTools {
         case .refused("not-stricter"): return "While frozen the freeze can only be made stricter (a longer wait)."
         case .refused("pin-already-set"): return "The group already has a PIN."
         case .refused("lock-changed"): return "The freeze changed meanwhile; start the unfreeze again."
+        case .refused("snooze-disabled"): return "The group doesn't allow snoozing."
+        case .refused("snooze-in-progress"): return "A snooze (or its cooldown) is already running."
+        case .refused("no-snooze"): return "No snooze is running."
         case .refused(let reason): return reason
         }
     }
