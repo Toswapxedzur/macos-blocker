@@ -404,6 +404,9 @@ public struct WebStoreDocument {
             "activeDays": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
             "timeWindowsText": "", "freezeMode": "none", "freezeModeChoice": "frozen", "strictFreezeHours": 24,
             "frozenAtMs": NSNull(), "parentalPasswordHash": NSNull(), "parentalPasswordSalt": NSNull(), "scopes": [],
+            // The user's default snooze length, as the editor's New group.
+            "snoozeMinutes": ((raw["globalSettings"] as? [String: Any])?["defaultSnoozeMinutes"] as? NSNumber)
+                .map { $0.doubleValue > 0 ? $0.doubleValue : 30 } ?? 30,
         ])
         var timers = raw["usageTimersMs"] as? [String: Any] ?? [:]
         var resets = raw["usageResetAtMs"] as? [String: Any] ?? [:]

@@ -52,6 +52,9 @@ final class ParentalPinAndLockToolsTests: XCTestCase {
         let id = try doc.createGroup(name: "Focus")
         XCTAssertThrowsError(try doc.createGroup(name: " focus ")) { XCTAssertEqual($0 as? GroupStoreError, .duplicateName("focus")) }
         XCTAssertEqual(doc.group(id: id)?["freezeMode"] as? String, "none", "a created group is never locked")
+        var withDefault = WebStoreDocument(raw: ["globalSettings": ["defaultSnoozeMinutes": 7], "blockedGroups": []])
+        let seven = try withDefault.createGroup(name: "Seven")
+        XCTAssertEqual(withDefault.group(id: seven)?["snoozeMinutes"] as? Double, 7, "the user's default snooze length")
 
         try doc.moveGroup(id: id, to: 0)
         XCTAssertEqual(doc.groupIDs.first, id)
