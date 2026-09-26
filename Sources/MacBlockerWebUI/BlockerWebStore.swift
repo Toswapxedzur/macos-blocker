@@ -49,10 +49,10 @@ public final class BlockerWebStore: @unchecked Sendable {
         }
     }
 
-    /// Settings ▸ "Ask a closed app to quit again every (seconds)": 0 = ask once.
-    public func closeRetrySeconds() -> Double {
+    /// Settings ▸ "Ask a blocked app to quit again every (minutes)": 0 = never.
+    public func quitRetryMinutes() -> Double {
         let settings = loadStoreObject()?["globalSettings"] as? [String: Any]
-        return max(0, (settings?["closeRetrySeconds"] as? NSNumber)?.doubleValue ?? 0)
+        return max(0, (settings?["quitRetryMinutes"] as? NSNumber)?.doubleValue ?? 0)
     }
 
     public func loadRawJSON() -> String? {

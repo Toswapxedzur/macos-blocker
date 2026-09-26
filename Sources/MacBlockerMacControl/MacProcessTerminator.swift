@@ -30,7 +30,7 @@ public struct RunningProcessSnapshot: Equatable, Sendable {
     }
 }
 
-/// One blocked process the terminator killed (or would kill), for logging/tests.
+/// One blocked process, for logging/tests.
 public struct TerminationAction: Equatable, Sendable {
     public var processIdentifier: Int32
     public var bundleIdentifier: String?
@@ -41,9 +41,8 @@ public struct TerminationAction: Equatable, Sendable {
     }
 }
 
-/// Kills blocked applications that are running. A block has one form: the
-/// app is force-quit (SIGKILL) every time it runs — at the block's start, on
-/// relaunch (the sweep repeats each second), whatever turned the block on.
+/// Finds the running applications a policy blocks. Quitting them is
+/// `QuitRequests`: normally, never by force.
 public enum MacProcessTerminator {
     /// Browsers are owned by their extensions. The native app never blocks,
     /// closes, hides, suspends, or kills them or their helper processes.
@@ -70,7 +69,7 @@ public enum MacProcessTerminator {
     }
 
     /// Pure selection: given a policy and a set of running processes, decide
-    /// which to kill. No side effects — safe to unit test.
+    /// which are blocked. No side effects — safe to unit test.
     public static func plan(
         policy: GuardPolicy,
         running: [RunningProcessSnapshot]
@@ -113,73 +112,23 @@ public enum MacProcessTerminator {
         }
     }
 
-    /// Sweeps running applications and enforces the policy. Returns the actions
-    /// taken (also useful for logging). Protected processes are skipped by the
-    /// policy's own guardrails.
-    @discardableResult
-    public static func enforce(policy: GuardPolicy) -> [TerminationAction] {
-        var taken: [TerminationAction] = []
+    /// The running processes this policy blocks (protected ones never match).
+    public static func blockedProcesses(policy: GuardPolicy) -> [NSRunningApplication] {
         let needsSigning = policy.usesCodeSigningMatch
-        for (app, snapshot) in snapshotRunningApplications() {
-            guard !isBrowserBundleIdentifier(snapshot.bundleIdentifier) else {
-                continue
-            }
-            // Resolve signing info only if some target matches on team/signing
-            // AND a cheap bundle-id/path match isn't already decisive — keeps
-            // the periodic sweep cheap for the common bundle-id-only case.
+        return snapshotRunningApplications().compactMap { app, snapshot in
+            guard !isBrowserBundleIdentifier(snapshot.bundleIdentifier) else { return nil }
+            // Signing info only when a cheap bundle-id/path match isn't decisive.
             var enriched = snapshot
             if needsSigning,
-               policy.match(
-                bundleIdentifier: snapshot.bundleIdentifier,
-                executablePath: snapshot.executablePath
-            ) == nil,
+               policy.match(bundleIdentifier: snapshot.bundleIdentifier, executablePath: snapshot.executablePath) == nil,
                let path = snapshot.executablePath,
                let signing = MacCodeSigning.info(forItemAt: path) {
                 enriched.teamIdentifier = signing.teamIdentifier
                 enriched.signingIdentifier = signing.signingIdentifier
             }
-
-            guard policy.match(
-                bundleIdentifier: enriched.bundleIdentifier,
-                teamIdentifier: enriched.teamIdentifier,
-                signingIdentifier: enriched.signingIdentifier,
-                executablePath: enriched.executablePath
-            ) != nil else {
-                continue
-            }
-
-            forceKill(app)
-            taken.append(
-                TerminationAction(processIdentifier: app.processIdentifier, bundleIdentifier: app.bundleIdentifier)
-            )
-        }
-        return taken
-    }
-
-    /// Force-quits every running instance of a blocked app (a rule's blockApp).
-    public static func forceKill(bundleIdentifier: String) {
-        guard !isBrowserBundleIdentifier(bundleIdentifier) else { return }
-        for app in NSWorkspace.shared.runningApplications where app.bundleIdentifier == bundleIdentifier {
-            forceKill(app)
-        }
-    }
-
-    /// Asks every running instance to quit (a rule's "close": not a block).
-    public static func terminate(bundleIdentifier: String) {
-        guard !isBrowserBundleIdentifier(bundleIdentifier) else { return }
-        let apps = NSWorkspace.shared.runningApplications.filter {
-            $0.bundleIdentifier == bundleIdentifier
-        }
-        for app in apps {
-            app.terminate()
-        }
-    }
-
-    private static func forceKill(_ app: NSRunningApplication) {
-        // SIGKILL is unblockable and immediate; forceTerminate() is the AppKit
-        // fallback if signalling somehow fails.
-        if kill(app.processIdentifier, SIGKILL) != 0 {
-            app.forceTerminate()
+            return policy.match(bundleIdentifier: enriched.bundleIdentifier, teamIdentifier: enriched.teamIdentifier,
+                                signingIdentifier: enriched.signingIdentifier, executablePath: enriched.executablePath) != nil
+                ? app : nil
         }
     }
     #endif

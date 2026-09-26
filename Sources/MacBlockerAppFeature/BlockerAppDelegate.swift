@@ -22,6 +22,18 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
     /// Records app-usage time into the local Activity log (opt-in per category).
     private var activityRecorder: ActivityRecorderService?
 
+    /// Another running copy of this app: same bundle id, or — for a
+    /// development binary without a bundle — the same executable.
+    static func otherRunningCopy() -> NSRunningApplication? {
+        let me = NSRunningApplication.current
+        let myPath = me.executableURL?.resolvingSymlinksInPath().path
+        return NSWorkspace.shared.runningApplications.first { app in
+            guard app.processIdentifier != me.processIdentifier else { return false }
+            if let id = me.bundleIdentifier { return app.bundleIdentifier == id }
+            return myPath != nil && app.executableURL?.resolvingSymlinksInPath().path == myPath
+        }
+    }
+
     open func applicationDidFinishLaunching(_ notification: Notification) {
         if CommandLine.arguments.contains("--unregister-login-item") {
             unregisterLoginItemForUninstall()
@@ -29,8 +41,15 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // Every app instance participates in its environment's authenticated local
-        // hub, which may listen on loopback when it wins host election.
+        // Only one Mac Vault runs (owner 2026-09-26): a second copy brings the
+        // running one forward and quits — it never joins it.
+        if let running = Self.otherRunningCopy() {
+            running.activate()
+            NSApp.terminate(nil)
+            return
+        }
+
+        // Mac Vault hosts the authenticated local hub on loopback.
         ConnectionHub.shared.start()
 
         // The Vault Classifier is a component of this app. Starting its tagging

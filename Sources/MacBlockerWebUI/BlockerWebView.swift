@@ -42,16 +42,6 @@ public struct BlockerWebView: _CBViewRepresentable {
     private let onDismissSystemPanel: ((String) -> Void)?
     /// Supplies buffered system-panel events as a JSON array string; polled each second.
     private let systemPanelEventsJSON: (() -> String?)?
-    /// Supplies the current app-blocking permission state as JSON
-    /// (`{"appBlockingGranted":Bool}`); pushed each second to `window.__cbPermissionState`.
-    private let permissionStateJSON: (() -> String?)?
-    /// Web requested that we prompt for and open the app-blocking permission.
-    private let onRequestAppBlockingPermission: (() -> Void)?
-    /// Web requested that we open the permission settings pane.
-    private let onOpenPermissionSettings: (() -> Void)?
-    /// Supplies the current web-app bridge connection status as JSON; pushed
-    /// each second to `window.__cbConnectionState`.
-    private let connectionStatusJSON: (() -> String?)?
     /// Supplies current per-group bridge clusters as a JSON array; pushed each
     /// second to `window.__cbClustersState`.
     private let clustersJSON: (() -> String?)?
@@ -71,10 +61,6 @@ public struct BlockerWebView: _CBViewRepresentable {
         onShowSystemPanel: ((String) -> Void)? = nil,
         onDismissSystemPanel: ((String) -> Void)? = nil,
         systemPanelEventsJSON: (() -> String?)? = nil,
-        permissionStateJSON: (() -> String?)? = nil,
-        onRequestAppBlockingPermission: (() -> Void)? = nil,
-        onOpenPermissionSettings: (() -> Void)? = nil,
-        connectionStatusJSON: (() -> String?)? = nil,
         clustersJSON: (() -> String?)? = nil,
         onGroupsAnnounce: ((String) -> Void)? = nil,
         onGroupSync: ((String) -> Void)? = nil
@@ -89,17 +75,13 @@ public struct BlockerWebView: _CBViewRepresentable {
         self.onShowSystemPanel = onShowSystemPanel
         self.onDismissSystemPanel = onDismissSystemPanel
         self.systemPanelEventsJSON = systemPanelEventsJSON
-        self.permissionStateJSON = permissionStateJSON
-        self.onRequestAppBlockingPermission = onRequestAppBlockingPermission
-        self.onOpenPermissionSettings = onOpenPermissionSettings
-        self.connectionStatusJSON = connectionStatusJSON
         self.clustersJSON = clustersJSON
         self.onGroupsAnnounce = onGroupsAnnounce
         self.onGroupSync = onGroupSync
     }
 
     public func makeCoordinator() -> Coordinator {
-        Coordinator(store: store, ruleLogJSON: ruleLogJSON, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup, onSnoozePress: onSnoozePress, onPanelEvent: onPanelEvent, onShowSystemPanel: onShowSystemPanel, onDismissSystemPanel: onDismissSystemPanel, systemPanelEventsJSON: systemPanelEventsJSON, permissionStateJSON: permissionStateJSON, onRequestAppBlockingPermission: onRequestAppBlockingPermission, onOpenPermissionSettings: onOpenPermissionSettings, connectionStatusJSON: connectionStatusJSON, clustersJSON: clustersJSON, onGroupsAnnounce: onGroupsAnnounce, onGroupSync: onGroupSync)
+        Coordinator(store: store, ruleLogJSON: ruleLogJSON, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup, onSnoozePress: onSnoozePress, onPanelEvent: onPanelEvent, onShowSystemPanel: onShowSystemPanel, onDismissSystemPanel: onDismissSystemPanel, systemPanelEventsJSON: systemPanelEventsJSON, clustersJSON: clustersJSON, onGroupsAnnounce: onGroupsAnnounce, onGroupSync: onGroupSync)
     }
 
     private func makeWebView(context: Context) -> WKWebView {
@@ -273,10 +255,6 @@ public struct BlockerWebView: _CBViewRepresentable {
         private let onShowSystemPanel: ((String) -> Void)?
         private let onDismissSystemPanel: ((String) -> Void)?
         private let systemPanelEventsJSON: (() -> String?)?
-        private let permissionStateJSON: (() -> String?)?
-        private let onRequestAppBlockingPermission: (() -> Void)?
-        private let onOpenPermissionSettings: (() -> Void)?
-        private let connectionStatusJSON: (() -> String?)?
         private let clustersJSON: (() -> String?)?
         private let onGroupsAnnounce: ((String) -> Void)?
         private let onGroupSync: ((String) -> Void)?
@@ -286,9 +264,6 @@ public struct BlockerWebView: _CBViewRepresentable {
         // GroupStore.save) so the open editor re-seeds instead of showing a stale
         // tree. Retained so deinit can detach it.
         private var groupStoreObserver: NSObjectProtocol?
-        // Starts true so the grant modal is offered exactly once per app launch
-        // (when Accessibility is still missing) and never re-shown on reactivation.
-        private var promptPermissionOnOpenPending = true
 
         init(
             store: BlockerWebStore,
@@ -300,10 +275,6 @@ public struct BlockerWebView: _CBViewRepresentable {
             onShowSystemPanel: ((String) -> Void)?,
             onDismissSystemPanel: ((String) -> Void)?,
             systemPanelEventsJSON: (() -> String?)?,
-            permissionStateJSON: (() -> String?)?,
-            onRequestAppBlockingPermission: (() -> Void)?,
-            onOpenPermissionSettings: (() -> Void)?,
-            connectionStatusJSON: (() -> String?)?,
             clustersJSON: (() -> String?)?,
             onGroupsAnnounce: ((String) -> Void)?,
             onGroupSync: ((String) -> Void)?
@@ -317,10 +288,6 @@ public struct BlockerWebView: _CBViewRepresentable {
             self.onShowSystemPanel = onShowSystemPanel
             self.onDismissSystemPanel = onDismissSystemPanel
             self.systemPanelEventsJSON = systemPanelEventsJSON
-            self.permissionStateJSON = permissionStateJSON
-            self.onRequestAppBlockingPermission = onRequestAppBlockingPermission
-            self.onOpenPermissionSettings = onOpenPermissionSettings
-            self.connectionStatusJSON = connectionStatusJSON
             self.clustersJSON = clustersJSON
             self.onGroupsAnnounce = onGroupsAnnounce
             self.onGroupSync = onGroupSync
@@ -342,8 +309,6 @@ public struct BlockerWebView: _CBViewRepresentable {
                 self?.pushUsage()
                 self?.pushRuleLog()
                 self?.pushSystemPanelEvents()
-                self?.pushPermissionState()
-                self?.pushConnectionState()
                 self?.pushClusters()
             }
             usagePushTimer = timer
@@ -378,33 +343,6 @@ public struct BlockerWebView: _CBViewRepresentable {
             webView.evaluateJavaScript("window.__cbSystemPanelEvent(\(json));", completionHandler: nil)
         }
 
-        private func pushPermissionState() {
-            guard let webView, let provider = permissionStateJSON,
-                  let json = provider(), !json.isEmpty else { return }
-            // Keep the Device Control section in sync every tick.
-            webView.evaluateJavaScript("window.__cbPermissionState && window.__cbPermissionState(\(json));", completionHandler: nil)
-
-            // Offer the grant modal only on (re)open. We run this after the state
-            // push (same webView queue preserves order, so the web side already
-            // knows the latest grant state) and only clear the pending flag once
-            // the web hook actually exists and ran — so a not-yet-loaded page on
-            // first launch doesn't swallow the prompt.
-            guard promptPermissionOnOpenPending else { return }
-            webView.evaluateJavaScript(
-                "(function(){ if (window.__cbPromptPermissionOnOpen) { window.__cbPromptPermissionOnOpen(); return true; } return false; })();"
-            ) { [weak self] result, _ in
-                if (result as? Bool) == true { self?.promptPermissionOnOpenPending = false }
-            }
-        }
-
-        private func pushConnectionState() {
-            guard let webView, let provider = connectionStatusJSON,
-                  let json = provider(), !json.isEmpty else { return }
-            webView.evaluateJavaScript(
-                "window.__cbConnectionState && window.__cbConnectionState(\(json));",
-                completionHandler: nil
-            )
-        }
 
         private func pushClusters() {
             guard let webView, let provider = clustersJSON,
@@ -496,12 +434,6 @@ public struct BlockerWebView: _CBViewRepresentable {
                     let id = (payload["id"] as? String) ?? ""
                     onDismissSystemPanel?(id)
                 }
-            case "request-app-blocking-permission":
-                onRequestAppBlockingPermission?()
-            case "open-permission-settings":
-                onOpenPermissionSettings?()
-            case "connection-status":
-                pushConnectionState()
             case "groups-announce":
                 if let json = messageJSON(body) { onGroupsAnnounce?(json) }
             case "group-sync":

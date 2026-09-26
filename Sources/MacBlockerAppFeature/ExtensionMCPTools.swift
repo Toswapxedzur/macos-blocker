@@ -176,7 +176,7 @@ public enum ExtensionMCPTools {
             },
             MCPTool(
                 name: "extension_set_global",
-                description: "Patch the extension's global settings (popup ▸ Settings): debugMode (bool; also enables the content-script trace), showOnPageLogToasts (bool), tickRateMs (100–10000), autosaveDebounceMs (0–10000), defaultSnoozeMinutes (> 0), quickAddEnabled (bool), closeRetrySeconds (desktop: how often a custom rule's close asks an app that stayed open to quit again; 0 = ask once). Sanitized the way the popup's save is.",
+                description: "Patch the extension's global settings (popup ▸ Settings): debugMode (bool; also enables the content-script trace), showOnPageLogToasts (bool), tickRateMs (100–10000), autosaveDebounceMs (0–10000), defaultSnoozeMinutes (> 0), quickAddEnabled (bool), quitRetryMinutes (desktop: how often a blocked or rule-closed app that stayed open is asked to quit again; 0 = never). Sanitized the way the popup's save is.",
                 inputSchema: [
                     "type": "object",
                     "properties": ["patch": ["type": "object", "description": "Global settings fields to change."], "browser": browserProperty],

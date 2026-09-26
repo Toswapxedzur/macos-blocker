@@ -15,7 +15,6 @@ public struct BlockerMainView: View {
     /// window (closing the window keeps blocking; quitting stops it).
     @ObservedObject private var enforcement = MacEnforcementBridge.shared
     #if os(macOS)
-    @StateObject private var permission = AppBlockingPermissionModel()
     // The hub is owned at the app-delegate (process) level, not by this view, so
     // it outlives any single editor window. The view only reads its status for
     // contextual per-group availability.
@@ -87,10 +86,6 @@ public struct BlockerMainView: View {
             onShowSystemPanel: { [weak enforcement] json in enforcement?.showSystemPanel(json: json) },
             onDismissSystemPanel: { [weak enforcement] id in enforcement?.dismissSystemPanel(id: id) },
             systemPanelEventsJSON: { [weak enforcement] in enforcement?.drainSystemPanelEventsJSON() },
-            permissionStateJSON: { "{\"appBlockingGranted\":\(MacPermissionState.current().accessibilityTrusted)}" },
-            onRequestAppBlockingPermission: { [weak permission] in permission?.requestGrant() },
-            onOpenPermissionSettings: { [weak permission] in permission?.openSettings() },
-            connectionStatusJSON: { [weak connection] in connection?.currentStatusJSON() },
             clustersJSON: { [weak connection] in connection?.clustersJSON() },
             onGroupsAnnounce: { [weak connection] json in connection?.announceFromBridge(json: json) },
             onGroupSync: { [weak connection] json in connection?.syncFromBridge(json: json) }
@@ -124,24 +119,4 @@ private struct ActivityPageView: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
-/// Backs the web grant modal / Device Control settings actions. It owns no UI
-/// state: the modal is shown on app open (driven natively in BlockerWebView)
-/// and the Device Control section is kept in sync by the per-tick state push.
-@MainActor
-final class AppBlockingPermissionModel: ObservableObject {
-    /// Requests Accessibility through macOS, then reveals the exact settings
-    /// pane where the user can grant it if it is still unavailable.
-    func requestGrant() {
-        let permission = MacPermissionState.current(promptForAccessibility: true)
-        guard !permission.accessibilityTrusted else { return }
-        openSettings()
-    }
-
-    /// Opens the Accessibility privacy pane in System Settings.
-    func openSettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-            NSWorkspace.shared.open(url)
-        }
-    }
-}
 #endif

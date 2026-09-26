@@ -16,10 +16,6 @@ public struct BlockerWebPanel: View {
     private let onShowSystemPanel: ((String) -> Void)?
     private let onDismissSystemPanel: ((String) -> Void)?
     private let systemPanelEventsJSON: (() -> String?)?
-    private let permissionStateJSON: (() -> String?)?
-    private let onRequestAppBlockingPermission: (() -> Void)?
-    private let onOpenPermissionSettings: (() -> Void)?
-    private let connectionStatusJSON: (() -> String?)?
     private let clustersJSON: (() -> String?)?
     private let onGroupsAnnounce: ((String) -> Void)?
     private let onGroupSync: ((String) -> Void)?
@@ -35,10 +31,6 @@ public struct BlockerWebPanel: View {
         onShowSystemPanel: ((String) -> Void)? = nil,
         onDismissSystemPanel: ((String) -> Void)? = nil,
         systemPanelEventsJSON: (() -> String?)? = nil,
-        permissionStateJSON: (() -> String?)? = nil,
-        onRequestAppBlockingPermission: (() -> Void)? = nil,
-        onOpenPermissionSettings: (() -> Void)? = nil,
-        connectionStatusJSON: (() -> String?)? = nil,
         clustersJSON: (() -> String?)? = nil,
         onGroupsAnnounce: ((String) -> Void)? = nil,
         onGroupSync: ((String) -> Void)? = nil
@@ -53,10 +45,6 @@ public struct BlockerWebPanel: View {
         self.onShowSystemPanel = onShowSystemPanel
         self.onDismissSystemPanel = onDismissSystemPanel
         self.systemPanelEventsJSON = systemPanelEventsJSON
-        self.permissionStateJSON = permissionStateJSON
-        self.onRequestAppBlockingPermission = onRequestAppBlockingPermission
-        self.onOpenPermissionSettings = onOpenPermissionSettings
-        self.connectionStatusJSON = connectionStatusJSON
         self.clustersJSON = clustersJSON
         self.onGroupsAnnounce = onGroupsAnnounce
         self.onGroupSync = onGroupSync
@@ -74,10 +62,6 @@ public struct BlockerWebPanel: View {
             onShowSystemPanel: onShowSystemPanel,
             onDismissSystemPanel: onDismissSystemPanel,
             systemPanelEventsJSON: systemPanelEventsJSON,
-            permissionStateJSON: permissionStateJSON,
-            onRequestAppBlockingPermission: onRequestAppBlockingPermission,
-            onOpenPermissionSettings: onOpenPermissionSettings,
-            connectionStatusJSON: connectionStatusJSON,
             clustersJSON: clustersJSON,
             onGroupsAnnounce: onGroupsAnnounce,
             onGroupSync: onGroupSync
