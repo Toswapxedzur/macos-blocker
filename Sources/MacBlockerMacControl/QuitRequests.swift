@@ -41,7 +41,7 @@ public final class QuitRequests: @unchecked Sendable {
     /// A rule's close: every running instance of the app is asked now and,
     /// while it stays open, again after each retry interval.
     public func close(bundleIdentifier: String, now: Date) {
-        guard !MacProcessTerminator.isBrowserBundleIdentifier(bundleIdentifier) else { return }
+        guard GuardPolicy.canBlock(bundleIdentifier) else { return }
         let apps = NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == bundleIdentifier }
         lock.lock()
         for app in apps {

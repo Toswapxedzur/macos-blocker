@@ -401,7 +401,7 @@ public final class MacEnforcementBridge: ObservableObject {
         // 5. Render the HUD for any timer whose app is currently frontmost.
         //    A timed group shows while its time counts for the front app (a
         //    custom-rule group always, while it runs).
-        let frontExempt = frontmost.map(Self.isExemptApplication) ?? true
+        let frontExempt = !GuardPolicy.canBlock(frontmost)
         var rows: [TimerOverlayRow] = groups.reversed().compactMap { group in
             guard group.isEnforcing(snoozes: usage.snoozesByGroup, at: now),
                   let remaining = group.remainingSeconds(usedSeconds: usage.usageByGroupSeconds[group.id] ?? 0),
@@ -685,7 +685,7 @@ public final class MacEnforcementBridge: ObservableObject {
             case .shield:
                 // The same quit as a block: normally, retried per Settings.
                 let targets = decision.targetIDs.isEmpty ? Set([frontmost].compactMap { $0 }) : decision.targetIDs
-                for target in targets where !Self.isExemptApplication(target) {
+                for target in targets {
                     requestClose(target, now: Date())
                 }
             default:
@@ -845,11 +845,10 @@ public final class MacEnforcementBridge: ObservableObject {
             }
             switch intent.action {
             case "close":
-                if let target = intent.target, !target.isEmpty,
-                   !MacProcessTerminator.isBrowserBundleIdentifier(target) {
+                // Apps no block can act on are left alone (QuitRequests.close).
+                if let target = intent.target, !target.isEmpty {
                     requestClose(target, now: Date())
-                } else if let fm = frontmost,
-                          !MacProcessTerminator.isBrowserBundleIdentifier(fm) {
+                } else if let fm = frontmost {
                     requestClose(fm, now: Date())
                 }
             // Web-level intents (closeTab / closeTabsByPattern / blockSite /
@@ -859,8 +858,7 @@ public final class MacEnforcementBridge: ObservableObject {
             // its own web events. The native app must not touch in-browser
             // affairs at any level; it only enforces whole-app intents.
             case "blockApp":
-                if let target = intent.target, !target.isEmpty,
-                   !MacProcessTerminator.isBrowserBundleIdentifier(target) {
+                if let target = intent.target, GuardPolicy.canBlock(target) {
                     blockedAppBundleIDsByGroup[groupID, default: []].insert(target)
                     appendLog(level: "log", group: "system",
                               message: "App blocked: \(target)")
@@ -978,7 +976,7 @@ public final class MacEnforcementBridge: ObservableObject {
             var addedMs: Double = 0
             // A snoozed group spends nothing, as in the extension.
             if let frontmost, elapsed > 0, group.isEnforcing(snoozes: snoozes, at: now),
-               group.countsApplication(frontmost, exempt: Self.isExemptApplication(frontmost)) {
+               group.countsApplication(frontmost, exempt: !GuardPolicy.canBlock(frontmost)) {
                 addedMs = elapsed * 1000
             }
 
@@ -1108,13 +1106,6 @@ public final class MacEnforcementBridge: ObservableObject {
         return json
     }
 
-    /// Apps no group can block: Apple, browsers (the extension's business) and
-    /// Vault itself, exactly the guard policy's protections.
-    nonisolated static func isExemptApplication(_ bundleID: String) -> Bool {
-        MacProcessTerminator.isBrowserBundleIdentifier(bundleID) ||
-            GuardPolicy(protectedBundleIdentifiers: Bundle.main.bundleIdentifier.map { [$0] } ?? [])
-                .isProtected(bundleIdentifier: bundleID)
-    }
     #endif
 }
 

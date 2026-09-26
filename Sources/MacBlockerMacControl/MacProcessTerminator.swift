@@ -68,28 +68,32 @@ public enum MacProcessTerminator {
             browserBundleIdentifiers.contains { bundleIdentifier.hasPrefix($0 + ".") }
     }
 
-    /// Pure selection: given a policy and a set of running processes, decide
-    /// which are blocked. No side effects — safe to unit test.
+    /// The selection — the sweep's and the tests' one path: which running
+    /// processes the policy blocks. Code-signing identity is read (through
+    /// `signing`, comparatively expensive) only when a target matches on it
+    /// and the cheap bundle-id/path match isn't decisive.
     public static func plan(
         policy: GuardPolicy,
-        running: [RunningProcessSnapshot]
+        running: [RunningProcessSnapshot],
+        signing: (String) -> (team: String?, identifier: String?)? = { _ in nil }
     ) -> [TerminationAction] {
         running.compactMap { proc -> TerminationAction? in
-            guard !isBrowserBundleIdentifier(proc.bundleIdentifier) else {
-                return nil
+            var candidate = proc
+            if policy.usesCodeSigningMatch,
+               policy.match(bundleIdentifier: proc.bundleIdentifier, executablePath: proc.executablePath) == nil,
+               let path = proc.executablePath, let info = signing(path) {
+                candidate.teamIdentifier = info.team
+                candidate.signingIdentifier = info.identifier
             }
             guard policy.match(
-                bundleIdentifier: proc.bundleIdentifier,
-                teamIdentifier: proc.teamIdentifier,
-                signingIdentifier: proc.signingIdentifier,
-                executablePath: proc.executablePath
+                bundleIdentifier: candidate.bundleIdentifier,
+                teamIdentifier: candidate.teamIdentifier,
+                signingIdentifier: candidate.signingIdentifier,
+                executablePath: candidate.executablePath
             ) != nil else {
                 return nil
             }
-            return TerminationAction(
-                processIdentifier: proc.processIdentifier,
-                bundleIdentifier: proc.bundleIdentifier
-            )
+            return TerminationAction(processIdentifier: proc.processIdentifier, bundleIdentifier: proc.bundleIdentifier)
         }
     }
 
@@ -112,24 +116,13 @@ public enum MacProcessTerminator {
         }
     }
 
-    /// The running processes this policy blocks (protected ones never match).
+    /// The running processes this policy blocks.
     public static func blockedProcesses(policy: GuardPolicy) -> [NSRunningApplication] {
-        let needsSigning = policy.usesCodeSigningMatch
-        return snapshotRunningApplications().compactMap { app, snapshot in
-            guard !isBrowserBundleIdentifier(snapshot.bundleIdentifier) else { return nil }
-            // Signing info only when a cheap bundle-id/path match isn't decisive.
-            var enriched = snapshot
-            if needsSigning,
-               policy.match(bundleIdentifier: snapshot.bundleIdentifier, executablePath: snapshot.executablePath) == nil,
-               let path = snapshot.executablePath,
-               let signing = MacCodeSigning.info(forItemAt: path) {
-                enriched.teamIdentifier = signing.teamIdentifier
-                enriched.signingIdentifier = signing.signingIdentifier
-            }
-            return policy.match(bundleIdentifier: enriched.bundleIdentifier, teamIdentifier: enriched.teamIdentifier,
-                                signingIdentifier: enriched.signingIdentifier, executablePath: enriched.executablePath) != nil
-                ? app : nil
-        }
+        let apps = snapshotRunningApplications()
+        let chosen = Set(plan(policy: policy, running: apps.map(\.snapshot)) { path in
+            MacCodeSigning.info(forItemAt: path).map { ($0.teamIdentifier, $0.signingIdentifier) }
+        }.map(\.processIdentifier))
+        return apps.filter { chosen.contains($0.snapshot.processIdentifier) }.map(\.app)
     }
     #endif
 }
