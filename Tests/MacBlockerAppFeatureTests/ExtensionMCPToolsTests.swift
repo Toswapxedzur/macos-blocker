@@ -32,7 +32,8 @@ final class ExtensionMCPToolsTests: XCTestCase {
         let res = try XCTUnwrap(server.handle(["jsonrpc": "2.0", "id": 1, "method": "tools/list"]))
         let names = try XCTUnwrap((res["result"] as? [String: Any])?["tools"] as? [[String: Any]]).compactMap { $0["name"] as? String }
         XCTAssertEqual(Set(names), ["extension_state", "extension_create_group", "extension_set_group", "extension_delete_group", "extension_set_classifier", "extension_set_global",
-                                      "extension_lock_group", "extension_unlock_group", "extension_move_group"])
+                                      "extension_lock_group", "extension_unlock_group", "extension_move_group",
+                                      "extension_snooze_group", "extension_end_snooze"])
     }
 
     func testLockToolsRelayTheirOperationsAndExplainTheGates() throws {

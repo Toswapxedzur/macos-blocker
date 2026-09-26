@@ -43,7 +43,21 @@ public final class GroupStore: @unchecked Sendable {
     /// The current document, or an empty one when no store exists yet.
     public func load() -> WebStoreDocument {
         lock.lock(); defer { lock.unlock() }
-        return loadLocked()
+        var document = loadLocked()
+        Self.attachSharedView(&document)
+        return document
+    }
+
+    /// Locks, PINs and snoozes are judged on the shared view: a group locked or
+    /// snoozed on a linked device is so here too, even before the editor
+    /// adopts it.
+    private static func attachSharedView(_ document: inout WebStoreDocument) {
+        guard let overlay = sharedOverlay else { return }
+        let overlaid = overlay(document.raw)
+        let groups = overlaid["blockedGroups"] as? [[String: Any]] ?? []
+        document.sharedView = Dictionary(groups.compactMap { g in (g["id"] as? String).map { ($0, g) } },
+                                         uniquingKeysWith: { first, _ in first })
+        document.sharedSnoozes = overlaid["groupSnoozes"] as? [String: Any]
     }
 
     /// Lays the live shared state of linked groups over a stored document (set
@@ -92,11 +106,7 @@ public final class GroupStore: @unchecked Sendable {
             var working = loadLocked()
             // Locks are judged on the shared view: a group locked on a linked
             // device is locked here too, even before the editor adopts it.
-            if let overlay = Self.sharedOverlay {
-                let groups = overlay(working.raw)["blockedGroups"] as? [[String: Any]] ?? []
-                working.sharedView = Dictionary(groups.compactMap { g in (g["id"] as? String).map { ($0, g) } },
-                                                uniquingKeysWith: { first, _ in first })
-            }
+            Self.attachSharedView(&working)
             try body(&working)
             saveLocked(working)
             document = working
@@ -169,6 +179,8 @@ public struct WebStoreDocument {
     /// by id; nil = judge by the stored group alone. Locks and PINs are read
     /// from here.
     public var sharedView: [String: [String: Any]]?
+    /// The snoozes as linked devices share them (see sharedView).
+    public var sharedSnoozes: [String: Any]?
 
     /// Per-group companion maps the editor keys by group id. They are cleared for
     /// a deleted group so the store doesn't accrue orphaned usage/snooze entries.
@@ -513,6 +525,43 @@ public struct WebStoreDocument {
         if let error = plan["error"] as? String { return .refused(error) }
         guard let updated = actions.call("unlock", [current]) as? [String: Any] else { return .refused("internal") }
         try writeLockUnit(id: id, from: updated)
+        return .done
+    }
+
+    /// Snooze, as the editor's (group-actions.js): the plan for starting one →
+    /// the confirmations it needs, or a refusal.
+    public func snoozePlan(id: String, now: Date = Date()) throws -> (confirmations: Int, refusal: String?) {
+        guard let current = viewed(id) else { throw GroupStoreError.groupNotFound(id) }
+        let entry = (sharedSnoozes ?? raw["groupSnoozes"] as? [String: Any])?[id] ?? NSNull()
+        let plan = GroupActionsRuntime.shared.call("snoozePlan", [current, entry, (now.timeIntervalSince1970 * 1000).rounded()]) as? [String: Any] ?? [:]
+        return ((plan["confirmations"] as? NSNumber)?.intValue ?? 0, plan["error"] as? String)
+    }
+
+    /// Starts the snooze from the group's saved settings (the plan is taken again).
+    public mutating func startSnooze(id: String, now: Date = Date()) throws -> LockOutcome {
+        guard let current = viewed(id) else { throw GroupStoreError.groupNotFound(id) }
+        if let refusal = try snoozePlan(id: id, now: now).refusal { return .refused(refusal) }
+        let nowMs = (now.timeIntervalSince1970 * 1000).rounded()
+        guard let entry = GroupActionsRuntime.shared.call("snoozeEntry", [current, nowMs]) else { return .refused("internal") }
+        var snoozes = raw["groupSnoozes"] as? [String: Any] ?? [:]
+        snoozes[id] = entry
+        raw["groupSnoozes"] = snoozes
+        return .done
+    }
+
+    /// Ends a running or scheduled snooze early (the ended entry is kept).
+    public mutating func endSnooze(id: String, now: Date = Date()) throws -> LockOutcome {
+        guard group(id: id) != nil else { throw GroupStoreError.groupNotFound(id) }
+        var snoozes = raw["groupSnoozes"] as? [String: Any] ?? [:]
+        let nowMs = (now.timeIntervalSince1970 * 1000).rounded()
+        let current = (sharedSnoozes ?? snoozes)[id] ?? NSNull()
+        let result = GroupActionsRuntime.shared.call("endSnoozeEntry", [current, nowMs]) as? [String: Any] ?? [:]
+        if let error = result["error"] as? String { return .refused(error) }
+        snoozes[id] = result["entry"]
+        raw["groupSnoozes"] = snoozes
+        var totals = raw["groupSnoozeTotalsMs"] as? [String: Any] ?? [:]
+        totals[id] = ((totals[id] as? NSNumber)?.doubleValue ?? 0) + ((result["activeMs"] as? NSNumber)?.doubleValue ?? 0)
+        raw["groupSnoozeTotalsMs"] = totals
         return .done
     }
 

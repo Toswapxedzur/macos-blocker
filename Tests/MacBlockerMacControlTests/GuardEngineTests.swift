@@ -317,4 +317,12 @@ final class GuardEngineTests: XCTestCase {
         )
         XCTAssertTrue(modes.isEmpty)
     }
+
+    // Owner 2026-09-26: the picker and the "+" offer only apps a block can act on.
+    func testOnlyBlockableAppsAreOffered() {
+        XCTAssertTrue(AppBlockPolicy.canBlock("com.hnc.Discord"))
+        XCTAssertFalse(AppBlockPolicy.canBlock("com.apple.Music"), "Apple's apps are never blocked")
+        XCTAssertFalse(AppBlockPolicy.canBlock("com.google.Chrome"), "browsers block inside themselves")
+        XCTAssertFalse(AppBlockPolicy.canBlock("com.google.Chrome.helper"))
+    }
 }

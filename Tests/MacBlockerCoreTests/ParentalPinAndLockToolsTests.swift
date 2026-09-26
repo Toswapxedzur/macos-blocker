@@ -26,6 +26,17 @@ final class ParentalPinAndLockToolsTests: XCTestCase {
         XCTAssertEqual(runtime.constant("CONFIRMATIONS") as? Int, 10)
     }
 
+    func testTheBundledRulesAreTheEditorsFiles() throws {
+        // sync-webui.sh copies them; a stale copy would give the tools other rules.
+        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        for name in ["group-actions.js", "parental-pin.js"] {
+            let canonical = repo.deletingLastPathComponent().appendingPathComponent("customBlocker/\(name)")
+            guard FileManager.default.fileExists(atPath: canonical.path) else { continue }
+            let bundled = repo.appendingPathComponent("Sources/MacBlockerCore/Resources/\(name)")
+            XCTAssertEqual(try Data(contentsOf: bundled), try Data(contentsOf: canonical), "\(name) is stale: run sync-webui.sh")
+        }
+    }
+
     // MARK: Store actions
 
     private func document() -> WebStoreDocument {
@@ -75,6 +86,33 @@ final class ParentalPinAndLockToolsTests: XCTestCase {
         XCTAssertNotNil((doc.raw["parentalPinAttempts"] as? [String: Any])?["b"], "the wrong PIN is counted in the editor's own store key")
         XCTAssertEqual(try doc.unlockCheck(id: "b", pin: "482915", now: now.addingTimeInterval(0.5)), .pinWait(seconds: 1))
         XCTAssertEqual(try doc.unlockCheck(id: "b", pin: "482915", now: now.addingTimeInterval(2)), .done)
+    }
+
+    func testSnoozeToolsFollowTheEditorsRules() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("snoozetools-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let shared = SharedAppGroupStore(baseDirectory: dir)
+        var raw = document().raw
+        var groups = raw["blockedGroups"] as? [[String: Any]] ?? []
+        groups[0]["snoozeMinutes"] = 10
+        groups[0]["snoozeConfirmations"] = 1
+        raw["blockedGroups"] = groups
+        shared.writeData(try JSONSerialization.data(withJSONObject: raw), to: SharedAppGroupStore.webStoreFileName)
+        var now = Date(timeIntervalSince1970: 1_000_000)
+        let tools = VaultMCPTools.groupTools(store: GroupStore(shared: shared), clock: { now })
+        func call(_ name: String, _ args: [String: Any]) -> MCPToolResult { tools.first { $0.name == name }!.handler(args) }
+        XCTAssertFalse(call("lock_group", ["id": "a"]).isError, "snoozing works on a frozen group too")
+        let asked = call("snooze_group", ["id": "a"]); XCTAssertFalse(asked.isError, "asks its one confirmation: \(asked.text)")
+        now.addTimeInterval(5)
+        XCTAssertFalse(call("snooze_group", ["id": "a", "confirm": true]).isError)
+        let entry = (GroupStore(shared: shared).load().raw["groupSnoozes"] as? [String: Any])?["a"] as? [String: Any]
+        XCTAssertEqual(((entry?["untilMs"] as? NSNumber)?.doubleValue ?? 0) - ((entry?["startsAtMs"] as? NSNumber)?.doubleValue ?? 0), 600_000, "10 min from the saved settings")
+        XCTAssertTrue(call("snooze_group", ["id": "a"]).isError, "one at a time")
+        now.addTimeInterval(60)
+        XCTAssertFalse(call("end_snooze", ["id": "a"]).isError)
+        let ended = (GroupStore(shared: shared).load().raw["groupSnoozes"] as? [String: Any])?["a"] as? [String: Any]
+        XCTAssertEqual(ended?["activeMsApplied"] as? Bool, true, "the ended entry is kept")
+        XCTAssertEqual(((GroupStore(shared: shared).load().raw["groupSnoozeTotalsMs"] as? [String: Any])?["a"] as? NSNumber)?.doubleValue, 60_000, "the 60 s it ran")
     }
 
     func testTheUnlockToolRunsTheWholeConfirmation() throws {

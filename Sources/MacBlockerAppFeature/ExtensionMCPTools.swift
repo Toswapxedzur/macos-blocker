@@ -132,6 +132,32 @@ public enum ExtensionMCPTools {
                 return relay(bridge, "settings-unlock-group", body, args)
             },
             MCPTool(
+                name: "extension_snooze_group",
+                description: "Snooze an extension group, as the popup's Snooze does: its saved snooze length, delay and cooldown; the group's own confirmations (call again with confirm: true every 5 s until confirmationsLeft is 0). Refused when the group doesn't allow snoozing or a snooze (or its cooldown) is running. A frozen group can be snoozed; its snooze settings are frozen with it.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": ["id": ["type": "string"], "confirm": ["type": "boolean"], "browser": browserProperty],
+                    "required": ["id"],
+                ]
+            ) { args in
+                guard let id = args["id"] as? String, !id.isEmpty else { return .failure("Missing 'id'.") }
+                var body: [String: Any] = ["id": id]
+                if let confirm = args["confirm"] as? Bool { body["confirm"] = confirm }
+                return relay(bridge, "settings-snooze-group", body, args)
+            },
+            MCPTool(
+                name: "extension_end_snooze",
+                description: "End an extension group's running (or scheduled) snooze early, as the popup's End Snooze does. Linked devices end it too.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": ["id": ["type": "string"], "browser": browserProperty],
+                    "required": ["id"],
+                ]
+            ) { args in
+                guard let id = args["id"] as? String, !id.isEmpty else { return .failure("Missing 'id'.") }
+                return relay(bridge, "settings-end-snooze", ["id": id], args)
+            },
+            MCPTool(
                 name: "extension_move_group",
                 description: "Move an extension group to a position in the group list (0 = top), as dragging it in the popup does. The first blocking group from the top decides how a page it blocks looks. A locked group cannot be moved. The order is this browser's own.",
                 inputSchema: [
@@ -227,6 +253,9 @@ public enum ExtensionMCPTools {
         case "not-locked": return "the group is not frozen."
         case "not-stricter": return "while frozen the freeze can only be made stricter (a longer wait)."
         case "pin-already-set": return "the group already has a PIN."
+        case "snooze-disabled": return "the group doesn't allow snoozing."
+        case "snooze-in-progress": return "a snooze (or its cooldown) is already running."
+        case "no-snooze": return "no snooze is running."
         case "duplicate-name": return "another group already has that name (ignoring letter case)."
         default:
             let parts = reason.split(separator: ":", maxSplits: 1).map(String.init)
