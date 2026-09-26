@@ -88,7 +88,7 @@ public struct CollectedPlatformEntry: Codable, Equatable, Sendable, Identifiable
         self.surface = surface
         self.text = text
         self.summary = summary
-        self.suppliedTags = Array(NSOrderedSet(array: suppliedTags)).compactMap { $0 as? String }.prefix(Self.maximumSuppliedTags).map(\.self)
+        self.suppliedTags = Array(NSOrderedSet(array: suppliedTags)).compactMap { $0 as? String }.prefix(Self.maximumSuppliedTags).map { $0 }
         self.canonicalURL = canonicalURL
         self.sourceIconURL = sourceIconURL
         self.attributes = Self.reconciledAttributes(attributes)
@@ -148,7 +148,7 @@ public struct CollectedPlatformEntry: Codable, Equatable, Sendable, Identifiable
         suppliedTags = Array(NSOrderedSet(array: try container.decodeIfPresent([String].self, forKey: .suppliedTags) ?? []))
             .compactMap { $0 as? String }
             .prefix(Self.maximumSuppliedTags)
-            .map(\.self)
+            .map { $0 }
         canonicalURL = try container.decodeIfPresent(String.self, forKey: .canonicalURL)
         var decodedAttributes = try container.decodeIfPresent([String: String].self, forKey: .attributes) ?? [:]
         let retiredCreatorAvatarURL = decodedAttributes.removeValue(forKey: "creatorAvatarURL")
@@ -214,7 +214,7 @@ public struct ClassificationDataset: Codable, Equatable, Sendable, Identifiable 
             refreshed.suppliedTags = Array(NSOrderedSet(array: existing.suppliedTags + entry.suppliedTags))
                 .compactMap { $0 as? String }
                 .prefix(CollectedPlatformEntry.maximumSuppliedTags)
-                .map(\.self)
+                .map { $0 }
             refreshed.sourceAliases = CollectedPlatformEntry.normalizedSourceAliases(
                 existing.sourceAliases + entry.sourceAliases,
                 primary: refreshed.creatorID,

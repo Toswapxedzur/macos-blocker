@@ -65,7 +65,7 @@ final class SharedHubClient {
         task.resume()
         receive(on: task)
         handshakeTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self, weak task] _ in
-            Task { @MainActor in
+            Task { @MainActor [weak self, weak task] in
                 guard let self, let task, self.task === task, self.state != .connected else { return }
                 self.connectionFailed("handshake-timeout", retry: true)
             }
@@ -74,7 +74,7 @@ final class SharedHubClient {
 
     private func receive(on task: URLSessionWebSocketTask) {
         task.receive { [weak self, weak task] result in
-            Task { @MainActor in
+            Task { @MainActor [weak self, weak task] in
                 guard let self, let task, self.task === task else { return }
                 switch result {
                 case .success(let message):
@@ -211,7 +211,7 @@ final class SharedHubClient {
         reconnectTimer?.invalidate()
         let delay = wasConnected ? 0.25 : 2.0
         reconnectTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 guard let self, self.desired else { return }
                 self.attemptJoin()
             }

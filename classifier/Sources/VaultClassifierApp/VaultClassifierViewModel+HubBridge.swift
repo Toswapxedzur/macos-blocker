@@ -299,7 +299,7 @@ extension VaultClassifierViewModel {
 
     func cacheSourceIcon(remoteURL: String) {
         sourceIconCache?.cache(remoteURL: remoteURL) { [weak self] in
-            Task { @MainActor in self?.onWebStateChange?() }
+            Task { @MainActor [weak self] in self?.onWebStateChange?() }
         }
     }
 
