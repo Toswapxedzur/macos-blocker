@@ -105,7 +105,6 @@ public struct BlockGroup: Codable, Identifiable, Equatable, Sendable {
     /// are the allowed ones; every other (non-protected, non-browser) app is
     /// blocked while the group blocks. Mirrors the website list's allowlist.
     public var applicationAllowlist: Bool
-    public var unsupportedLegacyFeatures: [String]
 
     public init(
         id: String = UUID().uuidString,
@@ -132,8 +131,7 @@ public struct BlockGroup: Codable, Identifiable, Equatable, Sendable {
         fallbackMessage: String = "",
         customRuleSource: String = "",
         targets: [BlockTarget] = [],
-        applicationAllowlist: Bool = false,
-        unsupportedLegacyFeatures: [String] = []
+        applicationAllowlist: Bool = false
     ) {
         self.id = id
         self.groupType = groupType
@@ -160,7 +158,6 @@ public struct BlockGroup: Codable, Identifiable, Equatable, Sendable {
         self.customRuleSource = customRuleSource
         self.targets = targets
         self.applicationAllowlist = applicationAllowlist
-        self.unsupportedLegacyFeatures = unsupportedLegacyFeatures
     }
 }
 

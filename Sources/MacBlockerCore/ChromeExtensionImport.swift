@@ -88,18 +88,6 @@ public enum ChromeExtensionImporter {
                 )
             }
 
-        var unsupported: [String] = []
-        if groupType != .site && groupType != .custom {
-            unsupported.append("Platform DOM/feed controls are imported as target metadata only.")
-        }
-        if bool(object["skipToNextOnBlock"]) == true {
-            unsupported.append("skipToNextOnBlock is not available on iOS.")
-        }
-        if let fallbackURL = string(object["fallbackUrl"]), !fallbackURL.isEmpty {
-            unsupported.append("fallbackUrl is replaced by shield/status messaging.")
-        }
-
-        warnings.append(contentsOf: unsupported.map { "\(string(object["name"]) ?? id): \($0)" })
 
         return BlockGroup(
             id: id,
@@ -126,8 +114,7 @@ public enum ChromeExtensionImporter {
             fallbackMessage: "",
             customRuleSource: string(object["blockingRulesText"]) ?? "",
             targets: sites + apps,
-            applicationAllowlist: WebStoreDocument.appsExcept(of: object),
-            unsupportedLegacyFeatures: unsupported
+            applicationAllowlist: WebStoreDocument.appsExcept(of: object)
         )
     }
 

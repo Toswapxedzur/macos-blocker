@@ -16,7 +16,7 @@ It can:
 
 - create, enable, disable, reorder, import, export, freeze, snooze, and remove groups;
 - target native applications selected through the application picker;
-- apply an immediate block, a timed allowance, or a count-up-only timer;
+- apply an immediate block or a timed allowance;
 - restrict normal groups to weekdays and local time windows;
 - run Custom JavaScript policy rules for application lifecycle events;
 - show rule-created native status/panel information through the host;
@@ -75,7 +75,7 @@ Several groups can match the same application. Vault evaluates group policy in s
 | Name | Non-empty, trimmed, unique case-insensitively within this endpoint. |
 | Enabled | Disabled groups are retained but do not take part in normal enforcement. |
 | Targets | One or more application identities selected from the picker. |
-| Behaviour | Immediate block, block after an allowance, or timer/count-up. |
+| Behaviour | Immediate block or block after an allowance. |
 | Schedule | Selected weekdays and optional local time windows. |
 | Freeze | None, Frozen, Strict frozen, or Parental frozen. |
 | Snooze | Per-group temporary-exception policy. |
@@ -89,7 +89,6 @@ An empty Default group has no selected application target and therefore does not
 | --- | --- |
 | Block immediately | A matching active target produces an immediate native block/shield decision. |
 | Block after a number of minutes | Matching use accrues against the group allowance. When the allowance is exhausted, the group produces a native block/shield decision until its usage period resets or another state makes the group inactive. |
-| Timer (count up, no block) | Matching use is measured and may be displayed, but that timer alone never produces a block. |
 
 New groups use a 15-minute allowance and a 24-hour reset interval unless changed. Timed usage belongs to the group, so all matching targets share that group policy. The exact response to a block is implemented by the native host and is constrained by the operating-system permissions and supported enforcement mechanism.
 
@@ -261,7 +260,7 @@ Before relying on a desktop rule:
 1. Verify Device Control is granted.
 2. Verify the selected target's normalized identity.
 3. Verify enabled state, schedule, freeze state, and snooze phase.
-4. Test immediate, timed, and count-up behaviour separately.
+4. Test immediate and timed behaviour separately.
 5. For a Custom group, Run the exact source and test each registered app event.
 6. Verify local-folder failures as well as successful operations.
 7. Verify bridge offline/connected behaviour if the group is linked.

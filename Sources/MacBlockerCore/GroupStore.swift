@@ -6,8 +6,8 @@ import Foundation
 ///
 /// Design (Option A): the raw chrome.storage envelope stays the source of truth.
 /// The web editor authors a richer per-group object than the native typed
-/// `BlockGroup` projection can represent (platform group types, DOM/feed
-/// controls, `skipToNextOnBlock`, `fallbackUrl`, …), and `ChromeExtensionImporter`
+/// `BlockGroup` projection can represent (platform lines, feed filters, the
+/// redirect field, …), and `ChromeExtensionImporter`
 /// is deliberately lossy because it only needs an enforcement view. So native
 /// mutations here are **field-surgical**: they edit the exact fields they own on
 /// the matching group dictionary and preserve every other field and every other

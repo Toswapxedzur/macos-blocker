@@ -27,10 +27,10 @@ final class GroupStoreTests: XCTestCase {
                     "groupType": "youtube",
                     "name": "YouTube",
                     "enabled": false,
-                    "mode": "timer",
+                    "mode": "after-minutes",
                     // Editor-only platform controls with no native equivalent:
                     "platformVideoMode": "all",
-                    "platformAuthors": ["@someone"],
+                    "sources": ["@someone"],
                 ],
             ],
             "globalSettings": ["defaultSnoozeMinutes": 30],
@@ -63,7 +63,7 @@ final class GroupStoreTests: XCTestCase {
         let g2 = try XCTUnwrap(document.group(id: "g2"))
         XCTAssertEqual(g2["enabled"] as? Bool, true)
         XCTAssertEqual(g2["platformVideoMode"] as? String, "all")
-        XCTAssertEqual(g2["platformAuthors"] as? [String], ["@someone"])
+        XCTAssertEqual(g2["sources"] as? [String], ["@someone"])
 
         // The untouched group is byte-identical.
         let g1 = try XCTUnwrap(document.group(id: "g1"))
@@ -200,7 +200,7 @@ final class GroupStoreTests: XCTestCase {
         let seed = try JSONSerialization.data(withJSONObject: sampleEnvelope())
         shared.writeData(seed, to: SharedAppGroupStore.webStoreFileName)
 
-        // Enable g2 (a timer group) so it enters the plan, and disable g1.
+        // Enable g2 (a timed group) so it enters the plan, and disable g1.
         _ = try store.mutate {
             try $0.setGroupEnabled(id: "g2", true)
             try $0.setGroupEnabled(id: "g1", false)
