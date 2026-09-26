@@ -1,93 +1,83 @@
 import XCTest
 @testable import MacBlockerCore
 
-/// Owner 2026-09-26: the AI tools get exactly the user's gates. The Mac tools
-/// check a PIN the way the editor does (customBlocker parental-pin.js, which
-/// the Mac editor runs): same hash, same old formats, same retry wait, same
-/// stored wrong-PIN counts. Reference values come from parental-pin.js.
+/// Owner 2026-09-26: the AI tools get exactly the user's gates, and a lock has
+/// parallel gates (a wait, a PIN) plus the confirmation on every unfreeze
+/// (10 × 5 s). The Mac tools run the editor's own group-actions.js and
+/// parental-pin.js in JavaScriptCore; reference values come from the JS.
 final class ParentalPinAndLockToolsTests: XCTestCase {
     private let salt = "0123456789abcdef0123456789abcdef"
+    private let runtime = GroupActionsRuntime.shared
 
-    func testHashesMatchTheEditor() {
-        XCTAssertEqual(ParentalPin.hash(pin: "135790", salt: salt),
-                       "pbkdf2-sha256$100000$cd1acbfdcaa962d759a8dab87c23a654f5c696abf2e8f5c7cb8bee6699edcc48")
-        XCTAssertEqual(ParentalPin.legacySHA256(pin: "246810", salt: salt),
-                       "87a7255c0b85f145372cdd6868e15934785693be23e5d7911b4b0fcd3c7c4ff3")
-        XCTAssertEqual(ParentalPin.legacyFallbackHash(pin: "112233", salt: salt), "fb192946b2f0547a")
-        XCTAssertEqual(ParentalPin.legacyFallbackHash(pin: "000000", salt: "a"), "fb1f48a7366e33db")
-    }
-
-    func testVerifyAndUpgrade() {
-        let current: [String: Any] = ["id": "g", "parentalPasswordSalt": salt, "parentalPasswordHash": ParentalPin.hash(pin: "135790", salt: salt)]
-        XCTAssertTrue(ParentalPin.verify(group: current, pin: "135790").ok)
-        XCTAssertFalse(ParentalPin.verify(group: current, pin: "135791").ok)
-        let old: [String: Any] = ["id": "o", "parentalPasswordSalt": salt, "parentalPasswordHash": "87a7255c0b85f145372cdd6868e15934785693be23e5d7911b4b0fcd3c7c4ff3"]
-        let result = ParentalPin.verify(group: old, pin: "246810")
-        XCTAssertTrue(result.ok)
-        XCTAssertEqual(result.upgradedHash, ParentalPin.hash(pin: "246810", salt: salt), "an old-format PIN is upgraded")
-    }
-
-    func testRetryWait() {
-        XCTAssertEqual([1, 2, 3, 7, 8, 20].map { ParentalPin.retryDelayMs(failures: $0) }, [1000, 2000, 4000, 64000, 64000, 64000])
-        let group: [String: Any] = ["id": "g", "parentalPasswordSalt": salt, "parentalPasswordHash": ParentalPin.hash(pin: "135790", salt: salt)]
-        var attempts: [String: Any] = [:]
-        XCTAssertEqual(ParentalPin.check(attempts: &attempts, group: group, pin: "000000", nowMs: 0), .wrong(waitSeconds: 1))
-        XCTAssertEqual(ParentalPin.check(attempts: &attempts, group: group, pin: "135790", nowMs: 500), .waiting(seconds: 1))
-        XCTAssertEqual(ParentalPin.check(attempts: &attempts, group: group, pin: "000001", nowMs: 1000), .wrong(waitSeconds: 2))
-        XCTAssertEqual(ParentalPin.check(attempts: &attempts, group: group, pin: "135790", nowMs: 3000), .ok(upgradedHash: nil))
-        XCTAssertTrue(attempts.isEmpty)
+    func testThePinCodeRunsInJavaScriptCoreWithTheEditorsResults() {
+        let current: [String: Any] = ["id": "g", "parentalPasswordSalt": salt,
+            "parentalPasswordHash": "pbkdf2-sha256$100000$cd1acbfdcaa962d759a8dab87c23a654f5c696abf2e8f5c7cb8bee6699edcc48"]
+        let ok = runtime.call("verifySync", [current, "135790"], module: "CBParentalPin") as? [String: Any]
+        XCTAssertEqual(ok?["ok"] as? Bool, true, "the editor's PBKDF2 hash verifies in JavaScriptCore")
+        let wrong = runtime.call("verifySync", [current, "135791"], module: "CBParentalPin") as? [String: Any]
+        XCTAssertEqual(wrong?["ok"] as? Bool, false)
+        let legacy: [String: Any] = ["id": "o", "parentalPasswordSalt": salt,
+            "parentalPasswordHash": "87a7255c0b85f145372cdd6868e15934785693be23e5d7911b4b0fcd3c7c4ff3"]
+        let upgraded = runtime.call("verifySync", [legacy, "246810"], module: "CBParentalPin") as? [String: Any]
+        XCTAssertEqual(upgraded?["ok"] as? Bool, true)
+        XCTAssertEqual((upgraded?["upgradedHash"] as? String)?.hasPrefix("pbkdf2-sha256$100000$"), true)
+        let fields = runtime.call("newPinFieldsSync", ["482915"], module: "CBParentalPin") as? [String: Any]
+        XCTAssertEqual((fields?["parentalPasswordSalt"] as? String)?.count, 32, "salt bytes come from the Mac's random source")
+        XCTAssertEqual(runtime.constant("CONFIRMATIONS") as? Int, 10)
     }
 
     // MARK: Store actions
 
     private func document() -> WebStoreDocument {
-        WebStoreDocument(raw: ["blockedGroups": [
-            ["id": "a", "name": "A", "freezeMode": "none", "strictFreezeHours": 24],
-            ["id": "b", "name": "B", "freezeMode": "none"],
+        let unlocked = runtime.call("normalizeLock", [[String: Any]()]) as? [String: Any] ?? [:]
+        return WebStoreDocument(raw: ["blockedGroups": [
+            ["id": "a", "name": "A"].merging(unlocked) { $1 },
+            ["id": "b", "name": "B"].merging(unlocked) { $1 },
         ]])
     }
 
-    func testCreateMoveAndLockLikeTheEditor() throws {
+    func testCreateMoveAndFreezeLikeTheEditor() throws {
         var doc = document()
         let id = try doc.createGroup(name: "Focus")
         XCTAssertThrowsError(try doc.createGroup(name: " focus ")) { XCTAssertEqual($0 as? GroupStoreError, .duplicateName("focus")) }
-        XCTAssertEqual(doc.group(id: id)?["freezeMode"] as? String, "none", "a created group is never locked")
+        XCTAssertFalse(WebStoreDocument.isLocked(doc.group(id: id) ?? [:]), "a created group is never frozen")
         var withDefault = WebStoreDocument(raw: ["globalSettings": ["defaultSnoozeMinutes": 7], "blockedGroups": []])
         let seven = try withDefault.createGroup(name: "Seven")
         XCTAssertEqual(withDefault.group(id: seven)?["snoozeMinutes"] as? Double, 7, "the user's default snooze length")
 
         try doc.moveGroup(id: id, to: 0)
         XCTAssertEqual(doc.groupIDs.first, id)
-        XCTAssertEqual(try doc.lockGroup(id: "a", mode: .frozen), .done)
+        XCTAssertEqual(try doc.lockGroup(id: "a", waitHours: 2), .done)
+        XCTAssertTrue(WebStoreDocument.isLocked(doc.group(id: "a") ?? [:]))
+        XCTAssertEqual(doc.group(id: "a")?["lockWaitHours"] as? Double, 2)
         XCTAssertThrowsError(try doc.moveGroup(id: "a", to: 0)) { XCTAssertEqual($0 as? GroupStoreError, .groupLocked("a")) }
-        XCTAssertThrowsError(try doc.lockGroup(id: "a", mode: .strict)) { XCTAssertEqual($0 as? GroupStoreError, .groupLocked("a")) }
-        XCTAssertThrowsError(try doc.lockGroup(id: "b", mode: .strict, strictHours: 100))
-        XCTAssertThrowsError(try doc.lockGroup(id: "b", mode: .parental)) { XCTAssertEqual($0 as? GroupStoreError, .pinRequired) }
+        XCTAssertEqual(try doc.lockGroup(id: "a", waitHours: 1), .refused("not-stricter"), "while frozen only stricter")
+        XCTAssertEqual(try doc.lockGroup(id: "a", waitHours: 5), .done)
+        XCTAssertEqual(try doc.lockGroup(id: "a", pin: "482915"), .done, "a PIN where there was none is stricter")
+        XCTAssertEqual(try doc.lockGroup(id: "a", pin: "111111"), .refused("pin-already-set"))
     }
 
-    func testUnlockGates() throws {
+    func testUnfreezeGates() throws {
         var doc = document()
         let now = Date(timeIntervalSince1970: 1_000_000)
-        try doc.lockGroup(id: "a", mode: .frozen, now: now)
-        XCTAssertEqual(try doc.unlockGroup(id: "a", now: now), .needsConfirmation)
-        XCTAssertEqual(try doc.unlockGroup(id: "a", confirmed: true, now: now), .done)
-        XCTAssertEqual(doc.group(id: "a")?["freezeMode"] as? String, "none")
-        XCTAssertThrowsError(try doc.unlockGroup(id: "a")) { XCTAssertEqual($0 as? GroupStoreError, .notLocked("a")) }
+        try doc.lockGroup(id: "a", waitHours: 2, now: now)
+        XCTAssertEqual(try doc.unlockCheck(id: "a", pin: nil, now: now.addingTimeInterval(3600)),
+                       .waitUntil(now.addingTimeInterval(7200)), "the wait gate holds for its hours")
+        XCTAssertEqual(try doc.unlockCheck(id: "a", pin: nil, now: now.addingTimeInterval(7201)), .done)
+        let version = (doc.group(id: "a")?["lockVersion"] as? NSNumber)?.intValue ?? -1
+        XCTAssertEqual(try doc.unlockGroup(id: "a", lockVersion: version - 1, now: now.addingTimeInterval(7300)), .refused("lock-changed"))
+        XCTAssertEqual(try doc.unlockGroup(id: "a", lockVersion: version, now: now.addingTimeInterval(7300)), .done)
+        XCTAssertFalse(WebStoreDocument.isLocked(doc.group(id: "a") ?? [:]))
+        XCTAssertThrowsError(try doc.unlockCheck(id: "a", pin: nil)) { XCTAssertEqual($0 as? GroupStoreError, .notLocked("a")) }
 
-        try doc.lockGroup(id: "a", mode: .strict, strictHours: 2, now: now)
-        XCTAssertEqual(try doc.unlockGroup(id: "a", confirmed: true, now: now.addingTimeInterval(3600)),
-                       .strictUntil(now.addingTimeInterval(7200)), "strict opens only after its hours")
-        XCTAssertEqual(try doc.unlockGroup(id: "a", confirmed: true, now: now.addingTimeInterval(7201)), .done)
-
-        try doc.lockGroup(id: "b", mode: .parental, pin: "482915", now: now)
-        let wrong = try doc.unlockGroup(id: "b", pin: "000000", now: now)
-        XCTAssertEqual(wrong, .pinWrong(waitSeconds: 1))
-        XCTAssertNotNil((doc.raw[ParentalPin.attemptsKey] as? [String: Any])?["b"], "the wrong PIN is counted in the editor's own store key")
-        XCTAssertEqual(try doc.unlockGroup(id: "b", pin: "482915", now: now.addingTimeInterval(0.5)), .pinWait(seconds: 1))
-        XCTAssertEqual(try doc.unlockGroup(id: "b", pin: "482915", now: now.addingTimeInterval(2)), .done)
+        try doc.lockGroup(id: "b", pin: "482915", now: now)
+        XCTAssertEqual(try doc.unlockCheck(id: "b", pin: "000000", now: now), .pinWrong(waitSeconds: 1))
+        XCTAssertNotNil((doc.raw["parentalPinAttempts"] as? [String: Any])?["b"], "the wrong PIN is counted in the editor's own store key")
+        XCTAssertEqual(try doc.unlockCheck(id: "b", pin: "482915", now: now.addingTimeInterval(0.5)), .pinWait(seconds: 1))
+        XCTAssertEqual(try doc.unlockCheck(id: "b", pin: "482915", now: now.addingTimeInterval(2)), .done)
     }
 
-    func testTheUnlockToolAsksWaitsAndConfirms() throws {
+    func testTheUnlockToolRunsTheWholeConfirmation() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("locktools-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let shared = SharedAppGroupStore(baseDirectory: dir)
@@ -97,18 +87,20 @@ final class ParentalPinAndLockToolsTests: XCTestCase {
         func call(_ name: String, _ args: [String: Any]) -> MCPToolResult {
             tools.first { $0.name == name }!.handler(args)
         }
-        XCTAssertFalse(call("lock_group", ["id": "a", "mode": "frozen"]).isError)
-        XCTAssertFalse(call("unlock_group", ["id": "a"]).isError, "the first call asks")
+        XCTAssertFalse(call("lock_group", ["id": "a"]).isError)
+        XCTAssertFalse(call("unlock_group", ["id": "a"]).isError, "the first call starts the confirmation")
         now.addTimeInterval(2)
         XCTAssertTrue(call("unlock_group", ["id": "a", "confirm": true]).isError, "too early")
-        now.addTimeInterval(4)
-        XCTAssertFalse(call("unlock_group", ["id": "a", "confirm": true]).isError)
-        XCTAssertEqual(GroupStore(shared: shared).load().group(id: "a")?["freezeMode"] as? String, "none")
-        XCTAssertTrue(call("unlock_group", ["id": "a", "confirm": true]).isError, "not locked any more")
+        for step in 1...10 {
+            now.addTimeInterval(5)
+            let result = call("unlock_group", ["id": "a", "confirm": true])
+            XCTAssertFalse(result.isError, "step \(step): \(result.text)")
+            XCTAssertEqual(WebStoreDocument.isLocked(GroupStore(shared: shared).load().group(id: "a") ?? [:]), step < 10)
+        }
 
-        XCTAssertFalse(call("lock_group", ["id": "b", "mode": "parental", "pin": "482915"]).isError)
+        XCTAssertFalse(call("lock_group", ["id": "b", "pin": "482915"]).isError)
         XCTAssertTrue(call("unlock_group", ["id": "b", "pin": "111111"]).isError)
-        let counted = GroupStore(shared: shared).load().raw[ParentalPin.attemptsKey] as? [String: Any]
+        let counted = GroupStore(shared: shared).load().raw["parentalPinAttempts"] as? [String: Any]
         XCTAssertNotNil(counted?["b"], "a wrong PIN through a tool is saved like one typed in the editor")
     }
 }

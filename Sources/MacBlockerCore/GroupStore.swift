@@ -155,8 +155,6 @@ public enum GroupStoreError: Error, Equatable {
     /// name, so names stay unique, as in the editor.
     case duplicateName(String)
     case notLocked(String)
-    /// A parental lock without a PIN yet: the lock sets one.
-    case pinRequired
 }
 
 /// A parsed `web-store.json` envelope plus the field-surgical group mutations.
@@ -176,7 +174,11 @@ public struct WebStoreDocument {
     /// a deleted group so the store doesn't accrue orphaned usage/snooze entries.
     private static let perGroupMapKeys = [
         "usageTimersMs", "usageResetAtMs", "usageBucketsMs", "groupSnoozes", "groupSnoozeTotalsMs",
+        pinAttemptsKey,
     ]
+
+    /// The editor's per-group wrong-PIN counts (parental-pin.js ATTEMPTS_KEY).
+    static let pinAttemptsKey = "parentalPinAttempts"
 
     public init(raw: [String: Any]) {
         self.raw = raw
@@ -358,8 +360,12 @@ public struct WebStoreDocument {
         return Self.isLocked(group)
     }
 
-    /// Same rule as the extension (`cbGroupIsLocked`): any freeze mode locks.
+    /// Same rule as the editor (group-actions.js `isLocked`): a lock time means
+    /// locked. A group stored before 2026-09-26 that the editor has not rewritten
+    /// yet still counts as locked by its old freeze mode (nobody is unlocked by
+    /// the upgrade).
     public static func isLocked(_ group: [String: Any]) -> Bool {
+        if group.keys.contains("lockedAtMs") { return group["lockedAtMs"] is NSNumber }
         guard let mode = group["freezeMode"] as? String else { return false }
         return mode != "none"
     }
@@ -376,6 +382,7 @@ public struct WebStoreDocument {
             map.removeValue(forKey: id)
             raw[key] = map
         }
+        if raw["quickAddGroupId"] as? String == id { raw["quickAddGroupId"] = "" }
     }
 
     // MARK: Private
@@ -386,6 +393,8 @@ public struct WebStoreDocument {
     }
 
     // MARK: Create, lock, unlock, move — the editor's actions and gates
+    // The gates themselves are the editor's code (group-actions.js and
+    // parental-pin.js, run by GroupActionsRuntime): nothing is re-decided here.
 
     /// A new, unlocked group with the editor's defaults (a site group; the
     /// editor fills every other field on load). Returns its id.
@@ -398,16 +407,18 @@ public struct WebStoreDocument {
         }
         let nowMs = (now.timeIntervalSince1970 * 1000).rounded()
         let id = "group-\(Int(nowMs))-\(UUID().uuidString.prefix(6).lowercased())"
-        groups.append([
+        var group: [String: Any] = [
             "id": id, "groupType": "site", "name": trimmed, "enabled": true, "mode": "instant",
             "allowedMinutes": 15, "resetIntervalHours": 24, "resetAtMidnight": false, "rollingLimit": false,
             "activeDays": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
-            "timeWindowsText": "", "freezeMode": "none", "freezeModeChoice": "frozen", "strictFreezeHours": 24,
-            "frozenAtMs": NSNull(), "parentalPasswordHash": NSNull(), "parentalPasswordSalt": NSNull(), "scopes": [],
+            "timeWindowsText": "", "scopes": [],
             // The user's default snooze length, as the editor's New group.
             "snoozeMinutes": ((raw["globalSettings"] as? [String: Any])?["defaultSnoozeMinutes"] as? NSNumber)
                 .map { $0.doubleValue > 0 ? $0.doubleValue : 30 } ?? 30,
-        ])
+        ]
+        let lock = GroupActionsRuntime.shared.call("normalizeLock", [[String: Any]()]) as? [String: Any] ?? [:]
+        group.merge(lock) { _, new in new }
+        groups.append(group)
         var timers = raw["usageTimersMs"] as? [String: Any] ?? [:]
         var resets = raw["usageResetAtMs"] as? [String: Any] ?? [:]
         timers[id] = 0
@@ -417,84 +428,91 @@ public struct WebStoreDocument {
         return id
     }
 
-    public enum LockMode: String { case frozen, strict, parental }
-
-    /// Locks a group, as the editor's Freeze does: strict for 0 < hours ≤ 72;
-    /// parental needs the group's PIN (through the retry wait) or, when none is
-    /// set yet, takes `pin` as the new PIN (the guardian settings' step).
-    @discardableResult
-    public mutating func lockGroup(id: String, mode: LockMode, strictHours: Double? = nil, pin: String? = nil, now: Date = Date()) throws -> LockOutcome {
-        guard let group = group(id: id) else { throw GroupStoreError.groupNotFound(id) }
-        if isLocked(group) { throw GroupStoreError.groupLocked(id) }
-        let nowMs = (now.timeIntervalSince1970 * 1000).rounded()
-        var fields: [String: Any] = ["freezeMode": mode.rawValue, "freezeModeChoice": mode.rawValue,
-                                     "frozenAtMs": nowMs, "freezeChangedAtMs": nowMs]
-        switch mode {
-        case .frozen: break
-        case .strict:
-            let hours = strictHours ?? ((group["strictFreezeHours"] as? NSNumber)?.doubleValue ?? 24)
-            guard hours > 0, hours <= 72 else { throw GroupStoreError.invalidInput("strictHours (0 < hours ≤ 72)") }
-            fields["strictFreezeHours"] = hours
-        case .parental:
-            let shared = sharedView?[id] ?? group
-            if let hash = shared["parentalPasswordHash"] as? String, !hash.isEmpty {
-                switch passPinGate(group: shared, pin: pin ?? "", nowMs: nowMs) {
-                case .success(let upgraded): if let upgraded { fields["parentalPasswordHash"] = upgraded }
-                case .failure(let refused): return refused
-                }
-            } else {
-                guard let pin, ParentalPin.isValid(pin) else { throw GroupStoreError.pinRequired }
-                fields.merge(ParentalPin.newPinFields(pin: pin)) { _, new in new }
-            }
-        }
-        try writeFields(id: id, fields)
-        return .done
-    }
-
-    /// What a lock or unlock came to. Anything but `.done` changed no group
-    /// (a wrong PIN is still counted, so the caller saves the document).
+    /// What a lock or unlock step came to. Anything but `.done` changed no
+    /// group (a wrong PIN is still counted, so the caller saves the document).
     public enum LockOutcome: Error, Equatable {
         case done
-        /// A strict lock opens only at this moment.
-        case strictUntil(Date)
-        /// The editor's confirmation: ask, wait, confirm.
-        case needsConfirmation
-        /// Still inside the wait after a wrong PIN: the PIN was not checked.
+        /// The lock's wait gate holds until this moment.
+        case waitUntil(Date)
+        /// Still inside the retry wait after a wrong PIN: the PIN was not checked.
         case pinWait(seconds: Int)
         /// Wrong PIN: the next try waits this long.
         case pinWrong(waitSeconds: Int)
+        /// A group-actions.js refusal ("not-stricter", "pin-already-set", …).
+        case refused(String)
     }
 
-    /// Unlocks a group through the editor's gates. A parental lock with a PIN
-    /// opens with the PIN (retry wait applies); any other lock returns the gate
-    /// to pass unless `confirmed` (the caller runs the ask-wait-confirm step).
+    /// The group as linked devices share it (its lock comes from the link).
+    private func viewed(_ id: String) -> [String: Any]? {
+        sharedView?[id] ?? group(id: id)
+    }
+
+    /// Freezes an unlocked group with the given gates, or makes a frozen one
+    /// stricter (a longer wait, a PIN where there was none) — as the editor's
+    /// Freeze / Make stricter.
     @discardableResult
-    public mutating func unlockGroup(id: String, pin: String? = nil, confirmed: Bool = false, now: Date = Date()) throws -> LockOutcome {
-        guard let stored = group(id: id) else { throw GroupStoreError.groupNotFound(id) }
-        let group = sharedView?[id] ?? stored
-        guard Self.isLocked(group) else { throw GroupStoreError.notLocked(id) }
-        let nowMs = (now.timeIntervalSince1970 * 1000).rounded()
-        var fields: [String: Any] = ["freezeMode": "none", "frozenAtMs": NSNull(), "freezeChangedAtMs": nowMs]
-        let mode = group["freezeMode"] as? String
-        let hasPin = !((group["parentalPasswordHash"] as? String) ?? "").isEmpty
-        if mode == "parental" {
-            if hasPin {
-                switch passPinGate(group: group, pin: pin ?? "", nowMs: nowMs) {
-                case .success(let upgraded): if let upgraded { fields["parentalPasswordHash"] = upgraded }
-                case .failure(let refused): return refused
-                }
+    public mutating func lockGroup(id: String, waitHours: Double? = nil, pin: String? = nil, now: Date = Date()) throws -> LockOutcome {
+        guard let current = viewed(id) else { throw GroupStoreError.groupNotFound(id) }
+        let actions = GroupActionsRuntime.shared
+        var gates: [String: Any] = [:]
+        if let waitHours { gates["waitHours"] = waitHours }
+        if let pin {
+            guard actions.call("isValidParentalPin", [pin], module: "CBParentalPin") as? Bool == true else {
+                throw GroupStoreError.invalidInput("pin (6 digits)")
             }
-            try writeFields(id: id, fields)
-            return .done
+            if actions.call("hasPin", [current]) as? Bool == true { return .refused("pin-already-set") }
+            gates["pinFields"] = actions.call("newPinFieldsSync", [pin], module: "CBParentalPin") ?? NSNull()
         }
-        if mode == "strict" {
-            let frozenAt = (group["frozenAtMs"] as? NSNumber)?.doubleValue ?? 0
-            let hours = (group["strictFreezeHours"] as? NSNumber)?.doubleValue ?? 0
-            let opensAt = frozenAt + hours * 3_600_000
-            if opensAt > nowMs { return .strictUntil(Date(timeIntervalSince1970: opensAt / 1000)) }
+        let nowMs = (now.timeIntervalSince1970 * 1000).rounded()
+        var result: [String: Any]
+        if actions.call("isLocked", [current]) as? Bool == true {
+            result = actions.call("tighten", [current, gates]) as? [String: Any] ?? [:]
+        } else {
+            result = actions.call("setGates", [current, gates]) as? [String: Any] ?? [:]
+            if let gated = result["group"] { result = actions.call("lock", [gated, nowMs]) as? [String: Any] ?? [:] }
         }
-        guard confirmed else { return .needsConfirmation }
-        try writeFields(id: id, fields)
+        if let error = result["error"] as? String { return .refused(error) }
+        guard let updated = result["group"] as? [String: Any] else { return .refused("internal") }
+        try writeLockUnit(id: id, from: updated)
+        return .done
+    }
+
+    /// The first unlock step, as the editor's Unfreeze: the wait must be over
+    /// and a set PIN must pass (with its retry wait). Returns `.done` when the
+    /// confirmation may start.
+    public mutating func unlockCheck(id: String, pin: String?, now: Date = Date()) throws -> LockOutcome {
+        guard let current = viewed(id) else { throw GroupStoreError.groupNotFound(id) }
+        let actions = GroupActionsRuntime.shared
+        let nowMs = (now.timeIntervalSince1970 * 1000).rounded()
+        let plan = actions.call("unlockPlan", [current, nowMs]) as? [String: Any] ?? [:]
+        if let until = (plan["waitUntilMs"] as? NSNumber)?.doubleValue { return .waitUntil(Date(timeIntervalSince1970: until / 1000)) }
+        if plan["error"] as? String == "not-locked" { throw GroupStoreError.notLocked(id) }
+        guard plan["needsPin"] as? Bool == true else { return .done }
+        let attempts = raw[Self.pinAttemptsKey] as? [String: Any] ?? [:]
+        let result = actions.call("checkSync", [attempts, current, pin ?? "", nowMs], module: "CBParentalPin") as? [String: Any] ?? [:]
+        raw[Self.pinAttemptsKey] = result["attempts"] as? [String: Any] ?? attempts
+        let waitSeconds = Int((((result["waitMs"] as? NSNumber)?.doubleValue ?? 0) / 1000).rounded(.up))
+        if result["waiting"] as? Bool == true { return .pinWait(seconds: waitSeconds) }
+        guard result["ok"] as? Bool == true else { return .pinWrong(waitSeconds: waitSeconds) }
+        if let upgraded = result["upgradedHash"] as? String {
+            var unit = current
+            unit["parentalPasswordHash"] = upgraded
+            try writeLockUnit(id: id, from: unit)
+        }
+        return .done
+    }
+
+    /// The last unlock step, after the confirmation: unfreezes the group when
+    /// its lock is still the one the confirmation was for.
+    public mutating func unlockGroup(id: String, lockVersion: Int, now: Date = Date()) throws -> LockOutcome {
+        guard let current = viewed(id) else { throw GroupStoreError.groupNotFound(id) }
+        let actions = GroupActionsRuntime.shared
+        guard (current["lockVersion"] as? NSNumber)?.intValue == lockVersion else { return .refused("lock-changed") }
+        let nowMs = (now.timeIntervalSince1970 * 1000).rounded()
+        let plan = actions.call("unlockPlan", [current, nowMs]) as? [String: Any] ?? [:]
+        if let error = plan["error"] as? String { return .refused(error) }
+        guard let updated = actions.call("unlock", [current]) as? [String: Any] else { return .refused("internal") }
+        try writeLockUnit(id: id, from: updated)
         return .done
     }
 
@@ -510,24 +528,17 @@ public struct WebStoreDocument {
         groups = list
     }
 
-    /// The PIN gate over the editor's stored wrong-PIN counts. Returns an
-    /// upgraded hash to store when the PIN was in an old format.
-    private mutating func passPinGate(group: [String: Any], pin: String, nowMs: Double) -> Result<String?, LockOutcome> {
-        var attempts = raw[ParentalPin.attemptsKey] as? [String: Any] ?? [:]
-        let result = ParentalPin.check(attempts: &attempts, group: group, pin: pin, nowMs: nowMs)
-        raw[ParentalPin.attemptsKey] = attempts
-        switch result {
-        case .ok(let upgraded): return .success(upgraded)
-        case .waiting(let seconds): return .failure(.pinWait(seconds: seconds))
-        case .wrong(let seconds): return .failure(.pinWrong(waitSeconds: seconds))
-        }
-    }
-
-    /// Writes fields without the lock check (the lock actions themselves).
-    private mutating func writeFields(id: String, _ fields: [String: Any]) throws {
+    /// Writes a group's lock unit (and the link version it was made on) into
+    /// the stored group; the hub takes it from there (compare-and-set).
+    private mutating func writeLockUnit(id: String, from source: [String: Any]) throws {
         var list = groups
         guard let index = list.firstIndex(where: { ($0["id"] as? String) == id }) else { throw GroupStoreError.groupNotFound(id) }
-        list[index].merge(fields) { _, new in new }
+        for field in ["lockedAtMs", "lockWaitHours", "parentalPasswordHash", "parentalPasswordSalt", "lockVersion", "lockSyncedVersion"] {
+            list[index][field] = source[field] ?? NSNull()
+        }
+        for legacy in ["freezeMode", "freezeModeChoice", "strictFreezeHours", "frozenAtMs", "freezeChangedAtMs"] {
+            list[index].removeValue(forKey: legacy)
+        }
         groups = list
     }
 
