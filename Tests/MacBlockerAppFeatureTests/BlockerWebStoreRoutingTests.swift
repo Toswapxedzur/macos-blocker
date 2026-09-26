@@ -37,6 +37,25 @@ final class BlockerWebStoreRoutingTests: XCTestCase {
         XCTAssertTrue(plan.entries.contains { $0.groupID == "g1" }, "plan must reflect the saved enabled group")
     }
 
+    /// Found live on mini1 2026-09-26: the usage writer read the file THROUGH
+    /// the shared overlay and wrote it back, baking another device's incomplete
+    /// copy into this Mac's group (its Apps entry was lost).
+    func testUsageWritesNeverPersistTheSharedOverlay() throws {
+        let (webStore, _, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        webStore.save(rawStore: ["blockedGroups": [["id": "g1", "name": "Focus", "enabled": true, "mode": "instant",
+            "scopes": [["id": "apps-1", "surface": "apps", "action": "block", "apps": [["id": "com.example.App"]]]]]]])
+        webStore.sharedOverlay = { document in
+            var overlaid = document
+            overlaid["blockedGroups"] = [["id": "g1", "name": "Focus", "scopes": [] as [[String: Any]]]]
+            return overlaid
+        }
+        webStore.writeUsage(timersMs: ["g1": 1_000], resetAtMs: ["g1": 1])
+        let json = try XCTUnwrap(webStore.loadRawJSON())
+        XCTAssertTrue(json.contains("com.example.App"), "the stored Apps entry survives a usage write")
+        XCTAssertEqual(webStore.importedGroups()?.groups.first?.targets.count ?? -1, 0, "enforcement still reads the overlay")
+    }
+
     func testEditorSaveDoesNotSelfNotify() {
         let (webStore, _, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }

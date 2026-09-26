@@ -329,6 +329,11 @@ public final class MacEnforcementBridge: ObservableObject {
         let elapsed = elapsedSinceLastSample(now: now)
         lastSampleAt = now
         let snoozes = webStore.loadSnoozes()
+        // Mac Vault takes part in its links itself, editor window or not.
+        if let raw = webStore.loadRawJSON(), let data = raw.data(using: .utf8),
+           let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            ConnectionHub.shared.contributeLocalDefinitions(document: document, nowMs: now.timeIntervalSince1970 * 1000)
+        }
         // A blocked app still in front (shielded or suspended) is not time in
         // that app: no group counts it, as a covered browser page counts none.
         let frontBlocked = frontmost.map { app in
