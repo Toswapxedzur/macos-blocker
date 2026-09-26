@@ -347,7 +347,10 @@ public final class MacEnforcementBridge: ObservableObject {
         let document = webStore.loadForTick(nowMs: nowMs)
         // Mac Vault takes part in its links itself, editor window or not.
         ConnectionHub.shared.contributeLocalDefinitions(document: document, nowMs: nowMs)
-        let view = BlockerWebStore.enforcementView(of: document)
+        // …and adopts what the link shares into its own file.
+        webStore.adoptShared()
+        var view = BlockerWebStore.enforcementView(of: document)
+        restartChangedBudgets(document: document, usage: &view.usage, nowMs: nowMs)
         let groups = view.groups
         let snoozes = view.snoozes
         let frontApp = NSWorkspace.shared.frontmostApplication
@@ -936,6 +939,37 @@ public final class MacEnforcementBridge: ObservableObject {
     }
 
     // MARK: - Helpers
+
+    /// Each group's budget fields as last seen, to spot an edit that changes
+    /// how its budget runs.
+    private var budgetFieldsSeen: [String: String] = [:]
+
+    /// An edit that changes how a group's budget runs restarts it, whoever
+    /// made it — the editor's own rule (group-actions.js budgetRestarts), as
+    /// the browser's worker applies it.
+    private func restartChangedBudgets(document: [String: Any], usage: inout BlockerWebStore.UsageTimers, nowMs: Double) {
+        let fields = ["groupType", "mode", "resetIntervalHours", "resetAtMidnight", "rollingLimit"]
+        var restarted: [String] = []
+        var seen: [String: String] = [:]
+        for group in document["blockedGroups"] as? [[String: Any]] ?? [] {
+            guard let id = group["id"] as? String else { continue }
+            let shape = fields.reduce(into: [String: Any]()) { $0[$1] = group[$1] ?? NSNull() }
+            let key = ConnectionHub.canonicalJSON(shape)
+            seen[id] = key
+            if let previous = budgetFieldsSeen[id], previous != key,
+               let data = previous.data(using: .utf8), let old = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                if GroupActionsRuntime.shared.call("budgetRestarts", [old, shape]) as? Bool == true { restarted.append(id) }
+            }
+        }
+        budgetFieldsSeen = seen
+        guard !restarted.isEmpty else { return }
+        var timers: [String: Double] = [:], resets: [String: Double] = [:], buckets: [String: [Double: Double]] = [:]
+        for id in restarted {
+            timers[id] = 0; resets[id] = nowMs; buckets[id] = [:]
+            usage.timersMs[id] = 0; usage.resetAtMs[id] = nowMs; usage.bucketsMs[id] = [:]
+        }
+        webStore.writeUsage(timersMs: timers, resetAtMs: resets, bucketsMs: buckets)
+    }
 
     private func elapsedSinceLastSample(now: Date) -> TimeInterval {
         guard let lastSampleAt else { return 0 }

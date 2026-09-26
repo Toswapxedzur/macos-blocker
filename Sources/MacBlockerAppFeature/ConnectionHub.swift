@@ -1437,6 +1437,7 @@ final class ConnectionHub: ObservableObject {
         var groups = document["blockedGroups"] as? [[String: Any]] ?? []
         guard !groups.isEmpty else { return document }
         var snoozes = document["groupSnoozes"] as? [String: Any] ?? [:]
+        var snoozeTotals = document["groupSnoozeTotalsMs"] as? [String: Any] ?? [:]
         var changed = false
         lock.lock()
         for cluster in clusters.values where cluster.members.contains(Self.localProgram) {
@@ -1454,12 +1455,17 @@ final class ConnectionHub: ObservableObject {
                cluster.sharedSnoozeTs > Self.snoozeChangeTs(snoozes[id] as? [String: Any]) {
                 snoozes[id] = cluster.sharedSnooze
             }
+            // The link's snooze total is the hub's count (each snooze once).
+            if cluster.sharedSnoozeTotalMs > 0, let id = groups[index]["id"] as? String {
+                snoozeTotals[id] = cluster.sharedSnoozeTotalMs
+            }
         }
         lock.unlock()
         guard changed else { return document }
         var overlaid = document
         overlaid["blockedGroups"] = groups
         overlaid["groupSnoozes"] = snoozes
+        overlaid["groupSnoozeTotalsMs"] = snoozeTotals
         return overlaid
     }
 
@@ -1546,20 +1552,6 @@ final class ConnectionHub: ObservableObject {
         cluster.sharedBuckets = cluster.sharedBuckets.filter { $0.key > cutoff }
     }
 
-    func syncFromBridge(json: String) {
-        guard let obj = decode(json) else { return }
-        submitBridgeFrame(Self.bridgeFrame(obj))
-    }
-
-    /// The Mac's web editor sends the extension popup's runtime messages
-    /// (`{type: "group-sync", …}`); hub frames are keyed by
-    /// `kind`, exactly as the browser's service worker re-keys them.
-    static func bridgeFrame(_ message: [String: Any]) -> [String: Any] {
-        var frame = message
-        if frame["kind"] == nil, let type = message["type"] as? String { frame["kind"] = type }
-        return frame
-    }
-
     /// JSON array of all clusters, pushed to the Mac's own web editor each tick.
     func clustersJSON() -> String {
         lock.lock()
@@ -1588,11 +1580,6 @@ final class ConnectionHub: ObservableObject {
         default:
             break
         }
-    }
-
-    private func decode(_ json: String) -> [String: Any]? {
-        guard let data = json.data(using: .utf8) else { return nil }
-        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
     }
 
     /// Caller must hold `lock`. Persists the cluster registry — links and their
@@ -1686,7 +1673,10 @@ final class ConnectionHub: ObservableObject {
                     "program": $0,
                     "groupName": cluster.groupName,
                     "groupId": cluster.memberGroupIds[$0] ?? "",
-                    "online": online.contains($0)
+                    "online": online.contains($0),
+                    // False until the member sent its definition: a browser then
+                    // contributes it (its lines join the link's).
+                    "contributed": cluster.contributed.contains($0)
                 ] as [String: Any]
             }
         ]
