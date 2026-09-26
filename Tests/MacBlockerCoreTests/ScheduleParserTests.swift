@@ -2,7 +2,9 @@ import XCTest
 @testable import MacBlockerCore
 
 final class ScheduleParserTests: XCTestCase {
-    func testParsesColonAndCompactWindows() {
+    func testParsesTheEditorsWindowFormat() {
+        // "HHMM-HHMM" only, as the editor writes and reads it; "09:00-10:30"
+        // is rejected there, so here too.
         let windows = ScheduleParser.parseWindows(
             """
             09:00-10:30
@@ -10,11 +12,9 @@ final class ScheduleParserTests: XCTestCase {
             """
         )
 
-        XCTAssertEqual(windows.count, 2)
-        XCTAssertEqual(windows[0].start, TimeOfDay(hour: 9, minute: 0))
-        XCTAssertEqual(windows[0].end, TimeOfDay(hour: 10, minute: 30))
-        XCTAssertEqual(windows[1].start, TimeOfDay(hour: 12, minute: 0))
-        XCTAssertEqual(windows[1].end, TimeOfDay(hour: 13, minute: 0))
+        XCTAssertEqual(windows.count, 1)
+        XCTAssertEqual(windows[0].start, TimeOfDay(hour: 12, minute: 0))
+        XCTAssertEqual(windows[0].end, TimeOfDay(hour: 13, minute: 0))
     }
 
     func testRejectsInvalidWindow() {
