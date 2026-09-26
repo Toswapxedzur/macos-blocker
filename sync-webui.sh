@@ -16,6 +16,7 @@ SYNCED_FILES=(
   popup.js
   popup.css
   group-scopes.js
+  parental-pin.js
   platform-profiles.js
   translations.js
   popup-markdown.js

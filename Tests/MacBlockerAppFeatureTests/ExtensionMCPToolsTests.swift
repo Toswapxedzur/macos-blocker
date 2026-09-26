@@ -31,7 +31,18 @@ final class ExtensionMCPToolsTests: XCTestCase {
         let (server, _) = makeServer { _, _ in .success([:]) }
         let res = try XCTUnwrap(server.handle(["jsonrpc": "2.0", "id": 1, "method": "tools/list"]))
         let names = try XCTUnwrap((res["result"] as? [String: Any])?["tools"] as? [[String: Any]]).compactMap { $0["name"] as? String }
-        XCTAssertEqual(Set(names), ["extension_state", "extension_create_group", "extension_set_group", "extension_delete_group", "extension_set_classifier", "extension_set_global"])
+        XCTAssertEqual(Set(names), ["extension_state", "extension_create_group", "extension_set_group", "extension_delete_group", "extension_set_classifier", "extension_set_global",
+                                      "extension_lock_group", "extension_unlock_group", "extension_move_group"])
+    }
+
+    func testLockToolsRelayTheirOperationsAndExplainTheGates() throws {
+        let (server, relayed) = makeServer { _, _ in .failure("pin-wrong:4") }
+        let out = try call(server, "extension_unlock_group", ["id": "g1", "pin": "000000"])
+        XCTAssertTrue(out.isError)
+        XCTAssertTrue(out.text.contains("wrong PIN; the next try waits 4 s."), out.text)
+        XCTAssertEqual(relayed().last?.operation, "settings-unlock-group")
+        XCTAssertEqual(ExtensionMCPTools.explain("strict-wait:2026-09-27T10:00:00.000Z"), "strict lock: it opens at 2026-09-27T10:00:00.000Z.")
+        XCTAssertEqual(ExtensionMCPTools.explain("confirm-wait:3"), "confirm again in 3 s (the popup's confirmation waits 5 s).")
     }
 
     func testStateRelaysSettingsGetAndReturnsTheBrowserBody() throws {

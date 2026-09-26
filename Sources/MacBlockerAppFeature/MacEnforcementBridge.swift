@@ -109,6 +109,8 @@ public final class MacEnforcementBridge: ObservableObject {
     // web editor to poll via drainSystemPanelEventsJSON().
     private var systemPanelEvents: [[String: String]] = []
     private var editorCloseObserver: NSObjectProtocol?
+    /// Bundle id → when to ask it to quit again (see `requestClose`).
+    private var pendingCloses: [String: Date] = [:]
     #endif
 
     public init(webStore: BlockerWebStore = BlockerWebStore(), sweepInterval: TimeInterval = 1.0) {
@@ -376,6 +378,8 @@ public final class MacEnforcementBridge: ObservableObject {
             usageByGroupSeconds: timersMs.mapValues { $0 / 1000 },
             snoozesByGroup: snoozes
         )
+
+        retryPendingCloses(now: now)
 
         // 2. Drain notification-driven lifecycle events.
         let lifecycleEvents = pendingLifecycleEvents
@@ -830,6 +834,30 @@ public final class MacEnforcementBridge: ObservableObject {
                   message: "Rule stopped: execution deadline exceeded. Edit it and click Run to retry.")
     }
 
+    /// A rule's "close" asks the app to quit normally; an app that stays open
+    /// (say, to keep unsaved work) is left open — unless Settings ▸ "Ask a
+    /// closed app to quit again" is above 0, then it is asked again that often
+    /// while it stays open (owner 2026-09-26; default 0 = ask once).
+    private func requestClose(_ bundleID: String, now: Date) {
+        MacProcessTerminator.terminate(bundleIdentifier: bundleID)
+        let retry = webStore.closeRetrySeconds()
+        if retry > 0 { pendingCloses[bundleID] = now.addingTimeInterval(retry) }
+    }
+
+    private func retryPendingCloses(now: Date) {
+        guard !pendingCloses.isEmpty else { return }
+        let retry = webStore.closeRetrySeconds()
+        let running = Set(NSWorkspace.shared.runningApplications.compactMap { $0.bundleIdentifier })
+        for (bundleID, nextAsk) in pendingCloses {
+            if retry <= 0 || !running.contains(bundleID) {
+                pendingCloses.removeValue(forKey: bundleID)
+            } else if now >= nextAsk {
+                MacProcessTerminator.terminate(bundleIdentifier: bundleID)
+                pendingCloses[bundleID] = now.addingTimeInterval(retry)
+            }
+        }
+    }
+
     private func processWindowIntents(_ intents: [WindowIntent], groupID: String, frontmost: String?) {
         for intent in intents {
             if intent.kind == "localFile" {
@@ -840,10 +868,10 @@ public final class MacEnforcementBridge: ObservableObject {
             case "close":
                 if let target = intent.target, !target.isEmpty,
                    !MacProcessTerminator.isBrowserBundleIdentifier(target) {
-                    MacProcessTerminator.terminate(bundleIdentifier: target)
+                    requestClose(target, now: Date())
                 } else if let fm = frontmost,
                           !MacProcessTerminator.isBrowserBundleIdentifier(fm) {
-                    MacProcessTerminator.terminate(bundleIdentifier: fm)
+                    requestClose(fm, now: Date())
                 }
             // Web-level intents (closeTab / closeTabsByPattern / blockSite /
             // unblockSite) are deliberately ignored — neither acted on nor

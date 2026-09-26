@@ -92,8 +92,67 @@ public enum ExtensionMCPTools {
                 return relay(bridge, "settings-delete-group", ["id": id], args)
             },
             MCPTool(
+                name: "extension_lock_group",
+                description: "Lock an extension group, as the popup's Freeze does: mode 'frozen' (unlocking needs a confirmation), 'strict' (cannot be unlocked for strictHours, 0 < hours ≤ 72) or 'parental' (unlocking needs the 6-digit PIN; pass the group's PIN — or, when it has none yet, the new PIN to set). A wrong PIN makes the next try wait 1 s, 2 s, 4 s … up to 64 s, shared with the popup.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "id": ["type": "string", "description": "The group id."],
+                        "mode": ["type": "string", "enum": ["frozen", "strict", "parental"]],
+                        "strictHours": ["type": "number"],
+                        "pin": ["type": "string"],
+                        "browser": browserProperty,
+                    ],
+                    "required": ["id", "mode"],
+                ]
+            ) { args in
+                guard let id = args["id"] as? String, !id.isEmpty else { return .failure("Missing 'id'.") }
+                guard let mode = args["mode"] as? String else { return .failure("Missing 'mode'.") }
+                var body: [String: Any] = ["id": id, "mode": mode]
+                if let hours = args["strictHours"] { body["strictHours"] = hours }
+                if let pin = args["pin"] as? String { body["pin"] = pin }
+                return relay(bridge, "settings-lock-group", body, args)
+            },
+            MCPTool(
+                name: "extension_unlock_group",
+                description: "Unlock an extension group through the popup's gates. Parental: pass the PIN (a wrong PIN makes the next try wait 1 s … 64 s). Strict: refused until its hours are over. Otherwise the popup's confirmation: the first call asks, a second call with confirm: true at least 5 seconds later (within 5 minutes) unlocks.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "id": ["type": "string", "description": "The group id."],
+                        "pin": ["type": "string"],
+                        "confirm": ["type": "boolean"],
+                        "browser": browserProperty,
+                    ],
+                    "required": ["id"],
+                ]
+            ) { args in
+                guard let id = args["id"] as? String, !id.isEmpty else { return .failure("Missing 'id'.") }
+                var body: [String: Any] = ["id": id]
+                if let pin = args["pin"] as? String { body["pin"] = pin }
+                if let confirm = args["confirm"] as? Bool { body["confirm"] = confirm }
+                return relay(bridge, "settings-unlock-group", body, args)
+            },
+            MCPTool(
+                name: "extension_move_group",
+                description: "Move an extension group to a position in the group list (0 = top), as dragging it in the popup does. The first blocking group from the top decides how a page it blocks looks. A locked group cannot be moved. The order is this browser's own.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "id": ["type": "string", "description": "The group id."],
+                        "index": ["type": "integer"],
+                        "browser": browserProperty,
+                    ],
+                    "required": ["id", "index"],
+                ]
+            ) { args in
+                guard let id = args["id"] as? String, !id.isEmpty else { return .failure("Missing 'id'.") }
+                guard let index = (args["index"] as? NSNumber)?.intValue else { return .failure("Missing 'index'.") }
+                return relay(bridge, "settings-move-group", ["id": id, "index": index], args)
+            },
+            MCPTool(
                 name: "extension_set_global",
-                description: "Patch the extension's global settings (popup ▸ Settings): debugMode (bool; also enables the content-script trace), showOnPageLogToasts (bool), tickRateMs (100–10000), autosaveDebounceMs (0–10000), defaultSnoozeMinutes (> 0). Sanitized the way the popup's save is.",
+                description: "Patch the extension's global settings (popup ▸ Settings): debugMode (bool; also enables the content-script trace), showOnPageLogToasts (bool), tickRateMs (100–10000), autosaveDebounceMs (0–10000), defaultSnoozeMinutes (> 0), quickAddEnabled (bool), closeRetrySeconds (desktop: how often a custom rule's close asks an app that stayed open to quit again; 0 = ask once). Sanitized the way the popup's save is.",
                 inputSchema: [
                     "type": "object",
                     "properties": ["patch": ["type": "object", "description": "Global settings fields to change."], "browser": browserProperty],
@@ -167,7 +226,18 @@ public enum ExtensionMCPTools {
         case "browser-relay-requires-host": return "Mac Vault is not hosting the local hub."
         case "group-locked": return "the group is frozen, strict or parental-locked (the popup refuses this too)."
         case "group-not-found": return "no group has that id."
-        default: return reason
+        case "not-locked": return "the group is not locked."
+        case "duplicate-name": return "another group already has that name (ignoring letter case)."
+        default:
+            let parts = reason.split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { return reason }
+            switch parts[0] {
+            case "pin-wait": return "wait \(parts[1]) s before the next PIN try (a wrong PIN was entered)."
+            case "pin-wrong": return "wrong PIN; the next try waits \(parts[1]) s."
+            case "strict-wait": return "strict lock: it opens at \(parts[1])."
+            case "confirm-wait": return "confirm again in \(parts[1]) s (the popup's confirmation waits 5 s)."
+            default: return reason
+            }
         }
     }
 
