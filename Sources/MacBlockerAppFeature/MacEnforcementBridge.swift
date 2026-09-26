@@ -342,7 +342,7 @@ public final class MacEnforcementBridge: ObservableObject {
         lastPanelFireAt.removeAll()
 
         let now = Date()
-        let nowMs = now.timeIntervalSince1970 * 1000
+        let nowMs = (now.timeIntervalSince1970 * 1000).rounded() // whole ms, as every stored time
         // The tick's one read of the store.
         let document = webStore.loadForTick(nowMs: nowMs)
         // Mac Vault takes part in its links itself, editor window or not.
