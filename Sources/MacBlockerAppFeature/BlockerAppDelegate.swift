@@ -82,8 +82,8 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
         let activityStore = ActivityStore.standard()
         ConnectionHub.shared.activityStore = activityStore
         MainActor.assumeIsolated { ActivityPage.shared.configure(store: activityStore) }
-        let activityRecorder = ActivityRecorderService(store: activityStore)
-        activityRecorder.start()
+        let activityRecorder = ActivityRecorderService(store: activityStore, maxStepSeconds: 4)
+        MainActor.assumeIsolated { MacEnforcementBridge.shared.activityRecorder = activityRecorder }
         self.activityRecorder = activityRecorder
 
         // MCP go-live. Start the loopback MCP server gated by a bearer token
