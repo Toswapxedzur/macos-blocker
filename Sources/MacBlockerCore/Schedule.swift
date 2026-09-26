@@ -80,10 +80,11 @@ public enum ScheduleParser {
             .compactMap { parseWindow(String($0)) }
     }
 
+    /// "HHMM-HHMM", exactly as the editor reads it (group-actions.js
+    /// normalizeTimeWindowLine; a test runs both on the same lines).
     public static func parseWindow(_ text: String) -> TimeWindow? {
-        let cleaned = text
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: ":", with: "")
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard cleaned.range(of: #"^[0-9]{4}-[0-9]{4}$"#, options: .regularExpression) != nil else { return nil }
         let parts = cleaned.split(separator: "-", omittingEmptySubsequences: false)
         guard parts.count == 2,
               let start = parseTime(String(parts[0])),
