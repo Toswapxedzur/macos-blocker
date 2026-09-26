@@ -216,7 +216,7 @@ public enum VaultMCPTools {
                 var lockVersion = 0
                 if let failure = run(store, { document in
                     outcome = try document.unlockCheck(id: id, pin: string(args, "pin"), now: now)
-                    lockVersion = (document.sharedView?[id]?["lockVersion"] as? NSNumber ?? document.group(id: id)?["lockVersion"] as? NSNumber)?.intValue ?? 0
+                    lockVersion = document.checkedLockVersion ?? 0
                 }) { return failure }
                 guard outcome == .done else { return .failure(explain(outcome)) }
                 let state = GroupActionsRuntime.shared.call("confirmStart", [(now.timeIntervalSince1970 * 1000).rounded()]) as? [String: Any] ?? [:]

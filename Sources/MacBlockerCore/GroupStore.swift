@@ -181,6 +181,8 @@ public struct WebStoreDocument {
     public var sharedView: [String: [String: Any]]?
     /// The snoozes as linked devices share them (see sharedView).
     public var sharedSnoozes: [String: Any]?
+    /// Set by `unlockCheck`: the lock version its confirmation is for.
+    public private(set) var checkedLockVersion: Int?
 
     /// Per-group companion maps the editor keys by group id. They are cleared for
     /// a deleted group so the store doesn't accrue orphaned usage/snooze entries.
@@ -491,25 +493,29 @@ public struct WebStoreDocument {
 
     /// The first unlock step, as the editor's Unfreeze: the wait must be over
     /// and a set PIN must pass (with its retry wait). Returns `.done` when the
-    /// confirmation may start.
+    /// confirmation may start; `checkedLockVersion` is then the lock version
+    /// the confirmation is for.
     public mutating func unlockCheck(id: String, pin: String?, now: Date = Date()) throws -> LockOutcome {
+        checkedLockVersion = nil
         guard let current = viewed(id) else { throw GroupStoreError.groupNotFound(id) }
         let actions = GroupActionsRuntime.shared
         let nowMs = (now.timeIntervalSince1970 * 1000).rounded()
         let plan = actions.call("unlockPlan", [current, nowMs]) as? [String: Any] ?? [:]
         if let until = (plan["waitUntilMs"] as? NSNumber)?.doubleValue { return .waitUntil(Date(timeIntervalSince1970: until / 1000)) }
         if plan["error"] as? String == "not-locked" { throw GroupStoreError.notLocked(id) }
-        guard plan["needsPin"] as? Bool == true else { return .done }
+        let version = (current["lockVersion"] as? NSNumber)?.intValue ?? 0
+        guard plan["needsPin"] as? Bool == true else { checkedLockVersion = version; return .done }
         let attempts = raw[Self.pinAttemptsKey] as? [String: Any] ?? [:]
         let result = actions.call("checkSync", [attempts, current, pin ?? "", nowMs], module: "CBParentalPin") as? [String: Any] ?? [:]
         raw[Self.pinAttemptsKey] = result["attempts"] as? [String: Any] ?? attempts
         let waitSeconds = Int((((result["waitMs"] as? NSNumber)?.doubleValue ?? 0) / 1000).rounded(.up))
         if result["waiting"] as? Bool == true { return .pinWait(seconds: waitSeconds) }
         guard result["ok"] as? Bool == true else { return .pinWrong(waitSeconds: waitSeconds) }
-        if let upgraded = result["upgradedHash"] as? String {
-            var unit = current
-            unit["parentalPasswordHash"] = upgraded
-            try writeLockUnit(id: id, from: unit)
+        checkedLockVersion = version
+        if let upgraded = result["upgradedHash"] as? String,
+           let unit = actions.call("upgradePinHash", [current, upgraded]) as? [String: Any] {
+            try writeLockUnit(id: id, from: unit) // a lock change: its version moves
+            checkedLockVersion = (unit["lockVersion"] as? NSNumber)?.intValue
         }
         return .done
     }
