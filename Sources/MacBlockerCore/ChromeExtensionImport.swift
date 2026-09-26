@@ -12,7 +12,11 @@ public struct ChromeExtensionImportResult: Sendable {
 
 public enum ChromeExtensionImporter {
     public static func importGroups(from data: Data) throws -> ChromeExtensionImportResult {
-        let raw = try JSONSerialization.jsonObject(with: data)
+        try importGroups(fromObject: try JSONSerialization.jsonObject(with: data))
+    }
+
+    /// A store document (`{blockedGroups: […]}`) or a bare group array, parsed.
+    public static func importGroups(fromObject raw: Any) throws -> ChromeExtensionImportResult {
         let sourceGroups: [[String: Any]]
         if let array = raw as? [[String: Any]] {
             sourceGroups = array

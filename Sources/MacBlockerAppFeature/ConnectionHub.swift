@@ -1494,8 +1494,8 @@ final class ConnectionHub: ObservableObject {
     ) {
         var contribution: [String: Any] = ["usageResetAtMs": resetAtMs]
         if deltaMs != 0 { contribution["usageDeltaMs"] = deltaMs }
-        if !bucketDeltas.isEmpty { contribution["usageBuckets"] = Self.bucketJSON(bucketDeltas) }
-        if let seedBuckets { contribution["usageBucketsSeed"] = Self.bucketJSON(seedBuckets) }
+        if !bucketDeltas.isEmpty { contribution["usageBuckets"] = UsageBudget.bucketJSON(bucketDeltas) }
+        if let seedBuckets { contribution["usageBucketsSeed"] = UsageBudget.bucketJSON(seedBuckets) }
         // A seed is the Mac's absolute local total, used by the hub only until the
         // first real delta arrives (it adopts the largest member total) so prior
         // Mac usage survives joining a cluster.
@@ -1535,13 +1535,13 @@ final class ConnectionHub: ObservableObject {
     /// group that already had rolling usage keeps it when it links. Minutes older
     /// than any window the group can use (its interval, at least a day) are pruned.
     private func applyBucketContributionLocked(_ cluster: ClusterState, _ contribution: [String: Any]) {
-        if let deltas = Self.parseBuckets(contribution["usageBuckets"]), !deltas.isEmpty {
+        if let deltas = UsageBudget.parseBuckets(contribution["usageBuckets"]), !deltas.isEmpty {
             for (minute, delta) in deltas {
                 let next = (cluster.sharedBuckets[minute] ?? 0) + delta
                 cluster.sharedBuckets[minute] = next > 0 ? next : nil
             }
             cluster.bucketsSeeded = true
-        } else if !cluster.bucketsSeeded, let seed = Self.parseBuckets(contribution["usageBucketsSeed"]) {
+        } else if !cluster.bucketsSeeded, let seed = UsageBudget.parseBuckets(contribution["usageBucketsSeed"]) {
             for (minute, used) in seed where used > (cluster.sharedBuckets[minute] ?? 0) {
                 cluster.sharedBuckets[minute] = used
             }
@@ -1551,21 +1551,6 @@ final class ConnectionHub: ObservableObject {
         let horizonMs = max(intervalHours, 24) * 3_600_000 + 60_000
         let cutoff = Date().timeIntervalSince1970 * 1000 - horizonMs
         cluster.sharedBuckets = cluster.sharedBuckets.filter { $0.key > cutoff }
-    }
-
-    static func parseBuckets(_ value: Any?) -> [Double: Double]? {
-        guard let object = value as? [String: Any] else { return nil }
-        var buckets: [Double: Double] = [:]
-        for (key, raw) in object {
-            guard let minute = Double(key), let ms = (raw as? NSNumber)?.doubleValue,
-                  minute.isFinite, ms.isFinite else { continue }
-            buckets[minute] = ms
-        }
-        return buckets
-    }
-
-    static func bucketJSON(_ buckets: [Double: Double]) -> [String: Double] {
-        Dictionary(uniqueKeysWithValues: buckets.map { (String(Int64($0.key)), $0.value) })
     }
 
     func syncFromBridge(json: String) {
@@ -1639,7 +1624,7 @@ final class ConnectionHub: ObservableObject {
                 "snoozeCountedStartMs": c.snoozeCountedStartMs,
                 "sharedUsageMs": c.sharedUsageMs,
                 "sharedUsageResetAtMs": c.sharedUsageResetAtMs,
-                "sharedBuckets": Self.bucketJSON(c.sharedBuckets),
+                "sharedBuckets": UsageBudget.bucketJSON(c.sharedBuckets),
                 "usageSeeded": c.usageSeeded,
                 "bucketsSeeded": c.bucketsSeeded
             ]
@@ -1677,7 +1662,7 @@ final class ConnectionHub: ObservableObject {
             cluster.snoozeCountedStartMs = (obj["snoozeCountedStartMs"] as? Double) ?? 0
             cluster.sharedUsageMs = (obj["sharedUsageMs"] as? Double) ?? 0
             cluster.sharedUsageResetAtMs = (obj["sharedUsageResetAtMs"] as? Double) ?? 0
-            cluster.sharedBuckets = Self.parseBuckets(obj["sharedBuckets"]) ?? [:]
+            cluster.sharedBuckets = UsageBudget.parseBuckets(obj["sharedBuckets"]) ?? [:]
             cluster.usageSeeded = (obj["usageSeeded"] as? Bool) ?? false
             cluster.bucketsSeeded = (obj["bucketsSeeded"] as? Bool) ?? false
             // Only restore clusters that still have ≥2 members (a 1-member
@@ -1720,7 +1705,7 @@ final class ConnectionHub: ObservableObject {
                 "ts": cluster.sharedTs,
                 "usageMs": cluster.sharedUsageMs,
                 "usageResetAtMs": cluster.sharedUsageResetAtMs,
-                "usageBuckets": Self.bucketJSON(cluster.sharedBuckets),
+                "usageBuckets": UsageBudget.bucketJSON(cluster.sharedBuckets),
                 "snooze": cluster.sharedSnooze,
                 "snoozeTs": cluster.sharedSnoozeTs,
                 "snoozeTotalMs": cluster.sharedSnoozeTotalMs

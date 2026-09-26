@@ -42,7 +42,8 @@ final class BlockerWebStoreRoutingTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
         webStore.save(rawStore: ["blockedGroups": [["id": "g1", "name": "Focus", "enabled": true, "mode": "instant",
             "scopes": [["id": "apps-1", "surface": "apps", "action": "block", "apps": [["id": "com.example.App"]]]]]]])
-        webStore.sharedOverlay = { document in
+        defer { GroupStore.sharedOverlay = nil }
+        GroupStore.sharedOverlay = { document in
             var overlaid = document
             overlaid["blockedGroups"] = [["id": "g1", "name": "Focus", "scopes": [] as [[String: Any]]]]
             return overlaid
@@ -50,7 +51,25 @@ final class BlockerWebStoreRoutingTests: XCTestCase {
         webStore.writeUsage(timersMs: ["g1": 1_000], resetAtMs: ["g1": 1])
         let json = try XCTUnwrap(webStore.loadRawJSON())
         XCTAssertTrue(json.contains("com.example.App"), "the stored Apps entry survives a usage write")
-        XCTAssertEqual(webStore.importedGroups()?.groups.first?.targets.count ?? -1, 0, "enforcement still reads the overlay")
+        XCTAssertEqual(webStore.importedGroups().first?.targets.count ?? -1, 0, "enforcement still reads the overlay")
+    }
+
+    func testTheTickReadsOnceAndCountsAFinishedSnoozeOnce() throws {
+        let (webStore, _, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        webStore.save(rawStore: ["blockedGroups": [["id": "g1", "name": "Focus"]],
+                                 "globalSettings": ["quitRetryMinutes": 3],
+                                 "usageTimersMs": ["g1": 5_000],
+                                 "groupSnoozes": ["g1": ["startsAtMs": 1_000, "untilMs": 61_000]]])
+        let first = webStore.loadForTick(nowMs: 100_000)
+        XCTAssertEqual(((first["groupSnoozeTotalsMs"] as? [String: Any])?["g1"] as? NSNumber)?.doubleValue, 60_000)
+        let again = webStore.loadForTick(nowMs: 200_000)
+        XCTAssertEqual(((again["groupSnoozeTotalsMs"] as? [String: Any])?["g1"] as? NSNumber)?.doubleValue, 60_000, "counted once")
+        let view = BlockerWebStore.enforcementView(of: again)
+        XCTAssertEqual(view.groups.map(\.id), ["g1"])
+        XCTAssertEqual(view.usage.timersMs["g1"], 5_000)
+        XCTAssertEqual(view.quitRetryMinutes, 3)
+        XCTAssertNotNil(view.snoozes["g1"]?.until)
     }
 
     func testEditorSaveDoesNotSelfNotify() {

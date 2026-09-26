@@ -3,18 +3,13 @@ import MacBlockerCore
 
 /// Persists the editor's raw chrome.storage snapshot (the same
 /// `blockedGroups` / `globalSettings` / usage keys the Chrome extension uses)
-/// in the shared container the Mac engine reads.
+/// in the shared container the Mac engine reads. Enforcement reads it through
+/// the live shared state of linked groups (`GroupStore.sharedOverlay`), so the
+/// Mac follows edits and snoozes made on another device with no editor open.
 public final class BlockerWebStore: @unchecked Sendable {
-    /// Laid over the stored document whenever enforcement reads it: the live
-    /// definition and snooze of linked groups, so the Mac follows edits and
-    /// snoozes made on another device even while no editor window is open (the
-    /// editor adopts them into the file when it next opens). Nil = the file as is.
-    public var sharedOverlay: (([String: Any]) -> [String: Any])?
-
     private let shared: SharedAppGroupStore
     /// The native owner of `web-store.json`. The editor persists THROUGH it so the
-    /// editor and MCP/native writers share one lock (no read-modify-write race)
-    /// and one enforcement-plan derivation.
+    /// editor and MCP/native writers share one lock (no read-modify-write race).
     private let groupStore: GroupStore
 
     public init(shared: SharedAppGroupStore = SharedAppGroupStore()) {
@@ -30,26 +25,8 @@ public final class BlockerWebStore: @unchecked Sendable {
     /// if the file does not already exist. Call once at launch so the
     /// enforcement bridge always has a store to read from.
     public func seedIfNeeded() {
-        let existing = shared.readData(SharedAppGroupStore.webStoreFileName)
-        if existing != nil {
-            print("[BlockerWebStore] seedIfNeeded: file already exists (\(shared.url(for: SharedAppGroupStore.webStoreFileName).path))")
-            return
-        }
-        print("[BlockerWebStore] seedIfNeeded: no file at \(shared.url(for: SharedAppGroupStore.webStoreFileName).path) — writing default store")
-        let defaultStore: [String: Any] = ["blockedGroups": [] as [[String: Any]]]
-        save(rawStore: defaultStore)
-        let verify = shared.readData(SharedAppGroupStore.webStoreFileName)
-        if verify != nil {
-            print("[BlockerWebStore] seedIfNeeded: ✓ file written successfully")
-        } else {
-            print("[BlockerWebStore] seedIfNeeded: ✗ file still missing after write!")
-        }
-    }
-
-    /// Settings ▸ "Ask a blocked app to quit again every (minutes)": 0 = never.
-    public func quitRetryMinutes() -> Double {
-        let settings = loadStoreObject()?["globalSettings"] as? [String: Any]
-        return max(0, (settings?["quitRetryMinutes"] as? NSNumber)?.doubleValue ?? 0)
+        guard shared.readData(SharedAppGroupStore.webStoreFileName) == nil else { return }
+        save(rawStore: ["blockedGroups": [] as [[String: Any]]])
     }
 
     public func loadRawJSON() -> String? {
@@ -65,11 +42,75 @@ public final class BlockerWebStore: @unchecked Sendable {
         else {
             return
         }
-        // Persist through GroupStore: it writes the file and rebuilds the plan
-        // under its lock (same derivation the native/MCP writers use). notify is
-        // false — this is the editor persisting its own state, so it must not
-        // trigger a re-seed of itself.
+        // notify is false — this is the editor persisting its own state, so it
+        // must not trigger a re-seed of itself.
         groupStore.save(WebStoreDocument(raw: raw), notify: false)
+    }
+
+    // MARK: The engine tick
+
+    /// What enforcement acts on this tick, from ONE read of the store.
+    public struct EnforcementView {
+        public var groups: [BlockGroup]
+        public var snoozes: [String: SnoozeState]
+        public var usage: UsageTimers
+        /// Settings ▸ "Ask a blocked app to quit again every (minutes)": 0 = never.
+        public var quitRetryMinutes: Double
+    }
+
+    /// The tick's one read of the stored document. A snooze that ran out adds
+    /// its snoozed time to the group's total once (`activeMsApplied`), as the
+    /// browser's worker does — written only when one did, under the file lock.
+    public func loadForTick(nowMs: Double) -> [String: Any] {
+        let object = loadStoreObject() ?? [:]
+        guard Self.countFinishedSnoozes(in: object, nowMs: nowMs) != nil else { return object }
+        return GroupStore.withFileLock {
+            guard let fresh = loadStoreObject(), let counted = Self.countFinishedSnoozes(in: fresh, nowMs: nowMs) else {
+                return loadStoreObject() ?? object
+            }
+            write(counted)
+            return counted
+        }
+    }
+
+    /// The document with finished snoozes counted, or nil when none finished.
+    private static func countFinishedSnoozes(in document: [String: Any], nowMs: Double) -> [String: Any]? {
+        guard var snoozes = document["groupSnoozes"] as? [String: Any] else { return nil }
+        var totals = document["groupSnoozeTotalsMs"] as? [String: Any] ?? [:]
+        var changed = false
+        for (groupID, value) in snoozes {
+            guard var entry = value as? [String: Any], entry["activeMsApplied"] as? Bool != true,
+                  let start = (entry["startsAtMs"] as? NSNumber)?.doubleValue,
+                  let until = (entry["untilMs"] as? NSNumber)?.doubleValue, nowMs >= until else { continue }
+            totals[groupID] = ((totals[groupID] as? NSNumber)?.doubleValue ?? 0) + max(0, until - start)
+            entry["activeMsApplied"] = true
+            snoozes[groupID] = entry
+            changed = true
+        }
+        guard changed else { return nil }
+        var counted = document
+        counted["groupSnoozes"] = snoozes
+        counted["groupSnoozeTotalsMs"] = totals
+        return counted
+    }
+
+    /// Groups and snoozes as linked devices share them; usage and settings as
+    /// stored (the engine folds shared usage in itself).
+    public static func enforcementView(of document: [String: Any]) -> EnforcementView {
+        let overlaid = GroupStore.sharedOverlay?(document) ?? document
+        let settings = document["globalSettings"] as? [String: Any]
+        return EnforcementView(
+            groups: (try? ChromeExtensionImporter.importGroups(fromObject: overlaid))?.groups ?? [],
+            snoozes: snoozes(overlaid["groupSnoozes"]),
+            usage: usageTimers(document),
+            quitRetryMinutes: max(0, (settings?["quitRetryMinutes"] as? NSNumber)?.doubleValue ?? 0)
+        )
+    }
+
+    /// Bridges the stored `blockedGroups`, as linked devices share them, into
+    /// the typed core model (for events fired outside the tick).
+    public func importedGroups() -> [BlockGroup] {
+        groupStore.loadGroups()
     }
 
     // MARK: Usage timers (the editor's own per-group spent-time, in ms)
@@ -87,35 +128,16 @@ public final class BlockerWebStore: @unchecked Sendable {
     }
 
     public func loadUsageTimers() -> UsageTimers {
-        guard let object = loadStoreObject() else {
-            return UsageTimers(timersMs: [:], resetAtMs: [:])
-        }
-        return UsageTimers(
-            timersMs: doubleMap(object["usageTimersMs"]),
-            resetAtMs: doubleMap(object["usageResetAtMs"]),
-            bucketsMs: bucketMaps(object["usageBucketsMs"])
+        Self.usageTimers(loadStoreObject() ?? [:])
+    }
+
+    private static func usageTimers(_ document: [String: Any]) -> UsageTimers {
+        UsageTimers(
+            timersMs: numbers(document["usageTimersMs"]),
+            resetAtMs: numbers(document["usageResetAtMs"]),
+            bucketsMs: (document["usageBucketsMs"] as? [String: Any] ?? [:])
+                .compactMapValues { UsageBudget.parseBuckets($0)?.filter { $0.value > 0 } }
         )
-    }
-
-    /// `{groupId: {"<minuteStartMs>": ms}}` -> typed buckets; malformed entries dropped.
-    private func bucketMaps(_ value: Any?) -> [String: [Double: Double]] {
-        guard let groups = value as? [String: Any] else { return [:] }
-        var result: [String: [Double: Double]] = [:]
-        for (groupID, raw) in groups {
-            guard let minutes = raw as? [String: Any] else { continue }
-            var buckets: [Double: Double] = [:]
-            for (key, ms) in minutes {
-                guard let start = Double(key), let used = (ms as? NSNumber)?.doubleValue,
-                      start.isFinite, used.isFinite, used > 0 else { continue }
-                buckets[start] = used
-            }
-            result[groupID] = buckets
-        }
-        return result
-    }
-
-    static func bucketJSON(_ buckets: [Double: Double]) -> [String: Double] {
-        Dictionary(uniqueKeysWithValues: buckets.map { (String(Int64($0.key)), $0.value) })
     }
 
     /// Overwrites the given per-group `usageTimersMs` / `usageResetAtMs` entries
@@ -135,129 +157,50 @@ public final class BlockerWebStore: @unchecked Sendable {
             guard var object = loadStoreObject() else { return }
             if !bucketsMs.isEmpty {
                 var stored = object["usageBucketsMs"] as? [String: Any] ?? [:]
-                for (groupID, buckets) in bucketsMs { stored[groupID] = Self.bucketJSON(buckets) }
+                for (groupID, buckets) in bucketsMs { stored[groupID] = UsageBudget.bucketJSON(buckets) }
                 object["usageBucketsMs"] = stored
             }
             if !timersMs.isEmpty {
-                var stored = doubleMap(object["usageTimersMs"])
-                for (key, value) in timersMs { stored[key] = value }
-                object["usageTimersMs"] = stored
+                object["usageTimersMs"] = Self.numbers(object["usageTimersMs"]).merging(timersMs) { $1 }
             }
             if !resetAtMs.isEmpty {
-                var stored = doubleMap(object["usageResetAtMs"])
-                for (key, value) in resetAtMs { stored[key] = value }
-                object["usageResetAtMs"] = stored
+                object["usageResetAtMs"] = Self.numbers(object["usageResetAtMs"]).merging(resetAtMs) { $1 }
             }
-            if let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) {
-                shared.writeData(data, to: SharedAppGroupStore.webStoreFileName)
-            }
+            write(object)
         }
     }
 
-    /// A snooze that ran out adds its snoozed time to the group's total once
-    /// (`activeMsApplied`), as the browser's worker does — so the total no
-    /// longer depends on the editor window being open when it ends.
-    public func countFinishedSnoozes(nowMs: Double) {
-        GroupStore.withFileLock {
-            guard var object = loadStoreObject(),
-                  var snoozes = object["groupSnoozes"] as? [String: Any] else { return }
-            var totals = object["groupSnoozeTotalsMs"] as? [String: Any] ?? [:]
-            var changed = false
-            for (groupID, value) in snoozes {
-                guard var entry = value as? [String: Any], entry["activeMsApplied"] as? Bool != true,
-                      let start = (entry["startsAtMs"] as? NSNumber)?.doubleValue,
-                      let until = (entry["untilMs"] as? NSNumber)?.doubleValue, nowMs >= until else { continue }
-                totals[groupID] = ((totals[groupID] as? NSNumber)?.doubleValue ?? 0) + max(0, until - start)
-                entry["activeMsApplied"] = true
-                snoozes[groupID] = entry
-                changed = true
+    // MARK: Parsing
+
+    /// The editor's `groupSnoozes` as the core `SnoozeState` model.
+    private static func snoozes(_ value: Any?) -> [String: SnoozeState] {
+        (value as? [String: Any] ?? [:]).compactMapValues { value in
+            guard let entry = value as? [String: Any] else { return nil }
+            func date(_ key: String) -> Date? {
+                guard let ms = (entry[key] as? NSNumber)?.doubleValue, ms > 0 else { return nil }
+                return Date(timeIntervalSince1970: ms / 1000)
             }
-            guard changed else { return }
-            object["groupSnoozes"] = snoozes
-            object["groupSnoozeTotalsMs"] = totals
-            if let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) {
-                shared.writeData(data, to: SharedAppGroupStore.webStoreFileName)
-            }
+            return SnoozeState(startsAt: date("startsAtMs"), until: date("untilMs"),
+                               cooldownUntil: date("cooldownUntilMs"),
+                               justification: (entry["justification"] as? String) ?? "")
         }
     }
 
-    /// Parses the editor's `groupSnoozes` into the core `SnoozeState` model so
-    /// native enforcement honors an active snooze (temporary unblock) the same
-    /// way the popup does.
-    public func loadSnoozes() -> [String: SnoozeState] {
-        // An enforcement read: a snooze started on a linked device applies here.
-        guard let object = loadStoreObject(overlaid: true),
-              let raw = object["groupSnoozes"] as? [String: Any]
-        else {
-            return [:]
-        }
-        var result: [String: SnoozeState] = [:]
-        for (groupID, value) in raw {
-            guard let dictionary = value as? [String: Any] else { continue }
-            result[groupID] = SnoozeState(
-                startsAt: msToDate(dictionary["startsAtMs"]),
-                until: msToDate(dictionary["untilMs"]),
-                cooldownUntil: msToDate(dictionary["cooldownUntilMs"]),
-                justification: (dictionary["justification"] as? String) ?? ""
-            )
-        }
-        return result
+    private static func numbers(_ value: Any?) -> [String: Double] {
+        (value as? [String: Any] ?? [:]).compactMapValues { ($0 as? NSNumber)?.doubleValue }
     }
 
-    private func msToDate(_ value: Any?) -> Date? {
-        let ms: Double?
-        if let number = value as? Double { ms = number }
-        else if let number = value as? Int { ms = Double(number) }
-        else if let number = (value as? NSNumber)?.doubleValue { ms = number }
-        else { ms = nil }
-        guard let ms, ms > 0 else { return nil }
-        return Date(timeIntervalSince1970: ms / 1000)
+    /// The stored document, raw. Anything that writes the file back must start
+    /// from this: persisting the shared overlay would bake another device's
+    /// (possibly incomplete) copy into this Mac's own groups.
+    private func loadStoreObject() -> [String: Any]? {
+        guard let data = shared.readData(SharedAppGroupStore.webStoreFileName) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
     }
 
-    /// The stored document. `overlaid` lays the live shared state of linked
-    /// groups over it — for READING what to enforce only. Anything that writes
-    /// the file back must read it raw: persisting the overlay would bake another
-    /// device's (possibly incomplete) copy into this Mac's own groups.
-    private func loadStoreObject(overlaid: Bool = false) -> [String: Any]? {
-        guard let data = shared.readData(SharedAppGroupStore.webStoreFileName),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            return nil
-        }
-        return overlaid ? (sharedOverlay?(object) ?? object) : object
-    }
-
-    private func doubleMap(_ value: Any?) -> [String: Double] {
-        guard let dictionary = value as? [String: Any] else { return [:] }
-        var result: [String: Double] = [:]
-        for (key, raw) in dictionary {
-            if let number = raw as? Double {
-                result[key] = number
-            } else if let number = raw as? Int {
-                result[key] = Double(number)
-            } else if let number = (raw as? NSNumber)?.doubleValue {
-                result[key] = number
-            }
-        }
-        return result
-    }
-
-    /// Bridges the editor's stored `blockedGroups` into the typed core model.
-    public func importedGroups() -> ChromeExtensionImportResult? {
-        guard let data = shared.readData(SharedAppGroupStore.webStoreFileName) else {
-            print("[BlockerWebStore] No web store file found at: \(shared.url(for: SharedAppGroupStore.webStoreFileName).path)")
-            return nil
-        }
-        do {
-            if let overlay = sharedOverlay,
-               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let overlaid = try? JSONSerialization.data(withJSONObject: overlay(object)) {
-                return try ChromeExtensionImporter.importGroups(from: overlaid)
-            }
-            return try ChromeExtensionImporter.importGroups(from: data)
-        } catch {
-            print("[BlockerWebStore] importGroups failed: \(error)")
-            return nil
+    private func write(_ object: [String: Any]) {
+        if let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) {
+            shared.writeData(data, to: SharedAppGroupStore.webStoreFileName)
         }
     }
 }

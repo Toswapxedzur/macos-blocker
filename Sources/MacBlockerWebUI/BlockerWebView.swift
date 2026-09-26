@@ -363,7 +363,7 @@ public struct BlockerWebView: _CBViewRepresentable {
             let payload: [String: Any] = [
                 "usageTimersMs": usage.timersMs,
                 "usageResetAtMs": usage.resetAtMs,
-                "usageBucketsMs": usage.bucketsMs.mapValues { BlockerWebStore.bucketJSON($0) }
+                "usageBucketsMs": usage.bucketsMs.mapValues { UsageBudget.bucketJSON($0) }
             ]
             guard let data = try? JSONSerialization.data(withJSONObject: payload),
                   let json = String(data: data, encoding: .utf8)
