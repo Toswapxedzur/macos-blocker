@@ -62,6 +62,20 @@ final class LinkedBudgetChangeTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupName: "Focus")).ms, 600_000)
     }
 
+    func testOfflineTimeFromTwoBrowsersAddsUpForTheCurrentPeriodOnly() throws {
+        let hub = linkedHub()
+        hub.setRoster(program: "firefox", groups: [["id": "f1", "name": "Focus"]])
+        let period = try XCTUnwrap(hub.sharedUsage(groupName: "Focus")).resetAtMs
+        hub.applySync(program: "chrome", groupName: "Focus",
+                      contribution: ["usageDeltaMs": 120_000.0, "usageDeltaAnchorMs": period], ts: 0)
+        hub.applySync(program: "firefox", groupName: "Focus",
+                      contribution: ["usageDeltaMs": 60_000.0, "usageDeltaAnchorMs": period], ts: 0)
+        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupName: "Focus")).ms, 780_000, "600 000 + both browsers' offline time")
+        hub.applySync(program: "firefox", groupName: "Focus",
+                      contribution: ["usageDeltaMs": 60_000.0, "usageDeltaAnchorMs": period - 1], ts: 0)
+        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupName: "Focus")).ms, 780_000, "time from a period that already ended is not added")
+    }
+
     func testNamesLinkRegardlessOfLetterCase() throws {
         let hub = linkedHub(chromeName: "focus ")
         XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupName: "Focus")).ms, 600_000,

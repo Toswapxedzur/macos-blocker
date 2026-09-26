@@ -1,6 +1,7 @@
 #if os(macOS)
 import AppKit
 import MacBlockerCore
+import MacBlockerMacControl
 
 /// The tiny floating "+" at the bottom right of the screen (owner 2026-09-25):
 /// one click appends the frontmost application to the group the user chose
@@ -107,7 +108,10 @@ public final class QuickAddPanel {
         guard !groupID.isEmpty,
               let app = NSWorkspace.shared.frontmostApplication,
               let bundleID = app.bundleIdentifier,
-              bundleID != Bundle.main.bundleIdentifier else { return }
+              AppBlockPolicy.canBlock(bundleID) else {
+            NSSound.beep() // Apple's apps, browsers and Vault are never blocked
+            return
+        }
         do {
             try store.mutate { try $0.addApplication(id: groupID, bundleID: bundleID, name: app.localizedName) }
         } catch {

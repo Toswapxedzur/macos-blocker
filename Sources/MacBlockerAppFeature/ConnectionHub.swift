@@ -1454,7 +1454,11 @@ final class ConnectionHub: ObservableObject {
             cluster.sharedUsageResetAtMs = anchor
         }
         rollBudgetLocked(cluster, nowMs: Date().timeIntervalSince1970 * 1000)
-        if let delta = contribution["usageDeltaMs"] as? Double, delta != 0 {
+        // Time a browser counted while the hub was away arrives tagged with
+        // its period: added only when that period is still the current one.
+        let deltaPeriod = (contribution["usageDeltaAnchorMs"] as? NSNumber)?.doubleValue
+        if let delta = contribution["usageDeltaMs"] as? Double, delta != 0,
+           deltaPeriod == nil || deltaPeriod == cluster.sharedUsageResetAtMs {
             cluster.sharedUsageMs = max(0, cluster.sharedUsageMs + delta)
             cluster.usageSeeded = true
         } else if !cluster.usageSeeded,
@@ -1561,6 +1565,15 @@ final class ConnectionHub: ObservableObject {
             guard let group = groups.first(where: { group in
                 pinned.isEmpty ? Self.sameName((group["name"] as? String) ?? "", cluster.groupName) : (group["id"] as? String) == pinned
             }), let groupID = group["id"] as? String else { continue }
+            // A snooze started or ended here (a tool, the engine) reaches the
+            // link as the newest change, editor window or not.
+            if let entry = (document["groupSnoozes"] as? [String: Any])?[groupID] as? [String: Any] {
+                let changedAt = Self.snoozeChangeTs(entry)
+                if changedAt > cluster.sharedSnoozeTs {
+                    frames.append(["kind": "group-sync", "program": Self.localProgram, "groupName": cluster.groupName,
+                                   "ts": 0, "snooze": entry, "snoozeTs": changedAt])
+                }
+            }
             var scalars: [String: Any] = [:]
             for field in Self.syncScalarFields where group[field] != nil { scalars[field] = group[field] }
             let scopes = group["scopes"] as? [[String: Any]] ?? []

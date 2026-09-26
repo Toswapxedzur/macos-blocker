@@ -104,6 +104,21 @@ public actor AppBlockPolicy: PolicyApplying {
     /// browsers, Vault). The bridge uses it to stop counting time in an app
     /// that is blocked yet still in front (a shield or a suspended app), as a
     /// covered browser page counts no time.
+    /// The apps a block never touches: Apple's own, browsers (their extensions
+    /// block inside them) and Vault itself.
+    public static var neverBlocked: Set<String> {
+        var protected = MacProcessTerminator.browserBundleIdentifiers
+        if let own = Bundle.main.bundleIdentifier { protected.insert(own) }
+        return protected
+    }
+
+    /// Whether a block can act on this app at all. The app picker and the
+    /// quick-add "+" offer only these (owner 2026-09-26: don't offer apps the
+    /// Mac never blocks).
+    public static func canBlock(_ bundleID: String) -> Bool {
+        !GuardPolicy(protectedBundleIdentifiers: neverBlocked).isProtected(bundleIdentifier: bundleID)
+    }
+
     public static func blocksApplication(
         _ bundleID: String,
         groups: [BlockGroup],
@@ -111,8 +126,7 @@ public actor AppBlockPolicy: PolicyApplying {
         now: Date,
         calendar: Calendar = .current
     ) -> Bool {
-        var protected = MacProcessTerminator.browserBundleIdentifiers
-        if let own = Bundle.main.bundleIdentifier { protected.insert(own) }
+        let protected = neverBlocked
         let blocked = blockedApplications(groups: groups, usage: usage, now: now, calendar: calendar)
         let lists = applicationAllowlists(groups: groups, usage: usage, now: now, calendar: calendar)
         // Runs every second: a bundle-id match needs no installed-app scan or
