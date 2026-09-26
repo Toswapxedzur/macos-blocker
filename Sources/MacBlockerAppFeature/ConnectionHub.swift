@@ -85,17 +85,9 @@ final class ConnectionHub: ObservableObject {
     private var peers: [ObjectIdentifier: Peer] = [:]
     private var classifierRequests: [String: ClassifierRequest] = [:]
     private var browserRequests: [String: BrowserRequest] = [:]
-    private var running = false
-    private static var brokerAddress: String {
-        VaultRuntimeEnvironment.current.hubAddress
-    }
-    private var lastError = ""
-    private var brokerPeers: [[String: Any]] = []
-    private var joinedHubProgram = ""
-    private var brokerSession: URLSession?
-    private var brokerTask: URLSessionWebSocketTask?
+    /// A listen that failed (the port is still held by a Mac Vault that is
+    /// quitting) is tried again.
     private var reconnectWorkItem: DispatchWorkItem?
-    private var pingTimer: DispatchSourceTimer?
     /// While hosting: starts each linked group's new budget period on time,
     /// even when no member is reporting usage (the hub owns the period).
     private var budgetTimer: DispatchSourceTimer?
@@ -104,7 +96,6 @@ final class ConnectionHub: ObservableObject {
     private var wantsBrokerConnection = false
     // Internal (not private) so tests can stand in for a hosting hub.
     var hostingLocalHub = false
-    private var lastBridgeAnnouncement: [String: Any]?
     static func helloRejectionReason(_ obj: [String: Any], challenge: String, secret: Data?) -> String? {
         let version = (obj["v"] as? NSNumber)?.intValue
         guard version == protocolVersion else { return "protocol-mismatch" }
@@ -262,7 +253,6 @@ final class ConnectionHub: ObservableObject {
         /// Live peer presence comes from the broker snapshot. It is deliberately
         /// not inferred from a local listener because Mac Vault is only a
         /// broker client now.
-        var onlineMembers: Set<String> = []
         /// Per-program local group id: the specific group *instance* that program
         /// linked. Membership is pinned to this id so deleting a group and later
         /// re-creating one with the same name does NOT silently re-join the old
@@ -325,8 +315,7 @@ final class ConnectionHub: ObservableObject {
     func start() {
         guard !wantsBrokerConnection else { return }
         wantsBrokerConnection = true
-        lastError = ""
-        startLocalHubOrJoinExisting()
+        startLocalHub()
     }
 
     func stop() {
@@ -336,14 +325,8 @@ final class ConnectionHub: ObservableObject {
         lock.unlock()
         reconnectWorkItem?.cancel()
         reconnectWorkItem = nil
-        pingTimer?.cancel()
-        pingTimer = nil
         budgetTimer?.cancel()
         budgetTimer = nil
-        brokerTask?.cancel(with: .goingAway, reason: nil)
-        brokerTask = nil
-        brokerSession?.invalidateAndCancel()
-        brokerSession = nil
         listener?.cancel()
         listener = nil
         lock.lock()
@@ -351,186 +334,56 @@ final class ConnectionHub: ObservableObject {
         let strandedBrowserRequests = browserRequests.values.map { $0.completion }
         browserRequests.removeAll()
         peers.removeAll()
-        running = false
         hostingLocalHub = false
-        joinedHubProgram = ""
         lock.unlock()
         for conn in conns { conn.cancel() }
         for completion in strandedBrowserRequests { completion(.failure("browser-unavailable")) }
     }
 
-    private func startLocalHubOrJoinExisting() {
+    /// Mac Vault is the only hub: it listens on the fixed local port. Only one
+    /// Mac Vault runs (the app refuses a second copy at launch); if the port is
+    /// still held — a quitting copy — the listen is simply tried again.
+    private func startLocalHub() {
         guard wantsBrokerConnection, listener == nil else { return }
-        do {
-            let parameters = NWParameters.tcp
-            parameters.defaultProtocolStack.applicationProtocols.insert(NWProtocolWebSocket.Options(), at: 0)
-            guard let port = NWEndpoint.Port(rawValue: VaultRuntimeEnvironment.current.hubPort) else {
-                return
-            }
-            let listener = try NWListener(using: parameters, on: port)
-            self.listener = listener
-            listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
-            listener.stateUpdateHandler = { [weak self, weak listener] state in
-                guard let self, self.listener === listener else { return }
-                switch state {
-                case .ready:
-                    self.lock.lock()
-                    self.running = true
-                    self.hostingLocalHub = true
-                    self.lastError = ""
-                    self.brokerPeers = []
-                    self.joinedHubProgram = ""
-                    // Links (and their running budgets) survive a restart.
-                    if self.clusters.isEmpty { self.restoreClustersLocked() }
-                    self.lock.unlock()
-                    self.startBudgetTimer()
-                case .failed:
-                    self.listener?.cancel()
-                    self.listener = nil
-                    self.lock.lock()
-                    self.running = false
-                    self.hostingLocalHub = false
-                    self.lastError = "server-running-not-connected"
-                    self.joinedHubProgram = ""
-                    self.lock.unlock()
-                    self.joinExistingLocalHub()
-                default:
-                    break
-                }
-            }
-            listener.start(queue: queue)
-        } catch {
-            lock.lock()
-            hostingLocalHub = false
-            lastError = "server-running-not-connected"
-            joinedHubProgram = ""
-            lock.unlock()
-            joinExistingLocalHub()
-        }
-    }
-
-    /// The listener attempt always comes first. Reaching this method means a
-    /// peer already owns the fixed local port, so the welcome below must prove
-    /// it is a current Mac Vault or Vault Classifier hub before we join it.
-    private func joinExistingLocalHub() {
-        guard wantsBrokerConnection, let url = URL(string: Self.brokerAddress) else {
-            setError("invalid-broker-address")
+        let parameters = NWParameters.tcp
+        parameters.defaultProtocolStack.applicationProtocols.insert(NWProtocolWebSocket.Options(), at: 0)
+        guard let port = NWEndpoint.Port(rawValue: VaultRuntimeEnvironment.current.hubPort),
+              let listener = try? NWListener(using: parameters, on: port) else {
+            retryListenLater()
             return
         }
-        brokerTask?.cancel(with: .goingAway, reason: nil)
-        let session = URLSession(configuration: .ephemeral)
-        let task = session.webSocketTask(with: url)
-        brokerSession = session
-        brokerTask = task
-        task.resume()
-        receiveBroker(on: task)
-    }
-
-    private func receiveBroker(on task: URLSessionWebSocketTask) {
-        task.receive { [weak self, weak task] result in
-            guard let self, let task, self.brokerTask === task else { return }
-            switch result {
-            case .success(let message):
-                let data: Data
-                switch message {
-                case .string(let text): data = Data(text.utf8)
-                case .data(let value): data = value
-                @unknown default: return
-                }
-                self.handleBrokerFrame(data)
-                if self.brokerTask === task { self.receiveBroker(on: task) }
-            case .failure(let error):
-                self.brokerDisconnected(error.localizedDescription)
+        self.listener = listener
+        listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
+        listener.stateUpdateHandler = { [weak self, weak listener] state in
+            guard let self, self.listener === listener else { return }
+            switch state {
+            case .ready:
+                self.lock.lock()
+                self.hostingLocalHub = true
+                // Links (and their running budgets) survive a restart.
+                if self.clusters.isEmpty { self.restoreClustersLocked() }
+                self.lock.unlock()
+                self.startBudgetTimer()
+            case .failed:
+                self.listener?.cancel()
+                self.listener = nil
+                self.lock.lock()
+                self.hostingLocalHub = false
+                self.lock.unlock()
+                self.retryListenLater()
+            default:
+                break
             }
         }
+        listener.start(queue: queue)
     }
 
-    private func handleBrokerFrame(_ data: Data) {
-        guard data.count <= Self.maxMessageBytes,
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let kind = object["kind"] as? String else {
-            brokerDisconnected("invalid-message")
-            return
-        }
-        switch kind {
-        case "challenge":
-            guard (object["v"] as? NSNumber)?.intValue == Self.protocolVersion,
-                  let challenge = object["challenge"] as? String,
-                  let proof = try? LocalHubAuthentication.makeProof(program: Self.localProgram, challenge: challenge) else {
-                brokerDisconnected("authentication-unavailable")
-                return
-            }
-            sendBroker([
-                "kind": "hello",
-                "v": Self.protocolVersion,
-                "program": Self.localProgram,
-                "challenge": challenge,
-                "proof": proof,
-            ])
-        case "welcome":
-            guard (object["v"] as? NSNumber)?.intValue == Self.protocolVersion,
-                  let hubProgram = object["hubProgram"] as? String,
-                  ["macapp", "classifier"].contains(hubProgram) else {
-                brokerDisconnected("protocol-mismatch", retry: false)
-                return
-            }
-            lock.lock()
-            running = true
-            lastError = ""
-            brokerPeers = object["peers"] as? [[String: Any]] ?? []
-            joinedHubProgram = hubProgram
-            lock.unlock()
-            if let clusters = object["clusters"] as? [[String: Any]] { replaceBrokerClusters(clusters) }
-            if let announcement = lastBridgeAnnouncement { sendBroker(announcement) }
-            startBrokerPings()
-        case "peers":
-            lock.lock()
-            brokerPeers = object["peers"] as? [[String: Any]] ?? []
-            lock.unlock()
-        case "clusters":
-            replaceBrokerClusters(object["clusters"] as? [[String: Any]] ?? [])
-        case "cluster-updated":
-            if let cluster = object["cluster"] as? [String: Any] { applyBrokerCluster(cluster) }
-        case "rejected":
-            let reason = (object["reason"] as? String) ?? "rejected"
-            brokerDisconnected(reason, retry: reason == "hub-yield-to-macapp")
-        default:
-            break
-        }
-    }
-
-    private func brokerDisconnected(_ reason: String, retry: Bool = true) {
-        lock.lock()
-        let wasJoinedHost = running && !hostingLocalHub
-        running = false
-        lastError = reason
-        brokerPeers.removeAll()
-        joinedHubProgram = ""
-        lock.unlock()
-        brokerTask?.cancel(with: .goingAway, reason: nil)
-        brokerTask = nil
-        pingTimer?.cancel()
-        pingTimer = nil
-        guard retry, wantsBrokerConnection else { return }
+    private func retryListenLater() {
+        guard wantsBrokerConnection else { return }
         reconnectWorkItem?.cancel()
-        // If the server we had joined disappeared, run a new host election
-        // instead of blindly reconnecting to its old socket. This method tries
-        // to listen first and joins only if another verified app wins the port.
-        let delay: DispatchTimeInterval = (wasJoinedHost || reason == "hub-yield-to-macapp") ? .milliseconds(250) : .seconds(2)
-        let work = DispatchWorkItem { [weak self] in self?.startLocalHubOrJoinExisting() }
+        let work = DispatchWorkItem { [weak self] in self?.startLocalHub() }
         reconnectWorkItem = work
-        queue.asyncAfter(deadline: .now() + delay, execute: work)
-    }
-
-    private func sendBroker(_ frame: [String: Any], on task: URLSessionWebSocketTask? = nil) {
-        guard JSONSerialization.isValidJSONObject(frame),
-              let data = try? JSONSerialization.data(withJSONObject: frame),
-              data.count <= Self.maxMessageBytes,
-              let text = String(data: data, encoding: .utf8),
-              let target = task ?? brokerTask else { return }
-        target.send(.string(text)) { [weak self] error in
-            if let error { self?.brokerDisconnected(error.localizedDescription) }
-        }
+        queue.asyncAfter(deadline: .now() + 3, execute: work)
     }
 
     private func startBudgetTimer() {
@@ -609,14 +462,6 @@ final class ConnectionHub: ObservableObject {
         return UsageBudget.periodStartMs(anchorMs: anchorMs, group: policy, nowMs: nowMs)
     }
 
-    private func startBrokerPings() {
-        pingTimer?.cancel()
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + 20, repeating: 20)
-        timer.setEventHandler { [weak self] in self?.sendBroker(["kind": "ping", "t": Date().timeIntervalSince1970 * 1_000]) }
-        pingTimer = timer
-        timer.resume()
-    }
 
     // MARK: Connections
 
@@ -1181,50 +1026,6 @@ final class ConnectionHub: ObservableObject {
         }
         lock.unlock()
         return list
-    }
-
-    private func setRunning(_ value: Bool) {
-        lock.lock(); running = value; lock.unlock()
-    }
-
-    private func setError(_ message: String) {
-        lock.lock(); lastError = message; running = false; lock.unlock()
-    }
-
-    /// JSON status string in the shape the web editor's `__cbConnectionState`
-    /// receiver expects.
-    func currentStatusJSON() -> String {
-        lock.lock()
-        let running = self.running
-        let err = self.lastError
-        let peerList = self.brokerPeers
-        let hosting = self.hostingLocalHub
-        let joinedProgram = self.joinedHubProgram
-        lock.unlock()
-        let visiblePeers = hosting ? peerListJSON() : peerList
-        let state: String
-        if !err.isEmpty {
-            state = err
-        } else if hosting {
-            state = "hosting"
-        } else if running {
-            state = "joined"
-        } else {
-            state = "off"
-        }
-        let status: [String: Any] = [
-            "running": running,
-            "state": state,
-            "address": Self.brokerAddress,
-            "peers": visiblePeers,
-            "error": err,
-            "hubProgram": hosting ? "macapp" : joinedProgram
-        ]
-        guard let data = try? JSONSerialization.data(withJSONObject: status),
-              let json = String(data: data, encoding: .utf8) else {
-            return "{\"running\":false,\"state\":\"off\",\"peers\":[]}"
-        }
-        return json
     }
 
     // MARK: Cluster registry API (called from the WS path and the web bridge)
@@ -1792,22 +1593,12 @@ final class ConnectionHub: ObservableObject {
 
     func announceFromBridge(json: String) {
         guard let obj = decode(json) else { return }
-        let frame = Self.bridgeFrame(obj)
-        lastBridgeAnnouncement = frame
-        submitBridgeFrame(frame)
+        submitBridgeFrame(Self.bridgeFrame(obj))
     }
 
-    /// The hosting Mac is itself a local endpoint, so its editor frames are
-    /// applied straight to the hub state. A non-host sends the exact same frame
-    /// through the one shared loopback socket.
+    /// The Mac is itself a local endpoint: its frames are applied straight to
+    /// the hub state.
     private func submitBridgeFrame(_ frame: [String: Any]) {
-        lock.lock()
-        let isHosting = hostingLocalHub
-        lock.unlock()
-        guard isHosting else {
-            sendBroker(frame)
-            return
-        }
         switch frame["kind"] as? String {
         case "groups-announce":
             setRoster(program: Self.localProgram, groups: frame["groups"] as? [[String: Any]] ?? [])
@@ -1823,57 +1614,11 @@ final class ConnectionHub: ObservableObject {
         }
     }
 
-    private func replaceBrokerClusters(_ snapshots: [[String: Any]]) {
-        lock.lock()
-        clusters.removeAll()
-        for snapshot in snapshots { installBrokerClusterLocked(snapshot) }
-        lock.unlock()
-    }
-
-    private func applyBrokerCluster(_ snapshot: [String: Any]) {
-        guard let identifier = snapshot["id"] as? String else { return }
-        lock.lock()
-        if let members = snapshot["members"] as? [[String: Any]], members.isEmpty {
-            clusters.removeValue(forKey: identifier)
-        } else {
-            installBrokerClusterLocked(snapshot)
-        }
-        lock.unlock()
-    }
-
-    private func installBrokerClusterLocked(_ snapshot: [String: Any]) {
-        guard let identifier = snapshot["id"] as? String,
-              let groupName = snapshot["groupName"] as? String else { return }
-        let cluster = ClusterState(id: identifier, groupName: groupName)
-        for member in (snapshot["members"] as? [[String: Any]] ?? []) {
-            guard let program = member["program"] as? String else { continue }
-            cluster.members.insert(program)
-            if let groupID = member["groupId"] as? String { cluster.memberGroupIds[program] = groupID }
-            if member["online"] as? Bool == true { cluster.onlineMembers.insert(program) }
-        }
-        if let shared = snapshot["shared"] as? [String: Any] {
-            cluster.sharedScalars = shared["scalars"] as? [String: Any] ?? [:]
-            cluster.sharedTs = (shared["ts"] as? NSNumber)?.doubleValue ?? 0
-            cluster.sharedScopes = shared["scopes"] as? [[String: Any]] ?? []
-            cluster.sharedLock = shared["lock"] as? [String: Any] ?? [:]
-            cluster.sharedUsageMs = (shared["usageMs"] as? NSNumber)?.doubleValue ?? 0
-            cluster.sharedUsageResetAtMs = (shared["usageResetAtMs"] as? NSNumber)?.doubleValue ?? 0
-            cluster.sharedBuckets = Self.parseBuckets(shared["usageBuckets"]) ?? [:]
-            cluster.sharedSnooze = shared["snooze"] as? [String: Any] ?? [:]
-            cluster.sharedSnoozeTs = (shared["snoozeTs"] as? NSNumber)?.doubleValue ?? 0
-            cluster.sharedSnoozeTotalMs = (shared["snoozeTotalMs"] as? NSNumber)?.doubleValue ?? 0
-        }
-        clusters[identifier] = cluster
-    }
-
-    // MARK: Cluster registry — internals
-
     private func decode(_ json: String) -> [String: Any]? {
         guard let data = json.data(using: .utf8) else { return nil }
         return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
     }
 
-    /// Restrictiveness rank for a freeze mode. Higher wins the cluster merge.
     /// Caller must hold `lock`. Persists the cluster registry — links and their
     /// running budgets — so both survive an app restart; the user only loses a
     /// link by disconnecting it. Called on config changes and by the 10 s budget
@@ -1947,24 +1692,13 @@ final class ConnectionHub: ObservableObject {
     /// host itself (always online while the hub runs). Used to flag cluster
     /// members online/offline.
     private func onlineProgramsLocked() -> Set<String> {
-        Self.onlineMembers(
-            hosting: hostingLocalHub,
-            connectedPrograms: Set(peers.values.filter { $0.connected && !$0.program.isEmpty }.map(\.program)),
-            brokerOnline: []
-        )
-    }
-
-    /// Which cluster members are online. The hosting hub knows: its connected
-    /// peers plus itself. A hub that joined another broker only knows what that
-    /// broker's snapshot said.
-    static func onlineMembers(hosting: Bool, connectedPrograms: Set<String>, brokerOnline: Set<String>) -> Set<String> {
-        hosting ? connectedPrograms.union([localProgram]) : brokerOnline
+        Set(peers.values.filter { $0.connected && !$0.program.isEmpty }.map(\.program)).union([Self.localProgram])
     }
 
     /// Caller must hold `lock`. Serializes a cluster including the shared
     /// definition (scalars + scope lines) and the shared runtime (usage, snooze).
     private func clusterJSONObject(_ cluster: ClusterState) -> [String: Any] {
-        let online = hostingLocalHub ? onlineProgramsLocked() : cluster.onlineMembers
+        let online = onlineProgramsLocked()
         let allOnline = cluster.members.allSatisfy { online.contains($0) }
         let hasShared = !cluster.sharedScalars.isEmpty || !cluster.sharedScopes.isEmpty || cluster.sharedTs > 0 || !cluster.sharedLock.isEmpty
         var dict: [String: Any] = [

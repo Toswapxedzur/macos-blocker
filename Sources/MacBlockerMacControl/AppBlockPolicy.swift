@@ -2,8 +2,9 @@ import Foundation
 import MacBlockerCore
 
 /// The macOS app-blocking policy applier: compiles the user's groups into a
-/// `GuardPolicy` and force-quits every running app it blocks — at the block's
-/// start and on every relaunch (the engine repeats the sweep each second).
+/// `GuardPolicy` and asks every running app it blocks to quit — normally,
+/// never by force (`QuitRequests`): once per launch, again after the retry
+/// interval if it stays open (the engine repeats the sweep each second).
 ///
 /// The editor uses this as its `PolicyApplying` implementation on macOS.
 public actor AppBlockPolicy: PolicyApplying {
@@ -16,6 +17,9 @@ public actor AppBlockPolicy: PolicyApplying {
     private var activeBlocked: Set<String> = []
     private var activeAllowlists: [GuardAllowlist] = []
     private var lastPolicy = GuardPolicy()
+    #if os(macOS)
+    private let quits = QuitRequests()
+    #endif
 
     public init(
         protectedBundleIdentifiers: Set<String> = [],
@@ -45,14 +49,7 @@ public actor AppBlockPolicy: PolicyApplying {
             }
         }
 
-        let policy = buildPolicy()
-        lastPolicy = policy
-
-        #if os(macOS)
-        if runTerminationSweep {
-            MacProcessTerminator.enforce(policy: policy)
-        }
-        #endif
+        lastPolicy = buildPolicy()
     }
 
     /// Evaluates the user's groups against the current schedule + usage and
@@ -70,34 +67,34 @@ public actor AppBlockPolicy: PolicyApplying {
         usage: UsageSnapshot,
         now: Date = Date(),
         calendar: Calendar = .current,
-        customBlockedBundleIDs: Set<String> = []
+        customBlockedBundleIDs: Set<String> = [],
+        quitRetry: TimeInterval = 0
     ) async throws {
         // Plus the bundle ids custom-rule decisions block.
         let blocked = Self.blockedApplications(groups: groups, usage: usage, now: now, calendar: calendar)
             .union(customBlockedBundleIDs.filter { !MacProcessTerminator.isBrowserBundleIdentifier($0) })
         let allowlists = Self.applicationAllowlists(groups: groups, usage: usage, now: now, calendar: calendar)
 
-        // Unchanged set → no rebuild/inventory scan; just keep enforcing.
-        if blocked == activeBlocked && allowlists == activeAllowlists {
-            #if os(macOS)
-            if runTerminationSweep {
-                MacProcessTerminator.enforce(policy: lastPolicy)
-            }
-            #endif
-            return
+        // A changed set rebuilds the policy (the inventory/signing scan);
+        // otherwise the last one keeps being enforced.
+        if blocked != activeBlocked || allowlists != activeAllowlists {
+            activeBlocked = blocked
+            activeAllowlists = allowlists
+            lastPolicy = buildPolicy()
         }
-
-        activeBlocked = blocked
-        activeAllowlists = allowlists
-        let policy = buildPolicy()
-        lastPolicy = policy
-
         #if os(macOS)
         if runTerminationSweep {
-            MacProcessTerminator.enforce(policy: policy)
+            quits.sweep(blocked: MacProcessTerminator.blockedProcesses(policy: lastPolicy), retry: quitRetry, now: now)
         }
         #endif
     }
+
+    #if os(macOS)
+    /// A custom rule's close: the app is asked to quit, like a block.
+    public func close(bundleIdentifier: String, now: Date = Date()) {
+        quits.close(bundleIdentifier: bundleIdentifier, now: now)
+    }
+    #endif
 
     /// Whether `bundleID` is blocked right now by these groups: the same
     /// decision the guard policy is built from, protections included (Apple,

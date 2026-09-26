@@ -387,16 +387,10 @@
         return bridgeOrResolve("show-system-panel", message, { ok: true });
       case "dismiss-system-panel":
         return bridgeOrResolve("dismiss-system-panel", message, { ok: true });
-      case "request-app-blocking-permission":
-        return bridgeOrResolve("request-app-blocking-permission", message, { ok: true });
-      case "open-permission-settings":
-        return bridgeOrResolve("open-permission-settings", message, { ok: true });
       case "refresh-blocking-rules":
         return bridgeOrResolve("refresh-blocking-rules", message, { ok: true });
       case "unload-custom-group":
         return bridgeOrResolve("unload-custom-group", message, { ok: true });
-      case "connection-status":
-        return bridgeOrResolve("connection-status", message, { ok: true });
       case "group-connect":
         return bridgeOrResolve("group-connect", message, { ok: true });
       case "group-disconnect":
