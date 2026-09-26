@@ -87,7 +87,6 @@ public struct BlockerMainView: View {
             onDismissSystemPanel: { [weak enforcement] id in enforcement?.dismissSystemPanel(id: id) },
             systemPanelEventsJSON: { [weak enforcement] in enforcement?.drainSystemPanelEventsJSON() },
             clustersJSON: { [weak connection] in connection?.clustersJSON() },
-            onGroupsAnnounce: { [weak connection] json in connection?.announceFromBridge(json: json) },
             onGroupSync: { [weak connection] json in connection?.syncFromBridge(json: json) }
         )
         #else

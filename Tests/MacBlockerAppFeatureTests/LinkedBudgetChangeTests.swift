@@ -22,13 +22,13 @@ final class LinkedBudgetChangeTests: XCTestCase {
 
     func testChangingTheBudgetPeriodRestartsTheSharedBudget() throws {
         let hub = linkedHub()
-        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupName: "Focus")).ms, 600_000)
+        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupID: "m1")).ms, 600_000)
         let before = (Date().timeIntervalSince1970 * 1000).rounded(.down)
         hub.applySync(program: "macapp", groupName: "Focus",
                       contribution: ["scalars": ["mode": "after-minutes", "allowedMinutes": 30, "resetIntervalHours": 12.0,
                                                  "resetAtMidnight": false, "rollingLimit": false]],
                       ts: 2)
-        let shared = try XCTUnwrap(hub.sharedUsage(groupName: "Focus"))
+        let shared = try XCTUnwrap(hub.sharedUsage(groupID: "m1"))
         XCTAssertEqual(shared.ms, 0, "every device adopts the restarted total")
         XCTAssertGreaterThanOrEqual(shared.resetAtMs, before, "the new period starts now")
     }
@@ -39,7 +39,7 @@ final class LinkedBudgetChangeTests: XCTestCase {
                       contribution: ["scalars": ["mode": "after-minutes", "allowedMinutes": 30, "resetIntervalHours": 24.0,
                                                  "resetAtMidnight": true, "rollingLimit": false]],
                       ts: 2)
-        let anchor = try XCTUnwrap(hub.sharedUsage(groupName: "Focus")).resetAtMs
+        let anchor = try XCTUnwrap(hub.sharedUsage(groupID: "m1")).resetAtMs
         let midnight = Calendar.current.startOfDay(for: Date()).timeIntervalSince1970 * 1000
         XCTAssertEqual(anchor, midnight, "the period every program computes starts at midnight, not at the edit")
     }
@@ -50,7 +50,7 @@ final class LinkedBudgetChangeTests: XCTestCase {
                       contribution: ["scalars": ["mode": "after-minutes", "allowedMinutes": 45, "resetIntervalHours": 24.0,
                                                  "resetAtMidnight": false, "rollingLimit": false]],
                       ts: 2)
-        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupName: "Focus")).ms, 600_000,
+        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupID: "m1")).ms, 600_000,
                        "the editor keeps the spent time when only the minutes change; so does the link")
     }
 
@@ -59,21 +59,21 @@ final class LinkedBudgetChangeTests: XCTestCase {
         hub.applySync(program: "macapp", groupName: "Focus",
                       contribution: ["scalars": ["mode": "instant", "resetIntervalHours": 24.0]],
                       ts: 0)
-        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupName: "Focus")).ms, 600_000)
+        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupID: "m1")).ms, 600_000)
     }
 
     func testOfflineTimeFromTwoBrowsersAddsUpForTheCurrentPeriodOnly() throws {
         let hub = linkedHub()
         hub.setRoster(program: "firefox", groups: [["id": "f1", "name": "Focus"]])
-        let period = try XCTUnwrap(hub.sharedUsage(groupName: "Focus")).resetAtMs
+        let period = try XCTUnwrap(hub.sharedUsage(groupID: "m1")).resetAtMs
         hub.applySync(program: "chrome", groupName: "Focus",
                       contribution: ["usageDeltaMs": 120_000.0, "usageDeltaAnchorMs": period], ts: 0)
         hub.applySync(program: "firefox", groupName: "Focus",
                       contribution: ["usageDeltaMs": 60_000.0, "usageDeltaAnchorMs": period], ts: 0)
-        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupName: "Focus")).ms, 780_000, "600 000 + both browsers' offline time")
+        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupID: "m1")).ms, 780_000, "600 000 + both browsers' offline time")
         hub.applySync(program: "firefox", groupName: "Focus",
                       contribution: ["usageDeltaMs": 60_000.0, "usageDeltaAnchorMs": period - 1], ts: 0)
-        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupName: "Focus")).ms, 780_000, "time from a period that already ended is not added")
+        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupID: "m1")).ms, 780_000, "time from a period that already ended is not added")
     }
 
     func testPeriodsCompareInWholeMilliseconds() throws {
@@ -83,16 +83,16 @@ final class LinkedBudgetChangeTests: XCTestCase {
         hub.applySync(program: "macapp", groupName: "Focus",
                       contribution: ["scalars": ["mode": "after-minutes", "allowedMinutes": 30, "resetIntervalHours": 12.0,
                                                  "resetAtMidnight": false, "rollingLimit": false]], ts: 2)
-        let period = try XCTUnwrap(hub.sharedUsage(groupName: "Focus")).resetAtMs
+        let period = try XCTUnwrap(hub.sharedUsage(groupID: "m1")).resetAtMs
         XCTAssertEqual(period, period.rounded(.down), "a restarted period starts on a whole millisecond")
         hub.applySync(program: "chrome", groupName: "Focus",
                       contribution: ["usageDeltaMs": 2_000.0, "usageDeltaAnchorMs": period.rounded(.down)], ts: 0)
-        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupName: "Focus")).ms, 2_000)
+        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupID: "m1")).ms, 2_000)
     }
 
     func testNamesLinkRegardlessOfLetterCase() throws {
         let hub = linkedHub(chromeName: "focus ")
-        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupName: "Focus")).ms, 600_000,
+        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupID: "m1")).ms, 600_000,
                        "'focus ' in the browser and 'Focus' on the Mac are one linked group")
     }
 }

@@ -1059,30 +1059,16 @@ final class ConnectionHub: ObservableObject {
         var snapshots: [[String: Any]] = []
         var changed = false
         for cluster in affected {
-            // Membership is pinned to the group *instance* this program linked.
-            // Backfill the id for clusters formed before id pinning (or restored
-            // from disk) by matching name+type once; this auto-migrates old links.
-            var pinnedId = cluster.memberGroupIds[program] ?? ""
-            if pinnedId.isEmpty,
-               let legacy = infos.first(where: { Self.sameName($0.name, cluster.groupName) }), !legacy.id.isEmpty {
-                pinnedId = legacy.id
-                cluster.memberGroupIds[program] = pinnedId
-                changed = true
-            }
-            // Keep the member only if its pinned instance is still present under
-            // the same name. A delete removes the id; a re-create under the same
-            // name yields a NEW id (so it can't silently re-join); a rename
-            // changes the name (so it decouples, matching the name-based UX).
-            // Frozen groups stay in the roster, so a freeze never decouples.
-            // Groups link by name alone: one group may span several platforms,
-            // a site list and an app list, so a "type" no longer identifies it.
-            let stillPresent: Bool
-            if pinnedId.isEmpty {
-                // No id to pin against (pre-id-pinning client): name only.
-                stillPresent = infos.contains { Self.sameName($0.name, cluster.groupName) }
-            } else {
-                stillPresent = infos.contains { $0.id == pinnedId && Self.sameName($0.name, cluster.groupName) }
-            }
+            // Membership is pinned to the group *instance* this program linked:
+            // it stays only while that instance is present under the same name.
+            // A delete removes the id; a re-create under the same name yields a
+            // NEW id (so it can't silently re-join); a rename decouples. Frozen
+            // groups stay in the roster, so a freeze never decouples. A link
+            // without a pinned id (from before pinning) is dropped here and
+            // re-forms, pinned, through auto-link.
+            let pinnedId = cluster.memberGroupIds[program] ?? ""
+            let stillPresent = !pinnedId.isEmpty
+                && infos.contains { $0.id == pinnedId && Self.sameName($0.name, cluster.groupName) }
             if stillPresent { continue }
             cluster.members.remove(program)
             cluster.memberGroupIds.removeValue(forKey: program)
@@ -1361,6 +1347,9 @@ final class ConnectionHub: ObservableObject {
         "fallbackUrl", "pauseSeconds",
     ]
 
+    /// The Mac's roster last given to the hub (canonical JSON).
+    private var lastLocalRoster = ""
+
     /// Mac group id -> the stored definition last seen (canonical JSON).
     private var localDefinitionSeen: [String: String] = [:]
 
@@ -1373,14 +1362,25 @@ final class ConnectionHub: ObservableObject {
     /// edit is never sent over it.
     func contributeLocalDefinitions(document: [String: Any], nowMs: Double) {
         let groups = document["blockedGroups"] as? [[String: Any]] ?? []
+        // The Mac's own group list comes from its store, every tick — so a
+        // group created, renamed, frozen or deleted with the window closed (by
+        // the "+" or a tool) links or leaves its link like any other.
+        let roster: [[String: Any]] = groups.compactMap { group in
+            guard let id = group["id"] as? String else { return nil }
+            return ["id": id, "name": (group["name"] as? String) ?? "", "frozen": WebStoreDocument.isLocked(group)]
+        }
+        let rosterKey = Self.canonicalJSON(roster)
+        if rosterKey != lastLocalRoster {
+            lastLocalRoster = rosterKey
+            setRoster(program: Self.localProgram, groups: roster)
+        }
         guard !groups.isEmpty else { return }
         var frames: [[String: Any]] = []
         lock.lock()
         for cluster in clusters.values where cluster.members.contains(Self.localProgram) {
             let pinned = cluster.memberGroupIds[Self.localProgram] ?? ""
-            guard let group = groups.first(where: { group in
-                pinned.isEmpty ? Self.sameName((group["name"] as? String) ?? "", cluster.groupName) : (group["id"] as? String) == pinned
-            }), let groupID = group["id"] as? String else { continue }
+            guard !pinned.isEmpty, let group = groups.first(where: { ($0["id"] as? String) == pinned }),
+                  let groupID = group["id"] as? String else { continue }
             // A snooze started or ended here (a tool, the engine) reaches the
             // link as the newest change, editor window or not.
             if let entry = (document["groupSnoozes"] as? [String: Any])?[groupID] as? [String: Any] {
@@ -1448,9 +1448,7 @@ final class ConnectionHub: ObservableObject {
         lock.lock()
         for cluster in clusters.values where cluster.members.contains(Self.localProgram) {
             let pinned = cluster.memberGroupIds[Self.localProgram] ?? ""
-            guard let index = groups.firstIndex(where: { group in
-                pinned.isEmpty ? Self.sameName((group["name"] as? String) ?? "", cluster.groupName) : (group["id"] as? String) == pinned
-            }) else { continue }
+            guard !pinned.isEmpty, let index = groups.firstIndex(where: { ($0["id"] as? String) == pinned }) else { continue }
             for (field, value) in cluster.sharedScalars { groups[index][field] = value }
             if !cluster.sharedScopes.isEmpty { groups[index]["scopes"] = cluster.sharedScopes }
             if !cluster.sharedLock.isEmpty {
@@ -1487,7 +1485,7 @@ final class ConnectionHub: ObservableObject {
     /// just accrued for the frontmost blocked app; `resetAtMs` is the group's
     /// current reset anchor (a newer anchor rolls the shared budget over).
     func reportLocalUsage(
-        groupName: String,
+        groupID: String,
         deltaMs: Double,
         resetAtMs: Double,
         seedMs: Double? = nil,
@@ -1502,9 +1500,10 @@ final class ConnectionHub: ObservableObject {
         // first real delta arrives (it adopts the largest member total) so prior
         // Mac usage survives joining a cluster.
         if let seedMs { contribution["usageMs"] = seedMs }
+        guard let cluster = localCluster(groupID: groupID) else { return }
         contribution["kind"] = "group-sync"
         contribution["program"] = Self.localProgram
-        contribution["groupName"] = groupName
+        contribution["groupName"] = cluster.groupName
         contribution["ts"] = 0
         submitBridgeFrame(contribution)
     }
@@ -1514,14 +1513,20 @@ final class ConnectionHub: ObservableObject {
     /// enforcer folds this total back into its local timer so the Mac display +
     /// enforcement reflect time spent on every linked member (e.g. browser
     /// website time), not just the Mac's own frontmost-app time.
-    func sharedUsage(groupName: String) -> (ms: Double, resetAtMs: Double, buckets: [Double: Double])? {
-        guard !groupName.isEmpty else { return nil }
+    func sharedUsage(groupID: String) -> (ms: Double, resetAtMs: Double, buckets: [Double: Double])? {
+        guard let cluster = localCluster(groupID: groupID) else { return nil }
         lock.lock()
         defer { lock.unlock() }
-        guard let cluster = clusters.values.first(where: {
-            Self.sameName($0.groupName, groupName) && $0.members.contains(Self.localProgram)
-        }) else { return nil }
         return (cluster.sharedUsageMs, cluster.sharedUsageResetAtMs, cluster.sharedBuckets)
+    }
+
+    /// The link a Mac group belongs to — matched by its pinned id, as the
+    /// overlay and the contributions match it.
+    private func localCluster(groupID: String) -> ClusterState? {
+        guard !groupID.isEmpty else { return nil }
+        lock.lock()
+        defer { lock.unlock() }
+        return clusters.values.first { $0.members.contains(Self.localProgram) && $0.memberGroupIds[Self.localProgram] == groupID }
     }
 
     /// Folds a member's rolling usage into the cluster: `usageBuckets` are
@@ -1569,7 +1574,7 @@ final class ConnectionHub: ObservableObject {
     }
 
     /// The Mac's web editor sends the extension popup's runtime messages
-    /// (`{type: "group-sync" | "groups-announce", …}`); hub frames are keyed by
+    /// (`{type: "group-sync", …}`); hub frames are keyed by
     /// `kind`, exactly as the browser's service worker re-keys them.
     static func bridgeFrame(_ message: [String: Any]) -> [String: Any] {
         var frame = message
@@ -1591,17 +1596,10 @@ final class ConnectionHub: ObservableObject {
 
     // MARK: Cluster registry — JSON-string entry points for the web bridge
 
-    func announceFromBridge(json: String) {
-        guard let obj = decode(json) else { return }
-        submitBridgeFrame(Self.bridgeFrame(obj))
-    }
-
     /// The Mac is itself a local endpoint: its frames are applied straight to
     /// the hub state.
     private func submitBridgeFrame(_ frame: [String: Any]) {
         switch frame["kind"] as? String {
-        case "groups-announce":
-            setRoster(program: Self.localProgram, groups: frame["groups"] as? [[String: Any]] ?? [])
         case "group-sync":
             applySync(
                 program: Self.localProgram,

@@ -18,17 +18,17 @@ final class ClusterRollingUsageTests: XCTestCase {
 
         hub.applySync(program: "chrome", groupName: "Focus",
                       contribution: ["usageBucketsSeed": [key: 30_000.0]], ts: 0)
-        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupName: "Focus")).buckets[minute], 30_000,
+        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupID: "m1")).buckets[minute], 30_000,
                        "a member's history seeds the shared minutes")
 
         hub.applySync(program: "macapp", groupName: "Focus",
                       contribution: ["usageBuckets": [key: 20_000.0]], ts: 0)
-        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupName: "Focus")).buckets[minute], 50_000,
+        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupID: "m1")).buckets[minute], 50_000,
                        "increments add to the seeded minute")
 
         hub.applySync(program: "chrome", groupName: "Focus",
                       contribution: ["usageBucketsSeed": [key: 99_000.0]], ts: 0)
-        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupName: "Focus")).buckets[minute], 50_000,
+        XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupID: "m1")).buckets[minute], 50_000,
                        "a late seed never overrides real increments")
     }
 
@@ -37,6 +37,6 @@ final class ClusterRollingUsageTests: XCTestCase {
         let old = UsageBudget.bucketStartMs(Date().timeIntervalSince1970 * 1000 - 3 * 86_400_000)
         hub.applySync(program: "chrome", groupName: "Focus",
                       contribution: ["usageBuckets": [String(Int64(old)): 60_000.0]], ts: 0)
-        XCTAssertTrue(try XCTUnwrap(hub.sharedUsage(groupName: "Focus")).buckets.isEmpty)
+        XCTAssertTrue(try XCTUnwrap(hub.sharedUsage(groupID: "m1")).buckets.isEmpty)
     }
 }

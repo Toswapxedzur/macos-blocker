@@ -16,7 +16,6 @@ public struct BlockerWebPanel: View {
     private let onDismissSystemPanel: ((String) -> Void)?
     private let systemPanelEventsJSON: (() -> String?)?
     private let clustersJSON: (() -> String?)?
-    private let onGroupsAnnounce: ((String) -> Void)?
     private let onGroupSync: ((String) -> Void)?
 
     public init(
@@ -31,7 +30,6 @@ public struct BlockerWebPanel: View {
         onDismissSystemPanel: ((String) -> Void)? = nil,
         systemPanelEventsJSON: (() -> String?)? = nil,
         clustersJSON: (() -> String?)? = nil,
-        onGroupsAnnounce: ((String) -> Void)? = nil,
         onGroupSync: ((String) -> Void)? = nil
     ) {
         self.store = store
@@ -45,7 +43,6 @@ public struct BlockerWebPanel: View {
         self.onDismissSystemPanel = onDismissSystemPanel
         self.systemPanelEventsJSON = systemPanelEventsJSON
         self.clustersJSON = clustersJSON
-        self.onGroupsAnnounce = onGroupsAnnounce
         self.onGroupSync = onGroupSync
     }
 
@@ -62,7 +59,6 @@ public struct BlockerWebPanel: View {
             onDismissSystemPanel: onDismissSystemPanel,
             systemPanelEventsJSON: systemPanelEventsJSON,
             clustersJSON: clustersJSON,
-            onGroupsAnnounce: onGroupsAnnounce,
             onGroupSync: onGroupSync
         )
         .ignoresSafeArea()
