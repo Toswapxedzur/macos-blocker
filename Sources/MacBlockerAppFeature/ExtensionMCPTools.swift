@@ -93,29 +93,27 @@ public enum ExtensionMCPTools {
             },
             MCPTool(
                 name: "extension_lock_group",
-                description: "Lock an extension group, as the popup's Freeze does: mode 'frozen' (unlocking needs a confirmation), 'strict' (cannot be unlocked for strictHours, 0 < hours ≤ 72) or 'parental' (unlocking needs the 6-digit PIN; pass the group's PIN — or, when it has none yet, the new PIN to set). A wrong PIN makes the next try wait 1 s, 2 s, 4 s … up to 64 s, shared with the popup.",
+                description: "Freeze an extension group, as the popup's Freeze does, with optional gates that combine: waitHours (it cannot be unfrozen for that long, 0 < hours ≤ 72) and pin (6 digits: unfreezing then needs this PIN). On a frozen group the same call can only make the freeze stricter: a longer wait, or a PIN where there was none. Every unfreeze also ends with the confirmation (10 steps, 5 s apart).",
                 inputSchema: [
                     "type": "object",
                     "properties": [
                         "id": ["type": "string", "description": "The group id."],
-                        "mode": ["type": "string", "enum": ["frozen", "strict", "parental"]],
-                        "strictHours": ["type": "number"],
+                        "waitHours": ["type": "number"],
                         "pin": ["type": "string"],
                         "browser": browserProperty,
                     ],
-                    "required": ["id", "mode"],
+                    "required": ["id"],
                 ]
             ) { args in
                 guard let id = args["id"] as? String, !id.isEmpty else { return .failure("Missing 'id'.") }
-                guard let mode = args["mode"] as? String else { return .failure("Missing 'mode'.") }
-                var body: [String: Any] = ["id": id, "mode": mode]
-                if let hours = args["strictHours"] { body["strictHours"] = hours }
+                var body: [String: Any] = ["id": id]
+                if let hours = args["waitHours"] { body["waitHours"] = hours }
                 if let pin = args["pin"] as? String { body["pin"] = pin }
                 return relay(bridge, "settings-lock-group", body, args)
             },
             MCPTool(
                 name: "extension_unlock_group",
-                description: "Unlock an extension group through the popup's gates. Parental: pass the PIN (a wrong PIN makes the next try wait 1 s … 64 s). Strict: refused until its hours are over. Otherwise the popup's confirmation: the first call asks, a second call with confirm: true at least 5 seconds later (within 5 minutes) unlocks.",
+                description: "Unfreeze an extension group through the popup's gates: the wait gate must be over; a set PIN must be passed (pin; a wrong PIN makes the next try wait 1 s … 64 s, shared with the popup); then the confirmation: call again with confirm: true every 5 seconds until confirmationsLeft is 0 (10 in all, within 5 minutes).",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -226,7 +224,9 @@ public enum ExtensionMCPTools {
         case "browser-relay-requires-host": return "Mac Vault is not hosting the local hub."
         case "group-locked": return "the group is frozen, strict or parental-locked (the popup refuses this too)."
         case "group-not-found": return "no group has that id."
-        case "not-locked": return "the group is not locked."
+        case "not-locked": return "the group is not frozen."
+        case "not-stricter": return "while frozen the freeze can only be made stricter (a longer wait)."
+        case "pin-already-set": return "the group already has a PIN."
         case "duplicate-name": return "another group already has that name (ignoring letter case)."
         default:
             let parts = reason.split(separator: ":", maxSplits: 1).map(String.init)
@@ -234,7 +234,7 @@ public enum ExtensionMCPTools {
             switch parts[0] {
             case "pin-wait": return "wait \(parts[1]) s before the next PIN try (a wrong PIN was entered)."
             case "pin-wrong": return "wrong PIN; the next try waits \(parts[1]) s."
-            case "strict-wait": return "strict lock: it opens at \(parts[1])."
+            case "strict-wait": return "the freeze's wait holds until \(parts[1])."
             case "confirm-wait": return "confirm again in \(parts[1]) s (the popup's confirmation waits 5 s)."
             default: return reason
             }
