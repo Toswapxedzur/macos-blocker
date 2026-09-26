@@ -147,6 +147,55 @@ final class GroupStoreTests: XCTestCase {
         XCTAssertEqual(document.raw["usageResetAtMs"] as? [String: Int], [:])
     }
 
+    func testDeleteGroupClearsItsRollingMinutesToo() throws {
+        var raw = sampleEnvelope()
+        raw["usageBucketsMs"] = ["g1": ["60000": 1000], "g2": ["60000": 5]]
+        var document = WebStoreDocument(raw: raw)
+        try document.deleteGroup(id: "g1")
+        XCTAssertEqual((document.raw["usageBucketsMs"] as? [String: Any])?.keys.sorted(), ["g2"])
+    }
+
+    func testRenameRefusesANameAnotherGroupHasInAnyCase() throws {
+        var document = WebStoreDocument(raw: sampleEnvelope())
+        XCTAssertThrowsError(try document.renameGroup(id: "g1", name: " youtube ")) { error in
+            XCTAssertEqual(error as? GroupStoreError, .duplicateName("youtube"), "groups link by name, so names stay unique, as in the editor")
+        }
+        try document.renameGroup(id: "g1", name: "FOCUS")
+        XCTAssertEqual(document.group(id: "g1")?["name"] as? String, "FOCUS", "a group may change its own name's case")
+    }
+
+    func testSwitchingToATimedModeRestartsTheBudgetLikeTheEditor() throws {
+        var document = WebStoreDocument(raw: sampleEnvelope())
+        let now = Date(timeIntervalSince1970: 1_000)
+        try document.setGroupMode(id: "g1", .afterMinutes, now: now)
+        XCTAssertEqual((document.raw["usageTimersMs"] as? [String: Any])?["g1"] as? Int, 0)
+        XCTAssertEqual((document.raw["usageResetAtMs"] as? [String: Any])?["g1"] as? Double, 1_000_000)
+        try document.setGroupMode(id: "g2", .afterMinutes, now: now)
+        XCTAssertEqual((document.raw["usageResetAtMs"] as? [String: Any])?["g2"] as? Double, nil, "an unchanged mode restarts nothing")
+    }
+
+    func testLocksAreJudgedOnTheSharedView() throws {
+        let (store, shared, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir); GroupStore.sharedOverlay = nil }
+        let data = try JSONSerialization.data(withJSONObject: sampleEnvelope())
+        shared.writeData(data, to: SharedAppGroupStore.webStoreFileName)
+        // A linked device locked g1; the stored copy does not know yet.
+        GroupStore.sharedOverlay = { raw in
+            var copy = raw
+            copy["blockedGroups"] = (raw["blockedGroups"] as? [[String: Any]] ?? []).map { group in
+                var g = group
+                if g["id"] as? String == "g1" { g["freezeMode"] = "frozen"; g["name"] = "Focus (shared)" }
+                return g
+            }
+            return copy
+        }
+        XCTAssertThrowsError(try store.mutate { try $0.setGroupEnabled(id: "g1", false) }) { error in
+            XCTAssertEqual(error as? GroupStoreError, .groupLocked("g1"), "an AI tool may not edit what the user cannot")
+        }
+        XCTAssertEqual(store.loadGroups().first { $0.id == "g1" }?.name, "Focus (shared)", "tools read what the user sees")
+        XCTAssertNoThrow(try store.mutate { try $0.setGroupEnabled(id: "g2", true) })
+    }
+
     // MARK: Lock mode (frozen / strict / parental)
 
     private func lockedEnvelope(appsExcept: Bool) -> [String: Any] {

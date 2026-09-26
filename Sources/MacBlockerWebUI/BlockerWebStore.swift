@@ -125,27 +125,29 @@ public final class BlockerWebStore: @unchecked Sendable {
         resetAtMs: [String: Double],
         bucketsMs: [String: [Double: Double]] = [:]
     ) {
-        guard !timersMs.isEmpty || !resetAtMs.isEmpty || !bucketsMs.isEmpty,
-              var object = loadStoreObject() else {
-            return
-        }
-        if !bucketsMs.isEmpty {
-            var stored = object["usageBucketsMs"] as? [String: Any] ?? [:]
-            for (groupID, buckets) in bucketsMs { stored[groupID] = Self.bucketJSON(buckets) }
-            object["usageBucketsMs"] = stored
-        }
-        if !timersMs.isEmpty {
-            var stored = doubleMap(object["usageTimersMs"])
-            for (key, value) in timersMs { stored[key] = value }
-            object["usageTimersMs"] = stored
-        }
-        if !resetAtMs.isEmpty {
-            var stored = doubleMap(object["usageResetAtMs"])
-            for (key, value) in resetAtMs { stored[key] = value }
-            object["usageResetAtMs"] = stored
-        }
-        if let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) {
-            shared.writeData(data, to: SharedAppGroupStore.webStoreFileName)
+        guard !timersMs.isEmpty || !resetAtMs.isEmpty || !bucketsMs.isEmpty else { return }
+        // Under the store's file lock: an edit saved between this read and
+        // write would otherwise be lost.
+        GroupStore.withFileLock {
+            guard var object = loadStoreObject() else { return }
+            if !bucketsMs.isEmpty {
+                var stored = object["usageBucketsMs"] as? [String: Any] ?? [:]
+                for (groupID, buckets) in bucketsMs { stored[groupID] = Self.bucketJSON(buckets) }
+                object["usageBucketsMs"] = stored
+            }
+            if !timersMs.isEmpty {
+                var stored = doubleMap(object["usageTimersMs"])
+                for (key, value) in timersMs { stored[key] = value }
+                object["usageTimersMs"] = stored
+            }
+            if !resetAtMs.isEmpty {
+                var stored = doubleMap(object["usageResetAtMs"])
+                for (key, value) in resetAtMs { stored[key] = value }
+                object["usageResetAtMs"] = stored
+            }
+            if let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) {
+                shared.writeData(data, to: SharedAppGroupStore.webStoreFileName)
+            }
         }
     }
 

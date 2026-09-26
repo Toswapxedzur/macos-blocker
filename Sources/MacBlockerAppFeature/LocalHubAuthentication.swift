@@ -35,18 +35,22 @@ enum LocalHubAuthentication {
         try makeProof(program: program, challenge: challenge, secret: sharedSecret())
     }
 
+    /// The single on-device file secret, shared with the classifier and the
+    /// browser's native-messaging host. `VaultClassifierBridge` resolves the
+    /// runtime environment (development / production) from the same variable
+    /// this app reads, so both stay separated identically.
     static func sharedSecret() throws -> Data {
-        try ensureSecret(environment: .current)
+        try VaultClassifierBridge.LocalHubAuthentication.sharedSecret()
     }
 
     /// A stable bearer token for the local MCP server, derived from the shared
-    /// hub secret via HMAC. This reuses the one Keychain item the app already
-    /// unlocks at launch, so the MCP server needs no separate secret and no extra
+    /// hub secret via HMAC. This reuses the one secret file the app already
+    /// reads at launch, so the MCP server needs no separate secret and no extra
     /// access prompt. Deterministic → the token written into a client's config
     /// stays valid across relaunches. Nil only if the hub secret is unavailable
     /// (in which case the caller should not expose an unauthenticated server).
-    static func mcpBearerToken(environment: VaultRuntimeEnvironment = .current) -> String? {
-        guard let secret = try? ensureSecret(environment: environment) else { return nil }
+    static func mcpBearerToken() -> String? {
+        guard let secret = try? sharedSecret() else { return nil }
         let code = HMAC<SHA256>.authenticationCode(
             for: Data("vault-mcp-bearer-v1".utf8),
             using: SymmetricKey(data: secret)
@@ -65,14 +69,6 @@ enum LocalHubAuthentication {
             using: SymmetricKey(data: secret)
         )
         return base64URL(Data(code))
-    }
-
-    private static func ensureSecret(environment: VaultRuntimeEnvironment) throws -> Data {
-        // The single on-device file secret, shared with the classifier and the
-        // browser's native-messaging host. `VaultClassifierBridge` resolves the
-        // environment from the same variable this app reads, so passing its own
-        // `.current` keeps development and production separated identically.
-        try VaultClassifierBridge.LocalHubAuthentication.sharedSecret()
     }
 
     private static func canonicalString(program: String, challenge: String) -> String {

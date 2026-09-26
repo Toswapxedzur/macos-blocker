@@ -69,8 +69,8 @@ final class GuardEngineTests: XCTestCase {
         XCTAssertFalse(MacProcessTerminator.isBrowserBundleIdentifier("com.example.FocusApp"))
 
         let policy = GuardPolicy(targets: [
-            GuardTarget(bundleIdentifier: "com.google.Chrome", enforcementMode: .forceTerminate),
-            GuardTarget(bundleIdentifier: "com.example.FocusApp", enforcementMode: .forceTerminate)
+            GuardTarget(bundleIdentifier: "com.google.Chrome"),
+            GuardTarget(bundleIdentifier: "com.example.FocusApp")
         ])
         let plan = MacProcessTerminator.plan(policy: policy, running: [
             RunningProcessSnapshot(processIdentifier: 100, bundleIdentifier: "com.google.Chrome"),
@@ -87,13 +87,12 @@ final class GuardEngineTests: XCTestCase {
             protectedBundleIdentifiers: ["com.adamancia.vault"],
             allowOnly: [GuardAllowlist(
                 allowedBundleIdentifiers: ["com.example.Editor"],
-                enforcementMode: .forceTerminate,
                 displayName: "Deep work"
             )]
         )
         XCTAssertNil(policy.match(bundleIdentifier: "com.example.editor"), "listed apps pass, case-insensitively")
         XCTAssertNil(policy.match(bundleIdentifier: "com.example.Editor.Helper"), "an allowed app's helpers pass with it")
-        XCTAssertEqual(policy.match(bundleIdentifier: "com.hnc.Discord")?.enforcementMode, .forceTerminate)
+        XCTAssertNotNil(policy.match(bundleIdentifier: "com.hnc.Discord"))
         XCTAssertEqual(policy.match(bundleIdentifier: "com.hnc.Discord")?.displayName, "Deep work")
         XCTAssertTrue(policy.shouldDenyLaunch(bundleIdentifier: "com.hnc.Discord"))
         // Guardrails still win: Apple, Vault itself, browsers and unidentified processes.
@@ -108,18 +107,18 @@ final class GuardEngineTests: XCTestCase {
         var group = appGroup(id: "g", bundleID: "com.example.Editor", mode: .afterMinutes, allowedMinutes: 30)
         group.applicationAllowlist = true
         let fresh = EndpointSecurityPolicyAdapter.applicationAllowlists(
-            groups: [group], usage: UsageSnapshot(), now: Date(), mode: .forceTerminate
+            groups: [group], usage: UsageSnapshot(), now: Date()
         )
         XCTAssertTrue(fresh.isEmpty, "a timed allowlist group blocks nothing before its allowance is spent")
 
         let spent = EndpointSecurityPolicyAdapter.applicationAllowlists(
-            groups: [group], usage: UsageSnapshot(usageByGroupSeconds: ["g": TimeInterval(30 * 60)]), now: Date(), mode: .suspend
+            groups: [group], usage: UsageSnapshot(usageByGroupSeconds: ["g": TimeInterval(30 * 60)]), now: Date()
         )
-        XCTAssertEqual(spent, [GuardAllowlist(allowedBundleIdentifiers: ["com.example.editor"], enforcementMode: .suspend, displayName: "g")])
+        XCTAssertEqual(spent, [GuardAllowlist(allowedBundleIdentifiers: ["com.example.editor"], displayName: "g")])
 
         group.applicationAllowlist = false
         let plain = EndpointSecurityPolicyAdapter.applicationAllowlists(
-            groups: [group], usage: UsageSnapshot(usageByGroupSeconds: ["g": TimeInterval(30 * 60)]), now: Date(), mode: .suspend
+            groups: [group], usage: UsageSnapshot(usageByGroupSeconds: ["g": TimeInterval(30 * 60)]), now: Date()
         )
         XCTAssertTrue(plain.isEmpty, "a plain blocklist group contributes no allowlist")
     }
@@ -127,12 +126,12 @@ final class GuardEngineTests: XCTestCase {
     func testAllowlistGroupNeverBlocksItsOwnListedApps() {
         var group = appGroup(id: "g", bundleID: "com.example.Editor", mode: .instant)
         group.applicationAllowlist = true
-        let modes = EndpointSecurityPolicyAdapter.blockedApplicationModes(
-            groups: [group], usage: UsageSnapshot(), now: Date(), mode: .forceTerminate
+        let modes = EndpointSecurityPolicyAdapter.blockedApplications(
+            groups: [group], usage: UsageSnapshot(), now: Date()
         )
         XCTAssertTrue(modes.isEmpty, "the listed apps are the ALLOWED ones")
         let lists = EndpointSecurityPolicyAdapter.applicationAllowlists(
-            groups: [group], usage: UsageSnapshot(), now: Date(), mode: .forceTerminate
+            groups: [group], usage: UsageSnapshot(), now: Date()
         )
         let policy = GuardPolicy(targets: EndpointSecurityPolicyAdapter.buildTargets(from: modes), allowOnly: lists)
         XCTAssertNil(policy.match(bundleIdentifier: "com.example.Editor"))
@@ -184,32 +183,12 @@ final class GuardEngineTests: XCTestCase {
         XCTAssertTrue(policy.allowOnly.isEmpty)
     }
 
-    // MARK: - preventsLaunch / runningAction layering
-
-    func testEnforcementModeLayers() {
-        XCTAssertTrue(MacEnforcementMode.forceTerminate.preventsLaunch)
-        XCTAssertEqual(MacEnforcementMode.forceTerminate.runningAction, .forceKill)
-
-        XCTAssertTrue(MacEnforcementMode.preventLaunch.preventsLaunch)
-        XCTAssertEqual(MacEnforcementMode.preventLaunch.runningAction, .none)
-
-        XCTAssertTrue(MacEnforcementMode.suspend.preventsLaunch)
-        XCTAssertEqual(MacEnforcementMode.suspend.runningAction, .suspend)
-
-        XCTAssertFalse(MacEnforcementMode.hideApplication.preventsLaunch)
-        XCTAssertEqual(MacEnforcementMode.hideApplication.runningAction, .hide)
-
-        XCTAssertFalse(MacEnforcementMode.shieldOnly.preventsLaunch)
-        XCTAssertEqual(MacEnforcementMode.shieldOnly.runningAction, .none)
-    }
-
     // MARK: - Termination sweep selection (pure)
 
     func testTerminatorPlanSelectsBlockedRunningProcesses() {
         let policy = GuardPolicy(targets: [
-            GuardTarget(bundleIdentifier: "com.zoom.us", enforcementMode: .forceTerminate),
-            GuardTarget(bundleIdentifier: "com.slack.app", enforcementMode: .suspend),
-            GuardTarget(bundleIdentifier: "com.note.app", enforcementMode: .preventLaunch)
+            GuardTarget(bundleIdentifier: "com.zoom.us"),
+            GuardTarget(bundleIdentifier: "com.slack.app")
         ])
         let running = [
             RunningProcessSnapshot(processIdentifier: 100, bundleIdentifier: "com.zoom.us"),
@@ -220,17 +199,9 @@ final class GuardEngineTests: XCTestCase {
         ]
 
         let plan = MacProcessTerminator.plan(policy: policy, running: running)
-        let byPID = Dictionary(uniqueKeysWithValues: plan.map { ($0.processIdentifier, $0.action) })
-
-        XCTAssertEqual(byPID[100], .forceKill)
-        XCTAssertEqual(byPID[200], .suspend)
-        // preventLaunch has no running action → not in the sweep plan.
-        XCTAssertNil(byPID[300])
-        // Apple binary → guardrail.
-        XCTAssertNil(byPID[400])
-        // Not blocked.
-        XCTAssertNil(byPID[500])
-        XCTAssertEqual(plan.count, 2)
+        // Blocked apps are killed; Apple binaries (guardrail) and unblocked
+        // apps are left alone.
+        XCTAssertEqual(plan.map(\.processIdentifier), [100, 200])
     }
 
     // MARK: - Policy store round-trip
@@ -248,8 +219,7 @@ final class GuardEngineTests: XCTestCase {
                 GuardTarget(
                     bundleIdentifier: "com.example.App",
                     teamIdentifier: "ABCDE12345",
-                    enforcementMode: .forceTerminate,
-                    displayName: "Example"
+                        displayName: "Example"
                 )
             ]
         )
@@ -270,7 +240,6 @@ final class GuardEngineTests: XCTestCase {
         let adapter = EndpointSecurityPolicyAdapter(
             store: GuardPolicyStore(url: tmp),
             client: nil,
-            defaultMode: .forceTerminate,
             runTerminationSweep: false
         )
 
@@ -321,16 +290,16 @@ final class GuardEngineTests: XCTestCase {
 
     func testInstantGroupBlocksImmediately() {
         let group = appGroup(id: "g", bundleID: "com.hnc.Discord", mode: .instant)
-        let modes = EndpointSecurityPolicyAdapter.blockedApplicationModes(
-            groups: [group], usage: UsageSnapshot(), now: Date(), mode: .forceTerminate
+        let modes = EndpointSecurityPolicyAdapter.blockedApplications(
+            groups: [group], usage: UsageSnapshot(), now: Date()
         )
-        XCTAssertEqual(modes["com.hnc.Discord"], .forceTerminate)
+        XCTAssertEqual(modes, ["com.hnc.Discord"])
     }
 
     func testBrowserGroupsAreExcludedFromNativePolicy() {
         let group = appGroup(id: "g", bundleID: "com.google.Chrome", mode: .instant)
-        let modes = EndpointSecurityPolicyAdapter.blockedApplicationModes(
-            groups: [group], usage: UsageSnapshot(), now: Date(), mode: .forceTerminate
+        let modes = EndpointSecurityPolicyAdapter.blockedApplications(
+            groups: [group], usage: UsageSnapshot(), now: Date()
         )
         XCTAssertTrue(modes.isEmpty)
     }
@@ -338,8 +307,8 @@ final class GuardEngineTests: XCTestCase {
     func testTimedGroupDoesNotBlockBeforeLimit() {
         // The reported bug: a timer group must NOT insta-block.
         let group = appGroup(id: "g", bundleID: "com.hnc.Discord", mode: .afterMinutes, allowedMinutes: 30)
-        let modes = EndpointSecurityPolicyAdapter.blockedApplicationModes(
-            groups: [group], usage: UsageSnapshot(), now: Date(), mode: .forceTerminate
+        let modes = EndpointSecurityPolicyAdapter.blockedApplications(
+            groups: [group], usage: UsageSnapshot(), now: Date()
         )
         XCTAssertTrue(modes.isEmpty)
     }
@@ -347,25 +316,25 @@ final class GuardEngineTests: XCTestCase {
     func testTimedGroupBlocksOnceLimitExhausted() {
         let group = appGroup(id: "g", bundleID: "com.hnc.Discord", mode: .afterMinutes, allowedMinutes: 30)
         let usage = UsageSnapshot(usageByGroupSeconds: ["g": TimeInterval(30 * 60)])
-        let modes = EndpointSecurityPolicyAdapter.blockedApplicationModes(
-            groups: [group], usage: usage, now: Date(), mode: .forceTerminate
+        let modes = EndpointSecurityPolicyAdapter.blockedApplications(
+            groups: [group], usage: usage, now: Date()
         )
-        XCTAssertEqual(modes["com.hnc.Discord"], .forceTerminate)
+        XCTAssertEqual(modes, ["com.hnc.Discord"])
     }
 
     func testAfterMinutesGroupRespectsRemainingTime() {
         let group = appGroup(id: "g", bundleID: "com.app", mode: .afterMinutes, allowedMinutes: 60)
         let usage = UsageSnapshot(usageByGroupSeconds: ["g": TimeInterval(10 * 60)])
-        let modes = EndpointSecurityPolicyAdapter.blockedApplicationModes(
-            groups: [group], usage: usage, now: Date(), mode: .forceTerminate
+        let modes = EndpointSecurityPolicyAdapter.blockedApplications(
+            groups: [group], usage: usage, now: Date()
         )
         XCTAssertTrue(modes.isEmpty)
     }
 
     func testDisabledGroupNeverBlocks() {
         let group = appGroup(id: "g", bundleID: "com.app", mode: .instant, enabled: false)
-        let modes = EndpointSecurityPolicyAdapter.blockedApplicationModes(
-            groups: [group], usage: UsageSnapshot(), now: Date(), mode: .forceTerminate
+        let modes = EndpointSecurityPolicyAdapter.blockedApplications(
+            groups: [group], usage: UsageSnapshot(), now: Date()
         )
         XCTAssertTrue(modes.isEmpty)
     }
@@ -376,36 +345,9 @@ final class GuardEngineTests: XCTestCase {
         let usage = UsageSnapshot(
             snoozesByGroup: ["g": SnoozeState(startsAt: now.addingTimeInterval(-60), until: now.addingTimeInterval(600))]
         )
-        let modes = EndpointSecurityPolicyAdapter.blockedApplicationModes(
-            groups: [group], usage: usage, now: now, mode: .forceTerminate
+        let modes = EndpointSecurityPolicyAdapter.blockedApplications(
+            groups: [group], usage: usage, now: now
         )
         XCTAssertTrue(modes.isEmpty)
-    }
-
-    func testAdapterRespectsPerDecisionModeOverride() async throws {
-        let tmp = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("guard-\(UUID().uuidString)")
-            .appendingPathComponent("policy.json")
-        defer { try? FileManager.default.removeItem(at: tmp.deletingLastPathComponent()) }
-
-        let adapter = EndpointSecurityPolicyAdapter(
-            store: GuardPolicyStore(url: tmp),
-            client: nil,
-            defaultMode: .forceTerminate,
-            runTerminationSweep: false
-        )
-
-        try await adapter.apply([
-            PolicyDecision(
-                action: .shield,
-                groupID: "g1",
-                targetIDs: ["com.example.App"],
-                metadata: [EndpointSecurityPolicyAdapter.enforcementMetadataKey: MacEnforcementMode.suspend.rawValue]
-            )
-        ])
-
-        let policy = await adapter.currentPolicy()
-        let target = try XCTUnwrap(policy.targets.first { $0.bundleIdentifier == "com.example.App" })
-        XCTAssertEqual(target.enforcementMode, .suspend)
     }
 }
