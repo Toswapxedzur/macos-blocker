@@ -540,7 +540,10 @@ public actor GroundedResearchQueue {
 
             // Transient failures are retried in place before the subject is
             // parked; permanent ones are not worth a second request.
-            var outcome: Result<GroundedResearchResult, Error>
+            // Every path through the loop assigns `outcome` before leaving it;
+            // the initial value only satisfies older compilers (Swift 5.10 cannot
+            // prove definite initialization across `while true` + `break`).
+            var outcome: Result<GroundedResearchResult, Error> = .failure(CancellationError())
             var transientRetries = 0
             while true {
                 do {

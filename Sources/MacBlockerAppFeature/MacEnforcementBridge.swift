@@ -250,7 +250,7 @@ public final class MacEnforcementBridge: ObservableObject {
         }
         tick()
         let timer = Timer.scheduledTimer(withTimeInterval: tickInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.tick()
             }
         }
@@ -292,7 +292,7 @@ public final class MacEnforcementBridge: ObservableObject {
                 if kind == .launched || kind == .terminated {
                     guard app.activationPolicy == .regular else { return }
                 }
-                Task { @MainActor in
+                Task { @MainActor [weak self] in
                     self?.pendingLifecycleEvents.append(AppLifecycleEvent(kind: kind, bundleID: bundleID))
                 }
             }

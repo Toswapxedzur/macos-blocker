@@ -22,7 +22,7 @@ final class VaultClassifierWebShell {
         self.sourceIconSchemeHandler = SourceIconSchemeHandler(cache: model.sourceIconCache)
         Task { @MainActor [weak coordinator] in
             model.onWebStateChange = { [weak coordinator] in
-                Task { @MainActor in coordinator?.sendState() }
+                Task { @MainActor [weak coordinator] in coordinator?.sendState() }
             }
         }
     }
@@ -112,7 +112,8 @@ final class VaultClassifierWebShell {
             makeScript: { [weak self] revision in
                 guard let self else { return nil }
                 let tStart = DispatchTime.now()
-                let payload = self.model.webSnapshot()
+                // The web view calls this on the main thread.
+                let payload = MainActor.assumeIsolated { self.model.webSnapshot() }
                 let tBuilt = DispatchTime.now()
                 Self.layoutLogger.recordNativeSnapshot(payload)
                 let script = VaultClassifierWebShell.stateUpdateJavaScript(
