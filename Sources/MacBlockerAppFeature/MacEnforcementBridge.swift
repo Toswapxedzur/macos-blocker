@@ -106,6 +106,8 @@ public final class MacEnforcementBridge: ObservableObject {
     // web editor to poll via drainSystemPanelEventsJSON().
     private var systemPanelEvents: [[String: String]] = []
     private var editorCloseObserver: NSObjectProtocol?
+    /// The Activity log's app-usage recorder, fed by this tick.
+    public var activityRecorder: ActivityRecorderService?
     #endif
 
     public init(webStore: BlockerWebStore = BlockerWebStore(), sweepInterval: TimeInterval = 1.0) {
@@ -348,7 +350,9 @@ public final class MacEnforcementBridge: ObservableObject {
         let view = BlockerWebStore.enforcementView(of: document)
         let groups = view.groups
         let snoozes = view.snoozes
-        let observedFrontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let frontApp = NSWorkspace.shared.frontmostApplication
+        activityRecorder?.sample(frontmost: frontApp, now: now)
+        let observedFrontmost = frontApp?.bundleIdentifier
         let frontmost = MacProcessTerminator.isBrowserBundleIdentifier(observedFrontmost) ? nil : observedFrontmost
 
         // 1. Reconcile reset windows + accrue time spent in the frontmost app.
