@@ -128,8 +128,9 @@ final class ParentalPinAndLockToolsTests: XCTestCase {
         now.addTimeInterval(60)
         XCTAssertFalse(call("end_snooze", ["id": "a"]).isError)
         let ended = (GroupStore(shared: shared).load().raw["groupSnoozes"] as? [String: Any])?["a"] as? [String: Any]
-        XCTAssertEqual(ended?["activeMsApplied"] as? Bool, true, "the ended entry is kept")
-        XCTAssertEqual(((GroupStore(shared: shared).load().raw["groupSnoozeTotalsMs"] as? [String: Any])?["a"] as? NSNumber)?.doubleValue, 60_000, "the 60 s it ran")
+        let ran = ((ended?["untilMs"] as? NSNumber)?.doubleValue ?? 0) - ((ended?["startsAtMs"] as? NSNumber)?.doubleValue ?? 0)
+        XCTAssertEqual(ran, 60_000, "the ended entry is kept, cut to the 60 s it ran")
+        XCTAssertNotEqual(ended?["activeMsApplied"] as? Bool, true, "the engine counts it once, as a snooze that ran out")
     }
 
     func testTheUnlockToolRunsTheWholeConfirmation() throws {
