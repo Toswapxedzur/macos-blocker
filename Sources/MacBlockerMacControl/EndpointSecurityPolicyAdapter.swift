@@ -7,8 +7,8 @@ import MacBlockerCore
 /// 1. **Prevent launch** — compiles a `GuardPolicy`, persists it to a
 ///    root-owned store, and pushes it to the Endpoint Security client so the
 ///    app can't `exec`.
-/// 2. **Kill if running** — sweeps running processes and SIGKILLs / suspends /
-///    terminates anything already open (covers apps started before the block).
+/// 2. **Kill if running** — sweeps running processes and SIGKILLs anything
+///    already open (covers apps started before the block).
 ///
 /// The editor uses this as its `PolicyApplying` implementation on macOS.
 public actor EndpointSecurityPolicyAdapter: PolicyApplying {
@@ -16,29 +16,22 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
 
     private let store: GuardPolicyStore
     private let client: EndpointSecurityClient?
-    private let defaultMode: MacEnforcementMode
     private let protectedBundleIdentifiers: Set<String>
     private let runTerminationSweep: Bool
 
-    /// Active blocks keyed by bundle id → chosen enforcement mode.
-    private var activeModes: [String: MacEnforcementMode] = [:]
+    /// The bundle ids blocked right now.
+    private var activeBlocked: Set<String> = []
     private var activeAllowlists: [GuardAllowlist] = []
     private var lastPolicy = GuardPolicy()
-
-    /// Metadata key a `PolicyDecision` can set to override the enforcement mode
-    /// for its targets (raw value of `MacEnforcementMode`).
-    public static let enforcementMetadataKey = "macEnforcement"
 
     public init(
         store: GuardPolicyStore = GuardPolicyStore(),
         client: EndpointSecurityClient? = nil,
-        defaultMode: MacEnforcementMode = .forceTerminate,
         protectedBundleIdentifiers: Set<String> = [],
         runTerminationSweep: Bool = true
     ) {
         self.store = store
         self.client = client
-        self.defaultMode = defaultMode
         // Vault never enforces against itself: matters once an allowlist group
         // blocks "everything except" (a blocklist only names other apps).
         var protected = protectedBundleIdentifiers.union(MacProcessTerminator.browserBundleIdentifiers)
@@ -51,14 +44,12 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
         for decision in decisions {
             switch decision.action {
             case .shield:
-                let mode = Self.mode(from: decision, default: defaultMode)
-                for id in decision.targetIDs {
-                    guard !MacProcessTerminator.isBrowserBundleIdentifier(id) else { continue }
-                    activeModes[id] = mode
+                for id in decision.targetIDs where !MacProcessTerminator.isBrowserBundleIdentifier(id) {
+                    activeBlocked.insert(id)
                 }
             case .allow, .unshield:
                 for id in decision.targetIDs {
-                    activeModes.removeValue(forKey: id)
+                    activeBlocked.remove(id)
                 }
             case .showStatus, .requestSnooze, .log, .quarantine:
                 continue
@@ -92,34 +83,15 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
         usage: UsageSnapshot,
         now: Date = Date(),
         calendar: Calendar = .current,
-        mode: MacEnforcementMode? = nil,
         customBlockedBundleIDs: Set<String> = []
     ) async throws {
-        let resolved = mode ?? defaultMode
-        var modes = Self.blockedApplicationModes(
-            groups: groups,
-            usage: usage,
-            now: now,
-            calendar: calendar,
-            mode: resolved
-        )
-
-        // Merge in bundle IDs shielded by custom-rule decisions.
-        for bundleID in customBlockedBundleIDs {
-            guard !MacProcessTerminator.isBrowserBundleIdentifier(bundleID) else { continue }
-            modes[bundleID] = resolved
-        }
-
-        let allowlists = Self.applicationAllowlists(
-            groups: groups,
-            usage: usage,
-            now: now,
-            calendar: calendar,
-            mode: resolved
-        )
+        // Plus the bundle ids custom-rule decisions block.
+        let blocked = Self.blockedApplications(groups: groups, usage: usage, now: now, calendar: calendar)
+            .union(customBlockedBundleIDs.filter { !MacProcessTerminator.isBrowserBundleIdentifier($0) })
+        let allowlists = Self.applicationAllowlists(groups: groups, usage: usage, now: now, calendar: calendar)
 
         // Unchanged set → no rebuild/inventory scan; just keep enforcing.
-        if modes == activeModes && allowlists == activeAllowlists {
+        if blocked == activeBlocked && allowlists == activeAllowlists {
             #if os(macOS)
             if runTerminationSweep {
                 MacProcessTerminator.enforce(policy: lastPolicy)
@@ -128,7 +100,7 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
             return
         }
 
-        activeModes = modes
+        activeBlocked = blocked
         activeAllowlists = allowlists
         let policy = buildPolicy()
         lastPolicy = policy
@@ -142,9 +114,6 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
         #endif
     }
 
-    /// Pure decision: the "block every application except these" groups that
-    /// block right now, each with its allowed set. Same activity rules as
-    /// `blockedApplicationModes`. Exposed for testing.
     /// Whether `bundleID` is blocked right now by these groups: the same
     /// decision the guard policy is built from, protections included (Apple,
     /// browsers, Vault). The bridge uses it to stop counting time in an app
@@ -159,18 +128,23 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
     ) -> Bool {
         var protected = MacProcessTerminator.browserBundleIdentifiers
         if let own = Bundle.main.bundleIdentifier { protected.insert(own) }
-        let modes = blockedApplicationModes(groups: groups, usage: usage, now: now, calendar: calendar, mode: .forceTerminate)
-        let lists = applicationAllowlists(groups: groups, usage: usage, now: now, calendar: calendar, mode: .forceTerminate)
-        let policy = GuardPolicy(targets: buildTargets(from: modes), protectedBundleIdentifiers: protected, allowOnly: lists)
+        let blocked = blockedApplications(groups: groups, usage: usage, now: now, calendar: calendar)
+        let lists = applicationAllowlists(groups: groups, usage: usage, now: now, calendar: calendar)
+        // Runs every second: a bundle-id match needs no installed-app scan or
+        // code-signing read (those only harden the kill sweep's policy).
+        let targets = blocked.map { GuardTarget(bundleIdentifier: $0, bundleIdentifierPrefixes: ["\($0)."]) }
+        let policy = GuardPolicy(targets: targets, protectedBundleIdentifiers: protected, allowOnly: lists)
         return policy.match(bundleIdentifier: bundleID) != nil
     }
 
+    /// Pure decision: the "block every application except these" groups that
+    /// block right now, each with its allowed set. Same activity rules as
+    /// `blockedApplications`. Exposed for testing.
     static func applicationAllowlists(
         groups: [BlockGroup],
         usage: UsageSnapshot,
         now: Date,
-        calendar: Calendar = .current,
-        mode: MacEnforcementMode
+        calendar: Calendar = .current
     ) -> [GuardAllowlist] {
         var lists: [GuardAllowlist] = []
         for group in groups where group.enabled && group.applicationAllowlist {
@@ -187,23 +161,22 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
             }
             guard shouldBlock else { continue }
             let allowed = Set(group.targets.filter { $0.kind == .application }.map(\.id))
-            lists.append(GuardAllowlist(allowedBundleIdentifiers: allowed, enforcementMode: mode, displayName: group.name))
+            lists.append(GuardAllowlist(allowedBundleIdentifiers: allowed, displayName: group.name))
         }
         return lists.sorted { $0.displayName < $1.displayName }
     }
 
-    /// Pure decision: which application bundle ids should be blocked *right now*,
-    /// and with what mode. Mirrors `PolicyEvaluator`'s shield logic but collects
-    /// application targets across all groups (the kill sweep then acts on the
-    /// running ones). Exposed for testing.
-    static func blockedApplicationModes(
+    /// Pure decision: which application bundle ids are blocked *right now*.
+    /// Mirrors `PolicyEvaluator`'s shield logic but collects application
+    /// targets across all groups (the kill sweep then acts on the running
+    /// ones). Exposed for testing.
+    static func blockedApplications(
         groups: [BlockGroup],
         usage: UsageSnapshot,
         now: Date,
-        calendar: Calendar = .current,
-        mode: MacEnforcementMode
-    ) -> [String: MacEnforcementMode] {
-        var modes: [String: MacEnforcementMode] = [:]
+        calendar: Calendar = .current
+    ) -> Set<String> {
+        var blocked: Set<String> = []
         // An "everything except" group's apps are the ALLOWED ones; that group
         // blocks through `applicationAllowlists`, never through its list.
         for group in groups where group.enabled && !group.applicationAllowlist {
@@ -224,10 +197,10 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
 
             for target in group.targets where target.kind == .application {
                 guard !MacProcessTerminator.isBrowserBundleIdentifier(target.id) else { continue }
-                modes[target.id] = mode
+                blocked.insert(target.id)
             }
         }
-        return modes
+        return blocked
     }
 
     public func currentPolicy() -> GuardPolicy {
@@ -248,22 +221,14 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
     }
 
     public func currentBlockedBundleIdentifiers() -> Set<String> {
-        Set(activeModes.keys)
-    }
-
-    private static func mode(from decision: PolicyDecision, default fallback: MacEnforcementMode) -> MacEnforcementMode {
-        if let raw = decision.metadata[enforcementMetadataKey],
-           let mode = MacEnforcementMode(rawValue: raw) {
-            return mode
-        }
-        return fallback
+        activeBlocked
     }
 
     private func buildPolicy() -> GuardPolicy {
         GuardPolicy(
             version: 1,
             generatedAt: Date(),
-            targets: Self.buildTargets(from: activeModes),
+            targets: Self.buildTargets(from: activeBlocked),
             protectedBundleIdentifiers: protectedBundleIdentifiers,
             allowOnly: activeAllowlists
         )
@@ -272,7 +237,7 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
     /// Resolves each blocked bundle id into a richly-keyed `GuardTarget`
     /// (path + code-signing identity + helper-prefix) so it can't be dodged by
     /// renaming/moving the app. On non-macOS only the bundle id is used.
-    static func buildTargets(from modes: [String: MacEnforcementMode]) -> [GuardTarget] {
+    static func buildTargets(from blocked: Set<String>) -> [GuardTarget] {
         #if os(macOS)
         let inventory = MacApplicationInventory.installedApplications()
         let byBundleID = Dictionary(
@@ -281,9 +246,9 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
         )
         #endif
 
-        return modes
-            .filter { !MacProcessTerminator.isBrowserBundleIdentifier($0.key) }
-            .map { bundleID, mode in
+        return blocked
+            .filter { !MacProcessTerminator.isBrowserBundleIdentifier($0) }
+            .map { bundleID in
             #if os(macOS)
             if let app = byBundleID[bundleID] {
                 let signing = MacCodeSigning.info(forItemAt: app.path)
@@ -293,7 +258,6 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
                     teamIdentifier: signing?.teamIdentifier,
                     signingIdentifier: signing?.signingIdentifier,
                     executablePaths: app.path.isEmpty ? [] : [app.path],
-                    enforcementMode: mode,
                     displayName: app.name
                 )
             }
@@ -301,7 +265,6 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
             return GuardTarget(
                 bundleIdentifier: bundleID,
                 bundleIdentifierPrefixes: ["\(bundleID)."],
-                enforcementMode: mode,
                 displayName: bundleID
             )
             }

@@ -40,6 +40,7 @@ public final class MacEnforcementBridge: ObservableObject {
     public static let shared: MacEnforcementBridge = {
         let bridge = MacEnforcementBridge()
         bridge.webStore.sharedOverlay = { ConnectionHub.shared.overlayShared(onto: $0) }
+        GroupStore.sharedOverlay = { ConnectionHub.shared.overlayShared(onto: $0) }
         return bridge
     }()
 
@@ -88,9 +89,14 @@ public final class MacEnforcementBridge: ObservableObject {
     // extension. There is no browser tab reader, focus observer, or dynamic
     // site blocklist here on purpose (see the boundary note above the class).
     private var blockedAppBundleIDsByGroup: [String: Set<String>] = [:]
-    private var blockedAppBundleIDs: Set<String> {
-        blockedAppBundleIDsByGroup.values.reduce(into: Set<String>()) { union, groupIDs in
-            union.formUnion(groupIDs)
+    /// The apps a custom rule blocked, for the groups enforcing right now: a
+    /// snoozed, disabled or off-schedule group blocks nothing, rule or not.
+    private func ruleBlockedApps(groups: [BlockGroup], snoozes: [String: SnoozeState], now: Date) -> Set<String> {
+        groups.reduce(into: Set<String>()) { union, group in
+            guard group.enabled, group.isActive(at: now),
+                  snoozes[group.id]?.phase(at: now) != .active,
+                  let apps = blockedAppBundleIDsByGroup[group.id] else { return }
+            union.formUnion(apps)
         }
     }
 
@@ -102,6 +108,7 @@ public final class MacEnforcementBridge: ObservableObject {
     // System overlay panel events (e.g. parental PIN entry) buffered for the
     // web editor to poll via drainSystemPanelEventsJSON().
     private var systemPanelEvents: [[String: String]] = []
+    private var editorCloseObserver: NSObjectProtocol?
     #endif
 
     public init(webStore: BlockerWebStore = BlockerWebStore(), sweepInterval: TimeInterval = 1.0) {
@@ -218,6 +225,18 @@ public final class MacEnforcementBridge: ObservableObject {
         lastSampleAt = Date()
         lastFrontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         registerWorkspaceObservers()
+        // The editor's parental PIN entry floats above everything; it belongs
+        // to the editor window and closes with it (nobody would answer it).
+        editorCloseObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let window = note.object as? NSWindow, !(window is NSPanel),
+                  window.styleMask.contains(.titled) else { return }
+            MainActor.assumeIsolated {
+                self?.panelOverlay.dismissSystemPanel(id: "")
+                self?.systemPanelEvents.removeAll()
+            }
+        }
         panelOverlay.setEventHandler { [weak self] groupID, panelId, controlId, eventName, value, extra in
             guard let self else { return }
             var data: [String: String] = [
@@ -230,7 +249,9 @@ public final class MacEnforcementBridge: ObservableObject {
             // System panels are driven by the web editor (parental PIN entry),
             // not a custom rule: buffer their events for the editor to poll.
             if groupID == PanelOverlayPanelController.systemGroupID {
+                // Bounded: with the editor closed nobody drains them.
                 self.systemPanelEvents.append(data)
+                if self.systemPanelEvents.count > 64 { self.systemPanelEvents.removeFirst(self.systemPanelEvents.count - 64) }
                 return
             }
             if eventName == "click" {
@@ -267,6 +288,8 @@ public final class MacEnforcementBridge: ObservableObject {
         toastOverlay.teardown()
         panelOverlay.teardown()
         unregisterWorkspaceObservers()
+        if let editorCloseObserver { NotificationCenter.default.removeObserver(editorCloseObserver) }
+        editorCloseObserver = nil
         #endif
     }
 
@@ -336,8 +359,9 @@ public final class MacEnforcementBridge: ObservableObject {
         }
         // A blocked app still in front (shielded or suspended) is not time in
         // that app: no group counts it, as a covered browser page counts none.
+        let ruleBlocked = ruleBlockedApps(groups: groups, snoozes: snoozes, now: now)
         let frontBlocked = frontmost.map { app in
-            blockedAppBundleIDs.contains(app) || EndpointSecurityPolicyAdapter.blocksApplication(
+            ruleBlocked.contains(app) || EndpointSecurityPolicyAdapter.blocksApplication(
                 app,
                 groups: groups,
                 usage: UsageSnapshot(
@@ -353,13 +377,6 @@ public final class MacEnforcementBridge: ObservableObject {
             snoozesByGroup: snoozes
         )
 
-        // Enforce persistent app blocklist: kill any blocked app that's running.
-        if !blockedAppBundleIDs.isEmpty, let fm = frontmost, blockedAppBundleIDs.contains(fm) {
-            MacProcessTerminator.terminate(bundleIdentifier: fm)
-            appendLog(level: "log", group: "system",
-                      message: "Killed blocked app: \(fm)")
-        }
-
         // 2. Drain notification-driven lifecycle events.
         let lifecycleEvents = pendingLifecycleEvents
         pendingLifecycleEvents.removeAll()
@@ -374,7 +391,8 @@ public final class MacEnforcementBridge: ObservableObject {
 
         // 4. Enforce: block apps whose group says "blocked now" PLUS
         //    any apps shield-ed by custom-rule decisions.
-        Task { [adapter, ruleBlocked = dispatchOutput.shieldedBundleIDs] in
+        //    (a rule's persistent blockApp list rides along: one kill sweep).
+        Task { [adapter, ruleBlocked = dispatchOutput.shieldedBundleIDs.union(ruleBlocked)] in
             try? await adapter.applyGroups(
                 groups, usage: usage, now: now,
                 customBlockedBundleIDs: ruleBlocked
@@ -837,7 +855,7 @@ public final class MacEnforcementBridge: ObservableObject {
                 if let target = intent.target, !target.isEmpty,
                    !MacProcessTerminator.isBrowserBundleIdentifier(target) {
                     blockedAppBundleIDsByGroup[groupID, default: []].insert(target)
-                    MacProcessTerminator.terminate(bundleIdentifier: target)
+                    MacProcessTerminator.forceKill(bundleIdentifier: target)
                     appendLog(level: "log", group: "system",
                               message: "App blocked: \(target)")
                 }
