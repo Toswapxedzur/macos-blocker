@@ -33,6 +33,17 @@ final class LinkedBudgetChangeTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(shared.resetAtMs, before, "the new period starts now")
     }
 
+    func testARestartedMidnightBudgetStartsOnTheGrid() throws {
+        let hub = linkedHub()
+        hub.applySync(program: "macapp", groupName: "Focus",
+                      contribution: ["scalars": ["mode": "after-minutes", "allowedMinutes": 30, "resetIntervalHours": 24.0,
+                                                 "resetAtMidnight": true, "rollingLimit": false]],
+                      ts: 2)
+        let anchor = try XCTUnwrap(hub.sharedUsage(groupName: "Focus")).resetAtMs
+        let midnight = Calendar.current.startOfDay(for: Date()).timeIntervalSince1970 * 1000
+        XCTAssertEqual(anchor, midnight, "the period every program computes starts at midnight, not at the edit")
+    }
+
     func testChangingOnlyTheAllowanceKeepsTheSpentTime() throws {
         let hub = linkedHub()
         hub.applySync(program: "macapp", groupName: "Focus",
