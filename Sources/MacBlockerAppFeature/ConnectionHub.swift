@@ -93,7 +93,7 @@ final class ConnectionHub: ObservableObject {
     private var budgetTimer: DispatchSourceTimer?
     /// The registry last written (skips identical writes from the budget timer).
     private var lastPersistedClusters: Data?
-    private var wantsBrokerConnection = false
+    private var wantsToListen = false
     // Internal (not private) so tests can stand in for a hosting hub.
     var hostingLocalHub = false
     static func helloRejectionReason(_ obj: [String: Any], challenge: String, secret: Data?) -> String? {
@@ -250,19 +250,14 @@ final class ConnectionHub: ObservableObject {
         let id: String
         let groupName: String
         var members: Set<String> = []
-        /// Live peer presence comes from the broker snapshot. It is deliberately
-        /// not inferred from a local listener because Mac Vault is only a
-        /// broker client now.
         /// Per-program local group id: the specific group *instance* that program
         /// linked. Membership is pinned to this id so deleting a group and later
         /// re-creating one with the same name does NOT silently re-join the old
-        /// cluster (the new group carries a fresh id). Empty for clusters formed
-        /// before id pinning; those fall back to name+type matching and are
-        /// backfilled from the roster on the next announce.
+        /// cluster (the new group carries a fresh id).
         var memberGroupIds: [String: String] = [:]
-        /// Per-program contribution: { scalars: {...}, scopes: [...] } — the
-        /// member's whole group definition (policy + every entry's lines).
-        var contributions: [String: [String: Any]] = [:]
+        /// The members that have contributed their definition: a member's FIRST
+        /// contribution unions its lines into the shared ones.
+        var contributed: Set<String> = []
         // Hub-authoritative shared state: the one group definition every
         // member adopts. Scalars and scopes are latest-edit-wins (see applySync).
         var sharedScalars: [String: Any] = [:]
@@ -313,13 +308,13 @@ final class ConnectionHub: ObservableObject {
     // MARK: Lifecycle
 
     func start() {
-        guard !wantsBrokerConnection else { return }
-        wantsBrokerConnection = true
+        guard !wantsToListen else { return }
+        wantsToListen = true
         startLocalHub()
     }
 
     func stop() {
-        wantsBrokerConnection = false
+        wantsToListen = false
         lock.lock()
         if hostingLocalHub { persistClustersLocked() }
         lock.unlock()
@@ -344,7 +339,7 @@ final class ConnectionHub: ObservableObject {
     /// Mac Vault runs (the app refuses a second copy at launch); if the port is
     /// still held — a quitting copy — the listen is simply tried again.
     private func startLocalHub() {
-        guard wantsBrokerConnection, listener == nil else { return }
+        guard wantsToListen, listener == nil else { return }
         let parameters = NWParameters.tcp
         parameters.defaultProtocolStack.applicationProtocols.insert(NWProtocolWebSocket.Options(), at: 0)
         guard let port = NWEndpoint.Port(rawValue: VaultRuntimeEnvironment.current.hubPort),
@@ -379,7 +374,7 @@ final class ConnectionHub: ObservableObject {
     }
 
     private func retryListenLater() {
-        guard wantsBrokerConnection else { return }
+        guard wantsToListen else { return }
         reconnectWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.startLocalHub() }
         reconnectWorkItem = work
@@ -1072,7 +1067,7 @@ final class ConnectionHub: ObservableObject {
             if stillPresent { continue }
             cluster.members.remove(program)
             cluster.memberGroupIds.removeValue(forKey: program)
-            cluster.contributions.removeValue(forKey: program)
+            cluster.contributed.remove(program)
             if cluster.members.count < 2 {
                 clusters.removeValue(forKey: cluster.id)
                 cluster.members.removeAll()
@@ -1184,13 +1179,11 @@ final class ConnectionHub: ObservableObject {
         let scopesPayload = contribution["scopes"] as? [[String: Any]]
         let carriesConfig = scalarsPayload != nil || scopesPayload != nil
         if carriesConfig {
-            let firstContribution = cluster.contributions[program] == nil
+            let firstContribution = !cluster.contributed.contains(program)
             let priority = (contribution["priority"] as? Bool) ?? false
             let wins = priority || ts >= cluster.sharedTs
             let budgetBefore = Self.budgetShape(cluster.sharedScalars)
-            var stored: [String: Any] = ["scalars": scalarsPayload ?? [:]]
-            if let scopes = scopesPayload { stored["scopes"] = scopes }
-            cluster.contributions[program] = stored
+            cluster.contributed.insert(program)
 
             // Scalars: last writer wins, except the link initiator forces its
             // settings to win the first merge (priority flag).
@@ -1402,7 +1395,7 @@ final class ConnectionHub: ObservableObject {
             let previous = localDefinitionSeen[groupID]
             if previous == key { continue }
             localDefinitionSeen[groupID] = key
-            let joined = cluster.contributions[Self.localProgram] != nil
+            let joined = cluster.contributed.contains(Self.localProgram)
             var ts: Double
             if !joined {
                 ts = 0 // joining: its lines are unioned; its settings never beat a newer edit
@@ -1613,7 +1606,7 @@ final class ConnectionHub: ObservableObject {
                 "groupName": c.groupName,
                 "members": Array(c.members),
                 "memberGroupIds": c.memberGroupIds,
-                "contributions": c.contributions,
+                "contributed": Array(c.contributed),
                 "sharedScalars": c.sharedScalars,
                 "sharedScopes": c.sharedScopes,
                 "sharedLock": c.sharedLock,
@@ -1649,9 +1642,9 @@ final class ConnectionHub: ObservableObject {
             let cluster = ClusterState(id: id, groupName: groupName)
             if let members = obj["members"] as? [String] { cluster.members = Set(members) }
             if let ids = obj["memberGroupIds"] as? [String: String] { cluster.memberGroupIds = ids }
-            if let contributions = obj["contributions"] as? [String: [String: Any]] {
-                cluster.contributions = contributions
-            }
+            // (Registries before 2026-09-26 kept each whole contribution.)
+            cluster.contributed = Set(obj["contributed"] as? [String]
+                ?? ((obj["contributions"] as? [String: Any]).map { Array($0.keys) } ?? []))
             if let scalars = obj["sharedScalars"] as? [String: Any] { cluster.sharedScalars = scalars }
             if let scopes = obj["sharedScopes"] as? [[String: Any]] { cluster.sharedScopes = scopes }
             if let lock = obj["sharedLock"] as? [String: Any] { cluster.sharedLock = lock }

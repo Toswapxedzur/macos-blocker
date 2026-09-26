@@ -446,9 +446,8 @@ public final class MacEnforcementBridge: ObservableObject {
 
     // MARK: - Event Dispatch
 
-    /// Builds events and dispatches them for all enabled groups. Groups with
-    /// `customRuleSource` get dispatched to the JS runtime; all groups get
-    /// their events logged regardless.
+    /// Builds events and dispatches them to the JS runtime for the enabled
+    /// groups whose custom rule is loaded, logging each.
     private struct DispatchOutput {
         var shieldedBundleIDs: Set<String>
         var customTimers: [CustomTimerSnapshot]
@@ -482,8 +481,9 @@ public final class MacEnforcementBridge: ObservableObject {
         var hudLogs: [(message: String, level: String)] = []
         var collectedPanels: [PanelSnapshot] = []
 
-        for group in enabledGroups {
-            guard group.isEnforcing(snoozes: usage.snoozesByGroup, at: now) else { continue }
+        // Only groups with a loaded rule get events: nothing else listens.
+        for group in ruleGroups where loadedRuleSources[group.id] != nil {
+            guard group.isEnforcing(snoozes: usage.snoozesByGroup, at: now), let runtime = ruleRuntime else { continue }
 
             let events = buildEventsForGroup(
                 group: group, frontmost: frontmost, now: now,
@@ -495,11 +495,6 @@ public final class MacEnforcementBridge: ObservableObject {
                     appendLog(level: "log", group: group.name,
                               message: "event fired: \(event.type) | target: \(event.target?.displayName ?? "none") | app: \(event.data["appId"] ?? event.data["bundleId"] ?? "—") | url: \(event.url.isEmpty ? "—" : event.url)")
                 }
-
-                // Only dispatch to runtime if this group has a custom rule loaded.
-                guard !group.customRuleSource.isEmpty,
-                      loadedRuleSources[group.id] != nil,
-                      let runtime = ruleRuntime else { continue }
 
                 let result: DispatchResult
                 do {
@@ -639,7 +634,7 @@ public final class MacEnforcementBridge: ObservableObject {
         enrichedData["appName"] = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
         enrichedData["isBrowser"] = "false"
         enrichedData["groupName"] = group.name
-        enrichedData["allApps"] = Self.runningAppsJSON()
+        enrichedData["allApps"] = runningAppsJSON()
         return CustomRuleEvent(
             type: type, groupID: group.id,
             target: matchingTarget, now: Date(),
@@ -763,16 +758,6 @@ public final class MacEnforcementBridge: ObservableObject {
         // linger on screen until the next tick (or forever if no other
         // group triggers a panel refresh).
         panelOverlay.removePanels(forGroup: groupID)
-        #endif
-    }
-
-    /// Remove all log entries and overlay state associated with a group.
-    public func purgeGroup(groupID: String) {
-        #if os(macOS)
-        let groupName = webStore.importedGroups().first(where: { $0.id == groupID })?.name
-        cleanRule(groupID: groupID)
-        let names = Set([groupID] + (groupName.map { [$0] } ?? []))
-        ruleLog.removeAll { names.contains($0.group) }
         #endif
     }
 
@@ -1091,7 +1076,16 @@ public final class MacEnforcementBridge: ObservableObject {
         return timers
     }
 
-    private static func runningAppsJSON() -> String {
+    /// The running apps, listed once per tick (every event in it shares the list).
+    private var runningAppsCache: (at: Date, json: String)?
+    private func runningAppsJSON() -> String {
+        if let cache = runningAppsCache, abs(cache.at.timeIntervalSinceNow) < 0.5 { return cache.json }
+        let json = Self.listRunningApps()
+        runningAppsCache = (Date(), json)
+        return json
+    }
+
+    private static func listRunningApps() -> String {
         let apps = NSWorkspace.shared.runningApplications
             .filter { $0.activationPolicy == .regular }
             .compactMap { app -> [String: Any]? in

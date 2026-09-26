@@ -41,20 +41,14 @@ public enum SnoozePhase: String, Codable, Sendable {
 
 public struct UsageSnapshot: Codable, Equatable, Sendable {
     public var usageByGroupSeconds: [String: TimeInterval]
-    public var resetAtByGroup: [String: Date]
     public var snoozesByGroup: [String: SnoozeState]
-    public var totalSnoozedSecondsByGroup: [String: TimeInterval]
 
     public init(
         usageByGroupSeconds: [String: TimeInterval] = [:],
-        resetAtByGroup: [String: Date] = [:],
-        snoozesByGroup: [String: SnoozeState] = [:],
-        totalSnoozedSecondsByGroup: [String: TimeInterval] = [:]
+        snoozesByGroup: [String: SnoozeState] = [:]
     ) {
         self.usageByGroupSeconds = usageByGroupSeconds
-        self.resetAtByGroup = resetAtByGroup
         self.snoozesByGroup = snoozesByGroup
-        self.totalSnoozedSecondsByGroup = totalSnoozedSecondsByGroup
     }
 }
 
