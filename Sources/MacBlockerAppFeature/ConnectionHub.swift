@@ -100,7 +100,8 @@ final class ConnectionHub: ObservableObject {
     /// even when no member is reporting usage (the hub owns the period).
     private var budgetTimer: DispatchSourceTimer?
     private var wantsBrokerConnection = false
-    private var hostingLocalHub = false
+    // Internal (not private) so tests can stand in for a hosting hub.
+    var hostingLocalHub = false
     private var lastBridgeAnnouncement: [String: Any]?
     static func helloRejectionReason(_ obj: [String: Any], challenge: String, secret: Data?) -> String? {
         let version = (obj["v"] as? NSNumber)?.intValue
@@ -1457,6 +1458,72 @@ final class ConnectionHub: ObservableObject {
             copy["id"] = "\(surface)-\(counters[surface]!)"
             return copy
         }
+    }
+
+    /// Mirror of group-scopes.js `SYNC_SCALAR_FIELDS` (a test keeps the two equal):
+    /// the policy settings a linked group shares.
+    static let syncScalarFields = [
+        "mode", "allowedMinutes", "resetIntervalHours", "resetAtMidnight", "rollingLimit",
+        "allowSnooze", "snoozeMinutes", "snoozeActivationDelayMinutes", "snoozeCooldownMinutes", "snoozeConfirmations",
+        "activeDays", "timeWindowsText",
+        "freezeMode", "freezeModeChoice", "strictFreezeHours", "frozenAtMs", "freezeChangedAtMs",
+        "parentalPasswordHash", "parentalPasswordSalt",
+        "fallbackUrl", "pauseSeconds",
+    ]
+
+    /// Mac group id -> the stored definition last seen (canonical JSON).
+    private var localDefinitionSeen: [String: String] = [:]
+
+    /// Mac Vault is a member of its links whether or not its editor window is
+    /// open. Joining a link, it contributes its stored definition (merged like
+    /// any first contribution, so its Apps entry joins the shared lines).
+    /// Afterwards it sends a change only when the stored group actually changed
+    /// on the Mac — the editor, quick add, an AI tool — and differs from the
+    /// shared definition; a copy that merely lags behind another device's newer
+    /// edit is never sent over it.
+    func contributeLocalDefinitions(document: [String: Any], nowMs: Double) {
+        let groups = document["blockedGroups"] as? [[String: Any]] ?? []
+        guard !groups.isEmpty else { return }
+        var frames: [[String: Any]] = []
+        lock.lock()
+        for cluster in clusters.values where cluster.members.contains(Self.localProgram) {
+            let pinned = cluster.memberGroupIds[Self.localProgram] ?? ""
+            guard let group = groups.first(where: { group in
+                pinned.isEmpty ? (group["name"] as? String) == cluster.groupName : (group["id"] as? String) == pinned
+            }), let groupID = group["id"] as? String else { continue }
+            var scalars: [String: Any] = [:]
+            for field in Self.syncScalarFields where group[field] != nil { scalars[field] = group[field] }
+            let scopes = group["scopes"] as? [[String: Any]] ?? []
+            let key = Self.canonicalJSON(["scalars": scalars, "scopes": scopes])
+            let previous = localDefinitionSeen[groupID]
+            if previous == key { continue }
+            localDefinitionSeen[groupID] = key
+            let joined = cluster.contributions[Self.localProgram] != nil
+            var ts: Double
+            if !joined {
+                ts = 0 // joining: its lines are unioned; its settings never beat a newer edit
+            } else if previous == nil {
+                continue // first sight in this process of an already-contributed group: not an edit
+            } else if Self.canonicalJSON(Self.syncScalarFields.reduce(into: [String: Any]()) { $0[$1] = cluster.sharedScalars[$1] })
+                        == Self.canonicalJSON(Self.syncScalarFields.reduce(into: [String: Any]()) { $0[$1] = scalars[$1] })
+                        && Self.canonicalJSON(cluster.sharedScopes) == Self.canonicalJSON(scopes) {
+                continue // the file caught up with the shared definition (adopted), not an edit
+            } else {
+                ts = nowMs
+            }
+            var frame: [String: Any] = ["kind": "group-sync", "program": Self.localProgram, "groupName": cluster.groupName, "ts": ts,
+                                        "scalars": scalars]
+            if !scopes.isEmpty { frame["scopes"] = scopes }
+            frames.append(frame)
+        }
+        lock.unlock()
+        for frame in frames { submitBridgeFrame(frame) }
+    }
+
+    static func canonicalJSON(_ value: Any) -> String {
+        guard JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) else { return "" }
+        return String(data: data, encoding: .utf8) ?? ""
     }
 
     /// The stored document with each linked group's live shared definition
