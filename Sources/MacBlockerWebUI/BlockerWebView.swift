@@ -386,8 +386,8 @@ public struct BlockerWebView: _CBViewRepresentable {
 
             switch kind {
             case "persist-store":
-                if let rawStore = body["store"] {
-                    store.save(rawStore: rawStore)
+                if let changes = body["changes"] as? [String: Any] {
+                    store.merge(changes: changes)
                     onStorePersisted?()
                 }
             case "run-custom-group":
