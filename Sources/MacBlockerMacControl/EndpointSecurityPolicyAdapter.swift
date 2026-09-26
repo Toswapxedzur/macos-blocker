@@ -1,21 +1,14 @@
 import Foundation
 import MacBlockerCore
 
-/// The macOS "maximum security" policy applier. It combines every blocking
-/// layer for each shielded target:
-///
-/// 1. **Prevent launch** — compiles a `GuardPolicy`, persists it to a
-///    root-owned store, and pushes it to the Endpoint Security client so the
-///    app can't `exec`.
-/// 2. **Kill if running** — sweeps running processes and SIGKILLs anything
-///    already open (covers apps started before the block).
+/// The macOS app-blocking policy applier: compiles the user's groups into a
+/// `GuardPolicy` and force-quits every running app it blocks — at the block's
+/// start and on every relaunch (the engine repeats the sweep each second).
 ///
 /// The editor uses this as its `PolicyApplying` implementation on macOS.
 public actor EndpointSecurityPolicyAdapter: PolicyApplying {
     public let capabilities: PlatformCapabilities = .macOS
 
-    private let store: GuardPolicyStore
-    private let client: EndpointSecurityClient?
     private let protectedBundleIdentifiers: Set<String>
     private let runTerminationSweep: Bool
 
@@ -25,13 +18,9 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
     private var lastPolicy = GuardPolicy()
 
     public init(
-        store: GuardPolicyStore = GuardPolicyStore(),
-        client: EndpointSecurityClient? = nil,
         protectedBundleIdentifiers: Set<String> = [],
         runTerminationSweep: Bool = true
     ) {
-        self.store = store
-        self.client = client
         // Vault never enforces against itself: matters once an allowlist group
         // blocks "everything except" (a blocklist only names other apps).
         var protected = protectedBundleIdentifiers.union(MacProcessTerminator.browserBundleIdentifiers)
@@ -58,8 +47,6 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
 
         let policy = buildPolicy()
         lastPolicy = policy
-        try store.save(policy)
-        client?.update(policy: policy)
 
         #if os(macOS)
         if runTerminationSweep {
@@ -104,8 +91,6 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
         activeAllowlists = allowlists
         let policy = buildPolicy()
         lastPolicy = policy
-        try store.save(policy)
-        client?.update(policy: policy)
 
         #if os(macOS)
         if runTerminationSweep {
@@ -205,19 +190,6 @@ public actor EndpointSecurityPolicyAdapter: PolicyApplying {
 
     public func currentPolicy() -> GuardPolicy {
         lastPolicy
-    }
-
-    /// Re-runs the kill/suspend sweep against the *current* policy without
-    /// recompiling it (cheap — no inventory/code-signing scan). Used on a timer
-    /// to catch blocked apps that were (re)launched, standing in for the
-    /// Endpoint Security launch-prevention when that entitlement isn't present.
-    @discardableResult
-    public func sweep() -> [TerminationAction] {
-        #if os(macOS)
-        return MacProcessTerminator.enforce(policy: lastPolicy)
-        #else
-        return []
-        #endif
     }
 
     public func currentBlockedBundleIdentifiers() -> Set<String> {
