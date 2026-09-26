@@ -39,7 +39,6 @@ public final class MacEnforcementBridge: ObservableObject {
     /// It reads linked groups through the hub's live shared state.
     public static let shared: MacEnforcementBridge = {
         let bridge = MacEnforcementBridge()
-        bridge.webStore.sharedOverlay = { ConnectionHub.shared.overlayShared(onto: $0) }
         GroupStore.sharedOverlay = { ConnectionHub.shared.overlayShared(onto: $0) }
         return bridge
     }()
@@ -146,7 +145,7 @@ public final class MacEnforcementBridge: ObservableObject {
     /// taps snooze in the shield/UI.
     public func fireSnoozePress(groupID: String) {
         #if os(macOS)
-        let groups = webStore.importedGroups()?.groups ?? []
+        let groups = webStore.importedGroups()
         guard let group = groups.first(where: { $0.id == groupID }) else { return }
         let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         let event = makeEvent(type: "snoozePress", group: group, frontmost: frontmost,
@@ -159,7 +158,7 @@ public final class MacEnforcementBridge: ObservableObject {
     /// sends an interaction (button click, input change, etc).
     public func firePanelEvent(groupID: String, data: [String: String]) {
         #if os(macOS)
-        let groups = webStore.importedGroups()?.groups ?? []
+        let groups = webStore.importedGroups()
         guard let group = groups.first(where: { $0.id == groupID }) else { return }
         let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         let event = makeEvent(type: "panelEvent", group: group, frontmost: frontmost, data: data)
@@ -203,7 +202,7 @@ public final class MacEnforcementBridge: ObservableObject {
     /// operation initiated by a custom rule completes.
     public func fireLocalFileEvent(groupID: String, data: [String: String]) {
         #if os(macOS)
-        let groups = webStore.importedGroups()?.groups ?? []
+        let groups = webStore.importedGroups()
         guard let group = groups.first(where: { $0.id == groupID }) else { return }
         let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         let event = makeEvent(type: "localFileEvent", group: group, frontmost: frontmost, data: data)
@@ -341,21 +340,20 @@ public final class MacEnforcementBridge: ObservableObject {
         lastPanelFireAt.removeAll()
 
         let now = Date()
-        let importResult = webStore.importedGroups()
-        let groups = importResult?.groups ?? []
+        let nowMs = now.timeIntervalSince1970 * 1000
+        // The tick's one read of the store.
+        let document = webStore.loadForTick(nowMs: nowMs)
+        // Mac Vault takes part in its links itself, editor window or not.
+        ConnectionHub.shared.contributeLocalDefinitions(document: document, nowMs: nowMs)
+        let view = BlockerWebStore.enforcementView(of: document)
+        let groups = view.groups
+        let snoozes = view.snoozes
         let observedFrontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         let frontmost = MacProcessTerminator.isBrowserBundleIdentifier(observedFrontmost) ? nil : observedFrontmost
 
         // 1. Reconcile reset windows + accrue time spent in the frontmost app.
         let elapsed = elapsedSinceLastSample(now: now)
         lastSampleAt = now
-        webStore.countFinishedSnoozes(nowMs: now.timeIntervalSince1970 * 1000)
-        let snoozes = webStore.loadSnoozes()
-        // Mac Vault takes part in its links itself, editor window or not.
-        if let raw = webStore.loadRawJSON(), let data = raw.data(using: .utf8),
-           let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            ConnectionHub.shared.contributeLocalDefinitions(document: document, nowMs: now.timeIntervalSince1970 * 1000)
-        }
         // A blocked app still in front (shielded or suspended) is not time in
         // that app: no group counts it, as a covered browser page counts none.
         let ruleBlocked = ruleBlockedApps(groups: groups, snoozes: snoozes, now: now)
@@ -364,13 +362,13 @@ public final class MacEnforcementBridge: ObservableObject {
                 app,
                 groups: groups,
                 usage: UsageSnapshot(
-                    usageByGroupSeconds: webStore.loadUsageTimers().timersMs.mapValues { $0 / 1000 },
+                    usageByGroupSeconds: view.usage.timersMs.mapValues { $0 / 1000 },
                     snoozesByGroup: snoozes
                 ),
                 now: now
             )
         } ?? false
-        let timersMs = reconcileUsage(groups: groups, frontmost: frontBlocked ? nil : frontmost, elapsed: elapsed, now: now, snoozes: snoozes)
+        let timersMs = reconcileUsage(current: view.usage, groups: groups, frontmost: frontBlocked ? nil : frontmost, elapsed: elapsed, now: now, snoozes: snoozes)
         let usage = UsageSnapshot(
             usageByGroupSeconds: timersMs.mapValues { $0 / 1000 },
             snoozesByGroup: snoozes
@@ -391,7 +389,7 @@ public final class MacEnforcementBridge: ObservableObject {
         // 4. Enforce: block apps whose group says "blocked now" PLUS
         //    any apps shield-ed by custom-rule decisions.
         //    (a rule's persistent blockApp list rides along: one kill sweep).
-        let quitRetry = webStore.quitRetryMinutes() * 60
+        let quitRetry = view.quitRetryMinutes * 60
         Task { [adapter, ruleBlocked = dispatchOutput.shieldedBundleIDs.union(ruleBlocked)] in
             try? await adapter.applyGroups(
                 groups, usage: usage, now: now,
@@ -767,7 +765,7 @@ public final class MacEnforcementBridge: ObservableObject {
     /// Remove all log entries and overlay state associated with a group.
     public func purgeGroup(groupID: String) {
         #if os(macOS)
-        let groupName = (webStore.importedGroups()?.groups ?? []).first(where: { $0.id == groupID })?.name
+        let groupName = webStore.importedGroups().first(where: { $0.id == groupID })?.name
         cleanRule(groupID: groupID)
         let names = Set([groupID] + (groupName.map { [$0] } ?? []))
         ruleLog.removeAll { names.contains($0.group) }
@@ -780,7 +778,7 @@ public final class MacEnforcementBridge: ObservableObject {
     public func buildRule(groupID: String) {
         #if os(macOS)
         guard let runtime = ensureRuntime() else { return }
-        let groups = webStore.importedGroups()?.groups ?? []
+        let groups = webStore.importedGroups()
         guard let group = groups.first(where: { $0.id == groupID && !$0.customRuleSource.isEmpty }) else {
             return
         }
@@ -958,13 +956,13 @@ public final class MacEnforcementBridge: ObservableObject {
     }
 
     private func reconcileUsage(
+        current: BlockerWebStore.UsageTimers,
         groups: [BlockGroup],
         frontmost: String?,
         elapsed: TimeInterval,
         now: Date,
         snoozes: [String: SnoozeState] = [:]
     ) -> [String: Double] {
-        let current = webStore.loadUsageTimers()
         var timers = current.timersMs
         var resetAt = current.resetAtMs
         let nowMs = now.timeIntervalSince1970 * 1000
