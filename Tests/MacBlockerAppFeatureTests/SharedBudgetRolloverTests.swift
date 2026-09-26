@@ -20,7 +20,7 @@ final class SharedBudgetRolloverTests: XCTestCase {
 
     func testAMemberAnchorOnlySeedsThePeriod() throws {
         let hub = linkedHub(intervalHours: 24)
-        let now = Date().timeIntervalSince1970 * 1000
+        let now = (Date().timeIntervalSince1970 * 1000).rounded(.down)
         hub.applySync(program: "chrome", groupName: "Focus",
                       contribution: ["usageResetAtMs": now - hour, "usageMs": 600_000.0], ts: 0)
         var shared = try XCTUnwrap(hub.sharedUsage(groupName: "Focus"))
@@ -36,7 +36,7 @@ final class SharedBudgetRolloverTests: XCTestCase {
 
     func testTheHubStartsTheNextPeriodOnItsOwn() throws {
         let hub = linkedHub(intervalHours: 1)
-        let anchor = Date().timeIntervalSince1970 * 1000 - 2.5 * hour
+        let anchor = (Date().timeIntervalSince1970 * 1000).rounded(.down) - 2.5 * hour
         hub.applySync(program: "chrome", groupName: "Focus",
                       contribution: ["usageResetAtMs": anchor + 2 * hour, "usageMs": 3_600_000.0], ts: 0)
         // Nobody reports again; the hub's own clock ends the period.
@@ -57,7 +57,7 @@ final class SharedBudgetRolloverTests: XCTestCase {
         hub.setRoster(program: "chrome", groups: [["id": "c1", "name": "Focus"]])
         hub.applySync(program: "chrome", groupName: "Focus",
                       contribution: ["scalars": ["resetIntervalHours": 1.0, "rollingLimit": true]], ts: 1)
-        let anchor = Date().timeIntervalSince1970 * 1000 - 5 * hour
+        let anchor = (Date().timeIntervalSince1970 * 1000).rounded(.down) - 5 * hour
         hub.applySync(program: "chrome", groupName: "Focus", contribution: ["usageResetAtMs": anchor], ts: 0)
         hub.rollSharedBudgets(nowMs: anchor + 5 * hour)
         XCTAssertEqual(try XCTUnwrap(hub.sharedUsage(groupName: "Focus")).resetAtMs, anchor)
