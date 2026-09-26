@@ -182,3 +182,23 @@ extension BlockGroup {
         return applicationIDs.contains(bundleID)
     }
 }
+
+public extension BlockGroup {
+    /// On, inside its schedule and not snoozed: its rule runs and its time
+    /// counts right now. The one "enforcing now" test for the Mac.
+    func isEnforcing(snoozes: [String: SnoozeState], at now: Date, calendar: Calendar = .current) -> Bool {
+        isActive(at: now, calendar: calendar) && snoozes[id]?.phase(at: now) != .active
+    }
+
+    /// Allowance left in seconds; nil for an instant group.
+    func remainingSeconds(usedSeconds: TimeInterval) -> TimeInterval? {
+        guard mode.isTimed else { return nil }
+        return max(0, TimeInterval(max(0, allowedMinutes) * 60) - usedSeconds)
+    }
+
+    /// Enforcing, and instant or out of allowance: its lines block right now.
+    func blocksNow(usage: UsageSnapshot, at now: Date, calendar: Calendar = .current) -> Bool {
+        isEnforcing(snoozes: usage.snoozesByGroup, at: now, calendar: calendar)
+            && (remainingSeconds(usedSeconds: usage.usageByGroupSeconds[id] ?? 0) ?? 0) <= 0
+    }
+}

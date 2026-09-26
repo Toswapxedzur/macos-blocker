@@ -122,19 +122,7 @@ public actor AppBlockPolicy {
         calendar: Calendar = .current
     ) -> [GuardAllowlist] {
         var lists: [GuardAllowlist] = []
-        for group in groups where group.enabled && group.applicationAllowlist {
-            guard group.isActive(at: now, calendar: calendar) else { continue }
-            if usage.snoozesByGroup[group.id]?.phase(at: now) == .active { continue }
-            let shouldBlock: Bool
-            switch group.mode {
-            case .instant:
-                shouldBlock = true
-            case .afterMinutes:
-                let used = usage.usageByGroupSeconds[group.id] ?? 0
-                let allowed = TimeInterval(max(0, group.allowedMinutes) * 60)
-                shouldBlock = (allowed - used) <= 0
-            }
-            guard shouldBlock else { continue }
+        for group in groups where group.applicationAllowlist && group.blocksNow(usage: usage, at: now, calendar: calendar) {
             let allowed = Set(group.targets.filter { $0.kind == .application }.map(\.id))
             lists.append(GuardAllowlist(allowedBundleIdentifiers: allowed, displayName: group.name))
         }
@@ -142,9 +130,8 @@ public actor AppBlockPolicy {
     }
 
     /// Pure decision: which application bundle ids are blocked *right now*.
-    /// Mirrors `PolicyEvaluator`'s shield logic but collects application
-    /// targets across all groups (the kill sweep then acts on the running
-    /// ones). Exposed for testing.
+    /// Collects the application targets of every group that blocks now (the
+    /// quit sweep then acts on the running ones). Exposed for testing.
     static func blockedApplications(
         groups: [BlockGroup],
         usage: UsageSnapshot,
@@ -154,22 +141,7 @@ public actor AppBlockPolicy {
         var blocked: Set<String> = []
         // An "everything except" group's apps are the ALLOWED ones; that group
         // blocks through `applicationAllowlists`, never through its list.
-        for group in groups where group.enabled && !group.applicationAllowlist {
-            guard group.isActive(at: now, calendar: calendar) else { continue }
-            if usage.snoozesByGroup[group.id]?.phase(at: now) == .active { continue }
-
-            let shouldBlock: Bool
-            switch group.mode {
-            case .instant:
-                shouldBlock = true
-            case .afterMinutes:
-                // Timed groups only block once the daily allowance is spent.
-                let used = usage.usageByGroupSeconds[group.id] ?? 0
-                let allowed = TimeInterval(max(0, group.allowedMinutes) * 60)
-                shouldBlock = (allowed - used) <= 0
-            }
-            guard shouldBlock else { continue }
-
+        for group in groups where !group.applicationAllowlist && group.blocksNow(usage: usage, at: now, calendar: calendar) {
             for target in group.targets where target.kind == .application {
                 guard !MacProcessTerminator.isBrowserBundleIdentifier(target.id) else { continue }
                 blocked.insert(target.id)
