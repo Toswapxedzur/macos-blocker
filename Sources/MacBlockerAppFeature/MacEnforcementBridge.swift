@@ -53,7 +53,6 @@ public final class MacEnforcementBridge: ObservableObject {
 
     #if os(macOS)
     private let adapter: AppBlockPolicy
-    private let evaluator = PolicyEvaluator()
     private let overlay = TimerOverlayPanelController()
     private let toastOverlay = ToastOverlayPanelController()
     private let panelOverlay = PanelOverlayPanelController()
@@ -93,8 +92,7 @@ public final class MacEnforcementBridge: ObservableObject {
     /// snoozed, disabled or off-schedule group blocks nothing, rule or not.
     private func ruleBlockedApps(groups: [BlockGroup], snoozes: [String: SnoozeState], now: Date) -> Set<String> {
         groups.reduce(into: Set<String>()) { union, group in
-            guard group.enabled, group.isActive(at: now),
-                  snoozes[group.id]?.phase(at: now) != .active,
+            guard group.isEnforcing(snoozes: snoozes, at: now),
                   let apps = blockedAppBundleIDsByGroup[group.id] else { return }
             union.formUnion(apps)
         }
@@ -403,17 +401,15 @@ public final class MacEnforcementBridge: ObservableObject {
         }
 
         // 5. Render the HUD for any timer whose app is currently frontmost.
-        let activeTargetIDs = matchingTargetIDs(groups: groups, frontmost: frontmost)
-        let context = ActivityContext(
-            now: now,
-            target: nil,
-            activeTargetIDs: activeTargetIDs,
-            exemptTargetIDs: frontmost.map { Self.isExemptApplication($0) ? [$0] : [] } ?? [],
-            platform: .macOS
-        )
-        let result = evaluator.evaluate(groups: groups, usage: usage, context: context)
-        var rows = result.visibleTimerItems.map {
-            TimerOverlayRow(id: $0.groupID, name: $0.name, remainingSeconds: $0.remainingSeconds)
+        //    A timed group shows while its time counts for the front app (a
+        //    custom-rule group always, while it runs).
+        let frontExempt = frontmost.map(Self.isExemptApplication) ?? true
+        var rows: [TimerOverlayRow] = groups.reversed().compactMap { group in
+            guard group.isEnforcing(snoozes: usage.snoozesByGroup, at: now),
+                  let remaining = group.remainingSeconds(usedSeconds: usage.usageByGroupSeconds[group.id] ?? 0),
+                  group.groupType == .custom || frontmost.map({ group.countsApplication($0, exempt: frontExempt) }) == true
+            else { return nil }
+            return TimerOverlayRow(id: group.id, name: group.name, remainingSeconds: remaining)
         }
         for timer in dispatchOutput.customTimers where !timer.isPaused {
             let remainingSec = max(0, timer.currentMs / 1000)
@@ -485,8 +481,7 @@ public final class MacEnforcementBridge: ObservableObject {
         var collectedPanels: [PanelSnapshot] = []
 
         for group in enabledGroups {
-            guard group.isActive(at: now) else { continue }
-            if usage.snoozesByGroup[group.id]?.phase(at: now) == .active { continue }
+            guard group.isEnforcing(snoozes: usage.snoozesByGroup, at: now) else { continue }
 
             let events = buildEventsForGroup(
                 group: group, frontmost: frontmost, now: now,
@@ -984,8 +979,7 @@ public final class MacEnforcementBridge: ObservableObject {
 
             var addedMs: Double = 0
             // A snoozed group spends nothing, as in the extension.
-            if let frontmost, elapsed > 0, group.isActive(at: now),
-               snoozes[gid]?.phase(at: now) != .active,
+            if let frontmost, elapsed > 0, group.isEnforcing(snoozes: snoozes, at: now),
                group.countsApplication(frontmost, exempt: Self.isExemptApplication(frontmost)) {
                 addedMs = elapsed * 1000
             }
@@ -1114,12 +1108,6 @@ public final class MacEnforcementBridge: ObservableObject {
         guard let data = try? JSONSerialization.data(withJSONObject: apps),
               let json = String(data: data, encoding: .utf8) else { return "[]" }
         return json
-    }
-
-    private func matchingTargetIDs(groups: [BlockGroup], frontmost: String?) -> Set<String> {
-        guard let frontmost else { return [] }
-        let exempt = Self.isExemptApplication(frontmost)
-        return groups.contains { $0.countsApplication(frontmost, exempt: exempt) } ? [frontmost] : []
     }
 
     /// Apps no group can block: Apple, browsers (the extension's business) and

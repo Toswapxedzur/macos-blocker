@@ -56,28 +56,3 @@ public struct PolicyDecision: Codable, Equatable, Sendable {
         self.metadata = metadata
     }
 }
-
-public struct EvaluationResult: Codable, Equatable, Sendable {
-    public var decisions: [PolicyDecision]
-    public var visibleTimerItems: [TimerDisplayItem]
-
-    public init(
-        decisions: [PolicyDecision] = [],
-        visibleTimerItems: [TimerDisplayItem] = []
-    ) {
-        self.decisions = decisions
-        self.visibleTimerItems = visibleTimerItems
-    }
-}
-
-public struct TimerDisplayItem: Codable, Equatable, Sendable {
-    public var groupID: String
-    public var name: String
-    public var remainingSeconds: TimeInterval
-
-    public init(groupID: String, name: String, remainingSeconds: TimeInterval) {
-        self.groupID = groupID
-        self.name = name
-        self.remainingSeconds = max(0, remainingSeconds)
-    }
-}

@@ -58,35 +58,3 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
     }
 }
 
-public struct ActivityContext: Codable, Equatable, Sendable {
-    public var now: Date
-    public var target: BlockTarget?
-    public var activeTargetIDs: Set<String>
-    /// Active applications no group can block (Apple, browsers, Vault); an
-    /// "everything except" group never counts or times them.
-    public var exemptTargetIDs: Set<String>
-    public var usageByTargetSeconds: [String: TimeInterval]
-    public var platform: RuntimePlatform
-
-    public init(
-        now: Date = Date(),
-        target: BlockTarget? = nil,
-        activeTargetIDs: Set<String> = [],
-        exemptTargetIDs: Set<String> = [],
-        usageByTargetSeconds: [String: TimeInterval] = [:],
-        platform: RuntimePlatform
-    ) {
-        self.now = now
-        self.target = target
-        self.activeTargetIDs = activeTargetIDs
-        self.exemptTargetIDs = exemptTargetIDs
-        self.usageByTargetSeconds = usageByTargetSeconds
-        self.platform = platform
-    }
-}
-
-public enum RuntimePlatform: String, Codable, Sendable {
-    case iOS
-    case iPadOS
-    case macOS
-}
