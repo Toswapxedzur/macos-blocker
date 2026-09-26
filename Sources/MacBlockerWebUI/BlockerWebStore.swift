@@ -8,6 +8,12 @@ import MacBlockerCore
 /// JavaScript-free `EnforcementPlan` that the DeviceActivityMonitor extension
 /// applies.
 public final class BlockerWebStore: @unchecked Sendable {
+    /// Laid over the stored document whenever enforcement reads it: the live
+    /// definition and snooze of linked groups, so the Mac follows edits and
+    /// snoozes made on another device even while no editor window is open (the
+    /// editor adopts them into the file when it next opens). Nil = the file as is.
+    public var sharedOverlay: (([String: Any]) -> [String: Any])?
+
     private let shared: SharedAppGroupStore
     /// The native owner of `web-store.json`. The editor persists THROUGH it so the
     /// editor and MCP/native writers share one lock (no read-modify-write race)
@@ -181,7 +187,7 @@ public final class BlockerWebStore: @unchecked Sendable {
         else {
             return nil
         }
-        return object
+        return sharedOverlay?(object) ?? object
     }
 
     private func doubleMap(_ value: Any?) -> [String: Double] {
@@ -206,6 +212,11 @@ public final class BlockerWebStore: @unchecked Sendable {
             return nil
         }
         do {
+            if let overlay = sharedOverlay,
+               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let overlaid = try? JSONSerialization.data(withJSONObject: overlay(object)) {
+                return try ChromeExtensionImporter.importGroups(from: overlaid)
+            }
             return try ChromeExtensionImporter.importGroups(from: data)
         } catch {
             print("[BlockerWebStore] importGroups failed: \(error)")
