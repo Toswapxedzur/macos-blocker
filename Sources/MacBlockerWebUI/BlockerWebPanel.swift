@@ -2,9 +2,8 @@
 import SwiftUI
 import MacBlockerCore
 
-/// The full ported editor UI, ready to drop into any SwiftUI scene on iOS,
-/// iPadOS, or macOS. This is the faithful customBlocker popup running inside a
-/// WKWebView, backed by the native policy core.
+/// The full editor UI: the customBlocker popup running inside a WKWebView,
+/// backed by the native policy core.
 public struct BlockerWebPanel: View {
     private let store: BlockerWebStore
     private let appInventoryJSON: (() -> String?)?

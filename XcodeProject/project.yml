@@ -3,15 +3,12 @@ name: macosBlocker
 # Generated into a real .xcodeproj by XcodeGen (https://github.com/yonaskolb/XcodeGen).
 # Run ./generate.sh from this folder. Then open macosBlocker.xcodeproj.
 #
-# Before shipping:
-#   1. Replace BUNDLE_ID_PREFIX below and APP_GROUP with your own values.
-#   2. Set DEVELOPMENT_TEAM (or set it per-target in Xcode signing).
-#   3. Request Apple's Family Controls (Distribution) entitlement.
+# Before shipping: set DEVELOPMENT_TEAM (or set it per-target in Xcode signing).
+# The iPhone app and its Screen Time extensions were retired on 2026-09-26.
 
 options:
   bundleIdPrefix: com.adamancia.vault
   deploymentTarget:
-    iOS: "16.0"
     macOS: "13.0"
   createIntermediateGroups: true
 
@@ -22,7 +19,6 @@ settings:
     SWIFT_VERSION: "5.9"
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: 9KCD8QL2LN
-    TARGETED_DEVICE_FAMILY: "1,2"     # iPhone + iPad
 
 packages:
   MacBlocker:
@@ -65,114 +61,3 @@ targets:
     dependencies:
       - package: MacBlocker
         product: MacBlockerAppFeature
-
-  # ---------------------------------------------------------------- app
-  macosBlocker:
-    type: application
-    platform: iOS
-    sources:
-      - path: ../XcodeScaffold/macosBlockerApp
-      - path: ../XcodeScaffold/Shared
-    info:
-      path: Info/App-Info.plist
-      properties:
-        CFBundleDisplayName: Mac Vault
-        UILaunchScreen: {}
-        NSFamilyControlsUsageDescription: >-
-          Mac Vault uses Screen Time to shield the apps, categories, and
-          websites you choose to block for yourself.
-    entitlements:
-      path: ../XcodeScaffold/Entitlements/macosBlockerApp.entitlements
-      properties:
-        com.apple.developer.family-controls: true
-        com.apple.security.application-groups: [group.com.adamancia.vault]
-        com.apple.security.network.client: true
-        com.apple.security.network.server: true
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.adamancia.vault.ios
-    dependencies:
-      - package: MacBlocker
-        product: MacBlockerAppFeature
-      - package: MacBlocker
-        product: MacBlockerWebUI
-      - package: MacBlocker
-        product: MacBlockerCore
-      - package: MacBlocker
-        product: MacBlockerScreenTime
-      - target: macosBlockerDeviceActivityMonitor
-      - target: macosBlockerShieldConfiguration
-      - target: macosBlockerShieldAction
-
-  # ---------------------------------------- DeviceActivityMonitor extension
-  macosBlockerDeviceActivityMonitor:
-    type: app-extension
-    platform: iOS
-    sources:
-      - path: ../XcodeScaffold/macosBlockerDeviceActivityMonitor
-      - path: ../XcodeScaffold/Shared
-    info:
-      path: Info/DeviceActivityMonitor-Info.plist
-      properties:
-        NSExtension:
-          NSExtensionPointIdentifier: com.apple.deviceactivity.monitor-extension
-          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).DeviceActivityMonitorExtension
-    entitlements:
-      path: ../XcodeScaffold/Entitlements/macosBlockerExtensions.entitlements
-      properties:
-        com.apple.developer.family-controls: true
-        com.apple.security.application-groups: [group.com.adamancia.vault]
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.adamancia.vault.ios.DeviceActivityMonitor
-    dependencies:
-      - package: MacBlocker
-        product: MacBlockerCore
-      - package: MacBlocker
-        product: MacBlockerScreenTime
-
-  # ---------------------------------------- ShieldConfiguration extension
-  macosBlockerShieldConfiguration:
-    type: app-extension
-    platform: iOS
-    sources:
-      - path: ../XcodeScaffold/macosBlockerShieldConfiguration
-    info:
-      path: Info/ShieldConfiguration-Info.plist
-      properties:
-        NSExtension:
-          NSExtensionPointIdentifier: com.apple.ManagedSettingsUI.shield-configuration-service
-          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShieldConfigurationExtension
-    entitlements:
-      path: ../XcodeScaffold/Entitlements/macosBlockerExtensions.entitlements
-      properties:
-        com.apple.developer.family-controls: true
-        com.apple.security.application-groups: [group.com.adamancia.vault]
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.adamancia.vault.ios.ShieldConfiguration
-
-  # ---------------------------------------- ShieldAction extension
-  macosBlockerShieldAction:
-    type: app-extension
-    platform: iOS
-    sources:
-      - path: ../XcodeScaffold/macosBlockerShieldAction
-      - path: ../XcodeScaffold/Shared
-    info:
-      path: Info/ShieldAction-Info.plist
-      properties:
-        NSExtension:
-          NSExtensionPointIdentifier: com.apple.ManagedSettings.shield-action-service
-          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShieldActionExtension
-    entitlements:
-      path: ../XcodeScaffold/Entitlements/macosBlockerExtensions.entitlements
-      properties:
-        com.apple.developer.family-controls: true
-        com.apple.security.application-groups: [group.com.adamancia.vault]
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.adamancia.vault.ios.ShieldAction
-    dependencies:
-      - package: MacBlocker
-        product: MacBlockerCore

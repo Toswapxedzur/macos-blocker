@@ -1,10 +1,8 @@
 import Foundation
 
-/// Shared App Group configuration. The real Xcode app and its Screen Time
-/// extensions must use the same identifier so they can read/write the same
-/// store. Set `AppGroup.identifier` once at launch (e.g. from an Info.plist
-/// value) before any store access. Replace the placeholder with your real
-/// App Group when you create the Xcode targets.
+/// Shared App Group configuration: the container Mac Vault (and the Safari
+/// extension's native handler) keep the store in. Set `AppGroup.identifier`
+/// once at launch before any store access.
 public enum AppGroup {
     public static let placeholderIdentifier = VaultRuntimeEnvironment.production.appGroupIdentifier
 

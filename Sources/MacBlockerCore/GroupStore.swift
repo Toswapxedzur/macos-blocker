@@ -14,11 +14,9 @@ import Foundation
 /// top-level key verbatim. Round-tripping through `BlockGroup` would silently
 /// drop the editor's data, so we never do it.
 ///
-/// `BlockGroup` remains the read-only enforcement projection: `save` re-derives
-/// the JavaScript-free `EnforcementPlan` the Screen Time extensions read, exactly
-/// as the WebView persist path does.
+/// `BlockGroup` remains the read-only enforcement projection.
 ///
-/// This is the single write surface both the WebView bridge and (later) MCP call,
+/// This is the single write surface both the WebView bridge and MCP call,
 /// so there is one implementation of every group mutation.
 public final class GroupStore: @unchecked Sendable {
     private let shared: SharedAppGroupStore
@@ -79,11 +77,7 @@ public final class GroupStore: @unchecked Sendable {
 
     // MARK: Writes
 
-    /// Persists the document verbatim, then rebuilds the enforcement plan the
-    /// Screen Time extensions read. Kept private-of-behavior identical to the
-    /// WebView persist path so the two writers can never derive different plans.
-    /// Writes the whole document (and rebuilds the enforcement plan) under the
-    /// lock. `notify` posts `didChangeNotification` so a live editor re-seeds; the
+    /// Writes the whole document verbatim under the lock. `notify` posts `didChangeNotification` so a live editor re-seeds; the
     /// editor's OWN persist path passes `false` (it already shows this state, and
     /// re-seeding itself would be wasted work), while native/MCP writers leave it
     /// true so the open editor learns about the out-of-band change.
@@ -146,12 +140,6 @@ public final class GroupStore: @unchecked Sendable {
             return
         }
         shared.writeData(data, to: SharedAppGroupStore.webStoreFileName)
-        if let plan = EnforcementPlanBuilder.build(
-            fromWebStoreData: data,
-            nativeTargetsByGroup: shared.loadGroupTargets()
-        ) {
-            shared.saveEnforcementPlan(plan)
-        }
     }
 }
 

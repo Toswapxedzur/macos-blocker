@@ -203,36 +203,6 @@ final class GuardEngineTests: XCTestCase {
         XCTAssertEqual(plan.map(\.processIdentifier), [100, 200])
     }
 
-    // MARK: - Decision → policy compilation
-
-    func testAdapterCompilesShieldDecisionsIntoPolicy() async throws {
-        let adapter = AppBlockPolicy(
-            runTerminationSweep: false
-        )
-
-        try await adapter.apply([
-            PolicyDecision(
-                action: .shield,
-                groupID: "g1",
-                targetIDs: ["com.zoom.us", "com.slack.app"],
-                reason: "blocked"
-            )
-        ])
-
-        var blocked = await adapter.currentBlockedBundleIdentifiers()
-        XCTAssertEqual(blocked, ["com.zoom.us", "com.slack.app"])
-
-        let policy = await adapter.currentPolicy()
-        XCTAssertTrue(policy.match(bundleIdentifier: "com.zoom.us") != nil)
-
-        // Unshielding one removes it from the policy.
-        try await adapter.apply([
-            PolicyDecision(action: .unshield, groupID: "g1", targetIDs: ["com.zoom.us"])
-        ])
-        blocked = await adapter.currentBlockedBundleIdentifiers()
-        XCTAssertEqual(blocked, ["com.slack.app"])
-    }
-
     // MARK: - Mode / schedule / usage aware block selection
 
     private func appGroup(

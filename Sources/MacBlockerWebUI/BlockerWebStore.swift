@@ -2,11 +2,8 @@ import Foundation
 import MacBlockerCore
 
 /// Persists the editor's raw chrome.storage snapshot (the same
-/// `blockedGroups` / `globalSettings` / usage keys the Chrome extension used)
-/// into the App Group shared container so the native policy core and the
-/// Screen Time extensions can read it. Every save also rebuilds the
-/// JavaScript-free `EnforcementPlan` that the DeviceActivityMonitor extension
-/// applies.
+/// `blockedGroups` / `globalSettings` / usage keys the Chrome extension uses)
+/// in the shared container the Mac engine reads.
 public final class BlockerWebStore: @unchecked Sendable {
     /// Laid over the stored document whenever enforcement reads it: the live
     /// definition and snooze of linked groups, so the Mac follows edits and
@@ -262,29 +259,5 @@ public final class BlockerWebStore: @unchecked Sendable {
             print("[BlockerWebStore] importGroups failed: \(error)")
             return nil
         }
-    }
-
-    /// Recomputes the enforcement plan that the Screen Time extensions read,
-    /// merging any natively-assigned app/category targets.
-    private func rebuildEnforcementPlan(from data: Data) {
-        guard let result = try? ChromeExtensionImporter.importGroups(from: data) else {
-            return
-        }
-        let plan = EnforcementPlanBuilder.build(
-            from: result.groups,
-            nativeTargetsByGroup: shared.loadGroupTargets()
-        )
-        shared.saveEnforcementPlan(plan)
-    }
-
-    /// Rebuilds the plan without a fresh save — call after assigning native
-    /// targets so the plan reflects them immediately.
-    public func rebuildEnforcementPlan() {
-        guard let data = shared.readData(SharedAppGroupStore.webStoreFileName) else {
-            let plan = EnforcementPlan()
-            shared.saveEnforcementPlan(plan)
-            return
-        }
-        rebuildEnforcementPlan(from: data)
     }
 }

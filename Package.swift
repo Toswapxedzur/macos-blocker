@@ -23,12 +23,10 @@ let cllamaIncludeFlags: [SwiftSetting] = [.unsafeFlags(["-Xcc", "-I\(brewPrefix)
 let package = Package(
     name: "macosBlocker",
     platforms: [
-        .iOS(.v16),
         .macOS(.v13)
     ],
     products: [
         .library(name: "MacBlockerCore", targets: ["MacBlockerCore"]),
-        .library(name: "MacBlockerScreenTime", targets: ["MacBlockerScreenTime"]),
         .library(name: "MacBlockerMacControl", targets: ["MacBlockerMacControl"]),
         .library(name: "MacBlockerAppFeature", targets: ["MacBlockerAppFeature"]),
         .library(name: "MacBlockerWebUI", targets: ["MacBlockerWebUI"]),
@@ -43,15 +41,11 @@ let package = Package(
         .target(
             name: "MacBlockerCore",
             resources: [
-                // Whole folder: custom-rule-runtime.js (iOS no-op-DOM engine),
+                // Whole folder: custom-rule-runtime.js (the Mac app's rule engine),
                 // plus helpers.js + event-sandbox.js (the verbatim, intent-
                 // emitting browser engine the Safari bridge runs in JSC).
                 .copy("Resources")
             ]
-        ),
-        .target(
-            name: "MacBlockerScreenTime",
-            dependencies: ["MacBlockerCore"]
         ),
         .target(
             name: "MacBlockerMacControl",
@@ -72,7 +66,6 @@ let package = Package(
             name: "MacBlockerAppFeature",
             dependencies: [
                 "MacBlockerCore",
-                "MacBlockerScreenTime",
                 "MacBlockerMacControl",
                 "MacBlockerWebUI",
                 .product(

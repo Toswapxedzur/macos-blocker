@@ -1,6 +1,6 @@
 # Mac Vault Xcode project
 
-`project.yml` is the checked-in XcodeGen specification for the macOS and iOS targets that use the shared Swift package.
+`project.yml` is the checked-in XcodeGen specification for the macOS app target that uses the shared Swift package.
 
 ## Generate the project
 
@@ -15,8 +15,7 @@ Regenerate after changing `project.yml`, targets, entitlements, or source member
 ## Current target families
 
 - `AdamanciaVaultMac` is the macOS application target backed by `MacBlockerAppFeature`.
-- `macosBlocker` is the iOS application target.
-- The iOS project includes Device Activity, Shield Configuration, and Shield Action extensions.
+- The iPhone app and its Screen Time extensions were retired on 2026-09-26.
 
 The current identifiers, deployment targets, version fields, and capabilities are defined in `project.yml` and the referenced entitlement files. Review them in the signing environment before distribution.
 

@@ -9,7 +9,7 @@ This map is derived from the current source tree. It is a navigation aid, not a 
 | Editor persistence | `BlockerWebStore.swift` and the WebView bridge |
 | Native app inventory | `Sources/MacBlockerMacControl/MacApplicationInventory.swift` and `MacAppInventoryJSON.swift` |
 | Enforcement plan | `Sources/MacBlockerCore/EnforcementPlan.swift` and `Sources/MacBlockerAppFeature/MacEnforcementBridge.swift` |
-| Native control adapters | `Sources/MacBlockerMacControl/` and `Sources/MacBlockerScreenTime/` |
+| Native control adapters | `Sources/MacBlockerMacControl/` |
 | Custom rules | `CustomJavaScriptPolicyRuntime.swift` plus the JavaScript runtime resources |
 | Bridge hub | `Sources/MacBlockerAppFeature/ConnectionHub.swift` |
 | App lifecycle | `BlockerAppDelegate.swift`, `BlockerMainView.swift`, and `MacBlockerPanelApp.swift` |

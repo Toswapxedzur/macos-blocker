@@ -3,10 +3,10 @@ import XCTest
 @testable import MacBlockerCore
 import MacBlockerWebUI
 
-/// The editor persists THROUGH GroupStore now (one lock, one plan derivation for
-/// both the WebView and MCP writers). These lock in that the editor's save still
-/// writes web-store.json and rebuilds the enforcement plan, and that it does NOT
-/// self-notify — a re-seed notification is only for out-of-band native writes.
+/// The editor persists THROUGH GroupStore (one lock for both the WebView and
+/// MCP writers). These lock in that the editor's save writes web-store.json and
+/// does NOT self-notify — a re-seed notification is only for out-of-band
+/// native writes.
 final class BlockerWebStoreRoutingTests: XCTestCase {
     private func makeStore() -> (BlockerWebStore, SharedAppGroupStore, URL) {
         let dir = FileManager.default.temporaryDirectory
@@ -15,8 +15,8 @@ final class BlockerWebStoreRoutingTests: XCTestCase {
         return (BlockerWebStore(shared: shared), shared, dir)
     }
 
-    func testSavePersistsAndRebuildsPlanThroughGroupStore() throws {
-        let (webStore, shared, dir) = makeStore()
+    func testSavePersistsThroughGroupStore() throws {
+        let (webStore, _, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let raw: [String: Any] = [
@@ -32,9 +32,6 @@ final class BlockerWebStoreRoutingTests: XCTestCase {
         // Persisted to the shared web-store.json …
         let json = try XCTUnwrap(webStore.loadRawJSON())
         XCTAssertTrue(json.contains("\"g1\""))
-        // … and the enforcement plan was rebuilt under GroupStore and reflects it.
-        let plan = try XCTUnwrap(shared.loadEnforcementPlan())
-        XCTAssertTrue(plan.entries.contains { $0.groupID == "g1" }, "plan must reflect the saved enabled group")
     }
 
     /// Found live on mini1 2026-09-26: the usage writer read the file THROUGH
