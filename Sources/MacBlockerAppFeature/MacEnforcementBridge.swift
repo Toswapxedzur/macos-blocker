@@ -52,7 +52,7 @@ public final class MacEnforcementBridge: ObservableObject {
     @Published public var ruleLog: [RuleLogEntry] = []
 
     #if os(macOS)
-    private let adapter: EndpointSecurityPolicyAdapter
+    private let adapter: AppBlockPolicy
     private let evaluator = PolicyEvaluator()
     private let overlay = TimerOverlayPanelController()
     private let toastOverlay = ToastOverlayPanelController()
@@ -116,7 +116,7 @@ public final class MacEnforcementBridge: ObservableObject {
     public init(webStore: BlockerWebStore = BlockerWebStore(), sweepInterval: TimeInterval = 1.0) {
         self.webStore = webStore
         #if os(macOS)
-        self.adapter = EndpointSecurityPolicyAdapter(runTerminationSweep: true)
+        self.adapter = AppBlockPolicy(runTerminationSweep: true)
         self.tickInterval = sweepInterval
         #endif
     }
@@ -363,7 +363,7 @@ public final class MacEnforcementBridge: ObservableObject {
         // that app: no group counts it, as a covered browser page counts none.
         let ruleBlocked = ruleBlockedApps(groups: groups, snoozes: snoozes, now: now)
         let frontBlocked = frontmost.map { app in
-            ruleBlocked.contains(app) || EndpointSecurityPolicyAdapter.blocksApplication(
+            ruleBlocked.contains(app) || AppBlockPolicy.blocksApplication(
                 app,
                 groups: groups,
                 usage: UsageSnapshot(
