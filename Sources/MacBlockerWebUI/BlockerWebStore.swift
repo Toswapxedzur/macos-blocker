@@ -153,7 +153,8 @@ public final class BlockerWebStore: @unchecked Sendable {
     /// native enforcement honors an active snooze (temporary unblock) the same
     /// way the popup does.
     public func loadSnoozes() -> [String: SnoozeState] {
-        guard let object = loadStoreObject(),
+        // An enforcement read: a snooze started on a linked device applies here.
+        guard let object = loadStoreObject(overlaid: true),
               let raw = object["groupSnoozes"] as? [String: Any]
         else {
             return [:]
@@ -181,13 +182,17 @@ public final class BlockerWebStore: @unchecked Sendable {
         return Date(timeIntervalSince1970: ms / 1000)
     }
 
-    private func loadStoreObject() -> [String: Any]? {
+    /// The stored document. `overlaid` lays the live shared state of linked
+    /// groups over it — for READING what to enforce only. Anything that writes
+    /// the file back must read it raw: persisting the overlay would bake another
+    /// device's (possibly incomplete) copy into this Mac's own groups.
+    private func loadStoreObject(overlaid: Bool = false) -> [String: Any]? {
         guard let data = shared.readData(SharedAppGroupStore.webStoreFileName),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
             return nil
         }
-        return sharedOverlay?(object) ?? object
+        return overlaid ? (sharedOverlay?(object) ?? object) : object
     }
 
     private func doubleMap(_ value: Any?) -> [String: Double] {
