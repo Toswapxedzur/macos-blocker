@@ -303,7 +303,7 @@ public final class ToastOverlayPanelController {
 
         let entryId = entry.id
         let timer = Timer.scheduledTimer(withTimeInterval: fadeAfter, repeats: false) { [weak self] _ in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.removeToast(id: entryId)
             }
         }
