@@ -157,6 +157,33 @@ public final class BlockerWebStore: @unchecked Sendable {
         }
     }
 
+    /// A snooze that ran out adds its snoozed time to the group's total once
+    /// (`activeMsApplied`), as the browser's worker does — so the total no
+    /// longer depends on the editor window being open when it ends.
+    public func countFinishedSnoozes(nowMs: Double) {
+        GroupStore.withFileLock {
+            guard var object = loadStoreObject(),
+                  var snoozes = object["groupSnoozes"] as? [String: Any] else { return }
+            var totals = object["groupSnoozeTotalsMs"] as? [String: Any] ?? [:]
+            var changed = false
+            for (groupID, value) in snoozes {
+                guard var entry = value as? [String: Any], entry["activeMsApplied"] as? Bool != true,
+                      let start = (entry["startsAtMs"] as? NSNumber)?.doubleValue,
+                      let until = (entry["untilMs"] as? NSNumber)?.doubleValue, nowMs >= until else { continue }
+                totals[groupID] = ((totals[groupID] as? NSNumber)?.doubleValue ?? 0) + max(0, until - start)
+                entry["activeMsApplied"] = true
+                snoozes[groupID] = entry
+                changed = true
+            }
+            guard changed else { return }
+            object["groupSnoozes"] = snoozes
+            object["groupSnoozeTotalsMs"] = totals
+            if let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) {
+                shared.writeData(data, to: SharedAppGroupStore.webStoreFileName)
+            }
+        }
+    }
+
     /// Parses the editor's `groupSnoozes` into the core `SnoozeState` model so
     /// native enforcement honors an active snooze (temporary unblock) the same
     /// way the popup does.

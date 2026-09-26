@@ -353,6 +353,7 @@ public final class MacEnforcementBridge: ObservableObject {
         // 1. Reconcile reset windows + accrue time spent in the frontmost app.
         let elapsed = elapsedSinceLastSample(now: now)
         lastSampleAt = now
+        webStore.countFinishedSnoozes(nowMs: now.timeIntervalSince1970 * 1000)
         let snoozes = webStore.loadSnoozes()
         // Mac Vault takes part in its links itself, editor window or not.
         if let raw = webStore.loadRawJSON(), let data = raw.data(using: .utf8),
