@@ -576,7 +576,7 @@ final class ConnectionHub: ObservableObject {
         let start = Self.sharedPeriodStartMs(anchorMs: cluster.sharedUsageResetAtMs, scalars: cluster.sharedScalars, nowMs: nowMs)
         guard start > cluster.sharedUsageResetAtMs else { return false }
         cluster.sharedUsageMs = 0
-        cluster.sharedUsageResetAtMs = start
+        cluster.sharedUsageResetAtMs = start.rounded(.down)
         // A fresh period: a member's absolute total from the old one must not
         // seed it back.
         cluster.usageSeeded = true
@@ -1408,8 +1408,8 @@ final class ConnectionHub: ObservableObject {
                 // The new period starts on the group's own grid (with midnight
                 // re-anchoring that is today's grid, not this instant), as every
                 // program computes it — else each would see a different period.
-                let nowMs = Date().timeIntervalSince1970 * 1000
-                cluster.sharedUsageResetAtMs = Self.sharedPeriodStartMs(anchorMs: nowMs, scalars: cluster.sharedScalars, nowMs: nowMs)
+                let nowMs = (Date().timeIntervalSince1970 * 1000).rounded(.down)
+                cluster.sharedUsageResetAtMs = Self.sharedPeriodStartMs(anchorMs: nowMs, scalars: cluster.sharedScalars, nowMs: nowMs).rounded(.down)
                 cluster.sharedBuckets = [:]
                 cluster.usageSeeded = true
                 cluster.bucketsSeeded = true
@@ -1451,14 +1451,14 @@ final class ConnectionHub: ObservableObject {
         // The hub owns the shared period: a member's anchor only seeds it when
         // the hub has none yet; from then on only the hub starts a new period.
         if cluster.sharedUsageResetAtMs == 0, let anchor = contribution["usageResetAtMs"] as? Double, anchor > 0 {
-            cluster.sharedUsageResetAtMs = anchor
+            cluster.sharedUsageResetAtMs = anchor.rounded(.down)
         }
         rollBudgetLocked(cluster, nowMs: Date().timeIntervalSince1970 * 1000)
         // Time a browser counted while the hub was away arrives tagged with
         // its period: added only when that period is still the current one.
         let deltaPeriod = (contribution["usageDeltaAnchorMs"] as? NSNumber)?.doubleValue
         if let delta = contribution["usageDeltaMs"] as? Double, delta != 0,
-           deltaPeriod == nil || deltaPeriod == cluster.sharedUsageResetAtMs {
+           deltaPeriod == nil || deltaPeriod!.rounded(.down) == cluster.sharedUsageResetAtMs.rounded(.down) {
             cluster.sharedUsageMs = max(0, cluster.sharedUsageMs + delta)
             cluster.usageSeeded = true
         } else if !cluster.usageSeeded,
