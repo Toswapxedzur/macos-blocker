@@ -20,7 +20,7 @@ public enum VaultMCPTools {
                         "name": group.name,
                         "enabled": group.enabled,
                         "mode": group.mode.rawValue,
-                        "lock": group.freezeMode.rawValue,
+                        "locked": group.lockedAt != nil,
                         "sites": group.targets.filter { $0.kind == .webDomain || $0.kind == .urlPattern }.count,
                         "apps": group.targets.filter { $0.kind == .application }.count,
                     ]
@@ -43,7 +43,8 @@ public enum VaultMCPTools {
                     "enabled": group.enabled,
                     "mode": group.mode.rawValue,
                     "allowedMinutes": group.allowedMinutes,
-                    "lock": group.freezeMode.rawValue,
+                    "locked": group.lockedAt != nil,
+                    "lockWaitHours": group.lockWaitHours,
                     "sites": group.targets.filter { $0.kind == .webDomain || $0.kind == .urlPattern }.map(\.normalizedValue),
                     "apps": group.targets.filter { $0.kind == .application }.map { ["id": $0.normalizedValue, "name": $0.displayName] },
                 ]))
@@ -162,67 +163,65 @@ public enum VaultMCPTools {
 
             MCPTool(
                 name: "lock_group",
-                description: "Lock a group, as the editor's Freeze does. mode 'frozen' (unlocking needs a confirmation), 'strict' (cannot be unlocked for strictHours, 0 < hours ≤ 72; default the group's own) or 'parental' (unlocking needs the 6-digit PIN; pass the group's PIN — or, when the group has none yet, the new PIN to set). A wrong PIN makes the next try wait 1 s, 2 s, 4 s … up to 64 s, shared with the editor.",
+                description: "Freeze a group, as the editor's Freeze does, with optional gates that combine: waitHours (it cannot be unfrozen for that long, 0 < hours ≤ 72) and pin (6 digits: unfreezing then needs this PIN). On a group that is already frozen the same call can only make the freeze stricter: a longer wait, or a PIN where there was none. Every unfreeze also ends with the confirmation (10 steps, 5 s apart).",
                 inputSchema: [
                     "type": "object",
                     "properties": [
                         "id": ["type": "string", "description": "The group id."],
-                        "mode": ["type": "string", "enum": ["frozen", "strict", "parental"]],
-                        "strictHours": ["type": "number", "description": "For strict: how long it stays locked."],
-                        "pin": ["type": "string", "description": "For parental: the 6-digit PIN."],
+                        "waitHours": ["type": "number", "description": "The wait gate in hours."],
+                        "pin": ["type": "string", "description": "A new 6-digit PIN gate (only when the group has none)."],
                     ],
-                    "required": ["id", "mode"],
+                    "required": ["id"],
                 ]
             ) { args in
                 guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
-                guard let raw = string(args, "mode"), let mode = WebStoreDocument.LockMode(rawValue: raw) else {
-                    return .failure("Invalid 'mode'. Use frozen, strict or parental.")
-                }
-                let hours = (args["strictHours"] as? NSNumber)?.doubleValue
+                let hours = (args["waitHours"] as? NSNumber)?.doubleValue
                 var outcome = WebStoreDocument.LockOutcome.done
-                if let failure = run(store, { outcome = try $0.lockGroup(id: id, mode: mode, strictHours: hours, pin: string(args, "pin"), now: clock()) }) {
+                if let failure = run(store, { outcome = try $0.lockGroup(id: id, waitHours: hours, pin: string(args, "pin"), now: clock()) }) {
                     return failure
                 }
-                return outcome == .done ? .ok("Group \(id) locked (\(mode.rawValue)).") : .failure(explain(outcome))
+                return outcome == .done ? .ok("Group \(id) is frozen.") : .failure(explain(outcome))
             },
 
             MCPTool(
                 name: "unlock_group",
-                description: "Unlock a group through the editor's gates. Parental: pass the PIN (a wrong PIN makes the next try wait 1 s … 64 s). Strict: refused until its hours are over. Otherwise the editor's confirmation: the first call asks, a second call with confirm: true at least 5 seconds later (within 5 minutes) unlocks.",
+                description: "Unfreeze a group through the editor's gates. The wait gate must be over; a set PIN must be passed (pin; a wrong PIN makes the next try wait 1 s … 64 s, shared with the editor); then the confirmation: call again with confirm: true every 5 seconds until no confirmation is left (10 in all, within 5 minutes).",
                 inputSchema: [
                     "type": "object",
                     "properties": [
                         "id": ["type": "string", "description": "The group id."],
-                        "pin": ["type": "string", "description": "For a parental lock: the 6-digit PIN."],
-                        "confirm": ["type": "boolean", "description": "Confirm an unlock asked for at least 5 seconds ago."],
+                        "pin": ["type": "string", "description": "The group's 6-digit PIN, when it has one."],
+                        "confirm": ["type": "boolean", "description": "One confirmation step."],
                     ],
                     "required": ["id"],
                 ]
             ) { args in
                 guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
                 let now = clock()
-                var confirmed = false
-                if args["confirm"] as? Bool == true {
-                    switch unlockRequests.readiness(id: id, now: now) {
-                    case .ready: confirmed = true
-                    case .wait(let seconds): return .failure("Confirm again in \(seconds) s (the editor's confirmation waits 5 s).")
-                    case .none: break
+                if args["confirm"] as? Bool == true, let request = unlockRequests.request(id: id, now: now) {
+                    let step = GroupActionsRuntime.shared.call("confirmStep", [request.state, (now.timeIntervalSince1970 * 1000).rounded()]) as? [String: Any] ?? [:]
+                    let waitMs = (step["waitMs"] as? NSNumber)?.doubleValue ?? 0
+                    if waitMs > 0 { return .failure("Confirm again in \(Int((waitMs / 1000).rounded(.up))) s (the editor's confirmation waits 5 s).") }
+                    let state = step["state"] as? [String: Any] ?? [:]
+                    guard step["done"] as? Bool == true else {
+                        unlockRequests.save(id: id, lockVersion: request.lockVersion, state: state, now: now)
+                        return .ok("Confirmation counted: \((state["left"] as? NSNumber)?.intValue ?? 0) left. Call again with confirm: true in 5 seconds.")
                     }
+                    unlockRequests.clear(id: id)
+                    var outcome = WebStoreDocument.LockOutcome.done
+                    if let failure = run(store, { outcome = try $0.unlockGroup(id: id, lockVersion: request.lockVersion, now: now) }) { return failure }
+                    return outcome == .done ? .ok("Group \(id) is unfrozen.") : .failure(explain(outcome))
                 }
                 var outcome = WebStoreDocument.LockOutcome.done
-                if let failure = run(store, { outcome = try $0.unlockGroup(id: id, pin: string(args, "pin"), confirmed: confirmed, now: now) }) {
-                    return failure
-                }
-                switch outcome {
-                case .done:
-                    unlockRequests.clear(id: id)
-                    return .ok("Group \(id) unlocked.")
-                case .needsConfirmation:
-                    unlockRequests.ask(id: id, now: now)
-                    return .ok("Unlock asked. Call unlock_group again with confirm: true after 5 seconds (within 5 minutes).")
-                default:
-                    return .failure(explain(outcome))
-                }
+                var lockVersion = 0
+                if let failure = run(store, { document in
+                    outcome = try document.unlockCheck(id: id, pin: string(args, "pin"), now: now)
+                    lockVersion = (document.sharedView?[id]?["lockVersion"] as? NSNumber ?? document.group(id: id)?["lockVersion"] as? NSNumber)?.intValue ?? 0
+                }) { return failure }
+                guard outcome == .done else { return .failure(explain(outcome)) }
+                let state = GroupActionsRuntime.shared.call("confirmStart", [(now.timeIntervalSince1970 * 1000).rounded()]) as? [String: Any] ?? [:]
+                unlockRequests.save(id: id, lockVersion: lockVersion, state: state, now: now)
+                return .ok("Unfreeze started: \((state["left"] as? NSNumber)?.intValue ?? 0) confirmations left. Call unlock_group with confirm: true every 5 seconds (within 5 minutes).")
             },
 
             MCPTool(
@@ -259,28 +258,34 @@ public enum VaultMCPTools {
     private static func explain(_ outcome: WebStoreDocument.LockOutcome) -> String {
         switch outcome {
         case .done: return "Done."
-        case .strictUntil(let date): return "Strict lock: it opens at \(ISO8601DateFormatter().string(from: date))."
-        case .needsConfirmation: return "Needs the confirmation step."
+        case .waitUntil(let date): return "The freeze's wait holds until \(ISO8601DateFormatter().string(from: date))."
         case .pinWait(let seconds): return "Wait \(seconds) s before the next PIN try (a wrong PIN was entered)."
         case .pinWrong(let seconds): return "Wrong PIN. The next try waits \(seconds) s."
+        case .refused("not-stricter"): return "While frozen the freeze can only be made stricter (a longer wait)."
+        case .refused("pin-already-set"): return "The group already has a PIN."
+        case .refused("lock-changed"): return "The freeze changed meanwhile; start the unfreeze again."
+        case .refused(let reason): return reason
         }
     }
 
-    /// Unlocks asked for (the editor's confirmation: ask, wait 5 s, confirm).
+    /// Unfreezes asked for: the confirmation state (group-actions.js
+    /// confirmStart / confirmStep) per group, for the lock version it began on.
     final class UnlockRequests: @unchecked Sendable {
-        enum Readiness { case ready, wait(Int), none }
-        static let intervalSeconds: TimeInterval = 5 // popup UNFREEZE_CONFIRMATION_INTERVAL_MS
+        struct Request { let lockVersion: Int; let state: [String: Any]; let askedAt: Date }
         static let lifetimeSeconds: TimeInterval = 300
         private let lock = NSLock()
-        private var askedAt: [String: Date] = [:]
+        private var requests: [String: Request] = [:]
 
-        func ask(id: String, now: Date) { lock.lock(); askedAt[id] = now; lock.unlock() }
-        func clear(id: String) { lock.lock(); askedAt.removeValue(forKey: id); lock.unlock() }
-        func readiness(id: String, now: Date) -> Readiness {
+        func save(id: String, lockVersion: Int, state: [String: Any], now: Date) {
             lock.lock(); defer { lock.unlock() }
-            guard let asked = askedAt[id], now.timeIntervalSince(asked) < Self.lifetimeSeconds else { return .none }
-            let left = Self.intervalSeconds - now.timeIntervalSince(asked)
-            return left > 0 ? .wait(Int(left.rounded(.up))) : .ready
+            let askedAt = requests[id].map { $0.lockVersion == lockVersion ? $0.askedAt : now } ?? now
+            requests[id] = Request(lockVersion: lockVersion, state: state, askedAt: askedAt)
+        }
+        func clear(id: String) { lock.lock(); requests.removeValue(forKey: id); lock.unlock() }
+        func request(id: String, now: Date) -> Request? {
+            lock.lock(); defer { lock.unlock() }
+            guard let request = requests[id], now.timeIntervalSince(request.askedAt) < Self.lifetimeSeconds else { return nil }
+            return request
         }
     }
 
@@ -308,8 +313,7 @@ public enum VaultMCPTools {
             case .invalidInput(let field): return "Invalid input: \(field)"
             case .groupLocked(let id): return "Group \(id) is frozen, strict or parental-locked (the editor refuses this too)."
             case .duplicateName(let name): return "Another group is already named \(name) (the editor refuses this too)."
-            case .notLocked(let id): return "Group \(id) is not locked."
-            case .pinRequired: return "A parental lock needs a PIN: pass 'pin' (6 digits); it becomes the group's parental PIN."
+            case .notLocked(let id): return "Group \(id) is not frozen."
             }
         }
         return (error as NSError).localizedDescription

@@ -278,6 +278,9 @@ final class ConnectionHub: ObservableObject {
         var sharedScalars: [String: Any] = [:]
         var sharedTs: Double = 0
         var sharedScopes: [[String: Any]] = []
+        /// The link's one lock (group-actions.js lockUnit), versioned; empty
+        /// until a member contributes one.
+        var sharedLock: [String: Any] = [:]
         /// Shared live usage budget. Members report *increments* (usageDeltaMs)
         /// from their own accrual, never absolutes, so folding this total back
         /// into each member's local counter can never double count. Before any
@@ -1299,39 +1302,57 @@ final class ConnectionHub: ObservableObject {
     /// to the specific instance so a delete/re-create can't silently re-join.
     /// Returns snapshots of the clusters it changed.
     private func autoLinkClustersLocked() -> [[String: Any]] {
-        // name -> program -> pinned group id (first instance per program).
-        // Names match case-insensitively (the editors keep names unique that way).
-        var byName: [String: [String: String]] = [:]
+        // name -> program -> (pinned group id, locked) — first instance per
+        // program. Names match case-insensitively (the editors keep names
+        // unique that way).
+        var byName: [String: [String: (id: String, frozen: Bool)]] = [:]
         var displayName: [String: String] = [:]
         for (program, infos) in rosters {
             for info in infos where !info.name.isEmpty {
                 let key = Self.nameKey(info.name)
                 if displayName[key] == nil { displayName[key] = info.name }
                 if byName[key]?[program] == nil {
-                    byName[key, default: [:]][program] = info.id
+                    byName[key, default: [:]][program] = (info.id, info.frozen)
                 }
             }
         }
         var snapshots: [[String: Any]] = []
-        for (key, programIds) in byName where programIds.count >= 2 {
-            let name = displayName[key] ?? key
-            let cluster = clusters.values.first { Self.nameKey($0.groupName) == key }
-                ?? {
-                    let created = ClusterState(id: UUID().uuidString, groupName: name)
-                    clusters[created.id] = created
-                    return created
-                }()
+        for (key, entries) in byName where entries.count >= 2 {
+            let existing = clusters.values.first { Self.nameKey($0.groupName) == key }
+            // Owner 2026-09-26: a locked group cannot join a link, and a locked
+            // link takes no one new — linking happens only between unlocked
+            // groups; linked groups then lock together. A member already in
+            // the link with the same group stays, locked or not.
+            let linkLocked = existing.map { Self.lockIsLocked($0.sharedLock) } ?? false
+            let eligible = entries.filter { program, entry in
+                if let existing, existing.members.contains(program), existing.memberGroupIds[program] == entry.id { return true }
+                return !entry.frozen && !linkLocked
+            }
+            guard eligible.count >= 2 || (existing != nil && !eligible.isEmpty) else { continue }
+            let cluster = existing ?? {
+                let created = ClusterState(id: UUID().uuidString, groupName: displayName[key] ?? key)
+                clusters[created.id] = created
+                return created
+            }()
             var mutated = false
-            for (program, gid) in programIds {
+            for (program, entry) in eligible {
                 if cluster.members.insert(program).inserted { mutated = true }
-                if !gid.isEmpty && cluster.memberGroupIds[program] != gid {
-                    cluster.memberGroupIds[program] = gid
+                if !entry.id.isEmpty && cluster.memberGroupIds[program] != entry.id {
+                    cluster.memberGroupIds[program] = entry.id
                     mutated = true
                 }
             }
             if mutated { snapshots.append(clusterJSONObject(cluster)) }
         }
         return snapshots
+    }
+
+    /// group-actions.js LOCK_FIELDS: the fields of the one lock unit.
+    static let lockFields = ["lockedAtMs", "lockWaitHours", "parentalPasswordHash", "parentalPasswordSalt", "lockVersion"]
+
+    /// A lock unit (group-actions.js) is locked when it has a lock time.
+    static func lockIsLocked(_ unit: [String: Any]) -> Bool {
+        (unit["lockedAtMs"] as? NSNumber) != nil
     }
 
     /// Folds one member's contribution into the cluster's shared state and, if the
@@ -1405,13 +1426,19 @@ final class ConnectionHub: ObservableObject {
                 }
             }
 
-            // Freeze follows the latest LOCK CHANGE (freezeChangedAtMs, stamped
-            // only when someone locks or unlocks), not the latest save — every
-            // save stamps its own time, which made the old save-time winner
-            // flip at random on couple/decouple. So an unlock on any device
-            // unlocks every device, and a lock locks every device. This runs
-            // after the scalar merge so it overrides whatever it picked.
-            mergeFreezeLocked(cluster)
+            // The link's one lock is versioned (group-actions.js): the first
+            // member's lock starts it; afterwards a change is taken only when
+            // it was made on top of the current version (compare-and-set). A
+            // joining member never changes it — it adopts the link's lock.
+            if let lock = contribution["lock"] as? [String: Any] {
+                let incoming = (lock["lockVersion"] as? NSNumber)?.intValue ?? 0
+                let base = (contribution["lockBase"] as? NSNumber)?.intValue ?? 0
+                if let current = (cluster.sharedLock["lockVersion"] as? NSNumber)?.intValue {
+                    if !firstContribution, base == current, incoming > current { cluster.sharedLock = lock }
+                } else {
+                    cluster.sharedLock = lock
+                }
+            }
         }
 
         // Usage: shared budget via delta accrual. Members report increments
@@ -1511,8 +1538,6 @@ final class ConnectionHub: ObservableObject {
         "mode", "allowedMinutes", "resetIntervalHours", "resetAtMidnight", "rollingLimit",
         "allowSnooze", "snoozeMinutes", "snoozeActivationDelayMinutes", "snoozeCooldownMinutes", "snoozeConfirmations",
         "activeDays", "timeWindowsText",
-        "freezeMode", "freezeModeChoice", "strictFreezeHours", "frozenAtMs", "freezeChangedAtMs",
-        "parentalPasswordHash", "parentalPasswordSalt",
         "fallbackUrl", "pauseSeconds",
     ]
 
@@ -1539,7 +1564,12 @@ final class ConnectionHub: ObservableObject {
             var scalars: [String: Any] = [:]
             for field in Self.syncScalarFields where group[field] != nil { scalars[field] = group[field] }
             let scopes = group["scopes"] as? [[String: Any]] ?? []
-            let key = Self.canonicalJSON(["scalars": scalars, "scopes": scopes])
+            // The lock travels as its own versioned unit (group-actions.js).
+            var lockUnit: [String: Any] = [:]
+            if group["lockVersion"] != nil {
+                for field in Self.lockFields { lockUnit[field] = group[field] ?? NSNull() }
+            }
+            let key = Self.canonicalJSON(["scalars": scalars, "scopes": scopes, "lock": lockUnit])
             let previous = localDefinitionSeen[groupID]
             if previous == key { continue }
             localDefinitionSeen[groupID] = key
@@ -1551,7 +1581,8 @@ final class ConnectionHub: ObservableObject {
                 continue // first sight in this process of an already-contributed group: not an edit
             } else if Self.canonicalJSON(Self.syncScalarFields.reduce(into: [String: Any]()) { $0[$1] = cluster.sharedScalars[$1] })
                         == Self.canonicalJSON(Self.syncScalarFields.reduce(into: [String: Any]()) { $0[$1] = scalars[$1] })
-                        && Self.canonicalJSON(cluster.sharedScopes) == Self.canonicalJSON(scopes) {
+                        && Self.canonicalJSON(cluster.sharedScopes) == Self.canonicalJSON(scopes)
+                        && (lockUnit.isEmpty || Self.canonicalJSON(lockUnit) == Self.canonicalJSON(Self.lockFields.reduce(into: [String: Any]()) { $0[$1] = cluster.sharedLock[$1] ?? NSNull() })) {
                 continue // the file caught up with the shared definition (adopted), not an edit
             } else {
                 ts = nowMs
@@ -1559,6 +1590,10 @@ final class ConnectionHub: ObservableObject {
             var frame: [String: Any] = ["kind": "group-sync", "program": Self.localProgram, "groupName": cluster.groupName, "ts": ts,
                                         "scalars": scalars]
             if !scopes.isEmpty { frame["scopes"] = scopes }
+            if !lockUnit.isEmpty {
+                frame["lock"] = lockUnit
+                frame["lockBase"] = (group["lockSyncedVersion"] as? NSNumber)?.intValue ?? 0
+            }
             frames.append(frame)
         }
         lock.unlock()
@@ -1589,6 +1624,10 @@ final class ConnectionHub: ObservableObject {
             }) else { continue }
             for (field, value) in cluster.sharedScalars { groups[index][field] = value }
             if !cluster.sharedScopes.isEmpty { groups[index]["scopes"] = cluster.sharedScopes }
+            if !cluster.sharedLock.isEmpty {
+                for (field, value) in cluster.sharedLock { groups[index][field] = value }
+                groups[index]["lockSyncedVersion"] = cluster.sharedLock["lockVersion"]
+            }
             changed = true
             if cluster.sharedSnoozeTs > 0, !cluster.sharedSnooze.isEmpty,
                let id = groups[index]["id"] as? String,
@@ -1788,6 +1827,7 @@ final class ConnectionHub: ObservableObject {
             cluster.sharedScalars = shared["scalars"] as? [String: Any] ?? [:]
             cluster.sharedTs = (shared["ts"] as? NSNumber)?.doubleValue ?? 0
             cluster.sharedScopes = shared["scopes"] as? [[String: Any]] ?? []
+            cluster.sharedLock = shared["lock"] as? [String: Any] ?? [:]
             cluster.sharedUsageMs = (shared["usageMs"] as? NSNumber)?.doubleValue ?? 0
             cluster.sharedUsageResetAtMs = (shared["usageResetAtMs"] as? NSNumber)?.doubleValue ?? 0
             cluster.sharedBuckets = Self.parseBuckets(shared["usageBuckets"]) ?? [:]
@@ -1806,50 +1846,6 @@ final class ConnectionHub: ObservableObject {
     }
 
     /// Restrictiveness rank for a freeze mode. Higher wins the cluster merge.
-    /// none < frozen (password) < parental < strict (time-locked).
-    private func freezeRank(_ mode: String?) -> Int {
-        switch mode {
-        case "strict": return 3
-        case "parental": return 2
-        case "frozen": return 1
-        default: return 0
-        }
-    }
-
-    /// Caller must hold `lock`. Overwrites the freeze fields in `sharedScalars`
-    /// with the tuple of the member whose lock changed LAST (freezeChangedAtMs);
-    /// among members that never stamped a change (older stores) the most
-    /// restrictive lock wins, as before. Deterministic either way. The whole
-    /// tuple — incl. the parental PIN — is copied from the winning member so the
-    /// lock stays internally consistent and every device can ask for the PIN.
-    private func mergeFreezeLocked(_ cluster: ClusterState) {
-        let freezeFields = ["freezeMode", "freezeModeChoice", "strictFreezeHours", "frozenAtMs", "freezeChangedAtMs",
-                            "parentalPasswordHash", "parentalPasswordSalt"]
-        var best: (changedAt: Double, rank: Int) = (-1, -1)
-        var bestFreeze: [String: Any]? = nil
-        for contribution in cluster.contributions.values {
-            guard let scalars = contribution["scalars"] as? [String: Any] else { continue }
-            let changedAt = (scalars["freezeChangedAtMs"] as? NSNumber)?.doubleValue ?? 0
-            let rank = freezeRank(scalars["freezeMode"] as? String)
-            if changedAt > best.changedAt || (changedAt == best.changedAt && rank > best.rank) {
-                best = (changedAt, rank)
-                var tuple: [String: Any] = [:]
-                for field in freezeFields where scalars[field] != nil {
-                    tuple[field] = scalars[field]
-                }
-                bestFreeze = tuple
-            }
-        }
-        guard let winning = bestFreeze else { return }
-        for field in freezeFields {
-            if let value = winning[field] {
-                cluster.sharedScalars[field] = value
-            } else {
-                cluster.sharedScalars.removeValue(forKey: field)
-            }
-        }
-    }
-
     /// Caller must hold `lock`. Persists the cluster registry — links and their
     /// running budgets — so both survive an app restart; the user only loses a
     /// link by disconnecting it. Called on config changes and by the 10 s budget
@@ -1864,6 +1860,7 @@ final class ConnectionHub: ObservableObject {
                 "contributions": c.contributions,
                 "sharedScalars": c.sharedScalars,
                 "sharedScopes": c.sharedScopes,
+                "sharedLock": c.sharedLock,
                 "sharedTs": c.sharedTs,
                 "sharedSnooze": c.sharedSnooze,
                 "sharedSnoozeTs": c.sharedSnoozeTs,
@@ -1900,6 +1897,7 @@ final class ConnectionHub: ObservableObject {
             }
             if let scalars = obj["sharedScalars"] as? [String: Any] { cluster.sharedScalars = scalars }
             if let scopes = obj["sharedScopes"] as? [[String: Any]] { cluster.sharedScopes = scopes }
+            if let lock = obj["sharedLock"] as? [String: Any] { cluster.sharedLock = lock }
             cluster.sharedTs = (obj["sharedTs"] as? Double) ?? 0
             if let snooze = obj["sharedSnooze"] as? [String: Any] { cluster.sharedSnooze = snooze }
             cluster.sharedSnoozeTs = (obj["sharedSnoozeTs"] as? Double) ?? 0
@@ -1938,7 +1936,7 @@ final class ConnectionHub: ObservableObject {
     private func clusterJSONObject(_ cluster: ClusterState) -> [String: Any] {
         let online = hostingLocalHub ? onlineProgramsLocked() : cluster.onlineMembers
         let allOnline = cluster.members.allSatisfy { online.contains($0) }
-        let hasShared = !cluster.sharedScalars.isEmpty || !cluster.sharedScopes.isEmpty || cluster.sharedTs > 0
+        let hasShared = !cluster.sharedScalars.isEmpty || !cluster.sharedScopes.isEmpty || cluster.sharedTs > 0 || !cluster.sharedLock.isEmpty
         var dict: [String: Any] = [
             "id": cluster.id,
             "groupName": cluster.groupName,
@@ -1968,6 +1966,7 @@ final class ConnectionHub: ObservableObject {
             // Lines appear once a member contributed them: an empty list is
             // "nothing shared yet", which members must not adopt as a deletion.
             if !cluster.sharedScopes.isEmpty { shared["scopes"] = cluster.sharedScopes }
+            if !cluster.sharedLock.isEmpty { shared["lock"] = cluster.sharedLock }
             dict["shared"] = shared
         }
         return dict

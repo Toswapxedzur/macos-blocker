@@ -106,9 +106,10 @@ public enum ChromeExtensionImporter {
             snoozeConfirmations: int(object["snoozeConfirmations"]) ?? 0,
             activeDays: parseDays(object["activeDays"]),
             timeWindows: ScheduleParser.parseWindows(scheduleText),
-            freezeMode: mapFreezeMode(string(object["freezeMode"])),
-            strictFreezeHours: int(object["strictFreezeHours"]) ?? 24,
-            frozenAt: dateFromMilliseconds(object["frozenAtMs"]),
+            lockedAt: WebStoreDocument.isLocked(object)
+                ? (dateFromMilliseconds(object["lockedAtMs"]) ?? dateFromMilliseconds(object["frozenAtMs"]) ?? Date(timeIntervalSince1970: 0))
+                : nil,
+            lockWaitHours: (object["lockWaitHours"] as? NSNumber)?.doubleValue ?? 0,
             parentalPasswordHash: string(object["parentalPasswordHash"]),
             parentalPasswordSalt: string(object["parentalPasswordSalt"]),
             fallbackMessage: "",
@@ -116,17 +117,6 @@ public enum ChromeExtensionImporter {
             targets: sites + apps,
             applicationAllowlist: WebStoreDocument.appsExcept(of: object)
         )
-    }
-
-    /// Maps the JS `freezeMode` strings to the Swift enum. The web layer uses
-    /// `"frozen"` for the normal freeze; the Swift enum spells that `.normal`.
-    private static func mapFreezeMode(_ raw: String?) -> FreezeMode {
-        switch raw {
-        case "frozen", "normal": return .normal
-        case "strict": return .strict
-        case "parental": return .parental
-        default: return .none
-        }
     }
 
     /// The macOS app blocks whole apps/sites only; the extension's platform

@@ -32,13 +32,6 @@ public enum BlockingMode: String, Codable, Sendable {
     }
 }
 
-public enum FreezeMode: String, Codable, Sendable {
-    case none
-    case normal
-    case strict
-    case parental
-}
-
 public struct BlockTarget: Codable, Equatable, Identifiable, Sendable {
     public enum Kind: String, Codable, Sendable {
         case application
@@ -93,9 +86,10 @@ public struct BlockGroup: Codable, Identifiable, Equatable, Sendable {
     public var snoozeConfirmations: Int
     public var activeDays: Set<Weekday>
     public var timeWindows: [TimeWindow]
-    public var freezeMode: FreezeMode
-    public var strictFreezeHours: Int
-    public var frozenAt: Date?
+    /// The lock (group-actions.js): when it was frozen (nil = unlocked) and its
+    /// wait gate. It only gates edits; enforcement never reads it.
+    public var lockedAt: Date?
+    public var lockWaitHours: Double
     public var parentalPasswordHash: String?
     public var parentalPasswordSalt: String?
     public var fallbackMessage: String
@@ -123,9 +117,8 @@ public struct BlockGroup: Codable, Identifiable, Equatable, Sendable {
         snoozeConfirmations: Int = 0,
         activeDays: Set<Weekday> = Set(Weekday.allCases),
         timeWindows: [TimeWindow] = [],
-        freezeMode: FreezeMode = .none,
-        strictFreezeHours: Int = 24,
-        frozenAt: Date? = nil,
+        lockedAt: Date? = nil,
+        lockWaitHours: Double = 0,
         parentalPasswordHash: String? = nil,
         parentalPasswordSalt: String? = nil,
         fallbackMessage: String = "",
@@ -149,9 +142,8 @@ public struct BlockGroup: Codable, Identifiable, Equatable, Sendable {
         self.snoozeConfirmations = snoozeConfirmations
         self.activeDays = activeDays
         self.timeWindows = timeWindows
-        self.freezeMode = freezeMode
-        self.strictFreezeHours = strictFreezeHours
-        self.frozenAt = frozenAt
+        self.lockedAt = lockedAt
+        self.lockWaitHours = lockWaitHours
         self.parentalPasswordHash = parentalPasswordHash
         self.parentalPasswordSalt = parentalPasswordSalt
         self.fallbackMessage = fallbackMessage

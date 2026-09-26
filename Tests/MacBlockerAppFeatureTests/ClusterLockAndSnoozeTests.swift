@@ -1,9 +1,12 @@
 import XCTest
 @testable import MacBlockerAppFeature
 
-/// Owner 2026-09-26: a lock or unlock on any linked device applies to every
-/// device (the latest LOCK CHANGE wins, not the latest save), and the parental
-/// PIN travels with the lock. Ending a snooze early ends it everywhere.
+/// Owner 2026-09-26: linked groups lock together — one lock for the link,
+/// owned by the hub and versioned: a device's change is taken only when it was
+/// made on top of the hub's current version (a stale or joining device can
+/// never overwrite it; a device's change made while the hub was away wins when
+/// it returns). A locked group cannot join a link. Ending a snooze early ends it
+/// everywhere.
 final class ClusterLockAndSnoozeTests: XCTestCase {
     private func linkedHub() -> ConnectionHub {
         let hub = ConnectionHub()
@@ -19,35 +22,47 @@ final class ClusterLockAndSnoozeTests: XCTestCase {
         return (doc["blockedGroups"] as? [[String: Any]])?.first ?? [:]
     }
 
-    func testAnUnlockOnOneDeviceUnlocksEveryDevice() {
-        let hub = linkedHub()
-        hub.applySync(program: "chrome", groupName: "Focus", contribution: ["scalars": [
-            "freezeMode": "parental", "freezeChangedAtMs": 1_000, "parentalPasswordHash": "h", "parentalPasswordSalt": "s"
-        ]], ts: 10)
-        hub.applySync(program: "macapp", groupName: "Focus", contribution: ["scalars": [
-            "freezeMode": "parental", "freezeChangedAtMs": 1_000, "parentalPasswordHash": "h", "parentalPasswordSalt": "s"
-        ]], ts: 11)
-        XCTAssertEqual(shared(hub)["freezeMode"] as? String, "parental")
-        XCTAssertEqual(shared(hub)["parentalPasswordHash"] as? String, "h", "the PIN travels with the lock")
-
-        // Chrome unlocks later; the Mac's stale "parental" no longer wins.
-        hub.applySync(program: "chrome", groupName: "Focus", contribution: ["scalars": [
-            "freezeMode": "none", "freezeChangedAtMs": 2_000
-        ]], ts: 12)
-        XCTAssertEqual(shared(hub)["freezeMode"] as? String, "none")
-
-        // A later save on the Mac that carries its OLD lock does not bring it back.
-        hub.applySync(program: "macapp", groupName: "Focus", contribution: ["scalars": [
-            "freezeMode": "parental", "freezeChangedAtMs": 1_000, "allowedMinutes": 20
-        ]], ts: 13)
-        XCTAssertEqual(shared(hub)["freezeMode"] as? String, "none", "only a newer lock change moves the lock")
+    private func unit(locked: Bool, version: Int, pin: String? = nil) -> [String: Any] {
+        ["lockedAtMs": locked ? 1_000 : NSNull(), "lockWaitHours": 0,
+         "parentalPasswordHash": pin ?? NSNull(), "parentalPasswordSalt": pin == nil ? NSNull() : "s", "lockVersion": version]
     }
 
-    func testMembersWithoutAChangeTimeFallBackToTheStrictestLock() {
+    private func sync(_ hub: ConnectionHub, _ program: String, lock: [String: Any], base: Int) {
+        hub.applySync(program: program, groupName: "Focus",
+                      contribution: ["scalars": ["allowedMinutes": 15], "lock": lock, "lockBase": base], ts: 1)
+    }
+
+    func testTheLinksLockMovesOnlyOnTopOfItsVersion() {
         let hub = linkedHub()
-        hub.applySync(program: "chrome", groupName: "Focus", contribution: ["scalars": ["freezeMode": "frozen"]], ts: 1)
-        hub.applySync(program: "macapp", groupName: "Focus", contribution: ["scalars": ["freezeMode": "strict"]], ts: 2)
-        XCTAssertEqual(shared(hub)["freezeMode"] as? String, "strict")
+        sync(hub, "chrome", lock: unit(locked: false, version: 3), base: 0)
+        sync(hub, "macapp", lock: unit(locked: true, version: 9), base: 0)
+        XCTAssertNil(shared(hub)["lockedAtMs"] as? NSNumber, "a joining member never changes the link's lock")
+        XCTAssertEqual(shared(hub)["lockVersion"] as? Int, 3)
+        XCTAssertEqual(shared(hub)["lockSyncedVersion"] as? Int, 3, "the Mac reads the link's version")
+
+        sync(hub, "macapp", lock: unit(locked: true, version: 4, pin: "h"), base: 3)
+        XCTAssertEqual(shared(hub)["lockedAtMs"] as? Int, 1_000, "a change made on the current version is taken")
+        XCTAssertEqual(shared(hub)["parentalPasswordHash"] as? String, "h", "the PIN travels with the lock")
+
+        sync(hub, "chrome", lock: unit(locked: false, version: 5), base: 3)
+        XCTAssertEqual(shared(hub)["lockedAtMs"] as? Int, 1_000, "a change made on an old version is dropped")
+
+        sync(hub, "chrome", lock: unit(locked: false, version: 5), base: 4)
+        XCTAssertNil(shared(hub)["lockedAtMs"] as? NSNumber, "an unlock made on the current version unlocks the link")
+    }
+
+    func testALockedGroupCannotJoinALink() {
+        let hub = ConnectionHub()
+        hub.setRoster(program: "macapp", groups: [["id": "m1", "name": "Focus", "frozen": true]])
+        hub.setRoster(program: "chrome", groups: [["id": "c1", "name": "Focus"]])
+        XCTAssertNil(hub.sharedUsage(groupName: "Focus"), "no link forms while one side is frozen")
+        hub.setRoster(program: "macapp", groups: [["id": "m1", "name": "Focus"]])
+        XCTAssertNotNil(hub.sharedUsage(groupName: "Focus"), "unfrozen, the groups link")
+
+        sync(hub, "chrome", lock: unit(locked: true, version: 1), base: 0)
+        hub.setRoster(program: "firefox", groups: [["id": "f1", "name": "focus"]])
+        hub.applySync(program: "firefox", groupName: "focus", contribution: ["scalars": [:], "lock": unit(locked: false, version: 50), "lockBase": 1], ts: 2)
+        XCTAssertEqual(shared(hub)["lockedAtMs"] as? Int, 1_000, "a locked link takes no one new, so nobody can unlock it by joining")
     }
 
     func testAnEndedSnoozeFromAnotherDeviceEndsTheLocalOne() {
