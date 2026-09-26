@@ -85,9 +85,9 @@ final class ClusterScopesShareTests: XCTestCase {
 
     func testMacEditorFramesAreKeyedByKind() {
         // The Mac's web editor sends the popup's runtime messages ({type: …});
-        // the hub dispatches on `kind`, so its own announces must be re-keyed.
-        let frame = ConnectionHub.bridgeFrame(["type": "groups-announce", "program": "macapp", "groups": []])
-        XCTAssertEqual(frame["kind"] as? String, "groups-announce")
+        // the hub dispatches on `kind`, so its own syncs must be re-keyed.
+        let frame = ConnectionHub.bridgeFrame(["type": "group-sync", "groupName": "Focus"])
+        XCTAssertEqual(frame["kind"] as? String, "group-sync")
         XCTAssertEqual(ConnectionHub.bridgeFrame(["kind": "group-sync"])["kind"] as? String, "group-sync")
     }
 
