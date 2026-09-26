@@ -999,23 +999,23 @@ public final class MacEnforcementBridge: ObservableObject {
                 if addedMs > 0 {
                     buckets[UsageBudget.bucketStartMs(nowMs), default: 0] += addedMs
                 }
-                if let shared = ConnectionHub.shared.sharedUsage(groupName: group.name) {
+                if let shared = ConnectionHub.shared.sharedUsage(groupID: gid) {
                     // Linked group: report this tick's minute (or seed our history
                     // once), then adopt the hub's shared per-minute usage.
                     if clusterSeededGroups.contains(gid) {
                         if addedMs > 0 {
                             ConnectionHub.shared.reportLocalUsage(
-                                groupName: group.name, deltaMs: 0, resetAtMs: 0,
+                                groupID: gid, deltaMs: 0, resetAtMs: 0,
                                 bucketDeltas: [UsageBudget.bucketStartMs(nowMs): addedMs]
                             )
                         }
                     } else {
                         ConnectionHub.shared.reportLocalUsage(
-                            groupName: group.name, deltaMs: 0, resetAtMs: 0, seedBuckets: buckets
+                            groupID: gid, deltaMs: 0, resetAtMs: 0, seedBuckets: buckets
                         )
                         clusterSeededGroups.insert(gid)
                     }
-                    buckets = ConnectionHub.shared.sharedUsage(groupName: group.name)?.buckets ?? shared.buckets
+                    buckets = ConnectionHub.shared.sharedUsage(groupID: gid)?.buckets ?? shared.buckets
                 } else {
                     clusterSeededGroups.remove(gid)
                 }
@@ -1033,7 +1033,7 @@ public final class MacEnforcementBridge: ObservableObject {
             // on the midnight-aligned grid when resetAtMidnight is on. A linked
             // group's period belongs to the hub: it resets there, and we adopt
             // its total and anchor below instead of resetting on our own clock.
-            let linked = ConnectionHub.shared.sharedUsage(groupName: group.name) != nil
+            let linked = ConnectionHub.shared.sharedUsage(groupID: gid) != nil
             var anchor = resetAt[gid] ?? nowMs
             if resetAt[gid] == nil {
                 resetAt[gid] = nowMs
@@ -1059,7 +1059,7 @@ public final class MacEnforcementBridge: ObservableObject {
             if linked {
                 if clusterSeededGroups.contains(gid) {
                     ConnectionHub.shared.reportLocalUsage(
-                        groupName: group.name,
+                        groupID: gid,
                         deltaMs: addedMs,
                         resetAtMs: anchor
                     )
@@ -1068,14 +1068,14 @@ public final class MacEnforcementBridge: ObservableObject {
                     // (which already includes this tick's accrual) with no delta,
                     // so prior Mac usage is preserved on the shared budget.
                     ConnectionHub.shared.reportLocalUsage(
-                        groupName: group.name,
+                        groupID: gid,
                         deltaMs: 0,
                         resetAtMs: anchor,
                         seedMs: timers[gid] ?? 0
                     )
                     clusterSeededGroups.insert(gid)
                 }
-                if let shared = ConnectionHub.shared.sharedUsage(groupName: group.name) {
+                if let shared = ConnectionHub.shared.sharedUsage(groupID: gid) {
                     let total = max(0, shared.ms)
                     if timers[gid] != total {
                         timers[gid] = total

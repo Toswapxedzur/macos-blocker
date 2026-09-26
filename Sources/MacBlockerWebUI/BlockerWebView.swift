@@ -46,7 +46,6 @@ public struct BlockerWebView: _CBViewRepresentable {
     /// second to `window.__cbClustersState`.
     private let clustersJSON: (() -> String?)?
     /// Web announced this Mac's eligible groups (JSON {program, groups}).
-    private let onGroupsAnnounce: ((String) -> Void)?
     /// Web pushed this group's shared definition (JSON {groupName, ts, scalars, scopes, snooze…}).
     private let onGroupSync: ((String) -> Void)?
 
@@ -62,7 +61,6 @@ public struct BlockerWebView: _CBViewRepresentable {
         onDismissSystemPanel: ((String) -> Void)? = nil,
         systemPanelEventsJSON: (() -> String?)? = nil,
         clustersJSON: (() -> String?)? = nil,
-        onGroupsAnnounce: ((String) -> Void)? = nil,
         onGroupSync: ((String) -> Void)? = nil
     ) {
         self.store = store
@@ -76,12 +74,11 @@ public struct BlockerWebView: _CBViewRepresentable {
         self.onDismissSystemPanel = onDismissSystemPanel
         self.systemPanelEventsJSON = systemPanelEventsJSON
         self.clustersJSON = clustersJSON
-        self.onGroupsAnnounce = onGroupsAnnounce
         self.onGroupSync = onGroupSync
     }
 
     public func makeCoordinator() -> Coordinator {
-        Coordinator(store: store, ruleLogJSON: ruleLogJSON, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup, onSnoozePress: onSnoozePress, onPanelEvent: onPanelEvent, onShowSystemPanel: onShowSystemPanel, onDismissSystemPanel: onDismissSystemPanel, systemPanelEventsJSON: systemPanelEventsJSON, clustersJSON: clustersJSON, onGroupsAnnounce: onGroupsAnnounce, onGroupSync: onGroupSync)
+        Coordinator(store: store, ruleLogJSON: ruleLogJSON, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup, onSnoozePress: onSnoozePress, onPanelEvent: onPanelEvent, onShowSystemPanel: onShowSystemPanel, onDismissSystemPanel: onDismissSystemPanel, systemPanelEventsJSON: systemPanelEventsJSON, clustersJSON: clustersJSON, onGroupSync: onGroupSync)
     }
 
     private func makeWebView(context: Context) -> WKWebView {
@@ -256,7 +253,6 @@ public struct BlockerWebView: _CBViewRepresentable {
         private let onDismissSystemPanel: ((String) -> Void)?
         private let systemPanelEventsJSON: (() -> String?)?
         private let clustersJSON: (() -> String?)?
-        private let onGroupsAnnounce: ((String) -> Void)?
         private let onGroupSync: ((String) -> Void)?
 
         private var usagePushTimer: Timer?
@@ -276,7 +272,6 @@ public struct BlockerWebView: _CBViewRepresentable {
             onDismissSystemPanel: ((String) -> Void)?,
             systemPanelEventsJSON: (() -> String?)?,
             clustersJSON: (() -> String?)?,
-            onGroupsAnnounce: ((String) -> Void)?,
             onGroupSync: ((String) -> Void)?
         ) {
             self.store = store
@@ -289,7 +284,6 @@ public struct BlockerWebView: _CBViewRepresentable {
             self.onDismissSystemPanel = onDismissSystemPanel
             self.systemPanelEventsJSON = systemPanelEventsJSON
             self.clustersJSON = clustersJSON
-            self.onGroupsAnnounce = onGroupsAnnounce
             self.onGroupSync = onGroupSync
         }
 
@@ -434,8 +428,6 @@ public struct BlockerWebView: _CBViewRepresentable {
                     let id = (payload["id"] as? String) ?? ""
                     onDismissSystemPanel?(id)
                 }
-            case "groups-announce":
-                if let json = messageJSON(body) { onGroupsAnnounce?(json) }
             case "group-sync":
                 if let json = messageJSON(body) { onGroupSync?(json) }
             case "clusters-status":

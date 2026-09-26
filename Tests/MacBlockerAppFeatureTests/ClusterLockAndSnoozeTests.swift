@@ -55,9 +55,9 @@ final class ClusterLockAndSnoozeTests: XCTestCase {
         let hub = ConnectionHub()
         hub.setRoster(program: "macapp", groups: [["id": "m1", "name": "Focus", "frozen": true]])
         hub.setRoster(program: "chrome", groups: [["id": "c1", "name": "Focus"]])
-        XCTAssertNil(hub.sharedUsage(groupName: "Focus"), "no link forms while one side is frozen")
+        XCTAssertNil(hub.sharedUsage(groupID: "m1"), "no link forms while one side is frozen")
         hub.setRoster(program: "macapp", groups: [["id": "m1", "name": "Focus"]])
-        XCTAssertNotNil(hub.sharedUsage(groupName: "Focus"), "unfrozen, the groups link")
+        XCTAssertNotNil(hub.sharedUsage(groupID: "m1"), "unfrozen, the groups link")
 
         sync(hub, "chrome", lock: unit(locked: true, version: 1), base: 0)
         hub.setRoster(program: "firefox", groups: [["id": "f1", "name": "focus"]])
@@ -103,5 +103,17 @@ final class ClusterLockAndSnoozeTests: XCTestCase {
         ]
         let snooze = (hub.overlayShared(onto: document)["groupSnoozes"] as? [String: Any])?["m1"] as? [String: Any]
         XCTAssertEqual((snooze?["untilMs"] as? NSNumber)?.doubleValue, now, "the newer END replaces the local active snooze")
+    }
+
+    func testTheMacGroupListComesFromItsStoreEveryTick() {
+        // A group created, renamed or deleted with the window closed (by the
+        // "+" or a tool) links and unlinks like any other.
+        let hub = ConnectionHub()
+        hub.setRoster(program: "chrome", groups: [["id": "c1", "name": "Focus"]])
+        let now = Date().timeIntervalSince1970 * 1000
+        hub.contributeLocalDefinitions(document: ["blockedGroups": [["id": "m1", "name": "focus"]]], nowMs: now)
+        XCTAssertNotNil(hub.sharedUsage(groupID: "m1"), "linked by name, pinned by id")
+        hub.contributeLocalDefinitions(document: ["blockedGroups": [["id": "m1", "name": "Work"]]], nowMs: now)
+        XCTAssertNil(hub.sharedUsage(groupID: "m1"), "a rename leaves the link")
     }
 }
