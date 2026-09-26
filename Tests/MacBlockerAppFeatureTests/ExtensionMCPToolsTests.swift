@@ -76,7 +76,7 @@ final class ExtensionMCPToolsTests: XCTestCase {
         let state = try call(server, "extension_state", [:])
         XCTAssertTrue(state.isError); XCTAssertTrue(state.text.contains("no browser with the Vault extension is connected"))
         let deleted = try call(server, "extension_delete_group", ["id": "g1"])
-        XCTAssertTrue(deleted.isError); XCTAssertTrue(deleted.text.contains("frozen, strict or parental-locked"))
+        XCTAssertTrue(deleted.isError); XCTAssertTrue(deleted.text.contains("the group is frozen"))
     }
 
     func testSetGlobalRelaysThePatch() throws {
