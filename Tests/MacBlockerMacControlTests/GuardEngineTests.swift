@@ -105,18 +105,18 @@ final class GuardEngineTests: XCTestCase {
     func testAllowlistDecisionFollowsGroupActivity() {
         var group = appGroup(id: "g", bundleID: "com.example.Editor", mode: .afterMinutes, allowedMinutes: 30)
         group.applicationAllowlist = true
-        let fresh = EndpointSecurityPolicyAdapter.applicationAllowlists(
+        let fresh = AppBlockPolicy.applicationAllowlists(
             groups: [group], usage: UsageSnapshot(), now: Date()
         )
         XCTAssertTrue(fresh.isEmpty, "a timed allowlist group blocks nothing before its allowance is spent")
 
-        let spent = EndpointSecurityPolicyAdapter.applicationAllowlists(
+        let spent = AppBlockPolicy.applicationAllowlists(
             groups: [group], usage: UsageSnapshot(usageByGroupSeconds: ["g": TimeInterval(30 * 60)]), now: Date()
         )
         XCTAssertEqual(spent, [GuardAllowlist(allowedBundleIdentifiers: ["com.example.editor"], displayName: "g")])
 
         group.applicationAllowlist = false
-        let plain = EndpointSecurityPolicyAdapter.applicationAllowlists(
+        let plain = AppBlockPolicy.applicationAllowlists(
             groups: [group], usage: UsageSnapshot(usageByGroupSeconds: ["g": TimeInterval(30 * 60)]), now: Date()
         )
         XCTAssertTrue(plain.isEmpty, "a plain blocklist group contributes no allowlist")
@@ -125,14 +125,14 @@ final class GuardEngineTests: XCTestCase {
     func testAllowlistGroupNeverBlocksItsOwnListedApps() {
         var group = appGroup(id: "g", bundleID: "com.example.Editor", mode: .instant)
         group.applicationAllowlist = true
-        let modes = EndpointSecurityPolicyAdapter.blockedApplications(
+        let modes = AppBlockPolicy.blockedApplications(
             groups: [group], usage: UsageSnapshot(), now: Date()
         )
         XCTAssertTrue(modes.isEmpty, "the listed apps are the ALLOWED ones")
-        let lists = EndpointSecurityPolicyAdapter.applicationAllowlists(
+        let lists = AppBlockPolicy.applicationAllowlists(
             groups: [group], usage: UsageSnapshot(), now: Date()
         )
-        let policy = GuardPolicy(targets: EndpointSecurityPolicyAdapter.buildTargets(from: modes), allowOnly: lists)
+        let policy = GuardPolicy(targets: AppBlockPolicy.buildTargets(from: modes), allowOnly: lists)
         XCTAssertNil(policy.match(bundleIdentifier: "com.example.Editor"))
         XCTAssertNotNil(policy.match(bundleIdentifier: "com.hnc.Discord"))
     }
@@ -162,16 +162,16 @@ final class GuardEngineTests: XCTestCase {
 
     func testBlocksApplicationMatchesTheGuardDecision() {
         let instant = appGroup(id: "i", bundleID: "com.hnc.Discord", mode: .instant)
-        XCTAssertTrue(EndpointSecurityPolicyAdapter.blocksApplication("com.hnc.Discord", groups: [instant], usage: UsageSnapshot(), now: Date()))
-        XCTAssertFalse(EndpointSecurityPolicyAdapter.blocksApplication("com.example.Other", groups: [instant], usage: UsageSnapshot(), now: Date()))
+        XCTAssertTrue(AppBlockPolicy.blocksApplication("com.hnc.Discord", groups: [instant], usage: UsageSnapshot(), now: Date()))
+        XCTAssertFalse(AppBlockPolicy.blocksApplication("com.example.Other", groups: [instant], usage: UsageSnapshot(), now: Date()))
         let timed = appGroup(id: "t", bundleID: "com.hnc.Discord", mode: .afterMinutes, allowedMinutes: 30)
-        XCTAssertFalse(EndpointSecurityPolicyAdapter.blocksApplication("com.hnc.Discord", groups: [timed], usage: UsageSnapshot(), now: Date()),
+        XCTAssertFalse(AppBlockPolicy.blocksApplication("com.hnc.Discord", groups: [timed], usage: UsageSnapshot(), now: Date()),
                        "an unspent budget blocks nothing, so its time still counts")
         var allow = appGroup(id: "a", bundleID: "com.example.Editor", mode: .instant)
         allow.applicationAllowlist = true
-        XCTAssertTrue(EndpointSecurityPolicyAdapter.blocksApplication("com.hnc.Discord", groups: [allow], usage: UsageSnapshot(), now: Date()))
-        XCTAssertFalse(EndpointSecurityPolicyAdapter.blocksApplication("com.example.Editor", groups: [allow], usage: UsageSnapshot(), now: Date()))
-        XCTAssertFalse(EndpointSecurityPolicyAdapter.blocksApplication("com.google.Chrome", groups: [allow], usage: UsageSnapshot(), now: Date()))
+        XCTAssertTrue(AppBlockPolicy.blocksApplication("com.hnc.Discord", groups: [allow], usage: UsageSnapshot(), now: Date()))
+        XCTAssertFalse(AppBlockPolicy.blocksApplication("com.example.Editor", groups: [allow], usage: UsageSnapshot(), now: Date()))
+        XCTAssertFalse(AppBlockPolicy.blocksApplication("com.google.Chrome", groups: [allow], usage: UsageSnapshot(), now: Date()))
     }
 
     func testPolicyWithoutAllowlistsStillDecodes() throws {
@@ -206,7 +206,7 @@ final class GuardEngineTests: XCTestCase {
     // MARK: - Decision → policy compilation
 
     func testAdapterCompilesShieldDecisionsIntoPolicy() async throws {
-        let adapter = EndpointSecurityPolicyAdapter(
+        let adapter = AppBlockPolicy(
             runTerminationSweep: false
         )
 
@@ -257,7 +257,7 @@ final class GuardEngineTests: XCTestCase {
 
     func testInstantGroupBlocksImmediately() {
         let group = appGroup(id: "g", bundleID: "com.hnc.Discord", mode: .instant)
-        let modes = EndpointSecurityPolicyAdapter.blockedApplications(
+        let modes = AppBlockPolicy.blockedApplications(
             groups: [group], usage: UsageSnapshot(), now: Date()
         )
         XCTAssertEqual(modes, ["com.hnc.Discord"])
@@ -265,7 +265,7 @@ final class GuardEngineTests: XCTestCase {
 
     func testBrowserGroupsAreExcludedFromNativePolicy() {
         let group = appGroup(id: "g", bundleID: "com.google.Chrome", mode: .instant)
-        let modes = EndpointSecurityPolicyAdapter.blockedApplications(
+        let modes = AppBlockPolicy.blockedApplications(
             groups: [group], usage: UsageSnapshot(), now: Date()
         )
         XCTAssertTrue(modes.isEmpty)
@@ -274,7 +274,7 @@ final class GuardEngineTests: XCTestCase {
     func testTimedGroupDoesNotBlockBeforeLimit() {
         // The reported bug: a timer group must NOT insta-block.
         let group = appGroup(id: "g", bundleID: "com.hnc.Discord", mode: .afterMinutes, allowedMinutes: 30)
-        let modes = EndpointSecurityPolicyAdapter.blockedApplications(
+        let modes = AppBlockPolicy.blockedApplications(
             groups: [group], usage: UsageSnapshot(), now: Date()
         )
         XCTAssertTrue(modes.isEmpty)
@@ -283,7 +283,7 @@ final class GuardEngineTests: XCTestCase {
     func testTimedGroupBlocksOnceLimitExhausted() {
         let group = appGroup(id: "g", bundleID: "com.hnc.Discord", mode: .afterMinutes, allowedMinutes: 30)
         let usage = UsageSnapshot(usageByGroupSeconds: ["g": TimeInterval(30 * 60)])
-        let modes = EndpointSecurityPolicyAdapter.blockedApplications(
+        let modes = AppBlockPolicy.blockedApplications(
             groups: [group], usage: usage, now: Date()
         )
         XCTAssertEqual(modes, ["com.hnc.Discord"])
@@ -292,7 +292,7 @@ final class GuardEngineTests: XCTestCase {
     func testAfterMinutesGroupRespectsRemainingTime() {
         let group = appGroup(id: "g", bundleID: "com.app", mode: .afterMinutes, allowedMinutes: 60)
         let usage = UsageSnapshot(usageByGroupSeconds: ["g": TimeInterval(10 * 60)])
-        let modes = EndpointSecurityPolicyAdapter.blockedApplications(
+        let modes = AppBlockPolicy.blockedApplications(
             groups: [group], usage: usage, now: Date()
         )
         XCTAssertTrue(modes.isEmpty)
@@ -300,7 +300,7 @@ final class GuardEngineTests: XCTestCase {
 
     func testDisabledGroupNeverBlocks() {
         let group = appGroup(id: "g", bundleID: "com.app", mode: .instant, enabled: false)
-        let modes = EndpointSecurityPolicyAdapter.blockedApplications(
+        let modes = AppBlockPolicy.blockedApplications(
             groups: [group], usage: UsageSnapshot(), now: Date()
         )
         XCTAssertTrue(modes.isEmpty)
@@ -312,7 +312,7 @@ final class GuardEngineTests: XCTestCase {
         let usage = UsageSnapshot(
             snoozesByGroup: ["g": SnoozeState(startsAt: now.addingTimeInterval(-60), until: now.addingTimeInterval(600))]
         )
-        let modes = EndpointSecurityPolicyAdapter.blockedApplications(
+        let modes = AppBlockPolicy.blockedApplications(
             groups: [group], usage: usage, now: now
         )
         XCTAssertTrue(modes.isEmpty)

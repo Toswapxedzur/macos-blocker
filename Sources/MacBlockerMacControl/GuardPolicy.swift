@@ -2,7 +2,7 @@ import Foundation
 import MacBlockerCore
 
 /// The compiled app-block policy: which running processes the kill sweep
-/// force-quits (`EndpointSecurityPolicyAdapter` builds it from the groups).
+/// force-quits (`AppBlockPolicy` builds it from the groups).
 public struct GuardPolicy: Codable, Equatable, Sendable {
     public var version: Int
     public var generatedAt: Date

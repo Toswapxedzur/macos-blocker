@@ -6,7 +6,7 @@ import MacBlockerCore
 /// start and on every relaunch (the engine repeats the sweep each second).
 ///
 /// The editor uses this as its `PolicyApplying` implementation on macOS.
-public actor EndpointSecurityPolicyAdapter: PolicyApplying {
+public actor AppBlockPolicy: PolicyApplying {
     public let capabilities: PlatformCapabilities = .macOS
 
     private let protectedBundleIdentifiers: Set<String>
