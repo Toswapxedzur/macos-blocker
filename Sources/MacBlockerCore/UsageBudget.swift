@@ -11,6 +11,23 @@ import Foundation
 /// - Rolling limit: usage is kept per minute and counts until it is N hours
 ///   old; with `resetAtMidnight` the window never reaches before today's 00:00.
 public enum UsageBudget {
+    /// `{"<minuteStartMs>": ms}` -> typed buckets; malformed entries dropped.
+    public static func parseBuckets(_ value: Any?) -> [Double: Double]? {
+        guard let object = value as? [String: Any] else { return nil }
+        var buckets: [Double: Double] = [:]
+        for (key, raw) in object {
+            guard let minute = Double(key), let ms = (raw as? NSNumber)?.doubleValue,
+                  minute.isFinite, ms.isFinite else { continue }
+            buckets[minute] = ms
+        }
+        return buckets
+    }
+
+    /// Typed buckets -> `{"<minuteStartMs>": ms}` as the stores and the hub keep them.
+    public static func bucketJSON(_ buckets: [Double: Double]) -> [String: Double] {
+        Dictionary(uniqueKeysWithValues: buckets.map { (String(Int64($0.key)), $0.value) })
+    }
+
     public static let bucketMs: Double = 60_000
 
     public static func intervalMs(_ group: BlockGroup) -> Double {
