@@ -6,9 +6,7 @@ import MacBlockerCore
 /// never by force (`QuitRequests`): once per launch, again after the retry
 /// interval if it stays open (the engine repeats the sweep each second).
 ///
-/// The editor uses this as its `PolicyApplying` implementation on macOS.
-public actor AppBlockPolicy: PolicyApplying {
-    public let capabilities: PlatformCapabilities = .macOS
+public actor AppBlockPolicy {
 
     private let protectedBundleIdentifiers: Set<String>
     private let runTerminationSweep: Bool
@@ -31,25 +29,6 @@ public actor AppBlockPolicy: PolicyApplying {
         if let own = Bundle.main.bundleIdentifier { protected.insert(own) }
         self.protectedBundleIdentifiers = protected
         self.runTerminationSweep = runTerminationSweep
-    }
-
-    public func apply(_ decisions: [PolicyDecision]) async throws {
-        for decision in decisions {
-            switch decision.action {
-            case .shield:
-                for id in decision.targetIDs where !MacProcessTerminator.isBrowserBundleIdentifier(id) {
-                    activeBlocked.insert(id)
-                }
-            case .allow, .unshield:
-                for id in decision.targetIDs {
-                    activeBlocked.remove(id)
-                }
-            case .showStatus, .requestSnooze, .log, .quarantine:
-                continue
-            }
-        }
-
-        lastPolicy = buildPolicy()
     }
 
     /// Evaluates the user's groups against the current schedule + usage and

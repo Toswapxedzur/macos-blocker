@@ -241,7 +241,7 @@ final class GroupStoreTests: XCTestCase {
 
     // MARK: GroupStore — I/O + enforcement-plan derivation
 
-    func testMutatePersistsAndRebuildsEnforcementPlan() throws {
+    func testMutatePersists() throws {
         let (store, shared, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -259,10 +259,7 @@ final class GroupStoreTests: XCTestCase {
         let reloaded = store.load()
         XCTAssertEqual(reloaded.group(id: "g2")?["enabled"] as? Bool, true)
         XCTAssertNotNil(reloaded.raw["ruleLog"])
-
-        // The derived plan reflects the new enabled set (only g2 is enabled).
-        let plan = try XCTUnwrap(shared.loadEnforcementPlan())
-        XCTAssertEqual(plan.entries.map(\.groupID), ["g2"])
+        XCTAssertEqual(reloaded.group(id: "g1")?["enabled"] as? Bool, false)
     }
 
     func testLoadGroupsReturnsEnforcementProjection() throws {
