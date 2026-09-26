@@ -4,7 +4,7 @@ import VaultClassifierCore
 import VaultClassifierBridge
 import VaultClassifierLLM
 
-// Collection platforms, classifier types (create/reorder/configure/activate/delete via preset), the trash, collection diagnostics and the native confirmation sheet they share.
+// Collection platforms, classifier types (create/reorder/configure/activate/delete), the trash, collection diagnostics and the native confirmation sheet they share.
 // Split out of VaultClassifierApp.swift (CLASSIFIER-INDEPENDENCE §7, Phase 5):
 // same type, same behaviour — pinned by ViewModelCharacterizationTests.
 @MainActor
