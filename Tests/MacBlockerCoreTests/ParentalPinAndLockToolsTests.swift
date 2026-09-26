@@ -37,6 +37,23 @@ final class ParentalPinAndLockToolsTests: XCTestCase {
         }
     }
 
+    func testSchedulesAndMinutesReadLikeTheEditor() throws {
+        // The Mac reads the editor's store with its own parsers; they must
+        // accept exactly what the editor's (group-actions.js) accept.
+        let lines = ["0900-1700", "2300-0100", "1200-1200", "09:00-17:00", "900-1700", "2400-0100", "0960-1000", " 0800-0900 ", "0800 - 0900", "abcd-efgh"]
+        for line in lines {
+            let js = runtime.call("normalizeTimeWindowLine", [line]) as? String
+            let swift = ScheduleParser.parseWindow(line)
+            XCTAssertEqual(js != nil, swift != nil, "\(line): editor \(js ?? "rejects"), Mac \(swift == nil ? "rejects" : "accepts")")
+        }
+        for value: Any in [30, 0, -5, 1.5, "abc"] {
+            let js = runtime.call("parseAllowedMinutes", [value]) as? Double
+            let data = try JSONSerialization.data(withJSONObject: ["blockedGroups": [["id": "g", "name": "G", "allowedMinutes": value]]])
+            let swift = try ChromeExtensionImporter.importGroups(from: data).groups.first?.allowedMinutes
+            XCTAssertEqual(swift, js ?? 15, "allowedMinutes \(value)")
+        }
+    }
+
     // MARK: Store actions
 
     private func document() -> WebStoreDocument {
