@@ -1384,7 +1384,11 @@ final class ConnectionHub: ObservableObject {
             // linked groups are one group.
             if !budgetBefore.isEmpty, Self.budgetShape(cluster.sharedScalars) != budgetBefore {
                 cluster.sharedUsageMs = 0
-                cluster.sharedUsageResetAtMs = Date().timeIntervalSince1970 * 1000
+                // The new period starts on the group's own grid (with midnight
+                // re-anchoring that is today's grid, not this instant), as every
+                // program computes it — else each would see a different period.
+                let nowMs = Date().timeIntervalSince1970 * 1000
+                cluster.sharedUsageResetAtMs = Self.sharedPeriodStartMs(anchorMs: nowMs, scalars: cluster.sharedScalars, nowMs: nowMs)
                 cluster.sharedBuckets = [:]
                 cluster.usageSeeded = true
                 cluster.bucketsSeeded = true
