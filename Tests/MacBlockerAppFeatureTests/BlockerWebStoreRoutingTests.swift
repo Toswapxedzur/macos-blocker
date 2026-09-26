@@ -100,6 +100,15 @@ final class BlockerWebStoreRoutingTests: XCTestCase {
         XCTAssertNil(BlockerWebStore.tidied(["blockedGroups": [["id": "g1"]], "usageTimersMs": ["g1": 5]], nowMs: 0), "nothing to tidy: no write")
     }
 
+    func testTheEditorMergesOnlyTheKeysItSet() throws {
+        let (webStore, _, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        webStore.save(rawStore: ["blockedGroups": [["id": "g1", "name": "A"]], "groupSnoozeTotalsMs": ["g1": 60_000]])
+        webStore.merge(changes: ["blockedGroups": [["id": "g1", "name": "B"]], "quickAddGroupId": NSNull()])
+        let json = try XCTUnwrap(webStore.loadRawJSON())
+        XCTAssertTrue(json.contains("\"B\"") && json.contains("60000"), "the engine's key is kept: \(json)")
+    }
+
     func testEditorSaveDoesNotSelfNotify() {
         let (webStore, _, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }

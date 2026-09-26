@@ -60,14 +60,21 @@
     }
   }
 
-  function persist() {
+  // Only the keys the editor set (or removed; null) go to Mac Vault, which
+  // merges them into its file — like chrome.storage, a key another writer
+  // changed meanwhile (the engine, a tool) is kept.
+  function persist(keys) {
     try {
       window.localStorage.setItem(STORE_KEY, JSON.stringify(store));
     } catch (_) {}
     var bridge = nativeBridge();
     if (bridge) {
+      var changes = {};
+      keys.forEach(function (key) {
+        changes[key] = Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null;
+      });
       try {
-        bridge.postMessage({ kind: "persist-store", store: store });
+        bridge.postMessage({ kind: "persist-store", changes: changes });
       } catch (_) {}
     }
   }
@@ -299,7 +306,7 @@
         };
         store[key] = deepClone(items[key]);
       });
-      persist();
+      persist(Object.keys(items || {}));
       notifyChanges(changes);
       return settleCallback(undefined, callback);
     },
@@ -310,7 +317,7 @@
         changes[key] = { oldValue: deepClone(store[key]), newValue: undefined };
         delete store[key];
       });
-      persist();
+      persist(list);
       notifyChanges(changes);
       return settleCallback(undefined, callback);
     }

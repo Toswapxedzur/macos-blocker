@@ -47,6 +47,20 @@ public final class BlockerWebStore: @unchecked Sendable {
         groupStore.save(WebStoreDocument(raw: raw), notify: false)
     }
 
+    /// The editor's writes: only the keys it set are merged into the file
+    /// (NSNull removes one), under the lock — so a key another writer changed
+    /// meanwhile (the engine, a tool) is kept, as chrome.storage does.
+    public func merge(changes: [String: Any]) {
+        guard !changes.isEmpty else { return }
+        GroupStore.withFileLock {
+            var object = loadStoreObject() ?? [:]
+            for (key, value) in changes {
+                if value is NSNull { object.removeValue(forKey: key) } else { object[key] = value }
+            }
+            write(object)
+        }
+    }
+
     // MARK: The engine tick
 
     /// What enforcement acts on this tick, from ONE read of the store.
@@ -71,6 +85,8 @@ public final class BlockerWebStore: @unchecked Sendable {
                 return loadStoreObject() ?? object
             }
             write(tidy)
+            // An open editor shows (and later writes) the tidied state.
+            DispatchQueue.main.async { GroupStore.postDidChange() }
             return tidy
         }
     }
