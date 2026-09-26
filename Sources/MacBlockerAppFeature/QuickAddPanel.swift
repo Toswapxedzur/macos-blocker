@@ -108,7 +108,7 @@ public final class QuickAddPanel {
         guard !groupID.isEmpty,
               let app = NSWorkspace.shared.frontmostApplication,
               let bundleID = app.bundleIdentifier,
-              AppBlockPolicy.canBlock(bundleID) else {
+              GuardPolicy.canBlock(bundleID) else {
             NSSound.beep() // Apple's apps, browsers and Vault are never blocked
             return
         }
