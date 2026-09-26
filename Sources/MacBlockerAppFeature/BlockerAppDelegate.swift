@@ -1,6 +1,7 @@
 #if os(macOS)
 import AppKit
 import ServiceManagement
+import notify
 import MacBlockerCore
 import MacBlockerWebUI
 import VaultClassifierApp
@@ -50,6 +51,7 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
         // App blocking runs for the whole session, window open or not; only
         // quitting the app stops it.
         MainActor.assumeIsolated { MacEnforcementBridge.shared.start() }
+        registerDevelopmentCloseWindowsTrigger()
 
         // The floating quick-add "+" (off by default; follows the editor's switch).
         MainActor.assumeIsolated { QuickAddPanel.shared.reload() }
@@ -109,6 +111,23 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "Quit")
         alert.addButton(withTitle: "Cancel")
         return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
+    }
+
+    /// DEVELOPMENT BUILDS ONLY (test scaffolding). Posting
+    /// `notifyutil -p com.adamancia.vault.development.close-windows` closes the
+    /// app's titled windows exactly as the user closing them would, so a remote
+    /// test host can prove the app keeps working with its window closed —
+    /// without screen-automation permissions. Never registered in production.
+    private var closeWindowsToken: Int32 = 0
+    private func registerDevelopmentCloseWindowsTrigger() {
+        guard VaultRuntimeEnvironment.current == .development else { return }
+        notify_register_dispatch("com.adamancia.vault.development.close-windows", &closeWindowsToken, .main) { _ in
+            MainActor.assumeIsolated {
+                for window in NSApp.windows where window.isVisible && window.styleMask.contains(.titled) {
+                    window.performClose(nil)
+                }
+            }
+        }
     }
 
     open func applicationWillTerminate(_ notification: Notification) {
