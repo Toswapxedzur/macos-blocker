@@ -109,8 +109,6 @@ public final class MacEnforcementBridge: ObservableObject {
     // web editor to poll via drainSystemPanelEventsJSON().
     private var systemPanelEvents: [[String: String]] = []
     private var editorCloseObserver: NSObjectProtocol?
-    /// Bundle id → when to ask it to quit again (see `requestClose`).
-    private var pendingCloses: [String: Date] = [:]
     #endif
 
     public init(webStore: BlockerWebStore = BlockerWebStore(), sweepInterval: TimeInterval = 1.0) {
@@ -380,8 +378,6 @@ public final class MacEnforcementBridge: ObservableObject {
             snoozesByGroup: snoozes
         )
 
-        retryPendingCloses(now: now)
-
         // 2. Drain notification-driven lifecycle events.
         let lifecycleEvents = pendingLifecycleEvents
         pendingLifecycleEvents.removeAll()
@@ -397,10 +393,12 @@ public final class MacEnforcementBridge: ObservableObject {
         // 4. Enforce: block apps whose group says "blocked now" PLUS
         //    any apps shield-ed by custom-rule decisions.
         //    (a rule's persistent blockApp list rides along: one kill sweep).
+        let quitRetry = webStore.quitRetryMinutes() * 60
         Task { [adapter, ruleBlocked = dispatchOutput.shieldedBundleIDs.union(ruleBlocked)] in
             try? await adapter.applyGroups(
                 groups, usage: usage, now: now,
-                customBlockedBundleIDs: ruleBlocked
+                customBlockedBundleIDs: ruleBlocked,
+                quitRetry: quitRetry
             )
         }
 
@@ -660,9 +658,12 @@ public final class MacEnforcementBridge: ObservableObject {
 
         guard !group.customRuleSource.isEmpty, let runtime = ensureRuntime() else { return }
 
-        // Ensure the rule is loaded.
-        if loadedRuleSources[group.id] != group.customRuleSource {
-            reconcileRuleRuntime(runtime: runtime, groups: [group])
+        // Load THIS group's rule if needed — only this one (the full reconcile
+        // treats every group missing from its list as removed and would unload
+        // every other group's rule).
+        if loadedRuleSources[group.id] != group.customRuleSource, quarantinedRuleSources[group.id] != group.customRuleSource {
+            if loadedRuleSources[group.id] != nil { cleanRule(groupID: group.id) }
+            buildRule(groupID: group.id)
         }
         guard loadedRuleSources[group.id] != nil else { return }
 
@@ -689,8 +690,10 @@ public final class MacEnforcementBridge: ObservableObject {
                     toastOverlay.show(message: "[\(group.name)] \(decision.reason)", level: level)
                 }
             case .shield:
-                if let fm = frontmost {
-                    MacProcessTerminator.terminate(bundleIdentifier: fm)
+                // The same quit as a block: normally, retried per Settings.
+                let targets = decision.targetIDs.isEmpty ? Set([frontmost].compactMap { $0 }) : decision.targetIDs
+                for target in targets where !Self.isExemptApplication(target) {
+                    requestClose(target, now: Date())
                 }
             default:
                 break
@@ -835,28 +838,10 @@ public final class MacEnforcementBridge: ObservableObject {
                   message: "Rule stopped: execution deadline exceeded. Edit it and click Run to retry.")
     }
 
-    /// A rule's "close" asks the app to quit normally; an app that stays open
-    /// (say, to keep unsaved work) is left open — unless Settings ▸ "Ask a
-    /// closed app to quit again" is above 0, then it is asked again that often
-    /// while it stays open (owner 2026-09-26; default 0 = ask once).
+    /// A rule's "close" asks the app to quit normally, like a block
+    /// (`QuitRequests`: retried after Settings' interval while it stays open).
     private func requestClose(_ bundleID: String, now: Date) {
-        MacProcessTerminator.terminate(bundleIdentifier: bundleID)
-        let retry = webStore.closeRetrySeconds()
-        if retry > 0 { pendingCloses[bundleID] = now.addingTimeInterval(retry) }
-    }
-
-    private func retryPendingCloses(now: Date) {
-        guard !pendingCloses.isEmpty else { return }
-        let retry = webStore.closeRetrySeconds()
-        let running = Set(NSWorkspace.shared.runningApplications.compactMap { $0.bundleIdentifier })
-        for (bundleID, nextAsk) in pendingCloses {
-            if retry <= 0 || !running.contains(bundleID) {
-                pendingCloses.removeValue(forKey: bundleID)
-            } else if now >= nextAsk {
-                MacProcessTerminator.terminate(bundleIdentifier: bundleID)
-                pendingCloses[bundleID] = now.addingTimeInterval(retry)
-            }
-        }
+        Task { [adapter] in await adapter.close(bundleIdentifier: bundleID, now: now) }
     }
 
     private func processWindowIntents(_ intents: [WindowIntent], groupID: String, frontmost: String?) {
@@ -884,7 +869,6 @@ public final class MacEnforcementBridge: ObservableObject {
                 if let target = intent.target, !target.isEmpty,
                    !MacProcessTerminator.isBrowserBundleIdentifier(target) {
                     blockedAppBundleIDsByGroup[groupID, default: []].insert(target)
-                    MacProcessTerminator.forceKill(bundleIdentifier: target)
                     appendLog(level: "log", group: "system",
                               message: "App blocked: \(target)")
                 }
