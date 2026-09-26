@@ -148,16 +148,21 @@ final class GuardEngineTests: XCTestCase {
         XCTAssertFalse(group.countsApplication("com.google.Chrome", exempt: true), "exempt apps (browsers, Apple, Vault) never count")
     }
 
-    func testAllowlistTimerShowsInTheAppsItWouldBlock() {
-        var group = appGroup(id: "g", bundleID: "com.example.Editor", mode: .afterMinutes, allowedMinutes: 30)
-        group.applicationAllowlist = true
-        let evaluator = PolicyEvaluator()
-        let inBlocked = evaluator.evaluate(groups: [group], usage: UsageSnapshot(), context: ActivityContext(activeTargetIDs: ["com.hnc.Discord"], platform: .macOS))
-        XCTAssertEqual(inBlocked.visibleTimerItems.map(\.groupID), ["g"])
-        let inAllowed = evaluator.evaluate(groups: [group], usage: UsageSnapshot(), context: ActivityContext(activeTargetIDs: ["com.example.Editor"], platform: .macOS))
-        XCTAssertTrue(inAllowed.visibleTimerItems.isEmpty)
-        let inExempt = evaluator.evaluate(groups: [group], usage: UsageSnapshot(), context: ActivityContext(activeTargetIDs: ["com.apple.Finder"], exemptTargetIDs: ["com.apple.Finder"], platform: .macOS))
-        XCTAssertTrue(inExempt.visibleTimerItems.isEmpty)
+    func testOneEnforcingTestForRulesTimeAndBlocking() {
+        let now = Date()
+        let timed = appGroup(id: "t", bundleID: "com.hnc.Discord", mode: .afterMinutes, allowedMinutes: 30)
+        XCTAssertEqual(timed.remainingSeconds(usedSeconds: 600), 1_200)
+        XCTAssertFalse(timed.blocksNow(usage: UsageSnapshot(usageByGroupSeconds: ["t": 600]), at: now))
+        XCTAssertTrue(timed.blocksNow(usage: UsageSnapshot(usageByGroupSeconds: ["t": 1_800]), at: now), "allowance spent")
+        let snoozed = UsageSnapshot(usageByGroupSeconds: ["t": 1_800], snoozesByGroup: ["t": SnoozeState(
+            startsAt: now.addingTimeInterval(-60), until: now.addingTimeInterval(60))])
+        XCTAssertFalse(timed.isEnforcing(snoozes: snoozed.snoozesByGroup, at: now))
+        XCTAssertFalse(timed.blocksNow(usage: snoozed, at: now), "a snoozed group blocks nothing")
+        var off = appGroup(id: "i", bundleID: "com.hnc.Discord", mode: .instant)
+        XCTAssertNil(off.remainingSeconds(usedSeconds: 0))
+        XCTAssertTrue(off.blocksNow(usage: UsageSnapshot(), at: now))
+        off.enabled = false
+        XCTAssertFalse(off.blocksNow(usage: UsageSnapshot(), at: now))
     }
 
     func testBlocksApplicationMatchesTheGuardDecision() {
