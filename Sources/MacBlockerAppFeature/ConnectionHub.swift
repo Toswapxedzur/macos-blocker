@@ -299,11 +299,11 @@ final class ConnectionHub: ObservableObject {
         /// identically; `sharedSnoozeTs` is the originating start time.
         var sharedSnooze: [String: Any] = [:]
         var sharedSnoozeTs: Double = 0
-        /// Shared cumulative snooze total (display only on each member). We keep
-        /// the max reported across members so the figure reflects time accrued on
-        /// any endpoint; members never merge it into their own accumulator, so a
-        /// max is safe and monotonic.
+        /// The link's total snoozed time: the hub counts each shared snooze once,
+        /// when it has finished (members show this figure). `snoozeCountedStartMs`
+        /// is the start of the last snooze counted (entries run one at a time).
         var sharedSnoozeTotalMs: Double = 0
+        var snoozeCountedStartMs: Double = 0
 
         init(id: String, groupName: String) {
             self.id = id
@@ -553,12 +553,14 @@ final class ConnectionHub: ObservableObject {
     }
 
     /// Starts a new period for every linked fixed budget whose period ended,
-    /// and tells the members (they adopt the reset total like any other).
+    /// counts every shared snooze that finished, and tells the members.
     func rollSharedBudgets(nowMs: Double) {
         lock.lock()
         var changed: [[String: Any]] = []
-        for cluster in clusters.values where rollBudgetLocked(cluster, nowMs: nowMs) {
-            changed.append(clusterJSONObject(cluster))
+        for cluster in clusters.values {
+            let rolled = rollBudgetLocked(cluster, nowMs: nowMs)
+            let counted = Self.countSnoozeLocked(cluster, nowMs: nowMs)
+            if rolled || counted { changed.append(clusterJSONObject(cluster)) }
         }
         lock.unlock()
         for snapshot in changed { broadcastCluster(snapshot) }
@@ -580,6 +582,20 @@ final class ConnectionHub: ObservableObject {
         // A fresh period: a member's absolute total from the old one must not
         // seed it back.
         cluster.usageSeeded = true
+        return true
+    }
+
+    /// Caller must hold `lock`. Adds the shared snooze's snoozed time to the
+    /// link's total once, when it has finished (or is being replaced).
+    @discardableResult
+    private static func countSnoozeLocked(_ cluster: ClusterState, nowMs: Double, replacing: Bool = false) -> Bool {
+        let entry = cluster.sharedSnooze
+        guard let start = (entry["startsAtMs"] as? NSNumber)?.doubleValue,
+              let until = (entry["untilMs"] as? NSNumber)?.doubleValue,
+              start != cluster.snoozeCountedStartMs,
+              replacing || nowMs >= until else { return false }
+        cluster.sharedSnoozeTotalMs += max(0, min(until, nowMs) - start)
+        cluster.snoozeCountedStartMs = start
         return true
     }
 
@@ -1473,17 +1489,16 @@ final class ConnectionHub: ObservableObject {
         // Active snooze: newest start wins. A member only carries `snoozeTs` when
         // it actually has an active/cooling snooze entry, so usage-only pings and
         // members without a snooze never clobber a snooze started elsewhere.
+        let nowMs = Date().timeIntervalSince1970 * 1000
         if let snoozeTs = contribution["snoozeTs"] as? Double, snoozeTs > 0 {
             if snoozeTs > cluster.sharedSnoozeTs {
+                // A new snooze replaces a finished one: count that one first.
+                Self.countSnoozeLocked(cluster, nowMs: nowMs, replacing: true)
                 cluster.sharedSnoozeTs = snoozeTs
                 cluster.sharedSnooze = (contribution["snooze"] as? [String: Any]) ?? [:]
             }
         }
-
-        // Cumulative snooze total: keep the max across members (display only).
-        if let total = contribution["snoozeTotalMs"] as? Double, total > cluster.sharedSnoozeTotalMs {
-            cluster.sharedSnoozeTotalMs = total
-        }
+        Self.countSnoozeLocked(cluster, nowMs: nowMs)
 
         // Persist only on config-bearing syncs (scalars/scopes/snooze), not
         // on per-tick usage pings, so the on-disk registry tracks structural and
@@ -1878,6 +1893,7 @@ final class ConnectionHub: ObservableObject {
                 "sharedSnooze": c.sharedSnooze,
                 "sharedSnoozeTs": c.sharedSnoozeTs,
                 "sharedSnoozeTotalMs": c.sharedSnoozeTotalMs,
+                "snoozeCountedStartMs": c.snoozeCountedStartMs,
                 "sharedUsageMs": c.sharedUsageMs,
                 "sharedUsageResetAtMs": c.sharedUsageResetAtMs,
                 "sharedBuckets": Self.bucketJSON(c.sharedBuckets),
@@ -1915,6 +1931,7 @@ final class ConnectionHub: ObservableObject {
             if let snooze = obj["sharedSnooze"] as? [String: Any] { cluster.sharedSnooze = snooze }
             cluster.sharedSnoozeTs = (obj["sharedSnoozeTs"] as? Double) ?? 0
             cluster.sharedSnoozeTotalMs = (obj["sharedSnoozeTotalMs"] as? Double) ?? 0
+            cluster.snoozeCountedStartMs = (obj["snoozeCountedStartMs"] as? Double) ?? 0
             cluster.sharedUsageMs = (obj["sharedUsageMs"] as? Double) ?? 0
             cluster.sharedUsageResetAtMs = (obj["sharedUsageResetAtMs"] as? Double) ?? 0
             cluster.sharedBuckets = Self.parseBuckets(obj["sharedBuckets"]) ?? [:]

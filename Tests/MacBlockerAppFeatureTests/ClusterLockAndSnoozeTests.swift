@@ -65,6 +65,31 @@ final class ClusterLockAndSnoozeTests: XCTestCase {
         XCTAssertEqual(shared(hub)["lockedAtMs"] as? Int, 1_000, "a locked link takes no one new, so nobody can unlock it by joining")
     }
 
+    func testTheLinksSnoozeTotalCountsEachSnoozeOnce() {
+        let hub = linkedHub()
+        hub.setRoster(program: "firefox", groups: [["id": "f1", "name": "Focus"]])
+        let now = (Date().timeIntervalSince1970 * 1000).rounded(.down)
+        let entry: [String: Any] = ["startsAtMs": now - 600_000, "untilMs": now - 300_000, "cooldownUntilMs": now - 300_000, "changedAtMs": now - 600_000]
+        // Every device reports the same finished snooze.
+        for program in ["chrome", "firefox", "macapp"] {
+            hub.applySync(program: program, groupName: "Focus", contribution: ["snooze": entry, "snoozeTs": now - 600_000], ts: 0)
+        }
+        XCTAssertEqual(shared(hub)["snoozeTotalMs"] as? Double, nil, "overlay carries no total; read the cluster")
+        let total = { () -> Double in
+            let json = hub.clustersJSON()
+            let clusters = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [[String: Any]] ?? []
+            return ((clusters.first?["shared"] as? [String: Any])?["snoozeTotalMs"] as? NSNumber)?.doubleValue ?? -1
+        }
+        XCTAssertEqual(total(), 300_000, "a snooze three devices saw counts once")
+        // A second snooze, ended early on one device, counts its snoozed part once.
+        let second: [String: Any] = ["startsAtMs": now - 100_000, "untilMs": now - 40_000, "cooldownUntilMs": now - 40_000, "changedAtMs": now - 40_000]
+        hub.applySync(program: "chrome", groupName: "Focus", contribution: ["snooze": second, "snoozeTs": now - 40_000], ts: 0)
+        hub.applySync(program: "firefox", groupName: "Focus", contribution: ["snooze": second, "snoozeTs": now - 40_000], ts: 0)
+        XCTAssertEqual(total(), 360_000)
+        hub.applySync(program: "macapp", groupName: "Focus", contribution: ["snoozeTotalMs": 9_999_999.0], ts: 0)
+        XCTAssertEqual(total(), 360_000, "a member's own figure is not taken")
+    }
+
     func testAnEndedSnoozeFromAnotherDeviceEndsTheLocalOne() {
         let hub = linkedHub()
         let now = Date().timeIntervalSince1970 * 1000
