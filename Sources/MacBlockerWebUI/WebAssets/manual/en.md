@@ -239,17 +239,14 @@ Revoke the folder when a rule no longer needs it. A rule must handle unavailable
 
 ## 9. Web-app bridge
 
-Local Vault transport runs automatically between compatible programs. When a native desktop app opens, it hosts or joins the local hub without a user connection switch.
+Mac Vault hosts the local hub that links it with Vault browser extensions on this computer. It needs no connection switch: groups with the same name in two programs link automatically, and a linked group is one definition everywhere — its policy, every Applies-to entry, one allowance and its snooze.
 
-Automatic transport does not merge every group. The user must still explicitly link and unlink eligible matching groups.
+- **Always on while it runs.** Mac Vault blocks applications and keeps the link for as long as the app runs, whether or not its window is open. Closing the window only hides the editor; quitting the app (with its confirmation) stops blocking and ends the link.
+- **One allowance.** Every linked program reports its own time to Mac Vault, and Mac Vault alone starts each new budget period, which the others adopt.
+- **Locks and snoozes follow the latest change.** Locking or unlocking a linked group on any program applies to every program, and the parental PIN travels with the lock. Starting or ending a snooze on any program does the same.
+- **Each program enforces what it can.** Mac Vault enforces the app list; browsers enforce websites and platforms. The other entries are kept for the linked programs.
 
-For a group link:
-
-1. Open the compatible Vault endpoints; transport starts automatically.
-2. Create matching, unfrozen groups with the same name and type.
-3. In the group bridge section, choose the program and link the group.
-
-A linked group forms a cluster. Supported common policy values, usage, and snooze state can synchronize while members are connected. Disconnecting pauses synchronization and preserves local groups. Browser-only targets, unsupported Custom actions, and platform-specific fields are not guaranteed to transfer.
+Renaming or deleting a group on one program unlinks it there.
 
 ## 10. Import, export, reset, and audit
 

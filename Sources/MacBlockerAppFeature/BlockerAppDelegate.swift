@@ -47,6 +47,10 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
             VaultClassifierPage.shared.start()
         }
 
+        // App blocking runs for the whole session, window open or not; only
+        // quitting the app stops it.
+        MainActor.assumeIsolated { MacEnforcementBridge.shared.start() }
+
         // The floating quick-add "+" (off by default; follows the editor's switch).
         MainActor.assumeIsolated { QuickAddPanel.shared.reload() }
 
@@ -108,6 +112,7 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     open func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated { MacEnforcementBridge.shared.stop() }
         activityRecorder?.stop()
         MainActor.assumeIsolated { VaultClassifierPage.shared.flushPendingWrites() }
         ConnectionHub.shared.stop()

@@ -17,12 +17,42 @@ final class ClusterScopesShareTests: XCTestCase {
         (lines ?? []).map(ConnectionHub.scopeEntryKey)
     }
 
+    /// The Mac group's shared lines as enforcement reads them (the overlay).
+    private func sharedScopes(_ hub: ConnectionHub) -> [[String: Any]]? {
+        let document: [String: Any] = ["blockedGroups": [["id": "m1", "name": "Focus"]]]
+        let groups = hub.overlayShared(onto: document)["blockedGroups"] as? [[String: Any]]
+        return groups?.first?["scopes"] as? [[String: Any]]
+    }
+
     func testGroupsLinkByNameAloneWhateverTheirType() throws {
         let hub = ConnectionHub()
         hub.setRoster(program: "macapp", groups: [["id": "m1", "name": "Focus", "type": "site"]])
         hub.setRoster(program: "chrome", groups: [["id": "c1", "name": "Focus", "type": "youtube"]])
         hub.applySync(program: "chrome", groupName: "Focus", contribution: ["scalars": ["mode": "instant"]], ts: 1)
-        XCTAssertNotNil(hub.sharedScopes(groupName: "Focus"), "a cluster formed although the types differ")
+        let overlaid = hub.overlayShared(onto: ["blockedGroups": [["id": "m1", "name": "Focus", "mode": "after-minutes"]]])
+        XCTAssertEqual((overlaid["blockedGroups"] as? [[String: Any]])?.first?["mode"] as? String, "instant",
+                       "a cluster formed although the types differ, and the Mac reads its shared policy")
+    }
+
+    func testEnforcementReadsTheLiveSharedDefinitionAndNewerSnooze() throws {
+        let hub = linkedHub()
+        let now = Date().timeIntervalSince1970 * 1000
+        hub.applySync(program: "chrome", groupName: "Focus", contribution: [
+            "scalars": ["allowedMinutes": 45],
+            "scopes": [["id": "apps-1", "surface": "apps", "platform": NSNull(), "action": "block", "apps": [["id": "com.hnc.Discord"]]]],
+            "snooze": ["startsAtMs": now, "untilMs": now + 600_000, "cooldownUntilMs": now + 600_000, "changedAtMs": now],
+            "snoozeTs": now
+        ], ts: 5)
+        let stored: [String: Any] = [
+            "blockedGroups": [["id": "m1", "name": "Focus", "allowedMinutes": 15]],
+            "groupSnoozes": ["m1": ["startsAtMs": now - 5_000, "untilMs": now - 1_000, "cooldownUntilMs": now - 1_000]]
+        ]
+        let overlaid = hub.overlayShared(onto: stored)
+        let group = try XCTUnwrap((overlaid["blockedGroups"] as? [[String: Any]])?.first)
+        XCTAssertEqual(group["allowedMinutes"] as? Int, 45, "the shared policy, even with no editor open")
+        XCTAssertEqual(keys(group["scopes"] as? [[String: Any]]), ["apps"], "the shared entries")
+        let snooze = try XCTUnwrap((overlaid["groupSnoozes"] as? [String: Any])?["m1"] as? [String: Any])
+        XCTAssertEqual((snooze["untilMs"] as? NSNumber)?.doubleValue, now + 600_000, "a newer snooze from another device applies")
     }
 
     func testFirstContributionsUnionEntriesThenLatestEditWins() throws {
@@ -34,23 +64,23 @@ final class ClusterScopesShareTests: XCTestCase {
         let apps: [[String: Any]] = [["id": "apps-1", "surface": "apps", "platform": NSNull(), "action": "block", "apps": [["id": "com.apple.Safari", "name": "Safari"]]]]
 
         hub.applySync(program: "chrome", groupName: "Focus", contribution: ["scalars": ["mode": "instant"], "scopes": youtube], ts: 10)
-        XCTAssertEqual(keys(hub.sharedScopes(groupName: "Focus")), ["youtube", "youtube"], "the first member's entries become the shared ones")
+        XCTAssertEqual(keys(sharedScopes(hub)), ["youtube", "youtube"], "the first member's entries become the shared ones")
 
         hub.applySync(program: "macapp", groupName: "Focus", contribution: ["scalars": ["mode": "instant"], "scopes": apps], ts: 5)
-        XCTAssertEqual(keys(hub.sharedScopes(groupName: "Focus")), ["youtube", "youtube", "apps"], "the Mac's first contribution adds its Apps entry even with an older ts")
+        XCTAssertEqual(keys(sharedScopes(hub)), ["youtube", "youtube", "apps"], "the Mac's first contribution adds its Apps entry even with an older ts")
 
         // Chrome adopted the union and now edits it: adds a site line, drops YouTube.
         let edited: [[String: Any]] = apps + [["id": "site-1", "surface": "site", "platform": NSNull(), "action": "block", "sites": ["example.com"], "sitesExcept": false]]
         hub.applySync(program: "chrome", groupName: "Focus", contribution: ["scalars": ["mode": "instant"], "scopes": edited], ts: 20)
-        XCTAssertEqual(keys(hub.sharedScopes(groupName: "Focus")), ["apps", "site"], "a later edit replaces the shared lines wholesale (deletions propagate)")
+        XCTAssertEqual(keys(sharedScopes(hub)), ["apps", "site"], "a later edit replaces the shared lines wholesale (deletions propagate)")
 
         // A stale edit from the Mac (older ts) does not win.
         hub.applySync(program: "macapp", groupName: "Focus", contribution: ["scalars": ["mode": "instant"], "scopes": youtube], ts: 15)
-        XCTAssertEqual(keys(hub.sharedScopes(groupName: "Focus")), ["apps", "site"], "latest edit wins")
+        XCTAssertEqual(keys(sharedScopes(hub)), ["apps", "site"], "latest edit wins")
 
         // A usage-only ping never touches the definition.
         hub.applySync(program: "chrome", groupName: "Focus", contribution: ["usageDeltaMs": 1000.0], ts: 30)
-        XCTAssertEqual(keys(hub.sharedScopes(groupName: "Focus")), ["apps", "site"])
+        XCTAssertEqual(keys(sharedScopes(hub)), ["apps", "site"])
     }
 
     func testMacEditorFramesAreKeyedByKind() {
