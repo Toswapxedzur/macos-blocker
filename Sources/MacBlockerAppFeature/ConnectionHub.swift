@@ -442,7 +442,7 @@ final class ConnectionHub: ObservableObject {
               let until = (entry["untilMs"] as? NSNumber)?.doubleValue,
               start != cluster.snoozeCountedStartMs,
               replacing || nowMs >= until else { return false }
-        cluster.sharedSnoozeTotalMs += max(0, min(until, nowMs) - start)
+        cluster.sharedSnoozeTotalMs += max(0, min(until, nowMs) - start).rounded()
         cluster.snoozeCountedStartMs = start
         return true
     }
