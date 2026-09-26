@@ -39,7 +39,7 @@ public enum ExtensionMCPTools {
         return [
             MCPTool(
                 name: "extension_state",
-                description: "The Vault browser extension's settings as JSON: every block group (platform rules with author / subreddit / tag filters, cover-until-tagged, page blocking, schedules, snooze rules, freeze state; site and custom groups), usage timers, active snoozes, the classifier settings (collection on/off, tagging mode) and global settings. Read live from the connected browser.",
+                description: "The Vault browser extension's settings as JSON: every block group (platform rules with author / subreddit / tag filters, cover-until-tagged, page blocking, schedules, snooze rules, freeze (wait + PIN); site and custom groups), usage timers, active snoozes, the classifier settings (collection on/off, tagging mode) and global settings. Read live from the connected browser.",
                 inputSchema: ["type": "object", "properties": ["browser": browserProperty]]
             ) { args in
                 relay(bridge, "settings-get", [:], args)
@@ -64,7 +64,7 @@ public enum ExtensionMCPTools {
             },
             MCPTool(
                 name: "extension_set_group",
-                description: "Patch fields of an existing extension block group by id (see extension_create_group for the fields). The id and the freeze / parental lock are never patchable; a frozen, strict or parental-locked group is refused, exactly as in the popup.",
+                description: "Patch fields of an existing extension block group by id (see extension_create_group for the fields). The id and the freeze (its wait and PIN) are never patchable; a frozen group is refused, exactly as in the popup.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -81,7 +81,7 @@ public enum ExtensionMCPTools {
             },
             MCPTool(
                 name: "extension_delete_group",
-                description: "Delete an extension block group by id. A frozen, strict or parental-locked group is refused, exactly as in the popup.",
+                description: "Delete an extension block group by id. A frozen group is refused, exactly as in the popup.",
                 inputSchema: [
                     "type": "object",
                     "properties": ["id": ["type": "string", "description": "The group id."], "browser": browserProperty],
@@ -248,7 +248,7 @@ public enum ExtensionMCPTools {
         case "browser-ambiguous": return "more than one browser is connected; pass 'browser'."
         case "browser-timeout": return "the browser did not answer."
         case "browser-relay-requires-host": return "Mac Vault is not hosting the local hub."
-        case "group-locked": return "the group is frozen, strict or parental-locked (the popup refuses this too)."
+        case "group-locked": return "the group is frozen (the popup refuses this too)."
         case "group-not-found": return "no group has that id."
         case "not-locked": return "the group is not frozen."
         case "not-stricter": return "while frozen the freeze can only be made stricter (a longer wait)."
