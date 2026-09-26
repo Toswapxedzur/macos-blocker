@@ -8,7 +8,6 @@ import MacBlockerCore
 ///
 public actor AppBlockPolicy {
 
-    private let protectedBundleIdentifiers: Set<String>
     private let runTerminationSweep: Bool
 
     /// The bundle ids blocked right now.
@@ -19,15 +18,7 @@ public actor AppBlockPolicy {
     private let quits = QuitRequests()
     #endif
 
-    public init(
-        protectedBundleIdentifiers: Set<String> = [],
-        runTerminationSweep: Bool = true
-    ) {
-        // Vault never enforces against itself: matters once an allowlist group
-        // blocks "everything except" (a blocklist only names other apps).
-        var protected = protectedBundleIdentifiers.union(MacProcessTerminator.browserBundleIdentifiers)
-        if let own = Bundle.main.bundleIdentifier { protected.insert(own) }
-        self.protectedBundleIdentifiers = protected
+    public init(runTerminationSweep: Bool = true) {
         self.runTerminationSweep = runTerminationSweep
     }
 
@@ -51,7 +42,7 @@ public actor AppBlockPolicy {
     ) async throws {
         // Plus the bundle ids custom-rule decisions block.
         let blocked = Self.blockedApplications(groups: groups, usage: usage, now: now, calendar: calendar)
-            .union(customBlockedBundleIDs.filter { !MacProcessTerminator.isBrowserBundleIdentifier($0) })
+            .union(customBlockedBundleIDs.filter(GuardPolicy.canBlock))
         let allowlists = Self.applicationAllowlists(groups: groups, usage: usage, now: now, calendar: calendar)
 
         // A changed set rebuilds the policy (the inventory/signing scan);
@@ -76,25 +67,9 @@ public actor AppBlockPolicy {
     #endif
 
     /// Whether `bundleID` is blocked right now by these groups: the same
-    /// decision the guard policy is built from, protections included (Apple,
-    /// browsers, Vault). The bridge uses it to stop counting time in an app
-    /// that is blocked yet still in front (a shield or a suspended app), as a
+    /// decision the guard policy is built from. The bridge uses it to stop
+    /// counting time in an app that is blocked yet still in front, as a
     /// covered browser page counts no time.
-    /// The apps a block never touches: Apple's own, browsers (their extensions
-    /// block inside them) and Vault itself.
-    public static var neverBlocked: Set<String> {
-        var protected = MacProcessTerminator.browserBundleIdentifiers
-        if let own = Bundle.main.bundleIdentifier { protected.insert(own) }
-        return protected
-    }
-
-    /// Whether a block can act on this app at all. The app picker and the
-    /// quick-add "+" offer only these (owner 2026-09-26: don't offer apps the
-    /// Mac never blocks).
-    public static func canBlock(_ bundleID: String) -> Bool {
-        !GuardPolicy(protectedBundleIdentifiers: neverBlocked).isProtected(bundleIdentifier: bundleID)
-    }
-
     public static func blocksApplication(
         _ bundleID: String,
         groups: [BlockGroup],
@@ -102,13 +77,12 @@ public actor AppBlockPolicy {
         now: Date,
         calendar: Calendar = .current
     ) -> Bool {
-        let protected = neverBlocked
         let blocked = blockedApplications(groups: groups, usage: usage, now: now, calendar: calendar)
         let lists = applicationAllowlists(groups: groups, usage: usage, now: now, calendar: calendar)
         // Runs every second: a bundle-id match needs no installed-app scan or
         // code-signing read (those only harden the kill sweep's policy).
         let targets = blocked.map { GuardTarget(bundleIdentifier: $0, bundleIdentifierPrefixes: ["\($0)."]) }
-        let policy = GuardPolicy(targets: targets, protectedBundleIdentifiers: protected, allowOnly: lists)
+        let policy = GuardPolicy(targets: targets, allowOnly: lists)
         return policy.match(bundleIdentifier: bundleID) != nil
     }
 
@@ -142,8 +116,7 @@ public actor AppBlockPolicy {
         // An "everything except" group's apps are the ALLOWED ones; that group
         // blocks through `applicationAllowlists`, never through its list.
         for group in groups where !group.applicationAllowlist && group.blocksNow(usage: usage, at: now, calendar: calendar) {
-            for target in group.targets where target.kind == .application {
-                guard !MacProcessTerminator.isBrowserBundleIdentifier(target.id) else { continue }
+            for target in group.targets where target.kind == .application && GuardPolicy.canBlock(target.id) {
                 blocked.insert(target.id)
             }
         }
@@ -159,13 +132,7 @@ public actor AppBlockPolicy {
     }
 
     private func buildPolicy() -> GuardPolicy {
-        GuardPolicy(
-            version: 1,
-            generatedAt: Date(),
-            targets: Self.buildTargets(from: activeBlocked),
-            protectedBundleIdentifiers: protectedBundleIdentifiers,
-            allowOnly: activeAllowlists
-        )
+        GuardPolicy(targets: Self.buildTargets(from: activeBlocked), allowOnly: activeAllowlists)
     }
 
     /// Resolves each blocked bundle id into a richly-keyed `GuardTarget`
@@ -181,7 +148,7 @@ public actor AppBlockPolicy {
         #endif
 
         return blocked
-            .filter { !MacProcessTerminator.isBrowserBundleIdentifier($0) }
+            .filter(GuardPolicy.canBlock)
             .map { bundleID in
             #if os(macOS)
             if let app = byBundleID[bundleID] {
