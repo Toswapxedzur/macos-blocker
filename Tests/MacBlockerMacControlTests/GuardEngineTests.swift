@@ -3,9 +3,8 @@ import XCTest
 @testable import MacBlockerCore
 
 /// Exercises the enforcement engine's pure logic: target matching, guardrails,
-/// the kill/suspend selection sweep, policy persistence, and decision→policy
-/// compilation. (The Endpoint Security `AUTH_EXEC` deny and the actual killing
-/// require the entitlement / live processes and are integration concerns.)
+/// the kill selection sweep and decision→policy compilation. (The actual
+/// killing needs live processes and is an integration concern.)
 final class GuardEngineTests: XCTestCase {
 
     // MARK: - Matching
@@ -46,7 +45,7 @@ final class GuardEngineTests: XCTestCase {
         // Even though a (misconfigured) target names an Apple bundle, the
         // guardrail refuses to match it.
         XCTAssertNil(policy.match(bundleIdentifier: "com.apple.Safari"))
-        XCTAssertFalse(policy.shouldDenyLaunch(bundleIdentifier: "com.apple.Safari"))
+        XCTAssertFalse(policy.match(bundleIdentifier: "com.apple.Safari") != nil)
     }
 
     func testUnidentifiedProcessIsTreatedAsProtected() {
@@ -94,7 +93,7 @@ final class GuardEngineTests: XCTestCase {
         XCTAssertNil(policy.match(bundleIdentifier: "com.example.Editor.Helper"), "an allowed app's helpers pass with it")
         XCTAssertNotNil(policy.match(bundleIdentifier: "com.hnc.Discord"))
         XCTAssertEqual(policy.match(bundleIdentifier: "com.hnc.Discord")?.displayName, "Deep work")
-        XCTAssertTrue(policy.shouldDenyLaunch(bundleIdentifier: "com.hnc.Discord"))
+        XCTAssertTrue(policy.match(bundleIdentifier: "com.hnc.Discord") != nil)
         // Guardrails still win: Apple, Vault itself, browsers and unidentified processes.
         XCTAssertNil(policy.match(bundleIdentifier: "com.apple.Finder"))
         XCTAssertNil(policy.match(bundleIdentifier: "com.adamancia.vault"))
@@ -204,42 +203,10 @@ final class GuardEngineTests: XCTestCase {
         XCTAssertEqual(plan.map(\.processIdentifier), [100, 200])
     }
 
-    // MARK: - Policy store round-trip
-
-    func testPolicyStoreRoundTrips() throws {
-        let tmp = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("guard-\(UUID().uuidString)")
-            .appendingPathComponent("policy.json")
-        let store = GuardPolicyStore(url: tmp)
-        defer { try? FileManager.default.removeItem(at: tmp.deletingLastPathComponent()) }
-
-        let policy = GuardPolicy(
-            generatedAt: Date(timeIntervalSince1970: 1_700_000_000),
-            targets: [
-                GuardTarget(
-                    bundleIdentifier: "com.example.App",
-                    teamIdentifier: "ABCDE12345",
-                        displayName: "Example"
-                )
-            ]
-        )
-        try store.save(policy)
-
-        let loaded = try XCTUnwrap(store.load())
-        XCTAssertEqual(loaded, policy)
-    }
-
     // MARK: - Decision → policy compilation
 
     func testAdapterCompilesShieldDecisionsIntoPolicy() async throws {
-        let tmp = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("guard-\(UUID().uuidString)")
-            .appendingPathComponent("policy.json")
-        defer { try? FileManager.default.removeItem(at: tmp.deletingLastPathComponent()) }
-
         let adapter = EndpointSecurityPolicyAdapter(
-            store: GuardPolicyStore(url: tmp),
-            client: nil,
             runTerminationSweep: false
         )
 
@@ -256,7 +223,7 @@ final class GuardEngineTests: XCTestCase {
         XCTAssertEqual(blocked, ["com.zoom.us", "com.slack.app"])
 
         let policy = await adapter.currentPolicy()
-        XCTAssertTrue(policy.shouldDenyLaunch(bundleIdentifier: "com.zoom.us"))
+        XCTAssertTrue(policy.match(bundleIdentifier: "com.zoom.us") != nil)
 
         // Unshielding one removes it from the policy.
         try await adapter.apply([

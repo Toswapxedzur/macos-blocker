@@ -1,14 +1,8 @@
 import Foundation
 import MacBlockerCore
 
-/// The cross-process, JavaScript-free block policy shared between the control
-/// plane (the editor app) and the always-on enforcement core (the Endpoint
-/// Security system extension / privileged daemon).
-///
-/// The app *compiles* this from the user's groups (`EnforcementPlan` /
-/// `[PolicyDecision]`) and writes it to a root-owned store; the enforcement core
-/// only *reads* it. It is deliberately small and `Codable` so it can be parsed
-/// inside an extension with a tight memory budget.
+/// The compiled app-block policy: which running processes the kill sweep
+/// force-quits (`EndpointSecurityPolicyAdapter` builds it from the groups).
 public struct GuardPolicy: Codable, Equatable, Sendable {
     public var version: Int
     public var generatedAt: Date
@@ -111,21 +105,6 @@ public struct GuardPolicy: Codable, Equatable, Sendable {
     /// during its periodic sweep.
     public var usesCodeSigningMatch: Bool {
         targets.contains { $0.teamIdentifier != nil || $0.signingIdentifier != nil }
-    }
-
-    /// Should Endpoint Security deny `exec` of this candidate?
-    public func shouldDenyLaunch(
-        bundleIdentifier: String?,
-        teamIdentifier: String? = nil,
-        signingIdentifier: String? = nil,
-        executablePath: String? = nil
-    ) -> Bool {
-        match(
-            bundleIdentifier: bundleIdentifier,
-            teamIdentifier: teamIdentifier,
-            signingIdentifier: signingIdentifier,
-            executablePath: executablePath
-        ) != nil
     }
 }
 
