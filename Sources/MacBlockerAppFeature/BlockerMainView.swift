@@ -11,7 +11,9 @@ import VaultClassifierApp
 /// second page of the same window.
 @MainActor
 public struct BlockerMainView: View {
-    @StateObject private var enforcement = MacEnforcementBridge()
+    /// The process-wide engine: it runs from launch to quit, not with this
+    /// window (closing the window keeps blocking; quitting stops it).
+    @ObservedObject private var enforcement = MacEnforcementBridge.shared
     #if os(macOS)
     @StateObject private var permission = AppBlockingPermissionModel()
     // The hub is owned at the app-delegate (process) level, not by this view, so
@@ -58,7 +60,6 @@ public struct BlockerMainView: View {
             enforcement.start()
             VaultClassifierPage.shared.setPageVisible(page == .classifier)
         }
-        .onDisappear { enforcement.stop() }
         .onReceive(NotificationCenter.default.publisher(for: .vaultSwitchScene)) { note in
             guard let raw = note.userInfo?["scene"] as? String, let next = Page(rawValue: raw) else { return }
             page = next

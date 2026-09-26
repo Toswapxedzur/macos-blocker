@@ -34,6 +34,15 @@ import MacBlockerMacControl
 ///   - `snoozePress` / `panelEvent` / `localFileEvent`
 @MainActor
 public final class MacEnforcementBridge: ObservableObject {
+    /// The one engine of the process (owner 2026-09-26: Mac Vault blocks the
+    /// whole time it runs, window open or not; it stops when the user quits).
+    /// It reads linked groups through the hub's live shared state.
+    public static let shared: MacEnforcementBridge = {
+        let bridge = MacEnforcementBridge()
+        bridge.webStore.sharedOverlay = { ConnectionHub.shared.overlayShared(onto: $0) }
+        return bridge
+    }()
+
     /// Shared store the editor persists into and we read groups back out of.
     public let webStore: BlockerWebStore
 

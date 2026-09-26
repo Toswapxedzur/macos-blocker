@@ -1373,13 +1373,12 @@ final class ConnectionHub: ObservableObject {
                 }
             }
 
-            // Freeze is NOT last-writer-wins. With both sides stamping Date.now()
-            // the LWW winner is order-dependent, so the cluster freeze flipped
-            // randomly on couple/decouple. Instead we take the MOST RESTRICTIVE
-            // freeze across every member's stored contribution: freezing any
-            // member propagates and the state is stable until every member is
-            // unfrozen. This runs after the scalar merge so it overrides whatever
-            // freeze the LWW happened to pick.
+            // Freeze follows the latest LOCK CHANGE (freezeChangedAtMs, stamped
+            // only when someone locks or unlocks), not the latest save — every
+            // save stamps its own time, which made the old save-time winner
+            // flip at random on couple/decouple. So an unlock on any device
+            // unlocks every device, and a lock locks every device. This runs
+            // after the scalar merge so it overrides whatever it picked.
             mergeFreezeLocked(cluster)
         }
 
@@ -1460,12 +1459,46 @@ final class ConnectionHub: ObservableObject {
         }
     }
 
-    /// The shared line list of the cluster this Mac's `groupName` belongs to
-    /// (nil when not linked).
-    func sharedScopes(groupName: String) -> [[String: Any]]? {
+    /// The stored document with each linked group's live shared definition
+    /// (policy scalars and entry lines) and any newer shared snooze laid over
+    /// it — what the editor would adopt if it were open. Mac enforcement reads
+    /// through this, so a closed editor window never leaves the Mac enforcing a
+    /// stale definition or missing a snooze started on another device.
+    func overlayShared(onto document: [String: Any]) -> [String: Any] {
+        var groups = document["blockedGroups"] as? [[String: Any]] ?? []
+        guard !groups.isEmpty else { return document }
+        var snoozes = document["groupSnoozes"] as? [String: Any] ?? [:]
+        var changed = false
         lock.lock()
-        defer { lock.unlock() }
-        return clusters.values.first(where: { $0.groupName == groupName && $0.members.contains(Self.localProgram) })?.sharedScopes
+        for cluster in clusters.values where cluster.members.contains(Self.localProgram) {
+            let pinned = cluster.memberGroupIds[Self.localProgram] ?? ""
+            guard let index = groups.firstIndex(where: { group in
+                pinned.isEmpty ? (group["name"] as? String) == cluster.groupName : (group["id"] as? String) == pinned
+            }) else { continue }
+            for (field, value) in cluster.sharedScalars { groups[index][field] = value }
+            if !cluster.sharedScopes.isEmpty { groups[index]["scopes"] = cluster.sharedScopes }
+            changed = true
+            if cluster.sharedSnoozeTs > 0, !cluster.sharedSnooze.isEmpty,
+               let id = groups[index]["id"] as? String,
+               cluster.sharedSnoozeTs > Self.snoozeChangeTs(snoozes[id] as? [String: Any]) {
+                snoozes[id] = cluster.sharedSnooze
+            }
+        }
+        lock.unlock()
+        guard changed else { return document }
+        var overlaid = document
+        overlaid["blockedGroups"] = groups
+        overlaid["groupSnoozes"] = snoozes
+        return overlaid
+    }
+
+    /// When a snooze entry last changed (started or ended): the newest change
+    /// wins across linked devices. Entries from before 2026-09-26 carry only
+    /// their start.
+    static func snoozeChangeTs(_ entry: [String: Any]?) -> Double {
+        guard let entry else { return 0 }
+        if let changed = (entry["changedAtMs"] as? NSNumber)?.doubleValue, changed > 0 { return changed }
+        return (entry["startsAtMs"] as? NSNumber)?.doubleValue ?? 0
     }
 
     /// Called by the in-process macOS enforcer when it accrues (or rolls over)
@@ -1672,20 +1705,22 @@ final class ConnectionHub: ObservableObject {
     }
 
     /// Caller must hold `lock`. Overwrites the freeze fields in `sharedScalars`
-    /// with the most-restrictive freeze tuple found across all member
-    /// contributions. Deterministic (no timestamps), so coupling/decoupling can
-    /// never flip the freeze state at random. The whole tuple is copied from the
-    /// winning member so frozenAtMs / strictFreezeHours / freezeModeChoice stay
-    /// internally consistent.
+    /// with the tuple of the member whose lock changed LAST (freezeChangedAtMs);
+    /// among members that never stamped a change (older stores) the most
+    /// restrictive lock wins, as before. Deterministic either way. The whole
+    /// tuple — incl. the parental PIN — is copied from the winning member so the
+    /// lock stays internally consistent and every device can ask for the PIN.
     private func mergeFreezeLocked(_ cluster: ClusterState) {
-        let freezeFields = ["freezeMode", "freezeModeChoice", "strictFreezeHours", "frozenAtMs"]
-        var bestRank = -1
+        let freezeFields = ["freezeMode", "freezeModeChoice", "strictFreezeHours", "frozenAtMs", "freezeChangedAtMs",
+                            "parentalPasswordHash", "parentalPasswordSalt"]
+        var best: (changedAt: Double, rank: Int) = (-1, -1)
         var bestFreeze: [String: Any]? = nil
         for contribution in cluster.contributions.values {
             guard let scalars = contribution["scalars"] as? [String: Any] else { continue }
+            let changedAt = (scalars["freezeChangedAtMs"] as? NSNumber)?.doubleValue ?? 0
             let rank = freezeRank(scalars["freezeMode"] as? String)
-            if rank > bestRank {
-                bestRank = rank
+            if changedAt > best.changedAt || (changedAt == best.changedAt && rank > best.rank) {
+                best = (changedAt, rank)
                 var tuple: [String: Any] = [:]
                 for field in freezeFields where scalars[field] != nil {
                     tuple[field] = scalars[field]
