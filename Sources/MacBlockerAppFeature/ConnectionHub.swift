@@ -99,6 +99,8 @@ final class ConnectionHub: ObservableObject {
     /// While hosting: starts each linked group's new budget period on time,
     /// even when no member is reporting usage (the hub owns the period).
     private var budgetTimer: DispatchSourceTimer?
+    /// The registry last written (skips identical writes from the budget timer).
+    private var lastPersistedClusters: Data?
     private var wantsBrokerConnection = false
     // Internal (not private) so tests can stand in for a hosting hub.
     var hostingLocalHub = false
@@ -121,9 +123,9 @@ final class ConnectionHub: ObservableObject {
     /// One connection per browser (owner 2026-09-25): a second instance of a
     /// browser program (two Chromes, a test rig beside the real browser) is
     /// refused while the first is connected, so two instances can never take
-    /// turns overwriting each other's roster and contributions. A dead first
-    /// connection is dropped by the ping timeout, after which the next hello
-    /// wins. The classifier is not a browser and is exempt.
+    /// turns overwriting each other's roster and contributions. When the first
+    /// connection closes, the next hello wins (a refused browser keeps
+    /// retrying). The classifier is not a browser and is exempt.
     static func isDuplicateBrowser(_ program: String, connectedPrograms: [String]) -> Bool {
         guard program != "classifier" else { return false }
         return connectedPrograms.contains(program)
@@ -326,6 +328,9 @@ final class ConnectionHub: ObservableObject {
 
     func stop() {
         wantsBrokerConnection = false
+        lock.lock()
+        if hostingLocalHub { persistClustersLocked() }
+        lock.unlock()
         reconnectWorkItem?.cancel()
         reconnectWorkItem = nil
         pingTimer?.cancel()
@@ -372,6 +377,8 @@ final class ConnectionHub: ObservableObject {
                     self.lastError = ""
                     self.brokerPeers = []
                     self.joinedHubProgram = ""
+                    // Links (and their running budgets) survive a restart.
+                    if self.clusters.isEmpty { self.restoreClustersLocked() }
                     self.lock.unlock()
                     self.startBudgetTimer()
                 case .failed:
@@ -532,7 +539,11 @@ final class ConnectionHub: ObservableObject {
             self.lock.lock()
             let hosting = self.hostingLocalHub
             self.lock.unlock()
-            if hosting { self.rollSharedBudgets(nowMs: Date().timeIntervalSince1970 * 1000) }
+            guard hosting else { return }
+            self.rollSharedBudgets(nowMs: Date().timeIntervalSince1970 * 1000)
+            self.lock.lock()
+            self.persistClustersLocked()
+            self.lock.unlock()
         }
         budgetTimer = timer
         timer.resume()
@@ -1233,7 +1244,7 @@ final class ConnectionHub: ObservableObject {
             // from disk) by matching name+type once; this auto-migrates old links.
             var pinnedId = cluster.memberGroupIds[program] ?? ""
             if pinnedId.isEmpty,
-               let legacy = infos.first(where: { $0.name == cluster.groupName }), !legacy.id.isEmpty {
+               let legacy = infos.first(where: { Self.sameName($0.name, cluster.groupName) }), !legacy.id.isEmpty {
                 pinnedId = legacy.id
                 cluster.memberGroupIds[program] = pinnedId
                 changed = true
@@ -1248,9 +1259,9 @@ final class ConnectionHub: ObservableObject {
             let stillPresent: Bool
             if pinnedId.isEmpty {
                 // No id to pin against (pre-id-pinning client): name only.
-                stillPresent = infos.contains { $0.name == cluster.groupName }
+                stillPresent = infos.contains { Self.sameName($0.name, cluster.groupName) }
             } else {
-                stillPresent = infos.contains { $0.id == pinnedId && $0.name == cluster.groupName }
+                stillPresent = infos.contains { $0.id == pinnedId && Self.sameName($0.name, cluster.groupName) }
             }
             if stillPresent { continue }
             cluster.members.remove(program)
@@ -1289,17 +1300,22 @@ final class ConnectionHub: ObservableObject {
     /// Returns snapshots of the clusters it changed.
     private func autoLinkClustersLocked() -> [[String: Any]] {
         // name -> program -> pinned group id (first instance per program).
+        // Names match case-insensitively (the editors keep names unique that way).
         var byName: [String: [String: String]] = [:]
+        var displayName: [String: String] = [:]
         for (program, infos) in rosters {
             for info in infos where !info.name.isEmpty {
-                if byName[info.name]?[program] == nil {
-                    byName[info.name, default: [:]][program] = info.id
+                let key = Self.nameKey(info.name)
+                if displayName[key] == nil { displayName[key] = info.name }
+                if byName[key]?[program] == nil {
+                    byName[key, default: [:]][program] = info.id
                 }
             }
         }
         var snapshots: [[String: Any]] = []
-        for (name, programIds) in byName where programIds.count >= 2 {
-            let cluster = clusters.values.first { $0.groupName == name }
+        for (key, programIds) in byName where programIds.count >= 2 {
+            let name = displayName[key] ?? key
+            let cluster = clusters.values.first { Self.nameKey($0.groupName) == key }
                 ?? {
                     let created = ClusterState(id: UUID().uuidString, groupName: name)
                     clusters[created.id] = created
@@ -1328,7 +1344,7 @@ final class ConnectionHub: ObservableObject {
         guard !program.isEmpty, !groupName.isEmpty else { return }
         lock.lock()
         guard let cluster = clusters.values.first(where: {
-            $0.groupName == groupName && $0.members.contains(program)
+            Self.sameName($0.groupName, groupName) && $0.members.contains(program)
         }) else {
             lock.unlock()
             return
@@ -1347,6 +1363,7 @@ final class ConnectionHub: ObservableObject {
             let firstContribution = cluster.contributions[program] == nil
             let priority = (contribution["priority"] as? Bool) ?? false
             let wins = priority || ts >= cluster.sharedTs
+            let budgetBefore = Self.budgetShape(cluster.sharedScalars)
             var stored: [String: Any] = ["scalars": scalarsPayload ?? [:]]
             if let scopes = scopesPayload { stored["scopes"] = scopes }
             cluster.contributions[program] = stored
@@ -1361,6 +1378,16 @@ final class ConnectionHub: ObservableObject {
                     cluster.sharedScalars = scalars
                     cluster.sharedTs = ts
                 }
+            }
+            // A changed budget (the same fields that restart an unlinked group's
+            // budget in the editor) restarts the shared budget for every device:
+            // linked groups are one group.
+            if !budgetBefore.isEmpty, Self.budgetShape(cluster.sharedScalars) != budgetBefore {
+                cluster.sharedUsageMs = 0
+                cluster.sharedUsageResetAtMs = Date().timeIntervalSince1970 * 1000
+                cluster.sharedBuckets = [:]
+                cluster.usageSeeded = true
+                cluster.bucketsSeeded = true
             }
             // Entries: a member's first contribution brings its own entries into
             // the shared definition (union by entry, the newcomer's version of a
@@ -1460,6 +1487,20 @@ final class ConnectionHub: ObservableObject {
         }
     }
 
+    static func nameKey(_ name: String) -> String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    static func sameName(_ a: String, _ b: String) -> Bool { nameKey(a) == nameKey(b) }
+
+    /// The settings whose change restarts a budget (popup `modeChanged` /
+    /// `resetIntervalChanged`); empty when nothing is shared yet.
+    static func budgetShape(_ scalars: [String: Any]) -> String {
+        guard !scalars.isEmpty else { return "" }
+        return ["mode", "resetIntervalHours", "resetAtMidnight", "rollingLimit"]
+            .map { "\(scalars[$0] ?? "")" }.joined(separator: "|")
+    }
+
     /// Mirror of group-scopes.js `SYNC_SCALAR_FIELDS` (a test keeps the two equal):
     /// the policy settings a linked group shares.
     static let syncScalarFields = [
@@ -1489,7 +1530,7 @@ final class ConnectionHub: ObservableObject {
         for cluster in clusters.values where cluster.members.contains(Self.localProgram) {
             let pinned = cluster.memberGroupIds[Self.localProgram] ?? ""
             guard let group = groups.first(where: { group in
-                pinned.isEmpty ? (group["name"] as? String) == cluster.groupName : (group["id"] as? String) == pinned
+                pinned.isEmpty ? Self.sameName((group["name"] as? String) ?? "", cluster.groupName) : (group["id"] as? String) == pinned
             }), let groupID = group["id"] as? String else { continue }
             var scalars: [String: Any] = [:]
             for field in Self.syncScalarFields where group[field] != nil { scalars[field] = group[field] }
@@ -1540,7 +1581,7 @@ final class ConnectionHub: ObservableObject {
         for cluster in clusters.values where cluster.members.contains(Self.localProgram) {
             let pinned = cluster.memberGroupIds[Self.localProgram] ?? ""
             guard let index = groups.firstIndex(where: { group in
-                pinned.isEmpty ? (group["name"] as? String) == cluster.groupName : (group["id"] as? String) == pinned
+                pinned.isEmpty ? Self.sameName((group["name"] as? String) ?? "", cluster.groupName) : (group["id"] as? String) == pinned
             }) else { continue }
             for (field, value) in cluster.sharedScalars { groups[index][field] = value }
             if !cluster.sharedScopes.isEmpty { groups[index]["scopes"] = cluster.sharedScopes }
@@ -1606,7 +1647,7 @@ final class ConnectionHub: ObservableObject {
         lock.lock()
         defer { lock.unlock() }
         guard let cluster = clusters.values.first(where: {
-            $0.groupName == groupName && $0.members.contains(Self.localProgram)
+            Self.sameName($0.groupName, groupName) && $0.members.contains(Self.localProgram)
         }) else { return nil }
         return (cluster.sharedUsageMs, cluster.sharedUsageResetAtMs, cluster.sharedBuckets)
     }
@@ -1805,12 +1846,10 @@ final class ConnectionHub: ObservableObject {
         }
     }
 
-    /// Caller must hold `lock`. Persists the cluster registry so links survive an
-    /// app/server restart — the user only loses a cluster by explicitly
-    /// disconnecting it. Live usage is intentionally NOT persisted (it is
-    /// re-seeded from each member's local counter on reconnect), which also
-    /// avoids per-tick disk writes; this is called only on structural / config
-    /// changes.
+    /// Caller must hold `lock`. Persists the cluster registry — links and their
+    /// running budgets — so both survive an app restart; the user only loses a
+    /// link by disconnecting it. Called on config changes and by the 10 s budget
+    /// timer (a write only when something changed).
     private func persistClustersLocked() {
         let arr: [[String: Any]] = clusters.values.map { c in
             [
@@ -1824,18 +1863,23 @@ final class ConnectionHub: ObservableObject {
                 "sharedTs": c.sharedTs,
                 "sharedSnooze": c.sharedSnooze,
                 "sharedSnoozeTs": c.sharedSnoozeTs,
-                "sharedSnoozeTotalMs": c.sharedSnoozeTotalMs
+                "sharedSnoozeTotalMs": c.sharedSnoozeTotalMs,
+                "sharedUsageMs": c.sharedUsageMs,
+                "sharedUsageResetAtMs": c.sharedUsageResetAtMs,
+                "sharedBuckets": Self.bucketJSON(c.sharedBuckets),
+                "usageSeeded": c.usageSeeded,
+                "bucketsSeeded": c.bucketsSeeded
             ]
         }
-        if let data = try? JSONSerialization.data(withJSONObject: arr) {
-            UserDefaults.standard.set(data, forKey: ConnectionHub.clustersDefaultsKey)
-        }
+        guard let data = try? JSONSerialization.data(withJSONObject: arr, options: [.sortedKeys]),
+              data != lastPersistedClusters else { return }
+        lastPersistedClusters = data
+        UserDefaults.standard.set(data, forKey: ConnectionHub.clustersDefaultsKey)
     }
 
-    /// Caller must hold `lock`. Rebuilds the cluster registry from disk on boot.
-    /// Usage fields start at 0/unseeded so the first member report re-seeds the
-    /// shared budget from the largest member total.
-    private func restoreClustersLocked() {
+    /// Caller must hold `lock`. Rebuilds the cluster registry (and the running
+    /// budgets) from disk when the hub starts.
+    func restoreClustersLocked() {
         guard let data = UserDefaults.standard.data(forKey: ConnectionHub.clustersDefaultsKey),
               let arr = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else { return }
         for obj in arr {
@@ -1856,6 +1900,11 @@ final class ConnectionHub: ObservableObject {
             if let snooze = obj["sharedSnooze"] as? [String: Any] { cluster.sharedSnooze = snooze }
             cluster.sharedSnoozeTs = (obj["sharedSnoozeTs"] as? Double) ?? 0
             cluster.sharedSnoozeTotalMs = (obj["sharedSnoozeTotalMs"] as? Double) ?? 0
+            cluster.sharedUsageMs = (obj["sharedUsageMs"] as? Double) ?? 0
+            cluster.sharedUsageResetAtMs = (obj["sharedUsageResetAtMs"] as? Double) ?? 0
+            cluster.sharedBuckets = Self.parseBuckets(obj["sharedBuckets"]) ?? [:]
+            cluster.usageSeeded = (obj["usageSeeded"] as? Bool) ?? false
+            cluster.bucketsSeeded = (obj["bucketsSeeded"] as? Bool) ?? false
             // Only restore clusters that still have ≥2 members (a 1-member
             // cluster is meaningless and would never broadcast).
             if cluster.members.count >= 2 { clusters[id] = cluster }

@@ -19,8 +19,8 @@ public struct GuardPolicy: Codable, Equatable, Sendable {
     /// `isProtected`) independent of this set.
     public var protectedBundleIdentifiers: Set<String>
     /// "Block every application except these" groups that block right now: a
-    /// candidate not in a list's allowed set matches that list (and is blocked
-    /// with its mode). Protected and browser processes are never matched.
+    /// candidate not in a list's allowed set matches that list (and is
+    /// blocked). Protected and browser processes are never matched.
     public var allowOnly: [GuardAllowlist]
 
     public init(
@@ -100,7 +100,6 @@ public struct GuardPolicy: Codable, Equatable, Sendable {
             return GuardTarget(
                 bundleIdentifier: bundleID,
                 bundleIdentifierPrefixes: [],
-                enforcementMode: list.enforcementMode,
                 displayName: list.displayName
             )
         }
@@ -126,19 +125,17 @@ public struct GuardPolicy: Codable, Equatable, Sendable {
             teamIdentifier: teamIdentifier,
             signingIdentifier: signingIdentifier,
             executablePath: executablePath
-        )?.enforcementMode.preventsLaunch ?? false
+        ) != nil
     }
 }
 
 /// One "block every application except these" group that blocks right now.
 public struct GuardAllowlist: Codable, Equatable, Sendable {
     public var allowedBundleIdentifiers: Set<String>
-    public var enforcementMode: MacEnforcementMode
     public var displayName: String
 
-    public init(allowedBundleIdentifiers: Set<String>, enforcementMode: MacEnforcementMode, displayName: String) {
+    public init(allowedBundleIdentifiers: Set<String>, displayName: String) {
         self.allowedBundleIdentifiers = Set(allowedBundleIdentifiers.map { $0.lowercased() })
-        self.enforcementMode = enforcementMode
         self.displayName = displayName
     }
 
@@ -166,7 +163,6 @@ public struct GuardTarget: Codable, Equatable, Sendable {
     public var signingIdentifier: String?
     /// Absolute executable/bundle paths that match (standardized).
     public var executablePaths: [String]
-    public var enforcementMode: MacEnforcementMode
     /// Human-readable, for logs/UI.
     public var displayName: String
 
@@ -176,7 +172,6 @@ public struct GuardTarget: Codable, Equatable, Sendable {
         teamIdentifier: String? = nil,
         signingIdentifier: String? = nil,
         executablePaths: [String] = [],
-        enforcementMode: MacEnforcementMode = .forceTerminate,
         displayName: String = ""
     ) {
         self.bundleIdentifier = bundleIdentifier
@@ -184,7 +179,6 @@ public struct GuardTarget: Codable, Equatable, Sendable {
         self.teamIdentifier = teamIdentifier
         self.signingIdentifier = signingIdentifier
         self.executablePaths = executablePaths.map { ($0 as NSString).standardizingPath }
-        self.enforcementMode = enforcementMode
         self.displayName = displayName.isEmpty ? bundleIdentifier : displayName
     }
 

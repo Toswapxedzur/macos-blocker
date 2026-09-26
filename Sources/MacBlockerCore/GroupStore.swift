@@ -22,7 +22,17 @@ import Foundation
 /// so there is one implementation of every group mutation.
 public final class GroupStore: @unchecked Sendable {
     private let shared: SharedAppGroupStore
-    private let lock = NSLock()
+    /// One lock for the process: every GroupStore (editor bridge, AI tools, the
+    /// "+" panel) and the engine's usage writes load-modify-save the one file.
+    private static let fileLock = NSLock()
+    private var lock: NSLock { Self.fileLock }
+
+    /// Runs `body` holding the store-file lock (for writers outside GroupStore,
+    /// like the engine's usage counters), so no write is lost to a race.
+    public static func withFileLock<T>(_ body: () throws -> T) rethrows -> T {
+        fileLock.lock(); defer { fileLock.unlock() }
+        return try body()
+    }
 
     public init(shared: SharedAppGroupStore = SharedAppGroupStore()) {
         self.shared = shared
@@ -36,13 +46,21 @@ public final class GroupStore: @unchecked Sendable {
         return loadLocked()
     }
 
-    /// The typed, read-only enforcement projection of the current groups.
+    /// Lays the live shared state of linked groups over a stored document (set
+    /// by the app to the hub's overlay). The AI tools read and lock-check through
+    /// it, exactly like enforcement and the user's view — never a stale copy.
+    public static var sharedOverlay: (([String: Any]) -> [String: Any])?
+
+    /// The typed, read-only projection of the current groups, as linked devices
+    /// share them.
     public func loadGroups() -> [BlockGroup] {
-        guard let data = shared.readData(SharedAppGroupStore.webStoreFileName, silent: true),
-              let result = try? ChromeExtensionImporter.importGroups(from: data) else {
-            return []
+        guard var data = shared.readData(SharedAppGroupStore.webStoreFileName, silent: true) else { return [] }
+        if let overlay = Self.sharedOverlay,
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let overlaid = try? JSONSerialization.data(withJSONObject: overlay(object)) {
+            data = overlaid
         }
-        return result.groups
+        return (try? ChromeExtensionImporter.importGroups(from: data))?.groups ?? []
     }
 
     // MARK: Writes
@@ -72,6 +90,12 @@ public final class GroupStore: @unchecked Sendable {
         let document: WebStoreDocument
         do {
             var working = loadLocked()
+            // Locks are judged on the shared view: a group locked on a linked
+            // device is locked here too, even before the editor adopts it.
+            if let overlay = Self.sharedOverlay {
+                let groups = overlay(working.raw)["blockedGroups"] as? [[String: Any]] ?? []
+                working.lockedGroupIDs = Set(groups.filter(WebStoreDocument.isLocked).compactMap { $0["id"] as? String })
+            }
             try body(&working)
             saveLocked(working)
             document = working
@@ -126,6 +150,9 @@ public enum GroupStoreError: Error, Equatable {
     /// The group is frozen, strict or parental-locked; like the editor, the
     /// store refuses edits to it.
     case groupLocked(String)
+    /// Another group already has this name (case-insensitively): groups link by
+    /// name, so names stay unique, as in the editor.
+    case duplicateName(String)
 }
 
 /// A parsed `web-store.json` envelope plus the field-surgical group mutations.
@@ -136,11 +163,14 @@ public enum GroupStoreError: Error, Equatable {
 /// store whose full schema is authored by the JavaScript editor.
 public struct WebStoreDocument {
     public private(set) var raw: [String: Any]
+    /// Groups locked on the shared view (see GroupStore.sharedOverlay); nil =
+    /// judge by the stored group alone.
+    public var lockedGroupIDs: Set<String>?
 
     /// Per-group companion maps the editor keys by group id. They are cleared for
     /// a deleted group so the store doesn't accrue orphaned usage/snooze entries.
     private static let perGroupMapKeys = [
-        "usageTimersMs", "usageResetAtMs", "groupSnoozes", "groupSnoozeTotalsMs",
+        "usageTimersMs", "usageResetAtMs", "usageBucketsMs", "groupSnoozes", "groupSnoozeTotalsMs",
     ]
 
     public init(raw: [String: Any]) {
@@ -165,8 +195,20 @@ public struct WebStoreDocument {
         try mutateGroup(id: id) { $0["enabled"] = enabled }
     }
 
-    public mutating func setGroupMode(id: String, _ mode: BlockingMode) throws {
+    /// Switching to a timed mode restarts the budget, as the editor's save does.
+    public mutating func setGroupMode(id: String, _ mode: BlockingMode, now: Date = Date()) throws {
+        let before = group(id: id)?["mode"] as? String
         try mutateGroup(id: id) { $0["mode"] = mode.rawValue }
+        guard mode == .afterMinutes, before != mode.rawValue else { return }
+        var timers = raw["usageTimersMs"] as? [String: Any] ?? [:]
+        var resets = raw["usageResetAtMs"] as? [String: Any] ?? [:]
+        var buckets = raw["usageBucketsMs"] as? [String: Any] ?? [:]
+        timers[id] = 0
+        resets[id] = (now.timeIntervalSince1970 * 1000).rounded()
+        buckets.removeValue(forKey: id)
+        raw["usageTimersMs"] = timers
+        raw["usageResetAtMs"] = resets
+        raw["usageBucketsMs"] = buckets
     }
 
     public mutating func setGroupAllowedMinutes(id: String, _ minutes: Int) throws {
@@ -177,6 +219,9 @@ public struct WebStoreDocument {
     public mutating func renameGroup(id: String, name: String) throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw GroupStoreError.invalidInput("name") }
+        if groups.contains(where: { ($0["id"] as? String) != id && (($0["name"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == trimmed.lowercased() }) {
+            throw GroupStoreError.duplicateName(trimmed)
+        }
         try mutateGroup(id: id) { $0["name"] = trimmed }
     }
 
@@ -303,6 +348,11 @@ public struct WebStoreDocument {
         }
     }
 
+    private func isLocked(_ group: [String: Any]) -> Bool {
+        if let lockedGroupIDs, let id = group["id"] as? String { return lockedGroupIDs.contains(id) }
+        return Self.isLocked(group)
+    }
+
     /// Same rule as the extension (`cbGroupIsLocked`): any freeze mode locks.
     public static func isLocked(_ group: [String: Any]) -> Bool {
         guard let mode = group["freezeMode"] as? String else { return false }
@@ -310,7 +360,7 @@ public struct WebStoreDocument {
     }
 
     public mutating func deleteGroup(id: String) throws {
-        if let group = group(id: id), Self.isLocked(group) { throw GroupStoreError.groupLocked(id) }
+        if let group = group(id: id), isLocked(group) { throw GroupStoreError.groupLocked(id) }
         var list = groups
         let before = list.count
         list.removeAll { ($0["id"] as? String) == id }
@@ -339,7 +389,7 @@ public struct WebStoreDocument {
             throw GroupStoreError.groupNotFound(id)
         }
         var group = list[index]
-        if Self.isLocked(group) { throw GroupStoreError.groupLocked(id) }
+        if isLocked(group) { throw GroupStoreError.groupLocked(id) }
         try body(&group)
         list[index] = group
         groups = list

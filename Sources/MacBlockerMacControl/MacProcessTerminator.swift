@@ -30,27 +30,20 @@ public struct RunningProcessSnapshot: Equatable, Sendable {
     }
 }
 
-/// One enforcement action the terminator decided to take, for logging/tests.
+/// One blocked process the terminator killed (or would kill), for logging/tests.
 public struct TerminationAction: Equatable, Sendable {
     public var processIdentifier: Int32
     public var bundleIdentifier: String?
-    public var action: MacEnforcementMode.RunningAction
 
-    public init(
-        processIdentifier: Int32,
-        bundleIdentifier: String?,
-        action: MacEnforcementMode.RunningAction
-    ) {
+    public init(processIdentifier: Int32, bundleIdentifier: String?) {
         self.processIdentifier = processIdentifier
         self.bundleIdentifier = bundleIdentifier
-        self.action = action
     }
 }
 
-/// Kills / suspends / hides already-running blocked applications. This is the
-/// "Layer 2" of the enforcement ladder that complements Endpoint Security's
-/// launch-prevention: it catches apps that were already running when a block
-/// turned on (schedule start, limit exceeded, rule fired).
+/// Kills blocked applications that are running. A block has one form: the
+/// app is force-quit (SIGKILL) every time it runs — at the block's start, on
+/// relaunch (the sweep repeats each second), whatever turned the block on.
 public enum MacProcessTerminator {
     /// Browsers are owned by their extensions. The native app never blocks,
     /// closes, hides, suspends, or kills them or their helper processes.
@@ -77,7 +70,7 @@ public enum MacProcessTerminator {
     }
 
     /// Pure selection: given a policy and a set of running processes, decide
-    /// which to act on and how. No side effects — safe to unit test.
+    /// which to kill. No side effects — safe to unit test.
     public static func plan(
         policy: GuardPolicy,
         running: [RunningProcessSnapshot]
@@ -86,20 +79,17 @@ public enum MacProcessTerminator {
             guard !isBrowserBundleIdentifier(proc.bundleIdentifier) else {
                 return nil
             }
-            guard let target = policy.match(
+            guard policy.match(
                 bundleIdentifier: proc.bundleIdentifier,
                 teamIdentifier: proc.teamIdentifier,
                 signingIdentifier: proc.signingIdentifier,
                 executablePath: proc.executablePath
-            ) else {
+            ) != nil else {
                 return nil
             }
-            let action = target.enforcementMode.runningAction
-            guard action != .none else { return nil }
             return TerminationAction(
                 processIdentifier: proc.processIdentifier,
-                bundleIdentifier: proc.bundleIdentifier,
-                action: action
+                bundleIdentifier: proc.bundleIdentifier
             )
         }
     }
@@ -149,31 +139,32 @@ public enum MacProcessTerminator {
                 enriched.signingIdentifier = signing.signingIdentifier
             }
 
-            guard let target = policy.match(
+            guard policy.match(
                 bundleIdentifier: enriched.bundleIdentifier,
                 teamIdentifier: enriched.teamIdentifier,
                 signingIdentifier: enriched.signingIdentifier,
                 executablePath: enriched.executablePath
-            ) else {
+            ) != nil else {
                 continue
             }
 
-            let action = target.enforcementMode.runningAction
-            apply(action, to: app)
-            if action != .none {
-                taken.append(
-                    TerminationAction(
-                        processIdentifier: app.processIdentifier,
-                        bundleIdentifier: app.bundleIdentifier,
-                        action: action
-                    )
-                )
-            }
+            forceKill(app)
+            taken.append(
+                TerminationAction(processIdentifier: app.processIdentifier, bundleIdentifier: app.bundleIdentifier)
+            )
         }
         return taken
     }
 
-    /// Terminates all processes matching the given bundle identifier.
+    /// Force-quits every running instance of a blocked app (a rule's blockApp).
+    public static func forceKill(bundleIdentifier: String) {
+        guard !isBrowserBundleIdentifier(bundleIdentifier) else { return }
+        for app in NSWorkspace.shared.runningApplications where app.bundleIdentifier == bundleIdentifier {
+            forceKill(app)
+        }
+    }
+
+    /// Asks every running instance to quit (a rule's "close": not a block).
     public static func terminate(bundleIdentifier: String) {
         guard !isBrowserBundleIdentifier(bundleIdentifier) else { return }
         let apps = NSWorkspace.shared.runningApplications.filter {
@@ -184,25 +175,11 @@ public enum MacProcessTerminator {
         }
     }
 
-    private static func apply(_ action: MacEnforcementMode.RunningAction, to app: NSRunningApplication) {
-        switch action {
-        case .none:
-            return
-        case .hide:
-            app.hide()
-        case .switchAway:
-            app.hide()
-            NSWorkspace.shared.frontmostApplication?.hide()
-        case .gracefulTerminate:
-            app.terminate()
-        case .forceKill:
-            // SIGKILL is unblockable and immediate; forceTerminate() is the
-            // AppKit fallback if signalling somehow fails.
-            if kill(app.processIdentifier, SIGKILL) != 0 {
-                app.forceTerminate()
-            }
-        case .suspend:
-            kill(app.processIdentifier, SIGSTOP)
+    private static func forceKill(_ app: NSRunningApplication) {
+        // SIGKILL is unblockable and immediate; forceTerminate() is the AppKit
+        // fallback if signalling somehow fails.
+        if kill(app.processIdentifier, SIGKILL) != 0 {
+            app.forceTerminate()
         }
     }
     #endif
