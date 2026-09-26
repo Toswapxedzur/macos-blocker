@@ -83,14 +83,6 @@ final class ClusterScopesShareTests: XCTestCase {
         XCTAssertEqual(keys(sharedScopes(hub)), ["apps", "site"])
     }
 
-    func testMacEditorFramesAreKeyedByKind() {
-        // The Mac's web editor sends the popup's runtime messages ({type: …});
-        // the hub dispatches on `kind`, so its own syncs must be re-keyed.
-        let frame = ConnectionHub.bridgeFrame(["type": "group-sync", "groupName": "Focus"])
-        XCTAssertEqual(frame["kind"] as? String, "group-sync")
-        XCTAssertEqual(ConnectionHub.bridgeFrame(["kind": "group-sync"])["kind"] as? String, "group-sync")
-    }
-
     func testUnionRenumbersLineIdsPerSurface() {
         let existing: [[String: Any]] = [["id": "items-1", "surface": "items", "platform": "youtube"], ["id": "site-1", "surface": "site", "platform": NSNull()]]
         let incoming: [[String: Any]] = [["id": "items-1", "surface": "items", "platform": "reddit"], ["id": "site-1", "surface": "site", "platform": NSNull(), "sites": ["a.com"]]]

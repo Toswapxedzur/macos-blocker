@@ -72,6 +72,34 @@ final class BlockerWebStoreRoutingTests: XCTestCase {
         XCTAssertNotNil(view.snoozes["g1"]?.until)
     }
 
+    func testTheMacAdoptsWhatItsLinkSharesIntoItsFile() throws {
+        let (webStore, _, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        defer { GroupStore.sharedOverlay = nil }
+        webStore.save(rawStore: ["blockedGroups": [["id": "g1", "name": "Focus", "allowedMinutes": 30]], "usageTimersMs": ["g1": 5]])
+        GroupStore.sharedOverlay = { document in
+            var overlaid = document
+            overlaid["blockedGroups"] = [["id": "g1", "name": "Focus", "allowedMinutes": 45]]
+            overlaid["groupSnoozeTotalsMs"] = ["g1": 60_000]
+            return overlaid
+        }
+        XCTAssertTrue(webStore.adoptShared(), "the shared definition is written into the file")
+        let json = try XCTUnwrap(webStore.loadRawJSON())
+        XCTAssertTrue(json.contains("\"allowedMinutes\":45") && json.contains("60000") && json.contains("usageTimersMs"), json)
+        XCTAssertFalse(webStore.adoptShared(), "caught up: nothing more to write")
+    }
+
+    func testADeletedGroupLeavesNoRuntimeEntry() {
+        let tidy = BlockerWebStore.tidied(["blockedGroups": [["id": "g1"]],
+                                           "usageTimersMs": ["g1": 5, "gone": 7],
+                                           "groupSnoozeTotalsMs": ["gone": 1],
+                                           "quickAddGroupId": "gone"], nowMs: 0)
+        XCTAssertEqual((tidy?["usageTimersMs"] as? [String: Any])?.keys.sorted(), ["g1"])
+        XCTAssertEqual((tidy?["groupSnoozeTotalsMs"] as? [String: Any])?.isEmpty, true)
+        XCTAssertEqual(tidy?["quickAddGroupId"] as? String, "")
+        XCTAssertNil(BlockerWebStore.tidied(["blockedGroups": [["id": "g1"]], "usageTimersMs": ["g1": 5]], nowMs: 0), "nothing to tidy: no write")
+    }
+
     func testEditorSaveDoesNotSelfNotify() {
         let (webStore, _, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }

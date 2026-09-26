@@ -120,7 +120,7 @@ public final class GroupStore: @unchecked Sendable {
     /// A no-op when nothing is listening (no editor open).
     public static let didChangeNotification = Notification.Name("com.adamancia.vault.GroupStoreDidChange")
 
-    private static func postDidChange() {
+    public static func postDidChange() {
         NotificationCenter.default.post(name: didChangeNotification, object: nil)
     }
 
@@ -225,12 +225,16 @@ public struct WebStoreDocument {
         try mutateGroup(id: id) { $0["allowedMinutes"] = minutes }
     }
 
+    /// The editor's name rule (group-actions.js nameTaken): unique per device,
+    /// case and outer spaces ignored.
+    static func nameTaken(_ groups: [[String: Any]], _ name: String, except id: String?) -> Bool {
+        GroupActionsRuntime.shared.call("nameTaken", [groups, name, id ?? NSNull()]) as? Bool == true
+    }
+
     public mutating func renameGroup(id: String, name: String) throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw GroupStoreError.invalidInput("name") }
-        if groups.contains(where: { ($0["id"] as? String) != id && (($0["name"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == trimmed.lowercased() }) {
-            throw GroupStoreError.duplicateName(trimmed)
-        }
+        if Self.nameTaken(groups, trimmed, except: id) { throw GroupStoreError.duplicateName(trimmed) }
         try mutateGroup(id: id) { $0["name"] = trimmed }
     }
 
@@ -404,9 +408,7 @@ public struct WebStoreDocument {
     public mutating func createGroup(name: String, now: Date = Date()) throws -> String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw GroupStoreError.invalidInput("name") }
-        if groups.contains(where: { (($0["name"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == trimmed.lowercased() }) {
-            throw GroupStoreError.duplicateName(trimmed)
-        }
+        if Self.nameTaken(groups, trimmed, except: nil) { throw GroupStoreError.duplicateName(trimmed) }
         let nowMs = (now.timeIntervalSince1970 * 1000).rounded()
         let id = "group-\(Int(nowMs))-\(UUID().uuidString.prefix(6).lowercased())"
         var group: [String: Any] = [
@@ -551,11 +553,9 @@ public struct WebStoreDocument {
         let current = (sharedSnoozes ?? snoozes)[id] ?? NSNull()
         let result = GroupActionsRuntime.shared.call("endSnoozeEntry", [current, nowMs]) as? [String: Any] ?? [:]
         if let error = result["error"] as? String { return .refused(error) }
+        // The time it ran is counted once by the engine, like a snooze that ran out.
         snoozes[id] = result["entry"]
         raw["groupSnoozes"] = snoozes
-        var totals = raw["groupSnoozeTotalsMs"] as? [String: Any] ?? [:]
-        totals[id] = ((totals[id] as? NSNumber)?.doubleValue ?? 0) + ((result["activeMs"] as? NSNumber)?.doubleValue ?? 0)
-        raw["groupSnoozeTotalsMs"] = totals
         return .done
     }
 

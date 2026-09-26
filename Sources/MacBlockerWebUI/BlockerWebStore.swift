@@ -58,19 +58,42 @@ public final class BlockerWebStore: @unchecked Sendable {
         public var quitRetryMinutes: Double
     }
 
-    /// The tick's one read of the stored document. A snooze that ran out adds
-    /// its snoozed time to the group's total once (`activeMsApplied`), as the
-    /// browser's worker does — written only when one did, under the file lock.
+    /// The tick's one read of the stored document, tidied by the runtime owner
+    /// (the editor writes only its groups): a snooze that ran out (or was
+    /// ended) adds its time to the group's total once (`activeMsApplied`), and
+    /// a deleted group leaves no per-group entry behind — as the browser's
+    /// worker does. Written only when something changed, under the file lock.
     public func loadForTick(nowMs: Double) -> [String: Any] {
         let object = loadStoreObject() ?? [:]
-        guard Self.countFinishedSnoozes(in: object, nowMs: nowMs) != nil else { return object }
+        guard Self.tidied(object, nowMs: nowMs) != nil else { return object }
         return GroupStore.withFileLock {
-            guard let fresh = loadStoreObject(), let counted = Self.countFinishedSnoozes(in: fresh, nowMs: nowMs) else {
+            guard let fresh = loadStoreObject(), let tidy = Self.tidied(fresh, nowMs: nowMs) else {
                 return loadStoreObject() ?? object
             }
-            write(counted)
-            return counted
+            write(tidy)
+            return tidy
         }
+    }
+
+    private static let perGroupKeys = ["usageTimersMs", "usageResetAtMs", "usageBucketsMs", "groupSnoozes", "groupSnoozeTotalsMs", "parentalPinAttempts"]
+
+    /// The document with finished snoozes counted and deleted groups' entries
+    /// dropped, or nil when neither applies.
+    public static func tidied(_ document: [String: Any], nowMs: Double) -> [String: Any]? {
+        let counted = countFinishedSnoozes(in: document, nowMs: nowMs)
+        var next = counted ?? document
+        var changed = counted != nil
+        let ids = Set((next["blockedGroups"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String })
+        for key in perGroupKeys {
+            guard let map = next[key] as? [String: Any], map.keys.contains(where: { !ids.contains($0) }) else { continue }
+            next[key] = map.filter { ids.contains($0.key) }
+            changed = true
+        }
+        if let quickAdd = next["quickAddGroupId"] as? String, !quickAdd.isEmpty, !ids.contains(quickAdd) {
+            next["quickAddGroupId"] = ""
+            changed = true
+        }
+        return changed ? next : nil
     }
 
     /// The document with finished snoozes counted, or nil when none finished.
@@ -92,6 +115,32 @@ public final class BlockerWebStore: @unchecked Sendable {
         counted["groupSnoozes"] = snoozes
         counted["groupSnoozeTotalsMs"] = totals
         return counted
+    }
+
+    /// Mac Vault owns adoption, as the browser's worker does: a linked group's
+    /// shared definition, lock, snooze and snooze total are written into this
+    /// Mac's own file, so the editor shows — and edits — the shared group, open
+    /// or opened later. Returns whether it wrote (an open editor is told).
+    @discardableResult
+    public func adoptShared() -> Bool {
+        guard let overlay = GroupStore.sharedOverlay else { return false }
+        let keys = ["blockedGroups", "groupSnoozes", "groupSnoozeTotalsMs"]
+        let wrote: Bool = GroupStore.withFileLock {
+            guard let object = loadStoreObject() else { return false }
+            let adopted = overlay(object)
+            guard keys.contains(where: { Self.canonical(adopted[$0]) != Self.canonical(object[$0]) }) else { return false }
+            var next = object
+            for key in keys where adopted[key] != nil { next[key] = adopted[key] }
+            write(next)
+            return true
+        }
+        if wrote { GroupStore.postDidChange() }
+        return wrote
+    }
+
+    private static func canonical(_ value: Any?) -> String {
+        guard let value, let data = try? JSONSerialization.data(withJSONObject: ["v": value], options: [.sortedKeys]) else { return "" }
+        return String(decoding: data, as: UTF8.self)
     }
 
     /// Groups and snoozes as linked devices share them; usage and settings as

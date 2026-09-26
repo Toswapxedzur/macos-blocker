@@ -393,11 +393,6 @@
         return bridgeOrResolve("group-connect", message, { ok: true });
       case "group-disconnect":
         return bridgeOrResolve("group-disconnect", message, { ok: true });
-      case "group-sync":
-        return bridgeOrResolve("group-sync", message, { ok: true });
-      case "groups-announce":
-        // Mac Vault builds its group list for the hub from its own store.
-        return Promise.resolve({ ok: true });
       case "clusters-status":
         return bridgeOrResolve("clusters-status", message, { ok: true });
       case "mcp-connectors-status":
