@@ -99,9 +99,7 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
             MCPConnectorRegistry.isLaunchAutoConnectEnabled = true
         }
 
-        // "Connect your AI tools" defaults to on: register the Vault MCP server
-        // into every installed desktop MCP client the user has not explicitly
-        // turned off. Explicit disconnects are remembered and never re-registered.
+        // Register the Vault MCP server into every installed desktop MCP client.
         MCPConnectorRegistry.shared.applyDefaultConnections()
 
         // Relaunch at login so tag blocking (and the hub) resume after a reboot
