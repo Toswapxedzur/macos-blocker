@@ -97,6 +97,28 @@ final class WorkspaceAssetsTests: XCTestCase {
         XCTAssertNoThrow(try unchosen.validate())
     }
 
+    /// A stored catalog from before a platform was retired (TikTok, 2026-09-24)
+    /// still loads: the retired binding goes, a type aimed at it stays, unbound.
+    /// Before this, validate() refused the whole state and the classifier never
+    /// started (nor joined the hub).
+    func testARetiredPlatformNeverStopsTheCatalogLoading() throws {
+        var catalog = WorkspaceCatalog.starter()
+        let binding = try catalog.ensurePlatformBinding("youtube")
+        let tree = try XCTUnwrap(catalog.trees.first { $0.id == binding.treeID })
+        let dataset = try XCTUnwrap(catalog.datasets.first { $0.id == binding.datasetID })
+        catalog.bindings.append(PlatformBinding(id: "tiktok", name: "TikTok", treeID: tree.id, datasetID: dataset.id, activeClassifierTypeID: "old"))
+        catalog.classifierTypes = [ClassifierTypeAsset(
+            id: "old", name: "TikTok tags", treeID: tree.id, treeRevision: tree.revision,
+            datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformID: "tiktok")]
+        XCTAssertThrowsError(try catalog.validate())
+
+        catalog.reconcileClassifierTypes()
+        XCTAssertNoThrow(try catalog.validate())
+        XCTAssertFalse(catalog.bindings.contains { $0.id == "tiktok" })
+        XCTAssertEqual(catalog.classifierTypes.map(\.id), ["old"], "the type is kept")
+        XCTAssertNil(catalog.classifierTypes.first?.applicablePlatformID, "…unbound")
+    }
+
     func testClassifierTypeLocalModelOverridesLegacyAndRoundTrip() throws {
         let legacy = Data(#"{"id":"type","name":"Type","treeID":"tree","treeRevision":1,"datasetID":"dataset","datasetRevision":1,"applicablePlatformID":"youtube","order":0}"#.utf8)
         let decodedLegacy = try JSONDecoder().decode(ClassifierTypeAsset.self, from: legacy)
