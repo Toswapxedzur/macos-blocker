@@ -43,7 +43,7 @@ final class ExtensionMCPToolsTests: XCTestCase {
         XCTAssertTrue(out.text.contains("wrong PIN; the next try waits 4 s."), out.text)
         XCTAssertEqual(relayed().last?.operation, "settings-unlock-group")
         XCTAssertEqual(ExtensionMCPTools.explain("wait-until:2026-09-27T10:00:00.000Z"), "the freeze's wait holds until 2026-09-27T10:00:00.000Z.")
-        XCTAssertEqual(ExtensionMCPTools.explain("confirm-wait:3"), "confirm again in 3 s (the popup's confirmation waits 5 s).")
+        XCTAssertEqual(ExtensionMCPTools.explain("confirm-wait:3"), "confirm again in 3 s (the editor's confirmation waits 5 s).")
     }
 
     func testStateRelaysSettingsGetAndReturnsTheBrowserBody() throws {

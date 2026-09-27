@@ -41,7 +41,9 @@ final class ClusterScopesShareTests: XCTestCase {
         let now = Date().timeIntervalSince1970 * 1000
         hub.applySync(program: "chrome", groupId: "c1", contribution: [
             "scalars": ["allowedMinutes": 45],
-            "scopes": [["id": "apps-1", "surface": "apps", "platform": NSNull(), "action": "block", "apps": [["id": "com.hnc.Discord"]]]],
+            "scopes": [["id": "site-1", "surface": "site", "platform": NSNull(), "action": "block", "sites": ["x.com"], "sitesExcept": false],
+                       // A browser never brings Apps lines (the scope line): this one is dropped.
+                       ["id": "apps-1", "surface": "apps", "platform": NSNull(), "action": "block", "apps": [["id": "com.hnc.Discord"]]]],
             "snooze": ["startsAtMs": now, "untilMs": now + 600_000, "cooldownUntilMs": now + 600_000, "changedAtMs": now],
             "snoozeTs": now
         ], ts: 5)
@@ -52,7 +54,7 @@ final class ClusterScopesShareTests: XCTestCase {
         let overlaid = hub.overlayShared(onto: stored)
         let group = try XCTUnwrap((overlaid["blockedGroups"] as? [[String: Any]])?.first)
         XCTAssertEqual(group["allowedMinutes"] as? Int, 45, "the shared policy, even with no editor open")
-        XCTAssertEqual(keys(group["scopes"] as? [[String: Any]]), ["apps"], "the shared entries")
+        XCTAssertEqual(keys(group["scopes"] as? [[String: Any]]), ["site"], "the shared entries: the browser's own lines only")
         let snooze = try XCTUnwrap((overlaid["groupSnoozes"] as? [String: Any])?["m1"] as? [String: Any])
         XCTAssertEqual((snooze["untilMs"] as? NSNumber)?.doubleValue, now + 600_000, "a newer snooze from another device applies")
     }
@@ -83,6 +85,21 @@ final class ClusterScopesShareTests: XCTestCase {
         // A usage-only ping never touches the definition.
         hub.applySync(program: "chrome", groupId: "c1", contribution: ["usageDeltaMs": 1000.0], ts: 30)
         XCTAssertEqual(keys(sharedScopes(hub)), ["apps", "site"])
+    }
+
+    func testEachProgramChangesOnlyItsOwnLinesAndAnEmptiedListIsShared() {
+        // The scope line (owner 2026-09-27): Mac Vault owns the Apps lines, a
+        // browser every other; neither can change or remove the other's.
+        let hub = linkedHub()
+        let apps: [[String: Any]] = [["id": "apps-1", "surface": "apps", "platform": NSNull(), "action": "block", "apps": [["id": "com.example.Game"]]]]
+        let site: [[String: Any]] = [["id": "site-1", "surface": "site", "platform": NSNull(), "action": "block", "sites": ["x.com"], "sitesExcept": false]]
+        hub.applySync(program: "macapp", groupId: "m1", contribution: ["scalars": [:] as [String: Any], "scopes": apps], ts: 1)
+        hub.applySync(program: "chrome", groupId: "c1", contribution: ["scalars": [:] as [String: Any], "scopes": site], ts: 2)
+        XCTAssertEqual(keys(sharedScopes(hub)), ["apps", "site"])
+        hub.applySync(program: "chrome", groupId: "c1", contribution: ["scalars": [:] as [String: Any], "scopes": [[String: Any]]()], ts: 3)
+        XCTAssertEqual(keys(sharedScopes(hub)), ["apps"], "the browser emptied its lines; the Mac's stay")
+        hub.applySync(program: "macapp", groupId: "m1", contribution: ["scalars": [:] as [String: Any], "scopes": [[String: Any]]()], ts: 4)
+        XCTAssertEqual(sharedScopes(hub)?.count, 0, "an emptied list is shared, not ignored")
     }
 
     func testUnionRenumbersLineIdsPerSurface() {

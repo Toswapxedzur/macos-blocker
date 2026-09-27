@@ -1266,15 +1266,19 @@ final class ConnectionHub: ObservableObject {
                 cluster.usageSeeded = true
                 cluster.bucketsSeeded = true
             }
-            // Entries: a member's first contribution brings its own entries into
-            // the shared definition (union by entry, the newcomer's version of a
-            // shared entry wins); afterwards the whole line list is latest-edit-
-            // wins, since every member edits the one shared definition.
+            // Lines follow the scope line (owner 2026-09-27): a member brings
+            // and edits only its own program's lines (Mac Vault the Apps lines,
+            // a browser every other); the other program's stay as they are. A
+            // first contribution joins its lines to those of its kind already
+            // shared (union by entry); afterwards the latest edit wins.
             if let scopes = scopesPayload {
+                let owner = Self.lineOwner(program: program)
+                let own = scopes.filter { Self.lineOwner(line: $0) == owner }
+                let theirs = cluster.sharedScopes.filter { Self.lineOwner(line: $0) != owner }
                 if firstContribution {
-                    cluster.sharedScopes = Self.unionScopes(cluster.sharedScopes, incoming: scopes)
+                    cluster.sharedScopes = theirs + Self.unionScopes(cluster.sharedScopes.filter { Self.lineOwner(line: $0) == owner }, incoming: own)
                 } else if wins {
-                    cluster.sharedScopes = scopes
+                    cluster.sharedScopes = theirs + own
                 }
             }
 
@@ -1360,6 +1364,14 @@ final class ConnectionHub: ObservableObject {
     /// Union of two line lists by entry: entries only `existing` names are kept,
     /// entries `incoming` names come from `incoming`. Line ids are renumbered per
     /// surface so the merged list has unique ids.
+    /// The owner of a line (group-scopes.js lineOwner) and of a program's lines.
+    static func lineOwner(line: [String: Any]) -> String {
+        (line["surface"] as? String) == "apps" ? "desktop" : "browser"
+    }
+    static func lineOwner(program: String) -> String {
+        program == localProgram ? "desktop" : "browser"
+    }
+
     static func unionScopes(_ existing: [[String: Any]], incoming: [[String: Any]]) -> [[String: Any]] {
         let incomingKeys = Set(incoming.map(scopeEntryKey))
         let merged = existing.filter { !incomingKeys.contains(scopeEntryKey($0)) } + incoming
@@ -1453,7 +1465,8 @@ final class ConnectionHub: ObservableObject {
             }
             var frame: [String: Any] = ["kind": "group-sync", "program": Self.localProgram, "groupId": groupID, "ts": ts,
                                         "scalars": scalars]
-            if !scopes.isEmpty { frame["scopes"] = scopes }
+            // Only Mac Vault's own lines, even none (an emptied list is shared too).
+            frame["scopes"] = scopes.filter { Self.lineOwner(line: $0) == "desktop" }
             if !lockUnit.isEmpty {
                 frame["lock"] = lockUnit
                 frame["lockBase"] = (group["lockSyncedVersion"] as? NSNumber)?.intValue ?? 0
@@ -1480,7 +1493,7 @@ final class ConnectionHub: ObservableObject {
             let pinned = cluster.memberGroupIds[Self.localProgram] ?? ""
             guard !pinned.isEmpty, let index = groups.firstIndex(where: { ($0["id"] as? String) == pinned }) else { continue }
             for (field, value) in cluster.sharedScalars { groups[index][field] = value }
-            if !cluster.sharedScopes.isEmpty { groups[index]["scopes"] = cluster.sharedScopes }
+            if !cluster.contributed.isEmpty { groups[index]["scopes"] = cluster.sharedScopes }
             if !cluster.sharedLock.isEmpty {
                 for (field, value) in cluster.sharedLock { groups[index][field] = value }
                 groups[index]["lockSyncedVersion"] = cluster.sharedLock["lockVersion"]
@@ -1741,9 +1754,9 @@ final class ConnectionHub: ObservableObject {
                 "snoozeTs": cluster.sharedSnoozeTs,
                 "snoozeTotalMs": cluster.sharedSnoozeTotalMs
             ]
-            // Lines appear once a member contributed them: an empty list is
-            // "nothing shared yet", which members must not adopt as a deletion.
-            if !cluster.sharedScopes.isEmpty { shared["scopes"] = cluster.sharedScopes }
+            // Lines appear once a member contributed: before that there is
+            // nothing to adopt; after it an empty list is an emptied one.
+            if !cluster.contributed.isEmpty { shared["scopes"] = cluster.sharedScopes }
             if !cluster.sharedLock.isEmpty { shared["lock"] = cluster.sharedLock }
             dict["shared"] = shared
         }

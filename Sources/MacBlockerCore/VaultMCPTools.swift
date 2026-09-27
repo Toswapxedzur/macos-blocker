@@ -1,46 +1,41 @@
 #if os(macOS)
 import Foundation
 
-/// The Vault MCP tool surface. These are bounded, named operations over the block
-/// groups — never arbitrary control — each wrapping the already-tested
-/// `GroupStore`, so the MCP server, the WebView bridge, and any future caller
-/// share one implementation of every mutation.
+/// The Vault MCP tool surface: the editor's own actions on Mac Vault's groups,
+/// with its gates (owner: tools do exactly what the user can) — never arbitrary
+/// control. Each wraps `GroupStore`, which runs the editor's rules. Mac Vault
+/// controls apps only (the scope line): these tools never edit a website or
+/// platform line. Results are JSON, like the extension tools'.
 public enum VaultMCPTools {
     public static func groupTools(store: GroupStore = GroupStore(), clock: @escaping () -> Date = Date.init) -> [MCPTool] {
-        let unlockRequests = UnlockRequests()
+        let confirmations = Confirmations()
+        let group: ([String: Any], String?) -> MCPToolResult = { args, key in
+            guard let id = string(args, "id"), let shown = store.load().publicGroup(id: id) else { return refuse("group-not-found") }
+            return .ok(jsonText(key.map { [$0: shown] } ?? shown))
+        }
         return [
             MCPTool(
                 name: "list_groups",
-                description: "List all block groups: id, name, on/off, mode, frozen, and how many websites and apps each lists.",
+                description: "List all block groups: id, name, enabled, mode, locked (frozen), and how many apps each lists. Linked groups show the shared state.",
                 inputSchema: objectSchema([])
             ) { _ in
                 let document = store.load()
-                let groups = document.groupIDs.compactMap { document.group(id: $0) }.map { group -> [String: Any] in
-                    [
-                        "id": group["id"] ?? "", "name": group["name"] ?? "", "enabled": group["enabled"] ?? true,
-                        "mode": group["mode"] ?? "instant", "locked": WebStoreDocument.isLocked(group),
-                        "sites": WebStoreDocument.sites(of: group).count, "apps": WebStoreDocument.apps(of: group).count,
-                    ]
+                let groups = document.groupIDs.compactMap { document.publicGroup(id: $0) }.map { shown -> [String: Any] in
+                    ["id": shown["id"] ?? "", "name": shown["name"] ?? "", "enabled": shown["enabled"] ?? true,
+                     "mode": shown["mode"] ?? "instant", "locked": shown["locked"] ?? false, "apps": WebStoreDocument.apps(of: shown).count]
                 }
                 return .ok(jsonText(["groups": groups]))
             },
 
             MCPTool(
                 name: "get_group",
-                description: "One block group as stored (the editor's fields): its settings, its lines (scopes) — including sitesExcept / appsExcept (\"block everything except these\") — and its freeze (without the PIN itself).",
+                description: "One block group as stored (the editor's fields): its settings, its lines (scopes; appsExcept = \"block every app except these\"), locked and hasParentalPin (never the PIN). Linked groups show the shared state; their website and platform lines are a browser's.",
                 inputSchema: objectSchema([("id", "string", "The group id.")], required: ["id"])
-            ) { args in
-                guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
-                guard var group = store.load().group(id: id) else { return .failure("Group not found: \(id)") }
-                group["locked"] = WebStoreDocument.isLocked(group)
-                group["hasParentalPin"] = group["parentalPasswordHash"] is String
-                for secret in ["parentalPasswordHash", "parentalPasswordSalt"] { group.removeValue(forKey: secret) }
-                return .ok(jsonText(group))
-            },
+            ) { args in group(args, nil) },
 
             MCPTool(
                 name: "set_group",
-                description: "Change a group's fields, as the editor does: name, enabled, mode (instant | after-minutes; a custom group stays instant), allowedMinutes, resetIntervalHours, resetAtMidnight, rollingLimit, activeDays, timeWindowsText (HHMM-HHMM lines), allowSnooze, snoozeMinutes, snoozeActivationDelayMinutes, snoozeCooldownMinutes (≤ 5), snoozeConfirmations, fallbackUrl, pauseSeconds, and scopes (the group's lines, as get_group shows them). A value the editor refuses is refused, never replaced by a default. A frozen group can't be changed; the freeze has its own tools.",
+                description: "Change a group's fields, as the editor does: name, enabled, mode (instant | after-minutes; a custom group stays instant), allowedMinutes, resetIntervalHours, resetAtMidnight, rollingLimit, activeDays (at least one), timeWindowsText (HHMM-HHMM lines), allowSnooze, snoozeMinutes, snoozeActivationDelayMinutes, snoozeCooldownMinutes (≤ 5), snoozeConfirmations, fallbackUrl, pauseSeconds, and scopes — Mac Vault's own lines only (the Apps lines; website and platform lines are a browser's and are refused). A value the editor refuses is refused, never replaced by a default. A frozen group can't be changed; the freeze has its own tools. Returns the group.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -50,90 +45,69 @@ public enum VaultMCPTools {
                     "required": ["id", "patch"],
                 ]
             ) { args in
-                guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
+                guard let id = string(args, "id") else { return refuse("group-not-found") }
                 guard let patch = args["patch"] as? [String: Any], !patch.isEmpty else { return .failure("Missing 'patch' object.") }
-                return run(store) { try $0.setGroup(id: id, patch: patch) } ?? .ok("Group \(id) changed.")
+                return apply(store) { try $0.setGroup(id: id, patch: patch) } ?? group(args, "group")
             },
 
             MCPTool(
                 name: "set_settings",
-                description: "Change Mac Vault's settings — exactly the editor's Settings: defaultSnoozeMinutes (> 0), quitRetryMinutes (0–1440: how often a blocked or rule-closed app that stayed open is asked to quit again; 0 = never), quickAddEnabled (the floating \"+\"), quickAddGroupId (its target group, or \"\").",
+                description: "Change Mac Vault's settings — exactly the editor's Settings: defaultSnoozeMinutes (> 0), quitRetryMinutes (whole minutes 0–1440: how often a blocked or rule-closed app that stayed open is asked to quit again; 0 = never), quickAddEnabled (the floating \"+\"), quickAddGroupId (its target group, or \"\"). A value the editor refuses is refused. Returns the settings.",
                 inputSchema: ["type": "object", "properties": ["patch": ["type": "object", "description": "The settings to change."]], "required": ["patch"]]
             ) { args in
                 guard let patch = args["patch"] as? [String: Any], !patch.isEmpty else { return .failure("Missing 'patch' object.") }
-                return run(store) { try $0.setSettings(patch) } ?? .ok("Settings changed.")
-            },
-
-            MCPTool(
-                name: "add_website",
-                description: "Add a website (a host, or a host with a path like youtube.com/shorts) to the group's Websites entry — its block list, or with sitesExcept the sites it lets through.",
-                inputSchema: objectSchema([
-                    ("id", "string", "The group id."),
-                    ("host", "string", "The site host or URL to block."),
-                ], required: ["id", "host"])
-            ) { args in
-                guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
-                guard let host = string(args, "host") else { return .failure("Missing 'host'.") }
-                return run(store) { try $0.addWebsite(id: id, host: host) }
-                    ?? .ok("Added \(host) to group \(id).")
-            },
-
-            MCPTool(
-                name: "remove_website",
-                description: "Remove that website entry from the group's Websites entry (a path entry never takes its host with it).",
-                inputSchema: objectSchema([
-                    ("id", "string", "The group id."),
-                    ("host", "string", "The site host or URL to remove."),
-                ], required: ["id", "host"])
-            ) { args in
-                guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
-                guard let host = string(args, "host") else { return .failure("Missing 'host'.") }
-                return run(store) { try $0.removeWebsite(id: id, host: host) }
-                    ?? .ok("Removed \(host) from group \(id).")
+                if let failure = apply(store, { try $0.setSettings(patch) }) { return failure }
+                return .ok(jsonText(store.load().editorSettings))
             },
 
             MCPTool(
                 name: "add_application",
-                description: "Add a macOS application (by bundle identifier) to the group's Apps entry — its block list, or with appsExcept the apps it lets through.",
+                description: "Add a macOS application (by bundle identifier) to the group's Apps entry — its block list, or with appsExcept the apps it lets through. Returns the group.",
                 inputSchema: objectSchema([
                     ("id", "string", "The group id."),
                     ("bundleId", "string", "The application's bundle identifier."),
                     ("name", "string", "Optional display name."),
                 ], required: ["id", "bundleId"])
             ) { args in
-                guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
-                guard let bundleId = string(args, "bundleId") else { return .failure("Missing 'bundleId'.") }
-                return run(store) { try $0.addApplication(id: id, bundleID: bundleId, name: string(args, "name")) }
-                    ?? .ok("Added \(bundleId) to group \(id).")
+                guard let id = string(args, "id") else { return refuse("group-not-found") }
+                guard let bundleId = string(args, "bundleId") else { return refuse("invalid-bundleId") }
+                return apply(store) { try $0.addApplication(id: id, bundleID: bundleId, name: string(args, "name")) } ?? group(args, "group")
             },
 
             MCPTool(
                 name: "remove_application",
-                description: "Remove an application (by bundle identifier) from the group's Apps entry.",
+                description: "Remove an application (by bundle identifier) from the group's Apps entry. Returns the group.",
                 inputSchema: objectSchema([
                     ("id", "string", "The group id."),
                     ("bundleId", "string", "The application's bundle identifier."),
                 ], required: ["id", "bundleId"])
             ) { args in
-                guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
-                guard let bundleId = string(args, "bundleId") else { return .failure("Missing 'bundleId'.") }
-                return run(store) { try $0.removeApplication(id: id, bundleID: bundleId) }
-                    ?? .ok("Removed \(bundleId) from group \(id).")
+                guard let id = string(args, "id") else { return refuse("group-not-found") }
+                guard let bundleId = string(args, "bundleId") else { return refuse("invalid-bundleId") }
+                return apply(store) { try $0.removeApplication(id: id, bundleID: bundleId) } ?? group(args, "group")
             },
 
             MCPTool(
                 name: "create_group",
-                description: "Create an unlocked block group with the editor's defaults (instant, every day, no sites or apps yet). Names are unique, ignoring letter case. Returns the new id.",
-                inputSchema: objectSchema([("name", "string", "The group name.")], required: ["name"])
+                description: "Create an unlocked group as the editor's New group does in Mac Vault: groupType site (an Apps group, the default) or custom (a rule group); the user's default snooze length; a free numbered name unless patch.name is given (names are unique, ignoring letter case); optional patch fields as set_group takes them. Returns the group.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "groupType": ["type": "string", "description": "site (default) or custom."],
+                        "patch": ["type": "object", "description": "Optional fields, as set_group."],
+                    ],
+                ]
             ) { args in
-                guard let name = string(args, "name") else { return .failure("Missing 'name'.") }
+                let type = string(args, "groupType") ?? "site"
+                let patch = args["patch"] as? [String: Any] ?? [:]
                 var id = ""
-                return run(store) { id = try $0.createGroup(name: name, now: clock()) } ?? .ok(jsonText(["id": id]))
+                if let failure = apply(store, { id = try $0.createGroup(groupType: type, patch: patch) }) { return failure }
+                return group(["id": id], "group")
             },
 
             MCPTool(
                 name: "lock_group",
-                description: "Freeze a group, as the editor's Freeze does, with optional gates that combine: waitHours (it cannot be unfrozen for that long, 0 < hours ≤ 72) and pin (6 digits: unfreezing then needs this PIN). On a group that is already frozen the same call can only make the freeze stricter: a longer wait, or a PIN where there was none. Every unfreeze also ends with the confirmation (10 steps, 5 s apart).",
+                description: "Freeze a group, as the editor's Freeze does, with optional gates that combine: waitHours (it cannot be unfrozen for that long; 0 or blank = no wait, at most 72) and pin (6 digits: unfreezing then needs this PIN). On a frozen group the same call can only make the freeze stricter: a longer wait, or a PIN where there was none. Every unfreeze ends with the confirmation (10 steps, 5 s apart). Returns the group.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -144,18 +118,17 @@ public enum VaultMCPTools {
                     "required": ["id"],
                 ]
             ) { args in
-                guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
-                let hours = (args["waitHours"] as? NSNumber)?.doubleValue
+                guard let id = string(args, "id") else { return refuse("group-not-found") }
                 var outcome = WebStoreDocument.LockOutcome.done
-                if let failure = run(store, { outcome = try $0.lockGroup(id: id, waitHours: hours, pin: string(args, "pin"), now: clock()) }) {
+                if let failure = apply(store, { outcome = try $0.lockGroup(id: id, waitHours: args["waitHours"], pin: string(args, "pin"), now: clock()) }) {
                     return failure
                 }
-                return outcome == .done ? .ok("Group \(id) is frozen.") : .failure(explain(outcome))
+                return outcome == .done ? group(args, "group") : refuse(outcome.code)
             },
 
             MCPTool(
                 name: "unlock_group",
-                description: "Unfreeze a group through the editor's gates. The wait gate must be over; a set PIN must be passed (pin; a wrong PIN makes the next try wait 1 s … 64 s, shared with the editor); then the confirmation: call again with confirm: true every 5 seconds until no confirmation is left (10 in all, within 5 minutes).",
+                description: "Unfreeze a group through the editor's gates. The wait gate must be over; a set PIN must be passed (pin; a wrong PIN makes the next try wait 1 s … 64 s, shared with the editor); then the confirmation: call again with confirm: true every 5 seconds until confirmationsLeft is 0 (10 in all, within 5 minutes). A freeze that changes meanwhile starts it over.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -166,92 +139,79 @@ public enum VaultMCPTools {
                     "required": ["id"],
                 ]
             ) { args in
-                guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
+                guard let id = string(args, "id"), let shown = store.load().publicGroup(id: id) else { return refuse("group-not-found") }
+                guard shown["locked"] as? Bool == true else { return refuse("not-locked") }
                 let now = clock()
-                if args["confirm"] as? Bool == true, let request = unlockRequests.request(id: id, now: now) {
-                    let step = GroupActionsRuntime.shared.call("confirmStep", [request.state, (now.timeIntervalSince1970 * 1000).rounded()]) as? [String: Any] ?? [:]
-                    let waitMs = (step["waitMs"] as? NSNumber)?.doubleValue ?? 0
-                    if waitMs > 0 { return .failure("Confirm again in \(Int((waitMs / 1000).rounded(.up))) s (the editor's confirmation waits 5 s).") }
-                    let state = step["state"] as? [String: Any] ?? [:]
-                    guard step["done"] as? Bool == true else {
-                        unlockRequests.save(id: id, lockVersion: request.lockVersion, state: state, now: now)
-                        return .ok("Confirmation counted: \((state["left"] as? NSNumber)?.intValue ?? 0) left. Call again with confirm: true in 5 seconds.")
-                    }
-                    unlockRequests.clear(id: id)
+                let count = (GroupActionsRuntime.shared.constant("CONFIRMATIONS") as? NSNumber)?.intValue ?? 10
+                let step = confirmations.step("unlock:\(id)", tag: "\((shown["lockVersion"] as? NSNumber)?.intValue ?? 0)", count: count,
+                                              confirm: args["confirm"] as? Bool == true, now: now) {
                     var outcome = WebStoreDocument.LockOutcome.done
-                    if let failure = run(store, { outcome = try $0.unlockGroup(id: id, lockVersion: request.lockVersion, now: now) }) { return failure }
-                    return outcome == .done ? .ok("Group \(id) is unfrozen.") : .failure(explain(outcome))
+                    var version = 0
+                    if let code = applyCode(store, { document in
+                        outcome = try document.unlockCheck(id: id, pin: string(args, "pin"), now: now)
+                        version = document.checkedLockVersion ?? 0
+                    }) { return ("", code) }
+                    return outcome == .done ? ("\(version)", nil) : ("", outcome.code)
                 }
-                var outcome = WebStoreDocument.LockOutcome.done
-                var lockVersion = 0
-                if let failure = run(store, { document in
-                    outcome = try document.unlockCheck(id: id, pin: string(args, "pin"), now: now)
-                    lockVersion = document.checkedLockVersion ?? 0
-                }) { return failure }
-                guard outcome == .done else { return .failure(explain(outcome)) }
-                let state = GroupActionsRuntime.shared.call("confirmStart", [(now.timeIntervalSince1970 * 1000).rounded()]) as? [String: Any] ?? [:]
-                unlockRequests.save(id: id, lockVersion: lockVersion, state: state, now: now)
-                return .ok("Unfreeze started: \((state["left"] as? NSNumber)?.intValue ?? 0) confirmations left. Call unlock_group with confirm: true every 5 seconds (within 5 minutes).")
+                switch step {
+                case .refused(let code): return refuse(code)
+                case .pending(let left): return pending(left, ["unlocked": false])
+                case .done(let tag):
+                    var outcome = WebStoreDocument.LockOutcome.done
+                    if let failure = apply(store, { outcome = try $0.unlockGroup(id: id, lockVersion: Int(tag) ?? -1, now: now) }) { return failure }
+                    guard outcome == .done else { return refuse(outcome.code) }
+                    return .ok(jsonText(["unlocked": true, "group": store.load().publicGroup(id: id) ?? [:]]))
+                }
             },
 
             MCPTool(
                 name: "snooze_group",
-                description: "Snooze a group, as the editor's Snooze does: its saved snooze length, delay and cooldown; the group's own confirmations (call again with confirm: true every 5 s until none is left). Refused when the group doesn't allow snoozing or a snooze (or its cooldown) is running. A frozen group can be snoozed; its snooze settings are frozen with it. A custom group's snooze is its rule's: this fires the rule's snoozePress, as the editor's button does.",
+                description: "Snooze a group, as the editor's Snooze does: its saved snooze length, delay and cooldown; the group's own confirmations (call again with confirm: true every 5 s until confirmationsLeft is 0). Refused when the group doesn't allow snoozing or a snooze (or its cooldown) is running. A frozen group can be snoozed. A custom group's snooze is its rule's: this fires the rule's snoozePress, as the editor's button does (when it allows snoozing).",
                 inputSchema: [
                     "type": "object",
                     "properties": ["id": ["type": "string", "description": "The group id."], "confirm": ["type": "boolean"]],
                     "required": ["id"],
                 ]
             ) { args in
-                guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
-                // A custom group's snooze is its rule's (owner 2026-09-27), as in the editor.
-                if store.load().group(id: id)?["groupType"] as? String == "custom" {
-                    guard let press = snoozePress else { return .failure("Mac Vault's rule engine isn't running.") }
+                guard let id = string(args, "id"), let shown = store.load().publicGroup(id: id) else { return refuse("group-not-found") }
+                if shown["groupType"] as? String == "custom" {
+                    guard shown["allowSnooze"] as? Bool != false else { return refuse("snooze-disabled") }
+                    guard let press = snoozePress else { return refuse("rules-not-running") }
                     press(id)
-                    return .ok("The group's rule got its snooze press.")
+                    return .ok(jsonText(["snoozePressed": true]))
                 }
                 let now = clock()
-                let nowMs = (now.timeIntervalSince1970 * 1000).rounded()
-                let key = "snooze:\(id)"
-                if args["confirm"] as? Bool == true, let request = unlockRequests.request(id: key, now: now) {
-                    let step = GroupActionsRuntime.shared.call("confirmStep", [request.state, nowMs]) as? [String: Any] ?? [:]
-                    let waitMs = (step["waitMs"] as? NSNumber)?.doubleValue ?? 0
-                    if waitMs > 0 { return .failure("Confirm again in \(Int((waitMs / 1000).rounded(.up))) s (the editor's confirmation waits 5 s).") }
-                    let state = step["state"] as? [String: Any] ?? [:]
-                    guard step["done"] as? Bool == true else {
-                        unlockRequests.save(id: key, lockVersion: 0, state: state, now: now)
-                        return .ok("Confirmation counted: \((state["left"] as? NSNumber)?.intValue ?? 0) left. Call again with confirm: true in 5 seconds.")
-                    }
-                    unlockRequests.clear(id: key)
-                } else {
-                    let plan: (confirmations: Int, refusal: String?)
-                    do { plan = try store.load().snoozePlan(id: id, now: now) } catch { return .failure(describe(error)) }
-                    if let refusal = plan.refusal { return .failure(explain(.refused(refusal))) }
-                    if plan.confirmations > 0 {
-                        let state = GroupActionsRuntime.shared.call("confirmStart", [nowMs, plan.confirmations]) as? [String: Any] ?? [:]
-                        unlockRequests.save(id: key, lockVersion: 0, state: state, now: now)
-                        return .ok("Snooze asked: \(plan.confirmations) confirmations. Call snooze_group with confirm: true every 5 seconds (within 5 minutes).")
-                    }
+                let plan: (confirmations: Int, refusal: String?)
+                do { plan = try store.load().snoozePlan(id: id, now: now) } catch { return refuse(code(error)) }
+                if let refusal = plan.refusal { return refuse(refusal) }
+                let step = confirmations.step("snooze:\(id)", tag: "snooze", count: plan.confirmations,
+                                              confirm: args["confirm"] as? Bool == true, now: now) { ("snooze", nil) }
+                switch step {
+                case .refused(let code): return refuse(code)
+                case .pending(let left): return pending(left, ["snoozed": false])
+                case .done:
+                    var outcome = WebStoreDocument.LockOutcome.done
+                    if let failure = apply(store, { outcome = try $0.startSnooze(id: id, now: clock()) }) { return failure }
+                    guard outcome == .done else { return refuse(outcome.code) }
+                    return .ok(jsonText(["snoozed": true, "snooze": store.load().snooze(id: id) ?? [:]]))
                 }
-                var outcome = WebStoreDocument.LockOutcome.done
-                if let failure = run(store, { outcome = try $0.startSnooze(id: id, now: clock()) }) { return failure }
-                return outcome == .done ? .ok("Group \(id) is snoozed.") : .failure(explain(outcome))
             },
 
             MCPTool(
                 name: "end_snooze",
-                description: "End a group's running (or scheduled) snooze early, as the editor's End Snooze does. Linked devices end it too.",
+                description: "End a group's running (or scheduled) snooze early, as the editor's End Snooze does. Linked devices end it too. Returns the ended snooze.",
                 inputSchema: objectSchema([("id", "string", "The group id.")], required: ["id"])
             ) { args in
-                guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
+                guard let id = string(args, "id") else { return refuse("group-not-found") }
                 var outcome = WebStoreDocument.LockOutcome.done
-                if let failure = run(store, { outcome = try $0.endSnooze(id: id, now: clock()) }) { return failure }
-                return outcome == .done ? .ok("Group \(id)'s snooze ended.") : .failure(explain(outcome))
+                if let failure = apply(store, { outcome = try $0.endSnooze(id: id, now: clock()) }) { return failure }
+                guard outcome == .done else { return refuse(outcome.code) }
+                return .ok(jsonText(["ended": true, "snooze": store.load().snooze(id: id) ?? [:]]))
             },
 
             MCPTool(
                 name: "move_group",
-                description: "Move a group to a position in the group list (0 = top), as dragging it in the editor does. The first blocking group from the top decides how a page it blocks looks. A locked group cannot be moved. The order is this device's own.",
+                description: "Move a group to a position in the group list (0 = top), as dragging it in the editor does. The first blocking group from the top decides. A frozen group cannot be moved. The order is this device's own. Returns the new order (ids).",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -261,14 +221,15 @@ public enum VaultMCPTools {
                     "required": ["id", "index"],
                 ]
             ) { args in
-                guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
-                guard let index = (args["index"] as? NSNumber)?.intValue else { return .failure("Missing 'index'.") }
-                return run(store) { try $0.moveGroup(id: id, to: index) } ?? .ok("Group \(id) moved to position \(index).")
+                guard let id = string(args, "id") else { return refuse("group-not-found") }
+                guard let index = (args["index"] as? NSNumber)?.intValue else { return refuse("invalid-index") }
+                if let failure = apply(store, { try $0.moveGroup(id: id, to: index) }) { return failure }
+                return .ok(jsonText(["order": store.load().groupIDs]))
             },
 
             MCPTool(
                 name: "set_lock_gates",
-                description: "Set the freeze gates of an unfrozen group, as the editor's guardian settings do: waitHours (0 < hours ≤ 72) and/or pin (6 digits, where none is set); clearPin: true removes the PIN (pass the current pin). Refused on a frozen group (make it stricter with lock_group).",
+                description: "Set the freeze gates of an unfrozen group, as the editor's guardian settings do: waitHours (0 or blank = no wait, at most 72) and/or pin (6 digits, where none is set); clearPin: true removes the PIN (pass the current pin). Refused on a frozen group (make it stricter with lock_group). Returns the group.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -278,58 +239,51 @@ public enum VaultMCPTools {
                     "required": ["id"],
                 ]
             ) { args in
-                guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
+                guard let id = string(args, "id") else { return refuse("group-not-found") }
                 var outcome = WebStoreDocument.LockOutcome.done
-                if let failure = run(store, { outcome = try $0.setLockGates(id: id, waitHours: (args["waitHours"] as? NSNumber)?.doubleValue,
-                                                                             pin: string(args, "pin"), clearPin: args["clearPin"] as? Bool == true, now: clock()) }) { return failure }
-                return outcome == .done ? .ok("Group \(id)'s freeze gates are set.") : .failure(explain(outcome))
+                if let failure = apply(store, { outcome = try $0.setLockGates(id: id, waitHours: args["waitHours"],
+                                                                               pin: string(args, "pin"), clearPin: args["clearPin"] as? Bool == true, now: clock()) }) { return failure }
+                return outcome == .done ? group(args, "group") : refuse(outcome.code)
             },
 
             MCPTool(
                 name: "delete_all_groups",
-                description: "Delete every group, as the editor's Delete all does: refused while any frozen group's wait still holds; pins lists the PIN of each distinct PIN-protected frozen group; with any frozen group it ends with the confirmation (call again with confirm: true every 5 s until none is left).",
+                description: "Delete every group, as the editor's Delete all does: refused while any frozen group's wait still holds; pins lists the PIN of each distinct PIN-protected frozen group (asked once, when the confirmation starts); with any frozen group it ends with the confirmation (call again with confirm: true every 5 s until confirmationsLeft is 0). The plan is taken again on every call: a freeze or PIN that arrives meanwhile stops or restarts it.",
                 inputSchema: [
                     "type": "object",
                     "properties": ["pins": ["type": "array", "items": ["type": "string"]], "confirm": ["type": "boolean"]],
                 ]
             ) { args in
                 let now = clock()
-                let nowMs = (now.timeIntervalSince1970 * 1000).rounded()
-                if args["confirm"] as? Bool == true, let request = unlockRequests.request(id: "delete-all", now: now) {
-                    let step = GroupActionsRuntime.shared.call("confirmStep", [request.state, nowMs]) as? [String: Any] ?? [:]
-                    let waitMs = (step["waitMs"] as? NSNumber)?.doubleValue ?? 0
-                    if waitMs > 0 { return .failure("Confirm again in \(Int((waitMs / 1000).rounded(.up))) s (the editor's confirmation waits 5 s).") }
-                    let state = step["state"] as? [String: Any] ?? [:]
-                    guard step["done"] as? Bool == true else {
-                        unlockRequests.save(id: "delete-all", lockVersion: 0, state: state, now: now)
-                        return .ok("Confirmation counted: \((state["left"] as? NSNumber)?.intValue ?? 0) left. Call again with confirm: true in 5 seconds.")
-                    }
-                    unlockRequests.clear(id: "delete-all")
-                    return run(store) { $0.deleteAll() } ?? .ok("Every group is deleted.")
+                let plan: WebStoreDocument.DeleteAllPlan
+                switch store.load().deleteAllPlan(now: now) {
+                case .failure(let outcome): return refuse(outcome.code)
+                case .success(let taken): plan = taken
                 }
-                var outcome = WebStoreDocument.LockOutcome.done
-                var needsConfirmation = false
                 let pins = (args["pins"] as? [Any] ?? []).map { "\($0)" }
-                if let failure = run(store, { document in
-                    outcome = document.deleteAllCheck(pins: pins, now: now)
-                    needsConfirmation = document.deleteAllNeedsConfirmation
-                    if outcome == .done, !needsConfirmation { document.deleteAll() }
-                }) { return failure }
-                guard outcome == .done else { return .failure(explain(outcome)) }
-                guard needsConfirmation else { return .ok("Every group is deleted.") }
-                let state = GroupActionsRuntime.shared.call("confirmStart", [nowMs]) as? [String: Any] ?? [:]
-                unlockRequests.save(id: "delete-all", lockVersion: 0, state: state, now: now)
-                return .ok("Delete all started: \((state["left"] as? NSNumber)?.intValue ?? 0) confirmations left. Call delete_all_groups with confirm: true every 5 seconds (within 5 minutes).")
+                let step = confirmations.step("delete-all", tag: plan.tag, count: plan.confirmations,
+                                              confirm: args["confirm"] as? Bool == true, now: now) {
+                    var outcome = WebStoreDocument.LockOutcome.done
+                    if let code = applyCode(store, { outcome = $0.checkDeleteAllPins(plan, pins: pins, now: now) }) { return (plan.tag, code) }
+                    return (plan.tag, outcome == .done ? nil : outcome.code)
+                }
+                switch step {
+                case .refused(let code): return refuse(code)
+                case .pending(let left): return pending(left, ["deleted": false])
+                case .done:
+                    var count = 0
+                    if let failure = apply(store, { count = $0.groupCount; $0.deleteAll() }) { return failure }
+                    return .ok(jsonText(["deleted": count]))
+                }
             },
 
             MCPTool(
                 name: "delete_group",
-                description: "Delete a block group by id.",
+                description: "Delete a block group by id. A frozen group is refused.",
                 inputSchema: objectSchema([("id", "string", "The group id.")], required: ["id"])
             ) { args in
-                guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
-                return run(store) { try $0.deleteGroup(id: id) }
-                    ?? .ok("Deleted group \(id).")
+                guard let id = string(args, "id") else { return refuse("group-not-found") }
+                return apply(store) { try $0.deleteGroup(id: id) } ?? .ok(jsonText(["deleted": id]))
             },
         ]
     }
@@ -339,52 +293,71 @@ public enum VaultMCPTools {
 
     // MARK: Helpers
 
-    private static func explain(_ outcome: WebStoreDocument.LockOutcome) -> String {
-        switch outcome {
-        case .done: return "Done."
-        case .waitUntil(let date): return "The freeze's wait holds until \(ISO8601DateFormatter().string(from: date))."
-        case .pinWait(let seconds): return "Wait \(seconds) s before the next PIN try (a wrong PIN was entered)."
-        case .pinWrong(let seconds): return "Wrong PIN. The next try waits \(seconds) s."
-        case .refused("not-stricter"): return "While frozen the freeze can only be made stricter (a longer wait)."
-        case .refused("pin-already-set"): return "The group already has a PIN."
-        case .refused("lock-changed"): return "The freeze changed meanwhile; start the unfreeze again."
-        case .refused("snooze-disabled"): return "The group doesn't allow snoozing."
-        case .refused("snooze-in-progress"): return "A snooze (or its cooldown) is already running."
-        case .refused("no-snooze"): return "No snooze is running."
-        case .refused(let reason): return reason
-        }
-    }
-
-    /// Unfreezes asked for: the confirmation state (group-actions.js
-    /// confirmStart / confirmStep) per group, for the lock version it began on.
-    final class UnlockRequests: @unchecked Sendable {
-        struct Request { let lockVersion: Int; let state: [String: Any]; let askedAt: Date }
-        static let lifetimeSeconds: TimeInterval = 300
+    /// A tool's confirmation, as the editor's modal (the browser worker's
+    /// cbToolConfirmation): a call with no pending confirmation for the same
+    /// tag asks — `ask` runs the gates (a PIN…) and names the tag the
+    /// confirmation is for — then each call with confirm: true at least 5 s
+    /// after the previous counts a step. It expires after 5 minutes; a changed
+    /// tag (the freeze changed, a new PIN) starts it over.
+    final class Confirmations: @unchecked Sendable {
+        enum Step { case done(tag: String), pending(left: Int), refused(String) }
+        private struct Pending { let tag: String; let state: [String: Any]; let askedAt: Date }
+        private static let lifetime: TimeInterval = 300
         private let lock = NSLock()
-        private var requests: [String: Request] = [:]
+        private var requests: [String: Pending] = [:]
 
-        func save(id: String, lockVersion: Int, state: [String: Any], now: Date) {
-            lock.lock(); defer { lock.unlock() }
-            let askedAt = requests[id].map { $0.lockVersion == lockVersion ? $0.askedAt : now } ?? now
-            requests[id] = Request(lockVersion: lockVersion, state: state, askedAt: askedAt)
+        func step(_ key: String, tag: String, count: Int, confirm: Bool, now: Date,
+                  ask: () -> (tag: String, refusal: String?)) -> Step {
+            let nowMs = (now.timeIntervalSince1970 * 1000).rounded()
+            let runtime = GroupActionsRuntime.shared
+            lock.lock()
+            let current = requests[key].flatMap { $0.tag == tag && now.timeIntervalSince($0.askedAt) < Self.lifetime ? $0 : nil }
+            lock.unlock()
+            guard confirm, let current else {
+                let asked = ask()
+                if let refusal = asked.refusal { return .refused(refusal) }
+                guard count > 0 else { save(key, nil); return .done(tag: asked.tag) }
+                let state = runtime.call("confirmStart", [nowMs, count]) as? [String: Any] ?? [:]
+                save(key, Pending(tag: asked.tag, state: state, askedAt: now))
+                return .pending(left: count)
+            }
+            let result = runtime.call("confirmStep", [current.state, nowMs]) as? [String: Any] ?? [:]
+            let waitMs = (result["waitMs"] as? NSNumber)?.doubleValue ?? 0
+            if waitMs > 0 { return .refused("confirm-wait:\(Int((waitMs / 1000).rounded(.up)))") }
+            if result["done"] as? Bool == true { save(key, nil); return .done(tag: current.tag) }
+            let state = result["state"] as? [String: Any] ?? [:]
+            save(key, Pending(tag: current.tag, state: state, askedAt: current.askedAt))
+            return .pending(left: (state["left"] as? NSNumber)?.intValue ?? 0)
         }
-        func clear(id: String) { lock.lock(); requests.removeValue(forKey: id); lock.unlock() }
-        func request(id: String, now: Date) -> Request? {
-            lock.lock(); defer { lock.unlock() }
-            guard let request = requests[id], now.timeIntervalSince(request.askedAt) < Self.lifetimeSeconds else { return nil }
-            return request
+
+        private func save(_ key: String, _ request: Pending?) {
+            lock.lock(); requests[key] = request; lock.unlock()
         }
     }
 
-    /// Applies a mutation and returns a failure result on error, or nil on
-    /// success (the caller supplies the success text).
-    private static func run(_ store: GroupStore, _ body: (inout WebStoreDocument) throws -> Void) -> MCPToolResult? {
+    private static let confirmNext = "call again with confirm: true every 5 s until confirmationsLeft is 0 (within 5 minutes)"
+
+    private static func pending(_ left: Int, _ extra: [String: Any]) -> MCPToolResult {
+        .ok(jsonText(extra.merging(["confirmationsLeft": left, "confirmAfterSeconds": 5, "next": confirmNext]) { $1 }))
+    }
+
+    private static func refuse(_ code: String) -> MCPToolResult {
+        .failure(ToolRefusals.explain(code))
+    }
+
+    /// Applies a mutation: nil on success, else the refusal code.
+    private static func applyCode(_ store: GroupStore, _ body: (inout WebStoreDocument) throws -> Void) -> String? {
         do {
             try store.mutate(body)
             return nil
         } catch {
-            return .failure(describe(error))
+            return code(error)
         }
+    }
+
+    /// Applies a mutation: nil on success, else the refusal result.
+    private static func apply(_ store: GroupStore, _ body: (inout WebStoreDocument) throws -> Void) -> MCPToolResult? {
+        applyCode(store, body).map(refuse)
     }
 
     private static func string(_ args: [String: Any], _ key: String) -> String? {
@@ -393,17 +366,15 @@ public enum VaultMCPTools {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    private static func describe(_ error: Error) -> String {
-        if let error = error as? GroupStoreError {
-            switch error {
-            case .groupNotFound(let id): return "Group not found: \(id)"
-            case .invalidInput(let field): return "Invalid input: \(field)"
-            case .groupLocked(let id): return "Group \(id) is frozen (the editor refuses this too)."
-            case .duplicateName(let name): return "Another group is already named \(name) (the editor refuses this too)."
-            case .notLocked(let id): return "Group \(id) is not frozen."
-            }
+    private static func code(_ error: Error) -> String {
+        guard let error = error as? GroupStoreError else { return (error as NSError).localizedDescription }
+        switch error {
+        case .groupNotFound: return "group-not-found"
+        case .invalidInput(let code): return code
+        case .groupLocked: return "group-locked"
+        case .duplicateName: return "duplicate-name"
+        case .notLocked: return "not-locked"
         }
-        return (error as NSError).localizedDescription
     }
 
     private static func jsonText(_ object: Any) -> String {

@@ -2,11 +2,9 @@ import Foundation
 
 public struct ChromeExtensionImportResult: Sendable {
     public var groups: [BlockGroup]
-    public var warnings: [String]
 
-    public init(groups: [BlockGroup], warnings: [String] = []) {
+    public init(groups: [BlockGroup]) {
         self.groups = groups
-        self.warnings = warnings
     }
 }
 
@@ -27,113 +25,42 @@ public enum ChromeExtensionImporter {
             throw ImportError.unsupportedShape
         }
 
-        var warnings: [String] = []
-        let groups = sourceGroups.map { object in
-            importGroup(object, warnings: &warnings)
-        }
-        return ChromeExtensionImportResult(groups: groups, warnings: warnings)
+        // Read exactly as the editor stores them: through its own sanitizer
+        // (group-scopes.js sanitizeGroups), so a field is never read differently.
+        let sanitized = GroupActionsRuntime.shared.call("sanitizeGroups", [sourceGroups], module: "CBGroupScopes") as? [[String: Any]] ?? sourceGroups
+        return ChromeExtensionImportResult(groups: sanitized.map(importGroup))
     }
 
-    private static func importGroup(_ object: [String: Any], warnings: inout [String]) -> BlockGroup {
-        let groupType = BlockGroupType(rawValue: string(object["groupType"]) ?? "site") ?? .site
-        let id = string(object["id"]) ?? UUID().uuidString
-        let scheduleText = string(object["timeWindowsText"]) ?? ""
-        // The extension scopes an entry to a path when it carries one
-        // ("youtube.com/shorts"). This app blocks whole hosts, so such an
-        // entry is skipped (with a warning) rather than widened to its host.
-        // A stored group carries its website list as a "site" scope line
-        // since 2026-09-24 (older stores: a top-level `sites`); it may name
-        // platforms and an app list besides.
-        // The "pause" page action (a countdown, then the page is let through)
-        // exists only in the browser: this app cannot hold a page, so a paused
-        // website list is not enforced here (with a warning) rather than
-        // turned into a hard block.
-        let siteListPauses = WebStoreDocument.siteListPauses(object)
-        let siteStrings = siteListPauses ? [] : WebStoreDocument.sites(of: object)
-        if siteListPauses, !WebStoreDocument.sites(of: object).isEmpty {
-            warnings.append("\(string(object["name"]) ?? id): the website list uses the pause action, which applies only in the browser extension; it is not blocked here.")
+    /// Mac Vault controls apps only (the scope line): a group's Apps line is
+    /// all it reads; website and platform lines are a browser's.
+    private static func importGroup(_ object: [String: Any]) -> BlockGroup {
+        let apps = WebStoreDocument.apps(of: object).compactMap { entry -> BlockTarget? in
+            guard let bundleID = string(entry["id"])?.trimmingCharacters(in: .whitespacesAndNewlines), !bundleID.isEmpty else { return nil }
+            let name = string(entry["name"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return BlockTarget(
+                id: bundleID,
+                kind: .application,
+                displayName: (name?.isEmpty == false ? name! : bundleID),
+                normalizedValue: bundleID,
+                tags: ["mac", "application"]
+            )
         }
-        let pathScoped = siteStrings.filter { isPathScopedSite($0) }
-        if !pathScoped.isEmpty {
-            warnings.append("\(string(object["name"]) ?? id): path-scoped site entries apply only in the browser extension and were skipped: \(pathScoped.joined(separator: ", "))")
-        }
-        let sites = siteStrings
-            .filter { !isPathScopedSite($0) }
-            .compactMap { normalizeHost($0) }
-            .map {
-                BlockTarget(
-                    kind: .webDomain,
-                    displayName: $0,
-                    normalizedValue: $0,
-                    tags: legacyTags(for: groupType)
-                )
-            }
-
-        // Default Block Mode now blocks native applications. Each app entry is
-        // { id: <bundleIdentifier>, name: <displayName> } and maps to an
-        // application BlockTarget keyed on its bundle id.
-        // Apps live in the group's "apps" scope line (older stores: top-level).
-        let apps = WebStoreDocument.apps(of: object)
-            .compactMap { entry -> BlockTarget? in
-                guard let bundleID = string(entry["id"])?
-                    .trimmingCharacters(in: .whitespacesAndNewlines),
-                    !bundleID.isEmpty
-                else {
-                    return nil
-                }
-                let name = string(entry["name"])?
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                return BlockTarget(
-                    id: bundleID,
-                    kind: .application,
-                    displayName: (name?.isEmpty == false ? name! : bundleID),
-                    normalizedValue: bundleID,
-                    tags: ["mac", "application"]
-                )
-            }
-
-
         return BlockGroup(
-            id: id,
-            groupType: mapGroupType(groupType),
-            name: string(object["name"]) ?? defaultName(for: groupType),
-            enabled: bool(object["enabled"]) ?? true,
+            id: string(object["id"]) ?? UUID().uuidString,
+            groupType: string(object["groupType"]) == "custom" ? .custom : .site,
+            name: string(object["name"]) ?? "Block Group",
+            enabled: bool(object["enabled"]) ?? false,
             mode: BlockingMode.reconcile(string(object["mode"])),
-            // Positive only, as the editor's parsers (group-actions.js) read them.
             allowedMinutes: positive(object["allowedMinutes"]) ?? 15,
             resetIntervalHours: positive(object["resetIntervalHours"]) ?? 24,
             resetAtMidnight: bool(object["resetAtMidnight"]) ?? false,
             rollingLimit: bool(object["rollingLimit"]) ?? false,
             activeDays: parseDays(object["activeDays"]),
-            timeWindows: ScheduleParser.parseWindows(scheduleText),
+            timeWindows: ScheduleParser.parseWindows(string(object["timeWindowsText"]) ?? ""),
             customRuleSource: string(object["blockingRulesText"]) ?? "",
-            targets: sites + apps,
+            targets: apps,
             applicationAllowlist: WebStoreDocument.appsExcept(of: object)
         )
-    }
-
-    /// The macOS app blocks whole apps/sites only; the extension's platform
-    /// group types collapse to the generic `.app` type natively.
-    private static func mapGroupType(_ groupType: BlockGroupType) -> BlockGroupType {
-        switch groupType {
-        case .youtube, .tiktok, .facebook, .instagram, .twitch, .reddit, .discord, .twitter:
-            return .app
-        default:
-            return groupType
-        }
-    }
-
-    private static func legacyTags(for groupType: BlockGroupType) -> Set<String> {
-        switch groupType {
-        case .youtube, .tiktok, .facebook, .instagram:
-            return ["social", "shortVideo", groupType.rawValue]
-        case .twitch:
-            return ["video", "streaming", groupType.rawValue]
-        case .reddit, .discord, .twitter:
-            return ["social", groupType.rawValue]
-        default:
-            return []
-        }
     }
 
     private static func parseDays(_ value: Any?) -> Set<Weekday> {
@@ -143,39 +70,6 @@ public enum ChromeExtensionImporter {
         // A stored empty list means "no day" (never active), as in the extension;
         // only a missing list defaults to every day.
         return Set(values.compactMap { Weekday(rawValue: string($0) ?? "") })
-    }
-
-    /// Normalizes a user-typed site/URL to a bare host (scheme- and `www.`-
-    /// stripped, lowercased) for enforcement and for `GroupStore` dedupe. Kept
-    /// module-internal so there is one normalization, not a drifting copy.
-    /// True when a site entry names a path under its host ("youtube.com/shorts",
-    /// "https://reddit.com/r/all/"): the extension scopes such entries to that
-    /// path, which a host-level blocker cannot express.
-    static func isPathScopedSite(_ value: String) -> Bool {
-        var text = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !text.contains("://") { text = "https://" + text }
-        guard let url = URL(string: text) else { return false }
-        let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        return !path.isEmpty
-    }
-
-    static func normalizeHost(_ value: String?) -> String? {
-        guard var value = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
-              !value.isEmpty
-        else {
-            return nil
-        }
-        if !value.contains("://") {
-            value = "https://" + value
-        }
-        guard let host = URL(string: value)?.host?.lowercased(), !host.isEmpty else {
-            return nil
-        }
-        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
-    }
-
-    private static func defaultName(for groupType: BlockGroupType) -> String {
-        groupType == .custom ? "Custom Block" : "Block Group"
     }
 
     private static func string(_ value: Any?) -> String? {

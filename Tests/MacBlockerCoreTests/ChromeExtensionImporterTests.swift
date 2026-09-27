@@ -2,34 +2,9 @@ import XCTest
 @testable import MacBlockerCore
 
 final class ChromeExtensionImporterTests: XCTestCase {
-    func testImportsSiteGroup() throws {
-        let json = """
-        [
-          {
-            "id": "group-1",
-            "groupType": "site",
-            "name": "Blocked Sites",
-            "enabled": true,
-            "mode": "instant",
-            "sites": ["https://www.example.com/", "https://www.example.com/docs"],
-            "activeDays": ["monday", "tuesday"],
-            "timeWindowsText": "0900-1000"
-          }
-        ]
-        """.data(using: .utf8)!
-
-        let result = try ChromeExtensionImporter.importGroups(from: json)
-
-        XCTAssertEqual(result.groups.count, 1)
-        XCTAssertEqual(result.groups[0].targets.map(\.normalizedValue), ["example.com"], "the path-scoped entry is skipped, not widened to its host")
-        XCTAssertTrue(result.warnings.contains { $0.contains("path-scoped") && $0.contains("example.com/docs") })
-        XCTAssertEqual(result.groups[0].activeDays, [.monday, .tuesday])
-        XCTAssertEqual(result.groups[0].timeWindows.count, 1)
-    }
-
-    func testImportsSiteLineFromScopes() throws {
-        // The scoped shape (policy + lines): the site list lives in a "site" line
-        // and the group may name platforms as well.
+    func testMacVaultReadsOnlyTheAppsLine() throws {
+        // The scope line (owner 2026-09-27): websites and platforms are a
+        // browser's; Mac Vault never blocks one, whatever a group names.
         let json = """
         [
           {
@@ -38,9 +13,12 @@ final class ChromeExtensionImporterTests: XCTestCase {
             "name": "Union",
             "enabled": true,
             "mode": "instant",
+            "activeDays": ["Monday", "tuesday"],
+            "timeWindowsText": "0900-1000",
             "scopes": [
               {"id": "items-1", "surface": "items", "platform": "youtube", "action": "hide", "form": "all", "sourceMode": "all", "sources": [], "tagFilter": null},
-              {"id": "site-1", "surface": "site", "platform": null, "action": "block", "sites": ["example.com", "news.ycombinator.com/best"], "sitesExcept": false}
+              {"id": "site-1", "surface": "site", "platform": null, "action": "block", "sites": ["example.com"], "sitesExcept": false},
+              {"id": "apps-1", "surface": "apps", "platform": null, "action": "block", "apps": [{"id": "com.example.Game", "name": "Game"}], "appsExcept": false}
             ]
           }
         ]
@@ -48,31 +26,17 @@ final class ChromeExtensionImporterTests: XCTestCase {
 
         let result = try ChromeExtensionImporter.importGroups(from: json)
 
-        XCTAssertEqual(result.groups.count, 1)
-        XCTAssertEqual(result.groups[0].targets.map(\.normalizedValue), ["example.com"])
-        XCTAssertTrue(result.warnings.contains { $0.contains("path-scoped") })
+        XCTAssertEqual(result.groups[0].targets.map(\.id), ["com.example.Game"])
+        XCTAssertTrue(result.groups[0].targets.allSatisfy { $0.kind == .application })
+        XCTAssertEqual(result.groups[0].activeDays, [.monday, .tuesday], "read through the editor's sanitizer (day names trimmed, lowercased)")
+        XCTAssertEqual(result.groups[0].timeWindows.count, 1)
     }
 
-    func testAPausedWebsiteListIsNotEnforcedNatively() throws {
+    func testFieldsReadExactlyAsTheEditorStoresThem() throws {
         let json = """
-        [
-          {
-            "id": "group-3",
-            "groupType": "site",
-            "name": "Pause news",
-            "enabled": true,
-            "mode": "instant",
-            "scopes": [
-              {"id": "site-1", "surface": "site", "platform": null, "action": "pause", "sites": ["news.example.com"], "sitesExcept": false}
-            ]
-          }
-        ]
+        [{"id": "g", "name": "No flag", "mode": "instant", "scopes": []}]
         """.data(using: .utf8)!
-
-        let result = try ChromeExtensionImporter.importGroups(from: json)
-
-        XCTAssertEqual(result.groups[0].targets.count, 0, "a pause action is browser-only; the Mac must not hard-block the site")
-        XCTAssertTrue(result.warnings.contains { $0.contains("pause") })
+        XCTAssertFalse(try ChromeExtensionImporter.importGroups(from: json).groups[0].enabled, "a missing enabled is off, as in the editor")
     }
 
     func testImportsAppsEverythingExcept() throws {

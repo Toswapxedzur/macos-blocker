@@ -110,12 +110,12 @@ final class MCPServerTests: XCTestCase {
         XCTAssertEqual((disableRes["result"] as? [String: Any])?["isError"] as? Bool, false)
         XCTAssertEqual(store.loadGroups().first?.enabled, false)
 
-        // add_website mutates the underlying store.
+        // add_application mutates the underlying store (Mac Vault edits apps only).
         _ = s.handle([
             "jsonrpc": "2.0", "id": 3, "method": "tools/call",
-            "params": ["name": "add_website", "arguments": ["id": "g1", "host": "news.ycombinator.com"]],
+            "params": ["name": "add_application", "arguments": ["id": "g1", "bundleId": "com.example.Game"]],
         ])
-        XCTAssertEqual(WebStoreDocument.sites(of: try XCTUnwrap(store.load().group(id: "g1"))).contains("news.ycombinator.com"), true)
+        XCTAssertEqual(WebStoreDocument.apps(of: try XCTUnwrap(store.load().group(id: "g1"))).first?["id"] as? String, "com.example.Game")
 
         // An unknown group id is a tool error (isError), not a protocol error.
         let errRes = try XCTUnwrap(s.handle([

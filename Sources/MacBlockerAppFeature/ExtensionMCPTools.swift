@@ -46,7 +46,7 @@ public enum ExtensionMCPTools {
             },
             MCPTool(
                 name: "extension_create_group",
-                description: "Create an extension block group of a type (youtube, tiktok, facebook, instagram, twitch, reddit, discord, twitter, bilibili, …, site, custom) with the popup's defaults, then apply an optional patch of group fields (e.g. name, platformTagMode 'include'|'exclude', platformTags [{name, confidence?, also?, except?}], platformTagBlockPage, platformTagCoverUntilTagged, platformTagEffect 'dim'|'block', sourceMode 'all'|'include'|'exclude'|'nobody' with sources [creators, accounts or subreddits], discordMode with discordTargets, surfaceHides, blockHomePage, sites/allowlist — or, instead of those flat fields, scopes: [{surface 'site'|'apps'|'items'|'pages'|'home'|'shelf', platform, sites/sitesExcept, apps/appsExcept ('block every application except these', desktop-enforced), form, sourceMode/sources, tagFilter, shelf, action 'block'|'pause'|'hide'|'dim' — 'pause' (site and untagged pages lines) covers the page with a countdown before letting it through; pauseSeconds is a group field}]; stored groups are returned as policy fields + scopes; mode, allowedMinutes, activeDays, timeWindowsText, sites, blockingRulesText). A group may carry lines for several platforms and a site list at once (it applies to their union, one policy): flat fields describe ONE platform — the group's groupType — and replace only that platform's lines, so patching groupType plus flat fields adds or edits that platform; a scopes patch replaces every line. Fields pass the extension's own sanitizer.",
+                description: "Create an extension block group of a type (youtube, tiktok, facebook, instagram, twitch, reddit, discord, twitter, bilibili, …, site, custom) with the popup's defaults, then apply an optional patch of group fields (e.g. name, platformTagMode 'include'|'exclude', platformTags [{name, confidence?, also?, except?}], platformTagBlockPage, platformTagCoverUntilTagged, platformTagEffect 'dim'|'block', sourceMode 'all'|'include'|'exclude'|'nobody' with sources [creators, accounts or subreddits], discordMode with discordTargets, surfaceHides, blockHomePage, sites/allowlist — or, instead of those flat fields, scopes: [{surface 'site'|'items'|'pages'|'home'|'shelf', platform, sites/sitesExcept, form, sourceMode/sources, tagFilter, shelf, action 'block'|'pause'|'hide'|'dim' — 'pause' (site and untagged pages lines) covers the page with a countdown before letting it through; pauseSeconds is a group field}]; stored groups are returned as policy fields + scopes; mode, allowedMinutes, activeDays, timeWindowsText, sites, blockingRulesText). A group may carry lines for several platforms and a site list at once (it applies to their union, one policy): flat fields describe ONE platform — the group's groupType — and replace only that platform's lines, so patching groupType plus flat fields adds or edits that platform; a scopes patch replaces every browser line (the Apps lines are Mac Vault's: a browser never edits them — the scope line). A value the editor refuses is refused; a free numbered name is given unless patch.name is set.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -64,7 +64,7 @@ public enum ExtensionMCPTools {
             },
             MCPTool(
                 name: "extension_set_group",
-                description: "Patch fields of an existing extension block group by id (see extension_create_group for the fields). The id and the freeze (its wait and PIN) are never patchable; a frozen group is refused, exactly as in the popup. An invalid value is refused (invalid-<field>), never replaced by a default; a custom group stays instant; Apps lines are the desktop's and are not edited here.",
+                description: "Patch fields of an existing extension block group by id (see extension_create_group for the fields). The id and the freeze (its wait and PIN) are never patchable; a frozen group is refused, exactly as in the popup. An invalid value is refused (invalid-<field>), never replaced by a default; a group never turns custom or back and a custom group stays instant; activeDays needs at least one day; the Apps lines are Mac Vault's and a change to them is refused (desktop-lines). Returns the group.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -93,7 +93,7 @@ public enum ExtensionMCPTools {
             },
             MCPTool(
                 name: "extension_lock_group",
-                description: "Freeze an extension group, as the popup's Freeze does, with optional gates that combine: waitHours (it cannot be unfrozen for that long, 0 < hours ≤ 72) and pin (6 digits: unfreezing then needs this PIN). On a frozen group the same call can only make the freeze stricter: a longer wait, or a PIN where there was none. Every unfreeze also ends with the confirmation (10 steps, 5 s apart).",
+                description: "Freeze an extension group, as the popup's Freeze does, with optional gates that combine: waitHours (it cannot be unfrozen for that long; 0 or blank = no wait, at most 72) and pin (6 digits: unfreezing then needs this PIN). On a frozen group the same call can only make the freeze stricter: a longer wait, or a PIN where there was none. Every unfreeze also ends with the confirmation (10 steps, 5 s apart).",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -113,7 +113,7 @@ public enum ExtensionMCPTools {
             },
             MCPTool(
                 name: "extension_set_lock_gates",
-                description: "Set the freeze gates of an unfrozen extension group, as the editor's guardian settings do: waitHours (0 < hours ≤ 72) and/or pin (6 digits, where none is set); clearPin: true removes the PIN (pass the current pin). Refused on a frozen group (make it stricter with extension_lock_group).",
+                description: "Set the freeze gates of an unfrozen extension group, as the editor's guardian settings do: waitHours (0 or blank = no wait, at most 72) and/or pin (6 digits, where none is set); clearPin: true removes the PIN (pass the current pin). Refused on a frozen group (make it stricter with extension_lock_group).",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -133,7 +133,7 @@ public enum ExtensionMCPTools {
             },
             MCPTool(
                 name: "extension_delete_all",
-                description: "Delete every extension group, as the editor's Delete all does: refused while any frozen group's wait still holds; pins lists the PIN of each distinct PIN-protected frozen group; with any frozen group it ends with the confirmation (call again with confirm: true every 5 s until confirmationsLeft is 0).",
+                description: "Delete every extension group, as the editor's Delete all does: refused while any frozen group's wait still holds; pins lists the PIN of each distinct PIN-protected frozen group (asked once, when the confirmation starts); with any frozen group it ends with the confirmation (call again with confirm: true every 5 s until confirmationsLeft is 0). The plan is taken again on every call: a freeze or PIN that arrives meanwhile stops or restarts it.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -212,7 +212,7 @@ public enum ExtensionMCPTools {
             },
             MCPTool(
                 name: "extension_set_global",
-                description: "Patch the extension's global settings — exactly the editor's Settings: defaultSnoozeMinutes (> 0), quickAddEnabled (bool), quitRetryMinutes (0–1440; used by a desktop app), quickAddGroupId (the quick-add \"+\" target group, or \"\"). Any other field is refused. Sanitized the way the editor's save is.",
+                description: "Patch the extension's global settings — exactly the editor's Settings: defaultSnoozeMinutes (> 0), quickAddEnabled (bool), quitRetryMinutes (whole minutes 0–1440; used by a desktop app), quickAddGroupId (the quick-add \"+\" target group, or \"\"). Any other field, or a value the editor's field can't hold, is refused.",
                 inputSchema: [
                     "type": "object",
                     "properties": ["patch": ["type": "object", "description": "Global settings fields to change."], "browser": browserProperty],
@@ -281,31 +281,10 @@ public enum ExtensionMCPTools {
         }
         switch reason {
         case "browser-unavailable": return "no browser with the Vault extension is connected to Mac Vault."
-        case let reason where reason.hasPrefix("not-an-editor-setting:"): return "'\(reason.dropFirst("not-an-editor-setting:".count))' is not one of the editor's settings (defaultSnoozeMinutes, quickAddEnabled, quitRetryMinutes)."
         case "browser-ambiguous": return "more than one browser is connected; pass 'browser'."
         case "browser-timeout": return "the browser did not answer."
         case "browser-relay-requires-host": return "Mac Vault is not hosting the local hub."
-        case "group-locked": return "the group is frozen (the popup refuses this too)."
-        case "group-not-found": return "no group has that id."
-        case "not-locked": return "the group is not frozen."
-        case "not-stricter": return "while frozen the freeze can only be made stricter (a longer wait)."
-        case "pin-already-set": return "the group already has a PIN."
-        case let reason where reason.hasPrefix("invalid-"): return "'\(reason.dropFirst("invalid-".count))' has a value the editor refuses; nothing was changed."
-        case let reason where reason.hasPrefix("pins-required:"): return "pass pins: one PIN for each of: \(reason.dropFirst("pins-required:".count))."
-        case "snooze-disabled": return "the group doesn't allow snoozing."
-        case "snooze-in-progress": return "a snooze (or its cooldown) is already running."
-        case "no-snooze": return "no snooze is running."
-        case "duplicate-name": return "another group already has that name (ignoring letter case)."
-        default:
-            let parts = reason.split(separator: ":", maxSplits: 1).map(String.init)
-            guard parts.count == 2 else { return reason }
-            switch parts[0] {
-            case "pin-wait": return "wait \(parts[1]) s before the next PIN try (a wrong PIN was entered)."
-            case "pin-wrong": return "wrong PIN; the next try waits \(parts[1]) s."
-            case "wait-until": return "the freeze's wait holds until \(parts[1])."
-            case "confirm-wait": return "confirm again in \(parts[1]) s (the popup's confirmation waits 5 s)."
-            default: return reason
-            }
+        default: return ToolRefusals.explain(reason)
         }
     }
 

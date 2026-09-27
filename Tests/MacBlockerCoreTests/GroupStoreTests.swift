@@ -98,27 +98,17 @@ final class GroupStoreTests: XCTestCase {
         }
     }
 
-    func testAddWebsiteIsIdempotentAcrossNormalization() throws {
+    func testMacToolsNeverEditWebsiteLines() throws {
+        // The scope line (owner 2026-09-27): Mac Vault edits only the Apps lines.
         var document = WebStoreDocument(raw: sampleEnvelope())
-        // The seeded "https://www.example.com/path" is a path entry: a host entry stays apart.
-        try document.addWebsite(id: "g1", host: "example.com")
-        try document.addWebsite(id: "g1", host: "https://www.example.com")
-        var sites = WebStoreDocument.sites(of: try XCTUnwrap(document.group(id: "g1")))
-        XCTAssertEqual(sites.filter { $0 == "example.com" }.count, 1, "normalized-duplicate hosts must not stack")
-        XCTAssertNil(document.group(id: "g1")?["sites"], "the legacy top-level list is folded into the site line")
-
-        try document.addWebsite(id: "g1", host: "news.ycombinator.com")
-        sites = WebStoreDocument.sites(of: try XCTUnwrap(document.group(id: "g1")))
-        XCTAssertEqual(sites.count, 3)
-        XCTAssertTrue(sites.contains("news.ycombinator.com"))
-    }
-
-    func testRemoveWebsiteMatchesByNormalizedHost() throws {
-        var document = WebStoreDocument(raw: sampleEnvelope())
-        try document.removeWebsite(id: "g1", host: "https://example.com")
-        XCTAssertEqual(WebStoreDocument.sites(of: try XCTUnwrap(document.group(id: "g1"))).count, 1, "the host doesn't take the path entry")
-        try document.removeWebsite(id: "g1", host: "www.example.com/path/")
-        XCTAssertTrue(WebStoreDocument.sites(of: try XCTUnwrap(document.group(id: "g1"))).isEmpty)
+        XCTAssertThrowsError(try document.setGroup(id: "g1", patch: ["scopes": [["surface": "site", "action": "block", "sites": ["x.com"]]]])) { error in
+            XCTAssertEqual(error as? GroupStoreError, .invalidInput("browser-lines"))
+        }
+        let apps: [[String: Any]] = [["surface": "apps", "action": "block", "apps": [["id": "com.example.App", "name": "App"]], "appsExcept": false]]
+        try document.setGroup(id: "g1", patch: ["scopes": apps])
+        let lines = document.group(id: "g1")?["scopes"] as? [[String: Any]] ?? []
+        XCTAssertTrue(lines.contains { ($0["surface"] as? String) == "site" }, "lines sent without the browser's keep them as stored")
+        XCTAssertEqual(WebStoreDocument.apps(of: document.group(id: "g1") ?? [:]).first?["id"] as? String, "com.example.App")
     }
 
     func testAddRemoveApplication() throws {
@@ -177,16 +167,6 @@ final class GroupStoreTests: XCTestCase {
         XCTAssertNotNil(document.group(id: "g1")?["scopes"], "stored through the editor's sanitizer")
     }
 
-    func testWebsitesKeepTheirPaths() throws {
-        var document = WebStoreDocument(raw: sampleEnvelope())
-        try document.addWebsite(id: "g1", host: "https://www.YouTube.com/")
-        try document.addWebsite(id: "g1", host: "youtube.com/shorts/")
-        XCTAssertTrue(WebStoreDocument.sites(of: document.group(id: "g1") ?? [:]).contains("youtube.com/shorts"))
-        try document.removeWebsite(id: "g1", host: "youtube.com/shorts")
-        let sites = WebStoreDocument.sites(of: document.group(id: "g1") ?? [:])
-        XCTAssertTrue(sites.contains("youtube.com") && !sites.contains("youtube.com/shorts"), "removing a path entry keeps its host: \(sites)")
-    }
-
     func testLocksAreJudgedOnTheSharedView() throws {
         let (store, shared, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir); GroupStore.sharedOverlay = nil }
@@ -227,7 +207,6 @@ final class GroupStoreTests: XCTestCase {
             { try $0.setGroup(id: "L", patch: ["allowedMinutes": 90]) },
             { try $0.setGroup(id: "L", patch: ["name": "Other"]) },
             { try $0.removeApplication(id: "L", bundleID: "com.example.Editor") },
-            { try $0.addWebsite(id: "L", host: "x.com") },
             { try $0.deleteGroup(id: "L") },
         ]
         for edit in edits {
@@ -283,8 +262,8 @@ final class GroupStoreTests: XCTestCase {
 
         let groups = store.loadGroups()
         XCTAssertEqual(groups.map(\.id), ["g1", "g2"])
-        // The lossy projection collapses the youtube platform type to .app.
-        XCTAssertEqual(groups.first { $0.id == "g2" }?.groupType, .app)
+        // Mac Vault tells only rule groups apart; a platform group is a list group.
+        XCTAssertEqual(groups.first { $0.id == "g2" }?.groupType, .site)
     }
 
     func testLoadEmptyWhenNoFile() {
