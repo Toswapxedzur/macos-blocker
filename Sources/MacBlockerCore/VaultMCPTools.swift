@@ -165,6 +165,24 @@ public enum VaultMCPTools {
             },
 
             MCPTool(
+                name: "run_custom_rule",
+                description: "Run a custom group's rule, as the editor's Run does: the source becomes the group's rule and starts fresh (its memory cleared, the group enabled). A rule that doesn't load changes nothing — the one running keeps running — and the answer says why (ran: false, error). Omit source to run the group's current rule text. Refused when the group is frozen. Mac Vault's rules control apps only. Write the source to this reference:\n" + ruleReference("mac"),
+                inputSchema: [
+                    "type": "object",
+                    "properties": ["id": ["type": "string", "description": "The custom group's id."], "source": ["type": "string", "description": "The rule: (on, v) => { … }"]],
+                    "required": ["id"],
+                ]
+            ) { args in
+                guard let id = string(args, "id"), let shown = store.load().publicGroup(id: id),
+                      shown["groupType"] as? String == "custom" else { return refuse("group-not-found") }
+                guard let run = runRule else { return refuse("rules-not-running") }
+                let source = args["source"] as? String ?? (store.load().group(id: id)?["blockingRulesText"] as? String ?? "")
+                let result = run(id, source)
+                if let code = result["error"] as? String, ["group-not-found", "group-locked", "rules-not-running"].contains(code) { return refuse(code) }
+                return .ok(jsonText(["ran": result["ok"] as? Bool == true, "handlers": result["handlers"] ?? 0, "error": result["error"] ?? NSNull()]))
+            },
+
+            MCPTool(
                 name: "snooze_group",
                 description: "Snooze a group, as the editor's Snooze does: its saved snooze length, delay and cooldown; the group's own confirmations (call again with confirm: true every 5 s until confirmationsLeft is 0). Refused when the group doesn't allow snoozing or a snooze (or its cooldown) is running. A frozen group can be snoozed. A custom group's snooze is its rule's: this sends the rule its \"snooze\" event, as the editor's button does (when it allows snoozing).",
                 inputSchema: [
@@ -290,6 +308,13 @@ public enum VaultMCPTools {
 
     /// A custom group's snooze press, supplied by Mac Vault's rule engine.
     nonisolated(unsafe) public static var snoozePress: ((String) -> Void)?
+    /// A custom group's Run (id, source) → the load result, supplied by Mac Vault's rule engine.
+    nonisolated(unsafe) public static var runRule: ((String, String) -> [String: Any])?
+
+    /// The rule reference the editor's "Let AI Code" gives an AI, for an engine.
+    public static func ruleReference(_ engine: String) -> String {
+        GroupActionsRuntime.shared.call("reference", [engine], module: "RuleCore") as? String ?? ""
+    }
 
     // MARK: Helpers
 
