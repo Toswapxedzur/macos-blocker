@@ -3,9 +3,10 @@ import Foundation
 import JavaScriptCore
 import Security
 
-/// Runs the editor's own lock rules for the Mac app's AI tools: customBlocker's
-/// `group-actions.js` and `parental-pin.js` (bundled copies kept in sync by
-/// `sync-webui.sh`) in JavaScriptCore. One implementation of every gate — the
+/// Runs the editor's own group rules for the Mac app's AI tools and engine:
+/// customBlocker's `platform-profiles.js`, `group-scopes.js`, `parental-pin.js`
+/// and `group-actions.js` (bundled copies kept in sync by `sync-webui.sh`) in
+/// JavaScriptCore. One implementation of every gate — the
 /// wait, the PIN with its retry wait, the confirmation — for the editor, the
 /// browser's tools and these tools (owner 2026-09-26: a tool may do exactly
 /// what the user can, no more, no less).
@@ -42,7 +43,7 @@ public final class GroupActionsRuntime: @unchecked Sendable {
             return status == kCCSuccess ? out.map { String(format: "%02x", $0) }.joined() : ""
         }
         context.setObject(pbkdf2, forKeyedSubscript: "__nativePbkdf2Hex" as NSString)
-        context.evaluateScript("""
+        context.evaluateScript(#"""
         function TextEncoder() {}
         TextEncoder.prototype.encode = function (text) {
           var utf8 = unescape(encodeURIComponent(String(text)));
@@ -55,8 +56,32 @@ public final class GroupActionsRuntime: @unchecked Sendable {
           for (var i = 0; i < array.length; i++) array[i] = bytes[i];
           return array;
         } };
-        """)
-        for name in ["parental-pin", "group-actions"] {
+        // The parts of URL the group rules read (host, path, query, hash).
+        function URL(input) {
+          var m = /^([a-z][a-z0-9+.-]*):\/\/(?:[^@\/?#]*@)?(\[[^\]]*\]|[^:\/?#]*)(?::(\d+))?([^?#]*)(\?[^#]*)?(#.*)?$/i.exec(String(input));
+          // A host a browser would reject (spaces, forbidden characters) is invalid too.
+          if (!m || !m[2] || !/^(\[[0-9a-f:.]+\]|[^\s<>^|%"`{}]+)$/i.test(m[2])) throw new TypeError("Invalid URL");
+          this.protocol = m[1].toLowerCase() + ":";
+          this.hostname = m[2].toLowerCase();
+          this.port = m[3] || "";
+          this.host = this.hostname + (this.port ? ":" + this.port : "");
+          this.pathname = m[4] || "/";
+          this.search = m[5] && m[5].length > 1 ? m[5] : "";
+          this.hash = m[6] && m[6].length > 1 ? m[6] : "";
+          this.origin = this.protocol + "//" + this.host;
+          this.href = this.origin + this.pathname + this.search + this.hash;
+          var query = this.search.slice(1);
+          this.searchParams = { get: function (key) {
+            var parts = query ? query.split("&") : [];
+            for (var i = 0; i < parts.length; i++) {
+              var kv = parts[i].split("=");
+              if (decodeURIComponent(kv[0]) === key) return decodeURIComponent((kv[1] || "").replace(/\+/g, " "));
+            }
+            return null;
+          } };
+        }
+        """#)
+        for name in ["platform-profiles", "group-scopes", "parental-pin", "group-actions"] {
             guard let url = Bundle.module.url(forResource: name, withExtension: "js", subdirectory: "Resources")
                     ?? Bundle.module.url(forResource: name, withExtension: "js"),
                   let source = try? String(contentsOf: url, encoding: .utf8) else {

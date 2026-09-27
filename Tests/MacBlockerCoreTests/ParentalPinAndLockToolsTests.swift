@@ -29,7 +29,7 @@ final class ParentalPinAndLockToolsTests: XCTestCase {
     func testTheBundledRulesAreTheEditorsFiles() throws {
         // sync-webui.sh copies them; a stale copy would give the tools other rules.
         let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        for name in ["group-actions.js", "parental-pin.js"] {
+        for name in ["group-actions.js", "parental-pin.js", "group-scopes.js", "platform-profiles.js"] {
             let canonical = repo.deletingLastPathComponent().appendingPathComponent("customBlocker/\(name)")
             guard FileManager.default.fileExists(atPath: canonical.path) else { continue }
             let bundled = repo.appendingPathComponent("Sources/MacBlockerCore/Resources/\(name)")
@@ -52,6 +52,17 @@ final class ParentalPinAndLockToolsTests: XCTestCase {
             let swift = try ChromeExtensionImporter.importGroups(from: data).groups.first?.allowedMinutes
             XCTAssertEqual(swift, js ?? 15, "allowedMinutes \(value)")
         }
+    }
+
+    func testTheEditorsGroupRulesRunInJavaScriptCore() {
+        // The website rule keeps paths, as in the browser (URL stand-in).
+        for (input, expected) in [("https://www.YouTube.com/shorts/", "youtube.com/shorts"), ("reddit.com/r/all?sort=new#top", "reddit.com/r/all"),
+                                  ("example.com", "example.com"), ("not a site at all", nil)] as [(String, String?)] {
+            XCTAssertEqual(runtime.call("normalizeSiteInput", [input], module: "CBGroupScopes") as? String, expected, input)
+        }
+        let stored = runtime.call("sanitizeGroups", [[["id": "g", "name": "G", "groupType": "site", "sites": ["www.example.com/news/"]]]], module: "CBGroupScopes") as? [[String: Any]]
+        let lines = stored?.first?["scopes"] as? [[String: Any]]
+        XCTAssertEqual((lines?.first?["sites"] as? [String]), ["example.com/news"], "the editor's own sanitizer")
     }
 
     // MARK: Store actions
@@ -158,5 +169,27 @@ final class ParentalPinAndLockToolsTests: XCTestCase {
         XCTAssertTrue(call("unlock_group", ["id": "b", "pin": "111111"]).isError)
         let counted = GroupStore(shared: shared).load().raw["parentalPinAttempts"] as? [String: Any]
         XCTAssertNotNil(counted?["b"], "a wrong PIN through a tool is saved like one typed in the editor")
+    }
+
+    func testTheNewToolsDoWhatTheEditorDoes() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("newtools-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let shared = SharedAppGroupStore(baseDirectory: dir)
+        shared.writeData(try JSONSerialization.data(withJSONObject: document().raw), to: SharedAppGroupStore.webStoreFileName)
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let tools = VaultMCPTools.groupTools(store: GroupStore(shared: shared), clock: { now })
+        func call(_ name: String, _ args: [String: Any]) -> MCPToolResult { tools.first { $0.name == name }!.handler(args) }
+        XCTAssertTrue(call("set_settings", ["patch": ["debugMode": true]]).isError, "only the editor's Settings")
+        XCTAssertFalse(call("set_settings", ["patch": ["quitRetryMinutes": 5, "quickAddGroupId": "a"]]).isError)
+        let raw = GroupStore(shared: shared).load().raw
+        XCTAssertEqual(((raw["globalSettings"] as? [String: Any])?["quitRetryMinutes"] as? NSNumber)?.intValue, 5)
+        XCTAssertEqual(raw["quickAddGroupId"] as? String, "a")
+        XCTAssertFalse(call("set_lock_gates", ["id": "a", "waitHours": 3, "pin": "482915"]).isError)
+        let gated = GroupStore(shared: shared).load().group(id: "a") ?? [:]
+        XCTAssertEqual((gated["lockWaitHours"] as? NSNumber)?.doubleValue, 3)
+        XCTAssertFalse(WebStoreDocument.isLocked(gated), "gates don't freeze")
+        XCTAssertTrue(call("set_lock_gates", ["id": "a", "clearPin": true, "pin": "000000"]).isError, "clearing the PIN takes the PIN")
+        XCTAssertFalse(call("delete_all_groups", [:]).isError, "nothing frozen: deleted at once")
+        XCTAssertEqual(GroupStore(shared: shared).load().groupCount, 0)
     }
 }

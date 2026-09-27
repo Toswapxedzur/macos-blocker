@@ -102,10 +102,10 @@ final class MCPServerTests: XCTestCase {
         let listText = try XCTUnwrap((((listRes["result"] as? [String: Any])?["content"]) as? [[String: Any]])?.first?["text"] as? String)
         XCTAssertTrue(listText.contains("Focus"))
 
-        // set_group_enabled false actually flips the stored group.
+        // set_group actually changes the stored group.
         let disableRes = try XCTUnwrap(s.handle([
             "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-            "params": ["name": "set_group_enabled", "arguments": ["id": "g1", "enabled": false]],
+            "params": ["name": "set_group", "arguments": ["id": "g1", "patch": ["enabled": false]]],
         ]))
         XCTAssertEqual((disableRes["result"] as? [String: Any])?["isError"] as? Bool, false)
         XCTAssertEqual(store.loadGroups().first?.enabled, false)
@@ -120,7 +120,7 @@ final class MCPServerTests: XCTestCase {
         // An unknown group id is a tool error (isError), not a protocol error.
         let errRes = try XCTUnwrap(s.handle([
             "jsonrpc": "2.0", "id": 4, "method": "tools/call",
-            "params": ["name": "set_group_enabled", "arguments": ["id": "nope", "enabled": true]],
+            "params": ["name": "set_group", "arguments": ["id": "nope", "patch": ["enabled": true]]],
         ]))
         XCTAssertEqual((errRes["result"] as? [String: Any])?["isError"] as? Bool, true)
     }

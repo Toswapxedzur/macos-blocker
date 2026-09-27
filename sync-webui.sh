@@ -47,7 +47,7 @@ cp -R "$SRC/translation" "$DEST/translation"
 
 echo "[sync-webui] synced ${#SYNCED_FILES[@]} files + popup.html + translation/ from $SRC"
 
-# The Mac app's AI tools run the same lock rules in JavaScriptCore.
-for file in parental-pin.js group-actions.js; do
+# The Mac app's AI tools run the editor's own group rules in JavaScriptCore.
+for file in platform-profiles.js group-scopes.js parental-pin.js group-actions.js; do
   cp "$SRC/$file" "$ROOT/Sources/MacBlockerCore/Resources/$file"
 done

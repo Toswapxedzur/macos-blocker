@@ -51,19 +51,19 @@ final class GroupStoreTests: XCTestCase {
 
     func testMutationPreservesUnknownTopLevelKeysAndGroupFields() throws {
         var document = WebStoreDocument(raw: sampleEnvelope())
-        try document.setGroupEnabled(id: "g2", true)
+        try document.setGroup(id: "g2", patch: ["enabled": true])
 
         // Unknown top-level keys untouched.
         XCTAssertEqual(document.raw["globalSettings"] as? [String: Int], ["defaultSnoozeMinutes": 30])
         XCTAssertEqual(document.raw["usageTimersMs"] as? [String: Int], ["g1": 1000, "g2": 0])
         XCTAssertNotNil(document.raw["ruleLog"])
 
-        // The edited group changed only its `enabled` field; its editor-only
-        // platform fields survived.
+        // The edited group is stored as the editor stores it: its platform
+        // fields live in its lines.
         let g2 = try XCTUnwrap(document.group(id: "g2"))
         XCTAssertEqual(g2["enabled"] as? Bool, true)
-        XCTAssertEqual(g2["platformVideoMode"] as? String, "all")
-        XCTAssertEqual(g2["sources"] as? [String], ["@someone"])
+        let lines = g2["scopes"] as? [[String: Any]] ?? []
+        XCTAssertTrue(lines.contains { ($0["sources"] as? [String])?.isEmpty == false }, "its creator list survived, in its lines: \(lines)")
 
         // The untouched group is byte-identical.
         let g1 = try XCTUnwrap(document.group(id: "g1"))
@@ -74,9 +74,9 @@ final class GroupStoreTests: XCTestCase {
 
     func testSetModeRenameAllowedMinutes() throws {
         var document = WebStoreDocument(raw: sampleEnvelope())
-        try document.setGroupMode(id: "g1", .afterMinutes)
-        try document.renameGroup(id: "g1", name: "  Deep Work  ")
-        try document.setGroupAllowedMinutes(id: "g1", 45)
+        try document.setGroup(id: "g1", patch: ["mode": "after-minutes"])
+        try document.setGroup(id: "g1", patch: ["name": "  Deep Work  "])
+        try document.setGroup(id: "g1", patch: ["allowedMinutes": 45])
 
         let g1 = try XCTUnwrap(document.group(id: "g1"))
         XCTAssertEqual(g1["mode"] as? String, "after-minutes")
@@ -86,38 +86,39 @@ final class GroupStoreTests: XCTestCase {
 
     func testRenameRejectsEmpty() {
         var document = WebStoreDocument(raw: sampleEnvelope())
-        XCTAssertThrowsError(try document.renameGroup(id: "g1", name: "   ")) { error in
-            XCTAssertEqual(error as? GroupStoreError, .invalidInput("name"))
+        XCTAssertThrowsError(try document.setGroup(id: "g1", patch: ["name": "   "])) { error in
+            XCTAssertEqual(error as? GroupStoreError, .invalidInput("invalid-name"))
         }
     }
 
     func testMutatingMissingGroupThrows() {
         var document = WebStoreDocument(raw: sampleEnvelope())
-        XCTAssertThrowsError(try document.setGroupEnabled(id: "nope", true)) { error in
+        XCTAssertThrowsError(try document.setGroup(id: "nope", patch: ["enabled": true])) { error in
             XCTAssertEqual(error as? GroupStoreError, .groupNotFound("nope"))
         }
     }
 
     func testAddWebsiteIsIdempotentAcrossNormalization() throws {
         var document = WebStoreDocument(raw: sampleEnvelope())
-        // Same host as the seeded "https://www.example.com/path".
+        // The seeded "https://www.example.com/path" is a path entry: a host entry stays apart.
         try document.addWebsite(id: "g1", host: "example.com")
         try document.addWebsite(id: "g1", host: "https://www.example.com")
         var sites = WebStoreDocument.sites(of: try XCTUnwrap(document.group(id: "g1")))
-        XCTAssertEqual(sites.count, 1, "normalized-duplicate hosts must not stack")
+        XCTAssertEqual(sites.filter { $0 == "example.com" }.count, 1, "normalized-duplicate hosts must not stack")
         XCTAssertNil(document.group(id: "g1")?["sites"], "the legacy top-level list is folded into the site line")
 
         try document.addWebsite(id: "g1", host: "news.ycombinator.com")
         sites = WebStoreDocument.sites(of: try XCTUnwrap(document.group(id: "g1")))
-        XCTAssertEqual(sites.count, 2)
+        XCTAssertEqual(sites.count, 3)
         XCTAssertTrue(sites.contains("news.ycombinator.com"))
     }
 
     func testRemoveWebsiteMatchesByNormalizedHost() throws {
         var document = WebStoreDocument(raw: sampleEnvelope())
         try document.removeWebsite(id: "g1", host: "https://example.com")
-        let sites = WebStoreDocument.sites(of: try XCTUnwrap(document.group(id: "g1")))
-        XCTAssertTrue(sites.isEmpty)
+        XCTAssertEqual(WebStoreDocument.sites(of: try XCTUnwrap(document.group(id: "g1"))).count, 1, "the host doesn't take the path entry")
+        try document.removeWebsite(id: "g1", host: "www.example.com/path/")
+        XCTAssertTrue(WebStoreDocument.sites(of: try XCTUnwrap(document.group(id: "g1"))).isEmpty)
     }
 
     func testAddRemoveApplication() throws {
@@ -157,21 +158,33 @@ final class GroupStoreTests: XCTestCase {
 
     func testRenameRefusesANameAnotherGroupHasInAnyCase() throws {
         var document = WebStoreDocument(raw: sampleEnvelope())
-        XCTAssertThrowsError(try document.renameGroup(id: "g1", name: " youtube ")) { error in
+        XCTAssertThrowsError(try document.setGroup(id: "g1", patch: ["name": " youtube "])) { error in
             XCTAssertEqual(error as? GroupStoreError, .duplicateName("youtube"), "groups link by name, so names stay unique, as in the editor")
         }
-        try document.renameGroup(id: "g1", name: "FOCUS")
+        try document.setGroup(id: "g1", patch: ["name": "FOCUS"])
         XCTAssertEqual(document.group(id: "g1")?["name"] as? String, "FOCUS", "a group may change its own name's case")
     }
 
-    func testSwitchingToATimedModeRestartsTheBudgetLikeTheEditor() throws {
+    func testAnEditIsCheckedAndStoredAsTheEditorDoes() throws {
         var document = WebStoreDocument(raw: sampleEnvelope())
-        let now = Date(timeIntervalSince1970: 1_000)
-        try document.setGroupMode(id: "g1", .afterMinutes, now: now)
-        XCTAssertEqual((document.raw["usageTimersMs"] as? [String: Any])?["g1"] as? Int, 0)
-        XCTAssertEqual((document.raw["usageResetAtMs"] as? [String: Any])?["g1"] as? Double, 1_000_000)
-        try document.setGroupMode(id: "g2", .afterMinutes, now: now)
-        XCTAssertEqual((document.raw["usageResetAtMs"] as? [String: Any])?["g2"] as? Double, nil, "an unchanged mode restarts nothing")
+        XCTAssertThrowsError(try document.setGroup(id: "g1", patch: ["timeWindowsText": "9-5"])) {
+            XCTAssertEqual($0 as? GroupStoreError, .invalidInput("invalid-timeWindowsText"), "refused, never replaced by a default")
+        }
+        XCTAssertThrowsError(try document.setGroup(id: "g1", patch: ["allowedMinutes": 0]))
+        try document.setGroup(id: "g1", patch: ["mode": "after-minutes", "allowedMinutes": 20, "timeWindowsText": "0900-1700"])
+        XCTAssertEqual(document.group(id: "g1")?["allowedMinutes"] as? Int, 20)
+        XCTAssertEqual(document.group(id: "g1")?["timeWindowsText"] as? String, "0900-1700")
+        XCTAssertNotNil(document.group(id: "g1")?["scopes"], "stored through the editor's sanitizer")
+    }
+
+    func testWebsitesKeepTheirPaths() throws {
+        var document = WebStoreDocument(raw: sampleEnvelope())
+        try document.addWebsite(id: "g1", host: "https://www.YouTube.com/")
+        try document.addWebsite(id: "g1", host: "youtube.com/shorts/")
+        XCTAssertTrue(WebStoreDocument.sites(of: document.group(id: "g1") ?? [:]).contains("youtube.com/shorts"))
+        try document.removeWebsite(id: "g1", host: "youtube.com/shorts")
+        let sites = WebStoreDocument.sites(of: document.group(id: "g1") ?? [:])
+        XCTAssertTrue(sites.contains("youtube.com") && !sites.contains("youtube.com/shorts"), "removing a path entry keeps its host: \(sites)")
     }
 
     func testLocksAreJudgedOnTheSharedView() throws {
@@ -189,11 +202,11 @@ final class GroupStoreTests: XCTestCase {
             }
             return copy
         }
-        XCTAssertThrowsError(try store.mutate { try $0.setGroupEnabled(id: "g1", false) }) { error in
+        XCTAssertThrowsError(try store.mutate { try $0.setGroup(id: "g1", patch: ["enabled": false]) }) { error in
             XCTAssertEqual(error as? GroupStoreError, .groupLocked("g1"), "an AI tool may not edit what the user cannot")
         }
         XCTAssertEqual(store.loadGroups().first { $0.id == "g1" }?.name, "Focus (shared)", "tools read what the user sees")
-        XCTAssertNoThrow(try store.mutate { try $0.setGroupEnabled(id: "g2", true) })
+        XCTAssertNoThrow(try store.mutate { try $0.setGroup(id: "g2", patch: ["enabled": true]) })
     }
 
     // MARK: Lock mode (frozen / strict / parental)
@@ -209,10 +222,10 @@ final class GroupStoreTests: XCTestCase {
     func testALockedGroupRefusesEveryToolEdit() {
         var document = WebStoreDocument(raw: lockedEnvelope(appsExcept: false))
         let edits: [(inout WebStoreDocument) throws -> Void] = [
-            { try $0.setGroupEnabled(id: "L", false) },
-            { try $0.setGroupMode(id: "L", .afterMinutes) },
-            { try $0.setGroupAllowedMinutes(id: "L", 90) },
-            { try $0.renameGroup(id: "L", name: "Other") },
+            { try $0.setGroup(id: "L", patch: ["enabled": false]) },
+            { try $0.setGroup(id: "L", patch: ["mode": "after-minutes"]) },
+            { try $0.setGroup(id: "L", patch: ["allowedMinutes": 90]) },
+            { try $0.setGroup(id: "L", patch: ["name": "Other"]) },
             { try $0.removeApplication(id: "L", bundleID: "com.example.Editor") },
             { try $0.addWebsite(id: "L", host: "x.com") },
             { try $0.deleteGroup(id: "L") },
@@ -251,8 +264,8 @@ final class GroupStoreTests: XCTestCase {
 
         // Enable g2 (a timed group) so it enters the plan, and disable g1.
         _ = try store.mutate {
-            try $0.setGroupEnabled(id: "g2", true)
-            try $0.setGroupEnabled(id: "g1", false)
+            try $0.setGroup(id: "g2", patch: ["enabled": true])
+            try $0.setGroup(id: "g1", patch: ["enabled": false])
         }
 
         // The persisted store round-trips and kept unknown keys.
@@ -298,7 +311,7 @@ final class GroupStoreTests: XCTestCase {
         ) { _ in posts += 1 }
         defer { NotificationCenter.default.removeObserver(token) }
 
-        _ = try store.mutate { try $0.setGroupEnabled(id: "g1", false) }
+        _ = try store.mutate { try $0.setGroup(id: "g1", patch: ["enabled": false]) }
         XCTAssertEqual(posts, 1, "a successful mutation must notify the editor")
 
         store.save(store.load())
@@ -338,12 +351,12 @@ final class GroupStoreTests: XCTestCase {
         defer { NotificationCenter.default.removeObserver(token) }
 
         // A throwing body writes nothing, so there is no editor-visible change.
-        XCTAssertThrowsError(try store.mutate { try $0.setGroupEnabled(id: "missing", false) })
+        XCTAssertThrowsError(try store.mutate { try $0.setGroup(id: "missing", patch: ["enabled": false]) })
         XCTAssertEqual(posts, 0, "a no-op/failed mutation must not notify")
 
         // The lock was released on the throw path: this real mutation must not
         // deadlock, and it notifies exactly once.
-        _ = try store.mutate { try $0.setGroupEnabled(id: "g1", false) }
+        _ = try store.mutate { try $0.setGroup(id: "g1", patch: ["enabled": false]) }
         XCTAssertEqual(posts, 1)
     }
 }

@@ -40,6 +40,8 @@ public final class MacEnforcementBridge: ObservableObject {
     public static let shared: MacEnforcementBridge = {
         let bridge = MacEnforcementBridge()
         GroupStore.sharedOverlay = { ConnectionHub.shared.overlayShared(onto: $0) }
+        // A tool's snooze of a custom group is the rule's snooze press, as the editor's.
+        VaultMCPTools.snoozePress = { id in Task { @MainActor in MacEnforcementBridge.shared.fireSnoozePress(groupID: id) } }
         return bridge
     }()
 

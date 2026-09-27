@@ -33,7 +33,7 @@ final class ExtensionMCPToolsTests: XCTestCase {
         let names = try XCTUnwrap((res["result"] as? [String: Any])?["tools"] as? [[String: Any]]).compactMap { $0["name"] as? String }
         XCTAssertEqual(Set(names), ["extension_state", "extension_create_group", "extension_set_group", "extension_delete_group", "extension_set_classifier", "extension_set_global",
                                       "extension_lock_group", "extension_unlock_group", "extension_move_group",
-                                      "extension_snooze_group", "extension_end_snooze"])
+                                      "extension_snooze_group", "extension_end_snooze", "extension_set_lock_gates", "extension_delete_all"])
     }
 
     func testLockToolsRelayTheirOperationsAndExplainTheGates() throws {
@@ -42,7 +42,7 @@ final class ExtensionMCPToolsTests: XCTestCase {
         XCTAssertTrue(out.isError)
         XCTAssertTrue(out.text.contains("wrong PIN; the next try waits 4 s."), out.text)
         XCTAssertEqual(relayed().last?.operation, "settings-unlock-group")
-        XCTAssertEqual(ExtensionMCPTools.explain("strict-wait:2026-09-27T10:00:00.000Z"), "the freeze's wait holds until 2026-09-27T10:00:00.000Z.")
+        XCTAssertEqual(ExtensionMCPTools.explain("wait-until:2026-09-27T10:00:00.000Z"), "the freeze's wait holds until 2026-09-27T10:00:00.000Z.")
         XCTAssertEqual(ExtensionMCPTools.explain("confirm-wait:3"), "confirm again in 3 s (the popup's confirmation waits 5 s).")
     }
 
