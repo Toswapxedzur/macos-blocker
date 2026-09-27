@@ -109,6 +109,20 @@ final class BlockerWebStoreRoutingTests: XCTestCase {
         XCTAssertTrue(json.contains("\"B\"") && json.contains("60000"), "the engine's key is kept: \(json)")
     }
 
+    func testAnUnlinkedMacGroupKeepsItsAppsLinesAndDuplicatesAreRenamed() throws {
+        let (webStore, _, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        webStore.save(rawStore: ["blockedGroups": [["id": "m1", "name": "Focus", "scopes": [
+            ["id": "site-1", "surface": "site", "sites": ["example.com"]],
+            ["id": "apps-1", "surface": "apps", "apps": [["id": "com.example.App"]]]]]]])
+        webStore.keepOwnLines(groupIds: ["m1"])
+        let json = try XCTUnwrap(webStore.loadRawJSON())
+        XCTAssertTrue(json.contains("apps-1") && !json.contains("site-1"), json)
+        let renamed = BlockerWebStore.tidied(["blockedGroups": [["id": "a", "name": "Work"], ["id": "b", "name": "work"]]], nowMs: 0, linkedGroupIds: ["b"])
+        XCTAssertEqual((renamed?["blockedGroups"] as? [[String: Any]])?.compactMap { $0["name"] as? String }, ["Work (2)", "work"],
+                       "the linked group keeps its name; the other is renamed silently")
+    }
+
     func testEditorSaveDoesNotSelfNotify() {
         let (webStore, _, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }

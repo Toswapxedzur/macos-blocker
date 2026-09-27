@@ -10,6 +10,7 @@ final class ClusterScopesShareTests: XCTestCase {
         let hub = ConnectionHub()
         hub.setRoster(program: "macapp", groups: [["id": "m1", "name": "Focus"]])
         hub.setRoster(program: "chrome", groups: [["id": "c1", "name": "Focus"]])
+        XCTAssertNil(hub.linkGroups(program: "macapp", groupId: "m1", targetProgram: "chrome", targetGroupId: "c1"))
         return hub
     }
 
@@ -24,11 +25,12 @@ final class ClusterScopesShareTests: XCTestCase {
         return groups?.first?["scopes"] as? [[String: Any]]
     }
 
-    func testGroupsLinkByNameAloneWhateverTheirType() throws {
+    func testGroupsOfAnyTypeCanBeLinked() throws {
         let hub = ConnectionHub()
         hub.setRoster(program: "macapp", groups: [["id": "m1", "name": "Focus", "type": "site"]])
         hub.setRoster(program: "chrome", groups: [["id": "c1", "name": "Focus", "type": "youtube"]])
-        hub.applySync(program: "chrome", groupName: "Focus", contribution: ["scalars": ["mode": "instant"]], ts: 1)
+        XCTAssertNil(hub.linkGroups(program: "macapp", groupId: "m1", targetProgram: "chrome", targetGroupId: "c1"))
+        hub.applySync(program: "chrome", groupId: "c1", contribution: ["scalars": ["mode": "instant"]], ts: 1)
         let overlaid = hub.overlayShared(onto: ["blockedGroups": [["id": "m1", "name": "Focus", "mode": "after-minutes"]]])
         XCTAssertEqual((overlaid["blockedGroups"] as? [[String: Any]])?.first?["mode"] as? String, "instant",
                        "a cluster formed although the types differ, and the Mac reads its shared policy")
@@ -37,7 +39,7 @@ final class ClusterScopesShareTests: XCTestCase {
     func testEnforcementReadsTheLiveSharedDefinitionAndNewerSnooze() throws {
         let hub = linkedHub()
         let now = Date().timeIntervalSince1970 * 1000
-        hub.applySync(program: "chrome", groupName: "Focus", contribution: [
+        hub.applySync(program: "chrome", groupId: "c1", contribution: [
             "scalars": ["allowedMinutes": 45],
             "scopes": [["id": "apps-1", "surface": "apps", "platform": NSNull(), "action": "block", "apps": [["id": "com.hnc.Discord"]]]],
             "snooze": ["startsAtMs": now, "untilMs": now + 600_000, "cooldownUntilMs": now + 600_000, "changedAtMs": now],
@@ -63,23 +65,23 @@ final class ClusterScopesShareTests: XCTestCase {
         ]
         let apps: [[String: Any]] = [["id": "apps-1", "surface": "apps", "platform": NSNull(), "action": "block", "apps": [["id": "com.apple.Safari", "name": "Safari"]]]]
 
-        hub.applySync(program: "chrome", groupName: "Focus", contribution: ["scalars": ["mode": "instant"], "scopes": youtube], ts: 10)
+        hub.applySync(program: "chrome", groupId: "c1", contribution: ["scalars": ["mode": "instant"], "scopes": youtube], ts: 10)
         XCTAssertEqual(keys(sharedScopes(hub)), ["youtube", "youtube"], "the first member's entries become the shared ones")
 
-        hub.applySync(program: "macapp", groupName: "Focus", contribution: ["scalars": ["mode": "instant"], "scopes": apps], ts: 5)
+        hub.applySync(program: "macapp", groupId: "m1", contribution: ["scalars": ["mode": "instant"], "scopes": apps], ts: 5)
         XCTAssertEqual(keys(sharedScopes(hub)), ["youtube", "youtube", "apps"], "the Mac's first contribution adds its Apps entry even with an older ts")
 
         // Chrome adopted the union and now edits it: adds a site line, drops YouTube.
         let edited: [[String: Any]] = apps + [["id": "site-1", "surface": "site", "platform": NSNull(), "action": "block", "sites": ["example.com"], "sitesExcept": false]]
-        hub.applySync(program: "chrome", groupName: "Focus", contribution: ["scalars": ["mode": "instant"], "scopes": edited], ts: 20)
+        hub.applySync(program: "chrome", groupId: "c1", contribution: ["scalars": ["mode": "instant"], "scopes": edited], ts: 20)
         XCTAssertEqual(keys(sharedScopes(hub)), ["apps", "site"], "a later edit replaces the shared lines wholesale (deletions propagate)")
 
         // A stale edit from the Mac (older ts) does not win.
-        hub.applySync(program: "macapp", groupName: "Focus", contribution: ["scalars": ["mode": "instant"], "scopes": youtube], ts: 15)
+        hub.applySync(program: "macapp", groupId: "m1", contribution: ["scalars": ["mode": "instant"], "scopes": youtube], ts: 15)
         XCTAssertEqual(keys(sharedScopes(hub)), ["apps", "site"], "latest edit wins")
 
         // A usage-only ping never touches the definition.
-        hub.applySync(program: "chrome", groupName: "Focus", contribution: ["usageDeltaMs": 1000.0], ts: 30)
+        hub.applySync(program: "chrome", groupId: "c1", contribution: ["usageDeltaMs": 1000.0], ts: 30)
         XCTAssertEqual(keys(sharedScopes(hub)), ["apps", "site"])
     }
 

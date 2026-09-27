@@ -42,11 +42,12 @@ public struct BlockerWebView: _CBViewRepresentable {
     private let onDismissSystemPanel: ((String) -> Void)?
     /// Supplies buffered system-panel events as a JSON array string; polled each second.
     private let systemPanelEventsJSON: (() -> String?)?
-    /// Supplies current per-group bridge clusters as a JSON array; pushed each
-    /// second to `window.__cbClustersState`.
+    /// Supplies the links and every program's groups (JSON {clusters, rosters});
+    /// pushed each second to `window.__cbClustersState`.
     private let clustersJSON: (() -> String?)?
-    /// Web announced this Mac's eligible groups (JSON {program, groups}).
-    /// Web pushed this group's shared definition (JSON {groupName, ts, scalars, scopes, snooze…}).
+    /// The editor's Link / Unlink ("group-link" | "group-unlink", its message);
+    /// returns the refusal, or nil.
+    private let onLinkRequest: ((String, [String: Any]) -> String?)?
 
     public init(
         store: BlockerWebStore = BlockerWebStore(),
@@ -59,7 +60,8 @@ public struct BlockerWebView: _CBViewRepresentable {
         onShowSystemPanel: ((String) -> Void)? = nil,
         onDismissSystemPanel: ((String) -> Void)? = nil,
         systemPanelEventsJSON: (() -> String?)? = nil,
-        clustersJSON: (() -> String?)? = nil
+        clustersJSON: (() -> String?)? = nil,
+        onLinkRequest: ((String, [String: Any]) -> String?)? = nil
     ) {
         self.store = store
         self.appInventoryJSON = appInventoryJSON
@@ -72,10 +74,11 @@ public struct BlockerWebView: _CBViewRepresentable {
         self.onDismissSystemPanel = onDismissSystemPanel
         self.systemPanelEventsJSON = systemPanelEventsJSON
         self.clustersJSON = clustersJSON
+        self.onLinkRequest = onLinkRequest
     }
 
     public func makeCoordinator() -> Coordinator {
-        Coordinator(store: store, ruleLogJSON: ruleLogJSON, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup, onSnoozePress: onSnoozePress, onPanelEvent: onPanelEvent, onShowSystemPanel: onShowSystemPanel, onDismissSystemPanel: onDismissSystemPanel, systemPanelEventsJSON: systemPanelEventsJSON, clustersJSON: clustersJSON)
+        Coordinator(store: store, ruleLogJSON: ruleLogJSON, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup, onSnoozePress: onSnoozePress, onPanelEvent: onPanelEvent, onShowSystemPanel: onShowSystemPanel, onDismissSystemPanel: onDismissSystemPanel, systemPanelEventsJSON: systemPanelEventsJSON, clustersJSON: clustersJSON, onLinkRequest: onLinkRequest)
     }
 
     private func makeWebView(context: Context) -> WKWebView {
@@ -250,6 +253,7 @@ public struct BlockerWebView: _CBViewRepresentable {
         private let onDismissSystemPanel: ((String) -> Void)?
         private let systemPanelEventsJSON: (() -> String?)?
         private let clustersJSON: (() -> String?)?
+        private let onLinkRequest: ((String, [String: Any]) -> String?)?
 
         private var usagePushTimer: Timer?
         // Observes native writes to web-store.json (an MCP tool call, a direct
@@ -267,7 +271,8 @@ public struct BlockerWebView: _CBViewRepresentable {
             onShowSystemPanel: ((String) -> Void)?,
             onDismissSystemPanel: ((String) -> Void)?,
             systemPanelEventsJSON: (() -> String?)?,
-            clustersJSON: (() -> String?)?
+            clustersJSON: (() -> String?)?,
+            onLinkRequest: ((String, [String: Any]) -> String?)?
         ) {
             self.store = store
             self.ruleLogJSON = ruleLogJSON
@@ -279,6 +284,7 @@ public struct BlockerWebView: _CBViewRepresentable {
             self.onDismissSystemPanel = onDismissSystemPanel
             self.systemPanelEventsJSON = systemPanelEventsJSON
             self.clustersJSON = clustersJSON
+            self.onLinkRequest = onLinkRequest
         }
 
         deinit {
@@ -423,6 +429,14 @@ public struct BlockerWebView: _CBViewRepresentable {
                     onDismissSystemPanel?(id)
                 }
             case "clusters-status":
+                pushClusters()
+            case "group-link", "group-unlink":
+                let message = body["message"] as? [String: Any] ?? [:]
+                if let refusal = onLinkRequest?(kind, message),
+                   let data = try? JSONSerialization.data(withJSONObject: [refusal]),
+                   let json = String(data: data, encoding: .utf8) {
+                    webView?.evaluateJavaScript("window.__cbLinkRefused && window.__cbLinkRefused(\(json)[0]);", completionHandler: nil)
+                }
                 pushClusters()
             case "local-folder-status":
                 pushLocalFolderStatus()

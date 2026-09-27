@@ -86,7 +86,16 @@ public struct BlockerMainView: View {
             onShowSystemPanel: { [weak enforcement] json in enforcement?.showSystemPanel(json: json) },
             onDismissSystemPanel: { [weak enforcement] id in enforcement?.dismissSystemPanel(id: id) },
             systemPanelEventsJSON: { [weak enforcement] in enforcement?.drainSystemPanelEventsJSON() },
-            clustersJSON: { [weak connection] in connection?.clustersJSON() }
+            clustersJSON: { [weak connection] in connection?.clustersJSON() },
+            onLinkRequest: { [weak connection] kind, message in
+                guard let connection else { return "macapp-unavailable" }
+                let groupId = (message["groupId"] as? String) ?? ""
+                return kind == "group-link"
+                    ? connection.linkGroups(program: ConnectionHub.localProgram, groupId: groupId,
+                                            targetProgram: (message["targetProgram"] as? String) ?? "",
+                                            targetGroupId: (message["targetGroupId"] as? String) ?? "")
+                    : connection.unlinkGroup(program: ConnectionHub.localProgram, groupId: groupId)
+            }
         )
         #else
         return BlockerWebPanel()

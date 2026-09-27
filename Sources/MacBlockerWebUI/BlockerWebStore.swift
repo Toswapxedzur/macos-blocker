@@ -77,11 +77,11 @@ public final class BlockerWebStore: @unchecked Sendable {
     /// ended) adds its time to the group's total once (`activeMsApplied`), and
     /// a deleted group leaves no per-group entry behind — as the browser's
     /// worker does. Written only when something changed, under the file lock.
-    public func loadForTick(nowMs: Double) -> [String: Any] {
+    public func loadForTick(nowMs: Double, linkedGroupIds: [String] = []) -> [String: Any] {
         let object = loadStoreObject() ?? [:]
-        guard Self.tidied(object, nowMs: nowMs) != nil else { return object }
+        guard Self.tidied(object, nowMs: nowMs, linkedGroupIds: linkedGroupIds) != nil else { return object }
         return GroupStore.withFileLock {
-            guard let fresh = loadStoreObject(), let tidy = Self.tidied(fresh, nowMs: nowMs) else {
+            guard let fresh = loadStoreObject(), let tidy = Self.tidied(fresh, nowMs: nowMs, linkedGroupIds: linkedGroupIds) else {
                 return loadStoreObject() ?? object
             }
             write(tidy)
@@ -93,12 +93,20 @@ public final class BlockerWebStore: @unchecked Sendable {
 
     private static let perGroupKeys = ["usageTimersMs", "usageResetAtMs", "usageBucketsMs", "groupSnoozes", "groupSnoozeTotalsMs", "parentalPinAttempts"]
 
-    /// The document with finished snoozes counted and deleted groups' entries
-    /// dropped, or nil when neither applies.
-    public static func tidied(_ document: [String: Any], nowMs: Double) -> [String: Any]? {
+    /// The document with finished snoozes counted, deleted groups' entries
+    /// dropped and duplicate names renamed silently (a linked group keeps its
+    /// name — group-actions.js dedupeNames), or nil when none applies.
+    public static func tidied(_ document: [String: Any], nowMs: Double, linkedGroupIds: [String] = []) -> [String: Any]? {
         let counted = countFinishedSnoozes(in: document, nowMs: nowMs)
         var next = counted ?? document
         var changed = counted != nil
+        let groups = next["blockedGroups"] as? [[String: Any]] ?? []
+        let nameKeys = groups.compactMap { ($0["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }.filter { !$0.isEmpty }
+        if Set(nameKeys).count < nameKeys.count,
+           let renamed = GroupActionsRuntime.shared.call("dedupeNames", [groups, linkedGroupIds]) as? [[String: Any]] {
+            next["blockedGroups"] = renamed
+            changed = true
+        }
         let ids = Set((next["blockedGroups"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String })
         for key in perGroupKeys {
             guard let map = next[key] as? [String: Any], map.keys.contains(where: { !ids.contains($0) }) else { continue }
@@ -157,6 +165,28 @@ public final class BlockerWebStore: @unchecked Sendable {
     private static func canonical(_ value: Any?) -> String {
         guard let value, let data = try? JSONSerialization.data(withJSONObject: ["v": value], options: [.sortedKeys]) else { return "" }
         return String(decoding: data, as: UTF8.self)
+    }
+
+    /// A Mac group that left a link (Unlink, or its link dissolved) keeps the
+    /// shared settings and only its own program's lines: the Apps lines
+    /// (owner 2026-09-27). An open editor is told.
+    public func keepOwnLines(groupIds: Set<String>) {
+        guard !groupIds.isEmpty else { return }
+        let wrote: Bool = GroupStore.withFileLock {
+            guard var object = loadStoreObject(), var groups = object["blockedGroups"] as? [[String: Any]] else { return false }
+            var changed = false
+            for index in groups.indices {
+                guard let id = groups[index]["id"] as? String, groupIds.contains(id),
+                      let scopes = groups[index]["scopes"] as? [[String: Any]] else { continue }
+                let own = scopes.filter { ($0["surface"] as? String) == "apps" }
+                if own.count != scopes.count { groups[index]["scopes"] = own; changed = true }
+            }
+            guard changed else { return false }
+            object["blockedGroups"] = groups
+            write(object)
+            return true
+        }
+        if wrote { GroupStore.postDidChange() }
     }
 
     /// Groups and snoozes as linked devices share them; usage and settings as
