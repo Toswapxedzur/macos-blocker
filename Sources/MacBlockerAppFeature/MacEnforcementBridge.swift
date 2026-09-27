@@ -1002,7 +1002,9 @@ public final class MacEnforcementBridge: ObservableObject {
             // A snoozed group spends nothing, as in the extension.
             if let frontmost, elapsed > 0, group.isEnforcing(snoozes: snoozes, at: now),
                group.countsApplication(frontmost, exempt: !GuardPolicy.canBlock(frontmost)) {
-                addedMs = elapsed * 1000
+                // Time counts up to the allowance, as in the extension.
+                let allowedMs = max(0, group.allowedMinutes) * 60_000
+                addedMs = min(elapsed * 1000, max(0, allowedMs - (timers[gid] ?? 0)))
             }
 
             if group.rollingLimit {

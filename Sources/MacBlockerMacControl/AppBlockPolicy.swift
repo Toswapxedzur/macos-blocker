@@ -156,7 +156,8 @@ public actor AppBlockPolicy {
                 return GuardTarget(
                     bundleIdentifier: bundleID,
                     bundleIdentifierPrefixes: ["\(bundleID)."],
-                    teamIdentifier: signing?.teamIdentifier,
+                    // The app's own signing identity, never its developer's team:
+                    // blocking Word must not quit Excel.
                     signingIdentifier: signing?.signingIdentifier,
                     executablePaths: app.path.isEmpty ? [] : [app.path],
                     displayName: app.name
