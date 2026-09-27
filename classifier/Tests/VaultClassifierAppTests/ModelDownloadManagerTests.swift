@@ -44,6 +44,34 @@ private actor DownloadProgressRecorder {
 }
 
 final class ModelDownloadManagerTests: XCTestCase {
+    /// The real transport hands back the finished file (a regression: the async
+    /// URLSession convenience never called its delegate, so every in-app model
+    /// download failed at the end with "the downloaded model file is unavailable").
+    func testTheURLSessionTransportReturnsTheFinishedFile() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("model.gguf")
+        let bytes = Data((0..<3_000_000).map { UInt8($0 % 251) })
+        try bytes.write(to: source)
+
+        let recorder = DownloadProgressRecorder()
+        let downloaded = try await URLSessionModelDownloadTransport().download(from: source) { update in
+            Task { await recorder.append(update) }
+        }
+        defer { try? FileManager.default.removeItem(at: downloaded) }
+        XCTAssertEqual(try Data(contentsOf: downloaded), bytes, "the whole file, kept past the callback")
+        XCTAssertNotEqual(downloaded, source)
+    }
+
+    func testTheURLSessionTransportFailsForAMissingFile() async {
+        let missing = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).gguf")
+        do {
+            _ = try await URLSessionModelDownloadTransport().download(from: missing) { _ in }
+            XCTFail("a missing source can't download")
+        } catch {}
+    }
+
     func testInjectedTransportReportsProgressAndAtomicallyPublishesGGUF() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

@@ -45,43 +45,50 @@ public enum ModelDownloadManagerError: Error, Equatable, LocalizedError {
     }
 }
 
+/// Downloads with a plain download task on its own session, whose delegate gets
+/// the progress and the finished file. (The async `download(for:delegate:)`
+/// convenience never called the task delegate: no progress, and the finished
+/// file was never picked up — every in-app model download failed at the end.)
 public struct URLSessionModelDownloadTransport: ModelDownloadTransport, @unchecked Sendable {
-    private let session: URLSession
+    private let configuration: URLSessionConfiguration
 
-    public init(session: URLSession = .shared) {
-        self.session = session
+    public init(configuration: URLSessionConfiguration = .default) {
+        self.configuration = configuration
     }
 
     public func download(
         from url: URL,
         progress: @escaping @Sendable (ModelDownloadProgress) -> Void
     ) async throws -> URL {
-        let delegate = DownloadProgressDelegate(progress: progress)
+        let delegate = DownloadDelegate(progress: progress)
+        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
         let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
-        do {
-            let (_, response) = try await session.download(for: request, delegate: delegate)
-            guard let httpResponse = response as? HTTPURLResponse,
-                  (200..<300).contains(httpResponse.statusCode) else {
-                throw ModelDownloadManagerError.invalidHTTPStatus(
-                    (response as? HTTPURLResponse)?.statusCode ?? 0
-                )
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                delegate.start(continuation)
+                session.downloadTask(with: request).resume()
             }
-            return try delegate.takeDownloadedFileURL()
-        } catch {
-            delegate.discardDownloadedFile()
-            throw error
+        } onCancel: {
+            session.invalidateAndCancel()
         }
     }
 }
 
-private final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
     private let progress: @Sendable (ModelDownloadProgress) -> Void
-    private let resultLock = NSLock()
-    private var downloadedFileURL: URL?
-    private var downloadedFileError: Error?
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<URL, Error>?
+    private var result: Result<URL, Error>?
 
     init(progress: @escaping @Sendable (ModelDownloadProgress) -> Void) {
         self.progress = progress
+    }
+
+    func start(_ continuation: CheckedContinuation<URL, Error>) {
+        lock.lock()
+        self.continuation = continuation
+        lock.unlock()
     }
 
     func urlSession(
@@ -91,55 +98,59 @@ private final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelega
         totalBytesWritten: Int64,
         totalBytesExpectedToWrite: Int64
     ) {
-        progress(ModelDownloadProgress(
-            bytesReceived: totalBytesWritten,
-            totalBytes: totalBytesExpectedToWrite
-        ))
+        progress(ModelDownloadProgress(bytesReceived: totalBytesWritten, totalBytes: totalBytesExpectedToWrite))
     }
 
+    // The file is only valid inside this callback: keep it (or the HTTP error).
     func urlSession(
         _ session: URLSession,
         downloadTask: URLSessionDownloadTask,
         didFinishDownloadingTo location: URL
     ) {
-        let persistentURL = FileManager.default.temporaryDirectory
+        if let http = downloadTask.response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            record(.failure(ModelDownloadManagerError.invalidHTTPStatus(http.statusCode)))
+            return
+        }
+        let kept = FileManager.default.temporaryDirectory
             .appendingPathComponent("vault-model-\(UUID().uuidString).download")
         do {
-            try FileManager.default.moveItem(at: location, to: persistentURL)
-            resultLock.lock()
-            downloadedFileURL = persistentURL
-            resultLock.unlock()
+            try FileManager.default.moveItem(at: location, to: kept)
+            record(.success(kept))
         } catch {
-            resultLock.lock()
-            downloadedFileError = error
-            resultLock.unlock()
+            record(.failure(error))
         }
     }
 
-    func takeDownloadedFileURL() throws -> URL {
-        resultLock.lock()
-        defer { resultLock.unlock() }
-        if let downloadedFileError { throw downloadedFileError }
-        guard let downloadedFileURL else {
-            throw ModelDownloadManagerError.invalidTemporaryFile
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error {
+            // A cancelled download is a cancellation, not an error to show.
+            record(.failure((error as? URLError)?.code == .cancelled ? CancellationError() : error))
         }
-        self.downloadedFileURL = nil
-        return downloadedFileURL
+        lock.lock()
+        let outcome = result ?? .failure(ModelDownloadManagerError.invalidTemporaryFile)
+        let waiting = continuation
+        continuation = nil
+        lock.unlock()
+        waiting?.resume(with: outcome)
     }
 
-    func discardDownloadedFile() {
-        resultLock.lock()
-        let fileURL = downloadedFileURL
-        downloadedFileURL = nil
-        resultLock.unlock()
-        guard let fileURL else { return }
-        try? FileManager.default.removeItem(at: fileURL)
+    // The first outcome counts; a later failure replaces a kept file (and
+    // deletes it).
+    private func record(_ outcome: Result<URL, Error>) {
+        lock.lock()
+        defer { lock.unlock() }
+        switch (result, outcome) {
+        case (nil, _):
+            result = outcome
+        case (.success(let kept)?, .failure):
+            try? FileManager.default.removeItem(at: kept)
+            result = outcome
+        default:
+            break
+        }
     }
 }
 
-/// Owns user-initiated catalog downloads and publishes only complete GGUF
-/// files. The actor never starts work on its own and performs no network access
-/// until `download` is called explicitly.
 public actor ModelDownloadManager {
     public typealias ModelsDirectoryProvider = @Sendable () -> URL?
     public typealias ProgressHandler = @Sendable (ModelDownloadProgress) -> Void
