@@ -202,23 +202,6 @@
     };
   }
 
-  // System overlay panel events pushed from the native host (e.g. parental PIN
-  // entry). The web editor registers handlers via window.__cbSystemPanelHandlers
-  // (see openOverlayPanel in popup.js).
-  window.__cbSystemPanelHandlers = window.__cbSystemPanelHandlers || [];
-  window.__cbSystemPanelEvent = function (json) {
-    try {
-      var events = typeof json === "string" ? JSON.parse(json) : json;
-      if (!Array.isArray(events)) events = [events];
-      var handlers = window.__cbSystemPanelHandlers.slice();
-      for (var i = 0; i < events.length; i++) {
-        for (var j = 0; j < handlers.length; j++) {
-          try { handlers[j](events[i]); } catch (_) {}
-        }
-      }
-    } catch (_) {}
-  };
-
   window.__cbApplyNativeRuleLog = function (json) {
     try {
       var entries = typeof json === "string" ? JSON.parse(json) : json;
@@ -368,6 +351,31 @@
 
   var messageListeners = [];
 
+  // A request Mac Vault answers through window.__cbNativeReply(id, reply).
+  var nativeReplies = {};
+  var nativeReplySeq = 0;
+  function nativeRequest(kind, message, fallback) {
+    var bridge = nativeBridge();
+    if (!bridge) return Promise.resolve(fallback);
+    return new Promise(function (resolve) {
+      var id = "r" + (++nativeReplySeq);
+      nativeReplies[id] = resolve;
+      setTimeout(function () {
+        if (nativeReplies[id]) { delete nativeReplies[id]; resolve(fallback); }
+      }, 5000);
+      try {
+        bridge.postMessage({ kind: kind, message: message, requestId: id });
+      } catch (_) {
+        delete nativeReplies[id];
+        resolve(fallback);
+      }
+    });
+  }
+  window.__cbNativeReply = function (id, reply) {
+    var resolve = nativeReplies[id];
+    if (resolve) { delete nativeReplies[id]; resolve(reply); }
+  };
+
   function bridgeOrResolve(kind, message, fallback) {
     var bridge = nativeBridge();
     if (bridge) {
@@ -403,12 +411,10 @@
         });
       case "fire-snooze-press":
         return bridgeOrResolve("fire-snooze-press", message, { ok: true });
+      case "vault-classifier-tag-names":
+        return nativeRequest("vault-classifier-tag-names", message, { ok: false, names: [] });
       case "reset-group-runtime":
         return bridgeOrResolve("reset-group-runtime", message, { ok: true });
-      case "show-system-panel":
-        return bridgeOrResolve("show-system-panel", message, { ok: true });
-      case "dismiss-system-panel":
-        return bridgeOrResolve("dismiss-system-panel", message, { ok: true });
       case "clusters-status":
         return bridgeOrResolve("clusters-status", message, { ok: true });
       case "group-link":

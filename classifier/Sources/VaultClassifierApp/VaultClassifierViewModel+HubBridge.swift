@@ -239,22 +239,7 @@ extension VaultClassifierViewModel {
             case .classifierTaxonomy:
                 let taxonomyRequest = try JSONDecoder().decode(NativeClassifierTaxonomyRequest.self, from: request.bodyData)
                 try taxonomyRequest.validate()
-                let catalog = coordinator.snapshot().workspaceCatalog
-                let types = catalog.classifierTypes
-                    .filter { $0.applicablePlatformID == taxonomyRequest.platformID }
-                    .sorted { ($0.order, $0.id) < ($1.order, $1.id) }
-                    .compactMap { type -> NativeClassifierTypeTaxonomy? in
-                        guard let tree = catalog.trees.first(where: {
-                            $0.id == type.treeID && $0.revision == type.treeRevision
-                        }), let taxonomy = try? tree.inferenceTaxonomy() else { return nil }
-                        let tagNodes = taxonomy.predictableLeafIDs
-                            .compactMap { taxonomy.nodes[$0] }
-                            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-                        let tags = NativeVideoTag.accepted(Self.nativeVideoTags(from: tagNodes))
-                        guard !tags.isEmpty else { return nil }
-                        return NativeClassifierTypeTaxonomy(typeID: type.id, name: type.name, tags: tags)
-                    }
-                return try sharedHubReply(NativeClassifierTaxonomyResponse(platformID: taxonomyRequest.platformID, types: types))
+                return try sharedHubReply(NativeClassifierTaxonomyResponse(platformID: taxonomyRequest.platformID, types: taxonomy(platformID: taxonomyRequest.platformID)))
             case .submitCorrection:
                 let correction = try JSONDecoder().decode(NativeSubmitCorrectionRequest.self, from: request.bodyData)
                 try correction.validate()
@@ -310,5 +295,29 @@ extension VaultClassifierViewModel {
             return .failure("classifier-response-invalid")
         }
         return .success(object)
+    }
+}
+
+extension VaultClassifierViewModel {
+    /// A platform's classifier types and their tags (the in-page correction
+    /// taxonomy and the editor's tag suggestions).
+    func taxonomy(platformID: String) -> [NativeClassifierTypeTaxonomy] {
+        guard let coordinator else { return [] }
+        let catalog = coordinator.snapshot().workspaceCatalog
+        let types = catalog.classifierTypes
+            .filter { $0.applicablePlatformID == platformID }
+            .sorted { ($0.order, $0.id) < ($1.order, $1.id) }
+        return types
+            .compactMap { type -> NativeClassifierTypeTaxonomy? in
+                guard let tree = catalog.trees.first(where: {
+                    $0.id == type.treeID && $0.revision == type.treeRevision
+                }), let taxonomy = try? tree.inferenceTaxonomy() else { return nil }
+                let tagNodes = taxonomy.predictableLeafIDs
+                    .compactMap { taxonomy.nodes[$0] }
+                    .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+                let tags = NativeVideoTag.accepted(Self.nativeVideoTags(from: tagNodes))
+                guard !tags.isEmpty else { return nil }
+                return NativeClassifierTypeTaxonomy(typeID: type.id, name: type.name, tags: tags)
+            }
     }
 }
