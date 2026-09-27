@@ -77,11 +77,14 @@ final class ParentalPinAndLockToolsTests: XCTestCase {
 
     func testCreateMoveAndFreezeLikeTheEditor() throws {
         var doc = document()
-        let id = try doc.createGroup(name: "Focus")
-        XCTAssertThrowsError(try doc.createGroup(name: " focus ")) { XCTAssertEqual($0 as? GroupStoreError, .duplicateName("focus")) }
+        let id = try doc.createGroup(patch: ["name": "Focus"])
+        XCTAssertThrowsError(try doc.createGroup(patch: ["name": " focus "])) { XCTAssertEqual($0 as? GroupStoreError, .duplicateName(" focus ")) }
+        let lines = doc.group(id: id)?["scopes"] as? [[String: Any]] ?? []
+        XCTAssertEqual(lines.map { $0["surface"] as? String }, ["apps"], "Mac Vault's New group names apps only (the scope line)")
+        XCTAssertThrowsError(try doc.createGroup(groupType: "youtube")) { XCTAssertEqual($0 as? GroupStoreError, .invalidInput("browser-lines")) }
         XCTAssertFalse(WebStoreDocument.isLocked(doc.group(id: id) ?? [:]), "a created group is never frozen")
         var withDefault = WebStoreDocument(raw: ["globalSettings": ["defaultSnoozeMinutes": 7], "blockedGroups": []])
-        let seven = try withDefault.createGroup(name: "Seven")
+        let seven = try withDefault.createGroup(patch: ["name": "Seven"])
         XCTAssertEqual(withDefault.group(id: seven)?["snoozeMinutes"] as? Double, 7, "the user's default snooze length")
 
         try doc.moveGroup(id: id, to: 0)

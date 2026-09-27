@@ -114,6 +114,23 @@ public final class BlockerWebStore: @unchecked Sendable {
             next["blockedGroups"] = groups
             changed = true
         }
+        // The scope line (owner 2026-09-27): Mac Vault's own group names only
+        // apps; website and platform lines come only from a link (a browser's),
+        // so a group outside a link drops any it still carries.
+        let linked = Set(linkedGroupIds)
+        if groups.contains(where: { group in
+            guard let id = group["id"] as? String, !linked.contains(id) else { return false }
+            return (group["scopes"] as? [[String: Any]] ?? []).contains { ($0["surface"] as? String) != "apps" }
+        }) {
+            groups = groups.map { group in
+                guard let id = group["id"] as? String, !linked.contains(id), let scopes = group["scopes"] as? [[String: Any]] else { return group }
+                var own = group
+                own["scopes"] = scopes.filter { ($0["surface"] as? String) == "apps" }
+                return own
+            }
+            next["blockedGroups"] = groups
+            changed = true
+        }
         let nameKeys = groups.compactMap { ($0["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }.filter { !$0.isEmpty }
         if Set(nameKeys).count < nameKeys.count,
            let renamed = GroupActionsRuntime.shared.call("dedupeNames", [groups, linkedGroupIds]) as? [[String: Any]] {
