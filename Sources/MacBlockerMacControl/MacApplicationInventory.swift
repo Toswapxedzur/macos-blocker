@@ -30,18 +30,6 @@ public struct InstalledApplication: Identifiable, Equatable, Sendable, Codable {
         self.path = path
         self.isRunning = isRunning
     }
-
-    /// Converts to the core `BlockTarget` model so an app can be assigned to a
-    /// block group. The bundle id is the stable identity.
-    public func asBlockTarget() -> BlockTarget {
-        BlockTarget(
-            id: bundleIdentifier,
-            kind: .application,
-            displayName: name,
-            normalizedValue: bundleIdentifier,
-            tags: ["mac", "application"]
-        )
-    }
 }
 
 /// Enumerates installed and running applications on macOS.

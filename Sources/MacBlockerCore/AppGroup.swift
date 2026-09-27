@@ -4,10 +4,8 @@ import Foundation
 /// extension's native handler) keep the store in. Set `AppGroup.identifier`
 /// once at launch before any store access.
 public enum AppGroup {
-    public static let placeholderIdentifier = VaultRuntimeEnvironment.production.appGroupIdentifier
-
-    /// Mutable so the app can override it at launch. Defaults to the
-    /// placeholder used throughout the scaffold entitlements.
+    /// Mutable so the app can override it at launch. Defaults to this
+    /// environment's group.
     public static var identifier: String = VaultRuntimeEnvironment.current.appGroupIdentifier
 
     /// The App Group shared container, when the entitlement is present.

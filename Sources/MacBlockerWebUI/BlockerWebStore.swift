@@ -91,8 +91,6 @@ public final class BlockerWebStore: @unchecked Sendable {
         }
     }
 
-    private static let perGroupKeys = ["usageTimersMs", "usageResetAtMs", "usageBucketsMs", "groupSnoozes", "groupSnoozeTotalsMs", "parentalPinAttempts"]
-
     /// The document with finished snoozes counted, deleted groups' entries
     /// dropped and duplicate names renamed silently (a linked group keeps its
     /// name — group-actions.js dedupeNames), or nil when none applies.
@@ -123,7 +121,7 @@ public final class BlockerWebStore: @unchecked Sendable {
             changed = true
         }
         let ids = Set((next["blockedGroups"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String })
-        for key in perGroupKeys {
+        for key in WebStoreDocument.perGroupMapKeys {
             guard let map = next[key] as? [String: Any], map.keys.contains(where: { !ids.contains($0) }) else { continue }
             next[key] = map.filter { ids.contains($0.key) }
             changed = true
@@ -167,7 +165,7 @@ public final class BlockerWebStore: @unchecked Sendable {
         let wrote: Bool = GroupStore.withFileLock {
             guard let object = loadStoreObject() else { return false }
             let adopted = overlay(object)
-            guard keys.contains(where: { Self.canonical(adopted[$0]) != Self.canonical(object[$0]) }) else { return false }
+            guard keys.contains(where: { WebStoreDocument.canonicalJSON(adopted[$0]) != WebStoreDocument.canonicalJSON(object[$0]) }) else { return false }
             var next = object
             for key in keys where adopted[key] != nil { next[key] = adopted[key] }
             write(next)
@@ -175,11 +173,6 @@ public final class BlockerWebStore: @unchecked Sendable {
         }
         if wrote { GroupStore.postDidChange() }
         return wrote
-    }
-
-    private static func canonical(_ value: Any?) -> String {
-        guard let value, let data = try? JSONSerialization.data(withJSONObject: ["v": value], options: [.sortedKeys]) else { return "" }
-        return String(decoding: data, as: UTF8.self)
     }
 
     /// A Mac group that left a link (Unlink, or its link dissolved) keeps the

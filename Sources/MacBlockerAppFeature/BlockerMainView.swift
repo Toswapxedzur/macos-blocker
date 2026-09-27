@@ -82,7 +82,6 @@ public struct BlockerMainView: View {
             onStorePersisted: { enforcement.refresh(); QuickAddPanel.shared.reload() },
             onRunCustomGroup: { [weak enforcement] groupID, _ in enforcement?.runRule(groupID: groupID) },
             onSnoozePress: { [weak enforcement] groupID in enforcement?.fireSnoozePress(groupID: groupID) },
-            onPanelEvent: { [weak enforcement] groupID, data in enforcement?.firePanelEvent(groupID: groupID, data: data) },
             onShowSystemPanel: { [weak enforcement] json in enforcement?.showSystemPanel(json: json) },
             onDismissSystemPanel: { [weak enforcement] id in enforcement?.dismissSystemPanel(id: id) },
             systemPanelEventsJSON: { [weak enforcement] in enforcement?.drainSystemPanelEventsJSON() },
