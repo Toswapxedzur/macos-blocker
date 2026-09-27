@@ -1391,7 +1391,7 @@ final class ConnectionHub: ObservableObject {
     /// Mirror of group-scopes.js `SYNC_SCALAR_FIELDS` (a test keeps the two equal):
     /// the policy settings a linked group shares.
     static let syncScalarFields = [
-        "name", "mode", "allowedMinutes", "resetIntervalHours", "resetAtMidnight", "rollingLimit",
+        "name", "enabled", "mode", "allowedMinutes", "resetIntervalHours", "resetAtMidnight", "rollingLimit",
         "allowSnooze", "snoozeMinutes", "snoozeActivationDelayMinutes", "snoozeCooldownMinutes", "snoozeConfirmations",
         "activeDays", "timeWindowsText",
         "fallbackUrl", "pauseSeconds",

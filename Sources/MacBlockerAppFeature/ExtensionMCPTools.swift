@@ -35,7 +35,7 @@ public enum ExtensionMCPTools {
     static let waitSeconds = 35.0
 
     public static func tools(bridge: Bridge = .liveHub) -> [MCPTool] {
-        let browserProperty: [String: Any] = ["type": "string", "description": "Which connected browser: a program name (chrome, edge, brave, …) or a peer id from vault_status when two instances of one program are connected; required only when more than one browser is connected."]
+        let browserProperty: [String: Any] = ["type": "string", "description": "Which connected browser, by program name (chrome, edge); needed only when more than one browser is connected."]
         return [
             MCPTool(
                 name: "extension_state",
@@ -176,7 +176,7 @@ public enum ExtensionMCPTools {
             },
             MCPTool(
                 name: "extension_set_global",
-                description: "Patch the extension's global settings (popup ▸ Settings): debugMode (bool; also enables the content-script trace), showOnPageLogToasts (bool), tickRateMs (100–10000), autosaveDebounceMs (0–10000), defaultSnoozeMinutes (> 0), quickAddEnabled (bool), quitRetryMinutes (desktop: how often a blocked or rule-closed app that stayed open is asked to quit again; 0 = never). Sanitized the way the popup's save is.",
+                description: "Patch the extension's global settings — exactly the editor's Settings: defaultSnoozeMinutes (> 0), quickAddEnabled (bool), quitRetryMinutes (0–1440; used by a desktop app). Any other field is refused. Sanitized the way the editor's save is.",
                 inputSchema: [
                     "type": "object",
                     "properties": ["patch": ["type": "object", "description": "Global settings fields to change."], "browser": browserProperty],
@@ -245,6 +245,7 @@ public enum ExtensionMCPTools {
         }
         switch reason {
         case "browser-unavailable": return "no browser with the Vault extension is connected to Mac Vault."
+        case let reason where reason.hasPrefix("not-an-editor-setting:"): return "'\(reason.dropFirst("not-an-editor-setting:".count))' is not one of the editor's settings (defaultSnoozeMinutes, quickAddEnabled, quitRetryMinutes)."
         case "browser-ambiguous": return "more than one browser is connected; pass 'browser'."
         case "browser-timeout": return "the browser did not answer."
         case "browser-relay-requires-host": return "Mac Vault is not hosting the local hub."

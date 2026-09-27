@@ -184,7 +184,7 @@ final class GroupStoreTests: XCTestCase {
             var copy = raw
             copy["blockedGroups"] = (raw["blockedGroups"] as? [[String: Any]] ?? []).map { group in
                 var g = group
-                if g["id"] as? String == "g1" { g["freezeMode"] = "frozen"; g["name"] = "Focus (shared)" }
+                if g["id"] as? String == "g1" { g["lockedAtMs"] = 1_000; g["name"] = "Focus (shared)" }
                 return g
             }
             return copy
@@ -200,7 +200,7 @@ final class GroupStoreTests: XCTestCase {
 
     private func lockedEnvelope(appsExcept: Bool) -> [String: Any] {
         ["blockedGroups": [[
-            "id": "L", "name": "Locked", "enabled": true, "mode": "instant", "freezeMode": "strict",
+            "id": "L", "name": "Locked", "enabled": true, "mode": "instant", "lockedAtMs": 1_000, "lockWaitHours": 24,
             "scopes": [["id": "apps-1", "surface": "apps", "platform": NSNull(), "action": "block",
                         "apps": [["id": "com.example.Editor", "name": "Editor"]], "appsExcept": appsExcept]],
         ]]]
