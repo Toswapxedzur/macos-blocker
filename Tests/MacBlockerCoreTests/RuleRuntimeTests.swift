@@ -86,6 +86,16 @@ final class RuleRuntimeTests: XCTestCase {
         XCTAssertTrue(fine.ok)
     }
 
+    func testADisabledGroupsRuleHearsNothingAndResumesAsItWas() throws {
+        let runtime = try RuleRuntime()
+        _ = try runtime.load(groupID: "g", source: #"(on, v) => { on("tick", () => { v.state.n = (v.state.n || 0) + 1; }); }"#, stateJSON: "{}")
+        XCTAssertEqual(try runtime.dispatch(type: "tick", data: [String: Any](), groupID: "g").states["g"], #"{"n":1}"#)
+        runtime.suppress(groupID: "g", true)
+        XCTAssertTrue(try runtime.dispatch(type: "tick", data: [String: Any](), groupID: "g").states.isEmpty, "suppressed: no handler runs")
+        runtime.suppress(groupID: "g", false)
+        XCTAssertEqual(try runtime.dispatch(type: "tick", data: [String: Any](), groupID: "g").states["g"], #"{"n":2}"#, "resumed as it was")
+    }
+
     func testTheEventGoesToTheNamedGroupOnly() throws {
         let runtime = try RuleRuntime()
         _ = try runtime.load(groupID: "a", source: #"(on, v) => { on("tick", () => v.log("a")); }"#, stateJSON: "{}")
