@@ -231,7 +231,12 @@ public struct WebStoreDocument {
     }
 
     /// The fields of a group's one lock unit (group-actions.js LOCK_FIELDS).
-    public static let lockFieldNames = GroupActionsRuntime.shared.constant("LOCK_FIELDS") as? [String] ?? []
+    public static let lockFieldNames: [String] = {
+        let fields = GroupActionsRuntime.shared.constant("LOCK_FIELDS") as? [String] ?? []
+        // Never an empty list: that would let an edit write the lock.
+        precondition(!fields.isEmpty, "group-actions.js is not bundled")
+        return fields
+    }()
 
     /// One value as sorted-key JSON, for comparing dictionaries by content.
     public static func canonicalJSON(_ value: Any?) -> String {
@@ -470,7 +475,8 @@ public struct WebStoreDocument {
                 throw GroupStoreError.invalidInput("pin (6 digits)")
             }
             if actions.call("hasPin", [current]) as? Bool == true { return .refused("pin-already-set") }
-            gates["pinFields"] = actions.call("newPinFieldsSync", [pin], module: "CBParentalPin") ?? NSNull()
+            guard let fields = actions.call("newPinFieldsSync", [pin], module: "CBParentalPin") else { throw GroupStoreError.invalidInput("pin (6 digits)") }
+            gates["pinFields"] = fields
         }
         let nowMs = (now.timeIntervalSince1970 * 1000).rounded()
         var result: [String: Any]
@@ -540,7 +546,8 @@ public struct WebStoreDocument {
         } else if let pin {
             guard actions.call("isValidParentalPin", [pin], module: "CBParentalPin") as? Bool == true else { throw GroupStoreError.invalidInput("pin (6 digits)") }
             if hasPin { return .refused("pin-already-set") }
-            gates["pinFields"] = actions.call("newPinFieldsSync", [pin], module: "CBParentalPin") ?? NSNull()
+            guard let fields = actions.call("newPinFieldsSync", [pin], module: "CBParentalPin") else { throw GroupStoreError.invalidInput("pin (6 digits)") }
+            gates["pinFields"] = fields
         }
         let result = actions.call("setGates", [current, gates]) as? [String: Any] ?? [:]
         if let error = result["error"] as? String { return .refused(error) }
