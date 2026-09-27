@@ -381,8 +381,6 @@ public struct BlockerWebView: NSViewRepresentable {
             case "local-folder-revoke":
                 LocalFolderGrant.clear()
                 pushLocalFolderStatus()
-            case "local-folder-reveal":
-                revealLocalFolder()
             case "switch-scene":
                 #if os(macOS)
                 if let scene = (body["message"] as? [String: Any])?["scene"] as? String
@@ -442,16 +440,6 @@ public struct BlockerWebView: NSViewRepresentable {
                 "window.__cbLocalFolderStatus && window.__cbLocalFolderStatus(\(json));",
                 completionHandler: nil
             )
-        }
-
-        /// Reveals the user-granted folder in Finder. No-op when none is granted.
-        private func revealLocalFolder() {
-            #if os(macOS)
-            guard let folder = LocalFolderGrant.resolvedFolderURL() else { return }
-            let scoped = folder.startAccessingSecurityScopedResource()
-            defer { if scoped { folder.stopAccessingSecurityScopedResource() } }
-            NSWorkspace.shared.activateFileViewerSelecting([folder])
-            #endif
         }
 
         // MARK: WKUIDelegate - JS dialogs

@@ -102,7 +102,7 @@ public final class MacEnforcementBridge: ObservableObject {
     /// Re-evaluates immediately (e.g. right after an editor save).
     public func refresh() {
         #if os(macOS)
-        tick()
+        tick(everySecond: false)
         #endif
     }
 
@@ -137,6 +137,16 @@ public final class MacEnforcementBridge: ObservableObject {
         dispatchRule(type: "panel", data: data, groupID: groupID)
         #endif
     }
+
+    #if os(macOS)
+    /// An event from outside the tick (the editor, a panel, the folder): the
+    /// group is read once.
+    private func dispatchRule(type: String, data: Any, groupID: String) {
+        guard ruleTypes[groupID]?.contains(type) == true,
+              let group = webStore.importedGroups().first(where: { $0.id == groupID }) else { return }
+        dispatchRule(type: type, data: data, group: group)
+    }
+    #endif
 
     /// Begins enforcement: an initial evaluation plus a repeating tick that
     /// accrues usage, re-evaluates, enforces, and refreshes the timer HUD.
@@ -231,7 +241,9 @@ public final class MacEnforcementBridge: ObservableObject {
 
     // MARK: - Tick
 
-    private func tick() {
+    /// `everySecond`: the timer's tick (the rules' "tick" event goes out only
+    /// then, not on an editor save's re-evaluation).
+    private func tick(everySecond: Bool = true) {
         // Flush any throttled panel events (trailing edge).
         for (_, pending) in pendingPanelEvents {
             firePanelEvent(groupID: pending.groupID, data: pending.data)
@@ -282,7 +294,7 @@ public final class MacEnforcementBridge: ObservableObject {
         )
 
         // 2. The rules: what happened to apps since the last tick, then "tick".
-        dispatchRuleEvents(groups: groups, frontApp: frontApp)
+        dispatchRuleEvents(groups: groups, frontApp: frontApp, everySecond: everySecond)
 
         // 3. Enforce: block apps whose group says "blocked now" plus the apps
         //    a rule blocked (one quit sweep).
@@ -314,7 +326,7 @@ public final class MacEnforcementBridge: ObservableObject {
 
     /// This tick's rule events: each app change since the last tick ("app"),
     /// then "tick". Rules load, reload and unload here as the groups change.
-    private func dispatchRuleEvents(groups: [BlockGroup], frontApp: NSRunningApplication?) {
+    private func dispatchRuleEvents(groups: [BlockGroup], frontApp: NSRunningApplication?, everySecond: Bool) {
         let lifecycleEvents = pendingLifecycleEvents
         pendingLifecycleEvents.removeAll()
         let frontmost = frontApp?.bundleIdentifier
@@ -326,15 +338,15 @@ public final class MacEnforcementBridge: ObservableObject {
         for event in lifecycleEvents {
             var data: [String: Any] = ["kind": event.kind.rawValue, "appId": event.bundleID, "name": event.name]
             if event.kind == .focus { data["previousAppId"] = lastFrontmost ?? NSNull() }
-            for group in listening { dispatchRule(type: "app", data: data, groupID: group.id) }
+            for group in listening { dispatchRule(type: "app", data: data, group: group) }
         }
         let wantsTick = listening.filter { ruleTypes[$0.id]?.contains("tick") == true }
-        guard !wantsTick.isEmpty else { return }
+        guard everySecond, !wantsTick.isEmpty else { return }
         let tick: [String: Any] = [
             "frontmost": frontApp.map { ["appId": $0.bundleIdentifier ?? "", "name": $0.localizedName ?? ""] as [String: Any] } ?? NSNull(),
             "running": Self.runningApps()
         ]
-        for group in wantsTick { dispatchRule(type: "tick", data: tick, groupID: group.id) }
+        for group in wantsTick { dispatchRule(type: "tick", data: tick, group: group) }
     }
 
     /// Every running app (menu-bar and background ones included): an `.app`
@@ -348,11 +360,10 @@ public final class MacEnforcementBridge: ObservableObject {
 
     /// One event to one group's rule (only if it handles that type), then what
     /// it asked for.
-    private func dispatchRule(type: String, data: Any, groupID: String) {
-        guard ruleTypes[groupID]?.contains(type) == true, let runtime = ruleRuntime,
-              let group = webStore.importedGroups().first(where: { $0.id == groupID }), group.enabled else { return }
+    private func dispatchRule(type: String, data: Any, group: BlockGroup) {
+        guard group.enabled, ruleTypes[group.id]?.contains(type) == true, let runtime = ruleRuntime else { return }
         do {
-            apply(try runtime.dispatch(type: type, data: data, groupID: groupID), group: group)
+            apply(try runtime.dispatch(type: type, data: data, groupID: group.id), group: group)
         } catch RuleRuntime.RuleRuntimeError.terminated {
             quarantineRule(group: group)
         } catch {
@@ -494,7 +505,6 @@ public final class MacEnforcementBridge: ObservableObject {
     }
 
     private func appendLog(level: String, group: String, message: String) {
-        print("[MacEnforcementBridge] [\(group)] \(level): \(message)")
         let entry = RuleLogEntry(timestamp: Date(), level: level, group: group, message: message)
         ruleLog.append(entry)
         if ruleLog.count > 200 {
