@@ -57,4 +57,14 @@ final class ClusterLocalMemberTests: XCTestCase {
         hub.contributeLocalDefinitions(document: document([appsLine, siteLine], minutes: 60), nowMs: 400)
         XCTAssertEqual((hub.overlayShared(onto: document([]))["blockedGroups"] as? [[String: Any]])?.first?["allowedMinutes"] as? Int, 60)
     }
+
+    func testARelinkedMacGroupContributesItsLinesAgain() {
+        let hub = linkedHub()
+        hub.contributeLocalDefinitions(document: document([appsLine]), nowMs: 100)
+        XCTAssertNil(hub.unlinkGroup(program: "chrome", groupId: "c1"))
+        XCTAssertNil(hub.linkGroups(program: "chrome", groupId: "c1", targetProgram: "macapp", targetGroupId: "m1"))
+        hub.applySync(program: "chrome", groupId: "c1", contribution: ["scalars": ["allowedMinutes": 30], "scopes": [siteLine]], ts: 50)
+        hub.contributeLocalDefinitions(document: document([appsLine]), nowMs: 200)
+        XCTAssertEqual(sharedSurfaces(hub), ["apps", "site"], "the unchanged Mac group joins the new link with its Apps lines")
+    }
 }
