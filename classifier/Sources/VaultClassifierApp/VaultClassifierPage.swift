@@ -82,6 +82,14 @@ public final class VaultClassifierPage {
         return model?.mcpSnapshot(section: section)
     }
 
+    /// A platform's tag names (the editor's tag suggestions), each once.
+    public func tagNames(platformID: String) -> [String] {
+        start()
+        var seen = Set<String>()
+        return (model?.taxonomy(platformID: platformID) ?? []).flatMap(\.tags).map(\.name)
+            .filter { seen.insert($0.lowercased()).inserted }
+    }
+
     /// Runs one page action with the page's own validation; returns the issue
     /// the page would show (nil = success) and whether it would re-render.
     public func mcpPerform(action: String, data: [String: Any]) -> ClassifierMCPActionOutcome {

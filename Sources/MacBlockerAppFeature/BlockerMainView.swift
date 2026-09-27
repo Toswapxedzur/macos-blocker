@@ -82,9 +82,6 @@ public struct BlockerMainView: View {
             onStorePersisted: { enforcement.refresh(); QuickAddPanel.shared.reload() },
             onRunCustomGroup: { [weak enforcement] groupID, _ in enforcement?.runRule(groupID: groupID) },
             onSnoozePress: { [weak enforcement] groupID in enforcement?.fireSnoozePress(groupID: groupID) },
-            onShowSystemPanel: { [weak enforcement] json in enforcement?.showSystemPanel(json: json) },
-            onDismissSystemPanel: { [weak enforcement] id in enforcement?.dismissSystemPanel(id: id) },
-            systemPanelEventsJSON: { [weak enforcement] in enforcement?.drainSystemPanelEventsJSON() },
             clustersJSON: { [weak connection] in connection?.clustersJSON() },
             onLinkRequest: { [weak connection] kind, message in
                 guard let connection else { return "macapp-unavailable" }
@@ -94,7 +91,8 @@ public struct BlockerMainView: View {
                                             targetProgram: (message["targetProgram"] as? String) ?? "",
                                             targetGroupId: (message["targetGroupId"] as? String) ?? "")
                     : connection.unlinkGroup(program: ConnectionHub.localProgram, groupId: groupId)
-            }
+            },
+            tagNames: { platform in MainActor.assumeIsolated { VaultClassifierPage.shared.tagNames(platformID: platform) } }
         )
         #else
         return BlockerWebPanel()

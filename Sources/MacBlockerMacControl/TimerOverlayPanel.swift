@@ -1132,12 +1132,7 @@ public final class PanelOverlayPanelController {
     /// Replace the entire panel set across all groups at once (tick loop).
     /// Any group not present is treated as having no panels and is cleared.
     public func replaceAll(_ panelsByGroupID: [String: [PanelSnapshot]]) {
-        var next = panelsByGroupID.filter { !$0.value.isEmpty }
-        // System panels are driven by the web editor (parental PIN entry), not
-        // the rule tick loop, so preserve them across full replacements.
-        if let system = panelsByGroup[Self.systemGroupID] {
-            next[Self.systemGroupID] = system
-        }
+        let next = panelsByGroupID.filter { !$0.value.isEmpty }
         if next == panelsByGroup { return }
         panelsByGroup = next
         render()
@@ -1146,35 +1141,6 @@ public final class PanelOverlayPanelController {
     /// Immediately drop a group's panels (called when a group is disabled).
     public func removePanels(forGroup groupID: String) {
         if panelsByGroup.removeValue(forKey: groupID) != nil { render() }
-    }
-
-    /// Reserved group key for "system" overlay panels (e.g. parental PIN entry)
-    /// that are not produced by a custom rule but driven by the web editor.
-    public static let systemGroupID = "__system__"
-
-    /// Show (or replace by id) a system overlay panel. Multiple system panels
-    /// can coexist; each is keyed by its snapshot id.
-    public func showSystemPanel(_ snapshot: PanelSnapshot) {
-        var snap = snapshot
-        snap.groupId = Self.systemGroupID
-        var panels = panelsByGroup[Self.systemGroupID] ?? []
-        if let idx = panels.firstIndex(where: { $0.id == snap.id }) {
-            panels[idx] = snap
-        } else {
-            panels.append(snap)
-        }
-        update(panels: panels, forGroup: Self.systemGroupID)
-    }
-
-    /// Remove a single system panel by id (or all system panels when id is empty).
-    public func dismissSystemPanel(id: String) {
-        if id.isEmpty {
-            removePanels(forGroup: Self.systemGroupID)
-            return
-        }
-        var panels = panelsByGroup[Self.systemGroupID] ?? []
-        panels.removeAll { $0.id == id }
-        update(panels: panels, forGroup: Self.systemGroupID)
     }
 
     private func render() {

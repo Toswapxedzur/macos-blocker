@@ -104,10 +104,6 @@ public final class MacEnforcementBridge: ObservableObject {
     private var lastPanelFireAt: [String: Date] = [:]
     private var pendingPanelEvents: [String: (groupID: String, data: [String: String])] = [:]
 
-    // System overlay panel events (e.g. parental PIN entry) buffered for the
-    // web editor to poll via drainSystemPanelEventsJSON().
-    private var systemPanelEvents: [[String: String]] = []
-    private var editorCloseObserver: NSObjectProtocol?
     /// The Activity log's app-usage recorder, fed by this tick.
     public var activityRecorder: ActivityRecorderService?
     #endif
@@ -170,38 +166,6 @@ public final class MacEnforcementBridge: ObservableObject {
         #endif
     }
 
-    /// Show a system overlay panel (e.g. parental PIN entry) requested by the
-    /// web editor. `json` is a serialized `PanelSnapshot`.
-    public func showSystemPanel(json: String) {
-        #if os(macOS)
-        guard let data = json.data(using: .utf8),
-              let snapshot = try? JSONDecoder().decode(PanelSnapshot.self, from: data) else { return }
-        panelOverlay.showSystemPanel(snapshot)
-        #endif
-    }
-
-    /// Dismiss a system overlay panel by id (empty id dismisses all).
-    public func dismissSystemPanel(id: String) {
-        #if os(macOS)
-        panelOverlay.dismissSystemPanel(id: id)
-        #endif
-    }
-
-    /// Drains buffered system-panel interaction events as a JSON array string
-    /// (or nil when empty). Polled by the web editor each second.
-    public func drainSystemPanelEventsJSON() -> String? {
-        #if os(macOS)
-        guard !systemPanelEvents.isEmpty else { return nil }
-        let events = systemPanelEvents
-        systemPanelEvents.removeAll()
-        guard let data = try? JSONSerialization.data(withJSONObject: events),
-              let json = String(data: data, encoding: .utf8) else { return nil }
-        return json
-        #else
-        return nil
-        #endif
-    }
-
     /// Fire a `localFileEvent` for the given group. Called after a file
     /// operation initiated by a custom rule completes.
     public func fireLocalFileEvent(groupID: String, data: [String: String]) {
@@ -223,18 +187,6 @@ public final class MacEnforcementBridge: ObservableObject {
         lastSampleAt = Date()
         lastFrontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         registerWorkspaceObservers()
-        // The editor's parental PIN entry floats above everything; it belongs
-        // to the editor window and closes with it (nobody would answer it).
-        editorCloseObserver = NotificationCenter.default.addObserver(
-            forName: NSWindow.willCloseNotification, object: nil, queue: .main
-        ) { [weak self] note in
-            guard let window = note.object as? NSWindow, !(window is NSPanel),
-                  window.styleMask.contains(.titled) else { return }
-            MainActor.assumeIsolated {
-                self?.panelOverlay.dismissSystemPanel(id: "")
-                self?.systemPanelEvents.removeAll()
-            }
-        }
         panelOverlay.setEventHandler { [weak self] groupID, panelId, controlId, eventName, value, extra in
             guard let self else { return }
             var data: [String: String] = [
@@ -244,14 +196,6 @@ public final class MacEnforcementBridge: ObservableObject {
                 "value": value
             ]
             if !extra.isEmpty { data["valuesJSON"] = extra }
-            // System panels are driven by the web editor (parental PIN entry),
-            // not a custom rule: buffer their events for the editor to poll.
-            if groupID == PanelOverlayPanelController.systemGroupID {
-                // Bounded: with the editor closed nobody drains them.
-                self.systemPanelEvents.append(data)
-                if self.systemPanelEvents.count > 64 { self.systemPanelEvents.removeFirst(self.systemPanelEvents.count - 64) }
-                return
-            }
             if eventName == "click" {
                 self.firePanelEvent(groupID: groupID, data: data)
                 return
@@ -286,8 +230,6 @@ public final class MacEnforcementBridge: ObservableObject {
         toastOverlay.teardown()
         panelOverlay.teardown()
         unregisterWorkspaceObservers()
-        if let editorCloseObserver { NotificationCenter.default.removeObserver(editorCloseObserver) }
-        editorCloseObserver = nil
         #endif
     }
 
