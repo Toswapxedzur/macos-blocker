@@ -106,7 +106,7 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
         // without the user reopening the app — otherwise protection silently
         // stays off until they do. Production, bundled builds only; a user can
         // still turn it off in System Settings ▸ Login Items.
-        syncLoginItem(enabled: true)
+        registerLoginItem()
     }
 
     /// Keep the process — and therefore the hub — running after the last editor
@@ -154,37 +154,25 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
         ConnectionHub.shared.stop()
     }
 
-    /// Registers (or removes) the app as a login item so the bridge is available
-    /// across reboots without the user re-opening the app.
-    private func syncLoginItem(enabled: Bool) {
+    /// Registers the app as a login item so the hub is back after a reboot.
+    private func registerLoginItem() {
         guard VaultRuntimeEnvironment.current == .production else { return }
-        guard #available(macOS 13.0, *) else { return }
         do {
-            if enabled {
-                if SMAppService.mainApp.status != .enabled {
-                    try SMAppService.mainApp.register()
-                }
-            } else {
-                if SMAppService.mainApp.status == .enabled {
-                    try SMAppService.mainApp.unregister()
-                }
-            }
+            if SMAppService.mainApp.status != .enabled { try SMAppService.mainApp.register() }
         } catch {
-            // Non-fatal: an un-bundled dev build (e.g. `swift run`) cannot
-            // register, and the user may have overridden the item in System
-            // Settings ▸ Login Items.
-            NSLog("[ConnectionHub] login-item sync failed: \(error)")
+            // Non-fatal: an un-bundled dev build cannot register, and the user
+            // may have overridden the item in System Settings ▸ Login Items.
+            NSLog("[Mac Vault] login-item registration failed: \(error)")
         }
     }
 
     private func unregisterLoginItemForUninstall() {
-        guard #available(macOS 13.0, *) else { return }
         do {
             if SMAppService.mainApp.status == .enabled {
                 try SMAppService.mainApp.unregister()
             }
         } catch {
-            NSLog("[ConnectionHub] uninstall login-item unregister failed: \(error)")
+            NSLog("[Mac Vault] uninstall login-item unregister failed: \(error)")
         }
     }
 }

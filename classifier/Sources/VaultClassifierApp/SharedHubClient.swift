@@ -134,7 +134,10 @@ final class SharedHubClient {
             handshakeTimer = nil
             transition(to: .connected, error: "")
         case "rejected":
-            connectionFailed((object["reason"] as? String) ?? "rejected", retry: false)
+            // A refusal can pass (a slow proof, one bad reply): try again, as the
+            // extension does — only a protocol mismatch never can.
+            let reason = (object["reason"] as? String) ?? "rejected"
+            connectionFailed(reason, retry: reason != "protocol-mismatch")
         case "classifier-request":
             handleClassifierRequest(object)
         default:

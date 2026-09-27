@@ -373,6 +373,10 @@ public struct BlockerWebView: NSViewRepresentable {
                    let source = payload["source"] as? String {
                     onRunCustomGroup?(groupID, source)
                 }
+            case "reset-group-runtime":
+                if let payload = body["message"] as? [String: Any], let groupID = payload["groupId"] as? String {
+                    store.resetRuntime(groupID: groupID)
+                }
             case "fire-snooze-press":
                 if let payload = body["message"] as? [String: Any],
                    let groupID = payload["groupId"] as? String {

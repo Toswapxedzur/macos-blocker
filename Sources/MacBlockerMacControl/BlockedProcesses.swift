@@ -119,10 +119,21 @@ public enum BlockedProcesses {
     /// The running processes this policy blocks.
     public static func running(policy: GuardPolicy) -> [NSRunningApplication] {
         let apps = snapshotRunningApplications()
-        let chosen = Set(plan(policy: policy, running: apps.map(\.snapshot)) { path in
-            MacCodeSigning.info(forItemAt: path).map { ($0.teamIdentifier, $0.signingIdentifier) }
-        }.map(\.processIdentifier))
+        let chosen = Set(plan(policy: policy, running: apps.map(\.snapshot), signing: signingInfo).map(\.processIdentifier))
         return apps.filter { chosen.contains($0.snapshot.processIdentifier) }.map(\.app)
+    }
+
+    /// Code-signing identity per executable path, read once (the sweep runs
+    /// every second; an app's signature doesn't change while it is installed).
+    nonisolated(unsafe) private static var signingCache: [String: (team: String?, identifier: String?)?] = [:]
+    private static let signingLock = NSLock()
+    private static func signingInfo(_ path: String) -> (team: String?, identifier: String?)? {
+        signingLock.lock()
+        if let cached = signingCache[path] { signingLock.unlock(); return cached }
+        signingLock.unlock()
+        let info = MacCodeSigning.info(forItemAt: path).map { (team: $0.teamIdentifier, identifier: $0.signingIdentifier) }
+        signingLock.lock(); signingCache[path] = .some(info); signingLock.unlock()
+        return info
     }
     #endif
 }
