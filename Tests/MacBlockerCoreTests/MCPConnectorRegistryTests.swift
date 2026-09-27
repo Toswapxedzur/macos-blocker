@@ -13,12 +13,10 @@ final class MCPConnectorRegistryTests: XCTestCase {
         home = FileManager.default.temporaryDirectory
             .appendingPathComponent("mcp-registry-tests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-        UserDefaults.standard.removeObject(forKey: "MCPConnectorRegistry.userDisconnected.v1")
     }
 
     override func tearDownWithError() throws {
         try? FileManager.default.removeItem(at: home)
-        UserDefaults.standard.removeObject(forKey: "MCPConnectorRegistry.userDisconnected.v1")
     }
 
     private func registry() -> MCPConnectorRegistry {
@@ -142,7 +140,7 @@ final class MCPConnectorRegistryTests: XCTestCase {
 
     // MARK: End-to-end on disk
 
-    func testConnectThenDisconnectRoundTripsOnDisk() throws {
+    func testConnectWritesTheConfigOnDisk() throws {
         try touch(".cursor/mcp.json", "{}")
         let registry = registry()
         let cursor = try XCTUnwrap(registry.connector(id: "cursor"))
@@ -151,9 +149,6 @@ final class MCPConnectorRegistryTests: XCTestCase {
         XCTAssertEqual(registry.connect(cursor), .connected)
         XCTAssertTrue(registry.isConnected(cursor))
         XCTAssertTrue(try read(".cursor/mcp.json").contains("vault-mac"))
-
-        XCTAssertEqual(registry.disconnect(cursor), .disconnected)
-        XCTAssertFalse(registry.isConnected(cursor))
     }
 
     func testConnectCreatesMissingConfigFileAndDirectories() throws {
@@ -181,7 +176,7 @@ final class MCPConnectorRegistryTests: XCTestCase {
         XCTAssertFalse(registry.isConnected(cursor), "no launch auto-write before the integration is live")
     }
 
-    func testApplyDefaultConnectionsConnectsInstalledButRespectsExplicitDisconnect() throws {
+    func testApplyDefaultConnectionsConnectsEveryInstalledClient() throws {
         MCPConnectorRegistry.isLaunchAutoConnectEnabled = true
         defer { MCPConnectorRegistry.isLaunchAutoConnectEnabled = false }
         try touch(".cursor/mcp.json", "{}")
@@ -190,12 +185,10 @@ final class MCPConnectorRegistryTests: XCTestCase {
         let cursor = try XCTUnwrap(registry.connector(id: "cursor"))
         let codex = try XCTUnwrap(registry.connector(id: "codex"))
 
-        // User explicitly turns Codex off; Cursor is left at its default.
-        registry.disconnect(codex)
         registry.applyDefaultConnections()
 
-        XCTAssertTrue(registry.isConnected(cursor), "installed + undecided defaults to connected")
-        XCTAssertFalse(registry.isConnected(codex), "an explicit disconnect is not silently re-connected")
+        XCTAssertTrue(registry.isConnected(cursor))
+        XCTAssertTrue(registry.isConnected(codex))
     }
 
     // MARK: App Data (TCC) — launch sweep must not pop "access data from other apps"
