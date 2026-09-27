@@ -147,6 +147,44 @@ final class ParentalPinAndLockToolsTests: XCTestCase {
         XCTAssertNotEqual(ended?["activeMsApplied"] as? Bool, true, "the engine counts it once, as a snooze that ran out")
     }
 
+    func testTheRunToolIsTheEditorsRun() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("runtool-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir); VaultMCPTools.runRule = nil }
+        let shared = SharedAppGroupStore(baseDirectory: dir)
+        var raw = document().raw
+        var groups = raw["blockedGroups"] as? [[String: Any]] ?? []
+        groups.append(["id": "r", "name": "Rule", "groupType": "custom", "enabled": false, "blockingRulesText": "(on, v) => { v.log(1); }", "scopes": []])
+        raw["blockedGroups"] = groups
+        shared.writeData(try JSONSerialization.data(withJSONObject: raw), to: SharedAppGroupStore.webStoreFileName)
+        let store = GroupStore(shared: shared)
+        let tools = VaultMCPTools.groupTools(store: store)
+        let tool = try XCTUnwrap(tools.first { $0.name == "run_custom_rule" })
+        XCTAssertTrue(tool.description.contains("(on, v) =>") && tool.description.contains("v.block"), "the Mac rule reference comes with the tool")
+        XCTAssertFalse(tool.description.contains("v.cover"), "…and nothing of the browser's")
+
+        XCTAssertTrue(tool.handler(["id": "r"]).isError, "no engine, no run")
+        var runs: [(String, String)] = []
+        VaultMCPTools.runRule = { id, source in runs.append((id, source)); return ["ok": source != "42", "handlers": 1, "error": source == "42" ? "Compile failed" : NSNull()] }
+        XCTAssertTrue(tool.handler(["id": "a"]).isError, "only a custom group runs")
+        let ran = tool.handler(["id": "r"])
+        XCTAssertFalse(ran.isError)
+        XCTAssertEqual(runs.last?.1, "(on, v) => { v.log(1); }", "no source = the group's current rule text")
+        func json(_ result: MCPToolResult) -> [String: Any] { (try? JSONSerialization.jsonObject(with: Data(result.text.utf8))) as? [String: Any] ?? [:] }
+        XCTAssertEqual(json(ran)["ran"] as? Bool, true, ran.text)
+        let failed = tool.handler(["id": "r", "source": "42"])
+        XCTAssertFalse(failed.isError, "a rule that doesn't load is an answer, not a refusal")
+        XCTAssertEqual(json(failed)["ran"] as? Bool, false, failed.text)
+        XCTAssertEqual(json(failed)["error"] as? String, "Compile failed")
+
+        // Run's record, as the editor's Run leaves it.
+        _ = try store.mutate { try $0.recordRun(id: "r", source: "(on, v) => {}") }
+        let recorded = try XCTUnwrap(store.load().group(id: "r"))
+        XCTAssertEqual(recorded["activeEventSource"] as? String, "(on, v) => {}")
+        XCTAssertEqual(recorded["blockingRulesText"] as? String, "(on, v) => {}")
+        XCTAssertEqual(recorded["enabled"] as? Bool, true)
+        XCTAssertThrowsError(try store.mutate { try $0.recordRun(id: "a", source: "x") }, "only a custom group records a Run")
+    }
+
     func testTheUnlockToolRunsTheWholeConfirmation() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("locktools-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: dir) }
