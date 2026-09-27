@@ -166,7 +166,7 @@ public enum VaultMCPTools {
 
             MCPTool(
                 name: "run_custom_rule",
-                description: "Run a custom group's rule, as the editor's Run does: the source becomes the group's rule and starts fresh (its memory cleared, the group enabled). A rule that doesn't load changes nothing — the one running keeps running — and the answer says why (ran: false, error). Omit source to run the group's current rule text. Refused when the group is frozen. Mac Vault's rules control apps only. Write the source to this reference:\n" + ruleReference("mac"),
+                description: "Run a custom group's rule, as the editor's Run does: the source becomes the group's rule and keeps its memory (v.state); the group is enabled. A rule that doesn't load changes nothing — the one running keeps running — and the answer says why (ran: false, error). Omit source to run the group's current rule text. Refused when the group is frozen. Mac Vault's rules control apps only. Write the source to this reference:\n" + ruleReference("mac"),
                 inputSchema: [
                     "type": "object",
                     "properties": ["id": ["type": "string", "description": "The custom group's id."], "source": ["type": "string", "description": "The rule: (on, v) => { … }"]],
