@@ -363,7 +363,7 @@ public enum VaultMCPTools {
             switch error {
             case .groupNotFound(let id): return "Group not found: \(id)"
             case .invalidInput(let field): return "Invalid input: \(field)"
-            case .groupLocked(let id): return "Group \(id) is frozen, strict or parental-locked (the editor refuses this too)."
+            case .groupLocked(let id): return "Group \(id) is frozen (the editor refuses this too)."
             case .duplicateName(let name): return "Another group is already named \(name) (the editor refuses this too)."
             case .notLocked(let id): return "Group \(id) is not frozen."
             }

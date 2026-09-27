@@ -146,7 +146,7 @@ public final class GroupStore: @unchecked Sendable {
 public enum GroupStoreError: Error, Equatable {
     case groupNotFound(String)
     case invalidInput(String)
-    /// The group is frozen, strict or parental-locked; like the editor, the
+    /// The group is frozen; like the editor, the
     /// store refuses edits to it.
     case groupLocked(String)
     /// Another group already has this name (case-insensitively): groups link by
@@ -367,13 +367,10 @@ public struct WebStoreDocument {
     }
 
     /// Same rule as the editor (group-actions.js `isLocked`): a lock time means
-    /// locked. A group stored before 2026-09-26 that the editor has not rewritten
-    /// yet still counts as locked by its old freeze mode (nobody is unlocked by
-    /// the upgrade).
+    /// locked. (A lock stored before 2026-09-26 is converted once by the engine,
+    /// BlockerWebStore.tidied, with the editor's own normalizeLock.)
     public static func isLocked(_ group: [String: Any]) -> Bool {
-        if group.keys.contains("lockedAtMs") { return group["lockedAtMs"] is NSNumber }
-        guard let mode = group["freezeMode"] as? String else { return false }
-        return mode != "none"
+        group["lockedAtMs"] is NSNumber
     }
 
     public mutating func deleteGroup(id: String) throws {

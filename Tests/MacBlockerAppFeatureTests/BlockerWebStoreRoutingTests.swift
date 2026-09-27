@@ -97,7 +97,12 @@ final class BlockerWebStoreRoutingTests: XCTestCase {
         XCTAssertEqual((tidy?["usageTimersMs"] as? [String: Any])?.keys.sorted(), ["g1"])
         XCTAssertEqual((tidy?["groupSnoozeTotalsMs"] as? [String: Any])?.isEmpty, true)
         XCTAssertEqual(tidy?["quickAddGroupId"] as? String, "")
-        XCTAssertNil(BlockerWebStore.tidied(["blockedGroups": [["id": "g1"]], "usageTimersMs": ["g1": 5]], nowMs: 0), "nothing to tidy: no write")
+        XCTAssertNil(BlockerWebStore.tidied(["blockedGroups": [["id": "g1", "lockedAtMs": NSNull()]], "usageTimersMs": ["g1": 5]], nowMs: 0), "nothing to tidy: no write")
+        let legacy = BlockerWebStore.tidied(["blockedGroups": [["id": "g1", "freezeMode": "strict", "frozenAtMs": 5, "strictFreezeHours": 3]]], nowMs: 0)
+        let converted = (legacy?["blockedGroups"] as? [[String: Any]])?.first
+        XCTAssertEqual((converted?["lockedAtMs"] as? NSNumber)?.doubleValue, 5, "an old strict freeze becomes the editor's lock once")
+        XCTAssertEqual((converted?["lockWaitHours"] as? NSNumber)?.doubleValue, 3)
+        XCTAssertNil(converted?["freezeMode"])
     }
 
     func testTheEditorMergesOnlyTheKeysItSet() throws {

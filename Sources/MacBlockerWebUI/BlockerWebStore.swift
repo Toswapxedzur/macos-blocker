@@ -100,7 +100,22 @@ public final class BlockerWebStore: @unchecked Sendable {
         let counted = countFinishedSnoozes(in: document, nowMs: nowMs)
         var next = counted ?? document
         var changed = counted != nil
-        let groups = next["blockedGroups"] as? [[String: Any]] ?? []
+        var groups = next["blockedGroups"] as? [[String: Any]] ?? []
+        // A lock stored before 2026-09-26 (freezeMode) becomes the editor's lock
+        // unit once — the same conversion as group-actions.js normalizeLock — so
+        // every rule reads one lock.
+        if groups.contains(where: { !$0.keys.contains("lockedAtMs") }) {
+            groups = groups.map { group in
+                guard !group.keys.contains("lockedAtMs"),
+                      let unit = GroupActionsRuntime.shared.call("normalizeLock", [group]) as? [String: Any] else { return group }
+                var converted = group.merging(unit) { _, new in new }
+                if converted["lockedAtMs"] == nil { converted["lockedAtMs"] = NSNull() }
+                for legacy in ["freezeMode", "freezeModeChoice", "strictFreezeHours", "frozenAtMs", "freezeChangedAtMs"] { converted.removeValue(forKey: legacy) }
+                return converted
+            }
+            next["blockedGroups"] = groups
+            changed = true
+        }
         let nameKeys = groups.compactMap { ($0["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }.filter { !$0.isEmpty }
         if Set(nameKeys).count < nameKeys.count,
            let renamed = GroupActionsRuntime.shared.call("dedupeNames", [groups, linkedGroupIds]) as? [[String: Any]] {

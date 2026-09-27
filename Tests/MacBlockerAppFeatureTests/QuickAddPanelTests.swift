@@ -25,7 +25,7 @@ final class QuickAddPanelTests: XCTestCase {
     }
 
     func testALockedGroupIsNoTarget() {
-        let locked: [[String: Any]] = [["id": "L", "groupType": "site", "freezeMode": "parental"]]
+        let locked: [[String: Any]] = [["id": "L", "groupType": "site", "lockedAtMs": 1_000]]
         XCTAssertNil(QuickAddPanel.target(in: store(enabled: true, groupID: "L", groups: locked)), "a locked group takes no edits")
     }
 }
