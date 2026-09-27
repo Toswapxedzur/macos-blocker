@@ -11,11 +11,9 @@ public struct BlockerWebPanel: View {
     private let onStorePersisted: (() -> Void)?
     private let onRunCustomGroup: ((String, String) -> Void)?
     private let onSnoozePress: ((String) -> Void)?
-    private let onShowSystemPanel: ((String) -> Void)?
-    private let onDismissSystemPanel: ((String) -> Void)?
-    private let systemPanelEventsJSON: (() -> String?)?
     private let clustersJSON: (() -> String?)?
     private let onLinkRequest: ((String, [String: Any]) -> String?)?
+    private let tagNames: ((String) -> [String])?
 
     public init(
         store: BlockerWebStore = BlockerWebStore(),
@@ -24,11 +22,9 @@ public struct BlockerWebPanel: View {
         onStorePersisted: (() -> Void)? = nil,
         onRunCustomGroup: ((String, String) -> Void)? = nil,
         onSnoozePress: ((String) -> Void)? = nil,
-        onShowSystemPanel: ((String) -> Void)? = nil,
-        onDismissSystemPanel: ((String) -> Void)? = nil,
-        systemPanelEventsJSON: (() -> String?)? = nil,
         clustersJSON: (() -> String?)? = nil,
-        onLinkRequest: ((String, [String: Any]) -> String?)? = nil
+        onLinkRequest: ((String, [String: Any]) -> String?)? = nil,
+        tagNames: ((String) -> [String])? = nil
     ) {
         self.store = store
         self.appInventoryJSON = appInventoryJSON
@@ -36,11 +32,9 @@ public struct BlockerWebPanel: View {
         self.onStorePersisted = onStorePersisted
         self.onRunCustomGroup = onRunCustomGroup
         self.onSnoozePress = onSnoozePress
-        self.onShowSystemPanel = onShowSystemPanel
-        self.onDismissSystemPanel = onDismissSystemPanel
-        self.systemPanelEventsJSON = systemPanelEventsJSON
         self.clustersJSON = clustersJSON
         self.onLinkRequest = onLinkRequest
+        self.tagNames = tagNames
     }
 
     public var body: some View {
@@ -52,11 +46,9 @@ public struct BlockerWebPanel: View {
             onRunCustomGroup: onRunCustomGroup,
             onSnoozePress: onSnoozePress,
            
-            onShowSystemPanel: onShowSystemPanel,
-            onDismissSystemPanel: onDismissSystemPanel,
-            systemPanelEventsJSON: systemPanelEventsJSON,
             clustersJSON: clustersJSON,
-            onLinkRequest: onLinkRequest
+            onLinkRequest: onLinkRequest,
+            tagNames: tagNames
         )
         .ignoresSafeArea()
     }

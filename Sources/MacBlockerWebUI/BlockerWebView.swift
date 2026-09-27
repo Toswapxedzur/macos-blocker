@@ -30,17 +30,15 @@ public struct BlockerWebView: NSViewRepresentable {
     private let onStorePersisted: (() -> Void)?
     private let onSnoozePress: ((String) -> Void)?
     /// Show a system overlay panel (serialized `PanelSnapshot`) on the native side.
-    private let onShowSystemPanel: ((String) -> Void)?
     /// Dismiss a system overlay panel by id ("" dismisses all).
-    private let onDismissSystemPanel: ((String) -> Void)?
     /// Supplies buffered system-panel events as a JSON array string; polled each second.
-    private let systemPanelEventsJSON: (() -> String?)?
     /// Supplies the links and every program's groups (JSON {clusters, rosters});
     /// pushed each second to `window.__cbClustersState`.
     private let clustersJSON: (() -> String?)?
     /// The editor's Link / Unlink ("group-link" | "group-unlink", its message);
     /// returns the refusal, or nil.
     private let onLinkRequest: ((String, [String: Any]) -> String?)?
+    private let tagNames: ((String) -> [String])?
 
     public init(
         store: BlockerWebStore = BlockerWebStore(),
@@ -49,11 +47,9 @@ public struct BlockerWebView: NSViewRepresentable {
         onStorePersisted: (() -> Void)? = nil,
         onRunCustomGroup: ((String, String) -> Void)? = nil,
         onSnoozePress: ((String) -> Void)? = nil,
-        onShowSystemPanel: ((String) -> Void)? = nil,
-        onDismissSystemPanel: ((String) -> Void)? = nil,
-        systemPanelEventsJSON: (() -> String?)? = nil,
         clustersJSON: (() -> String?)? = nil,
-        onLinkRequest: ((String, [String: Any]) -> String?)? = nil
+        onLinkRequest: ((String, [String: Any]) -> String?)? = nil,
+        tagNames: ((String) -> [String])? = nil
     ) {
         self.store = store
         self.appInventoryJSON = appInventoryJSON
@@ -61,15 +57,13 @@ public struct BlockerWebView: NSViewRepresentable {
         self.onStorePersisted = onStorePersisted
         self.onRunCustomGroup = onRunCustomGroup
         self.onSnoozePress = onSnoozePress
-        self.onShowSystemPanel = onShowSystemPanel
-        self.onDismissSystemPanel = onDismissSystemPanel
-        self.systemPanelEventsJSON = systemPanelEventsJSON
         self.clustersJSON = clustersJSON
         self.onLinkRequest = onLinkRequest
+        self.tagNames = tagNames
     }
 
     public func makeCoordinator() -> Coordinator {
-        Coordinator(store: store, ruleLogJSON: ruleLogJSON, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup, onSnoozePress: onSnoozePress, onShowSystemPanel: onShowSystemPanel, onDismissSystemPanel: onDismissSystemPanel, systemPanelEventsJSON: systemPanelEventsJSON, clustersJSON: clustersJSON, onLinkRequest: onLinkRequest)
+        Coordinator(store: store, ruleLogJSON: ruleLogJSON, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup, onSnoozePress: onSnoozePress, clustersJSON: clustersJSON, onLinkRequest: onLinkRequest, tagNames: tagNames)
     }
 
     private func makeWebView(context: Context) -> WKWebView {
@@ -231,11 +225,9 @@ public struct BlockerWebView: NSViewRepresentable {
         private let onStorePersisted: (() -> Void)?
         private let onRunCustomGroup: ((String, String) -> Void)?
         private let onSnoozePress: ((String) -> Void)?
-        private let onShowSystemPanel: ((String) -> Void)?
-        private let onDismissSystemPanel: ((String) -> Void)?
-        private let systemPanelEventsJSON: (() -> String?)?
         private let clustersJSON: (() -> String?)?
         private let onLinkRequest: ((String, [String: Any]) -> String?)?
+        private let tagNames: ((String) -> [String])?
 
         private var usagePushTimer: Timer?
         // Observes native writes to web-store.json (an MCP tool call, a direct
@@ -249,22 +241,18 @@ public struct BlockerWebView: NSViewRepresentable {
             onStorePersisted: (() -> Void)?,
             onRunCustomGroup: ((String, String) -> Void)?,
             onSnoozePress: ((String) -> Void)?,
-            onShowSystemPanel: ((String) -> Void)?,
-            onDismissSystemPanel: ((String) -> Void)?,
-            systemPanelEventsJSON: (() -> String?)?,
             clustersJSON: (() -> String?)?,
-            onLinkRequest: ((String, [String: Any]) -> String?)?
+            onLinkRequest: ((String, [String: Any]) -> String?)?,
+            tagNames: ((String) -> [String])?
         ) {
             self.store = store
             self.ruleLogJSON = ruleLogJSON
             self.onStorePersisted = onStorePersisted
             self.onRunCustomGroup = onRunCustomGroup
             self.onSnoozePress = onSnoozePress
-            self.onShowSystemPanel = onShowSystemPanel
-            self.onDismissSystemPanel = onDismissSystemPanel
-            self.systemPanelEventsJSON = systemPanelEventsJSON
             self.clustersJSON = clustersJSON
             self.onLinkRequest = onLinkRequest
+            self.tagNames = tagNames
         }
 
         deinit {
@@ -282,7 +270,6 @@ public struct BlockerWebView: NSViewRepresentable {
             let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
                 self?.pushUsage()
                 self?.pushRuleLog()
-                self?.pushSystemPanelEvents()
                 self?.pushClusters()
             }
             usagePushTimer = timer
@@ -310,13 +297,6 @@ public struct BlockerWebView: NSViewRepresentable {
             let escaped = BlockerWebView.javaScriptStringLiteral(raw)
             webView.evaluateJavaScript("window.__cbApplyNativeStore(\(escaped));", completionHandler: nil)
         }
-
-        private func pushSystemPanelEvents() {
-            guard let webView, let provider = systemPanelEventsJSON,
-                  let json = provider(), !json.isEmpty else { return }
-            webView.evaluateJavaScript("window.__cbSystemPanelEvent(\(json));", completionHandler: nil)
-        }
-
 
         private func pushClusters() {
             guard let webView, let provider = clustersJSON,
@@ -373,6 +353,15 @@ public struct BlockerWebView: NSViewRepresentable {
                    let source = payload["source"] as? String {
                     onRunCustomGroup?(groupID, source)
                 }
+            case "vault-classifier-tag-names":
+                // The editor's tag suggestions, from Mac Vault's own classifier.
+                let platform = (body["message"] as? [String: Any])?["platform"] as? String ?? ""
+                let names = tagNames?(platform) ?? []
+                if let id = body["requestId"] as? String,
+                   let data = try? JSONSerialization.data(withJSONObject: [id, ["ok": true, "names": Array(names.prefix(200))]] as [Any]),
+                   let json = String(data: data, encoding: .utf8) {
+                    webView?.evaluateJavaScript("window.__cbNativeReply && window.__cbNativeReply.apply(null, \(json));", completionHandler: nil)
+                }
             case "reset-group-runtime":
                 if let payload = body["message"] as? [String: Any], let groupID = payload["groupId"] as? String {
                     store.resetRuntime(groupID: groupID)
@@ -381,18 +370,6 @@ public struct BlockerWebView: NSViewRepresentable {
                 if let payload = body["message"] as? [String: Any],
                    let groupID = payload["groupId"] as? String {
                     onSnoozePress?(groupID)
-                }
-            case "show-system-panel":
-                if let payload = body["message"] as? [String: Any],
-                   let snapshot = payload["snapshot"],
-                   let data = try? JSONSerialization.data(withJSONObject: snapshot),
-                   let json = String(data: data, encoding: .utf8) {
-                    onShowSystemPanel?(json)
-                }
-            case "dismiss-system-panel":
-                if let payload = body["message"] as? [String: Any] {
-                    let id = (payload["id"] as? String) ?? ""
-                    onDismissSystemPanel?(id)
                 }
             case "clusters-status":
                 pushClusters()
