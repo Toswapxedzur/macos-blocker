@@ -104,20 +104,8 @@ public enum ChromeExtensionImporter {
             resetIntervalHours: positive(object["resetIntervalHours"]) ?? 24,
             resetAtMidnight: bool(object["resetAtMidnight"]) ?? false,
             rollingLimit: bool(object["rollingLimit"]) ?? false,
-            allowSnooze: bool(object["allowSnooze"]) ?? true,
-            snoozeMinutes: int(object["snoozeMinutes"]) ?? 30,
-            snoozeActivationDelayMinutes: int(object["snoozeActivationDelayMinutes"]) ?? 0,
-            snoozeCooldownMinutes: int(object["snoozeCooldownMinutes"]) ?? 0,
-            snoozeConfirmations: int(object["snoozeConfirmations"]) ?? 0,
             activeDays: parseDays(object["activeDays"]),
             timeWindows: ScheduleParser.parseWindows(scheduleText),
-            lockedAt: WebStoreDocument.isLocked(object)
-                ? (dateFromMilliseconds(object["lockedAtMs"]) ?? dateFromMilliseconds(object["frozenAtMs"]) ?? Date(timeIntervalSince1970: 0))
-                : nil,
-            lockWaitHours: (object["lockWaitHours"] as? NSNumber)?.doubleValue ?? 0,
-            parentalPasswordHash: string(object["parentalPasswordHash"]),
-            parentalPasswordSalt: string(object["parentalPasswordSalt"]),
-            fallbackMessage: "",
             customRuleSource: string(object["blockingRulesText"]) ?? "",
             targets: sites + apps,
             applicationAllowlist: WebStoreDocument.appsExcept(of: object)
@@ -198,16 +186,6 @@ public enum ChromeExtensionImporter {
         value as? Bool
     }
 
-    private static func int(_ value: Any?) -> Int? {
-        if let int = value as? Int {
-            return int
-        }
-        if let number = value as? NSNumber {
-            return number.intValue
-        }
-        return nil
-    }
-
     /// Keeps fractions (a 2.5 h interval must not truncate to 2, nor 0.5 h to 0).
     private static func positive(_ value: Any?) -> Double? {
         double(value).flatMap { $0 > 0 ? $0 : nil }
@@ -219,13 +197,6 @@ public enum ChromeExtensionImporter {
             return double.isFinite ? double : nil
         }
         return nil
-    }
-
-    private static func dateFromMilliseconds(_ value: Any?) -> Date? {
-        guard let number = value as? NSNumber else {
-            return nil
-        }
-        return Date(timeIntervalSince1970: number.doubleValue / 1000)
     }
 }
 

@@ -1161,7 +1161,7 @@ final class ConnectionHub: ObservableObject {
             return ownCluster === otherCluster ? "already-linked" : "linked-elsewhere"
         }
         if let existing = ownCluster ?? otherCluster {
-            if Self.lockIsLocked(existing.sharedLock) { lock.unlock(); return "group-locked" }
+            if WebStoreDocument.isLocked(existing.sharedLock) { lock.unlock(); return "group-locked" }
             let joining = ownCluster == nil ? program : targetProgram
             if existing.members.contains(joining) { lock.unlock(); return "program-already-linked" }
         }
@@ -1187,7 +1187,7 @@ final class ConnectionHub: ObservableObject {
     func unlinkGroup(program: String, groupId: String) -> String? {
         lock.lock()
         guard let cluster = clusterLocked(program: program, groupId: groupId) else { lock.unlock(); return "not-linked" }
-        if Self.lockIsLocked(cluster.sharedLock) { lock.unlock(); return "group-locked" }
+        if WebStoreDocument.isLocked(cluster.sharedLock) { lock.unlock(); return "group-locked" }
         removeMemberLocked(cluster, program: program)
         persistClustersLocked()
         let snapshot = clusterJSONObject(cluster)
@@ -1206,14 +1206,6 @@ final class ConnectionHub: ObservableObject {
     func activeClusterCount() -> Int {
         lock.lock(); defer { lock.unlock() }
         return clusters.values.filter { $0.members.count >= 2 }.count
-    }
-
-    /// group-actions.js LOCK_FIELDS: the fields of the one lock unit.
-    static let lockFields = ["lockedAtMs", "lockWaitHours", "parentalPasswordHash", "parentalPasswordSalt", "lockVersion"]
-
-    /// A lock unit (group-actions.js) is locked when it has a lock time.
-    static func lockIsLocked(_ unit: [String: Any]) -> Bool {
-        (unit["lockedAtMs"] as? NSNumber) != nil
     }
 
     /// Folds one member's contribution into the cluster's shared state and, if the
@@ -1244,7 +1236,7 @@ final class ConnectionHub: ObservableObject {
             // The group whose Link button made the link: its settings win.
             let priority = firstContribution && program == cluster.initiator
             let wins = priority || ts >= cluster.sharedTs
-            let budgetBefore = Self.budgetShape(cluster.sharedScalars)
+            let scalarsBefore = cluster.sharedScalars
             cluster.contributed.insert(program)
 
             // Scalars: last writer wins, except the link initiator's settings
@@ -1259,10 +1251,11 @@ final class ConnectionHub: ObservableObject {
                 }
             }
             if let name = cluster.sharedScalars["name"] as? String, !name.isEmpty { cluster.groupName = name }
-            // A changed budget (the same fields that restart an unlinked group's
-            // budget in the editor) restarts the shared budget for every device:
+            // A changed budget (the editor's own rule, group-actions.js
+            // budgetRestarts) restarts the shared budget for every device:
             // linked groups are one group.
-            if !budgetBefore.isEmpty, Self.budgetShape(cluster.sharedScalars) != budgetBefore {
+            if !scalarsBefore.isEmpty,
+               GroupActionsRuntime.shared.call("budgetRestarts", [scalarsBefore, cluster.sharedScalars]) as? Bool == true {
                 cluster.sharedUsageMs = 0
                 // The new period starts on the group's own grid (with midnight
                 // re-anchoring that is today's grid, not this instant), as every
@@ -1380,14 +1373,6 @@ final class ConnectionHub: ObservableObject {
         }
     }
 
-    /// The settings whose change restarts a budget (popup `modeChanged` /
-    /// `resetIntervalChanged`); empty when nothing is shared yet.
-    static func budgetShape(_ scalars: [String: Any]) -> String {
-        guard !scalars.isEmpty else { return "" }
-        return ["mode", "resetIntervalHours", "resetAtMidnight", "rollingLimit"]
-            .map { "\(scalars[$0] ?? "")" }.joined(separator: "|")
-    }
-
     /// Mirror of group-scopes.js `SYNC_SCALAR_FIELDS` (a test keeps the two equal):
     /// the policy settings a linked group shares.
     static let syncScalarFields = [
@@ -1419,7 +1404,7 @@ final class ConnectionHub: ObservableObject {
             guard let id = group["id"] as? String else { return nil }
             return ["id": id, "name": (group["name"] as? String) ?? "", "frozen": WebStoreDocument.isLocked(group)]
         }
-        let rosterKey = Self.canonicalJSON(roster)
+        let rosterKey = WebStoreDocument.canonicalJSON(roster)
         if rosterKey != lastLocalRoster {
             lastLocalRoster = rosterKey
             setRoster(program: Self.localProgram, groups: roster)
@@ -1446,9 +1431,9 @@ final class ConnectionHub: ObservableObject {
             // The lock travels as its own versioned unit (group-actions.js).
             var lockUnit: [String: Any] = [:]
             if group["lockVersion"] != nil {
-                for field in Self.lockFields { lockUnit[field] = group[field] ?? NSNull() }
+                for field in WebStoreDocument.lockFieldNames { lockUnit[field] = group[field] ?? NSNull() }
             }
-            let key = Self.canonicalJSON(["scalars": scalars, "scopes": scopes, "lock": lockUnit])
+            let key = WebStoreDocument.canonicalJSON(["scalars": scalars, "scopes": scopes, "lock": lockUnit])
             let previous = localDefinitionSeen[groupID]
             if previous == key { continue }
             localDefinitionSeen[groupID] = key
@@ -1458,10 +1443,10 @@ final class ConnectionHub: ObservableObject {
                 ts = 0 // joining: its lines are unioned; its settings never beat a newer edit
             } else if previous == nil {
                 continue // first sight in this process of an already-contributed group: not an edit
-            } else if Self.canonicalJSON(Self.syncScalarFields.reduce(into: [String: Any]()) { $0[$1] = cluster.sharedScalars[$1] })
-                        == Self.canonicalJSON(Self.syncScalarFields.reduce(into: [String: Any]()) { $0[$1] = scalars[$1] })
-                        && Self.canonicalJSON(cluster.sharedScopes) == Self.canonicalJSON(scopes)
-                        && (lockUnit.isEmpty || Self.canonicalJSON(lockUnit) == Self.canonicalJSON(Self.lockFields.reduce(into: [String: Any]()) { $0[$1] = cluster.sharedLock[$1] ?? NSNull() })) {
+            } else if WebStoreDocument.canonicalJSON(Self.syncScalarFields.reduce(into: [String: Any]()) { $0[$1] = cluster.sharedScalars[$1] })
+                        == WebStoreDocument.canonicalJSON(Self.syncScalarFields.reduce(into: [String: Any]()) { $0[$1] = scalars[$1] })
+                        && WebStoreDocument.canonicalJSON(cluster.sharedScopes) == WebStoreDocument.canonicalJSON(scopes)
+                        && (lockUnit.isEmpty || WebStoreDocument.canonicalJSON(lockUnit) == WebStoreDocument.canonicalJSON(WebStoreDocument.lockFieldNames.reduce(into: [String: Any]()) { $0[$1] = cluster.sharedLock[$1] ?? NSNull() })) {
                 continue // the file caught up with the shared definition (adopted), not an edit
             } else {
                 ts = nowMs
@@ -1477,12 +1462,6 @@ final class ConnectionHub: ObservableObject {
         }
         lock.unlock()
         for frame in frames { submitBridgeFrame(frame) }
-    }
-
-    static func canonicalJSON(_ value: Any) -> String {
-        guard JSONSerialization.isValidJSONObject(value),
-              let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) else { return "" }
-        return String(data: data, encoding: .utf8) ?? ""
     }
 
     /// The stored document with each linked group's live shared definition
@@ -1582,7 +1561,7 @@ final class ConnectionHub: ObservableObject {
         guard !groupID.isEmpty else { return nil }
         lock.lock()
         defer { lock.unlock() }
-        return clusters.values.first { $0.members.contains(Self.localProgram) && $0.memberGroupIds[Self.localProgram] == groupID }
+        return clusterLocked(program: Self.localProgram, groupId: groupID)
     }
 
     /// Folds a member's rolling usage into the cluster: `usageBuckets` are

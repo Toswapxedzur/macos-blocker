@@ -37,8 +37,6 @@ public struct BlockTarget: Codable, Equatable, Identifiable, Sendable {
         case application
         case category
         case webDomain
-        case urlPattern
-        case legacyPlatform
     }
 
     public var id: String
@@ -79,20 +77,8 @@ public struct BlockGroup: Codable, Identifiable, Equatable, Sendable {
     /// Genuine sliding-window limit: used time counts until it is
     /// `resetIntervalHours` old, then comes back gradually.
     public var rollingLimit: Bool
-    public var allowSnooze: Bool
-    public var snoozeMinutes: Int
-    public var snoozeActivationDelayMinutes: Int
-    public var snoozeCooldownMinutes: Int
-    public var snoozeConfirmations: Int
     public var activeDays: Set<Weekday>
     public var timeWindows: [TimeWindow]
-    /// The lock (group-actions.js): when it was frozen (nil = unlocked) and its
-    /// wait gate. It only gates edits; enforcement never reads it.
-    public var lockedAt: Date?
-    public var lockWaitHours: Double
-    public var parentalPasswordHash: String?
-    public var parentalPasswordSalt: String?
-    public var fallbackMessage: String
     public var customRuleSource: String
     public var targets: [BlockTarget]
     /// "Block every application except these": the group's application targets
@@ -110,18 +96,8 @@ public struct BlockGroup: Codable, Identifiable, Equatable, Sendable {
         resetIntervalHours: Double = 24,
         resetAtMidnight: Bool = false,
         rollingLimit: Bool = false,
-        allowSnooze: Bool = true,
-        snoozeMinutes: Int = 30,
-        snoozeActivationDelayMinutes: Int = 0,
-        snoozeCooldownMinutes: Int = 0,
-        snoozeConfirmations: Int = 0,
         activeDays: Set<Weekday> = Set(Weekday.allCases),
         timeWindows: [TimeWindow] = [],
-        lockedAt: Date? = nil,
-        lockWaitHours: Double = 0,
-        parentalPasswordHash: String? = nil,
-        parentalPasswordSalt: String? = nil,
-        fallbackMessage: String = "",
         customRuleSource: String = "",
         targets: [BlockTarget] = [],
         applicationAllowlist: Bool = false
@@ -135,18 +111,8 @@ public struct BlockGroup: Codable, Identifiable, Equatable, Sendable {
         self.resetIntervalHours = resetIntervalHours
         self.resetAtMidnight = resetAtMidnight
         self.rollingLimit = rollingLimit
-        self.allowSnooze = allowSnooze
-        self.snoozeMinutes = snoozeMinutes
-        self.snoozeActivationDelayMinutes = snoozeActivationDelayMinutes
-        self.snoozeCooldownMinutes = snoozeCooldownMinutes
-        self.snoozeConfirmations = snoozeConfirmations
         self.activeDays = activeDays
         self.timeWindows = timeWindows
-        self.lockedAt = lockedAt
-        self.lockWaitHours = lockWaitHours
-        self.parentalPasswordHash = parentalPasswordHash
-        self.parentalPasswordSalt = parentalPasswordSalt
-        self.fallbackMessage = fallbackMessage
         self.customRuleSource = customRuleSource
         self.targets = targets
         self.applicationAllowlist = applicationAllowlist

@@ -10,17 +10,11 @@ public extension Notification.Name {
     static let vaultSwitchScene = Notification.Name("VaultSwitchScene")
 }
 
-#if canImport(UIKit)
-import UIKit
-public typealias _CBViewRepresentable = UIViewRepresentable
-#elseif canImport(AppKit)
 import AppKit
-public typealias _CBViewRepresentable = NSViewRepresentable
-#endif
 
 /// Hosts the ported customBlocker editor (`popup.html`) inside a WKWebView and
 /// bridges its chrome.storage snapshot to a native file via `BlockerWebStore`.
-public struct BlockerWebView: _CBViewRepresentable {
+public struct BlockerWebView: NSViewRepresentable {
     private let store: BlockerWebStore
     private let onRunCustomGroup: ((String, String) -> Void)?
     /// Supplies the installed-application inventory as a JSON array string
@@ -35,7 +29,6 @@ public struct BlockerWebView: _CBViewRepresentable {
     /// persisted, so the host can recompile/enforce the policy immediately.
     private let onStorePersisted: (() -> Void)?
     private let onSnoozePress: ((String) -> Void)?
-    private let onPanelEvent: ((String, [String: String]) -> Void)?
     /// Show a system overlay panel (serialized `PanelSnapshot`) on the native side.
     private let onShowSystemPanel: ((String) -> Void)?
     /// Dismiss a system overlay panel by id ("" dismisses all).
@@ -56,7 +49,6 @@ public struct BlockerWebView: _CBViewRepresentable {
         onStorePersisted: (() -> Void)? = nil,
         onRunCustomGroup: ((String, String) -> Void)? = nil,
         onSnoozePress: ((String) -> Void)? = nil,
-        onPanelEvent: ((String, [String: String]) -> Void)? = nil,
         onShowSystemPanel: ((String) -> Void)? = nil,
         onDismissSystemPanel: ((String) -> Void)? = nil,
         systemPanelEventsJSON: (() -> String?)? = nil,
@@ -69,7 +61,6 @@ public struct BlockerWebView: _CBViewRepresentable {
         self.onStorePersisted = onStorePersisted
         self.onRunCustomGroup = onRunCustomGroup
         self.onSnoozePress = onSnoozePress
-        self.onPanelEvent = onPanelEvent
         self.onShowSystemPanel = onShowSystemPanel
         self.onDismissSystemPanel = onDismissSystemPanel
         self.systemPanelEventsJSON = systemPanelEventsJSON
@@ -78,7 +69,7 @@ public struct BlockerWebView: _CBViewRepresentable {
     }
 
     public func makeCoordinator() -> Coordinator {
-        Coordinator(store: store, ruleLogJSON: ruleLogJSON, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup, onSnoozePress: onSnoozePress, onPanelEvent: onPanelEvent, onShowSystemPanel: onShowSystemPanel, onDismissSystemPanel: onDismissSystemPanel, systemPanelEventsJSON: systemPanelEventsJSON, clustersJSON: clustersJSON, onLinkRequest: onLinkRequest)
+        Coordinator(store: store, ruleLogJSON: ruleLogJSON, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup, onSnoozePress: onSnoozePress, onShowSystemPanel: onShowSystemPanel, onDismissSystemPanel: onDismissSystemPanel, systemPanelEventsJSON: systemPanelEventsJSON, clustersJSON: clustersJSON, onLinkRequest: onLinkRequest)
     }
 
     private func makeWebView(context: Context) -> WKWebView {
@@ -222,21 +213,13 @@ public struct BlockerWebView: _CBViewRepresentable {
     </body></html>
     """
 
-    // MARK: UIKit
+    // MARK: NSViewRepresentable
 
-    #if canImport(UIKit)
-    public func makeUIView(context: Context) -> WKWebView {
-        makeWebView(context: context)
-    }
-
-    public func updateUIView(_ uiView: WKWebView, context: Context) {}
-    #elseif canImport(AppKit)
     public func makeNSView(context: Context) -> WKWebView {
         makeWebView(context: context)
     }
 
     public func updateNSView(_ nsView: WKWebView, context: Context) {}
-    #endif
 
     // MARK: Coordinator
 
@@ -248,7 +231,6 @@ public struct BlockerWebView: _CBViewRepresentable {
         private let onStorePersisted: (() -> Void)?
         private let onRunCustomGroup: ((String, String) -> Void)?
         private let onSnoozePress: ((String) -> Void)?
-        private let onPanelEvent: ((String, [String: String]) -> Void)?
         private let onShowSystemPanel: ((String) -> Void)?
         private let onDismissSystemPanel: ((String) -> Void)?
         private let systemPanelEventsJSON: (() -> String?)?
@@ -267,7 +249,6 @@ public struct BlockerWebView: _CBViewRepresentable {
             onStorePersisted: (() -> Void)?,
             onRunCustomGroup: ((String, String) -> Void)?,
             onSnoozePress: ((String) -> Void)?,
-            onPanelEvent: ((String, [String: String]) -> Void)?,
             onShowSystemPanel: ((String) -> Void)?,
             onDismissSystemPanel: ((String) -> Void)?,
             systemPanelEventsJSON: (() -> String?)?,
@@ -279,7 +260,6 @@ public struct BlockerWebView: _CBViewRepresentable {
             self.onStorePersisted = onStorePersisted
             self.onRunCustomGroup = onRunCustomGroup
             self.onSnoozePress = onSnoozePress
-            self.onPanelEvent = onPanelEvent
             self.onShowSystemPanel = onShowSystemPanel
             self.onDismissSystemPanel = onDismissSystemPanel
             self.systemPanelEventsJSON = systemPanelEventsJSON
@@ -347,15 +327,6 @@ public struct BlockerWebView: _CBViewRepresentable {
             )
         }
 
-        private func messageJSON(_ body: [String: Any]) -> String? {
-            guard let payload = body["message"],
-                  let data = try? JSONSerialization.data(withJSONObject: payload),
-                  let json = String(data: data, encoding: .utf8) else {
-                return nil
-            }
-            return json
-        }
-
         private func pushUsage() {
             guard let webView else { return }
             let usage = store.loadUsageTimers()
@@ -406,15 +377,6 @@ public struct BlockerWebView: _CBViewRepresentable {
                 if let payload = body["message"] as? [String: Any],
                    let groupID = payload["groupId"] as? String {
                     onSnoozePress?(groupID)
-                }
-            case "custom-panel-event":
-                if let payload = body["message"] as? [String: Any],
-                   let groupID = payload["groupId"] as? String {
-                    var data: [String: String] = [:]
-                    for (key, value) in payload where key != "groupId" {
-                        data[key] = "\(value)"
-                    }
-                    onPanelEvent?(groupID, data)
                 }
             case "show-system-panel":
                 if let payload = body["message"] as? [String: Any],

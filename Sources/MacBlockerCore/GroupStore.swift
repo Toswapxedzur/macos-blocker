@@ -174,7 +174,7 @@ public struct WebStoreDocument {
 
     /// Per-group companion maps the editor keys by group id. They are cleared for
     /// a deleted group so the store doesn't accrue orphaned usage/snooze entries.
-    private static let perGroupMapKeys = [
+    public static let perGroupMapKeys = [
         "usageTimersMs", "usageResetAtMs", "usageBucketsMs", "groupSnoozes", "groupSnoozeTotalsMs",
         pinAttemptsKey,
     ]
@@ -230,8 +230,14 @@ public struct WebStoreDocument {
         groups = list
     }
 
-    /// group-actions.js LOCK_FIELDS.
-    static let lockFieldNames = ["lockedAtMs", "lockWaitHours", "parentalPasswordHash", "parentalPasswordSalt", "lockVersion"]
+    /// The fields of a group's one lock unit (group-actions.js LOCK_FIELDS).
+    public static let lockFieldNames = GroupActionsRuntime.shared.constant("LOCK_FIELDS") as? [String] ?? []
+
+    /// One value as sorted-key JSON, for comparing dictionaries by content.
+    public static func canonicalJSON(_ value: Any?) -> String {
+        guard let value, let data = try? JSONSerialization.data(withJSONObject: ["v": value], options: [.sortedKeys]) else { return "" }
+        return String(decoding: data, as: UTF8.self)
+    }
 
     /// The editor's name rule (group-actions.js nameTaken): unique per device,
     /// case and outer spaces ignored.

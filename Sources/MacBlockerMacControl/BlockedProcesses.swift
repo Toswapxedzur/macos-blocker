@@ -7,7 +7,7 @@ import Darwin
 
 /// A snapshot of one running process, reduced to the fields the policy matches
 /// on. Kept separate from `NSRunningApplication` so the *selection* logic is
-/// pure and unit-testable without actually killing anything.
+/// pure and unit-testable without quitting anything.
 public struct RunningProcessSnapshot: Equatable, Sendable {
     public var processIdentifier: Int32
     public var bundleIdentifier: String?
@@ -30,8 +30,8 @@ public struct RunningProcessSnapshot: Equatable, Sendable {
     }
 }
 
-/// One blocked process, for logging/tests.
-public struct TerminationAction: Equatable, Sendable {
+/// One running process a policy blocks.
+public struct BlockedProcess: Equatable, Sendable {
     public var processIdentifier: Int32
     public var bundleIdentifier: String?
 
@@ -43,9 +43,9 @@ public struct TerminationAction: Equatable, Sendable {
 
 /// Finds the running applications a policy blocks. Quitting them is
 /// `QuitRequests`: normally, never by force.
-public enum MacProcessTerminator {
+public enum BlockedProcesses {
     /// Browsers are owned by their extensions. The native app never blocks,
-    /// closes, hides, suspends, or kills them or their helper processes.
+    /// closes or hides them or their helper processes.
     public static let browserBundleIdentifiers: Set<String> = [
         "com.apple.Safari",
         "com.apple.SafariTechnologyPreview",
@@ -76,8 +76,8 @@ public enum MacProcessTerminator {
         policy: GuardPolicy,
         running: [RunningProcessSnapshot],
         signing: (String) -> (team: String?, identifier: String?)? = { _ in nil }
-    ) -> [TerminationAction] {
-        running.compactMap { proc -> TerminationAction? in
+    ) -> [BlockedProcess] {
+        running.compactMap { proc -> BlockedProcess? in
             var candidate = proc
             if policy.usesCodeSigningMatch,
                policy.match(bundleIdentifier: proc.bundleIdentifier, executablePath: proc.executablePath) == nil,
@@ -93,7 +93,7 @@ public enum MacProcessTerminator {
             ) != nil else {
                 return nil
             }
-            return TerminationAction(processIdentifier: proc.processIdentifier, bundleIdentifier: proc.bundleIdentifier)
+            return BlockedProcess(processIdentifier: proc.processIdentifier, bundleIdentifier: proc.bundleIdentifier)
         }
     }
 
@@ -117,7 +117,7 @@ public enum MacProcessTerminator {
     }
 
     /// The running processes this policy blocks.
-    public static func blockedProcesses(policy: GuardPolicy) -> [NSRunningApplication] {
+    public static func running(policy: GuardPolicy) -> [NSRunningApplication] {
         let apps = snapshotRunningApplications()
         let chosen = Set(plan(policy: policy, running: apps.map(\.snapshot)) { path in
             MacCodeSigning.info(forItemAt: path).map { ($0.teamIdentifier, $0.signingIdentifier) }

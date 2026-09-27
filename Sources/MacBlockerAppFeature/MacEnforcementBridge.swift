@@ -115,7 +115,7 @@ public final class MacEnforcementBridge: ObservableObject {
     public init(webStore: BlockerWebStore = BlockerWebStore(), sweepInterval: TimeInterval = 1.0) {
         self.webStore = webStore
         #if os(macOS)
-        self.adapter = AppBlockPolicy(runTerminationSweep: true)
+        self.adapter = AppBlockPolicy()
         self.tickInterval = sweepInterval
         #endif
     }
@@ -219,9 +219,6 @@ public final class MacEnforcementBridge: ObservableObject {
     public func start() {
         #if os(macOS)
         guard timer == nil else { return }
-        print("[MacEnforcementBridge] start() called")
-        print("[MacEnforcementBridge] AppGroup.containerURL = \(AppGroup.containerURL()?.path ?? "nil")")
-        print("[MacEnforcementBridge] AppGroup.baseDirectory = \(AppGroup.baseDirectory().path)")
         webStore.seedIfNeeded()
         lastSampleAt = Date()
         lastFrontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
@@ -311,7 +308,7 @@ public final class MacEnforcementBridge: ObservableObject {
             let observer = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
                 guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                       let bundleID = app.bundleIdentifier,
-                      !MacProcessTerminator.isBrowserBundleIdentifier(bundleID) else { return }
+                      !BlockedProcesses.isBrowserBundleIdentifier(bundleID) else { return }
                 // Only track GUI apps (regular activation policy).
                 if kind == .launched || kind == .terminated {
                     guard app.activationPolicy == .regular else { return }
@@ -360,7 +357,7 @@ public final class MacEnforcementBridge: ObservableObject {
         let frontApp = NSWorkspace.shared.frontmostApplication
         activityRecorder?.sample(frontmost: frontApp, now: now)
         let observedFrontmost = frontApp?.bundleIdentifier
-        let frontmost = MacProcessTerminator.isBrowserBundleIdentifier(observedFrontmost) ? nil : observedFrontmost
+        let frontmost = BlockedProcesses.isBrowserBundleIdentifier(observedFrontmost) ? nil : observedFrontmost
 
         // 1. Reconcile reset windows + accrue time spent in the frontmost app.
         let elapsed = elapsedSinceLastSample(now: now)
@@ -399,7 +396,7 @@ public final class MacEnforcementBridge: ObservableObject {
 
         // 4. Enforce: block apps whose group says "blocked now" PLUS
         //    any apps shield-ed by custom-rule decisions.
-        //    (a rule's persistent blockApp list rides along: one kill sweep).
+        //    (a rule's persistent blockApp list rides along: one quit sweep).
         let quitRetry = view.quitRetryMinutes * 60
         Task { [adapter, ruleBlocked = dispatchOutput.shieldedBundleIDs.union(ruleBlocked)] in
             try? await adapter.applyGroups(
@@ -870,7 +867,7 @@ public final class MacEnforcementBridge: ObservableObject {
                 }
             case "openApp":
                 if let target = intent.target, !target.isEmpty,
-                   !MacProcessTerminator.isBrowserBundleIdentifier(target) {
+                   !BlockedProcesses.isBrowserBundleIdentifier(target) {
                     if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: target) {
                         NSWorkspace.shared.openApplication(at: url,
                                                            configuration: NSWorkspace.OpenConfiguration())
@@ -946,7 +943,7 @@ public final class MacEnforcementBridge: ObservableObject {
 
     /// Each group's budget fields as last seen, to spot an edit that changes
     /// how its budget runs.
-    private var budgetFieldsSeen: [String: String] = [:]
+    private var budgetFieldsSeen: [String: [String: Any]] = [:]
 
     /// An edit that changes how a group's budget runs restarts it, whoever
     /// made it — the editor's own rule (group-actions.js budgetRestarts), as
@@ -954,15 +951,15 @@ public final class MacEnforcementBridge: ObservableObject {
     private func restartChangedBudgets(document: [String: Any], usage: inout BlockerWebStore.UsageTimers, nowMs: Double) {
         let fields = ["groupType", "mode", "resetIntervalHours", "resetAtMidnight", "rollingLimit"]
         var restarted: [String] = []
-        var seen: [String: String] = [:]
+        var seen: [String: [String: Any]] = [:]
         for group in document["blockedGroups"] as? [[String: Any]] ?? [] {
             guard let id = group["id"] as? String else { continue }
             let shape = fields.reduce(into: [String: Any]()) { $0[$1] = group[$1] ?? NSNull() }
-            let key = ConnectionHub.canonicalJSON(shape)
-            seen[id] = key
-            if let previous = budgetFieldsSeen[id], previous != key,
-               let data = previous.data(using: .utf8), let old = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                if GroupActionsRuntime.shared.call("budgetRestarts", [old, shape]) as? Bool == true { restarted.append(id) }
+            seen[id] = shape
+            if let previous = budgetFieldsSeen[id],
+               WebStoreDocument.canonicalJSON(previous) != WebStoreDocument.canonicalJSON(shape),
+               GroupActionsRuntime.shared.call("budgetRestarts", [previous, shape]) as? Bool == true {
+                restarted.append(id)
             }
         }
         budgetFieldsSeen = seen
@@ -1130,7 +1127,7 @@ public final class MacEnforcementBridge: ObservableObject {
             .filter { $0.activationPolicy == .regular }
             .compactMap { app -> [String: Any]? in
                 guard let bid = app.bundleIdentifier else { return nil }
-                guard !MacProcessTerminator.isBrowserBundleIdentifier(bid) else { return nil }
+                guard !BlockedProcesses.isBrowserBundleIdentifier(bid) else { return nil }
                 // The native app does not distinguish browsers — it never reads
                 // tabs, so every app is reported as a plain app (isBrowser:false).
                 return [

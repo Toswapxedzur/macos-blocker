@@ -251,18 +251,6 @@ final class MCPConnectorRegistryTests: XCTestCase {
         XCTAssertTrue(registry.isConnected(try XCTUnwrap(registry.connector(id: "claude-desktop"))))
     }
 
-    // MARK: WebView projection
-
-    func testStateJSONListsOnlyInstalledWithLiveConnectedFlag() throws {
-        try touch(".cursor/mcp.json", "{}")
-        let registry = registry()
-        registry.connect(try XCTUnwrap(registry.connector(id: "cursor")))
-        let json = registry.stateJSON()
-        XCTAssertTrue(json.contains("\"cursor\""))
-        XCTAssertTrue(json.contains("\"connected\":true"))
-        XCTAssertFalse(json.contains("\"vscode\""), "a client the user does not have is never surfaced")
-    }
-
     // MARK: Bearer token
 
     func testHTTPEntryEmbedsBearerHeaderWhenTokenPresent() throws {

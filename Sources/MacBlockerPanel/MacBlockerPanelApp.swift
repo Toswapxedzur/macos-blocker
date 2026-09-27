@@ -39,7 +39,7 @@ struct MacBlockerPanelApp: App {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Mac Vault")
                     .font(.title2.bold())
-                Text("The macOS panel runs the shared editor and status-window replacement. iOS shielding still requires an Xcode app target with Screen Time entitlements.")
+                Text("Mac Vault runs the shared editor and enforces your groups on this Mac.")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: 420, alignment: .leading)
             }

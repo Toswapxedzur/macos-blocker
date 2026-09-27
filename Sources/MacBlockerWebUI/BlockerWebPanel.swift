@@ -11,7 +11,6 @@ public struct BlockerWebPanel: View {
     private let onStorePersisted: (() -> Void)?
     private let onRunCustomGroup: ((String, String) -> Void)?
     private let onSnoozePress: ((String) -> Void)?
-    private let onPanelEvent: ((String, [String: String]) -> Void)?
     private let onShowSystemPanel: ((String) -> Void)?
     private let onDismissSystemPanel: ((String) -> Void)?
     private let systemPanelEventsJSON: (() -> String?)?
@@ -25,7 +24,6 @@ public struct BlockerWebPanel: View {
         onStorePersisted: (() -> Void)? = nil,
         onRunCustomGroup: ((String, String) -> Void)? = nil,
         onSnoozePress: ((String) -> Void)? = nil,
-        onPanelEvent: ((String, [String: String]) -> Void)? = nil,
         onShowSystemPanel: ((String) -> Void)? = nil,
         onDismissSystemPanel: ((String) -> Void)? = nil,
         systemPanelEventsJSON: (() -> String?)? = nil,
@@ -38,7 +36,6 @@ public struct BlockerWebPanel: View {
         self.onStorePersisted = onStorePersisted
         self.onRunCustomGroup = onRunCustomGroup
         self.onSnoozePress = onSnoozePress
-        self.onPanelEvent = onPanelEvent
         self.onShowSystemPanel = onShowSystemPanel
         self.onDismissSystemPanel = onDismissSystemPanel
         self.systemPanelEventsJSON = systemPanelEventsJSON
@@ -54,7 +51,7 @@ public struct BlockerWebPanel: View {
             onStorePersisted: onStorePersisted,
             onRunCustomGroup: onRunCustomGroup,
             onSnoozePress: onSnoozePress,
-            onPanelEvent: onPanelEvent,
+           
             onShowSystemPanel: onShowSystemPanel,
             onDismissSystemPanel: onDismissSystemPanel,
             systemPanelEventsJSON: systemPanelEventsJSON,

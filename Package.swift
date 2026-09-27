@@ -17,7 +17,7 @@ let brewPrefix: String = {
     return "/opt/homebrew"
 }()
 // Unconditional on purpose: Xcode does not apply a platform-conditioned unsafe
-// flag to a package target, and the extra search path is inert on iOS.
+// flag to a package target.
 let cllamaIncludeFlags: [SwiftSetting] = [.unsafeFlags(["-Xcc", "-I\(brewPrefix)/include"])]
 
 let package = Package(
@@ -51,8 +51,7 @@ let package = Package(
             name: "MacBlockerMacControl",
             dependencies: ["MacBlockerCore"],
             linkerSettings: [
-                .linkedFramework("Security", .when(platforms: [.macOS])),
-                .linkedLibrary("EndpointSecurity", .when(platforms: [.macOS]))
+                .linkedFramework("Security", .when(platforms: [.macOS]))
             ]
         ),
         .target(

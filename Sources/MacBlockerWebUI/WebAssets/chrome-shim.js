@@ -388,36 +388,22 @@
         });
       case "fire-snooze-press":
         return bridgeOrResolve("fire-snooze-press", message, { ok: true });
-      case "custom-panel-event":
-        return bridgeOrResolve("custom-panel-event", message, { ok: true });
       case "show-system-panel":
         return bridgeOrResolve("show-system-panel", message, { ok: true });
       case "dismiss-system-panel":
         return bridgeOrResolve("dismiss-system-panel", message, { ok: true });
-      case "unload-custom-group":
-        return bridgeOrResolve("unload-custom-group", message, { ok: true });
-      case "group-connect":
-        return bridgeOrResolve("group-connect", message, { ok: true });
-      case "group-disconnect":
-        return bridgeOrResolve("group-disconnect", message, { ok: true });
       case "clusters-status":
         return bridgeOrResolve("clusters-status", message, { ok: true });
       case "group-link":
       case "group-unlink":
         return bridgeOrResolve(message.type, message, { ok: true });
-      case "mcp-connectors-status":
-        return bridgeOrResolve("mcp-connectors-status", message, { ok: true });
-      case "mcp-connect":
-        return bridgeOrResolve("mcp-connect", message, { ok: true });
-      case "mcp-disconnect":
-        return bridgeOrResolve("mcp-disconnect", message, { ok: true });
       default:
         return Promise.resolve({ ok: true });
     }
   }
 
   var runtime = {
-    id: "ios-blocker",
+    id: "mac-vault",
     lastError: null,
     getURL: function (path) {
       try {
