@@ -1,18 +1,10 @@
 import Foundation
 
+/// Mac Vault tells a rule group (custom) from a list group; what a list
+/// group names is its Apps line.
 public enum BlockGroupType: String, Codable, CaseIterable, Sendable {
     case site
-    case youtube
-    case tiktok
-    case facebook
-    case instagram
-    case twitch
-    case reddit
-    case discord
-    case twitter
     case custom
-    case app
-    case category
 }
 
 public enum BlockingMode: String, Codable, Sendable {
@@ -35,8 +27,6 @@ public enum BlockingMode: String, Codable, Sendable {
 public struct BlockTarget: Codable, Equatable, Identifiable, Sendable {
     public enum Kind: String, Codable, Sendable {
         case application
-        case category
-        case webDomain
     }
 
     public var id: String

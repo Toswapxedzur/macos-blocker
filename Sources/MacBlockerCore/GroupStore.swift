@@ -200,33 +200,21 @@ public struct WebStoreDocument {
 
     // MARK: Mutations
 
-    /// An edit, as the editor makes it (owner: a tool does exactly what the
-    /// user can): the editor's own check (group-actions.js validateGroupPatch)
-    /// refuses a bad value, never replacing it with a default, and the editor's
-    /// own sanitizer (group-scopes.js sanitizeGroups) stores the group. The id
-    /// and the lock are not patchable (the lock tools are). A budget whose
-    /// running changed is restarted by the engine, as for an editor save.
+    /// An edit, exactly as the editor could make it (group-scopes.js
+    /// applyToolEdit): a bad value is refused, never defaulted; the id, the
+    /// lock and a custom group's kind aren't patchable; and Mac Vault edits only
+    /// its own (Apps) lines — the scope line. The engine restarts a budget whose
+    /// running changed, as for an editor save.
     public mutating func setGroup(id: String, patch: [String: Any]) throws {
         guard let current = group(id: id) else { throw GroupStoreError.groupNotFound(id) }
         if isLocked(current) { throw GroupStoreError.groupLocked(id) }
-        var edit = patch
-        for key in ["id", "lockSyncedVersion"] + Self.lockFieldNames { edit.removeValue(forKey: key) }
-        let runtime = GroupActionsRuntime.shared
-        let type = (edit["groupType"] as? String) ?? (current["groupType"] as? String) ?? "site"
-        if let problem = runtime.call("validateGroupPatch", [edit, type]) as? String { throw GroupStoreError.invalidInput(problem) }
-        if let name = (edit["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-           Self.nameTaken(groups, name, except: id) { throw GroupStoreError.duplicateName(name) }
-        try replaceGroup(id: id, with: current.merging(edit) { _, new in new })
-    }
-
-    /// Stores a group through the editor's sanitizer.
-    private mutating func replaceGroup(id: String, with group: [String: Any]) throws {
-        guard let stored = (GroupActionsRuntime.shared.call("sanitizeGroups", [[group]], module: "CBGroupScopes") as? [[String: Any]])?.first else {
-            throw GroupStoreError.invalidInput("group")
-        }
+        let result = GroupActionsRuntime.shared.call("applyToolEdit", [current, patch, "desktop"], module: "CBGroupScopes") as? [String: Any] ?? [:]
+        if let problem = result["error"] as? String { throw GroupStoreError.invalidInput(problem) }
+        guard let edited = result["group"] as? [String: Any] else { throw GroupStoreError.invalidInput("invalid-group") }
+        if let name = edited["name"] as? String, Self.nameTaken(groups, name, except: id) { throw GroupStoreError.duplicateName(name) }
         var list = groups
         guard let index = list.firstIndex(where: { ($0["id"] as? String) == id }) else { throw GroupStoreError.groupNotFound(id) }
-        list[index] = stored
+        list[index] = edited
         groups = list
     }
 
@@ -250,42 +238,16 @@ public struct WebStoreDocument {
         GroupActionsRuntime.shared.call("nameTaken", [groups, name, id ?? NSNull()]) as? Bool == true
     }
 
-    /// Since 2026-09-24 a group's website list and app list are scope lines
-    /// ({surface: "site", sites, sitesExcept} / {surface: "apps", apps}), the
-    /// same shape the extension stores. A mutation edits that line, creating it
-    /// when missing and folding a legacy top-level `sites` / `apps` field into
-    /// it on the way (older stores written by the previous editor).
-    private static func mutateScopeLine(
-        _ group: inout [String: Any],
-        surface: String,
-        _ body: (inout [String: Any]) -> Void
-    ) {
+    /// A group's app list is its Apps line ({surface: "apps", apps}), the same
+    /// shape the editor stores; an edit creates the line when missing.
+    private static func mutateAppsLine(_ group: inout [String: Any], _ body: (inout [String: Any]) -> Void) {
         var scopes = group["scopes"] as? [[String: Any]] ?? []
-        var index = scopes.firstIndex { ($0["surface"] as? String) == surface }
-        if index == nil {
-            var line: [String: Any] = ["id": "\(surface)-1", "surface": surface, "platform": NSNull(), "action": "block"]
-            if surface == "site" {
-                line["sites"] = group["sites"] as? [String] ?? []
-                line["sitesExcept"] = (group["allowlist"] as? Bool) ?? false
-            } else {
-                line["apps"] = group["apps"] as? [[String: Any]] ?? []
-            }
-            scopes.append(line)
-            index = scopes.count - 1
+        if !scopes.contains(where: { ($0["surface"] as? String) == "apps" }) {
+            scopes.append(["id": "apps-1", "surface": "apps", "platform": NSNull(), "action": "block", "apps": [[String: Any]](), "appsExcept": false])
         }
-        body(&scopes[index!])
+        let index = scopes.firstIndex { ($0["surface"] as? String) == "apps" }!
+        body(&scopes[index])
         group["scopes"] = scopes
-        group.removeValue(forKey: surface == "site" ? "sites" : "apps")
-        if surface == "site" { group.removeValue(forKey: "allowlist") }
-    }
-
-    /// The website list of a stored group (its site line, else a legacy field).
-    public static func sites(of group: [String: Any]) -> [String] {
-        let scopes = group["scopes"] as? [[String: Any]] ?? []
-        if let line = scopes.first(where: { ($0["surface"] as? String) == "site" }) {
-            return line["sites"] as? [String] ?? []
-        }
-        return group["sites"] as? [String] ?? []
     }
 
     /// "Block every application except these" on the group's Apps entry.
@@ -293,14 +255,6 @@ public struct WebStoreDocument {
         let scopes = group["scopes"] as? [[String: Any]] ?? []
         guard let line = scopes.first(where: { ($0["surface"] as? String) == "apps" }) else { return false }
         return (line["appsExcept"] as? Bool) == true
-    }
-
-    /// True when the group's website list uses the extension's "pause" page
-    /// action (a countdown before the page is let through) rather than a block.
-    public static func siteListPauses(_ group: [String: Any]) -> Bool {
-        let scopes = group["scopes"] as? [[String: Any]] ?? []
-        guard let line = scopes.first(where: { ($0["surface"] as? String) == "site" }) else { return false }
-        return (line["action"] as? String) == "pause"
     }
 
     /// The app list of a stored group (its apps line, else a legacy field).
@@ -312,44 +266,14 @@ public struct WebStoreDocument {
         return group["apps"] as? [[String: Any]] ?? []
     }
 
-    /// Adds a website to a group's Websites entry, idempotently, normalized by
-    /// the editor's own rule (group-scopes.js normalizeSiteInput): a host, or a
-    /// host with a path ("youtube.com/shorts" stays apart from "youtube.com").
-    public mutating func addWebsite(id: String, host: String) throws {
-        guard let entry = Self.siteEntry(host) else { throw GroupStoreError.invalidInput("host") }
-        try mutateGroup(id: id) { group in
-            Self.mutateScopeLine(&group, surface: "site") { line in
-                var sites = line["sites"] as? [String] ?? []
-                if !sites.contains(where: { Self.siteEntry($0) == entry }) { sites.append(entry) }
-                line["sites"] = sites
-            }
-        }
-    }
-
-    /// Removes exactly that entry (a path entry never takes its host with it).
-    public mutating func removeWebsite(id: String, host: String) throws {
-        guard let entry = Self.siteEntry(host) else { throw GroupStoreError.invalidInput("host") }
-        try mutateGroup(id: id) { group in
-            Self.mutateScopeLine(&group, surface: "site") { line in
-                var sites = line["sites"] as? [String] ?? []
-                sites.removeAll { Self.siteEntry($0) == entry }
-                line["sites"] = sites
-            }
-        }
-    }
-
-    static func siteEntry(_ text: String) -> String? {
-        GroupActionsRuntime.shared.call("normalizeSiteInput", [text], module: "CBGroupScopes") as? String
-    }
-
     /// Adds an application target `{ id: <bundleId>, name: <displayName> }` to a
     /// group's Apps entry, idempotently by bundle id.
     public mutating func addApplication(id: String, bundleID: String, name: String?) throws {
         let bundle = bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !bundle.isEmpty else { throw GroupStoreError.invalidInput("bundleID") }
+        guard !bundle.isEmpty else { throw GroupStoreError.invalidInput("invalid-bundleId") }
         let display = name?.trimmingCharacters(in: .whitespacesAndNewlines)
         try mutateGroup(id: id) { group in
-            Self.mutateScopeLine(&group, surface: "apps") { line in
+            Self.mutateAppsLine(&group) { line in
                 var apps = line["apps"] as? [[String: Any]] ?? []
                 guard !apps.contains(where: { ($0["id"] as? String) == bundle }) else { return }
                 apps.append(["id": bundle, "name": (display?.isEmpty == false) ? display! : bundle])
@@ -361,7 +285,7 @@ public struct WebStoreDocument {
     public mutating func removeApplication(id: String, bundleID: String) throws {
         let bundle = bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
         try mutateGroup(id: id) { group in
-            Self.mutateScopeLine(&group, surface: "apps") { line in
+            Self.mutateAppsLine(&group) { line in
                 var apps = line["apps"] as? [[String: Any]] ?? []
                 apps.removeAll { ($0["id"] as? String) == bundle }
                 line["apps"] = apps
@@ -407,19 +331,19 @@ public struct WebStoreDocument {
     // The gates themselves are the editor's code (group-actions.js and
     // parental-pin.js, run by GroupActionsRuntime): nothing is re-decided here.
 
-    /// A new, unlocked group with the editor's defaults (group-scopes.js
-    /// createDefaultGroup: a site group, the user's default snooze length).
-    /// Returns its id.
+    /// A new, unlocked group as the editor's New group makes it in Mac Vault
+    /// (group-scopes.js createToolGroup): the user's default snooze length, a
+    /// free numbered name unless one is given, and only Apps lines. Returns its id.
     @discardableResult
-    public mutating func createGroup(name: String, now: Date = Date()) throws -> String {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw GroupStoreError.invalidInput("name") }
-        if Self.nameTaken(groups, trimmed, except: nil) { throw GroupStoreError.duplicateName(trimmed) }
+    public mutating func createGroup(groupType: String = "site", patch: [String: Any] = [:]) throws -> String {
         let runtime = GroupActionsRuntime.shared
         let defaultSnooze = (runtime.call("sanitizeGlobalSettings", [raw["globalSettings"] ?? NSNull()]) as? [String: Any])?["defaultSnoozeMinutes"] ?? NSNull()
-        let created = runtime.call("createDefaultGroup", ["site", ["name": trimmed, "snoozeMinutes": defaultSnooze]], module: "CBGroupScopes") ?? NSNull()
-        guard let group = (runtime.call("sanitizeGroups", [[created]], module: "CBGroupScopes") as? [[String: Any]])?.first,
-              let id = group["id"] as? String else { throw GroupStoreError.invalidInput("group") }
+        let result = runtime.call("createToolGroup", [groups, groupType, patch, "desktop", ["snoozeMinutes": defaultSnooze]], module: "CBGroupScopes") as? [String: Any] ?? [:]
+        if let problem = result["error"] as? String {
+            if problem == "duplicate-name" { throw GroupStoreError.duplicateName((patch["name"] as? String) ?? "") }
+            throw GroupStoreError.invalidInput(problem)
+        }
+        guard let group = result["group"] as? [String: Any], let id = group["id"] as? String else { throw GroupStoreError.invalidInput("invalid-group") }
         groups.append(group)
         return id
     }
@@ -436,7 +360,11 @@ public struct WebStoreDocument {
             raw["quickAddGroupId"] = id
         }
         if let unknown = settings.keys.first(where: { !Self.settingsFields.contains($0) }) {
-            throw GroupStoreError.invalidInput("\(unknown) (the editor's Settings: \(Self.settingsFields.joined(separator: ", ")), quickAddGroupId)")
+            throw GroupStoreError.invalidInput("not-an-editor-setting:\(unknown)")
+        }
+        // A value the editor's field can't hold is refused, never defaulted.
+        if let problem = GroupActionsRuntime.shared.call("validateSettingsPatch", [settings]) as? String {
+            throw GroupStoreError.invalidInput(problem)
         }
         let current = raw["globalSettings"] as? [String: Any] ?? [:]
         raw["globalSettings"] = GroupActionsRuntime.shared.call("sanitizeGlobalSettings", [current.merging(settings) { _, new in new }]) ?? current
@@ -454,6 +382,42 @@ public struct WebStoreDocument {
         case pinWrong(waitSeconds: Int)
         /// A group-actions.js refusal ("not-stricter", "pin-already-set", …).
         case refused(String)
+
+        /// The refusal as the extension's tools word it ("wait-until:<ISO>",
+        /// "pin-wrong:<s>", …; ToolRefusals explains it).
+        public var code: String {
+            switch self {
+            case .done: return "done"
+            case .waitUntil(let date): return "wait-until:\(ISO8601DateFormatter().string(from: date))"
+            case .pinWait(let seconds): return "pin-wait:\(seconds)"
+            case .pinWrong(let seconds): return "pin-wrong:\(seconds)"
+            case .refused(let reason): return reason
+            }
+        }
+    }
+
+    /// The editor's Settings as tools show them.
+    public var editorSettings: [String: Any] {
+        let settings = GroupActionsRuntime.shared.call("sanitizeGlobalSettings", [raw["globalSettings"] ?? NSNull()]) as? [String: Any] ?? [:]
+        var shown: [String: Any] = [:]
+        for key in Self.settingsFields { shown[key] = settings[key] }
+        return ["globalSettings": shown, "quickAddGroupId": raw["quickAddGroupId"] as? String ?? ""]
+    }
+
+    /// A group's snooze entry as linked devices share it.
+    public func snooze(id: String) -> [String: Any]? {
+        ((sharedSnoozes ?? raw["groupSnoozes"] as? [String: Any]) ?? [:])[id] as? [String: Any]
+    }
+
+    /// A group as tools show it: as linked devices share it (its lock comes
+    /// from the link), without the PIN itself.
+    public func publicGroup(id: String) -> [String: Any]? {
+        guard var group = viewed(id) else { return nil }
+        let actions = GroupActionsRuntime.shared
+        group["locked"] = actions.call("isLocked", [group]) as? Bool == true
+        group["hasParentalPin"] = actions.call("hasPin", [group]) as? Bool == true
+        for secret in ["parentalPasswordHash", "parentalPasswordSalt"] { group.removeValue(forKey: secret) }
+        return group
     }
 
     /// The group as linked devices share it (its lock comes from the link).
@@ -465,26 +429,25 @@ public struct WebStoreDocument {
     /// stricter (a longer wait, a PIN where there was none) — as the editor's
     /// Freeze / Make stricter.
     @discardableResult
-    public mutating func lockGroup(id: String, waitHours: Double? = nil, pin: String? = nil, now: Date = Date()) throws -> LockOutcome {
+    public mutating func lockGroup(id: String, waitHours: Any? = nil, pin: String? = nil, now: Date = Date()) throws -> LockOutcome {
         guard let current = viewed(id) else { throw GroupStoreError.groupNotFound(id) }
         let actions = GroupActionsRuntime.shared
         var gates: [String: Any] = [:]
         if let waitHours { gates["waitHours"] = waitHours }
         if let pin {
             guard actions.call("isValidParentalPin", [pin], module: "CBParentalPin") as? Bool == true else {
-                throw GroupStoreError.invalidInput("pin (6 digits)")
+                throw GroupStoreError.invalidInput("invalid-pin")
             }
             if actions.call("hasPin", [current]) as? Bool == true { return .refused("pin-already-set") }
-            guard let fields = actions.call("newPinFieldsSync", [pin], module: "CBParentalPin") else { throw GroupStoreError.invalidInput("pin (6 digits)") }
+            guard let fields = actions.call("newPinFieldsSync", [pin], module: "CBParentalPin") else { throw GroupStoreError.invalidInput("invalid-pin") }
             gates["pinFields"] = fields
         }
         let nowMs = (now.timeIntervalSince1970 * 1000).rounded()
-        var result: [String: Any]
+        let result: [String: Any]
         if actions.call("isLocked", [current]) as? Bool == true {
             result = actions.call("tighten", [current, gates]) as? [String: Any] ?? [:]
         } else {
-            result = actions.call("setGates", [current, gates]) as? [String: Any] ?? [:]
-            if let gated = result["group"] { result = actions.call("lock", [gated, nowMs]) as? [String: Any] ?? [:] }
+            result = actions.call("lockWithGates", [current, gates, nowMs]) as? [String: Any] ?? [:]
         }
         if let error = result["error"] as? String { return .refused(error) }
         guard let updated = result["group"] as? [String: Any] else { return .refused("internal") }
@@ -506,15 +469,11 @@ public struct WebStoreDocument {
         if plan["error"] as? String == "not-locked" { throw GroupStoreError.notLocked(id) }
         let version = (current["lockVersion"] as? NSNumber)?.intValue ?? 0
         guard plan["needsPin"] as? Bool == true else { checkedLockVersion = version; return .done }
-        let attempts = raw[Self.pinAttemptsKey] as? [String: Any] ?? [:]
-        let result = actions.call("checkSync", [attempts, current, pin ?? "", nowMs], module: "CBParentalPin") as? [String: Any] ?? [:]
-        raw[Self.pinAttemptsKey] = result["attempts"] as? [String: Any] ?? attempts
-        let waitSeconds = Int((((result["waitMs"] as? NSNumber)?.doubleValue ?? 0) / 1000).rounded(.up))
-        if result["waiting"] as? Bool == true { return .pinWait(seconds: waitSeconds) }
-        guard result["ok"] as? Bool == true else { return .pinWrong(waitSeconds: waitSeconds) }
+        let check = pinCheck(current, pin, nowMs: nowMs)
+        if let refusal = check.refusal { return refusal }
         checkedLockVersion = version
         // (The PIN check also upgrades an old-format hash, a lock change.)
-        if let upgraded = result["upgradedHash"] as? String,
+        if let upgraded = check.upgradedHash,
            let unit = actions.call("upgradePinHash", [current, upgraded]) as? [String: Any] {
             try writeLockUnit(id: id, from: unit) // a lock change: its version moves
             checkedLockVersion = (unit["lockVersion"] as? NSNumber)?.intValue
@@ -522,31 +481,33 @@ public struct WebStoreDocument {
         return .done
     }
 
-    /// A PIN try, counted like one typed in the editor: nil when it passes.
-    private mutating func pinRefusal(_ group: [String: Any], _ pin: String?, nowMs: Double) -> LockOutcome? {
+    /// A PIN try, counted like one typed in the editor: no refusal when it
+    /// passes (with the upgraded hash of an old-format PIN, if any).
+    private mutating func pinCheck(_ group: [String: Any], _ pin: String?, nowMs: Double) -> (refusal: LockOutcome?, upgradedHash: String?) {
         let attempts = raw[Self.pinAttemptsKey] as? [String: Any] ?? [:]
         let result = GroupActionsRuntime.shared.call("checkSync", [attempts, group, pin ?? "", nowMs], module: "CBParentalPin") as? [String: Any] ?? [:]
         raw[Self.pinAttemptsKey] = result["attempts"] as? [String: Any] ?? attempts
         let waitSeconds = Int((((result["waitMs"] as? NSNumber)?.doubleValue ?? 0) / 1000).rounded(.up))
-        if result["waiting"] as? Bool == true { return .pinWait(seconds: waitSeconds) }
-        return result["ok"] as? Bool == true ? nil : .pinWrong(waitSeconds: waitSeconds)
+        if result["waiting"] as? Bool == true { return (.pinWait(seconds: waitSeconds), nil) }
+        guard result["ok"] as? Bool == true else { return (.pinWrong(waitSeconds: waitSeconds), nil) }
+        return (nil, result["upgradedHash"] as? String)
     }
 
     /// The freeze gates of an unfrozen group, as the editor's guardian
     /// settings: the wait (hours) and a PIN; clearing a PIN takes the PIN.
-    public mutating func setLockGates(id: String, waitHours: Double?, pin: String?, clearPin: Bool, now: Date = Date()) throws -> LockOutcome {
+    public mutating func setLockGates(id: String, waitHours: Any?, pin: String?, clearPin: Bool, now: Date = Date()) throws -> LockOutcome {
         guard let current = viewed(id) else { throw GroupStoreError.groupNotFound(id) }
         let actions = GroupActionsRuntime.shared
         var gates: [String: Any] = [:]
         if let waitHours { gates["waitHours"] = waitHours }
         let hasPin = actions.call("hasPin", [current]) as? Bool == true
         if clearPin {
-            if hasPin, let refusal = pinRefusal(current, pin, nowMs: (now.timeIntervalSince1970 * 1000).rounded()) { return refusal }
+            if hasPin, let refusal = pinCheck(current, pin, nowMs: (now.timeIntervalSince1970 * 1000).rounded()).refusal { return refusal }
             gates["pinFields"] = NSNull()
         } else if let pin {
-            guard actions.call("isValidParentalPin", [pin], module: "CBParentalPin") as? Bool == true else { throw GroupStoreError.invalidInput("pin (6 digits)") }
+            guard actions.call("isValidParentalPin", [pin], module: "CBParentalPin") as? Bool == true else { throw GroupStoreError.invalidInput("invalid-pin") }
             if hasPin { return .refused("pin-already-set") }
-            guard let fields = actions.call("newPinFieldsSync", [pin], module: "CBParentalPin") else { throw GroupStoreError.invalidInput("pin (6 digits)") }
+            guard let fields = actions.call("newPinFieldsSync", [pin], module: "CBParentalPin") else { throw GroupStoreError.invalidInput("invalid-pin") }
             gates["pinFields"] = fields
         }
         let result = actions.call("setGates", [current, gates]) as? [String: Any] ?? [:]
@@ -556,28 +517,41 @@ public struct WebStoreDocument {
         return .done
     }
 
-    /// "Delete all", step one, as the editor's: no wait holding on any frozen
-    /// group, then each distinct PIN (pins in the order of the returned names).
-    /// `.done` means deleting may go ahead; `deleteAllNeedsConfirmation` then
-    /// says whether the confirmation must run first.
-    public mutating func deleteAllCheck(pins: [String], now: Date = Date()) -> LockOutcome {
+    /// "Delete all" as the editor's, taken again on every step: refused while a
+    /// frozen group's wait holds; else the distinct PIN-protected groups (one
+    /// PIN each, in this order), a tag naming that PIN set (a new PIN restarts
+    /// the confirmation) and the confirmations needed.
+    public struct DeleteAllPlan {
+        public let pinGroups: [[String: Any]]
+        public let tag: String
+        public let confirmations: Int
+    }
+    public func deleteAllPlan(now: Date = Date()) -> Result<DeleteAllPlan, LockOutcome> {
         let nowMs = (now.timeIntervalSince1970 * 1000).rounded()
         let viewedGroups = groups.map { viewed(($0["id"] as? String) ?? "") ?? $0 }
         let plan = GroupActionsRuntime.shared.call("deleteAllPlan", [viewedGroups, nowMs]) as? [String: Any] ?? [:]
-        if let until = (plan["waitUntilMs"] as? NSNumber)?.doubleValue { return .waitUntil(Date(timeIntervalSince1970: until / 1000)) }
-        let pinGroups = plan["pinGroups"] as? [[String: Any]] ?? []
-        if pins.count < pinGroups.count {
-            return .refused("pins-required: " + pinGroups.compactMap { $0["name"] as? String }.joined(separator: ", "))
+        if let until = (plan["waitUntilMs"] as? NSNumber)?.doubleValue { return .failure(.waitUntil(Date(timeIntervalSince1970: until / 1000))) }
+        if let error = plan["error"] as? String { return .failure(.refused(error)) }
+        let hashes = plan["pinHashes"] as? [String] ?? []
+        return .success(DeleteAllPlan(
+            pinGroups: plan["pinGroups"] as? [[String: Any]] ?? [],
+            tag: hashes.isEmpty ? "no-pin" : hashes.joined(separator: ","),
+            confirmations: plan["needsConfirmation"] as? Bool == true ? ((plan["confirmations"] as? NSNumber)?.intValue ?? 0) : 0))
+    }
+
+    /// The plan's PINs, each counted like one typed in the editor.
+    public mutating func checkDeleteAllPins(_ plan: DeleteAllPlan, pins: [String], now: Date = Date()) -> LockOutcome {
+        if pins.count < plan.pinGroups.count {
+            return .refused("pins-required:" + plan.pinGroups.compactMap { $0["name"] as? String }.joined(separator: ", "))
         }
-        for (index, group) in pinGroups.enumerated() {
-            if let refusal = pinRefusal(group, pins[index], nowMs: nowMs) { return refusal }
+        let nowMs = (now.timeIntervalSince1970 * 1000).rounded()
+        for (index, group) in plan.pinGroups.enumerated() {
+            if let refusal = pinCheck(group, pins[index], nowMs: nowMs).refusal { return refusal }
         }
-        deleteAllNeedsConfirmation = plan["needsConfirmation"] as? Bool == true
         return .done
     }
-    public private(set) var deleteAllNeedsConfirmation = false
 
-    /// Deletes every group (after deleteAllCheck and, when needed, the confirmation).
+    /// Deletes every group (after the plan's PINs and confirmation).
     public mutating func deleteAll() {
         groups = []
     }
@@ -637,7 +611,7 @@ public struct WebStoreDocument {
         var list = groups
         guard let from = list.firstIndex(where: { ($0["id"] as? String) == id }) else { throw GroupStoreError.groupNotFound(id) }
         if isLocked(list[from]) { throw GroupStoreError.groupLocked(id) }
-        guard index >= 0, index < list.count else { throw GroupStoreError.invalidInput("index (0…\(list.count - 1))") }
+        guard index >= 0, index < list.count else { throw GroupStoreError.invalidInput("invalid-index") }
         let moved = list.remove(at: from)
         list.insert(moved, at: index)
         groups = list

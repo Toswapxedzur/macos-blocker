@@ -204,7 +204,7 @@ final class GuardEngineTests: XCTestCase {
     ) -> BlockGroup {
         BlockGroup(
             id: id,
-            groupType: .app,
+            groupType: .site,
             name: id,
             enabled: enabled,
             mode: mode,
