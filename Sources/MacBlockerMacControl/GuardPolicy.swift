@@ -85,7 +85,7 @@ public struct GuardAllowlist: Equatable, Sendable {
     /// An allowed app's helpers (`<id>.helper`) are allowed with it, like the
     /// prefix match on a blocked `GuardTarget`.
     public func allows(bundleIdentifier: String) -> Bool {
-        BlockGroup.allowlist(allowedBundleIdentifiers, allows: bundleIdentifier)
+        BlockGroup.lists(allowedBundleIdentifiers, bundleIdentifier)
     }
 }
 

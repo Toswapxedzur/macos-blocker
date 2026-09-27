@@ -81,8 +81,9 @@ public final class ActivityStore: @unchecked Sendable {
             guard !domain.isEmpty, uri.hasPrefix("data:image/"), uri.utf8.count <= Self.maxWebIconBytes else { continue }
             current[domain] = uri
         }
-        if current.count > Self.maxWebIcons {
-            current = Dictionary(uniqueKeysWithValues: current.prefix(Self.maxWebIcons).map { ($0.key, $0.value) })
+        // Over the cap, older icons go first (never the ones just added).
+        for key in Array(current.keys) where current.count > Self.maxWebIcons && icons[key] == nil {
+            current.removeValue(forKey: key)
         }
         write(encode(current), to: rootDirectory.appendingPathComponent(Self.webIconsFileName))
     }

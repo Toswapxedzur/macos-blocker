@@ -33,21 +33,21 @@ public final class QuickAddPanel {
 
     /// What the store says: the "+" is shown only when the switch is on and the
     /// chosen group still exists (and is not a custom rule).
-    static func target(in raw: [String: Any]) -> String? {
-        let settings = raw["globalSettings"] as? [String: Any] ?? [:]
+    static func target(in document: WebStoreDocument) -> String? {
+        let settings = document.raw["globalSettings"] as? [String: Any] ?? [:]
         guard settings["quickAddEnabled"] as? Bool == true,
-              let groupID = raw["quickAddGroupId"] as? String, !groupID.isEmpty else { return nil }
-        let groups = raw["blockedGroups"] as? [[String: Any]] ?? []
-        // "+" is an edit, and a locked group takes no edits (as in the editor).
-        guard let group = groups.first(where: { ($0["id"] as? String) == groupID }),
+              let groupID = document.raw["quickAddGroupId"] as? String, !groupID.isEmpty else { return nil }
+        // "+" is an edit, and a locked group takes no edits (as in the editor) —
+        // locked here or on a linked device.
+        guard let group = document.publicGroup(id: groupID),
               (group["groupType"] as? String) != "custom",
-              !WebStoreDocument.isLocked(group) else { return nil }
+              group["locked"] as? Bool != true else { return nil }
         return groupID
     }
 
     /// Re-read the store and show or hide the panel accordingly.
     public func reload() {
-        if let target = Self.target(in: store.load().raw) {
+        if let target = Self.target(in: store.load()) {
             groupID = target
             show()
         } else {

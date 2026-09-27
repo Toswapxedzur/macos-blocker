@@ -61,7 +61,7 @@ public final class GroupStore: @unchecked Sendable {
     /// Lays the live shared state of linked groups over a stored document (set
     /// by the app to the hub's overlay). The AI tools read and lock-check through
     /// it, exactly like enforcement and the user's view — never a stale copy.
-    public static var sharedOverlay: (([String: Any]) -> [String: Any])?
+    nonisolated(unsafe) public static var sharedOverlay: (([String: Any]) -> [String: Any])?
 
     /// The typed, read-only projection of the current groups, as linked devices
     /// share them.

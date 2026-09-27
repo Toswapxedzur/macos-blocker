@@ -116,11 +116,12 @@ extension BlockGroup {
         Set(targets.filter { $0.kind == .application }.map(\.id))
     }
 
-    /// Whether an "everything except" list allows `bundleID`: a listed app or
-    /// one of its helpers (`<id>.…`), case-insensitively.
-    public static func allowlist(_ allowed: Set<String>, allows bundleID: String) -> Bool {
+    /// Whether an app list names `bundleID`: a listed app or one of its
+    /// helpers (`<id>.…`), case-insensitively — the rule blocking matches by
+    /// (GuardTarget), for counting time and for rules too.
+    public static func lists(_ listed: Set<String>, _ bundleID: String) -> Bool {
         let id = bundleID.lowercased()
-        return allowed.contains { entry in
+        return listed.contains { entry in
             let listed = entry.lowercased()
             return id == listed || id.hasPrefix(listed + ".")
         }
@@ -133,9 +134,9 @@ extension BlockGroup {
     /// block (Apple, browsers, Vault itself); the caller knows those.
     public func countsApplication(_ bundleID: String, exempt: Bool) -> Bool {
         if applicationAllowlist {
-            return !exempt && !Self.allowlist(applicationIDs, allows: bundleID)
+            return !exempt && !Self.lists(applicationIDs, bundleID)
         }
-        return applicationIDs.contains(bundleID)
+        return Self.lists(applicationIDs, bundleID)
     }
 }
 

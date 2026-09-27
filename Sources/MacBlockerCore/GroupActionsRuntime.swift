@@ -103,9 +103,9 @@ public final class GroupActionsRuntime: @unchecked Sendable {
         return result.toObject()
     }
 
-    public func constant(_ name: String) -> Any? {
+    public func constant(_ name: String, module: String = "CBGroupActions") -> Any? {
         lock.lock(); defer { lock.unlock() }
-        return context.objectForKeyedSubscript("CBGroupActions")?.objectForKeyedSubscript(name)?.toObject()
+        return context.objectForKeyedSubscript(module)?.objectForKeyedSubscript(name)?.toObject()
     }
 
     /// NSNull becomes JS null; everything else passes as is.

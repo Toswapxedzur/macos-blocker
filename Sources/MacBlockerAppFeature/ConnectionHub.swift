@@ -317,13 +317,21 @@ final class ConnectionHub: ObservableObject {
 
     // MARK: Lifecycle
 
+    /// The listener, its retry and the budget timer live on the hub's queue
+    /// (their callbacks run there); start and stop hop onto it.
     func start() {
-        guard !wantsToListen else { return }
-        wantsToListen = true
-        startLocalHub()
+        queue.async { [self] in
+            guard !wantsToListen else { return }
+            wantsToListen = true
+            startLocalHub()
+        }
     }
 
     func stop() {
+        queue.sync { stopOnQueue() }
+    }
+
+    private func stopOnQueue() {
         wantsToListen = false
         lock.lock()
         if hostingLocalHub { persistClustersLocked() }
@@ -434,7 +442,9 @@ final class ConnectionHub: ObservableObject {
         guard cluster.sharedUsageResetAtMs > 0,
               (cluster.sharedScalars["rollingLimit"] as? Bool) != true else { return false }
         let start = Self.sharedPeriodStartMs(anchorMs: cluster.sharedUsageResetAtMs, scalars: cluster.sharedScalars, nowMs: nowMs)
-        guard start > cluster.sharedUsageResetAtMs else { return false }
+        // A new period whenever the anchor isn't this period's start, as
+        // UsageBudget and group-actions.js decide it.
+        guard start != cluster.sharedUsageResetAtMs else { return false }
         cluster.sharedUsageMs = 0
         cluster.sharedUsageResetAtMs = start.rounded(.down)
         // A fresh period: a member's absolute total from the old one must not
@@ -749,7 +759,7 @@ final class ConnectionHub: ObservableObject {
             send(source, dict: ["kind": "classifier-response", "requestID": requestID, "operation": operation, "body": ["stored": stored]])
         case "activity-settings":
             if let settingsBody = body["settings"] as? [String: Any] {
-                store.saveSettings(ActivityWire.merged(store.loadSettings(), with: settingsBody))
+                store.updateSettings { $0 = ActivityWire.merged($0, with: settingsBody) }
             }
             send(source, dict: ["kind": "classifier-response", "requestID": requestID, "operation": operation, "body": ["settings": ActivityWire.settingsPayload(store.loadSettings())]])
         default:
@@ -1385,14 +1395,13 @@ final class ConnectionHub: ObservableObject {
         }
     }
 
-    /// Mirror of group-scopes.js `SYNC_SCALAR_FIELDS` (a test keeps the two equal):
-    /// the policy settings a linked group shares.
-    static let syncScalarFields = [
-        "name", "enabled", "mode", "allowedMinutes", "resetIntervalHours", "resetAtMidnight", "rollingLimit",
-        "allowSnooze", "snoozeMinutes", "snoozeActivationDelayMinutes", "snoozeCooldownMinutes", "snoozeConfirmations",
-        "activeDays", "timeWindowsText",
-        "fallbackUrl", "pauseSeconds",
-    ]
+    /// The policy settings a linked group shares: group-scopes.js
+    /// SYNC_SCALAR_FIELDS, the one list (read from the editor's code).
+    static let syncScalarFields: [String] = {
+        let fields = GroupActionsRuntime.shared.constant("SYNC_SCALAR_FIELDS", module: "CBGroupScopes") as? [String] ?? []
+        precondition(!fields.isEmpty, "group-scopes.js is not bundled")
+        return fields
+    }()
 
     /// The Mac's roster last given to the hub (canonical JSON).
     private var lastLocalRoster = ""

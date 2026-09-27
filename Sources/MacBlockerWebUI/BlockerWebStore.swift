@@ -55,7 +55,15 @@ public final class BlockerWebStore: @unchecked Sendable {
         GroupStore.withFileLock {
             var object = loadStoreObject() ?? [:]
             for (key, value) in changes {
-                if value is NSNull { object.removeValue(forKey: key) } else { object[key] = value }
+                if value is NSNull {
+                    object.removeValue(forKey: key)
+                } else if WebStoreDocument.perGroupMapKeys.contains(key), let entries = value as? [String: Any] {
+                    // A per-group map (snoozes…) merges by group: the editor's copy
+                    // of the other groups' entries may be older than the engine's.
+                    object[key] = (object[key] as? [String: Any] ?? [:]).merging(entries) { $1 }
+                } else {
+                    object[key] = value
+                }
             }
             write(object)
         }
@@ -265,6 +273,25 @@ public final class BlockerWebStore: @unchecked Sendable {
     /// other key). Used by the enforcement bridge to accrue time and to apply
     /// reset-interval rollovers, keeping the popup and native enforcement on one
     /// source of truth. A no-op write when both maps are empty.
+    /// An imported group starts fresh (owner 2026-09-27): its usage, snooze
+    /// and snooze total go; a new budget period starts now. Mac Vault owns the
+    /// runtime maps, so the editor asks for this rather than writing them.
+    public func resetRuntime(groupID: String, now: Date = Date()) {
+        GroupStore.withFileLock {
+            guard var object = loadStoreObject() else { return }
+            for key in ["usageTimersMs", "usageResetAtMs", "usageBucketsMs", "groupSnoozes", "groupSnoozeTotalsMs"] {
+                var map = object[key] as? [String: Any] ?? [:]
+                map.removeValue(forKey: groupID)
+                object[key] = map
+            }
+            var anchors = object["usageResetAtMs"] as? [String: Any] ?? [:]
+            anchors[groupID] = (now.timeIntervalSince1970 * 1000).rounded()
+            object["usageResetAtMs"] = anchors
+            write(object)
+        }
+        GroupStore.postDidChange()
+    }
+
     public func writeUsage(
         timersMs: [String: Double],
         resetAtMs: [String: Double],
