@@ -82,7 +82,6 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
 
     public enum ActionResult: Sendable, Equatable {
         case connected
-        case disconnected
         case failed(String)
     }
 
@@ -96,8 +95,6 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
     /// by the MCP server). Set by the app at launch from the hub-derived token.
     /// Nil (the default, and in tests) writes tokenless entries.
     public var authTokenProvider: (() -> String?)?
-
-    private static let userDisconnectedDefaultsKey = "MCPConnectorRegistry.userDisconnected.v1"
 
     public init(
         home: URL = FileManager.default.homeDirectoryForCurrentUser,
@@ -147,22 +144,12 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
         }
     }
 
-    // MARK: Connect / disconnect
+    // MARK: Connect
 
     @discardableResult
     public func connect(_ connector: Connector) -> ActionResult {
         lock.lock(); defer { lock.unlock() }
-        let result = write(connector, connect: true)
-        if case .connected = result { setUserDisconnected(connector.id, false) }
-        return result
-    }
-
-    @discardableResult
-    public func disconnect(_ connector: Connector) -> ActionResult {
-        lock.lock(); defer { lock.unlock() }
-        let result = write(connector, connect: false)
-        if case .disconnected = result { setUserDisconnected(connector.id, true) }
-        return result
+        return write(connector)
     }
 
     /// Gates the launch-time registration: the app turns it on only once its MCP
@@ -170,24 +157,20 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
     /// unauthenticated endpoint.
     public static var isLaunchAutoConnectEnabled = false
 
-    /// Connects, at launch, every installed client. The AI Tool Connections UI was
-    /// removed on 2026-09-23: connection is automatic with no prompt, because the
-    /// app is non-sandboxed and every catalog client's config lives outside a
-    /// sandbox container (so `isSilentlyRegisterable` is now true for all of them).
-    /// A client is skipped only when a prior explicit disconnect remembered it.
-    /// No-op until the integration is live (see `isLaunchAutoConnectEnabled`).
+    /// Connects, at launch, every installed client (owner 2026-09-23 / 09-27:
+    /// connection is automatic, with no per-tool choice). The app is
+    /// non-sandboxed and every catalog client's config lives outside a sandbox
+    /// container (so `isSilentlyRegisterable` is true for all of them). No-op
+    /// until the integration is live (see `isLaunchAutoConnectEnabled`).
     public func applyDefaultConnections() {
         guard Self.isLaunchAutoConnectEnabled else { return }
-        let disconnected = userDisconnectedIDs()
         for connector in catalog
-        where connector.isSilentlyRegisterable
-            && !disconnected.contains(connector.id)
-            && isInstalledSilently(connector) {
+        where connector.isSilentlyRegisterable && isInstalledSilently(connector) {
             if !isConnected(connector) { connect(connector) }
         }
     }
 
-    private func write(_ connector: Connector, connect: Bool) -> ActionResult {
+    private func write(_ connector: Connector) -> ActionResult {
         let url = home.appendingPathComponent(connector.configPath)
         let token = authTokenProvider?()
         do {
@@ -200,18 +183,18 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
                     servers: servers,
                     transport: connector.transport,
                     token: token,
-                    connect: connect
+                    connect: true
                 )
                 try writeAtomically(updated, to: url)
             case .codexToml:
                 let existing = (try? String(contentsOf: url, encoding: .utf8))
-                let updated = Self.applyCodexToml(existing: existing, servers: servers, token: token, connect: connect)
+                let updated = Self.applyCodexToml(existing: existing, servers: servers, token: token, connect: true)
                 try writeAtomically(Data(updated.utf8), to: url)
             }
         } catch {
             return .failed(Self.describe(error))
         }
-        return connect ? .connected : .disconnected
+        return .connected
     }
 
     private func writeAtomically(_ data: Data, to url: URL) throws {
@@ -318,19 +301,6 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
         // Collapse a trailing run of blank lines the removal may have left behind.
         while result.hasSuffix("\n\n") { result.removeLast() }
         return result
-    }
-
-    // MARK: User-choice persistence (default-to-connect)
-
-    private func userDisconnectedIDs() -> Set<String> {
-        let stored = UserDefaults.standard.stringArray(forKey: Self.userDisconnectedDefaultsKey) ?? []
-        return Set(stored)
-    }
-
-    private func setUserDisconnected(_ id: String, _ disconnected: Bool) {
-        var ids = userDisconnectedIDs()
-        if disconnected { ids.insert(id) } else { ids.remove(id) }
-        UserDefaults.standard.set(Array(ids).sorted(), forKey: Self.userDisconnectedDefaultsKey)
     }
 
     public func connector(id: String) -> Connector? {
