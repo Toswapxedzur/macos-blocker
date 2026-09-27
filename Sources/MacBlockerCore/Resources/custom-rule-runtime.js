@@ -8,6 +8,7 @@
  *   MacBlockerRuntime.load(groupId, source, stateJSON)
  *     → { ok, handlers, types, error, logs, quarantine }
  *   MacBlockerRuntime.unload(groupId)
+ *   MacBlockerRuntime.suppress(groupId, on)      // a disabled group's rule hears nothing
  *   MacBlockerRuntime.dispatch(descriptorJSON)   // { type, now, data, targetGroupId? }
  *     → { actions, logs, panels: { groupId: [panel] }, states: { groupId: stateJSON }, quarantine }
  * Log values arrive as one message string; a state and a file payload as JSON
@@ -53,6 +54,9 @@ var MacBlockerRuntime = (function () {
     },
     unload(groupId) {
       engine.unload(String(groupId));
+    },
+    suppress(groupId, on) {
+      engine.suppress(String(groupId), on === true);
     },
     dispatch(descriptorJSON) {
       const result = engine.dispatch(JSON.parse(descriptorJSON));

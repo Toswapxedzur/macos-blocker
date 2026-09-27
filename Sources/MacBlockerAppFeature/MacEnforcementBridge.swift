@@ -61,6 +61,11 @@ public final class MacEnforcementBridge: ObservableObject {
     private var ruleRuntime: RuleRuntime?
     private var loadedRuleSources: [String: String] = [:]
     private var ruleTypes: [String: Set<String>] = [:]
+    /// Disabled groups: the rule stays loaded but hears nothing, and its panels
+    /// and app blocks are lifted until the group is enabled (owner 2026-09-27).
+    private var suppressedRules: Set<String> = []
+    /// Each rule's current panels (shown only while its group is enabled).
+    private var rulePanels: [String: [PanelSnapshot]] = [:]
     private var quarantinedRuleSources: [String: String] = [:]
     private var lastFrontmost: String?
 
@@ -378,7 +383,7 @@ public final class MacEnforcementBridge: ObservableObject {
 
     private func apply(_ result: RuleRuntime.DispatchResult, group: BlockGroup) {
         for log in result.logs { appendLog(level: log.level, group: group.name, message: log.message) }
-        for (groupID, panels) in result.panels { panelOverlay.update(panels: panels, forGroup: groupID) }
+        for (groupID, panels) in result.panels { setPanels(panels, groupID: groupID) }
         if !result.states.isEmpty { webStore.writeRuleStates(result.states.mapValues { Optional($0) }) }
         for action in result.actions { perform(action) }
         if result.quarantine != nil { quarantineRule(group: group) }
@@ -440,17 +445,34 @@ public final class MacEnforcementBridge: ObservableObject {
 
     /// Loads what each enabled custom group last Ran (its active source) and
     /// unloads the rules of groups that are gone, disabled or emptied.
+    /// Loads what each custom group last Ran (its active source), unloads the
+    /// rules of groups that are gone or emptied, and suppresses the rules of
+    /// disabled groups (loaded, silent) — enabling one resumes it as it was.
     private func reconcileRules(groups: [BlockGroup]) {
         let wanted = Dictionary(uniqueKeysWithValues: groups
-            .filter { $0.groupType == .custom && $0.enabled && !$0.customRuleSource.isEmpty }
+            .filter { $0.groupType == .custom && !$0.customRuleSource.isEmpty }
             .map { ($0.id, $0) })
         for groupID in Set(loadedRuleSources.keys).union(quarantinedRuleSources.keys) where wanted[groupID] == nil {
             unloadRule(groupID: groupID)
         }
         for (groupID, group) in wanted {
-            if loadedRuleSources[groupID] == group.customRuleSource || quarantinedRuleSources[groupID] == group.customRuleSource { continue }
-            _ = loadRule(group: group, source: group.customRuleSource, stateJSON: webStore.ruleState(groupID: groupID))
+            if loadedRuleSources[groupID] != group.customRuleSource, quarantinedRuleSources[groupID] != group.customRuleSource {
+                _ = loadRule(group: group, source: group.customRuleSource, stateJSON: webStore.ruleState(groupID: groupID))
+            }
+            if loadedRuleSources[groupID] != nil { setSuppressed(!group.enabled, groupID: groupID) }
         }
+    }
+
+    private func setSuppressed(_ on: Bool, groupID: String, force: Bool = false) {
+        guard force || on != suppressedRules.contains(groupID) else { return }
+        ruleRuntime?.suppress(groupID: groupID, on)
+        if on { suppressedRules.insert(groupID) } else { suppressedRules.remove(groupID) }
+        panelOverlay.update(panels: on ? [] : rulePanels[groupID] ?? [], forGroup: groupID)
+    }
+
+    private func setPanels(_ panels: [PanelSnapshot], groupID: String) {
+        rulePanels[groupID] = panels
+        if !suppressedRules.contains(groupID) { panelOverlay.update(panels: panels, forGroup: groupID) }
     }
 
     /// Registers a group's rule; one that doesn't load leaves the old one.
@@ -468,7 +490,9 @@ public final class MacEnforcementBridge: ObservableObject {
             quarantinedRuleSources.removeValue(forKey: group.id)
             ruleTypes[group.id] = Set(result.types)
             blockedAppBundleIDsByGroup.removeValue(forKey: group.id)
-            panelOverlay.update(panels: result.panels ?? [], forGroup: group.id)
+            setPanels(result.panels ?? [], groupID: group.id)
+            // A fresh load isn't suppressed in the engine: say where it stands.
+            setSuppressed(!group.enabled, groupID: group.id, force: true)
             return result
         } catch RuleRuntime.RuleRuntimeError.terminated {
             quarantineRule(group: group)
@@ -483,6 +507,8 @@ public final class MacEnforcementBridge: ObservableObject {
         loadedRuleSources.removeValue(forKey: groupID)
         quarantinedRuleSources.removeValue(forKey: groupID)
         ruleTypes.removeValue(forKey: groupID)
+        suppressedRules.remove(groupID)
+        rulePanels.removeValue(forKey: groupID)
         blockedAppBundleIDsByGroup.removeValue(forKey: groupID)
         panelOverlay.removePanels(forGroup: groupID)
     }
@@ -498,7 +524,10 @@ public final class MacEnforcementBridge: ObservableObject {
             return ["ok": false, "error": "group-not-found"]
         }
         if document.isLocked(id: groupID) { return ["ok": false, "error": "group-locked"] }
-        guard let result = loadRule(group: group, source: source, stateJSON: webStore.ruleState(groupID: groupID)) else {
+        // Run enables the group (as the editor does).
+        var running = group
+        running.enabled = true
+        guard let result = loadRule(group: running, source: source, stateJSON: webStore.ruleState(groupID: groupID)) else {
             return ["ok": false, "error": quarantinedRuleSources[groupID] != nil ? "sandbox-timeout" : "rules-not-running"]
         }
         if result.ok { _ = try? store.mutate { try $0.recordRun(id: groupID, source: source) } }
