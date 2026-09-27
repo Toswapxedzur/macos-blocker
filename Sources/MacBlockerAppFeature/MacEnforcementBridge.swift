@@ -630,7 +630,7 @@ public final class MacEnforcementBridge: ObservableObject {
         let hostname = frontmost ?? ""
 
         let matchingTarget = frontmost.flatMap { fm in
-            group.targets.first(where: { $0.kind == .application && $0.id == fm })
+            group.targets.first(where: { $0.kind == .application && BlockGroup.lists([$0.id], fm) })
         }
 
         var enrichedData = data
@@ -649,6 +649,8 @@ public final class MacEnforcementBridge: ObservableObject {
     /// Dispatches a single event (snoozePress, panelEvent, localFileEvent)
     /// outside the regular tick loop.
     private func dispatchSingleEvent(_ event: CustomRuleEvent, group: BlockGroup, frontmost: String?) {
+        // A disabled group's rule never runs (the tick skips it too).
+        guard group.enabled else { return }
         appendLog(level: "log", group: group.name,
                   message: "event fired: \(event.type) | target: \(event.target?.displayName ?? "none") | url: \(event.url.isEmpty ? "—" : event.url)")
 

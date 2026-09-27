@@ -63,7 +63,11 @@
   // Only the keys the editor set (or removed; null) go to Mac Vault, which
   // merges them into its file — like chrome.storage, a key another writer
   // changed meanwhile (the engine, a tool) is kept.
-  function persist(keys) {
+  // Per-group maps (WebStoreDocument.perGroupMapKeys): only the entries this
+  // editor changed are sent — its copy of other groups' entries may be older
+  // than the engine's, and Mac Vault merges them by group.
+  var PER_GROUP_KEYS = ["usageTimersMs", "usageResetAtMs", "usageBucketsMs", "groupSnoozes", "groupSnoozeTotalsMs", "parentalPinAttempts"];
+  function persist(keys, before) {
     try {
       window.localStorage.setItem(STORE_KEY, JSON.stringify(store));
     } catch (_) {}
@@ -71,7 +75,16 @@
     if (bridge) {
       var changes = {};
       keys.forEach(function (key) {
-        changes[key] = Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null;
+        var value = Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null;
+        if (value && typeof value === "object" && before && PER_GROUP_KEYS.indexOf(key) >= 0) {
+          var old = before[key] && typeof before[key] === "object" ? before[key] : {};
+          var changed = {};
+          Object.keys(value).forEach(function (id) {
+            if (JSON.stringify(value[id]) !== JSON.stringify(old[id])) changed[id] = value[id];
+          });
+          value = changed;
+        }
+        changes[key] = value;
       });
       try {
         bridge.postMessage({ kind: "persist-store", changes: changes });
@@ -299,14 +312,16 @@
     },
     set: function (items, callback) {
       var changes = {};
+      var before = {};
       Object.keys(items || {}).forEach(function (key) {
+        before[key] = store[key];
         changes[key] = {
           oldValue: deepClone(store[key]),
           newValue: deepClone(items[key])
         };
         store[key] = deepClone(items[key]);
       });
-      persist(Object.keys(items || {}));
+      persist(Object.keys(items || {}), before);
       notifyChanges(changes);
       return settleCallback(undefined, callback);
     },
@@ -388,6 +403,8 @@
         });
       case "fire-snooze-press":
         return bridgeOrResolve("fire-snooze-press", message, { ok: true });
+      case "reset-group-runtime":
+        return bridgeOrResolve("reset-group-runtime", message, { ok: true });
       case "show-system-panel":
         return bridgeOrResolve("show-system-panel", message, { ok: true });
       case "dismiss-system-panel":

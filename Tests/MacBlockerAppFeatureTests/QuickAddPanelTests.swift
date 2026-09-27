@@ -1,14 +1,15 @@
 import XCTest
 @testable import MacBlockerAppFeature
+import MacBlockerCore
 
 /// The floating "+" follows the editor's switch and chosen group in the store.
 @MainActor
 final class QuickAddPanelTests: XCTestCase {
-    private func store(enabled: Bool?, groupID: String?, groups: [[String: Any]]) -> [String: Any] {
+    private func store(enabled: Bool?, groupID: String?, groups: [[String: Any]]) -> WebStoreDocument {
         var raw: [String: Any] = ["blockedGroups": groups]
         if let enabled { raw["globalSettings"] = ["quickAddEnabled": enabled] }
         if let groupID { raw["quickAddGroupId"] = groupID }
-        return raw
+        return WebStoreDocument(raw: raw)
     }
     private let groups: [[String: Any]] = [["id": "g1", "groupType": "site"], ["id": "c1", "groupType": "custom"]]
 
