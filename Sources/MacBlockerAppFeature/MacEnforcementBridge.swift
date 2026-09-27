@@ -9,29 +9,15 @@ import MacBlockerMacControl
 /// Connects the web editor's saved groups to live macOS enforcement and the
 /// floating timer HUD.
 ///
-/// Scope boundary — the native app enforces **whole apps only** and never
-/// touches in-browser affairs at any level: it does not read browser tabs
-/// (no `__nativeGetAllTabs` provider is installed, so `getAllTabs()` returns
-/// `[]`), and it ignores every web-level intent (`closeTab`,
-/// `closeTabsByPattern`, `blockSite`, `unblockSite`). Site/tab/DOM enforcement
-/// belongs entirely to the customBlocker browser extension, matching the
-/// Windows port. `isBrowser` is always reported `false`.
+/// Scope line (owner 2026-09-27): Mac Vault controls apps only and never a
+/// website — it reads no browser tab and acts on nothing inside a browser;
+/// sites, pages and tabs belong to the browser extension.
 ///
-/// Lifecycle events (notification-driven, real-time):
-///   - `openAppEvent`      — process launched (strong)
-///   - `closeAppEvent`     — process terminated (strong)
-///   - `focusEvent`        — app became frontmost
-///   - `unfocusEvent`      — app lost frontmost
-///   - `minimizeEvent`     — app hidden (Cmd+H)
-///   - `unminimizeEvent`   — app unhidden
-///
-/// Context events:
-///   - `switchAppEvent`    — frontmost changed non-null → non-null
-///   - `appChangedEvent`   — superset of all above + URL changes
-///   - `tickEvent`         — every ~1s
-///
-/// User-triggered:
-///   - `snoozePress` / `panelEvent` / `localFileEvent`
+/// Custom rules (rule-core.js, run by `RuleRuntime`) get Mac Vault's events —
+/// "tick" every second ({ frontmost, running }) and "app" as apps launch,
+/// quit, come to the front or leave it, hide or unhide — plus "snooze",
+/// "panel" and "file"; they act with v.block / v.quit / v.open (apps), panels,
+/// the folder and their state.
 @MainActor
 public final class MacEnforcementBridge: ObservableObject {
     /// The one engine of the process (owner 2026-09-26: Mac Vault blocks the
@@ -55,7 +41,6 @@ public final class MacEnforcementBridge: ObservableObject {
     #if os(macOS)
     private let adapter: AppBlockPolicy
     private let overlay = TimerOverlayPanelController()
-    private let toastOverlay = ToastOverlayPanelController()
     private let panelOverlay = PanelOverlayPanelController()
     private var timer: Timer?
     private let tickInterval: TimeInterval
@@ -67,34 +52,32 @@ public final class MacEnforcementBridge: ObservableObject {
     /// Cleared when a group leaves its cluster so a re-link re-seeds.
     private var clusterSeededGroups: Set<String> = []
 
-    // Custom-rule runtime state
-    private var ruleRuntime: CustomJavaScriptPolicyRuntime?
+    // Custom rules: the loaded source and the event types each handles.
+    private var ruleRuntime: RuleRuntime?
     private var loadedRuleSources: [String: String] = [:]
+    private var ruleTypes: [String: Set<String>] = [:]
     private var quarantinedRuleSources: [String: String] = [:]
     private var lastFrontmost: String?
 
     // Notification-driven lifecycle event queue. NSWorkspace notifications
     // push events here; the tick loop drains them.
     private struct AppLifecycleEvent {
-        enum Kind: String { case launched, terminated, activated, deactivated, hidden, unhidden }
+        enum Kind: String { case launch, quit, focus, blur, hide, unhide }
         let kind: Kind
         let bundleID: String
+        let name: String
     }
     private var pendingLifecycleEvents: [AppLifecycleEvent] = []
     private var workspaceObservers: [Any] = []
 
-    // Persistent (rule-driven) app blocklist — whole-app enforcement only.
-    // The native app deliberately does NOT read or control browser tabs/sites:
-    // site/tab/DOM enforcement belongs entirely to the customBlocker browser
-    // extension. There is no browser tab reader, focus observer, or dynamic
-    // site blocklist here on purpose (see the boundary note above the class).
+    // The apps each group's rule blocked (v.block), until it unblocks them or
+    // its rule is Run again, disabled or deleted.
     private var blockedAppBundleIDsByGroup: [String: Set<String>] = [:]
-    /// The apps a custom rule blocked, for the groups enforcing right now: a
-    /// snoozed, disabled or off-schedule group blocks nothing, rule or not.
-    private func ruleBlockedApps(groups: [BlockGroup], snoozes: [String: SnoozeState], now: Date) -> Set<String> {
+    /// The apps the enabled groups' rules blocked (a rule runs whenever its
+    /// group is enabled, as in the browser).
+    private func ruleBlockedApps(groups: [BlockGroup]) -> Set<String> {
         groups.reduce(into: Set<String>()) { union, group in
-            guard group.isEnforcing(snoozes: snoozes, at: now),
-                  let apps = blockedAppBundleIDsByGroup[group.id] else { return }
+            guard group.enabled, let apps = blockedAppBundleIDsByGroup[group.id] else { return }
             union.formUnion(apps)
         }
     }
@@ -102,7 +85,7 @@ public final class MacEnforcementBridge: ObservableObject {
     // Panel event throttle (leading-edge, trailing flush at tick)
     private static let panelThrottleInterval: TimeInterval = 0.10
     private var lastPanelFireAt: [String: Date] = [:]
-    private var pendingPanelEvents: [String: (groupID: String, data: [String: String])] = [:]
+    private var pendingPanelEvents: [String: (groupID: String, data: [String: Any])] = [:]
 
     /// The Activity log's app-usage recorder, fed by this tick.
     public var activityRecorder: ActivityRecorderService?
@@ -141,40 +124,17 @@ public final class MacEnforcementBridge: ObservableObject {
 
     // MARK: - Public event triggers
 
-    /// Fire a `snoozePress` event for the given group. Called when the user
-    /// taps snooze in the shield/UI.
+    /// The group's Snooze: its rule's "snooze" event (the rule decides).
     public func fireSnoozePress(groupID: String) {
         #if os(macOS)
-        let groups = webStore.importedGroups()
-        guard let group = groups.first(where: { $0.id == groupID }) else { return }
-        let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        let event = makeEvent(type: "snoozePress", group: group, frontmost: frontmost,
-                              data: ["triggeredAt": String(Int(Date().timeIntervalSince1970 * 1000))])
-        dispatchSingleEvent(event, group: group, frontmost: frontmost)
+        dispatchRule(type: "snooze", data: [String: Any](), groupID: groupID)
         #endif
     }
 
-    /// Fire a `panelEvent` for the given group. Called when the web UI panel
-    /// sends an interaction (button click, input change, etc).
-    public func firePanelEvent(groupID: String, data: [String: String]) {
+    /// A rule's panel interaction: its "panel" event.
+    public func firePanelEvent(groupID: String, data: [String: Any]) {
         #if os(macOS)
-        let groups = webStore.importedGroups()
-        guard let group = groups.first(where: { $0.id == groupID }) else { return }
-        let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        let event = makeEvent(type: "panelEvent", group: group, frontmost: frontmost, data: data)
-        dispatchSingleEvent(event, group: group, frontmost: frontmost)
-        #endif
-    }
-
-    /// Fire a `localFileEvent` for the given group. Called after a file
-    /// operation initiated by a custom rule completes.
-    public func fireLocalFileEvent(groupID: String, data: [String: String]) {
-        #if os(macOS)
-        let groups = webStore.importedGroups()
-        guard let group = groups.first(where: { $0.id == groupID }) else { return }
-        let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        let event = makeEvent(type: "localFileEvent", group: group, frontmost: frontmost, data: data)
-        dispatchSingleEvent(event, group: group, frontmost: frontmost)
+        dispatchRule(type: "panel", data: data, groupID: groupID)
         #endif
     }
 
@@ -189,13 +149,14 @@ public final class MacEnforcementBridge: ObservableObject {
         registerWorkspaceObservers()
         panelOverlay.setEventHandler { [weak self] groupID, panelId, controlId, eventName, value, extra in
             guard let self else { return }
-            var data: [String: String] = [
+            let values = (try? JSONSerialization.jsonObject(with: Data(extra.utf8))) as? [String: Any] ?? [:]
+            let data: [String: Any] = [
                 "panelId": panelId,
                 "controlId": controlId,
                 "eventName": eventName,
-                "value": value
+                "value": value,
+                "values": values
             ]
-            if !extra.isEmpty { data["valuesJSON"] = extra }
             if eventName == "click" {
                 self.firePanelEvent(groupID: groupID, data: data)
                 return
@@ -227,7 +188,6 @@ public final class MacEnforcementBridge: ObservableObject {
         timer = nil
         lastSampleAt = nil
         overlay.hide()
-        toastOverlay.teardown()
         panelOverlay.teardown()
         unregisterWorkspaceObservers()
         #endif
@@ -239,24 +199,21 @@ public final class MacEnforcementBridge: ObservableObject {
     private func registerWorkspaceObservers() {
         let center = NSWorkspace.shared.notificationCenter
         let mapping: [(NSNotification.Name, AppLifecycleEvent.Kind)] = [
-            (.init("NSWorkspaceDidLaunchApplicationNotification"), .launched),
-            (.init("NSWorkspaceDidTerminateApplicationNotification"), .terminated),
-            (.init("NSWorkspaceDidActivateApplicationNotification"), .activated),
-            (.init("NSWorkspaceDidDeactivateApplicationNotification"), .deactivated),
-            (.init("NSWorkspaceDidHideApplicationNotification"), .hidden),
-            (.init("NSWorkspaceDidUnhideApplicationNotification"), .unhidden),
+            (.init("NSWorkspaceDidLaunchApplicationNotification"), .launch),
+            (.init("NSWorkspaceDidTerminateApplicationNotification"), .quit),
+            (.init("NSWorkspaceDidActivateApplicationNotification"), .focus),
+            (.init("NSWorkspaceDidDeactivateApplicationNotification"), .blur),
+            (.init("NSWorkspaceDidHideApplicationNotification"), .hide),
+            (.init("NSWorkspaceDidUnhideApplicationNotification"), .unhide),
         ]
         for (name, kind) in mapping {
             let observer = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                // Every app counts, menu-bar and background ones included.
                 guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-                      let bundleID = app.bundleIdentifier,
-                      !BlockedProcesses.isBrowserBundleIdentifier(bundleID) else { return }
-                // Only track GUI apps (regular activation policy).
-                if kind == .launched || kind == .terminated {
-                    guard app.activationPolicy == .regular else { return }
-                }
+                      let bundleID = app.bundleIdentifier else { return }
+                let event = AppLifecycleEvent(kind: kind, bundleID: bundleID, name: app.localizedName ?? bundleID)
                 Task { @MainActor [weak self] in
-                    self?.pendingLifecycleEvents.append(AppLifecycleEvent(kind: kind, bundleID: bundleID))
+                    self?.pendingLifecycleEvents.append(event)
                 }
             }
             workspaceObservers.append(observer)
@@ -306,7 +263,7 @@ public final class MacEnforcementBridge: ObservableObject {
         lastSampleAt = now
         // A blocked app still in front (shielded or suspended) is not time in
         // that app: no group counts it, as a covered browser page counts none.
-        let ruleBlocked = ruleBlockedApps(groups: groups, snoozes: snoozes, now: now)
+        let ruleBlocked = ruleBlockedApps(groups: groups)
         let frontBlocked = frontmost.map { app in
             ruleBlocked.contains(app) || AppBlockPolicy.blocksApplication(
                 app,
@@ -324,23 +281,13 @@ public final class MacEnforcementBridge: ObservableObject {
             snoozesByGroup: snoozes
         )
 
-        // 2. Drain notification-driven lifecycle events.
-        let lifecycleEvents = pendingLifecycleEvents
-        pendingLifecycleEvents.removeAll()
+        // 2. The rules: what happened to apps since the last tick, then "tick".
+        dispatchRuleEvents(groups: groups, frontApp: frontApp)
 
-        let switched = frontmost != lastFrontmost
-
-        // 3. Build and dispatch events for ALL enabled groups, log each event.
-        let dispatchOutput = dispatchEvents(
-            groups: groups, frontmost: frontmost, usage: usage, now: now,
-            lifecycleEvents: lifecycleEvents, switched: switched
-        )
-
-        // 4. Enforce: block apps whose group says "blocked now" PLUS
-        //    any apps shield-ed by custom-rule decisions.
-        //    (a rule's persistent blockApp list rides along: one quit sweep).
+        // 3. Enforce: block apps whose group says "blocked now" plus the apps
+        //    a rule blocked (one quit sweep).
         let quitRetry = view.quitRetryMinutes * 60
-        Task { [adapter, ruleBlocked = dispatchOutput.shieldedBundleIDs.union(ruleBlocked)] in
+        Task { [adapter, ruleBlocked = ruleBlockedApps(groups: groups)] in
             try? await adapter.applyGroups(
                 groups, usage: usage, now: now,
                 customBlockedBundleIDs: ruleBlocked,
@@ -348,530 +295,202 @@ public final class MacEnforcementBridge: ObservableObject {
             )
         }
 
-        // 5. Render the HUD for any timer whose app is currently frontmost.
+        // 4. Render the HUD for any timer whose app is currently frontmost.
         //    A timed group shows while its time counts for the front app (a
         //    custom-rule group always, while it runs).
         let frontExempt = !GuardPolicy.canBlock(frontmost)
-        var rows: [TimerOverlayRow] = groups.reversed().compactMap { group in
+        let rows: [TimerOverlayRow] = groups.reversed().compactMap { group in
             guard group.isEnforcing(snoozes: usage.snoozesByGroup, at: now),
                   let remaining = group.remainingSeconds(usedSeconds: usage.usageByGroupSeconds[group.id] ?? 0),
                   group.groupType == .custom || frontmost.map({ group.countsApplication($0, exempt: frontExempt) }) == true
             else { return nil }
             return TimerOverlayRow(id: group.id, name: group.name, remainingSeconds: remaining)
         }
-        for timer in dispatchOutput.customTimers where !timer.isPaused {
-            let remainingSec = max(0, timer.currentMs / 1000)
-            rows.append(TimerOverlayRow(
-                id: "\(timer.groupId).\(timer.id)",
-                name: timer.displayName,
-                remainingSeconds: remainingSec
-            ))
-        }
         overlay.update(rows: rows)
 
-        // 6. Show popup/screen log messages as toasts (separate from the timer HUD).
-        for log in dispatchOutput.hudLogs {
-            toastOverlay.show(message: log.message, level: log.level)
-        }
-
-        // 7. Render interactive panels from getPanelHelper(). The overlay is
-        //    an authoritative mirror of every enabled group's current panels,
-        //    so panels from a disabled or no-longer-active group disappear.
-        //    In-progress user input is preserved on the native side (the
-        //    overlay dedupes identical snapshots and controls hold edits in
-        //    local view state).
-        var panelsByGroupID: [String: [PanelSnapshot]] = [:]
-        for panel in dispatchOutput.panels {
-            panelsByGroupID[panel.groupId ?? "", default: []].append(panel)
-        }
-        panelOverlay.replaceAll(panelsByGroupID)
-
-        // Track state for next tick.
-        lastFrontmost = frontmost
     }
 
-    // MARK: - Event Dispatch
+    // MARK: - Custom rules
 
-    /// Builds events and dispatches them to the JS runtime for the enabled
-    /// groups whose custom rule is loaded, logging each.
-    private struct DispatchOutput {
-        var shieldedBundleIDs: Set<String>
-        var customTimers: [CustomTimerSnapshot]
-        var hudLogs: [(message: String, level: String)]
-        var panels: [PanelSnapshot]
+    /// This tick's rule events: each app change since the last tick ("app"),
+    /// then "tick". Rules load, reload and unload here as the groups change.
+    private func dispatchRuleEvents(groups: [BlockGroup], frontApp: NSRunningApplication?) {
+        let lifecycleEvents = pendingLifecycleEvents
+        pendingLifecycleEvents.removeAll()
+        let frontmost = frontApp?.bundleIdentifier
+        defer { lastFrontmost = frontmost }
+        reconcileRules(groups: groups)
+        guard !loadedRuleSources.isEmpty else { return }
+
+        let listening = groups.filter { loadedRuleSources[$0.id] != nil }
+        for event in lifecycleEvents {
+            var data: [String: Any] = ["kind": event.kind.rawValue, "appId": event.bundleID, "name": event.name]
+            if event.kind == .focus { data["previousAppId"] = lastFrontmost ?? NSNull() }
+            for group in listening { dispatchRule(type: "app", data: data, groupID: group.id) }
+        }
+        let wantsTick = listening.filter { ruleTypes[$0.id]?.contains("tick") == true }
+        guard !wantsTick.isEmpty else { return }
+        let tick: [String: Any] = [
+            "frontmost": frontApp.map { ["appId": $0.bundleIdentifier ?? "", "name": $0.localizedName ?? ""] as [String: Any] } ?? NSNull(),
+            "running": Self.runningApps()
+        ]
+        for group in wantsTick { dispatchRule(type: "tick", data: tick, groupID: group.id) }
     }
 
-    private func dispatchEvents(
-        groups: [BlockGroup],
-        frontmost: String?,
-        usage: UsageSnapshot,
-        now: Date,
-        lifecycleEvents: [AppLifecycleEvent],
-        switched: Bool
-    ) -> DispatchOutput {
-        let enabledGroups = groups.filter { $0.enabled }
-        let ruleGroups = enabledGroups.filter { !$0.customRuleSource.isEmpty }
-
-        // Reconcile the JS runtime for groups that have custom rules.
-        if ruleGroups.isEmpty {
-            if !loadedRuleSources.isEmpty || !quarantinedRuleSources.isEmpty || !blockedAppBundleIDsByGroup.isEmpty {
-                unloadAllRules()
-            }
-        } else if let runtime = ensureRuntime() {
-            reconcileRuleRuntime(runtime: runtime, groups: ruleGroups)
+    /// Every running app (menu-bar and background ones included): an `.app`
+    /// with a bundle id.
+    private static func runningApps() -> [[String: Any]] {
+        NSWorkspace.shared.runningApplications.compactMap { app in
+            guard let id = app.bundleIdentifier, app.bundleURL?.pathExtension == "app" else { return nil }
+            return ["appId": id, "name": app.localizedName ?? id]
         }
-
-        var shieldedBundleIDs: Set<String> = []
-        var allowedBundleIDs: Set<String> = []
-        var collectedTimers: [CustomTimerSnapshot] = []
-        var hudLogs: [(message: String, level: String)] = []
-        var collectedPanels: [PanelSnapshot] = []
-
-        // Only groups with a loaded rule get events: nothing else listens.
-        for group in ruleGroups where loadedRuleSources[group.id] != nil {
-            guard group.isEnforcing(snoozes: usage.snoozesByGroup, at: now), let runtime = ruleRuntime else { continue }
-
-            let events = buildEventsForGroup(
-                group: group, frontmost: frontmost, now: now,
-                lifecycleEvents: lifecycleEvents, switched: switched
-            )
-
-            for event in events {
-                if event.type != "tickEvent" {
-                    appendLog(level: "log", group: group.name,
-                              message: "event fired: \(event.type) | target: \(event.target?.displayName ?? "none") | app: \(event.data["appId"] ?? event.data["bundleId"] ?? "—") | url: \(event.url.isEmpty ? "—" : event.url)")
-                }
-
-                let result: DispatchResult
-                do {
-                    result = try runtime.dispatch(event)
-                } catch {
-                    if isExecutionTermination(error) {
-                        quarantineRule(group: group, runtime: runtime)
-                    } else {
-                        appendLog(level: "error", group: group.name,
-                                  message: "dispatch failed: \(error.localizedDescription)")
-                    }
-                    continue
-                }
-
-                for decision in result.decisions {
-                    switch decision.action {
-                    case .shield:
-                        if decision.targetIDs.isEmpty, let fm = frontmost {
-                            shieldedBundleIDs.insert(fm)
-                        } else {
-                            for id in decision.targetIDs {
-                                shieldedBundleIDs.insert(id)
-                            }
-                        }
-                    case .allow:
-                        if decision.targetIDs.isEmpty, let fm = frontmost {
-                            allowedBundleIDs.insert(fm)
-                        } else {
-                            for id in decision.targetIDs {
-                                allowedBundleIDs.insert(id)
-                            }
-                        }
-                    case .log:
-                        let level = decision.metadata["level"] ?? "log"
-                        let surface = decision.metadata["surface"] ?? "all"
-                        appendLog(level: level, group: group.name, message: decision.reason)
-                        if surface == "popup" || surface == "screen" || surface == "all" {
-                            hudLogs.append((message: "[\(group.name)] \(decision.reason)", level: level))
-                        }
-                    case .showStatus, .quarantine, .requestSnooze, .unshield:
-                        break
-                    }
-                }
-
-                // Collect visible timers and panels from the last event
-                // (tickEvent) to avoid duplicates from multiple events per group.
-                if event.type == "tickEvent" {
-                    collectedTimers.append(contentsOf: result.timers)
-                    collectedPanels.append(contentsOf: result.panels)
-                }
-
-                processWindowIntents(result.intents, groupID: group.id, frontmost: frontmost)
-            }
-        }
-
-        shieldedBundleIDs.subtract(allowedBundleIDs)
-        return DispatchOutput(shieldedBundleIDs: shieldedBundleIDs, customTimers: collectedTimers, hudLogs: hudLogs, panels: collectedPanels)
     }
 
-    private func buildEventsForGroup(
-        group: BlockGroup,
-        frontmost: String?,
-        now: Date,
-        lifecycleEvents: [AppLifecycleEvent],
-        switched: Bool
-    ) -> [CustomRuleEvent] {
-        var events: [CustomRuleEvent] = []
-
-        func make(type: String, data: [String: String] = [:]) -> CustomRuleEvent {
-            makeEvent(type: type, group: group, frontmost: frontmost, data: data)
-        }
-
-        // Always fire tickEvent.
-        events.append(make(type: "tickEvent", data: ["intervalMs": "1000"]))
-
-        // Process notification-driven lifecycle events (no target filtering —
-        // rules decide what to act on).
-        for le in lifecycleEvents {
-            let bundleData = ["bundleId": le.bundleID]
-            switch le.kind {
-            case .launched:
-                events.append(make(type: "openAppEvent", data: bundleData))
-                events.append(make(type: "appChangedEvent", data: ["reason": "open", "bundleId": le.bundleID]))
-            case .terminated:
-                events.append(make(type: "closeAppEvent", data: bundleData))
-                events.append(make(type: "appChangedEvent", data: ["reason": "close", "bundleId": le.bundleID]))
-            case .activated:
-                events.append(make(type: "focusEvent", data: bundleData))
-                events.append(make(type: "appChangedEvent", data: ["reason": "focus", "bundleId": le.bundleID]))
-            case .deactivated:
-                events.append(make(type: "unfocusEvent", data: bundleData))
-                events.append(make(type: "appChangedEvent", data: ["reason": "unfocus", "bundleId": le.bundleID]))
-            case .hidden:
-                events.append(make(type: "minimizeEvent", data: bundleData))
-                events.append(make(type: "appChangedEvent", data: ["reason": "minimize", "bundleId": le.bundleID]))
-            case .unhidden:
-                events.append(make(type: "unminimizeEvent", data: bundleData))
-                events.append(make(type: "appChangedEvent", data: ["reason": "unminimize", "bundleId": le.bundleID]))
-            }
-        }
-
-        // switchAppEvent: only fires on non-null → non-null frontmost change.
-        if switched, let prev = lastFrontmost, let curr = frontmost {
-            events.append(make(type: "switchAppEvent", data: [
-                "previousAppId": prev,
-                "currentAppId": curr
-            ]))
-            events.append(make(type: "appChangedEvent", data: [
-                "reason": "switch",
-                "previousAppId": prev,
-                "currentAppId": curr
-            ]))
-        }
-
-        return events
-    }
-
-    /// Helper to build a single event with standard enriched data.
-    private func makeEvent(
-        type: String,
-        group: BlockGroup,
-        frontmost: String?,
-        data: [String: String] = [:]
-    ) -> CustomRuleEvent {
-        // App-level only: never derived from browser tab state. URL is a synthetic
-        // app:// scheme and isBrowser is always false (site/tab/DOM is the
-        // extension's domain).
-        let url = frontmost.map { "app://\($0)" } ?? ""
-        let hostname = frontmost ?? ""
-
-        let matchingTarget = frontmost.flatMap { fm in
-            group.targets.first(where: { $0.kind == .application && BlockGroup.lists([$0.id], fm) })
-        }
-
-        var enrichedData = data
-        enrichedData["appId"] = frontmost ?? ""
-        enrichedData["appName"] = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
-        enrichedData["isBrowser"] = "false"
-        enrichedData["groupName"] = group.name
-        enrichedData["allApps"] = runningAppsJSON()
-        return CustomRuleEvent(
-            type: type, groupID: group.id,
-            target: matchingTarget, now: Date(),
-            url: url, hostname: hostname, data: enrichedData
-        )
-    }
-
-    /// Dispatches a single event (snoozePress, panelEvent, localFileEvent)
-    /// outside the regular tick loop.
-    private func dispatchSingleEvent(_ event: CustomRuleEvent, group: BlockGroup, frontmost: String?) {
-        // A disabled group's rule never runs (the tick skips it too).
-        guard group.enabled else { return }
-        appendLog(level: "log", group: group.name,
-                  message: "event fired: \(event.type) | target: \(event.target?.displayName ?? "none") | url: \(event.url.isEmpty ? "—" : event.url)")
-
-        guard !group.customRuleSource.isEmpty, let runtime = ensureRuntime() else { return }
-
-        // Load THIS group's rule if needed — only this one (the full reconcile
-        // treats every group missing from its list as removed and would unload
-        // every other group's rule).
-        if loadedRuleSources[group.id] != group.customRuleSource, quarantinedRuleSources[group.id] != group.customRuleSource {
-            if loadedRuleSources[group.id] != nil { cleanRule(groupID: group.id) }
-            buildRule(groupID: group.id)
-        }
-        guard loadedRuleSources[group.id] != nil else { return }
-
-        let result: DispatchResult
+    /// One event to one group's rule (only if it handles that type), then what
+    /// it asked for.
+    private func dispatchRule(type: String, data: Any, groupID: String) {
+        guard ruleTypes[groupID]?.contains(type) == true, let runtime = ruleRuntime,
+              let group = webStore.importedGroups().first(where: { $0.id == groupID }), group.enabled else { return }
         do {
-            result = try runtime.dispatch(event)
+            apply(try runtime.dispatch(type: type, data: data, groupID: groupID), group: group)
+        } catch RuleRuntime.RuleRuntimeError.terminated {
+            quarantineRule(group: group)
         } catch {
-            if isExecutionTermination(error) {
-                quarantineRule(group: group, runtime: runtime)
+            appendLog(level: "error", group: group.name, message: "\(type): \(error)")
+        }
+    }
+
+    private func apply(_ result: RuleRuntime.DispatchResult, group: BlockGroup) {
+        for log in result.logs { appendLog(level: log.level, group: group.name, message: log.message) }
+        for (groupID, panels) in result.panels { panelOverlay.update(panels: panels, forGroup: groupID) }
+        if !result.states.isEmpty { webStore.writeRuleStates(result.states.mapValues { Optional($0) }) }
+        for action in result.actions { perform(action) }
+        if result.quarantine != nil { quarantineRule(group: group) }
+    }
+
+    /// A rule's action — apps only (the scope line).
+    private func perform(_ action: RuleRuntime.Action) {
+        switch action.kind {
+        case "block":
+            guard let app = action.appId, GuardPolicy.canBlock(app) else { return }
+            if action.on == false {
+                blockedAppBundleIDsByGroup[action.groupId]?.remove(app)
             } else {
-                appendLog(level: "error", group: group.name,
-                          message: "dispatch failed: \(error.localizedDescription)")
+                blockedAppBundleIDsByGroup[action.groupId, default: []].insert(app)
             }
-            return
-        }
-
-        for decision in result.decisions {
-            switch decision.action {
-            case .log:
-                let level = decision.metadata["level"] ?? "log"
-                let surface = decision.metadata["surface"] ?? "all"
-                appendLog(level: level, group: group.name, message: decision.reason)
-                if surface == "popup" || surface == "screen" || surface == "all" {
-                    toastOverlay.show(message: "[\(group.name)] \(decision.reason)", level: level)
-                }
-            case .shield:
-                // The same quit as a block: normally, retried per Settings.
-                let targets = decision.targetIDs.isEmpty ? Set([frontmost].compactMap { $0 }) : decision.targetIDs
-                for target in targets {
-                    requestClose(target, now: Date())
-                }
-            default:
-                break
+        case "quit":
+            // Asked to quit normally, like a block (QuitRequests: an app no
+            // block can act on is left alone).
+            if let app = action.appId { Task { [adapter] in await adapter.close(bundleIdentifier: app, now: Date()) } }
+        case "open":
+            if let app = action.appId, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: app) {
+                NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
             }
+        case "file":
+            runRuleFile(action)
+        default:
+            break
         }
-
-        processWindowIntents(result.intents, groupID: group.id, frontmost: frontmost)
-
-        panelOverlay.update(panels: result.panels, forGroup: group.id)
     }
 
-    private func ensureRuntime() -> CustomJavaScriptPolicyRuntime? {
-        if let rt = ruleRuntime { return rt }
+    /// A rule's file request, in the folder the user chose (`LocalFolderGrant`,
+    /// as the browser's "Choose folder"); its answer is the rule's "file" event.
+    private func runRuleFile(_ action: RuleRuntime.Action) {
+        let op = action.op ?? "", path = action.path ?? "", requestId = action.requestId ?? ""
+        var answer: [String: String] = ["ok": "false", "error": "local-folder-not-available"]
+        if let folder = LocalFolderGrant.resolvedFolderURL() {
+            let scoped = folder.startAccessingSecurityScopedResource()
+            defer { if scoped { folder.stopAccessingSecurityScopedResource() } }
+            answer = LocalFileBroker(baseURL: folder).handle(action: op, path: path, text: action.payload, requestID: requestId)
+        }
+        let entries = answer["entriesJSON"].flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) }
+        let data: [String: Any] = [
+            "requestId": requestId, "op": op, "path": path, "ok": answer["ok"] == "true",
+            "text": answer["text"] ?? NSNull(), "entries": entries ?? NSNull(),
+            "exists": answer["exists"].map { $0 == "true" } ?? NSNull(), "error": answer["error"] ?? ""
+        ]
+        dispatchRule(type: "file", data: data, groupID: action.groupId)
+    }
+
+    private func ensureRuntime() -> RuleRuntime? {
+        if let runtime = ruleRuntime { return runtime }
         do {
-            let rt = try CustomJavaScriptPolicyRuntime()
-            // No tab provider is installed on purpose: __nativeGetAllTabs stays
-            // undefined so the runtime's getAllTabs() returns []. The native app
-            // never reads browser tabs; that's the extension's job.
-            ruleRuntime = rt
-            return rt
+            ruleRuntime = try RuleRuntime()
         } catch {
-            appendLog(level: "error", group: "system", message: "Failed to create rule runtime: \(error)")
-            return nil
+            appendLog(level: "error", group: "system", message: "The rule engine didn't start: \(error)")
+        }
+        return ruleRuntime
+    }
+
+    /// Loads what each enabled custom group last Ran (its active source) and
+    /// unloads the rules of groups that are gone, disabled or emptied.
+    private func reconcileRules(groups: [BlockGroup]) {
+        let wanted = Dictionary(uniqueKeysWithValues: groups
+            .filter { $0.groupType == .custom && $0.enabled && !$0.customRuleSource.isEmpty }
+            .map { ($0.id, $0) })
+        for groupID in Set(loadedRuleSources.keys).union(quarantinedRuleSources.keys) where wanted[groupID] == nil {
+            unloadRule(groupID: groupID)
+        }
+        for (groupID, group) in wanted {
+            if loadedRuleSources[groupID] == group.customRuleSource || quarantinedRuleSources[groupID] == group.customRuleSource { continue }
+            _ = loadRule(group: group, source: group.customRuleSource, stateJSON: webStore.ruleState(groupID: groupID))
         }
     }
 
-    private func reconcileRuleRuntime(runtime: CustomJavaScriptPolicyRuntime, groups: [BlockGroup]) {
-        let currentGroupIDs = Set(groups.map(\.id))
-        let currentGroupNames = Set(groups.map(\.name))
-
-        // Clean groups that are no longer enabled or have been removed.
-        let trackedGroupIDs = Set(loadedRuleSources.keys).union(quarantinedRuleSources.keys)
-        for groupID in trackedGroupIDs where !currentGroupIDs.contains(groupID) {
-            cleanRule(groupID: groupID)
-        }
-
-        // Purge log entries from groups that no longer exist.
-        ruleLog.removeAll { entry in
-            let g = entry.group
-            if g == "system" || g.isEmpty { return false }
-            return !currentGroupIDs.contains(g) && !currentGroupNames.contains(g)
-        }
-
-        // Build groups that are enabled but not yet loaded.
-        for group in groups {
-            if let quarantined = quarantinedRuleSources[group.id] {
-                if quarantined == group.customRuleSource { continue }
-                quarantinedRuleSources.removeValue(forKey: group.id)
+    /// Registers a group's rule; one that doesn't load leaves the old one.
+    private func loadRule(group: BlockGroup, source: String, stateJSON: String) -> RuleRuntime.LoadResult? {
+        guard let runtime = ensureRuntime() else { return nil }
+        do {
+            let result = try runtime.load(groupID: group.id, source: source, stateJSON: stateJSON)
+            for log in result.logs { appendLog(level: log.level, group: group.name, message: log.message) }
+            guard result.ok else {
+                appendLog(level: "error", group: group.name, message: result.error ?? "The rule didn't load.")
+                if result.quarantine != nil { quarantineRule(group: group) }
+                return result
             }
-            if let loaded = loadedRuleSources[group.id] {
-                if loaded == group.customRuleSource { continue }
-                cleanRule(groupID: group.id)
-            }
-            buildRule(groupID: group.id)
+            loadedRuleSources[group.id] = source
+            quarantinedRuleSources.removeValue(forKey: group.id)
+            ruleTypes[group.id] = Set(result.types)
+            blockedAppBundleIDsByGroup.removeValue(forKey: group.id)
+            panelOverlay.update(panels: result.panels ?? [], forGroup: group.id)
+            return result
+        } catch RuleRuntime.RuleRuntimeError.terminated {
+            quarantineRule(group: group)
+        } catch {
+            appendLog(level: "error", group: group.name, message: "The rule didn't load: \(error)")
         }
+        return nil
     }
 
-    /// Tear down a group's rule: unload JS, clear all per-group state
-    /// (handlers, timers, persistence, blocklist, log dedup).
-    /// Called on: disable group, or as the first half of Run.
-    public func cleanRule(groupID: String) {
-        #if os(macOS)
-        if let runtime = ruleRuntime, loadedRuleSources[groupID] != nil {
-            runtime.unload(groupID: groupID)
-        }
+    private func unloadRule(groupID: String) {
+        ruleRuntime?.unload(groupID: groupID)
         loadedRuleSources.removeValue(forKey: groupID)
         quarantinedRuleSources.removeValue(forKey: groupID)
+        ruleTypes.removeValue(forKey: groupID)
         blockedAppBundleIDsByGroup.removeValue(forKey: groupID)
-        // Immediately drop any panels this group rendered so they don't
-        // linger on screen until the next tick (or forever if no other
-        // group triggers a panel refresh).
         panelOverlay.removePanels(forGroup: groupID)
-        #endif
     }
 
-    /// Compile and load a group's current source. Assumes clean state
-    /// (call cleanRule first if reloading).
-    /// Called on: enable group, or as the second half of Run.
-    public func buildRule(groupID: String) {
-        #if os(macOS)
-        guard let runtime = ensureRuntime() else { return }
-        let groups = webStore.importedGroups()
-        guard let group = groups.first(where: { $0.id == groupID && !$0.customRuleSource.isEmpty }) else {
-            return
+    /// Run (the editor's button): the rule starts fresh (its state cleared).
+    /// A rule that doesn't load changes nothing — the one before keeps running.
+    /// The answer is the editor's load result.
+    public func runRule(groupID: String, source: String) -> [String: Any] {
+        guard let group = webStore.importedGroups().first(where: { $0.id == groupID && $0.groupType == .custom }) else {
+            return ["ok": false, "error": "group-not-found"]
         }
-        guard loadedRuleSources[groupID] == nil else { return }
-        do {
-            let loadResult = try runtime.load(groupID: groupID, source: group.customRuleSource)
-            loadedRuleSources[groupID] = group.customRuleSource
-            appendLog(level: "log", group: group.name,
-                      message: "Rule built: \(loadResult.handlers) handler(s)")
-            for decision in loadResult.decisions where decision.action == .log {
-                let level = decision.metadata["level"] ?? "log"
-                appendLog(level: level, group: group.name, message: decision.reason)
-            }
-        } catch {
-            loadedRuleSources.removeValue(forKey: groupID)
-            if isExecutionTermination(error) {
-                quarantineRule(group: group, runtime: runtime)
-            } else {
-                appendLog(level: "error", group: group.name,
-                          message: "Rule build failed: \(error.localizedDescription)")
-            }
+        guard let result = loadRule(group: group, source: source, stateJSON: "{}") else {
+            return ["ok": false, "error": quarantinedRuleSources[groupID] != nil ? "sandbox-timeout" : "rules-not-running"]
         }
-        #endif
+        if result.ok { webStore.writeRuleStates([groupID: nil]) }
+        return ["ok": result.ok, "handlers": result.handlers, "error": result.error ?? NSNull()]
     }
 
-    /// Run = clean + build. Called when the user clicks Run in the editor.
-    public func runRule(groupID: String) {
-        cleanRule(groupID: groupID)
-        buildRule(groupID: groupID)
-    }
-
-    private func isExecutionTermination(_ error: Error) -> Bool {
-        let message: String
-        switch error as? CustomJavaScriptPolicyRuntimeError {
-        case .compileFailed(let detail), .dispatchFailed(let detail):
-            message = detail
-        default:
-            message = String(describing: error)
-        }
-        return message.localizedCaseInsensitiveContains("execution terminated")
-    }
-
-    private func quarantineRule(group: BlockGroup, runtime: CustomJavaScriptPolicyRuntime) {
-        runtime.unload(groupID: group.id)
-        loadedRuleSources.removeValue(forKey: group.id)
-        blockedAppBundleIDsByGroup.removeValue(forKey: group.id)
-        panelOverlay.removePanels(forGroup: group.id)
-        quarantinedRuleSources[group.id] = group.customRuleSource
-        appendLog(level: "error", group: group.name,
-                  message: "Rule stopped: execution deadline exceeded. Edit it and click Run to retry.")
-    }
-
-    /// A rule's "close" asks the app to quit normally, like a block
-    /// (`QuitRequests`: retried after Settings' interval while it stays open).
-    private func requestClose(_ bundleID: String, now: Date) {
-        Task { [adapter] in await adapter.close(bundleIdentifier: bundleID, now: now) }
-    }
-
-    private func processWindowIntents(_ intents: [WindowIntent], groupID: String, frontmost: String?) {
-        for intent in intents {
-            if intent.kind == "localFile" {
-                processLocalFileIntent(intent)
-                continue
-            }
-            switch intent.action {
-            case "close":
-                // Apps no block can act on are left alone (QuitRequests.close).
-                if let target = intent.target, !target.isEmpty {
-                    requestClose(target, now: Date())
-                } else if let fm = frontmost {
-                    requestClose(fm, now: Date())
-                }
-            // Web-level intents (closeTab / closeTabsByPattern / blockSite /
-            // unblockSite) are deliberately ignored — neither acted on nor
-            // logged. Site/tab/DOM enforcement belongs entirely to the
-            // customBlocker browser extension, which runs the same rule against
-            // its own web events. The native app must not touch in-browser
-            // affairs at any level; it only enforces whole-app intents.
-            case "blockApp":
-                if let target = intent.target, GuardPolicy.canBlock(target) {
-                    blockedAppBundleIDsByGroup[groupID, default: []].insert(target)
-                    appendLog(level: "log", group: "system",
-                              message: "App blocked: \(target)")
-                }
-            case "unblockApp":
-                if let target = intent.target, !target.isEmpty {
-                    blockedAppBundleIDsByGroup[groupID]?.remove(target)
-                    if blockedAppBundleIDsByGroup[groupID]?.isEmpty == true {
-                        blockedAppBundleIDsByGroup.removeValue(forKey: groupID)
-                    }
-                    appendLog(level: "log", group: "system",
-                              message: "App unblocked: \(target)")
-                }
-            case "openApp":
-                if let target = intent.target, !target.isEmpty,
-                   !BlockedProcesses.isBrowserBundleIdentifier(target) {
-                    if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: target) {
-                        NSWorkspace.shared.openApplication(at: url,
-                                                           configuration: NSWorkspace.OpenConfiguration())
-                        appendLog(level: "log", group: "system",
-                                  message: "App opened: \(target)")
-                    }
-                }
-            default:
-                break
-            }
-        }
-    }
-
-    // MARK: - Local File I/O
-
-    /// Custom-rule file I/O is rooted at the user-granted folder (`LocalFolderGrant`),
-    /// matching the browser extension's "choose a folder" model: with no folder
-    /// granted every operation fails `local-folder-not-available` until the user
-    /// picks one in Settings.
-    private func processLocalFileIntent(_ intent: WindowIntent) {
-        guard let groupId = intent.groupId, !groupId.isEmpty,
-              let requestId = intent.requestId, !requestId.isEmpty else { return }
-        let action = intent.action
-        let path = intent.path ?? ""
-
-        Task { @MainActor in
-            let resultData: [String: String]
-            if let folder = LocalFolderGrant.resolvedFolderURL() {
-                let scoped = folder.startAccessingSecurityScopedResource()
-                defer { if scoped { folder.stopAccessingSecurityScopedResource() } }
-                resultData = LocalFileBroker(baseURL: folder).handle(
-                    action: action,
-                    path: path,
-                    text: intent.text,
-                    requestID: requestId
-                )
-            } else {
-                resultData = [
-                    "ok": "false",
-                    "eventName": "error",
-                    "action": action,
-                    "path": path,
-                    "directoryPath": "",
-                    "requestId": requestId,
-                    "error": "local-folder-not-available"
-                ]
-            }
-            fireLocalFileEvent(groupID: groupId, data: resultData)
-        }
-    }
-
-    private func unloadAllRules() {
-        if let runtime = ruleRuntime {
-            for groupID in loadedRuleSources.keys {
-                runtime.unload(groupID: groupID)
-            }
-        }
-        loadedRuleSources.removeAll()
-        quarantinedRuleSources.removeAll()
-        blockedAppBundleIDsByGroup.removeAll()
+    /// A rule that ran past its time is stopped until it is Run again.
+    private func quarantineRule(group: BlockGroup) {
+        let source = loadedRuleSources[group.id] ?? group.customRuleSource
+        unloadRule(groupID: group.id)
+        quarantinedRuleSources[group.id] = source
+        appendLog(level: "error", group: group.name, message: "Rule stopped: it ran past its time. Edit it and click Run to retry.")
     }
 
     private func appendLog(level: String, group: String, message: String) {
@@ -1055,34 +674,6 @@ public final class MacEnforcementBridge: ObservableObject {
 
         webStore.writeUsage(timersMs: timerWrites, resetAtMs: resetWrites, bucketsMs: bucketWrites)
         return timers
-    }
-
-    /// The running apps, listed once per tick (every event in it shares the list).
-    private var runningAppsCache: (at: Date, json: String)?
-    private func runningAppsJSON() -> String {
-        if let cache = runningAppsCache, abs(cache.at.timeIntervalSinceNow) < 0.5 { return cache.json }
-        let json = Self.listRunningApps()
-        runningAppsCache = (Date(), json)
-        return json
-    }
-
-    private static func listRunningApps() -> String {
-        let apps = NSWorkspace.shared.runningApplications
-            .filter { $0.activationPolicy == .regular }
-            .compactMap { app -> [String: Any]? in
-                guard let bid = app.bundleIdentifier else { return nil }
-                guard !BlockedProcesses.isBrowserBundleIdentifier(bid) else { return nil }
-                // The native app does not distinguish browsers — it never reads
-                // tabs, so every app is reported as a plain app (isBrowser:false).
-                return [
-                    "id": bid,
-                    "name": app.localizedName ?? bid,
-                    "isBrowser": false
-                ]
-            }
-        guard let data = try? JSONSerialization.data(withJSONObject: apps),
-              let json = String(data: data, encoding: .utf8) else { return "[]" }
-        return json
     }
 
     #endif

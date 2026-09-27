@@ -16,7 +16,7 @@ import AppKit
 /// bridges its chrome.storage snapshot to a native file via `BlockerWebStore`.
 public struct BlockerWebView: NSViewRepresentable {
     private let store: BlockerWebStore
-    private let onRunCustomGroup: ((String, String) -> Void)?
+    private let onRunCustomGroup: ((String, String) -> [String: Any])?
     /// Supplies the installed-application inventory as a JSON array string
     /// (`[{ "id": bundleId, "name": ..., "icon": dataURL }]`). Provided by the
     /// app layer (which can import AppKit / MacControl); nil on platforms with
@@ -29,9 +29,6 @@ public struct BlockerWebView: NSViewRepresentable {
     /// persisted, so the host can recompile/enforce the policy immediately.
     private let onStorePersisted: (() -> Void)?
     private let onSnoozePress: ((String) -> Void)?
-    /// Show a system overlay panel (serialized `PanelSnapshot`) on the native side.
-    /// Dismiss a system overlay panel by id ("" dismisses all).
-    /// Supplies buffered system-panel events as a JSON array string; polled each second.
     /// Supplies the links and every program's groups (JSON {clusters, rosters});
     /// pushed each second to `window.__cbClustersState`.
     private let clustersJSON: (() -> String?)?
@@ -45,7 +42,7 @@ public struct BlockerWebView: NSViewRepresentable {
         appInventoryJSON: (() -> String?)? = nil,
         ruleLogJSON: (() -> String?)? = nil,
         onStorePersisted: (() -> Void)? = nil,
-        onRunCustomGroup: ((String, String) -> Void)? = nil,
+        onRunCustomGroup: ((String, String) -> [String: Any])? = nil,
         onSnoozePress: ((String) -> Void)? = nil,
         clustersJSON: (() -> String?)? = nil,
         onLinkRequest: ((String, [String: Any]) -> String?)? = nil,
@@ -223,7 +220,7 @@ public struct BlockerWebView: NSViewRepresentable {
         private let store: BlockerWebStore
         private let ruleLogJSON: (() -> String?)?
         private let onStorePersisted: (() -> Void)?
-        private let onRunCustomGroup: ((String, String) -> Void)?
+        private let onRunCustomGroup: ((String, String) -> [String: Any])?
         private let onSnoozePress: ((String) -> Void)?
         private let clustersJSON: (() -> String?)?
         private let onLinkRequest: ((String, [String: Any]) -> String?)?
@@ -239,7 +236,7 @@ public struct BlockerWebView: NSViewRepresentable {
             store: BlockerWebStore,
             ruleLogJSON: (() -> String?)?,
             onStorePersisted: (() -> Void)?,
-            onRunCustomGroup: ((String, String) -> Void)?,
+            onRunCustomGroup: ((String, String) -> [String: Any])?,
             onSnoozePress: ((String) -> Void)?,
             clustersJSON: (() -> String?)?,
             onLinkRequest: ((String, [String: Any]) -> String?)?,
@@ -348,20 +345,16 @@ public struct BlockerWebView: NSViewRepresentable {
                     onStorePersisted?()
                 }
             case "run-custom-group":
-                if let payload = body["message"] as? [String: Any],
-                   let groupID = payload["groupId"] as? String,
-                   let source = payload["source"] as? String {
-                    onRunCustomGroup?(groupID, source)
-                }
+                // Run: the rule loads in Mac Vault's engine; the editor gets the result.
+                let payload = body["message"] as? [String: Any] ?? [:]
+                let loadResult = onRunCustomGroup?(payload["groupId"] as? String ?? "", payload["source"] as? String ?? "")
+                    ?? ["ok": false, "error": "rules-not-running"]
+                nativeReply(body, ["ok": true, "loadResult": loadResult])
             case "vault-classifier-tag-names":
                 // The editor's tag suggestions, from Mac Vault's own classifier.
                 let platform = (body["message"] as? [String: Any])?["platform"] as? String ?? ""
                 let names = tagNames?(platform) ?? []
-                if let id = body["requestId"] as? String,
-                   let data = try? JSONSerialization.data(withJSONObject: [id, ["ok": true, "names": Array(names.prefix(200))]] as [Any]),
-                   let json = String(data: data, encoding: .utf8) {
-                    webView?.evaluateJavaScript("window.__cbNativeReply && window.__cbNativeReply.apply(null, \(json));", completionHandler: nil)
-                }
+                nativeReply(body, ["ok": true, "names": Array(names.prefix(200))])
             case "reset-group-runtime":
                 if let payload = body["message"] as? [String: Any], let groupID = payload["groupId"] as? String {
                     store.resetRuntime(groupID: groupID)
@@ -400,6 +393,14 @@ public struct BlockerWebView: NSViewRepresentable {
             default:
                 break
             }
+        }
+
+        /// Answers a request the editor made with `nativeRequest` (its requestId).
+        private func nativeReply(_ body: [String: Any], _ reply: [String: Any]) {
+            guard let id = body["requestId"] as? String,
+                  let data = try? JSONSerialization.data(withJSONObject: [id, reply] as [Any]),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            webView?.evaluateJavaScript("window.__cbNativeReply && window.__cbNativeReply.apply(null, \(json));", completionHandler: nil)
         }
 
         /// Native folder-grant picker (macOS has no web directory picker). Mirrors

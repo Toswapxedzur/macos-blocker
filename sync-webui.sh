@@ -23,7 +23,7 @@ SYNCED_FILES=(
   popup-markdown.js
   bridge-protocol.js
   browser-compat.js
-  custom-rule-ai-reference.js
+  rule-core.js
 )
 
 for file in "${SYNCED_FILES[@]}"; do
@@ -47,8 +47,9 @@ cp -R "$SRC/translation" "$DEST/translation"
 
 echo "[sync-webui] synced ${#SYNCED_FILES[@]} files + popup.html + translation/ from $SRC"
 
-# JavaScriptCore runs the editor's own group rules (the AI tools) and the
-# browser's custom-rule sandbox (the Safari rule bridge), verbatim.
-for file in platform-profiles.js group-scopes.js parental-pin.js group-actions.js helpers.js event-sandbox.js; do
+# JavaScriptCore runs the editor's own group rules (the AI tools), the rule
+# core (Mac Vault's own rule engine), and the browser's custom-rule sandbox
+# (the Safari rule bridge), verbatim.
+for file in platform-profiles.js group-scopes.js parental-pin.js group-actions.js rule-core.js event-sandbox.js; do
   cp "$SRC/$file" "$ROOT/Sources/MacBlockerCore/Resources/$file"
 done
