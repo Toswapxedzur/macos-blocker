@@ -57,7 +57,8 @@ public enum ChromeExtensionImporter {
             rollingLimit: bool(object["rollingLimit"]) ?? false,
             activeDays: parseDays(object["activeDays"]),
             timeWindows: ScheduleParser.parseWindows(string(object["timeWindowsText"]) ?? ""),
-            customRuleSource: string(object["blockingRulesText"]) ?? "",
+            // What Run last loaded (the editor's text runs only once Run).
+            customRuleSource: string(object["activeEventSource"]) ?? "",
             targets: apps,
             applicationAllowlist: WebStoreDocument.appsExcept(of: object)
         )

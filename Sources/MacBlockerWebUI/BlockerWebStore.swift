@@ -292,6 +292,29 @@ public final class BlockerWebStore: @unchecked Sendable {
         GroupStore.postDidChange()
     }
 
+    /// A custom rule's memory (`v.state`), JSON text: "{}" when it has none.
+    /// Kept in the store's `cbRuleState` map, as the browser keeps its own.
+    public func ruleState(groupID: String) -> String {
+        guard let state = (loadStoreObject()?["cbRuleState"] as? [String: Any])?[groupID],
+              JSONSerialization.isValidJSONObject(state),
+              let data = try? JSONSerialization.data(withJSONObject: state) else { return "{}" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// Writes rules' states (JSON text; nil forgets a group's).
+    public func writeRuleStates(_ states: [String: String?]) {
+        guard !states.isEmpty else { return }
+        GroupStore.withFileLock {
+            guard var object = loadStoreObject() else { return }
+            var stored = object["cbRuleState"] as? [String: Any] ?? [:]
+            for (groupID, json) in states {
+                stored[groupID] = json.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) }
+            }
+            object["cbRuleState"] = stored
+            write(object)
+        }
+    }
+
     public func writeUsage(
         timersMs: [String: Double],
         resetAtMs: [String: Double],

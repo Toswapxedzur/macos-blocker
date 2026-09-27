@@ -321,32 +321,6 @@
     }
   };
 
-  // ----- custom-rule syntax check (parse-only; never executes user code) -----
-
-  function checkSyntax(source) {
-    try {
-      var text = String(source || "");
-      // Parse only. Executing the registration body here would run untrusted
-      // code in the privileged editor page and could freeze its UI before the
-      // native runtime's execution deadline has a chance to intervene.
-      new Function('"use strict"; return (' + text + "\n);");
-      if (!/=>|\bfunction\b/.test(text)) {
-        return { ok: true, result: { ok: false, error: "Rule must evaluate to a function." } };
-      }
-      // Registration count is a UI preview only; the isolated native runtime
-      // supplies the authoritative count after Run. Cover raw event.on and
-      // the register/registerX aliases without evaluating the source.
-      var registrations = text.match(/\b(?:event|events)\s*\.\s*(?:on|register(?:[A-Z_$][\w$]*)?)\s*\(/g) || [];
-      var count = Math.min(1000, registrations.length);
-      return { ok: true, result: { ok: true, handlers: count } };
-    } catch (parseErr) {
-      return {
-        ok: true,
-        result: { ok: false, error: String((parseErr && parseErr.message) || parseErr) }
-      };
-    }
-  }
-
   // ----- runtime -----
 
   var messageListeners = [];
@@ -397,18 +371,9 @@
         store.ruleLog = [];
         try { window.localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (_) {}
         return Promise.resolve({ ok: true });
-      case "check-custom-group-syntax":
-        return Promise.resolve(checkSyntax(message && message.source));
       case "run-custom-group":
-        var runResult = checkSyntax(message && message.source);
-        var bridge = nativeBridge();
-        if (bridge) {
-          try { bridge.postMessage({ kind: "run-custom-group", message: message }); } catch (_) {}
-        }
-        return Promise.resolve({
-          ok: true,
-          loadResult: runResult && runResult.result ? runResult.result : { ok: true, handlers: 0 }
-        });
+        // The rule loads in Mac Vault's own engine; its load result comes back.
+        return nativeRequest("run-custom-group", message, { ok: false, error: "rules-not-running" });
       case "fire-snooze-press":
         return bridgeOrResolve("fire-snooze-press", message, { ok: true });
       case "vault-classifier-tag-names":
