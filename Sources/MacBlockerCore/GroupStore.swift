@@ -305,6 +305,23 @@ public struct WebStoreDocument {
         group["lockedAtMs"] is NSNumber
     }
 
+    /// Whether a group is frozen, judged as the editor does (the linked view).
+    public func isLocked(id: String) -> Bool {
+        group(id: id).map(isLocked) ?? false
+    }
+
+    /// Run's record (the editor's Run): the text is the group's rule and what
+    /// runs; the group is enabled again, with no abort reason.
+    public mutating func recordRun(id: String, source: String) throws {
+        try mutateGroup(id: id) { group in
+            guard group["groupType"] as? String == "custom" else { throw GroupStoreError.groupNotFound(id) }
+            group["blockingRulesText"] = source
+            group["activeEventSource"] = source
+            group["enabled"] = true
+            group["lastAbortReason"] = NSNull()
+        }
+    }
+
     public mutating func deleteGroup(id: String) throws {
         if let group = group(id: id), isLocked(group) { throw GroupStoreError.groupLocked(id) }
         var list = groups

@@ -81,7 +81,7 @@ public final class GroupActionsRuntime: @unchecked Sendable {
           } };
         }
         """#)
-        for name in ["platform-profiles", "group-scopes", "parental-pin", "group-actions"] {
+        for name in ["platform-profiles", "group-scopes", "parental-pin", "group-actions", "rule-core"] {
             guard let url = Bundle.module.url(forResource: name, withExtension: "js", subdirectory: "Resources")
                     ?? Bundle.module.url(forResource: name, withExtension: "js"),
                   let source = try? String(contentsOf: url, encoding: .utf8) else {

@@ -182,6 +182,20 @@ public enum ExtensionMCPTools {
                 return relay(bridge, "settings-snooze-group", body, args)
             },
             MCPTool(
+                name: "extension_run_custom_rule",
+                description: "Run an extension custom group's rule, as the editor's Run does: the source becomes the group's rule and starts fresh (its memory cleared, the group enabled). A rule that doesn't load changes nothing — the one running keeps running — and the answer says why (ran: false, error). Omit source to run the group's current rule text. Refused when the group is frozen. A browser's rules control the browser only. Write the source to this reference:\n" + VaultMCPTools.ruleReference("browser"),
+                inputSchema: [
+                    "type": "object",
+                    "properties": ["id": ["type": "string"], "source": ["type": "string", "description": "The rule: (on, v) => { … }"], "browser": browserProperty],
+                    "required": ["id"],
+                ]
+            ) { args in
+                guard let id = args["id"] as? String, !id.isEmpty else { return .failure("Missing 'id'.") }
+                var body: [String: Any] = ["id": id]
+                if let source = args["source"] as? String { body["source"] = source }
+                return relay(bridge, "settings-run-custom-rule", body, args)
+            },
+            MCPTool(
                 name: "extension_end_snooze",
                 description: "End an extension group's running (or scheduled) snooze early, as the popup's End Snooze does. Linked devices end it too.",
                 inputSchema: [

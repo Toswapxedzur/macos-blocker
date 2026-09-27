@@ -28,6 +28,11 @@ public final class MacEnforcementBridge: ObservableObject {
         GroupStore.sharedOverlay = { ConnectionHub.shared.overlayShared(onto: $0) }
         // A tool's snooze of a custom group is the rule's snooze press, as the editor's.
         VaultMCPTools.snoozePress = { id in Task { @MainActor in MacEnforcementBridge.shared.fireSnoozePress(groupID: id) } }
+        // A tool's Run is the editor's Run.
+        VaultMCPTools.runRule = { id, source in
+            let run = { MainActor.assumeIsolated { MacEnforcementBridge.shared.runRule(groupID: id, source: source) } }
+            return Thread.isMainThread ? run() : DispatchQueue.main.sync(execute: run)
+        }
         return bridge
     }()
 
@@ -482,17 +487,24 @@ public final class MacEnforcementBridge: ObservableObject {
         panelOverlay.removePanels(forGroup: groupID)
     }
 
-    /// Run (the editor's button): the rule starts fresh (its state cleared).
-    /// A rule that doesn't load changes nothing — the one before keeps running.
-    /// The answer is the editor's load result.
+    /// Run (the editor's button and the AI tool): the text becomes the group's
+    /// rule and starts fresh (its state cleared). A rule that doesn't load
+    /// changes nothing — the one before keeps running. A frozen group is refused.
     public func runRule(groupID: String, source: String) -> [String: Any] {
-        guard let group = webStore.importedGroups().first(where: { $0.id == groupID && $0.groupType == .custom }) else {
+        let store = GroupStore()
+        let document = store.load()
+        guard document.group(id: groupID)?["groupType"] as? String == "custom",
+              let group = webStore.importedGroups().first(where: { $0.id == groupID }) else {
             return ["ok": false, "error": "group-not-found"]
         }
+        if document.isLocked(id: groupID) { return ["ok": false, "error": "group-locked"] }
         guard let result = loadRule(group: group, source: source, stateJSON: "{}") else {
             return ["ok": false, "error": quarantinedRuleSources[groupID] != nil ? "sandbox-timeout" : "rules-not-running"]
         }
-        if result.ok { webStore.writeRuleStates([groupID: nil]) }
+        if result.ok {
+            webStore.writeRuleStates([groupID: nil])
+            _ = try? store.mutate { try $0.recordRun(id: groupID, source: source) }
+        }
         return ["ok": result.ok, "handlers": result.handlers, "error": result.error ?? NSNull()]
     }
 
