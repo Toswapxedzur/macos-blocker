@@ -64,7 +64,7 @@ public enum ExtensionMCPTools {
             },
             MCPTool(
                 name: "extension_set_group",
-                description: "Patch fields of an existing extension block group by id (see extension_create_group for the fields). The id and the freeze (its wait and PIN) are never patchable; a frozen group is refused, exactly as in the popup.",
+                description: "Patch fields of an existing extension block group by id (see extension_create_group for the fields). The id and the freeze (its wait and PIN) are never patchable; a frozen group is refused, exactly as in the popup. An invalid value is refused (invalid-<field>), never replaced by a default; a custom group stays instant; Apps lines are the desktop's and are not edited here.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -112,6 +112,42 @@ public enum ExtensionMCPTools {
                 return relay(bridge, "settings-lock-group", body, args)
             },
             MCPTool(
+                name: "extension_set_lock_gates",
+                description: "Set the freeze gates of an unfrozen extension group, as the editor's guardian settings do: waitHours (0 < hours ≤ 72) and/or pin (6 digits, where none is set); clearPin: true removes the PIN (pass the current pin). Refused on a frozen group (make it stricter with extension_lock_group).",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "id": ["type": "string", "description": "The group id."],
+                        "waitHours": ["type": "number"],
+                        "pin": ["type": "string"],
+                        "clearPin": ["type": "boolean"],
+                        "browser": browserProperty,
+                    ],
+                    "required": ["id"],
+                ]
+            ) { args in
+                guard let id = args["id"] as? String, !id.isEmpty else { return .failure("Missing 'id'.") }
+                var body: [String: Any] = ["id": id]
+                for key in ["waitHours", "pin", "clearPin"] { if let value = args[key] { body[key] = value } }
+                return relay(bridge, "settings-set-lock-gates", body, args)
+            },
+            MCPTool(
+                name: "extension_delete_all",
+                description: "Delete every extension group, as the editor's Delete all does: refused while any frozen group's wait still holds; pins lists the PIN of each distinct PIN-protected frozen group; with any frozen group it ends with the confirmation (call again with confirm: true every 5 s until confirmationsLeft is 0).",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "pins": ["type": "array", "items": ["type": "string"]],
+                        "confirm": ["type": "boolean"],
+                        "browser": browserProperty,
+                    ],
+                ]
+            ) { args in
+                var body: [String: Any] = [:]
+                for key in ["pins", "confirm"] { if let value = args[key] { body[key] = value } }
+                return relay(bridge, "settings-delete-all", body, args)
+            },
+            MCPTool(
                 name: "extension_unlock_group",
                 description: "Unfreeze an extension group through the popup's gates: the wait gate must be over; a set PIN must be passed (pin; a wrong PIN makes the next try wait 1 s … 64 s, shared with the popup); then the confirmation: call again with confirm: true every 5 seconds until confirmationsLeft is 0 (10 in all, within 5 minutes).",
                 inputSchema: [
@@ -133,7 +169,7 @@ public enum ExtensionMCPTools {
             },
             MCPTool(
                 name: "extension_snooze_group",
-                description: "Snooze an extension group, as the popup's Snooze does: its saved snooze length, delay and cooldown; the group's own confirmations (call again with confirm: true every 5 s until confirmationsLeft is 0). Refused when the group doesn't allow snoozing or a snooze (or its cooldown) is running. A frozen group can be snoozed; its snooze settings are frozen with it.",
+                description: "Snooze an extension group, as the popup's Snooze does: its saved snooze length, delay and cooldown; the group's own confirmations (call again with confirm: true every 5 s until confirmationsLeft is 0). Refused when the group doesn't allow snoozing or a snooze (or its cooldown) is running. A frozen group can be snoozed; its snooze settings are frozen with it. A custom group's snooze is its rule's: this fires the rule's snoozePress, as the editor's button does.",
                 inputSchema: [
                     "type": "object",
                     "properties": ["id": ["type": "string"], "confirm": ["type": "boolean"], "browser": browserProperty],
@@ -176,7 +212,7 @@ public enum ExtensionMCPTools {
             },
             MCPTool(
                 name: "extension_set_global",
-                description: "Patch the extension's global settings — exactly the editor's Settings: defaultSnoozeMinutes (> 0), quickAddEnabled (bool), quitRetryMinutes (0–1440; used by a desktop app). Any other field is refused. Sanitized the way the editor's save is.",
+                description: "Patch the extension's global settings — exactly the editor's Settings: defaultSnoozeMinutes (> 0), quickAddEnabled (bool), quitRetryMinutes (0–1440; used by a desktop app), quickAddGroupId (the quick-add \"+\" target group, or \"\"). Any other field is refused. Sanitized the way the editor's save is.",
                 inputSchema: [
                     "type": "object",
                     "properties": ["patch": ["type": "object", "description": "Global settings fields to change."], "browser": browserProperty],
@@ -254,6 +290,8 @@ public enum ExtensionMCPTools {
         case "not-locked": return "the group is not frozen."
         case "not-stricter": return "while frozen the freeze can only be made stricter (a longer wait)."
         case "pin-already-set": return "the group already has a PIN."
+        case let reason where reason.hasPrefix("invalid-"): return "'\(reason.dropFirst("invalid-".count))' has a value the editor refuses; nothing was changed."
+        case let reason where reason.hasPrefix("pins-required:"): return "pass pins: one PIN for each of: \(reason.dropFirst("pins-required:".count))."
         case "snooze-disabled": return "the group doesn't allow snoozing."
         case "snooze-in-progress": return "a snooze (or its cooldown) is already running."
         case "no-snooze": return "no snooze is running."
@@ -264,7 +302,7 @@ public enum ExtensionMCPTools {
             switch parts[0] {
             case "pin-wait": return "wait \(parts[1]) s before the next PIN try (a wrong PIN was entered)."
             case "pin-wrong": return "wrong PIN; the next try waits \(parts[1]) s."
-            case "strict-wait": return "the freeze's wait holds until \(parts[1])."
+            case "wait-until": return "the freeze's wait holds until \(parts[1])."
             case "confirm-wait": return "confirm again in \(parts[1]) s (the popup's confirmation waits 5 s)."
             default: return reason
             }
