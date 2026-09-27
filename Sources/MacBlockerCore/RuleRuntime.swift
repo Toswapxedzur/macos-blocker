@@ -124,6 +124,14 @@ public final class RuleRuntime {
         try call("MacBlockerRuntime.load(\(literal(groupID)), \(literal(source)), \(literal(stateJSON)))")
     }
 
+    /// A disabled group's rule stays loaded but hears nothing until resumed.
+    public func suppress(groupID: String, _ on: Bool) {
+        #if canImport(JavaScriptCore)
+        context.evaluateScript("MacBlockerRuntime.suppress(\(literal(groupID)), \(on));")
+        context.exception = nil
+        #endif
+    }
+
     public func unload(groupID: String) {
         #if canImport(JavaScriptCore)
         context.evaluateScript("MacBlockerRuntime.unload(\(literal(groupID)));")
