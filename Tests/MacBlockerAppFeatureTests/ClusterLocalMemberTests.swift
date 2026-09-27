@@ -10,6 +10,7 @@ final class ClusterLocalMemberTests: XCTestCase {
         hub.hostingLocalHub = true // this Mac hosts the hub, as in the app
         hub.setRoster(program: "macapp", groups: [["id": "m1", "name": "Focus"]])
         hub.setRoster(program: "chrome", groups: [["id": "c1", "name": "Focus"]])
+        XCTAssertNil(hub.linkGroups(program: "chrome", groupId: "c1", targetProgram: "macapp", targetGroupId: "m1")) // the browser links: its settings lead
         return hub
     }
     private let appsLine: [String: Any] = ["id": "apps-1", "surface": "apps", "platform": NSNull(), "action": "block",
@@ -37,7 +38,7 @@ final class ClusterLocalMemberTests: XCTestCase {
 
     func testJoiningContributesTheMacEntriesWithoutTheEditor() {
         let hub = linkedHub()
-        hub.applySync(program: "chrome", groupName: "Focus", contribution: ["scalars": ["allowedMinutes": 30], "scopes": [siteLine]], ts: 50)
+        hub.applySync(program: "chrome", groupId: "c1", contribution: ["scalars": ["allowedMinutes": 30], "scopes": [siteLine]], ts: 50)
         hub.contributeLocalDefinitions(document: document([appsLine]), nowMs: 100)
         XCTAssertEqual(sharedSurfaces(hub), ["apps", "site"], "the Mac's Apps entry joins the shared lines")
         let group = (hub.overlayShared(onto: document([appsLine]))["blockedGroups"] as? [[String: Any]])?.first
@@ -46,10 +47,10 @@ final class ClusterLocalMemberTests: XCTestCase {
 
     func testOnlyARealMacEditIsSentAndALaggingCopyNever() {
         let hub = linkedHub()
-        hub.applySync(program: "chrome", groupName: "Focus", contribution: ["scalars": ["allowedMinutes": 30], "scopes": [siteLine]], ts: 50)
+        hub.applySync(program: "chrome", groupId: "c1", contribution: ["scalars": ["allowedMinutes": 30], "scopes": [siteLine]], ts: 50)
         hub.contributeLocalDefinitions(document: document([appsLine]), nowMs: 100)
         // Chrome edits later; the Mac file still holds its old copy: nothing is sent.
-        hub.applySync(program: "chrome", groupName: "Focus", contribution: ["scalars": ["allowedMinutes": 45], "scopes": [siteLine, appsLine]], ts: 200)
+        hub.applySync(program: "chrome", groupId: "c1", contribution: ["scalars": ["allowedMinutes": 45], "scopes": [siteLine, appsLine]], ts: 200)
         hub.contributeLocalDefinitions(document: document([appsLine]), nowMs: 300)
         XCTAssertEqual((hub.overlayShared(onto: document([]))["blockedGroups"] as? [[String: Any]])?.first?["allowedMinutes"] as? Int, 45)
         // A real Mac edit (the file changes) is sent and wins.

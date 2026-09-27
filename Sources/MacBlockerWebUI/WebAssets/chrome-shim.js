@@ -402,6 +402,9 @@
         return bridgeOrResolve("group-disconnect", message, { ok: true });
       case "clusters-status":
         return bridgeOrResolve("clusters-status", message, { ok: true });
+      case "group-link":
+      case "group-unlink":
+        return bridgeOrResolve(message.type, message, { ok: true });
       case "mcp-connectors-status":
         return bridgeOrResolve("mcp-connectors-status", message, { ok: true });
       case "mcp-connect":

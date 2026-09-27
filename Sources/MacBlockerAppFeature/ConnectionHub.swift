@@ -248,7 +248,11 @@ final class ConnectionHub: ObservableObject {
     /// settings derived from each member's contribution.
     private final class ClusterState {
         let id: String
-        let groupName: String
+        /// The link's shared name (linked groups are renamed together).
+        var groupName: String
+        /// The program whose Link button made the link: its settings win the
+        /// first merge (the other group joins it).
+        var initiator = ""
         var members: Set<String> = []
         /// Per-program local group id: the specific group *instance* that program
         /// linked. Membership is pinned to this id so deleting a group and later
@@ -303,7 +307,13 @@ final class ConnectionHub: ObservableObject {
 
     /// UserDefaults key for the persisted cluster registry. Bumping the suffix
     /// invalidates older on-disk shapes.
-    private static let clustersDefaultsKey = "ConnectionHub.clusters.v1"
+    /// v2 since 2026-09-27: links are made by the user. The automatic links
+    /// of v1 were dropped (owner) — see restoreClustersLocked.
+    private static let clustersDefaultsKey = "ConnectionHub.clusters.v2"
+    private static let droppedClustersDefaultsKey = "ConnectionHub.clusters.v1"
+    /// Mac groups that left a link (unlinked, or their link dissolved) and must
+    /// keep only their own lines; the engine takes and trims them.
+    private var unlinkedLocal: Set<String> = []
 
     // MARK: Lifecycle
 
@@ -599,10 +609,20 @@ final class ConnectionHub: ObservableObject {
             lock.unlock()
             applySync(
                 program: prog,
-                groupName: (obj["groupName"] as? String) ?? "",
+                groupId: (obj["groupId"] as? String) ?? "",
                 contribution: obj,
                 ts: (obj["ts"] as? Double) ?? 0
             )
+        case "group-link", "group-unlink":
+            lock.lock()
+            let prog = peers[key]?.program ?? ""
+            lock.unlock()
+            let groupId = (obj["groupId"] as? String) ?? ""
+            let refusal = kind == "group-link"
+                ? linkGroups(program: prog, groupId: groupId,
+                             targetProgram: (obj["targetProgram"] as? String) ?? "", targetGroupId: (obj["targetGroupId"] as? String) ?? "")
+                : unlinkGroup(program: prog, groupId: groupId)
+            if let refusal { send(conn, dict: ["kind": "link-refused", "reason": refusal, "groupId": groupId]) }
         case "classifier-request":
             lock.lock()
             let program = peers[key]?.program ?? ""
@@ -1054,37 +1074,121 @@ final class ConnectionHub: ObservableObject {
         var snapshots: [[String: Any]] = []
         var changed = false
         for cluster in affected {
-            // Membership is pinned to the group *instance* this program linked:
-            // it stays only while that instance is present under the same name.
-            // A delete removes the id; a re-create under the same name yields a
-            // NEW id (so it can't silently re-join); a rename decouples. Frozen
-            // groups stay in the roster, so a freeze never decouples. A link
-            // without a pinned id (from before pinning) is dropped here and
-            // re-forms, pinned, through auto-link.
+            // Membership is pinned to the group instance the user linked: it
+            // ends when that group is deleted (a rename keeps it — names are
+            // shared across the link). Frozen groups stay.
             let pinnedId = cluster.memberGroupIds[program] ?? ""
-            let stillPresent = !pinnedId.isEmpty
-                && infos.contains { $0.id == pinnedId && Self.sameName($0.name, cluster.groupName) }
-            if stillPresent { continue }
-            cluster.members.remove(program)
-            cluster.memberGroupIds.removeValue(forKey: program)
-            cluster.contributed.remove(program)
-            if cluster.members.count < 2 {
-                clusters.removeValue(forKey: cluster.id)
-                cluster.members.removeAll()
-            }
+            if !pinnedId.isEmpty, infos.contains(where: { $0.id == pinnedId }) { continue }
+            removeMemberLocked(cluster, program: program)
             changed = true
             snapshots.append(clusterJSONObject(cluster))
         }
-        // Auto-link: after pruning, (re)form clusters for same-named groups now
-        // present on two or more programs. There is no manual connect step.
-        let added = autoLinkClustersLocked()
-        if !added.isEmpty {
-            changed = true
-            snapshots.append(contentsOf: added)
-        }
         if changed { persistClustersLocked() }
+        let rosterSnapshot = rostersJSONObjectLocked()
         lock.unlock()
         for snapshot in snapshots { broadcastCluster(snapshot) }
+        broadcastToPeers(["kind": "rosters", "rosters": rosterSnapshot])
+    }
+
+    /// Caller must hold `lock`. Takes `program` out of the link; a link left
+    /// with one member dissolves. A Mac group that leaves (or is left alone)
+    /// is queued to keep only its own lines.
+    private func removeMemberLocked(_ cluster: ClusterState, program: String) {
+        if program == Self.localProgram, let id = cluster.memberGroupIds[program] { unlinkedLocal.insert(id) }
+        cluster.members.remove(program)
+        cluster.memberGroupIds.removeValue(forKey: program)
+        cluster.contributed.remove(program)
+        if cluster.members.count < 2 {
+            if cluster.members.contains(Self.localProgram), let id = cluster.memberGroupIds[Self.localProgram] { unlinkedLocal.insert(id) }
+            clusters.removeValue(forKey: cluster.id)
+            cluster.members.removeAll()
+        }
+    }
+
+    /// The Mac's groups that are in a link now.
+    func linkedLocalGroupIds() -> [String] {
+        lock.lock(); defer { lock.unlock() }
+        return clusters.values.compactMap { $0.members.contains(Self.localProgram) ? $0.memberGroupIds[Self.localProgram] : nil }
+    }
+
+    /// The Mac groups that left a link since the last call.
+    func takeUnlinkedLocalGroups() -> Set<String> {
+        lock.lock(); defer { lock.unlock() }
+        let ids = unlinkedLocal
+        unlinkedLocal = []
+        return ids
+    }
+
+    /// Caller must hold `lock`. Every program's groups, for the Link picker.
+    private func rostersJSONObjectLocked() -> [String: Any] {
+        rosters.mapValues { infos in infos.map { ["id": $0.id, "name": $0.name, "frozen": $0.frozen] as [String: Any] } }
+    }
+
+    private func broadcastToPeers(_ payload: [String: Any]) {
+        lock.lock()
+        let conns = peers.values.filter { $0.connected }.map(\.connection)
+        lock.unlock()
+        for conn in conns { send(conn, dict: payload) }
+    }
+
+    // MARK: Links — made and removed by the user (owner 2026-09-27)
+
+    /// Links a group with a group of another program (the Link button or a
+    /// tool). The initiator's settings win the first merge; the lines of both
+    /// are unioned. Refused while either group or the link is locked, for a
+    /// group already in another link, and for a second group of one program.
+    /// Returns the refusal, or nil.
+    func linkGroups(program: String, groupId: String, targetProgram: String, targetGroupId: String) -> String? {
+        guard !program.isEmpty, !targetProgram.isEmpty, program != targetProgram, !groupId.isEmpty, !targetGroupId.isEmpty else { return "invalid-link" }
+        lock.lock()
+        guard let own = rosters[program]?.first(where: { $0.id == groupId }),
+              let other = rosters[targetProgram]?.first(where: { $0.id == targetGroupId }) else { lock.unlock(); return "group-not-found" }
+        if own.frozen || other.frozen { lock.unlock(); return "group-locked" }
+        let ownCluster = clusterLocked(program: program, groupId: groupId)
+        let otherCluster = clusterLocked(program: targetProgram, groupId: targetGroupId)
+        if let ownCluster, let otherCluster {
+            lock.unlock()
+            return ownCluster === otherCluster ? "already-linked" : "linked-elsewhere"
+        }
+        if let existing = ownCluster ?? otherCluster {
+            if Self.lockIsLocked(existing.sharedLock) { lock.unlock(); return "group-locked" }
+            let joining = ownCluster == nil ? program : targetProgram
+            if existing.members.contains(joining) { lock.unlock(); return "program-already-linked" }
+        }
+        let cluster = ownCluster ?? otherCluster ?? {
+            let created = ClusterState(id: UUID().uuidString, groupName: own.name)
+            created.initiator = program
+            clusters[created.id] = created
+            return created
+        }()
+        cluster.members.formUnion([program, targetProgram])
+        cluster.memberGroupIds[program] = groupId
+        cluster.memberGroupIds[targetProgram] = targetGroupId
+        persistClustersLocked()
+        let snapshot = clusterJSONObject(cluster)
+        lock.unlock()
+        broadcastCluster(snapshot)
+        return nil
+    }
+
+    /// Takes a group out of its link (the Unlink button or a tool). Both keep
+    /// the shared settings; each keeps only its own program's lines. Refused
+    /// while the link is locked.
+    func unlinkGroup(program: String, groupId: String) -> String? {
+        lock.lock()
+        guard let cluster = clusterLocked(program: program, groupId: groupId) else { lock.unlock(); return "not-linked" }
+        if Self.lockIsLocked(cluster.sharedLock) { lock.unlock(); return "group-locked" }
+        removeMemberLocked(cluster, program: program)
+        persistClustersLocked()
+        let snapshot = clusterJSONObject(cluster)
+        lock.unlock()
+        broadcastCluster(snapshot)
+        return nil
+    }
+
+    /// Caller must hold `lock`.
+    private func clusterLocked(program: String, groupId: String) -> ClusterState? {
+        clusters.values.first { $0.members.contains(program) && $0.memberGroupIds[program] == groupId }
     }
 
     /// Number of live clusters (≥2 members). Used to warn the user before
@@ -1092,57 +1196,6 @@ final class ConnectionHub: ObservableObject {
     func activeClusterCount() -> Int {
         lock.lock(); defer { lock.unlock() }
         return clusters.values.filter { $0.members.count >= 2 }.count
-    }
-
-    /// Caller must hold `lock`. Auto-forms clusters: every group name present on
-    /// two or more programs becomes one cluster containing all programs that have
-    /// that group. Same-named groups link with no manual step; membership is pinned
-    /// to the specific instance so a delete/re-create can't silently re-join.
-    /// Returns snapshots of the clusters it changed.
-    private func autoLinkClustersLocked() -> [[String: Any]] {
-        // name -> program -> (pinned group id, locked) — first instance per
-        // program. Names match case-insensitively (the editors keep names
-        // unique that way).
-        var byName: [String: [String: (id: String, frozen: Bool)]] = [:]
-        var displayName: [String: String] = [:]
-        for (program, infos) in rosters {
-            for info in infos where !info.name.isEmpty {
-                let key = Self.nameKey(info.name)
-                if displayName[key] == nil { displayName[key] = info.name }
-                if byName[key]?[program] == nil {
-                    byName[key, default: [:]][program] = (info.id, info.frozen)
-                }
-            }
-        }
-        var snapshots: [[String: Any]] = []
-        for (key, entries) in byName where entries.count >= 2 {
-            let existing = clusters.values.first { Self.nameKey($0.groupName) == key }
-            // Owner 2026-09-26: a locked group cannot join a link, and a locked
-            // link takes no one new — linking happens only between unlocked
-            // groups; linked groups then lock together. A member already in
-            // the link with the same group stays, locked or not.
-            let linkLocked = existing.map { Self.lockIsLocked($0.sharedLock) } ?? false
-            let eligible = entries.filter { program, entry in
-                if let existing, existing.members.contains(program), existing.memberGroupIds[program] == entry.id { return true }
-                return !entry.frozen && !linkLocked
-            }
-            guard eligible.count >= 2 || (existing != nil && !eligible.isEmpty) else { continue }
-            let cluster = existing ?? {
-                let created = ClusterState(id: UUID().uuidString, groupName: displayName[key] ?? key)
-                clusters[created.id] = created
-                return created
-            }()
-            var mutated = false
-            for (program, entry) in eligible {
-                if cluster.members.insert(program).inserted { mutated = true }
-                if !entry.id.isEmpty && cluster.memberGroupIds[program] != entry.id {
-                    cluster.memberGroupIds[program] = entry.id
-                    mutated = true
-                }
-            }
-            if mutated { snapshots.append(clusterJSONObject(cluster)) }
-        }
-        return snapshots
     }
 
     /// group-actions.js LOCK_FIELDS: the fields of the one lock unit.
@@ -1159,12 +1212,10 @@ final class ConnectionHub: ObservableObject {
     /// contribution unions its entries into the shared lines, so two groups that
     /// existed separately keep both sides' entries when they link), and the usage
     /// counter is a delta accumulator (the Mac is the budget authority).
-    func applySync(program: String, groupName: String, contribution: [String: Any], ts: Double) {
-        guard !program.isEmpty, !groupName.isEmpty else { return }
+    func applySync(program: String, groupId: String, contribution: [String: Any], ts: Double) {
+        guard !program.isEmpty, !groupId.isEmpty else { return }
         lock.lock()
-        guard let cluster = clusters.values.first(where: {
-            Self.sameName($0.groupName, groupName) && $0.members.contains(program)
-        }) else {
+        guard let cluster = clusterLocked(program: program, groupId: groupId) else {
             lock.unlock()
             return
         }
@@ -1180,13 +1231,14 @@ final class ConnectionHub: ObservableObject {
         let carriesConfig = scalarsPayload != nil || scopesPayload != nil
         if carriesConfig {
             let firstContribution = !cluster.contributed.contains(program)
-            let priority = (contribution["priority"] as? Bool) ?? false
+            // The group whose Link button made the link: its settings win.
+            let priority = firstContribution && program == cluster.initiator
             let wins = priority || ts >= cluster.sharedTs
             let budgetBefore = Self.budgetShape(cluster.sharedScalars)
             cluster.contributed.insert(program)
 
-            // Scalars: last writer wins, except the link initiator forces its
-            // settings to win the first merge (priority flag).
+            // Scalars: last writer wins, except the link initiator's settings
+            // win the first merge.
             if let scalars = scalarsPayload {
                 if priority {
                     cluster.sharedScalars = scalars
@@ -1196,6 +1248,7 @@ final class ConnectionHub: ObservableObject {
                     cluster.sharedTs = ts
                 }
             }
+            if let name = cluster.sharedScalars["name"] as? String, !name.isEmpty { cluster.groupName = name }
             // A changed budget (the same fields that restart an unlinked group's
             // budget in the editor) restarts the shared budget for every device:
             // linked groups are one group.
@@ -1317,12 +1370,6 @@ final class ConnectionHub: ObservableObject {
         }
     }
 
-    static func nameKey(_ name: String) -> String {
-        name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    }
-
-    static func sameName(_ a: String, _ b: String) -> Bool { nameKey(a) == nameKey(b) }
-
     /// The settings whose change restarts a budget (popup `modeChanged` /
     /// `resetIntervalChanged`); empty when nothing is shared yet.
     static func budgetShape(_ scalars: [String: Any]) -> String {
@@ -1334,7 +1381,7 @@ final class ConnectionHub: ObservableObject {
     /// Mirror of group-scopes.js `SYNC_SCALAR_FIELDS` (a test keeps the two equal):
     /// the policy settings a linked group shares.
     static let syncScalarFields = [
-        "mode", "allowedMinutes", "resetIntervalHours", "resetAtMidnight", "rollingLimit",
+        "name", "mode", "allowedMinutes", "resetIntervalHours", "resetAtMidnight", "rollingLimit",
         "allowSnooze", "snoozeMinutes", "snoozeActivationDelayMinutes", "snoozeCooldownMinutes", "snoozeConfirmations",
         "activeDays", "timeWindowsText",
         "fallbackUrl", "pauseSeconds",
@@ -1379,7 +1426,7 @@ final class ConnectionHub: ObservableObject {
             if let entry = (document["groupSnoozes"] as? [String: Any])?[groupID] as? [String: Any] {
                 let changedAt = Self.snoozeChangeTs(entry)
                 if changedAt > cluster.sharedSnoozeTs {
-                    frames.append(["kind": "group-sync", "program": Self.localProgram, "groupName": cluster.groupName,
+                    frames.append(["kind": "group-sync", "program": Self.localProgram, "groupId": groupID,
                                    "ts": 0, "snooze": entry, "snoozeTs": changedAt])
                 }
             }
@@ -1409,7 +1456,7 @@ final class ConnectionHub: ObservableObject {
             } else {
                 ts = nowMs
             }
-            var frame: [String: Any] = ["kind": "group-sync", "program": Self.localProgram, "groupName": cluster.groupName, "ts": ts,
+            var frame: [String: Any] = ["kind": "group-sync", "program": Self.localProgram, "groupId": groupID, "ts": ts,
                                         "scalars": scalars]
             if !scopes.isEmpty { frame["scopes"] = scopes }
             if !lockUnit.isEmpty {
@@ -1502,7 +1549,7 @@ final class ConnectionHub: ObservableObject {
         guard let cluster = localCluster(groupID: groupID) else { return }
         contribution["kind"] = "group-sync"
         contribution["program"] = Self.localProgram
-        contribution["groupName"] = cluster.groupName
+        contribution["groupId"] = groupID
         contribution["ts"] = 0
         submitBridgeFrame(contribution)
     }
@@ -1552,14 +1599,15 @@ final class ConnectionHub: ObservableObject {
         cluster.sharedBuckets = cluster.sharedBuckets.filter { $0.key > cutoff }
     }
 
-    /// JSON array of all clusters, pushed to the Mac's own web editor each tick.
+    /// The links and every program's groups (for the Link picker), pushed to
+    /// the Mac's own web editor each tick.
     func clustersJSON() -> String {
         lock.lock()
-        let arr = clusters.values.map { clusterJSONObject($0) }
+        let payload: [String: Any] = ["clusters": clusters.values.map { clusterJSONObject($0) }, "rosters": rostersJSONObjectLocked()]
         lock.unlock()
-        guard let data = try? JSONSerialization.data(withJSONObject: arr),
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
               let json = String(data: data, encoding: .utf8) else {
-            return "[]"
+            return "{\"clusters\":[]}"
         }
         return json
     }
@@ -1573,7 +1621,7 @@ final class ConnectionHub: ObservableObject {
         case "group-sync":
             applySync(
                 program: Self.localProgram,
-                groupName: frame["groupName"] as? String ?? "",
+                groupId: frame["groupId"] as? String ?? "",
                 contribution: frame,
                 ts: frame["ts"] as? Double ?? 0
             )
@@ -1618,6 +1666,15 @@ final class ConnectionHub: ObservableObject {
     /// Caller must hold `lock`. Rebuilds the cluster registry (and the running
     /// budgets) from disk when the hub starts.
     func restoreClustersLocked() {
+        // The automatic links of v1 are dropped (owner 2026-09-27): each Mac
+        // group in one keeps only its own lines, as after an Unlink.
+        if let old = UserDefaults.standard.data(forKey: ConnectionHub.droppedClustersDefaultsKey) {
+            let arr = (try? JSONSerialization.jsonObject(with: old)) as? [[String: Any]] ?? []
+            for obj in arr {
+                if let id = (obj["memberGroupIds"] as? [String: String])?[Self.localProgram] { unlinkedLocal.insert(id) }
+            }
+            UserDefaults.standard.removeObject(forKey: ConnectionHub.droppedClustersDefaultsKey)
+        }
         guard let data = UserDefaults.standard.data(forKey: ConnectionHub.clustersDefaultsKey),
               let arr = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else { return }
         for obj in arr {
@@ -1714,8 +1771,9 @@ final class ConnectionHub: ObservableObject {
     private func sendClustersSnapshot(_ conn: NWConnection) {
         lock.lock()
         let arr = clusters.values.map { clusterJSONObject($0) }
+        let rosterSnapshot = rostersJSONObjectLocked()
         lock.unlock()
-        send(conn, dict: ["kind": "clusters", "clusters": arr])
+        send(conn, dict: ["kind": "clusters", "clusters": arr, "rosters": rosterSnapshot])
     }
 
 }

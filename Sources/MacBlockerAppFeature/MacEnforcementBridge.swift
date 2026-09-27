@@ -344,7 +344,9 @@ public final class MacEnforcementBridge: ObservableObject {
         let now = Date()
         let nowMs = (now.timeIntervalSince1970 * 1000).rounded() // whole ms, as every stored time
         // The tick's one read of the store.
-        let document = webStore.loadForTick(nowMs: nowMs)
+        // A Mac group that left a link keeps only its own lines.
+        webStore.keepOwnLines(groupIds: ConnectionHub.shared.takeUnlinkedLocalGroups())
+        let document = webStore.loadForTick(nowMs: nowMs, linkedGroupIds: ConnectionHub.shared.linkedLocalGroupIds())
         // Mac Vault takes part in its links itself, editor window or not.
         ConnectionHub.shared.contributeLocalDefinitions(document: document, nowMs: nowMs)
         // …and adopts what the link shares into its own file.
