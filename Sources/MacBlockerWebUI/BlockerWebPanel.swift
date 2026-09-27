@@ -16,6 +16,7 @@ public struct BlockerWebPanel: View {
     private let onDismissSystemPanel: ((String) -> Void)?
     private let systemPanelEventsJSON: (() -> String?)?
     private let clustersJSON: (() -> String?)?
+    private let onLinkRequest: ((String, [String: Any]) -> String?)?
 
     public init(
         store: BlockerWebStore = BlockerWebStore(),
@@ -28,7 +29,8 @@ public struct BlockerWebPanel: View {
         onShowSystemPanel: ((String) -> Void)? = nil,
         onDismissSystemPanel: ((String) -> Void)? = nil,
         systemPanelEventsJSON: (() -> String?)? = nil,
-        clustersJSON: (() -> String?)? = nil
+        clustersJSON: (() -> String?)? = nil,
+        onLinkRequest: ((String, [String: Any]) -> String?)? = nil
     ) {
         self.store = store
         self.appInventoryJSON = appInventoryJSON
@@ -41,6 +43,7 @@ public struct BlockerWebPanel: View {
         self.onDismissSystemPanel = onDismissSystemPanel
         self.systemPanelEventsJSON = systemPanelEventsJSON
         self.clustersJSON = clustersJSON
+        self.onLinkRequest = onLinkRequest
     }
 
     public var body: some View {
@@ -55,7 +58,8 @@ public struct BlockerWebPanel: View {
             onShowSystemPanel: onShowSystemPanel,
             onDismissSystemPanel: onDismissSystemPanel,
             systemPanelEventsJSON: systemPanelEventsJSON,
-            clustersJSON: clustersJSON
+            clustersJSON: clustersJSON,
+            onLinkRequest: onLinkRequest
         )
         .ignoresSafeArea()
     }
