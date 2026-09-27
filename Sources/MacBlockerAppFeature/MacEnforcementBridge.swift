@@ -488,7 +488,7 @@ public final class MacEnforcementBridge: ObservableObject {
     }
 
     /// Run (the editor's button and the AI tool): the text becomes the group's
-    /// rule and starts fresh (its state cleared). A rule that doesn't load
+    /// rule, keeping its memory (v.state, owner 2026-09-27). A rule that doesn't load
     /// changes nothing — the one before keeps running. A frozen group is refused.
     public func runRule(groupID: String, source: String) -> [String: Any] {
         let store = GroupStore()
@@ -498,13 +498,10 @@ public final class MacEnforcementBridge: ObservableObject {
             return ["ok": false, "error": "group-not-found"]
         }
         if document.isLocked(id: groupID) { return ["ok": false, "error": "group-locked"] }
-        guard let result = loadRule(group: group, source: source, stateJSON: "{}") else {
+        guard let result = loadRule(group: group, source: source, stateJSON: webStore.ruleState(groupID: groupID)) else {
             return ["ok": false, "error": quarantinedRuleSources[groupID] != nil ? "sandbox-timeout" : "rules-not-running"]
         }
-        if result.ok {
-            webStore.writeRuleStates([groupID: nil])
-            _ = try? store.mutate { try $0.recordRun(id: groupID, source: source) }
-        }
+        if result.ok { _ = try? store.mutate { try $0.recordRun(id: groupID, source: source) } }
         return ["ok": result.ok, "handlers": result.handlers, "error": result.error ?? NSNull()]
     }
 
