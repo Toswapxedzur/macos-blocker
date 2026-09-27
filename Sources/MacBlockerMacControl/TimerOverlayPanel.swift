@@ -148,240 +148,7 @@ public final class TimerOverlayPanelController {
     }
 }
 
-// MARK: - Toast Overlay (log popup messages)
-
-/// A single toast entry shown in the floating toast stack.
-public struct ToastEntry: Identifiable, Equatable, Sendable {
-    public let id: String
-    public let message: String
-    public let level: String        // "log", "warn", "error"
-    public let timestamp: Date
-
-    public init(id: String, message: String, level: String, timestamp: Date = Date()) {
-        self.id = id
-        self.message = message
-        self.level = level
-        self.timestamp = timestamp
-    }
-
-    /// `HH:mm:ss` matching customBlocker's `formatLogFeedTime`.
-    var formattedTime: String {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss"
-        return f.string(from: timestamp)
-    }
-
-    /// Meta line: `HH:mm:ss` for log, `HH:mm:ss · WARN` / `HH:mm:ss · ERROR`
-    /// for non-log levels — matching customBlocker's log feed entry format.
-    var metaText: String {
-        if level == "log" { return formattedTime }
-        return "\(formattedTime) · \(level.uppercased())"
-    }
-}
-
-@MainActor
-final class ToastOverlayModel: ObservableObject {
-    @Published var toasts: [ToastEntry] = []
-}
-
-private let toastWidth: CGFloat = 380
-
-/// Individual toast card matching customBlocker's toast + log-feed style:
-/// colored background, 3px left border, meta line with timestamp, message body.
-struct ToastCardView: View {
-    let entry: ToastEntry
-
-    private var palette: (bg: Color, fg: Color, border: Color, meta: Color) {
-        switch entry.level {
-        case "error":
-            return (
-                Color(red: 0.498, green: 0.114, blue: 0.114),  // #7f1d1d
-                Color(red: 0.996, green: 0.949, blue: 0.949),  // #fef2f2
-                Color(red: 0.937, green: 0.267, blue: 0.267),  // #ef4444
-                Color(red: 0.996, green: 0.949, blue: 0.949).opacity(0.6)
-            )
-        case "warn":
-            return (
-                Color(red: 0.471, green: 0.208, blue: 0.059),  // #78350f
-                Color(red: 1.0, green: 0.984, blue: 0.918),    // #fffbeb
-                Color(red: 0.961, green: 0.620, blue: 0.043),  // #f59e0b
-                Color(red: 1.0, green: 0.984, blue: 0.918).opacity(0.6)
-            )
-        default:
-            return (
-                Color(red: 0.059, green: 0.090, blue: 0.165),  // #0f172a
-                Color(red: 0.945, green: 0.961, blue: 0.973),  // #f1f5f9
-                Color(red: 0.220, green: 0.741, blue: 0.973),  // #38bdf8
-                Color(red: 0.945, green: 0.961, blue: 0.973).opacity(0.5)
-            )
-        }
-    }
-
-    var body: some View {
-        let p = palette
-        HStack(spacing: 0) {
-            Rectangle()
-                .fill(p.border)
-                .frame(width: 3)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(entry.metaText)
-                    .font(.system(size: 10, weight: .medium, design: .default))
-                    .foregroundColor(p.meta)
-                    .tracking(0.4)
-                Text(entry.message)
-                    .font(.system(size: 13, weight: .regular, design: .default))
-                    .foregroundColor(p.fg)
-                    .lineLimit(4)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .frame(width: toastWidth)
-        .background(p.bg)
-        .cornerRadius(6)
-        .shadow(color: .black.opacity(0.35), radius: 10, y: 3)
-    }
-}
-
-/// Toast stack — bottom-right, fixed width, matching customBlocker's layout.
-struct ToastOverlayView: View {
-    @ObservedObject var model: ToastOverlayModel
-
-    var body: some View {
-        VStack(alignment: .trailing, spacing: 6) {
-            ForEach(model.toasts) { entry in
-                ToastCardView(entry: entry)
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .bottom).combined(with: .opacity),
-                        removal: .opacity
-                    ))
-            }
-        }
-        .frame(width: toastWidth)
-        .animation(.easeInOut(duration: 0.4), value: model.toasts)
-    }
-}
-
-/// Manages a floating toast panel for log popup messages — separate from the
-/// timer HUD. Matches customBlocker's toast behavior: individual colored cards
-/// that auto-dismiss after ~5 seconds, stacked in the bottom-right corner.
-@MainActor
-public final class ToastOverlayPanelController {
-    private let model = ToastOverlayModel()
-    private var panel: NSPanel?
-    private let screenInset: CGFloat = 16
-    private let maxVisible = 8
-    private let fadeAfter: TimeInterval = 5.0
-    private var dismissTimers: [String: Timer] = [:]
-    private var counter = 0
-
-    public init() {}
-
-    /// Show a toast. Each toast auto-dismisses after ~5 seconds.
-    public func show(message: String, level: String) {
-        counter += 1
-        let entry = ToastEntry(
-            id: "toast.\(counter)",
-            message: message,
-            level: level,
-            timestamp: Date()
-        )
-
-        while model.toasts.count >= maxVisible {
-            let removed = model.toasts.removeFirst()
-            cancelDismiss(id: removed.id)
-        }
-
-        model.toasts.append(entry)
-        let panel = ensurePanel()
-        resizeAndPosition(panel)
-        if !panel.isVisible {
-            panel.orderFrontRegardless()
-        }
-
-        let entryId = entry.id
-        let timer = Timer.scheduledTimer(withTimeInterval: fadeAfter, repeats: false) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.removeToast(id: entryId)
-            }
-        }
-        dismissTimers[entryId] = timer
-    }
-
-    public func teardown() {
-        for (_, t) in dismissTimers { t.invalidate() }
-        dismissTimers.removeAll()
-        model.toasts.removeAll()
-        panel?.orderOut(nil)
-        panel = nil
-    }
-
-    private func removeToast(id: String) {
-        cancelDismiss(id: id)
-        model.toasts.removeAll { $0.id == id }
-        if model.toasts.isEmpty {
-            panel?.orderOut(nil)
-        } else {
-            if let panel { resizeAndPosition(panel) }
-        }
-    }
-
-    private func cancelDismiss(id: String) {
-        dismissTimers[id]?.invalidate()
-        dismissTimers.removeValue(forKey: id)
-    }
-
-    private func ensurePanel() -> NSPanel {
-        if let panel { return panel }
-
-        let hosting = NSHostingView(rootView: ToastOverlayView(model: model))
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: toastWidth, height: 40),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.isFloatingPanel = true
-        panel.becomesKeyOnlyIfNeeded = true
-        panel.hidesOnDeactivate = false
-        panel.isExcludedFromWindowsMenu = true
-        panel.ignoresMouseEvents = true
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        panel.level = .screenSaver
-        panel.collectionBehavior = [
-            .canJoinAllSpaces,
-            .fullScreenAuxiliary,
-            .stationary,
-            .ignoresCycle
-        ]
-        hosting.translatesAutoresizingMaskIntoConstraints = true
-        panel.contentView = hosting
-        self.panel = panel
-        return panel
-    }
-
-    private func resizeAndPosition(_ panel: NSPanel) {
-        guard let hosting = panel.contentView else { return }
-        hosting.layoutSubtreeIfNeeded()
-        let size = hosting.fittingSize
-        guard let screen = NSScreen.main else {
-            panel.setContentSize(size)
-            return
-        }
-        let frame = screen.frame
-        let origin = NSPoint(
-            x: frame.maxX - size.width - screenInset,
-            y: frame.minY + screenInset
-        )
-        panel.setFrame(NSRect(origin: origin, size: size), display: true)
-    }
-}
-
-// MARK: - Panel Overlay (interactive panels from getPanelHelper)
+// MARK: - Panel Overlay (a custom rule's v.panel)
 
 /// SwiftUI view for a single panel control.
 struct PanelControlView: View {
@@ -400,8 +167,9 @@ struct PanelControlView: View {
     var body: some View {
         Group {
             switch control.type {
-            case "text":
-                Text(control.text ?? control.label ?? "")
+            case "text", "html":
+                // An html control shows its text here (the browser renders the markup).
+                Text(control.text ?? control.html.map { $0.replacingOccurrences(of: "<[^>]*>", with: "", options: .regularExpression) } ?? control.label ?? "")
                     .font(.system(size: 13))
                     .opacity(0.85)
                     .fixedSize(horizontal: false, vertical: true)
@@ -531,19 +299,6 @@ struct PanelControlView: View {
                         snapshotValue: control.value?.stringValue ?? "#000000",
                         onEvent: onEvent
                     )
-                }
-
-            case "timer":
-                let snap = control.timer
-                let ms = snap?.currentMs ?? 0
-                let name = snap?.displayName ?? control.label ?? control.id
-                HStack {
-                    Text(name)
-                        .font(.system(size: 13, weight: .medium))
-                    Spacer()
-                    Text(formatTimerMs(ms, format: control.format ?? "mm:ss"))
-                        .font(.system(size: 13, weight: .regular, design: .monospaced))
-                        .foregroundColor(ms <= 0 ? .red : .primary)
                 }
 
             case "section":
@@ -941,24 +696,6 @@ private struct PanelPinControl: View {
     }
 }
 
-private func formatTimerMs(_ ms: Double, format: String) -> String {
-    let totalMs = max(0, Int(ms))
-    let totalSec = totalMs / 1000
-    switch format {
-    case "ms": return "\(totalMs)"
-    case "ss": return "\(totalSec)"
-    case "hh:mm:ss":
-        let h = totalSec / 3600
-        let m = (totalSec % 3600) / 60
-        let s = totalSec % 60
-        return String(format: "%d:%02d:%02d", h, m, s)
-    default: // mm:ss
-        let m = totalSec / 60
-        let s = totalSec % 60
-        return String(format: "%d:%02d", m, s)
-    }
-}
-
 /// View for a complete panel.
 struct PanelCardView: View {
     let snapshot: PanelSnapshot
@@ -972,7 +709,7 @@ struct PanelCardView: View {
             for c in controls {
                 switch c.type {
                 case "section": visit(c.controls)
-                case "button", "text", "timer": continue
+                case "button", "text", "html": continue
                 default:
                     if let v = c.value { out[c.id] = v.stringValue }
                 }

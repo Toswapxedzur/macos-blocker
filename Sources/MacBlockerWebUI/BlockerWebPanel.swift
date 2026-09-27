@@ -9,7 +9,7 @@ public struct BlockerWebPanel: View {
     private let appInventoryJSON: (() -> String?)?
     private let ruleLogJSON: (() -> String?)?
     private let onStorePersisted: (() -> Void)?
-    private let onRunCustomGroup: ((String, String) -> Void)?
+    private let onRunCustomGroup: ((String, String) -> [String: Any])?
     private let onSnoozePress: ((String) -> Void)?
     private let clustersJSON: (() -> String?)?
     private let onLinkRequest: ((String, [String: Any]) -> String?)?
@@ -20,7 +20,7 @@ public struct BlockerWebPanel: View {
         appInventoryJSON: (() -> String?)? = nil,
         ruleLogJSON: (() -> String?)? = nil,
         onStorePersisted: (() -> Void)? = nil,
-        onRunCustomGroup: ((String, String) -> Void)? = nil,
+        onRunCustomGroup: ((String, String) -> [String: Any])? = nil,
         onSnoozePress: ((String) -> Void)? = nil,
         clustersJSON: (() -> String?)? = nil,
         onLinkRequest: ((String, [String: Any]) -> String?)? = nil,

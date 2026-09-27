@@ -41,9 +41,10 @@ let package = Package(
         .target(
             name: "MacBlockerCore",
             resources: [
-                // Whole folder: custom-rule-runtime.js (the Mac app's rule engine),
-                // plus helpers.js + event-sandbox.js (the verbatim, intent-
-                // emitting browser engine the Safari bridge runs in JSC).
+                // Whole folder: rule-core.js (the rule contract) with
+                // custom-rule-runtime.js (the Mac app's rule engine on it) and
+                // event-sandbox.js (the browser's, which the Safari bridge
+                // runs in JSC), plus the editor's group rules.
                 .copy("Resources")
             ]
         ),

@@ -166,7 +166,7 @@ public enum VaultMCPTools {
 
             MCPTool(
                 name: "snooze_group",
-                description: "Snooze a group, as the editor's Snooze does: its saved snooze length, delay and cooldown; the group's own confirmations (call again with confirm: true every 5 s until confirmationsLeft is 0). Refused when the group doesn't allow snoozing or a snooze (or its cooldown) is running. A frozen group can be snoozed. A custom group's snooze is its rule's: this fires the rule's snoozePress, as the editor's button does (when it allows snoozing).",
+                description: "Snooze a group, as the editor's Snooze does: its saved snooze length, delay and cooldown; the group's own confirmations (call again with confirm: true every 5 s until confirmationsLeft is 0). Refused when the group doesn't allow snoozing or a snooze (or its cooldown) is running. A frozen group can be snoozed. A custom group's snooze is its rule's: this sends the rule its \"snooze\" event, as the editor's button does (when it allows snoozing).",
                 inputSchema: [
                     "type": "object",
                     "properties": ["id": ["type": "string", "description": "The group id."], "confirm": ["type": "boolean"]],

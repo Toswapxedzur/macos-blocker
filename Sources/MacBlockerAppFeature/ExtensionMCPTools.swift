@@ -169,7 +169,7 @@ public enum ExtensionMCPTools {
             },
             MCPTool(
                 name: "extension_snooze_group",
-                description: "Snooze an extension group, as the popup's Snooze does: its saved snooze length, delay and cooldown; the group's own confirmations (call again with confirm: true every 5 s until confirmationsLeft is 0). Refused when the group doesn't allow snoozing or a snooze (or its cooldown) is running. A frozen group can be snoozed; its snooze settings are frozen with it. A custom group's snooze is its rule's: this fires the rule's snoozePress, as the editor's button does.",
+                description: "Snooze an extension group, as the popup's Snooze does: its saved snooze length, delay and cooldown; the group's own confirmations (call again with confirm: true every 5 s until confirmationsLeft is 0). Refused when the group doesn't allow snoozing or a snooze (or its cooldown) is running. A frozen group can be snoozed; its snooze settings are frozen with it. A custom group's snooze is its rule's: this sends the rule its \"snooze\" event, as the editor's button does.",
                 inputSchema: [
                     "type": "object",
                     "properties": ["id": ["type": "string"], "confirm": ["type": "boolean"], "browser": browserProperty],
