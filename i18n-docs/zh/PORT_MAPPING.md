@@ -10,7 +10,7 @@
 |原生应用库存 | `Sources/MacBlockerMacControl/MacApplicationInventory.swift` 和 `MacAppInventoryJSON.swift` |
 |执行计划| `Sources/MacBlockerCore/EnforcementPlan.swift` 和 `Sources/MacBlockerAppFeature/MacEnforcementBridge.swift` |
 |本机控制适配器| `Sources/MacBlockerMacControl/` 和 `Sources/MacBlockerScreenTime/` |
-|自定义规则 | `CustomJavaScriptPolicyRuntime.swift` 加上 JavaScript 运行时资源 |
+|自定义规则 | `RuleRuntime.swift` (rule-core.js + custom-rule-runtime.js: apps only) 加上 JavaScript 运行时资源 |
 |桥枢纽| `Sources/MacBlockerAppFeature/ConnectionHub.swift` |
 |应用程序生命周期| `BlockerAppDelegate.swift`、`BlockerMainView.swift` 和 `MacBlockerPanelApp.swift` |
 

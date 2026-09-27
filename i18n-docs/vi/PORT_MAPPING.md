@@ -10,7 +10,7 @@ Bản đồ này được lấy từ cây nguồn hiện tại. Nó là một c�
 | Khoảng không quảng cáo ứng dụng gốc | `Sources/MacBlockerMacControl/MacApplicationInventory.swift` và `MacAppInventoryJSON.swift` |
 | Kế hoạch thực thi | `Sources/MacBlockerCore/EnforcementPlan.swift` và `Sources/MacBlockerAppFeature/MacEnforcementBridge.swift` |
 | Bộ điều hợp điều khiển gốc | `Sources/MacBlockerMacControl/` và `Sources/MacBlockerScreenTime/` |
-| Quy tắc tùy chỉnh | `CustomJavaScriptPolicyRuntime.swift` cộng với tài nguyên thời gian chạy JavaScript |
+| Quy tắc tùy chỉnh | `RuleRuntime.swift` (rule-core.js + custom-rule-runtime.js: apps only) cộng với tài nguyên thời gian chạy JavaScript |
 | Trung tâm cầu | `Sources/MacBlockerAppFeature/ConnectionHub.swift` |
 | Vòng đời ứng dụng | `BlockerAppDelegate.swift`, `BlockerMainView.swift` và `MacBlockerPanelApp.swift` |
 

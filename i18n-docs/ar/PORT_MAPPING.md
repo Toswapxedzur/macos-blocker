@@ -10,7 +10,7 @@
 | مخزون التطبيق الأصلي | `Sources/MacBlockerMacControl/MacApplicationInventory.swift` و `MacAppInventoryJSON.swift` |
 | خطة التنفيذ | `Sources/MacBlockerCore/EnforcementPlan.swift` و `Sources/MacBlockerAppFeature/MacEnforcementBridge.swift` |
 | محولات التحكم الأصلية | `Sources/MacBlockerMacControl/` و `Sources/MacBlockerScreenTime/` |
-| القواعد المخصصة | `CustomJavaScriptPolicyRuntime.swift` بالإضافة إلى موارد وقت تشغيل JavaScript |
+| القواعد المخصصة | `RuleRuntime.swift` (rule-core.js + custom-rule-runtime.js: apps only) بالإضافة إلى موارد وقت تشغيل JavaScript |
 | محور الجسر | `Sources/MacBlockerAppFeature/ConnectionHub.swift` |
 | دورة حياة التطبيق | `BlockerAppDelegate.swift`، `BlockerMainView.swift`، و`MacBlockerPanelApp.swift` |
 
