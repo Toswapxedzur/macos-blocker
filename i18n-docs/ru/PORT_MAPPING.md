@@ -10,7 +10,7 @@
 | Собственный инвентарь приложений | `Sources/MacBlockerMacControl/MacApplicationInventory.swift` и `MacAppInventoryJSON.swift` |
 | План исполнения | `Sources/MacBlockerCore/EnforcementPlan.swift` и `Sources/MacBlockerAppFeature/MacEnforcementBridge.swift` |
 | Родные адаптеры управления | `Sources/MacBlockerMacControl/` и `Sources/MacBlockerScreenTime/` |
-| Пользовательские правила | `CustomJavaScriptPolicyRuntime.swift` плюс ресурсы времени выполнения JavaScript |
+| Пользовательские правила | `RuleRuntime.swift` (rule-core.js + custom-rule-runtime.js: apps only) плюс ресурсы времени выполнения JavaScript |
 | Мост-концентратор | `Sources/MacBlockerAppFeature/ConnectionHub.swift` |
 | Жизненный цикл приложения | `BlockerAppDelegate.swift`, `BlockerMainView.swift` и `MacBlockerPanelApp.swift` |
 

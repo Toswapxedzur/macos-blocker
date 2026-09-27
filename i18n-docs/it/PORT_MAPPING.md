@@ -10,7 +10,7 @@ Questa mappa è derivata dall'albero dei sorgenti corrente. Si tratta di un aiut
 | Inventario delle app native | `Sources/MacBlockerMacControl/MacApplicationInventory.swift` e `MacAppInventoryJSON.swift` |
 | Piano di esecuzione | `Sources/MacBlockerCore/EnforcementPlan.swift` e `Sources/MacBlockerAppFeature/MacEnforcementBridge.swift` |
 | Adattatori di controllo nativo | `Sources/MacBlockerMacControl/` e `Sources/MacBlockerScreenTime/` |
-| Regole personalizzate | `CustomJavaScriptPolicyRuntime.swift` più le risorse runtime JavaScript |
+| Regole personalizzate | `RuleRuntime.swift` (rule-core.js + custom-rule-runtime.js: apps only) più le risorse runtime JavaScript |
 | Mozzo del ponte | `Sources/MacBlockerAppFeature/ConnectionHub.swift` |
 | Ciclo di vita dell'app | `BlockerAppDelegate.swift`, `BlockerMainView.swift` e `MacBlockerPanelApp.swift` |
 

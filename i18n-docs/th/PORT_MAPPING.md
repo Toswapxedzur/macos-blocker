@@ -10,7 +10,7 @@
 | พื้นที่โฆษณาเนทีฟแอป | `Sources/MacBlockerMacControl/MacApplicationInventory.swift` และ `MacAppInventoryJSON.swift` |
 | แผนการบังคับใช้ | `Sources/MacBlockerCore/EnforcementPlan.swift` และ `Sources/MacBlockerAppFeature/MacEnforcementBridge.swift` |
 | อะแดปเตอร์ควบคุมดั้งเดิม | `Sources/MacBlockerMacControl/` และ `Sources/MacBlockerScreenTime/` |
-| กฎที่กำหนดเอง | `CustomJavaScriptPolicyRuntime.swift` รวมถึงทรัพยากรรันไทม์ JavaScript |
+| กฎที่กำหนดเอง | `RuleRuntime.swift` (rule-core.js + custom-rule-runtime.js: apps only) รวมถึงทรัพยากรรันไทม์ JavaScript |
 | สะพานฮับ | `Sources/MacBlockerAppFeature/ConnectionHub.swift` |
 | วงจรชีวิตของแอป | `BlockerAppDelegate.swift`, `BlockerMainView.swift` และ `MacBlockerPanelApp.swift` |
 

@@ -10,7 +10,7 @@
 |ネイティブ アプリのインベントリ | `Sources/MacBlockerMacControl/MacApplicationInventory.swift` と `MacAppInventoryJSON.swift` |
 |施行計画 | `Sources/MacBlockerCore/EnforcementPlan.swift` と `Sources/MacBlockerAppFeature/MacEnforcementBridge.swift` |
 |ネイティブ コントロール アダプター | `Sources/MacBlockerMacControl/` と `Sources/MacBlockerScreenTime/` |
-|カスタムルール | `CustomJavaScriptPolicyRuntime.swift` と JavaScript ランタイム リソース |
+|カスタムルール | `RuleRuntime.swift` (rule-core.js + custom-rule-runtime.js: apps only) と JavaScript ランタイム リソース |
 |ブリッジハブ | `Sources/MacBlockerAppFeature/ConnectionHub.swift` |
 |アプリのライフサイクル | `BlockerAppDelegate.swift`、`BlockerMainView.swift`、および `MacBlockerPanelApp.swift` |
 
