@@ -123,8 +123,7 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
     }
 
     /// Detection that only probes non-TCC-guarded paths, so it never pops the
-    /// App Data dialog. Used by the launch sweep; the Settings panel still uses
-    /// full `isInstalled` (its prompt is a deliberate, in-context user action).
+    /// App Data dialog. Used by the launch sweep.
     func isInstalledSilently(_ connector: Connector) -> Bool {
         connector.unprotectedDetectionPaths.contains {
             fileManager.fileExists(atPath: home.appendingPathComponent($0).path)
@@ -166,23 +165,9 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
         return result
     }
 
-    @discardableResult
-    public func connectByID(_ id: String) -> ActionResult {
-        guard let connector = connector(id: id) else { return .failed("unknown-connector") }
-        return connect(connector)
-    }
-
-    @discardableResult
-    public func disconnectByID(_ id: String) -> ActionResult {
-        guard let connector = connector(id: id) else { return .failed("unknown-connector") }
-        return disconnect(connector)
-    }
-
-    /// Gates the launch-time mass registration. It stays off until the Vault MCP
-    /// server actually ships, so the app never writes dead-endpoint entries into
-    /// the user's real AI-tool configs before there is a server to reach. Manual
-    /// per-tool toggles in Settings are unaffected and always work. Flip to true
-    /// (with the server) to make "default to connect" fire at launch.
+    /// Gates the launch-time registration: the app turns it on only once its MCP
+    /// server is running with a token, so no tool is ever pointed at a dead or
+    /// unauthenticated endpoint.
     public static var isLaunchAutoConnectEnabled = false
 
     /// Connects, at launch, every installed client. The AI Tool Connections UI was
@@ -346,27 +331,6 @@ public final class MCPConnectorRegistry: @unchecked Sendable {
         var ids = userDisconnectedIDs()
         if disconnected { ids.insert(id) } else { ids.remove(id) }
         UserDefaults.standard.set(Array(ids).sorted(), forKey: Self.userDisconnectedDefaultsKey)
-    }
-
-    // MARK: WebView projection
-
-    /// JSON for the Settings UI: only installed connectors, each with its live
-    /// connected state and transport. Never lists a client the user does not have.
-    public func stateJSON() -> String {
-        let entries: [[String: Any]] = installedConnectors().map { connector in
-            [
-                "id": connector.id,
-                "name": connector.displayName,
-                "transport": connector.transport.rawValue,
-                "connected": isConnected(connector),
-            ]
-        }
-        let payload: [String: Any] = ["connectors": entries]
-        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
-              let json = String(data: data, encoding: .utf8) else {
-            return "{\"connectors\":[]}"
-        }
-        return json
     }
 
     public func connector(id: String) -> Connector? {

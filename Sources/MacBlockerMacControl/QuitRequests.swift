@@ -19,7 +19,7 @@ public final class QuitRequests: @unchecked Sendable {
 
     /// Asks every blocked process that wasn't asked yet (or whose retry is due).
     @discardableResult
-    public func sweep(blocked: [NSRunningApplication], retry: TimeInterval, now: Date) -> [TerminationAction] {
+    public func sweep(blocked: [NSRunningApplication], retry: TimeInterval, now: Date) -> [BlockedProcess] {
         let running = Set(NSWorkspace.shared.runningApplications.map(\.processIdentifier))
         let blockedIDs = Set(blocked.map(\.processIdentifier))
         lock.lock()
@@ -35,7 +35,7 @@ public final class QuitRequests: @unchecked Sendable {
         for app in due { askedAt[app.processIdentifier] = now }
         lock.unlock()
         for app in due { app.terminate() }
-        return due.map { TerminationAction(processIdentifier: $0.processIdentifier, bundleIdentifier: $0.bundleIdentifier) }
+        return due.map { BlockedProcess(processIdentifier: $0.processIdentifier, bundleIdentifier: $0.bundleIdentifier) }
     }
 
     /// A rule's close: every running instance of the app is asked now and,

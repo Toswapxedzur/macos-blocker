@@ -54,16 +54,16 @@ final class GuardEngineTests: XCTestCase {
     }
 
     func testNativeTerminatorNeverSelectsBrowserProcesses() {
-        XCTAssertTrue(MacProcessTerminator.isBrowserBundleIdentifier("com.google.Chrome"))
-        XCTAssertTrue(MacProcessTerminator.isBrowserBundleIdentifier("com.google.Chrome.helper"))
-        XCTAssertTrue(MacProcessTerminator.isBrowserBundleIdentifier("org.mozilla.firefox"))
-        XCTAssertFalse(MacProcessTerminator.isBrowserBundleIdentifier("com.example.FocusApp"))
+        XCTAssertTrue(BlockedProcesses.isBrowserBundleIdentifier("com.google.Chrome"))
+        XCTAssertTrue(BlockedProcesses.isBrowserBundleIdentifier("com.google.Chrome.helper"))
+        XCTAssertTrue(BlockedProcesses.isBrowserBundleIdentifier("org.mozilla.firefox"))
+        XCTAssertFalse(BlockedProcesses.isBrowserBundleIdentifier("com.example.FocusApp"))
 
         let policy = GuardPolicy(targets: [
             GuardTarget(bundleIdentifier: "com.google.Chrome"),
             GuardTarget(bundleIdentifier: "com.example.FocusApp")
         ])
-        let plan = MacProcessTerminator.plan(policy: policy, running: [
+        let plan = BlockedProcesses.plan(policy: policy, running: [
             RunningProcessSnapshot(processIdentifier: 100, bundleIdentifier: "com.google.Chrome"),
             RunningProcessSnapshot(processIdentifier: 200, bundleIdentifier: "com.example.FocusApp")
         ])
@@ -187,7 +187,7 @@ final class GuardEngineTests: XCTestCase {
             RunningProcessSnapshot(processIdentifier: 500, bundleIdentifier: "com.other.app")
         ]
 
-        let plan = MacProcessTerminator.plan(policy: policy, running: running)
+        let plan = BlockedProcesses.plan(policy: policy, running: running)
         // Blocked apps are killed; Apple binaries (guardrail) and unblocked
         // apps are left alone.
         XCTAssertEqual(plan.map(\.processIdentifier), [100, 200])

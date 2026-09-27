@@ -18,8 +18,7 @@ import Foundation
 /// This is the macOS counterpart of `offscreen.js`: it installs a tiny
 /// `window` / `postMessage` shim, performs the same ready/init handshake, and
 /// answers the same payload kinds (`load-source`, `check-source`,
-/// `unload-group`, `list-handlers`, `evaluate-platform-items`,
-/// `dispatch-event`/`post-event`). DOM/redirect intents are returned inside
+/// `unload-group`, `evaluate-platform-items`, `dispatch-event`). DOM/redirect intents are returned inside
 /// the result and applied by the extension's content script, exactly as on
 /// Chromium.
 ///
@@ -94,12 +93,6 @@ public final class SafariCustomRuleBridge {
     public func loadSource(groupID: String, source: String) throws -> String {
         try handle(payloadJSON: Self.encodeJSONObject([
             "kind": "load-source", "groupId": groupID, "source": source
-        ]))
-    }
-
-    public func unloadGroup(groupID: String, clearState: Bool = true) throws -> String {
-        try handle(payloadJSON: Self.encodeJSONObject([
-            "kind": "unload-group", "groupId": groupID, "clearState": clearState
         ]))
     }
 
@@ -194,8 +187,15 @@ public final class SafariCustomRuleBridge {
     }
 
     private func loadEngine() throws {
+        // The same files, in the same order, as event-sandbox.html.
+        let profiles = try Self.loadResource("platform-profiles", ext: "js")
         let helpers = try Self.loadResource("helpers", ext: "js")
         let sandbox = try Self.loadResource("event-sandbox", ext: "js")
+        context.evaluateScript(profiles)
+        if let exception = context.exception {
+            context.exception = nil
+            throw BridgeError.dispatchFailed("platform-profiles.js: \(exception.toString() ?? "unknown")")
+        }
         context.evaluateScript(helpers)
         if let exception = context.exception {
             context.exception = nil

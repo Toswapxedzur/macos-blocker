@@ -27,7 +27,7 @@ public struct GuardPolicy: Equatable, Sendable {
     public static func canBlock(_ bundleIdentifier: String?) -> Bool {
         guard let bundleID = bundleIdentifier, !bundleID.isEmpty else { return false }
         let lowered = bundleID.lowercased()
-        if lowered.hasPrefix("com.apple.") || MacProcessTerminator.isBrowserBundleIdentifier(bundleID) { return false }
+        if lowered.hasPrefix("com.apple.") || BlockedProcesses.isBrowserBundleIdentifier(bundleID) { return false }
         if let own = ownBundleIdentifier?.lowercased(), lowered == own || lowered.hasPrefix(own + ".") { return false }
         return true
     }

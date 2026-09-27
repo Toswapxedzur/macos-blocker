@@ -8,8 +8,6 @@ import MacBlockerCore
 ///
 public actor AppBlockPolicy {
 
-    private let runTerminationSweep: Bool
-
     /// The bundle ids blocked right now.
     private var activeBlocked: Set<String> = []
     private var activeAllowlists: [GuardAllowlist] = []
@@ -18,9 +16,7 @@ public actor AppBlockPolicy {
     private let quits = QuitRequests()
     #endif
 
-    public init(runTerminationSweep: Bool = true) {
-        self.runTerminationSweep = runTerminationSweep
-    }
+    public init() {}
 
     /// Evaluates the user's groups against the current schedule + usage and
     /// compiles only the *currently-blocked* application targets into the guard
@@ -30,7 +26,7 @@ public actor AppBlockPolicy {
     /// exhausted, and a scheduled group only blocks inside its window.
     ///
     /// Safe to call frequently: when the resulting block set is unchanged it
-    /// skips the (costly) policy rebuild and just re-runs the kill sweep, so a
+    /// skips the (costly) policy rebuild and just re-runs the quit sweep, so a
     /// timer can drive schedule/limit transitions cheaply.
     public func applyGroups(
         _ groups: [BlockGroup],
@@ -53,9 +49,7 @@ public actor AppBlockPolicy {
             lastPolicy = buildPolicy()
         }
         #if os(macOS)
-        if runTerminationSweep {
-            quits.sweep(blocked: MacProcessTerminator.blockedProcesses(policy: lastPolicy), retry: quitRetry, now: now)
-        }
+        quits.sweep(blocked: BlockedProcesses.running(policy: lastPolicy), retry: quitRetry, now: now)
         #endif
     }
 
@@ -80,7 +74,7 @@ public actor AppBlockPolicy {
         let blocked = blockedApplications(groups: groups, usage: usage, now: now, calendar: calendar)
         let lists = applicationAllowlists(groups: groups, usage: usage, now: now, calendar: calendar)
         // Runs every second: a bundle-id match needs no installed-app scan or
-        // code-signing read (those only harden the kill sweep's policy).
+        // code-signing read (those only harden the quit sweep's policy).
         let targets = blocked.map { GuardTarget(bundleIdentifier: $0, bundleIdentifierPrefixes: ["\($0)."]) }
         let policy = GuardPolicy(targets: targets, allowOnly: lists)
         return policy.match(bundleIdentifier: bundleID) != nil
@@ -121,14 +115,6 @@ public actor AppBlockPolicy {
             }
         }
         return blocked
-    }
-
-    public func currentPolicy() -> GuardPolicy {
-        lastPolicy
-    }
-
-    public func currentBlockedBundleIdentifiers() -> Set<String> {
-        activeBlocked
     }
 
     private func buildPolicy() -> GuardPolicy {

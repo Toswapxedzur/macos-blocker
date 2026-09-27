@@ -11,7 +11,6 @@ public final class SharedAppGroupStore: @unchecked Sendable {
 
     public init(baseDirectory: URL = AppGroup.baseDirectory()) {
         self.baseDirectory = baseDirectory
-        print("[SharedAppGroupStore] init baseDirectory: \(baseDirectory.path)")
     }
 
     public func url(for fileName: String) -> URL {
@@ -67,32 +66,4 @@ public final class SharedAppGroupStore: @unchecked Sendable {
         }
     }
 
-    public func removeFile(_ fileName: String) {
-        queue.sync { try? fileManager.removeItem(at: url(for: fileName)) }
-    }
-
-    // MARK: Codable convenience
-
-    public static var encoder: JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.sortedKeys]
-        return encoder
-    }
-
-    public static var decoder: JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
-    }
-
-    public func readJSON<T: Decodable>(_ type: T.Type, from fileName: String) -> T? {
-        guard let data = readData(fileName) else { return nil }
-        return try? Self.decoder.decode(T.self, from: data)
-    }
-
-    public func writeJSON<T: Encodable>(_ value: T, to fileName: String) {
-        guard let data = try? Self.encoder.encode(value) else { return }
-        writeData(data, to: fileName)
-    }
 }
