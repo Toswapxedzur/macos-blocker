@@ -7,10 +7,10 @@ The current code is the source of truth. The English in-app reference is [Source
 ## What is implemented
 
 - Default groups for selected macOS applications and Custom groups for advanced policy rules.
-- Immediate, allowance, and countdown blocking modes.
-- Schedules, freeze modes, snooze flows, import/export, and persistent group state.
+- Immediate blocking and blocking after a time allowance.
+- Schedules, freezing (a wait and/or a PIN to unfreeze), snooze flows, import/export, and persistent group state.
 - Application inventory, device-control permission state, native enforcement adapters, and a floating status surface.
-- A controlled JavaScript policy runtime with logging and syntax checking.
+- Custom rules on the shared rule core (`rule-core.js`): raw app events in, a small set of app actions out (Mac Vault controls apps only, never a website), with a time limit and logging.
 - A loopback WebSocket bridge hub for explicitly linked compatible groups.
 - A WebView editor with the same core group model as the Vault product family.
 

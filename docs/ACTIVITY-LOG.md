@@ -1,6 +1,7 @@
 # Activity Log — design
 
-> **Status: BUILDING (2026-09-19).** Owner ask: an integrated feature that
+> **Status: built on macOS and in the extension (phases 1–4, 2026-09-19/20); the
+> Windows feeder (phase 5) waits with the Windows port.** Owner ask: an integrated feature that
 > records the user's own activity — app use time, time on websites, and the
 > content they watch — shown as a dashboard (pie chart), local-only, per-category
 > opt-in, with user-controlled retention. Design-doc-first, like
@@ -85,8 +86,9 @@ Activity/
 - Native feeders (`appUsage`) write straight to the store.
 - The extension measures `webVisit` / `contentWatched` in the **content script**
   (survives the MV3 worker sleeping), buffers to `chrome.storage`, and flushes to
-  the native app over a new hub op **`activity-record`** (one enum case in
-  `SharedBrowserBridgeOperation` → allowlists derive automatically). Flush is
+  Mac Vault over the hub op **`activity-record`** (settings: `activity-settings`),
+  which Mac Vault's `ConnectionHub` — the hub's only host — answers itself (it is
+  in the extension's `operations` list and the hub's allowlists). Flush is
   idempotent and the buffer is bounded (cap + drop-oldest).
 - Same definitions (idle threshold, day boundary, "watched") hold identically
   across macOS, Windows, and the extension.
@@ -96,7 +98,7 @@ Activity/
 1. **Shared core (this doc + `Activity.swift`/`ActivityStore.swift` in
    `MacBlockerCore`)** — model, settings, per-(category,day) store, aggregate,
    reaper, delete; injectable clock; hermetic tests for the privacy invariant,
-   idempotent replay, aggregation, reaper, and deletes. ← building now
+   idempotent replay, aggregation, reaper, and deletes.
 2. **macOS feeder** — foreground+focused app intervals with idle/lock/sleep
    pausing → `appUsage`.
 3. **Hub op + extension feeders** — `activity-record`; content-script `webVisit`
