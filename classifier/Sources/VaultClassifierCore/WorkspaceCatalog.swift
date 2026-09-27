@@ -468,6 +468,15 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
 
     /// Keep classifier types aligned with their current tree and data revisions.
     public mutating func reconcileClassifierTypes() {
+        // A platform the classifier no longer supports (TikTok, deleted
+        // 2026-09-24) leaves the stored catalog — its binding and collected
+        // entries go; a type aimed at it stays, unbound (below). A stored state
+        // must never keep the classifier from starting.
+        let supported = { (platformID: String) in CollectionPlatformRegistry.definition(for: platformID) != nil }
+        bindings.removeAll { !supported($0.id) }
+        for index in datasets.indices {
+            datasets[index].collectedEntries.removeAll { !supported($0.platformID) }
+        }
         for index in trees.indices {
             TagColorAssignment.reconcileColors(in: &trees[index])
         }
