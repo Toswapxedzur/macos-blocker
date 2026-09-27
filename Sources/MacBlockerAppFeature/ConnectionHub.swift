@@ -1018,8 +1018,11 @@ final class ConnectionHub: ObservableObject {
             let affected = clusters.values
                 .filter { $0.members.contains(program) }
                 .map { clusterJSONObject($0) }
+            let rosterSnapshot = rostersJSONObjectLocked()
             lock.unlock()
             for snapshot in affected { broadcastCluster(snapshot) }
+            // The other browsers' Link pickers drop the program's groups.
+            broadcastToPeers(["kind": "rosters", "rosters": rosterSnapshot])
         }
         if existed { broadcastPeers() }
     }
@@ -1094,12 +1097,19 @@ final class ConnectionHub: ObservableObject {
     /// with one member dissolves. A Mac group that leaves (or is left alone)
     /// is queued to keep only its own lines.
     private func removeMemberLocked(_ cluster: ClusterState, program: String) {
-        if program == Self.localProgram, let id = cluster.memberGroupIds[program] { unlinkedLocal.insert(id) }
+        if program == Self.localProgram, let id = cluster.memberGroupIds[program] {
+            unlinkedLocal.insert(id)
+            // Linked again later, it contributes afresh.
+            localDefinitionSeen.removeValue(forKey: id)
+        }
         cluster.members.remove(program)
         cluster.memberGroupIds.removeValue(forKey: program)
         cluster.contributed.remove(program)
         if cluster.members.count < 2 {
-            if cluster.members.contains(Self.localProgram), let id = cluster.memberGroupIds[Self.localProgram] { unlinkedLocal.insert(id) }
+            if cluster.members.contains(Self.localProgram), let id = cluster.memberGroupIds[Self.localProgram] {
+                unlinkedLocal.insert(id)
+                localDefinitionSeen.removeValue(forKey: id)
+            }
             clusters.removeValue(forKey: cluster.id)
             cluster.members.removeAll()
         }
@@ -1639,6 +1649,7 @@ final class ConnectionHub: ObservableObject {
             [
                 "id": c.id,
                 "groupName": c.groupName,
+                "initiator": c.initiator,
                 "members": Array(c.members),
                 "memberGroupIds": c.memberGroupIds,
                 "contributed": Array(c.contributed),
@@ -1684,6 +1695,7 @@ final class ConnectionHub: ObservableObject {
             // per-member sites/apps pools; both are ignored (the definition is
             // re-shared by the members' next contribution).
             let cluster = ClusterState(id: id, groupName: groupName)
+            cluster.initiator = (obj["initiator"] as? String) ?? ""
             if let members = obj["members"] as? [String] { cluster.members = Set(members) }
             if let ids = obj["memberGroupIds"] as? [String: String] { cluster.memberGroupIds = ids }
             // (Registries before 2026-09-26 kept each whole contribution.)
