@@ -10,7 +10,7 @@ Diese Karte wird aus dem aktuellen Quellbaum abgeleitet. Es handelt sich um eine
 | Natives App-Inventar | `Sources/MacBlockerMacControl/MacApplicationInventory.swift` und `MacAppInventoryJSON.swift` |
 | Durchsetzungsplan | `Sources/MacBlockerCore/EnforcementPlan.swift` und `Sources/MacBlockerAppFeature/MacEnforcementBridge.swift` |
 | Native Steueradapter | `Sources/MacBlockerMacControl/` und `Sources/MacBlockerScreenTime/` |
-| Benutzerdefinierte Regeln | `CustomJavaScriptPolicyRuntime.swift` plus die JavaScript-Laufzeitressourcen |
+| Benutzerdefinierte Regeln | `RuleRuntime.swift` (rule-core.js + custom-rule-runtime.js: apps only) plus die JavaScript-Laufzeitressourcen |
 | Brückennabe | `Sources/MacBlockerAppFeature/ConnectionHub.swift` |
 | App-Lebenszyklus | `BlockerAppDelegate.swift`, `BlockerMainView.swift` und `MacBlockerPanelApp.swift` |
 

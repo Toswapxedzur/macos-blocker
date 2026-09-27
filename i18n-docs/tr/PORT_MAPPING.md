@@ -10,7 +10,7 @@ Bu harita mevcut kaynak ağacından türetilmiştir. Bu bir gezinme yardımcıs�
 | Yerel uygulama envanteri | `Sources/MacBlockerMacControl/MacApplicationInventory.swift` ve `MacAppInventoryJSON.swift` |
 | Uygulama planı | `Sources/MacBlockerCore/EnforcementPlan.swift` ve `Sources/MacBlockerAppFeature/MacEnforcementBridge.swift` |
 | Yerel kontrol adaptörleri | `Sources/MacBlockerMacControl/` ve `Sources/MacBlockerScreenTime/` |
-| Özel kurallar | `CustomJavaScriptPolicyRuntime.swift` artı JavaScript çalışma zamanı kaynakları |
+| Özel kurallar | `RuleRuntime.swift` (rule-core.js + custom-rule-runtime.js: apps only) artı JavaScript çalışma zamanı kaynakları |
 | Köprü merkezi | `Sources/MacBlockerAppFeature/ConnectionHub.swift` |
 | Uygulama yaşam döngüsü | `BlockerAppDelegate.swift`, `BlockerMainView.swift` ve `MacBlockerPanelApp.swift` |
 

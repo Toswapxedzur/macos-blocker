@@ -10,7 +10,7 @@ Peta ini berasal dari pohon sumber saat ini. Ini adalah bantuan navigasi, bukan 
 | Inventaris aplikasi asli | `Sources/MacBlockerMacControl/MacApplicationInventory.swift` dan `MacAppInventoryJSON.swift` |
 | Rencana penegakan | `Sources/MacBlockerCore/EnforcementPlan.swift` dan `Sources/MacBlockerAppFeature/MacEnforcementBridge.swift` |
 | Adaptor kontrol asli | `Sources/MacBlockerMacControl/` dan `Sources/MacBlockerScreenTime/` |
-| Aturan adat | `CustomJavaScriptPolicyRuntime.swift` ditambah sumber daya runtime JavaScript |
+| Aturan adat | `RuleRuntime.swift` (rule-core.js + custom-rule-runtime.js: apps only) ditambah sumber daya runtime JavaScript |
 | Pusat jembatan | `Sources/MacBlockerAppFeature/ConnectionHub.swift` |
 | Siklus hidup aplikasi | `BlockerAppDelegate.swift`, `BlockerMainView.swift`, dan `MacBlockerPanelApp.swift` |
 

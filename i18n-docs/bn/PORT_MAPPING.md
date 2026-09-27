@@ -10,7 +10,7 @@
 | নেটিভ অ্যাপ ইনভেন্টরি | `Sources/MacBlockerMacControl/MacApplicationInventory.swift` এবং `MacAppInventoryJSON.swift` |
 | প্রয়োগ পরিকল্পনা | `Sources/MacBlockerCore/EnforcementPlan.swift` এবং `Sources/MacBlockerAppFeature/MacEnforcementBridge.swift` |
 | নেটিভ কন্ট্রোল অ্যাডাপ্টার | `Sources/MacBlockerMacControl/` এবং `Sources/MacBlockerScreenTime/` |
-| কাস্টম নিয়ম | `CustomJavaScriptPolicyRuntime.swift` প্লাস জাভাস্ক্রিপ্ট রানটাইম সম্পদ |
+| কাস্টম নিয়ম | `RuleRuntime.swift` (rule-core.js + custom-rule-runtime.js: apps only) প্লাস জাভাস্ক্রিপ্ট রানটাইম সম্পদ |
 | ব্রিজ হাব | `Sources/MacBlockerAppFeature/ConnectionHub.swift` |
 | অ্যাপ জীবনচক্র | `BlockerAppDelegate.swift`, `BlockerMainView.swift`, এবং `MacBlockerPanelApp.swift` |
 

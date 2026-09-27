@@ -10,7 +10,7 @@ This map is derived from the current source tree. It is a navigation aid, not a 
 | Native app inventory | `Sources/MacBlockerMacControl/MacApplicationInventory.swift` and `MacAppInventoryJSON.swift` |
 | Enforcement plan | `Sources/MacBlockerCore/EnforcementPlan.swift` and `Sources/MacBlockerAppFeature/MacEnforcementBridge.swift` |
 | Native control adapters | `Sources/MacBlockerMacControl/` |
-| Custom rules | `CustomJavaScriptPolicyRuntime.swift` plus the JavaScript runtime resources |
+| Custom rules | `RuleRuntime.swift` (rule-core.js + custom-rule-runtime.js: apps only) plus the JavaScript runtime resources |
 | Bridge hub | `Sources/MacBlockerAppFeature/ConnectionHub.swift` |
 | App lifecycle | `BlockerAppDelegate.swift`, `BlockerMainView.swift`, and `MacBlockerPanelApp.swift` |
 

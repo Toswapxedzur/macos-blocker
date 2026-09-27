@@ -10,7 +10,7 @@
 | 기본 앱 인벤토리 | `Sources/MacBlockerMacControl/MacApplicationInventory.swift` 및 `MacAppInventoryJSON.swift` |
 | 시행계획 | `Sources/MacBlockerCore/EnforcementPlan.swift` 및 `Sources/MacBlockerAppFeature/MacEnforcementBridge.swift` |
 | 네이티브 제어 어댑터 | `Sources/MacBlockerMacControl/` 및 `Sources/MacBlockerScreenTime/` |
-| 맞춤 규칙 | `CustomJavaScriptPolicyRuntime.swift` 및 JavaScript 런타임 리소스 |
+| 맞춤 규칙 | `RuleRuntime.swift` (rule-core.js + custom-rule-runtime.js: apps only) 및 JavaScript 런타임 리소스 |
 | 브리지 허브 | `Sources/MacBlockerAppFeature/ConnectionHub.swift` |
 | 앱 수명주기 | `BlockerAppDelegate.swift`, `BlockerMainView.swift`, `MacBlockerPanelApp.swift` |
 

@@ -10,7 +10,7 @@
 | नेटिव ऐप इन्वेंट्री | `Sources/MacBlockerMacControl/MacApplicationInventory.swift` और `MacAppInventoryJSON.swift` |
 | प्रवर्तन योजना | `Sources/MacBlockerCore/EnforcementPlan.swift` और `Sources/MacBlockerAppFeature/MacEnforcementBridge.swift` |
 | मूल नियंत्रण एडेप्टर | `Sources/MacBlockerMacControl/` और `Sources/MacBlockerScreenTime/` |
-| कस्टम नियम | `CustomJavaScriptPolicyRuntime.swift` प्लस जावास्क्रिप्ट रनटाइम संसाधन |
+| कस्टम नियम | `RuleRuntime.swift` (rule-core.js + custom-rule-runtime.js: apps only) प्लस जावास्क्रिप्ट रनटाइम संसाधन |
 | ब्रिज हब | `Sources/MacBlockerAppFeature/ConnectionHub.swift` |
 | ऐप जीवनचक्र | `BlockerAppDelegate.swift`, `BlockerMainView.swift`, और `MacBlockerPanelApp.swift` |
 

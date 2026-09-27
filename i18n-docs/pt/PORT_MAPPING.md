@@ -10,7 +10,7 @@ Este mapa é derivado da árvore de origem atual. É um auxílio à navegação,
 | Inventário de aplicativos nativos | `Sources/MacBlockerMacControl/MacApplicationInventory.swift` e `MacAppInventoryJSON.swift` |
 | Plano de execução | `Sources/MacBlockerCore/EnforcementPlan.swift` e `Sources/MacBlockerAppFeature/MacEnforcementBridge.swift` |
 | Adaptadores de controle nativos | `Sources/MacBlockerMacControl/` e `Sources/MacBlockerScreenTime/` |
-| Regras personalizadas | `CustomJavaScriptPolicyRuntime.swift` mais os recursos de tempo de execução JavaScript |
+| Regras personalizadas | `RuleRuntime.swift` (rule-core.js + custom-rule-runtime.js: apps only) mais os recursos de tempo de execução JavaScript |
 | Centro de ponte | `Sources/MacBlockerAppFeature/ConnectionHub.swift` |
 | Ciclo de vida do aplicativo | `BlockerAppDelegate.swift`, `BlockerMainView.swift` e `MacBlockerPanelApp.swift` |
 

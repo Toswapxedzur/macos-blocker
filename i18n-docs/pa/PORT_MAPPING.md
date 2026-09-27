@@ -10,7 +10,7 @@
 | ਮੂਲ ਐਪ ਵਸਤੂ ਸੂਚੀ | `Sources/MacBlockerMacControl/MacApplicationInventory.swift` ਅਤੇ `MacAppInventoryJSON.swift` |
 | ਲਾਗੂ ਕਰਨ ਦੀ ਯੋਜਨਾ | `Sources/MacBlockerCore/EnforcementPlan.swift` ਅਤੇ `Sources/MacBlockerAppFeature/MacEnforcementBridge.swift` |
 | ਨੇਟਿਵ ਕੰਟਰੋਲ ਅਡਾਪਟਰ | `Sources/MacBlockerMacControl/` ਅਤੇ `Sources/MacBlockerScreenTime/` |
-| ਕਸਟਮ ਨਿਯਮ | `CustomJavaScriptPolicyRuntime.swift` ਨਾਲ ਹੀ JavaScript ਰਨਟਾਈਮ ਸਰੋਤ |
+| ਕਸਟਮ ਨਿਯਮ | `RuleRuntime.swift` (rule-core.js + custom-rule-runtime.js: apps only) ਨਾਲ ਹੀ JavaScript ਰਨਟਾਈਮ ਸਰੋਤ |
 | ਬ੍ਰਿਜ ਹੱਬ | `Sources/MacBlockerAppFeature/ConnectionHub.swift` |
 | ਐਪ ਲਾਈਫਸਾਈਕਲ | `BlockerAppDelegate.swift`, `BlockerMainView.swift`, ਅਤੇ `MacBlockerPanelApp.swift` |
 

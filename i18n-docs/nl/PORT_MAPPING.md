@@ -10,7 +10,7 @@ Deze kaart is afgeleid van de huidige bronboom. Het is een navigatiehulpmiddel, 
 | Native app-inventaris | `Sources/MacBlockerMacControl/MacApplicationInventory.swift` en `MacAppInventoryJSON.swift` |
 | Handhavingsplan | `Sources/MacBlockerCore/EnforcementPlan.swift` en `Sources/MacBlockerAppFeature/MacEnforcementBridge.swift` |
 | Native besturingsadapters | `Sources/MacBlockerMacControl/` en `Sources/MacBlockerScreenTime/` |
-| Aangepaste regels | `CustomJavaScriptPolicyRuntime.swift` plus de JavaScript-runtimebronnen |
+| Aangepaste regels | `RuleRuntime.swift` (rule-core.js + custom-rule-runtime.js: apps only) plus de JavaScript-runtimebronnen |
 | Brughub | `Sources/MacBlockerAppFeature/ConnectionHub.swift` |
 | App-levenscyclus | `BlockerAppDelegate.swift`, `BlockerMainView.swift` en `MacBlockerPanelApp.swift` |
 
