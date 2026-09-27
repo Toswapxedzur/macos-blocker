@@ -11,18 +11,15 @@ public enum VaultMCPTools {
         return [
             MCPTool(
                 name: "list_groups",
-                description: "List all block groups with their id, name, enabled state, blocking mode, and blocked site/app counts.",
+                description: "List all block groups: id, name, on/off, mode, frozen, and how many websites and apps each lists.",
                 inputSchema: objectSchema([])
             ) { _ in
-                let groups = store.loadGroups().map { group -> [String: Any] in
+                let document = store.load()
+                let groups = document.groupIDs.compactMap { document.group(id: $0) }.map { group -> [String: Any] in
                     [
-                        "id": group.id,
-                        "name": group.name,
-                        "enabled": group.enabled,
-                        "mode": group.mode.rawValue,
-                        "locked": group.lockedAt != nil,
-                        "sites": group.targets.filter { $0.kind == .webDomain || $0.kind == .urlPattern }.count,
-                        "apps": group.targets.filter { $0.kind == .application }.count,
+                        "id": group["id"] ?? "", "name": group["name"] ?? "", "enabled": group["enabled"] ?? true,
+                        "mode": group["mode"] ?? "instant", "locked": WebStoreDocument.isLocked(group),
+                        "sites": WebStoreDocument.sites(of: group).count, "apps": WebStoreDocument.apps(of: group).count,
                     ]
                 }
                 return .ok(jsonText(["groups": groups]))
@@ -30,73 +27,46 @@ public enum VaultMCPTools {
 
             MCPTool(
                 name: "get_group",
-                description: "Get one block group's full detail (mode, allowed minutes, blocked sites and apps) by id.",
+                description: "One block group as stored (the editor's fields): its settings, its lines (scopes) — including sitesExcept / appsExcept (\"block everything except these\") — and its freeze (without the PIN itself).",
                 inputSchema: objectSchema([("id", "string", "The group id.")], required: ["id"])
             ) { args in
                 guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
-                guard let group = store.loadGroups().first(where: { $0.id == id }) else {
-                    return .failure("Group not found: \(id)")
-                }
-                return .ok(jsonText([
-                    "id": group.id,
-                    "name": group.name,
-                    "enabled": group.enabled,
-                    "mode": group.mode.rawValue,
-                    "allowedMinutes": group.allowedMinutes,
-                    "locked": group.lockedAt != nil,
-                    "lockWaitHours": group.lockWaitHours,
-                    "sites": group.targets.filter { $0.kind == .webDomain || $0.kind == .urlPattern }.map(\.normalizedValue),
-                    "apps": group.targets.filter { $0.kind == .application }.map { ["id": $0.normalizedValue, "name": $0.displayName] },
-                ]))
+                guard var group = store.load().group(id: id) else { return .failure("Group not found: \(id)") }
+                group["locked"] = WebStoreDocument.isLocked(group)
+                group["hasParentalPin"] = group["parentalPasswordHash"] is String
+                for secret in ["parentalPasswordHash", "parentalPasswordSalt"] { group.removeValue(forKey: secret) }
+                return .ok(jsonText(group))
             },
 
             MCPTool(
-                name: "set_group_enabled",
-                description: "Enable or disable a block group by id.",
-                inputSchema: objectSchema([
-                    ("id", "string", "The group id."),
-                    ("enabled", "boolean", "Whether the group should be enabled."),
-                ], required: ["id", "enabled"])
+                name: "set_group",
+                description: "Change a group's fields, as the editor does: name, enabled, mode (instant | after-minutes; a custom group stays instant), allowedMinutes, resetIntervalHours, resetAtMidnight, rollingLimit, activeDays, timeWindowsText (HHMM-HHMM lines), allowSnooze, snoozeMinutes, snoozeActivationDelayMinutes, snoozeCooldownMinutes (≤ 5), snoozeConfirmations, fallbackUrl, pauseSeconds, and scopes (the group's lines, as get_group shows them). A value the editor refuses is refused, never replaced by a default. A frozen group can't be changed; the freeze has its own tools.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "id": ["type": "string", "description": "The group id."],
+                        "patch": ["type": "object", "description": "The fields to change."],
+                    ],
+                    "required": ["id", "patch"],
+                ]
             ) { args in
                 guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
-                guard let enabled = args["enabled"] as? Bool else { return .failure("Missing 'enabled'.") }
-                return run(store) { try $0.setGroupEnabled(id: id, enabled) }
-                    ?? .ok("Group \(id) set enabled=\(enabled).")
+                guard let patch = args["patch"] as? [String: Any], !patch.isEmpty else { return .failure("Missing 'patch' object.") }
+                return run(store) { try $0.setGroup(id: id, patch: patch) } ?? .ok("Group \(id) changed.")
             },
 
             MCPTool(
-                name: "set_blocking_mode",
-                description: "Set a group's blocking mode: 'instant' or 'after-minutes'.",
-                inputSchema: objectSchema([
-                    ("id", "string", "The group id."),
-                    ("mode", "string", "One of: instant, after-minutes."),
-                ], required: ["id", "mode"])
+                name: "set_settings",
+                description: "Change Mac Vault's settings — exactly the editor's Settings: defaultSnoozeMinutes (> 0), quitRetryMinutes (0–1440: how often a blocked or rule-closed app that stayed open is asked to quit again; 0 = never), quickAddEnabled (the floating \"+\"), quickAddGroupId (its target group, or \"\").",
+                inputSchema: ["type": "object", "properties": ["patch": ["type": "object", "description": "The settings to change."]], "required": ["patch"]]
             ) { args in
-                guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
-                guard let raw = string(args, "mode"), let mode = BlockingMode(rawValue: raw) else {
-                    return .failure("Invalid 'mode'. Use instant or after-minutes.")
-                }
-                return run(store) { try $0.setGroupMode(id: id, mode) }
-                    ?? .ok("Group \(id) mode set to \(mode.rawValue).")
-            },
-
-            MCPTool(
-                name: "rename_group",
-                description: "Rename a block group by id.",
-                inputSchema: objectSchema([
-                    ("id", "string", "The group id."),
-                    ("name", "string", "The new group name."),
-                ], required: ["id", "name"])
-            ) { args in
-                guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
-                guard let name = string(args, "name") else { return .failure("Missing 'name'.") }
-                return run(store) { try $0.renameGroup(id: id, name: name) }
-                    ?? .ok("Group \(id) renamed.")
+                guard let patch = args["patch"] as? [String: Any], !patch.isEmpty else { return .failure("Missing 'patch' object.") }
+                return run(store) { try $0.setSettings(patch) } ?? .ok("Settings changed.")
             },
 
             MCPTool(
                 name: "add_website",
-                description: "Add a website (host or URL) to a group's blocked sites.",
+                description: "Add a website (a host, or a host with a path like youtube.com/shorts) to the group's Websites entry — its block list, or with sitesExcept the sites it lets through.",
                 inputSchema: objectSchema([
                     ("id", "string", "The group id."),
                     ("host", "string", "The site host or URL to block."),
@@ -110,7 +80,7 @@ public enum VaultMCPTools {
 
             MCPTool(
                 name: "remove_website",
-                description: "Remove a website from a group's blocked sites.",
+                description: "Remove that website entry from the group's Websites entry (a path entry never takes its host with it).",
                 inputSchema: objectSchema([
                     ("id", "string", "The group id."),
                     ("host", "string", "The site host or URL to remove."),
@@ -124,7 +94,7 @@ public enum VaultMCPTools {
 
             MCPTool(
                 name: "add_application",
-                description: "Add a macOS application (by bundle identifier) to a group's blocked apps.",
+                description: "Add a macOS application (by bundle identifier) to the group's Apps entry — its block list, or with appsExcept the apps it lets through.",
                 inputSchema: objectSchema([
                     ("id", "string", "The group id."),
                     ("bundleId", "string", "The application's bundle identifier."),
@@ -139,7 +109,7 @@ public enum VaultMCPTools {
 
             MCPTool(
                 name: "remove_application",
-                description: "Remove an application (by bundle identifier) from a group's blocked apps.",
+                description: "Remove an application (by bundle identifier) from the group's Apps entry.",
                 inputSchema: objectSchema([
                     ("id", "string", "The group id."),
                     ("bundleId", "string", "The application's bundle identifier."),
@@ -226,7 +196,7 @@ public enum VaultMCPTools {
 
             MCPTool(
                 name: "snooze_group",
-                description: "Snooze a group, as the editor's Snooze does: its saved snooze length, delay and cooldown; the group's own confirmations (call again with confirm: true every 5 s until none is left). Refused when the group doesn't allow snoozing or a snooze (or its cooldown) is running. A frozen group can be snoozed; its snooze settings are frozen with it.",
+                description: "Snooze a group, as the editor's Snooze does: its saved snooze length, delay and cooldown; the group's own confirmations (call again with confirm: true every 5 s until none is left). Refused when the group doesn't allow snoozing or a snooze (or its cooldown) is running. A frozen group can be snoozed; its snooze settings are frozen with it. A custom group's snooze is its rule's: this fires the rule's snoozePress, as the editor's button does.",
                 inputSchema: [
                     "type": "object",
                     "properties": ["id": ["type": "string", "description": "The group id."], "confirm": ["type": "boolean"]],
@@ -234,6 +204,12 @@ public enum VaultMCPTools {
                 ]
             ) { args in
                 guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
+                // A custom group's snooze is its rule's (owner 2026-09-27), as in the editor.
+                if store.load().group(id: id)?["groupType"] as? String == "custom" {
+                    guard let press = snoozePress else { return .failure("Mac Vault's rule engine isn't running.") }
+                    press(id)
+                    return .ok("The group's rule got its snooze press.")
+                }
                 let now = clock()
                 let nowMs = (now.timeIntervalSince1970 * 1000).rounded()
                 let key = "snooze:\(id)"
@@ -291,6 +267,62 @@ public enum VaultMCPTools {
             },
 
             MCPTool(
+                name: "set_lock_gates",
+                description: "Set the freeze gates of an unfrozen group, as the editor's guardian settings do: waitHours (0 < hours ≤ 72) and/or pin (6 digits, where none is set); clearPin: true removes the PIN (pass the current pin). Refused on a frozen group (make it stricter with lock_group).",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "id": ["type": "string", "description": "The group id."],
+                        "waitHours": ["type": "number"], "pin": ["type": "string"], "clearPin": ["type": "boolean"],
+                    ],
+                    "required": ["id"],
+                ]
+            ) { args in
+                guard let id = string(args, "id") else { return .failure("Missing 'id'.") }
+                var outcome = WebStoreDocument.LockOutcome.done
+                if let failure = run(store, { outcome = try $0.setLockGates(id: id, waitHours: (args["waitHours"] as? NSNumber)?.doubleValue,
+                                                                             pin: string(args, "pin"), clearPin: args["clearPin"] as? Bool == true, now: clock()) }) { return failure }
+                return outcome == .done ? .ok("Group \(id)'s freeze gates are set.") : .failure(explain(outcome))
+            },
+
+            MCPTool(
+                name: "delete_all_groups",
+                description: "Delete every group, as the editor's Delete all does: refused while any frozen group's wait still holds; pins lists the PIN of each distinct PIN-protected frozen group; with any frozen group it ends with the confirmation (call again with confirm: true every 5 s until none is left).",
+                inputSchema: [
+                    "type": "object",
+                    "properties": ["pins": ["type": "array", "items": ["type": "string"]], "confirm": ["type": "boolean"]],
+                ]
+            ) { args in
+                let now = clock()
+                let nowMs = (now.timeIntervalSince1970 * 1000).rounded()
+                if args["confirm"] as? Bool == true, let request = unlockRequests.request(id: "delete-all", now: now) {
+                    let step = GroupActionsRuntime.shared.call("confirmStep", [request.state, nowMs]) as? [String: Any] ?? [:]
+                    let waitMs = (step["waitMs"] as? NSNumber)?.doubleValue ?? 0
+                    if waitMs > 0 { return .failure("Confirm again in \(Int((waitMs / 1000).rounded(.up))) s (the editor's confirmation waits 5 s).") }
+                    let state = step["state"] as? [String: Any] ?? [:]
+                    guard step["done"] as? Bool == true else {
+                        unlockRequests.save(id: "delete-all", lockVersion: 0, state: state, now: now)
+                        return .ok("Confirmation counted: \((state["left"] as? NSNumber)?.intValue ?? 0) left. Call again with confirm: true in 5 seconds.")
+                    }
+                    unlockRequests.clear(id: "delete-all")
+                    return run(store) { $0.deleteAll() } ?? .ok("Every group is deleted.")
+                }
+                var outcome = WebStoreDocument.LockOutcome.done
+                var needsConfirmation = false
+                let pins = (args["pins"] as? [Any] ?? []).map { "\($0)" }
+                if let failure = run(store, { document in
+                    outcome = document.deleteAllCheck(pins: pins, now: now)
+                    needsConfirmation = document.deleteAllNeedsConfirmation
+                    if outcome == .done, !needsConfirmation { document.deleteAll() }
+                }) { return failure }
+                guard outcome == .done else { return .failure(explain(outcome)) }
+                guard needsConfirmation else { return .ok("Every group is deleted.") }
+                let state = GroupActionsRuntime.shared.call("confirmStart", [nowMs]) as? [String: Any] ?? [:]
+                unlockRequests.save(id: "delete-all", lockVersion: 0, state: state, now: now)
+                return .ok("Delete all started: \((state["left"] as? NSNumber)?.intValue ?? 0) confirmations left. Call delete_all_groups with confirm: true every 5 seconds (within 5 minutes).")
+            },
+
+            MCPTool(
                 name: "delete_group",
                 description: "Delete a block group by id.",
                 inputSchema: objectSchema([("id", "string", "The group id.")], required: ["id"])
@@ -301,6 +333,9 @@ public enum VaultMCPTools {
             },
         ]
     }
+
+    /// A custom group's snooze press, supplied by Mac Vault's rule engine.
+    nonisolated(unsafe) public static var snoozePress: ((String) -> Void)?
 
     // MARK: Helpers
 
