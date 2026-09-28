@@ -16,10 +16,10 @@
     '<button type="button" class="vui-tab is-active" data-scene="activity">Activity</button>',
     "</nav>",
     '<div class="vui-topbar-links">',
-    '<div class="ranges" id="ranges">',
-    '<button type="button" data-range="today" class="active">Today</button>',
-    '<button type="button" data-range="7d">7 days</button>',
-    '<button type="button" data-range="30d">30 days</button>',
+    '<div class="vui-tabs" id="ranges">',
+    '<button type="button" data-range="today" class="vui-tab is-active">Today</button>',
+    '<button type="button" data-range="7d" class="vui-tab">7 days</button>',
+    '<button type="button" data-range="30d" class="vui-tab">30 days</button>',
     "</div>",
     "</div>",
     "</header>",
@@ -146,9 +146,9 @@
     var s = snapshot.settings || {};
     var panel = el("div", "panel");
 
-    var head = el("div", "lists");
+    var head = el("div", "lists vui-tabs");
     LISTS.forEach(function (c) {
-      var b = textButton(c.title, function () { current = c.id; render(); }, c.id === current ? "active" : "");
+      var b = textButton(c.title, function () { current = c.id; render(); }, c.id === current ? "vui-tab is-active" : "vui-tab");
       head.appendChild(b);
     });
     var def = LISTS.filter(function (c) { return c.id === current; })[0];
@@ -177,7 +177,7 @@
 
   scope.getElementById("ranges").addEventListener("click", function (e) {
     var b = e.target.closest("button[data-range]"); if (!b) return;
-    [].forEach.call(this.querySelectorAll("button"), function (x) { x.classList.toggle("active", x === b); });
+    [].forEach.call(this.querySelectorAll("button"), function (x) { x.classList.toggle("is-active", x === b); });
     send({ kind: "range", range: b.dataset.range });
   });
 
