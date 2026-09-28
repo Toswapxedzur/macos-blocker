@@ -3,9 +3,10 @@ import Foundation
 /// Render-ready geometry for the Activity dashboard (see docs/ACTIVITY-LOG.md).
 /// Built in Swift and unit tested, so the web view only draws rectangles: a
 /// ranked **bar graph** of totals per key, and a single **segmented timeline
-/// bar** of the exact sessions across the range. A stable `colorIndex` per key
-/// ties a key's bar to its timeline segments (the web CSS maps the index to a
-/// theme-aware colour).
+/// bar** of the exact sessions across the range. `colorIndex` is unique per key
+/// across the whole snapshot (apps, then sites, then watched videos — no two
+/// items ever share a colour) and ties a key's bar to its timeline segments;
+/// the page maps the index to a colour.
 
 public struct ActivityBar: Codable, Equatable, Sendable {
     public var key: String
@@ -58,24 +59,10 @@ public struct ActivityDashboardSettings: Codable, Equatable, Sendable {
 }
 
 public enum ActivityDashboard {
-    public static let paletteSize = 12
-
-    /// A deterministic key→palette-index hash (FNV-1a; `String.hashValue` is
-    /// salted per process). Used as a fallback colour for a key that has no bar.
-    public static func colorIndex(for key: String) -> Int {
-        var hash: UInt64 = 0xcbf29ce484222325
-        for byte in key.utf8 {
-            hash ^= UInt64(byte)
-            hash = hash &* 0x100000001b3
-        }
-        return Int(hash % UInt64(paletteSize))
-    }
-
-    /// Ranked bars (largest first) of total seconds per key. Colour is assigned
-    /// by rank so the top items in a lens are always visually distinct (the dot
-    /// is a legend) — collisions only start past 12 keys. A key's colour holds
-    /// between a lens's bar and its timeline via the same ranking map.
-    public static func bars(from records: [ActivityRecord]) -> [ActivityBar] {
+    /// Ranked bars (largest first) of total seconds per key. Colours go by rank,
+    /// counting on from `firstColor`, so every key gets its own; a key's colour
+    /// holds between its bar and its timeline segments.
+    public static func bars(from records: [ActivityRecord], firstColor: Int = 0) -> [ActivityBar] {
         var totals: [String: (label: String, seconds: Double, platform: String?)] = [:]
         for record in records {
             let existing = totals[record.key]
@@ -91,7 +78,7 @@ public enum ActivityDashboard {
                 label: item.label,
                 seconds: item.seconds,
                 fraction: maxSeconds > 0 ? item.seconds / maxSeconds : 0,
-                colorIndex: index % paletteSize,
+                colorIndex: firstColor + index,
                 platform: item.platform
             )
         }
@@ -129,14 +116,14 @@ public enum ActivityDashboard {
             }
     }
 
-    public static func lens(from records: [ActivityRecord], rangeStartMs: Double, rangeEndMs: Double) -> ActivityLensView {
-        let bars = bars(from: records)
+    public static func lens(from records: [ActivityRecord], rangeStartMs: Double, rangeEndMs: Double, firstColor: Int = 0) -> ActivityLensView {
+        let bars = bars(from: records, firstColor: firstColor)
         var colorByKey: [String: Int] = [:]
         for bar in bars { colorByKey[bar.key] = bar.colorIndex }
         return ActivityLensView(
             totalSeconds: records.reduce(0) { $0 + $1.seconds },
             bars: bars,
-            timeline: timeline(from: records, rangeStartMs: rangeStartMs, rangeEndMs: rangeEndMs) { colorByKey[$0] ?? colorIndex(for: $0) }
+            timeline: timeline(from: records, rangeStartMs: rangeStartMs, rangeEndMs: rangeEndMs) { colorByKey[$0] ?? firstColor }
         )
     }
 

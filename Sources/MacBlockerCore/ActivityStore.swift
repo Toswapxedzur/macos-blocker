@@ -160,12 +160,16 @@ public final class ActivityStore: @unchecked Sendable {
         let app = records(category: .appUsage, from: start, to: end)
         let web = records(category: .webVisit, from: start, to: end)
         let watched = records(category: .contentWatched, from: start, to: end)
+        // One colour order for the whole page: apps, then sites (so a site drawn
+        // inside a browser's time never looks like an app), then watched videos.
+        let appLens = ActivityDashboard.lens(from: app, rangeStartMs: startMs, rangeEndMs: endMs)
+        let webLens = ActivityDashboard.lens(from: web, rangeStartMs: startMs, rangeEndMs: endMs, firstColor: appLens.bars.count)
         return ActivityDashboardSnapshot(
             rangeStartMs: startMs,
             rangeEndMs: endMs,
-            app: ActivityDashboard.lens(from: app, rangeStartMs: startMs, rangeEndMs: endMs),
-            web: ActivityDashboard.lens(from: web, rangeStartMs: startMs, rangeEndMs: endMs),
-            watched: ActivityDashboard.bars(from: watched),
+            app: appLens,
+            web: webLens,
+            watched: ActivityDashboard.bars(from: watched, firstColor: appLens.bars.count + webLens.bars.count),
             settings: ActivityDashboard.settingsView(loadSettings())
         )
     }

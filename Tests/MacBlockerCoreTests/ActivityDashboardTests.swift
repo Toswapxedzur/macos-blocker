@@ -25,11 +25,46 @@ final class ActivityDashboardTests: XCTestCase {
             from: [rec("code", at: 0, seconds: 300), rec("chrome", at: 1000, seconds: 100)],
             rangeStartMs: 0, rangeEndMs: 10000
         )
-        XCTAssertEqual(lens.bars.map(\.colorIndex), [0, 1], "distinct colours by rank, not a hash collision")
+        XCTAssertEqual(lens.bars.map(\.colorIndex), [0, 1], "distinct colours by rank")
         let barColor = Dictionary(uniqueKeysWithValues: lens.bars.map { ($0.key, $0.colorIndex) })
         for segment in lens.timeline {
             XCTAssertEqual(segment.colorIndex, barColor[segment.key])
         }
+    }
+
+    func testColorsNeverRepeatPastTheBasePalette() {
+        // 30 keys → 30 different colours (no wrap-around at 12).
+        let records = (0..<30).map { rec("app\($0)", at: Double($0) * 10, seconds: Double(100 - $0)) }
+        let bars = ActivityDashboard.bars(from: records)
+        XCTAssertEqual(Set(bars.map(\.colorIndex)).count, 30)
+    }
+
+    func testSnapshotColoursAreUniqueAcrossAppsSitesAndWatched() {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ActivityStore(directory: directory)
+        var settings = store.loadSettings()
+        for category in ActivityCategory.allCases {
+            var value = settings.settings(for: category)
+            value.enabled = true
+            settings.set(value, for: category)
+        }
+        store.saveSettings(settings)
+        let now = Date()
+        func record(_ category: ActivityCategory, _ key: String) -> ActivityRecord {
+            ActivityRecord(id: UUID().uuidString, category: category, startedAt: now.addingTimeInterval(-600), seconds: 60, key: key, label: key)
+        }
+        for item in [
+            record(.appUsage, "com.google.Chrome"), record(.appUsage, "com.microsoft.VSCode"),
+            record(.webVisit, "youtube.com"), record(.webVisit, "reddit.com"),
+            record(.contentWatched, "youtube:abc"),
+        ] {
+            XCTAssertTrue(store.record(item))
+        }
+        let snapshot = store.dashboardSnapshot(from: now.addingTimeInterval(-3600), to: now)
+        let all = snapshot.app.bars + snapshot.web.bars + snapshot.watched
+        XCTAssertEqual(all.count, 5)
+        XCTAssertEqual(Set(all.map(\.colorIndex)).count, 5, "no two items share a colour")
     }
 
     func testTimelinePositionsSegmentsWithinRange() {
