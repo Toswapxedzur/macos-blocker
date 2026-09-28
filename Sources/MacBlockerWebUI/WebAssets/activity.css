@@ -11,8 +11,15 @@ main { flex: 1; min-height: 0; overflow: auto; }
 .total { margin-left: auto; color: var(--vui-muted); }
 .total strong { color: var(--vui-text); font-size: var(--vui-size-title); font-weight: 700; margin-left: 4px; }
 /* day strip */
-.strip { position: relative; height: 14px; border-radius: 99px; background: var(--vui-fill); overflow: hidden; }
+.strip { position: relative; height: 44px; border-radius: 10px; background: var(--vui-fill); overflow: hidden; }
 .strip .seg { position: absolute; top: 0; bottom: 0; min-width: 2px; }
+/* A site inside a browser's time: the top band; the browser's colour stays
+   visible as the band below it. */
+.strip .seg.site { bottom: 15%; }
+.legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: -8px 2px 14px; color: var(--vui-muted); font-size: var(--vui-size-small); }
+.legend-title { font-weight: 700; }
+.legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.legend .dot { width: 8px; height: 8px; border-radius: 50%; }
 .strip .day { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255, 255, 255, 0.9); }
 .axis { display: flex; justify-content: space-between; color: var(--vui-muted); font-size: var(--vui-size-small); margin: 4px 2px 14px; }
 /* rows */

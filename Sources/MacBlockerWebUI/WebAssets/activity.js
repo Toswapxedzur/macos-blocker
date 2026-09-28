@@ -85,7 +85,27 @@
   function clock(ms) { return new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
   function day(ms) { return new Date(ms).toLocaleDateString([], { month: "short", day: "numeric" }); }
 
-  function strip(segments, startMs, endMs) {
+  // Browsers (by bundle id): in the Apps strip their time is split — the sites
+  // visited on top, a thin band in the browser's own colour below.
+  var BROWSERS = {
+    "com.google.Chrome": 1, "com.google.Chrome.beta": 1, "com.google.Chrome.canary": 1,
+    "com.google.Chrome.for.Testing": 1, "org.chromium.Chromium": 1, "com.microsoft.edgemac": 1,
+    "com.brave.Browser": 1, "company.thebrowser.Browser": 1, "com.vivaldi.Vivaldi": 1,
+    "com.operasoftware.Opera": 1, "com.apple.Safari": 1, "org.mozilla.firefox": 1
+  };
+
+  function segmentTitle(s) {
+    return (s.label || s.key) + " — " + new Date(s.startedAtMs).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) + " · " + fmt(s.seconds);
+  }
+
+  function place(node, from, to) {
+    node.style.left = (from * 100) + "%";
+    node.style.width = ((to - from) * 100) + "%";
+  }
+
+  // `sites` (the websites timeline) is drawn inside the browser segments of
+  // `segments` (the apps timeline); omit it for a strip of one kind.
+  function strip(segments, startMs, endMs, sites) {
     var wrap = el("div");
     var track = el("div", "strip");
     var span = endMs - startMs;
@@ -96,18 +116,47 @@
         var line = el("div", "day"); line.style.left = ((d.getTime() - startMs) / span * 100) + "%"; track.appendChild(line);
       }
     }
+    var shownSites = {}; // key -> { label, colorIndex, fraction } drawn in browser time
     segments.forEach(function (s) {
       var seg = el("div", "seg " + color(s.colorIndex));
-      seg.style.left = (s.startFraction * 100) + "%";
-      seg.style.width = (s.widthFraction * 100) + "%";
-      seg.title = (s.label || s.key) + " — " + new Date(s.startedAtMs).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) + " · " + fmt(s.seconds);
+      var from = s.startFraction, to = s.startFraction + s.widthFraction;
+      place(seg, from, to);
+      seg.title = segmentTitle(s);
       track.appendChild(seg);
+      if (!sites || !BROWSERS[s.key]) return;
+      // The sites visited while this browser was in front, clipped to it; a
+      // site never takes the browser's own colour.
+      sites.forEach(function (w) {
+        var a = Math.max(from, w.startFraction), b = Math.min(to, w.startFraction + w.widthFraction);
+        if (b <= a) return;
+        var index = w.colorIndex === s.colorIndex ? w.colorIndex + 6 : w.colorIndex;
+        var site = el("div", "seg site " + color(index));
+        place(site, a, b);
+        site.title = segmentTitle(w) + " (" + (s.label || s.key) + ")";
+        track.appendChild(site);
+        var shown = shownSites[w.key] || (shownSites[w.key] = { label: w.label || w.key, colorIndex: index, fraction: 0 });
+        shown.fraction += b - a;
+      });
     });
     wrap.appendChild(track);
     var axis = el("div", "axis");
     axis.appendChild(el("span", null, multiDay ? day(startMs) : clock(startMs)));
     axis.appendChild(el("span", null, multiDay ? day(endMs) : clock(endMs)));
     wrap.appendChild(axis);
+    // Name the sites drawn in browser time (their colours are not in the list).
+    var legendSites = Object.keys(shownSites).map(function (k) { return shownSites[k]; })
+      .sort(function (x, y) { return y.fraction - x.fraction; }).slice(0, 8);
+    if (legendSites.length) {
+      var legend = el("div", "legend");
+      legend.appendChild(el("span", "legend-title", "In browsers"));
+      legendSites.forEach(function (site) {
+        var item = el("span", "legend-item");
+        item.appendChild(el("span", "dot " + color(site.colorIndex)));
+        item.appendChild(document.createTextNode(site.label));
+        legend.appendChild(item);
+      });
+      wrap.appendChild(legend);
+    }
     return wrap;
   }
 
@@ -166,7 +215,8 @@
       off.appendChild(textButton("Turn on", function () { send({ kind: "setSettings", category: def.key, enabled: true }); }));
       panel.appendChild(off);
     } else {
-      if (lens && lens.timeline.length) panel.appendChild(strip(lens.timeline, snapshot.rangeStartMs, snapshot.rangeEndMs));
+      var sites = def.lens === "app" && snapshot.web ? snapshot.web.timeline : null;
+      if (lens && lens.timeline.length) panel.appendChild(strip(lens.timeline, snapshot.rangeStartMs, snapshot.rangeEndMs, sites));
       panel.appendChild(rows(bars));
     }
     panel.appendChild(settingsPanel(s));
