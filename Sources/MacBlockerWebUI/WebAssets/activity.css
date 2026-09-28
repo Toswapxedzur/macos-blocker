@@ -1,6 +1,6 @@
-/* Mac Vault's Activity scene (see scenes.js / activity.js): Usage (apps, with
-   the sites of each browser under it) or Watched, big icons, one day strip,
-   the recording settings out of the way. The shared look is vault-ui.css. */
+/* Mac Vault's Activity scene (see scenes.js / activity.js): Usage (apps and
+   websites in one ranked list, each marked) or Watched, big icons, one day
+   strip, the recording settings out of the way. The shared look is vault-ui.css. */
 /* The scene's mount stands where the page's body used to. */
 #activity { display: flex; flex-direction: column; height: 100%; padding: 10px 12px; }
 main { flex: 1; min-height: 0; overflow: auto; }
@@ -24,17 +24,13 @@ main { flex: 1; min-height: 0; overflow: auto; }
 .icon { width: 36px; height: 36px; border-radius: 9px; display: flex; align-items: center; justify-content: center; overflow: hidden; background: var(--navy-100); color: var(--navy-700); font-weight: 700; font-size: 14px; }
 .icon img { width: 36px; height: 36px; object-fit: contain; }
 .row-body { min-width: 0; }
-.row-name { overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.row-name { display: flex; align-items: center; gap: 8px; min-width: 0; font-weight: 700; }
 .row-bar { height: 5px; margin-top: 5px; border-radius: 99px; background: var(--vui-fill); overflow: hidden; }
 .row-bar span { display: block; height: 100%; border-radius: 99px; }
 .row-time { color: var(--vui-muted); font-variant-numeric: tabular-nums; min-width: 56px; text-align: right; }
-/* A site under its browser: indented, a smaller icon. */
-.row.nested { grid-template-columns: 24px minmax(0, 1fr) auto; margin-left: 48px; padding: 4px 4px; }
-.row.nested .icon { width: 24px; height: 24px; border-radius: 6px; font-size: 11px; }
-.row.nested .icon img { width: 24px; height: 24px; }
-.row.nested .row-name { font-weight: 400; }
-.row-more { margin: 2px 0 6px 84px; color: var(--vui-muted); font-size: var(--vui-size-small); }
-.row-group { margin: 14px 4px 4px; color: var(--vui-muted); font-weight: 700; }
+/* App or Website, beside the name. */
+.row-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-kind { flex: none; padding: 1px 7px; border-radius: 999px; background: var(--vui-fill); color: var(--vui-muted); font-size: 10px; font-weight: 700; }
 .empty { color: var(--vui-muted); padding: 14px 4px; }
 .off { display: flex; align-items: center; gap: 8px; color: var(--vui-muted); padding: 10px 4px; }
 /* settings */
