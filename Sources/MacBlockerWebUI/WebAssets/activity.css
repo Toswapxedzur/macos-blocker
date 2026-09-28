@@ -1,6 +1,6 @@
-/* Mac Vault's Activity scene (see scenes.js / activity.js): one list at a
-   time (apps, websites, watched), big icons, one day strip, the recording
-   settings out of the way. The shared look is vault-ui.css. */
+/* Mac Vault's Activity scene (see scenes.js / activity.js): Usage (apps, with
+   the sites of each browser under it) or Watched, big icons, one day strip,
+   the recording settings out of the way. The shared look is vault-ui.css. */
 /* The scene's mount stands where the page's body used to. */
 #activity { display: flex; flex-direction: column; height: 100%; padding: 10px 12px; }
 main { flex: 1; min-height: 0; overflow: auto; }
@@ -16,10 +16,6 @@ main { flex: 1; min-height: 0; overflow: auto; }
 /* A site inside a browser's time: the top band; the browser's colour stays
    visible as the band below it. */
 .strip .seg.site { bottom: 15%; }
-.legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: -8px 2px 14px; color: var(--vui-muted); font-size: var(--vui-size-small); }
-.legend-title { font-weight: 700; }
-.legend-item { display: inline-flex; align-items: center; gap: 5px; }
-.legend .dot { width: 8px; height: 8px; border-radius: 50%; }
 .strip .day { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255, 255, 255, 0.9); }
 .axis { display: flex; justify-content: space-between; color: var(--vui-muted); font-size: var(--vui-size-small); margin: 4px 2px 14px; }
 /* rows */
@@ -32,6 +28,13 @@ main { flex: 1; min-height: 0; overflow: auto; }
 .row-bar { height: 5px; margin-top: 5px; border-radius: 99px; background: var(--vui-fill); overflow: hidden; }
 .row-bar span { display: block; height: 100%; border-radius: 99px; }
 .row-time { color: var(--vui-muted); font-variant-numeric: tabular-nums; min-width: 56px; text-align: right; }
+/* A site under its browser: indented, a smaller icon. */
+.row.nested { grid-template-columns: 24px minmax(0, 1fr) auto; margin-left: 48px; padding: 4px 4px; }
+.row.nested .icon { width: 24px; height: 24px; border-radius: 6px; font-size: 11px; }
+.row.nested .icon img { width: 24px; height: 24px; }
+.row.nested .row-name { font-weight: 400; }
+.row-more { margin: 2px 0 6px 84px; color: var(--vui-muted); font-size: var(--vui-size-small); }
+.row-group { margin: 14px 4px 4px; color: var(--vui-muted); font-weight: 700; }
 .empty { color: var(--vui-muted); padding: 14px 4px; }
 .off { display: flex; align-items: center; gap: 8px; color: var(--vui-muted); padding: 10px 4px; }
 /* settings */
