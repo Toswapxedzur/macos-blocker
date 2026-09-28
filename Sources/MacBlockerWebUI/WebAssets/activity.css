@@ -3,18 +3,11 @@
    settings out of the way. The shared look is vault-ui.css. */
 /* The scene's mount stands where the page's body used to. */
 #activity { display: flex; flex-direction: column; height: 100%; padding: 10px 12px; }
-/* Range switch: the extension's pills — the chosen one navy, the rest grey. */
-.ranges { display: flex; gap: 8px; }
-.ranges button { background: #e2e8f0; color: #0f172a; }
-.ranges button.active { background: var(--navy-700); color: #ffffff; }
 main { flex: 1; min-height: 0; overflow: auto; }
 .page { max-width: 880px; margin: 0 auto; }
 .panel { background: rgba(255, 255, 255, 0.92); border-radius: 16px; box-shadow: var(--vui-panel-shadow); padding: 16px 18px 18px; }
-.lists { display: flex; align-items: baseline; gap: 16px; margin-bottom: 14px; }
-.lists button { padding: 0; border-radius: 0; background: none; font-size: 16px; font-weight: 700; color: #94a3b8; }
-.lists button.active { color: #1f2937; }
-.lists button:hover { filter: none; color: #64748b; }
-.lists button.active:hover { color: #1f2937; }
+/* The list switch is the shared .vui-tabs; the total sits at its right. */
+.lists { margin-bottom: 14px; }
 .total { margin-left: auto; color: var(--vui-muted); }
 .total strong { color: var(--vui-text); font-size: var(--vui-size-title); font-weight: 700; margin-left: 4px; }
 /* day strip */
