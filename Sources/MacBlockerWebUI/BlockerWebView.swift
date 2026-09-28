@@ -4,18 +4,14 @@ import SwiftUI
 import WebKit
 import MacBlockerCore
 
-/// Posted (with userInfo `["scene": "vault"|"classifier"|"activity"]`) by a
-/// scene's in-web header switch; `BlockerMainView` listens and flips the page.
-public extension Notification.Name {
-    static let vaultSwitchScene = Notification.Name("VaultSwitchScene")
-}
-
 import AppKit
 
 /// Hosts the ported customBlocker editor (`popup.html`) inside a WKWebView and
 /// bridges its chrome.storage snapshot to a native file via `BlockerWebStore`.
+/// Mac Vault's other scenes (`WebScene`) share this one web view and document.
 public struct BlockerWebView: NSViewRepresentable {
     private let store: BlockerWebStore
+    private let scenes: [WebScene]
     private let onRunCustomGroup: ((String, String) -> [String: Any])?
     /// Supplies the installed-application inventory as a JSON array string
     /// (`[{ "id": bundleId, "name": ..., "icon": dataURL }]`). Provided by the
@@ -46,9 +42,11 @@ public struct BlockerWebView: NSViewRepresentable {
         onSnoozePress: ((String) -> Void)? = nil,
         clustersJSON: (() -> String?)? = nil,
         onLinkRequest: ((String, [String: Any]) -> String?)? = nil,
-        tagNames: ((String) -> [String])? = nil
+        tagNames: ((String) -> [String])? = nil,
+        scenes: [WebScene] = []
     ) {
         self.store = store
+        self.scenes = scenes
         self.appInventoryJSON = appInventoryJSON
         self.ruleLogJSON = ruleLogJSON
         self.onStorePersisted = onStorePersisted
@@ -60,13 +58,62 @@ public struct BlockerWebView: NSViewRepresentable {
     }
 
     public func makeCoordinator() -> Coordinator {
-        Coordinator(store: store, ruleLogJSON: ruleLogJSON, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup, onSnoozePress: onSnoozePress, clustersJSON: clustersJSON, onLinkRequest: onLinkRequest, tagNames: tagNames)
+        Coordinator(store: store, ruleLogJSON: ruleLogJSON, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup, onSnoozePress: onSnoozePress, clustersJSON: clustersJSON, onLinkRequest: onLinkRequest, tagNames: tagNames, scenes: scenes)
     }
 
+    @MainActor
     private func makeWebView(context: Context) -> WKWebView {
         let controller = WKUserContentController()
         controller.add(context.coordinator, name: "cbBridge")
+        Self.addUserScripts(to: controller, store: store)
 
+        let config = WKWebViewConfiguration()
+        config.userContentController = controller
+        config.preferences.javaScriptCanOpenWindowsAutomatically = false
+        for scene in scenes { scene.install(config) }
+
+        // Serve assets over a custom scheme so the editor's fetch() of
+        // translation/*.json, manual/*.md, and the app inventory works
+        // (WKWebView blocks fetch on file:// URLs). The handler must be
+        // registered before the WKWebView is created. The app inventory is
+        // served dynamically here rather than injected, because with real
+        // icons it is multi-megabyte and too large for a user script.
+        if let assetsDir = WebAssetsLocator.assetsDirectory {
+            var componentDirectories: [String: URL] = [:]
+            for scene in scenes {
+                if let prefix = scene.assetsPrefix, let directory = scene.assetsDirectory {
+                    componentDirectories[prefix] = directory
+                }
+            }
+            let handler = WebAssetSchemeHandler(
+                assetsDirectory: assetsDir,
+                componentDirectories: componentDirectories,
+                inventoryJSONProvider: appInventoryJSON
+            )
+            config.setURLSchemeHandler(handler, forURLScheme: WebAssetSchemeHandler.scheme)
+            context.coordinator.schemeHandler = handler
+        }
+
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.uiDelegate = context.coordinator
+        webView.navigationDelegate = context.coordinator
+        // Every scene is designed on the fixed light theme.
+        webView.appearance = NSAppearance(named: .aqua)
+        context.coordinator.webView = webView
+        context.coordinator.startUsagePush()
+        for scene in scenes { scene.attach(webView) }
+
+        if WebAssetsLocator.assetsDirectory != nil {
+            webView.load(URLRequest(url: WebAssetSchemeHandler.indexURL))
+        } else {
+            webView.loadHTMLString(Self.missingAssetsHTML, baseURL: nil)
+        }
+        return webView
+    }
+
+    /// The document-start scripts: the store seed and the bundled catalogs.
+    /// Added again, with a fresh seed, before a reload.
+    static func addUserScripts(to controller: WKUserContentController, store: BlockerWebStore) {
         // Seed the editor's storage from the native snapshot before any
         // extension script reads chrome.storage. At document start the shim
         // has not loaded yet (it is a body script), so the seed is parked on
@@ -75,7 +122,7 @@ public struct BlockerWebView: NSViewRepresentable {
         // localStorage copy and wrote that back over the file (bug fixed
         // 2026-09-25).
         if let seed = store.loadRawJSON() {
-            let escaped = Self.javaScriptStringLiteral(seed)
+            let escaped = javaScriptStringLiteral(seed)
             let js = "window.__cbNativeStoreSeed = \(escaped);"
             let userScript = WKUserScript(
                 source: js,
@@ -88,7 +135,7 @@ public struct BlockerWebView: NSViewRepresentable {
         // Ship the localized catalogs and manuals into the page before the
         // popup starts. This keeps localization available even if a WKWebView
         // fetch of a bundled custom-scheme resource is interrupted.
-        if let assetBootstrap = Self.nativeAssetBootstrapScript() {
+        if let assetBootstrap = nativeAssetBootstrapScript() {
             controller.addUserScript(
                 WKUserScript(
                     source: assetBootstrap,
@@ -97,37 +144,6 @@ public struct BlockerWebView: NSViewRepresentable {
                 )
             )
         }
-
-        let config = WKWebViewConfiguration()
-        config.userContentController = controller
-        config.preferences.javaScriptCanOpenWindowsAutomatically = false
-
-        // Serve assets over a custom scheme so the editor's fetch() of
-        // translation/*.json, manual/*.md, and the app inventory works
-        // (WKWebView blocks fetch on file:// URLs). The handler must be
-        // registered before the WKWebView is created. The app inventory is
-        // served dynamically here rather than injected, because with real
-        // icons it is multi-megabyte and too large for a user script.
-        if let assetsDir = WebAssetsLocator.assetsDirectory {
-            let handler = WebAssetSchemeHandler(
-                assetsDirectory: assetsDir,
-                inventoryJSONProvider: appInventoryJSON
-            )
-            config.setURLSchemeHandler(handler, forURLScheme: WebAssetSchemeHandler.scheme)
-            context.coordinator.schemeHandler = handler
-        }
-
-        let webView = WKWebView(frame: .zero, configuration: config)
-        webView.uiDelegate = context.coordinator
-        context.coordinator.webView = webView
-        context.coordinator.startUsagePush()
-
-        if WebAssetsLocator.assetsDirectory != nil {
-            webView.load(URLRequest(url: WebAssetSchemeHandler.indexURL))
-        } else {
-            webView.loadHTMLString(Self.missingAssetsHTML, baseURL: nil)
-        }
-        return webView
     }
 
     private static func javaScriptStringLiteral(_ value: String) -> String {
@@ -214,7 +230,7 @@ public struct BlockerWebView: NSViewRepresentable {
 
     // MARK: Coordinator
 
-    public final class Coordinator: NSObject, WKScriptMessageHandler, WKUIDelegate {
+    public final class Coordinator: NSObject, WKScriptMessageHandler, WKUIDelegate, WKNavigationDelegate {
         weak var webView: WKWebView?
         var schemeHandler: WebAssetSchemeHandler?
         private let store: BlockerWebStore
@@ -225,6 +241,7 @@ public struct BlockerWebView: NSViewRepresentable {
         private let clustersJSON: (() -> String?)?
         private let onLinkRequest: ((String, [String: Any]) -> String?)?
         private let tagNames: ((String) -> [String])?
+        private let scenes: [WebScene]
 
         private var usagePushTimer: Timer?
         // Observes native writes to web-store.json (an MCP tool call, a direct
@@ -240,9 +257,11 @@ public struct BlockerWebView: NSViewRepresentable {
             onSnoozePress: ((String) -> Void)?,
             clustersJSON: (() -> String?)?,
             onLinkRequest: ((String, [String: Any]) -> String?)?,
-            tagNames: ((String) -> [String])?
+            tagNames: ((String) -> [String])?,
+            scenes: [WebScene]
         ) {
             self.store = store
+            self.scenes = scenes
             self.ruleLogJSON = ruleLogJSON
             self.onStorePersisted = onStorePersisted
             self.onRunCustomGroup = onRunCustomGroup
@@ -381,13 +400,10 @@ public struct BlockerWebView: NSViewRepresentable {
             case "local-folder-revoke":
                 LocalFolderGrant.clear()
                 pushLocalFolderStatus()
-            case "switch-scene":
-                #if os(macOS)
-                if let scene = (body["message"] as? [String: Any])?["scene"] as? String
-                    ?? body["scene"] as? String {
-                    NotificationCenter.default.post(name: .vaultSwitchScene, object: nil, userInfo: ["scene": scene])
+            case "scene-shown":
+                if let scene = body["scene"] as? String, scene.count <= 32 {
+                    NotificationCenter.default.post(name: .vaultSceneShown, object: nil, userInfo: ["scene": scene])
                 }
-                #endif
             default:
                 break
             }
@@ -440,6 +456,20 @@ public struct BlockerWebView: NSViewRepresentable {
                 "window.__cbLocalFolderStatus && window.__cbLocalFolderStatus(\(json));",
                 completionHandler: nil
             )
+        }
+
+        // MARK: WKNavigationDelegate
+
+        /// The page (all scenes) died with its web content process: load it
+        /// again and let each scene catch up.
+        public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            let controller = webView.configuration.userContentController
+            controller.removeAllUserScripts()
+            BlockerWebView.addUserScripts(to: controller, store: store)
+            webView.reload()
+            MainActor.assumeIsolated {
+                for scene in scenes { scene.reloaded() }
+            }
         }
 
         // MARK: WKUIDelegate - JS dialogs

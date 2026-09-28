@@ -3,9 +3,10 @@ import Foundation
 import VaultClassifierCore
 import WebKit
 
-/// The development shell is deliberately a bundled local WebKit document.
-/// AppKit owns the native window; every visible control and layout is rendered
-/// by the local HTML/CSS/JS asset below.
+/// The native half of the Classifier scene. The page (app.js / app.css /
+/// strings.js) runs in its host's web view — Mac Vault's one document, beside
+/// the Vault editor — and talks to the model through the "vaultClassifier"
+/// message handler installed here.
 final class VaultClassifierWebShell {
     /// WebView actions carry only a small bounded dictionary. Every live field
     /// is also parsed and bounded individually by `performWebAction`.
@@ -27,27 +28,21 @@ final class VaultClassifierWebShell {
         }
     }
 
-    func makeWebView() -> WKWebView {
-        let configuration = WKWebViewConfiguration()
+    /// Before the host's web view exists: the page's message handler and the
+    /// creator-avatar scheme.
+    func install(in configuration: WKWebViewConfiguration) {
         configuration.setURLSchemeHandler(sourceIconSchemeHandler, forURLScheme: SourceIconCache.scheme)
-        configuration.websiteDataStore = .nonPersistent()
         configuration.userContentController.add(coordinator, name: Coordinator.messageHandlerName)
-
-        let view = WKWebView(frame: .zero, configuration: configuration)
-        view.navigationDelegate = coordinator
-        view.allowsBackForwardNavigationGestures = false
-        coordinator.webView = view
-
-        guard let index = Self.bundledWebAssetURL(named: "index", extension: "html") else {
-            preconditionFailure("Vault Classifier web shell is missing its bundled index.html resource.")
-        }
-        view.loadFileURL(index, allowingReadAccessTo: index.deletingLastPathComponent())
-        return view
     }
 
-    deinit {
-        coordinator.webView?.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.messageHandlerName)
-        coordinator.webView?.navigationDelegate = nil
+    /// The host's web view, where the page runs.
+    func attach(_ webView: WKWebView) {
+        coordinator.webView = webView
+    }
+
+    /// The host reloaded the page after its web content process died.
+    func pageReloaded() {
+        coordinator.pageReloaded()
     }
 
     /// The host tells the shell whether its page is in front. While it is not,
@@ -88,18 +83,23 @@ final class VaultClassifierWebShell {
         return "window.VaultClassifier && window.VaultClassifier.receiveCreatorEntries && window.VaultClassifier.receiveCreatorEntries(JSON.parse(new TextDecoder().decode(Uint8Array.from(atob('\(encoded)'), value => value.charCodeAt(0)))));"
     }
 
+    /// The page's files (served by the host under "classifier/").
+    static var webAssetsDirectory: URL? {
+        Bundle.module.resourceURL?.appendingPathComponent("WebAssets", isDirectory: true)
+    }
+
     static func bundledWebAssetURL(named name: String, extension fileExtension: String) -> URL? {
         Bundle.module.url(forResource: name, withExtension: fileExtension, subdirectory: "WebAssets")
     }
 
-    private final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+    private final class Coordinator: NSObject, WKScriptMessageHandler {
         static let messageHandlerName = "vaultClassifier"
         private static let layoutLogger = TagTreeLayoutLogger()
 
         let model: VaultClassifierViewModel
         weak var webView: WKWebView?
-        /// Whether the host currently shows this page (Mac Vault hides it behind
-        /// its other scenes). Standalone/test contexts never hide it.
+        /// Whether the host currently shows this scene (Mac Vault shows one scene
+        /// at a time).
         private var hostShowsPage = true
         private var occlusionObserver: NSObjectProtocol?
         private lazy var stateDelivery = LatestWebStateDelivery(
@@ -183,15 +183,6 @@ final class VaultClassifierWebShell {
                     Self.layoutLogger.recordWebTrace(data)
                     return
                 }
-                // Host navigation (the Vault/Classifier/Activity switch in the
-                // header). The classifier stays host-agnostic: it just forwards
-                // the requested scene name to whatever host installed the hook.
-                if action == "switch-scene" {
-                    if let scene = data["scene"] as? String, scene.count <= 32 {
-                        VaultClassifierPage.hostNavigationHandler?(scene)
-                    }
-                    return
-                }
                 if action == "loadCreatorEntries" {
                     self.deliverCreatorEntries(data)
                     return
@@ -202,21 +193,10 @@ final class VaultClassifierWebShell {
             }
         }
 
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            Task { @MainActor [weak self] in self?.sendState() }
-        }
-
-        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            guard navigationAction.request.url?.isFileURL == true else {
-                decisionHandler(.cancel)
-                return
-            }
-            decisionHandler(.allow)
-        }
-
-        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        /// The page reloaded (its script asks for state again on start); a
+        /// delivery in flight to the dead page never completes.
+        func pageReloaded() {
             stateDelivery.recoverAfterWebContentProcessTermination()
-            webView.reload()
         }
 
         func sendState() {

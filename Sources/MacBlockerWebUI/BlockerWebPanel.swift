@@ -3,7 +3,7 @@ import SwiftUI
 import MacBlockerCore
 
 /// The full editor UI: the customBlocker popup running inside a WKWebView,
-/// backed by the native policy core.
+/// backed by the native policy core; Mac Vault's other scenes share it.
 public struct BlockerWebPanel: View {
     private let store: BlockerWebStore
     private let appInventoryJSON: (() -> String?)?
@@ -14,6 +14,7 @@ public struct BlockerWebPanel: View {
     private let clustersJSON: (() -> String?)?
     private let onLinkRequest: ((String, [String: Any]) -> String?)?
     private let tagNames: ((String) -> [String])?
+    private let scenes: [WebScene]
 
     public init(
         store: BlockerWebStore = BlockerWebStore(),
@@ -24,7 +25,8 @@ public struct BlockerWebPanel: View {
         onSnoozePress: ((String) -> Void)? = nil,
         clustersJSON: (() -> String?)? = nil,
         onLinkRequest: ((String, [String: Any]) -> String?)? = nil,
-        tagNames: ((String) -> [String])? = nil
+        tagNames: ((String) -> [String])? = nil,
+        scenes: [WebScene] = []
     ) {
         self.store = store
         self.appInventoryJSON = appInventoryJSON
@@ -35,6 +37,7 @@ public struct BlockerWebPanel: View {
         self.clustersJSON = clustersJSON
         self.onLinkRequest = onLinkRequest
         self.tagNames = tagNames
+        self.scenes = scenes
     }
 
     public var body: some View {
@@ -45,10 +48,10 @@ public struct BlockerWebPanel: View {
             onStorePersisted: onStorePersisted,
             onRunCustomGroup: onRunCustomGroup,
             onSnoozePress: onSnoozePress,
-           
             clustersJSON: clustersJSON,
             onLinkRequest: onLinkRequest,
-            tagNames: tagNames
+            tagNames: tagNames,
+            scenes: scenes
         )
         .ignoresSafeArea()
     }

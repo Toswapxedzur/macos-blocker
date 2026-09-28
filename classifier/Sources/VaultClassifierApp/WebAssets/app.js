@@ -1,7 +1,11 @@
 (() => {
   "use strict";
 
-  const root = document.getElementById("app");
+  // Mac Vault's Classifier scene: this page lives in a shadow root beside the
+  // Vault editor in the one document (see Mac Vault's scenes.js), so it looks
+  // up and listens inside that root, never on the document.
+  const scope = window.VaultScenes.scope("classifier");
+  const root = scope.getElementById("app");
   const navigationWidthStorageKey = "vaultClassifier.navigationPanelWidth";
   const navigationWidthRange = { minimum: 236, maximum: 460, fallback: 300 };
   const strings = window.VaultClassifierStrings || {};
@@ -105,7 +109,7 @@
       navigationPanelWidth = Math.round(Math.min(navigationWidthRange.maximum, Math.max(navigationWidthRange.minimum, storedWidth)));
     }
   } catch (_) {}
-  document.documentElement.lang = selectedLanguage;
+  root.lang = selectedLanguage;
 
   function applyNavigationPanelWidth() {
     root.style.setProperty("--navigation-panel-width", `${navigationPanelWidth}px`);
@@ -172,8 +176,6 @@
   const enumText = (family, value) => Object.hasOwn(strings, `enum.${family}.${value}`)
     ? t(`enum.${family}.${value}`)
     : String(value ?? "").replaceAll(/([A-Z])/g, " $1").replaceAll(/[._-]/g, " ").replace(/^./, (letter) => letter.toUpperCase());
-
-  document.title = t("app.title");
 
   function send(action, data = {}) {
     const handler = window.webkit?.messageHandlers?.vaultClassifier;
@@ -771,7 +773,7 @@
   function shell(content) {
     return `<div class="popup">
       <header class="vui-topbar">
-        <nav class="vui-tabs" aria-label="Scene"><button type="button" class="vui-tab" data-action="switchScene" data-scene="vault">Vault</button><button type="button" class="vui-tab is-active" data-action="switchScene" data-scene="classifier">Classifier</button><button type="button" class="vui-tab" data-action="switchScene" data-scene="activity">Activity</button></nav>
+        <nav class="vui-tabs" aria-label="Scene"><button type="button" class="vui-tab" data-scene="vault">Vault</button><button type="button" class="vui-tab is-active" data-scene="classifier">Classifier</button><button type="button" class="vui-tab" data-scene="activity">Activity</button></nav>
         <div class="vui-topbar-links"><span class="settings-popover-anchor"><button type="button" class="secondary" data-action="openUtilityPanel" data-utility-panel="settings" aria-haspopup="dialog" aria-expanded="${utilityPanel ? "true" : "false"}">${tx("utility.settings.button")}</button>${utilityPanelContent()}</span></div>
       </header>
       <div class="layout">
@@ -1304,7 +1306,7 @@
     render();
   }
 
-  document.addEventListener("input", (event) => {
+  scope.addEventListener("input", (event) => {
     const searchInput = event.target.closest("input[data-list-search]");
     if (searchInput) {
       const group = searchInput.dataset.listSearch;
@@ -1515,7 +1517,7 @@
     // A snapshot push can rebuild the DOM while the user is typing in a list
     // search (classification runs push often). Preserve which search box was
     // focused and the caret so search-as-you-type is not interrupted.
-    const focusedSearch = document.activeElement?.closest?.("input[data-list-search]");
+    const focusedSearch = scope.activeElement?.closest?.("input[data-list-search]");
     const focusedSearchState = focusedSearch
       ? { group: focusedSearch.dataset.listSearch, start: focusedSearch.selectionStart, end: focusedSearch.selectionEnd }
       : null;
@@ -1555,7 +1557,7 @@
     });
   }
 
-  document.addEventListener("click", (event) => {
+  scope.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-action]");
     if (!button) {
       const map = event.target.closest("[data-tree-map]");
@@ -1570,12 +1572,6 @@
     }
     if (button.disabled) return;
     const action = button.dataset.action;
-    if (action === "switchScene") {
-      // Header scene switch (Vault / Classifier / Activity). Classifier is the
-      // active scene here; ask the native host to show another one.
-      if (button.dataset.scene) send("switch-scene", { scene: button.dataset.scene });
-      return;
-    }
     if (action === "workspace") {
       const nextWorkspace = button.dataset.workspace;
       if (!state || !workspaceNames.has(nextWorkspace) || state.workspace === nextWorkspace) return;
@@ -1814,13 +1810,13 @@
     send(action, data);
   });
 
-  document.addEventListener("keydown", (event) => {
+  scope.addEventListener("keydown", (event) => {
     if (event.key !== "Escape" || !utilityPanel) return;
     utilityPanel = null;
     render();
   });
 
-  document.addEventListener("toggle", (event) => {
+  scope.addEventListener("toggle", (event) => {
     const details = event.target;
     if (!details?.matches?.("details")) return;
     if (details.matches("details[data-collection-creators-platform]")) {
@@ -1829,17 +1825,17 @@
     }
   }, true);
 
-  document.addEventListener("toggle", (event) => {
+  scope.addEventListener("toggle", (event) => {
     const key = event.target.matches?.("details[data-expand]") ? event.target.dataset.expand : null;
     if (key) event.target.open ? openExpands.add(key) : openExpands.delete(key);
   }, true);
 
-  document.addEventListener("change", (event) => {
+  scope.addEventListener("change", (event) => {
     const languageControl = event.target.closest("[data-language-selection]");
     if (languageControl) {
       if (!languageChoices.some(([identifier]) => identifier === languageControl.value)) return;
       selectedLanguage = languageControl.value;
-      document.documentElement.lang = selectedLanguage;
+      root.lang = selectedLanguage;
       try { window.localStorage.setItem("vaultClassifier.language", selectedLanguage); } catch (_) {}
       return;
     }
@@ -1859,7 +1855,7 @@
     }
   });
 
-  document.addEventListener("pointerdown", (event) => {
+  scope.addEventListener("pointerdown", (event) => {
     const resizer = event.target.closest("[data-navigation-resizer]");
     if (!resizer || event.button !== 0) return;
     navigationResize = { pointerID: event.pointerId };
@@ -1867,7 +1863,7 @@
     event.preventDefault();
   });
 
-  document.addEventListener("pointermove", (event) => {
+  scope.addEventListener("pointermove", (event) => {
     if (!navigationResize || event.pointerId !== navigationResize.pointerID) return;
     const layout = root.querySelector(".layout");
     if (!layout) return;
@@ -1884,8 +1880,8 @@
     try { window.localStorage.setItem(navigationWidthStorageKey, String(navigationPanelWidth)); } catch (_) {}
   }
 
-  document.addEventListener("pointerup", finishNavigationResize);
-  document.addEventListener("pointercancel", finishNavigationResize);
+  scope.addEventListener("pointerup", finishNavigationResize);
+  scope.addEventListener("pointercancel", finishNavigationResize);
 
   // Drag-reorder the classifier-type list. Ported from the extension's group
   // reorder (customBlocker/popup.js): the whole row is the drag target (no
@@ -2047,13 +2043,13 @@
     window.addEventListener("mouseup", handleUp);
   }
 
-  document.addEventListener("mousedown", (event) => {
+  scope.addEventListener("mousedown", (event) => {
     const row = event.target.closest?.(".classifier-type-row[data-type-id]");
     if (!row) return;
     startTypeReorder(event, row.dataset.typeId);
   });
 
-  document.addEventListener("keydown", (event) => {
+  scope.addEventListener("keydown", (event) => {
     const resizer = event.target.closest?.("[data-navigation-resizer]");
     if (!resizer) return;
     let nextWidth = navigationPanelWidth;
@@ -2086,7 +2082,7 @@
     event.stopPropagation();
   }
 
-  document.addEventListener("contextmenu", (event) => {
+  scope.addEventListener("contextmenu", (event) => {
     const map = event.target.closest("[data-tree-map]");
     if (!map || event.target.closest("[data-tree-popover]")) return;
     event.preventDefault();
@@ -2192,13 +2188,13 @@
     });
   }
 
-  document.addEventListener("pointerdown", beginTagDrag);
-  document.addEventListener("mousedown", beginTagDrag);
-  document.addEventListener("pointermove", moveTagDrag);
-  document.addEventListener("mousemove", moveTagDrag);
-  document.addEventListener("pointerup", finishTagDrag);
-  document.addEventListener("pointercancel", finishTagDrag);
-  document.addEventListener("mouseup", finishTagDrag);
+  scope.addEventListener("pointerdown", beginTagDrag);
+  scope.addEventListener("mousedown", beginTagDrag);
+  scope.addEventListener("pointermove", moveTagDrag);
+  scope.addEventListener("mousemove", moveTagDrag);
+  scope.addEventListener("pointerup", finishTagDrag);
+  scope.addEventListener("pointercancel", finishTagDrag);
+  scope.addEventListener("mouseup", finishTagDrag);
 
   window.VaultClassifier = {
     receive(payload) {
@@ -2241,6 +2237,7 @@
   };
 
   window.addEventListener("resize", () => window.requestAnimationFrame(drawTreeConnections));
+  window.VaultUI.observe(scope);
   render();
   send("state", {});
 })();

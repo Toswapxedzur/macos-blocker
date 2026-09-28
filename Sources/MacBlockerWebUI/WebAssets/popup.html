@@ -8,15 +8,16 @@
     <link rel="icon" media="(prefers-color-scheme: dark)" href="icons/adamancia-vault-lock-inverse-dark-128.png?v=20260712b" />
     <link rel="stylesheet" href="vault-ui.css" />
     <link rel="stylesheet" href="popup.css" />
+    <link rel="stylesheet" href="scenes.css" />
   </head>
   <body>
     <main class="popup">
       <header class="vui-topbar">
         <!-- Mac Vault: the scene switch (Vault / Classifier / Activity). -->
         <nav class="vui-tabs desktop-only" id="sceneTabs" aria-label="Scene">
-          <button type="button" class="vui-tab scene-tab is-active" data-scene="vault" data-i18n="scene.vault">Vault</button>
-          <button type="button" class="vui-tab scene-tab" data-scene="classifier" data-i18n="scene.classifier">Classifier</button>
-          <button type="button" class="vui-tab scene-tab" data-scene="activity" data-i18n="scene.activity">Activity</button>
+          <button type="button" class="vui-tab is-active" data-scene="vault" data-i18n="scene.vault">Vault</button>
+          <button type="button" class="vui-tab" data-scene="classifier" data-i18n="scene.classifier">Classifier</button>
+          <button type="button" class="vui-tab" data-scene="activity" data-i18n="scene.activity">Activity</button>
         </nav>
         <h1 class="browser-only app-title" data-i18n="app.shortTitle">Adamancia Vault</h1>
         <div class="vui-topbar-links">
@@ -786,5 +787,7 @@
     <script src="popup-markdown.js"></script>
     <script src="rule-core.js"></script>
     <script src="popup.js"></script>
+    <!-- Mac Vault: the Classifier and Activity scenes, in this same document. -->
+    <script src="scenes.js"></script>
   </body>
 </html>

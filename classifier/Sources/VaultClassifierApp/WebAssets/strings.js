@@ -1,5 +1,4 @@
 window.VaultClassifierStrings = Object.freeze({
-  "app.title": "Vault Classifier",
   "app.loading": "Loading the local Vault Classifier shell…",
   "utility.close": "Close",
   "utility.settings.button": "Settings",

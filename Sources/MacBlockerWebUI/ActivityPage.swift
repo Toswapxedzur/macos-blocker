@@ -3,12 +3,11 @@ import AppKit
 import WebKit
 import MacBlockerCore
 
-/// Hosts the Activity dashboard (activity.html) in a WKWebView and bridges it to
-/// the ActivityStore: it pushes render-ready snapshots and applies the page's
-/// range / settings / delete messages. macOS-only; the same asset is reused by
-/// Windows' WebView2 in a later phase.
+/// The Activity scene (activity.js / activity.css, in the editor's one web
+/// view and document) bridged to the ActivityStore: it pushes render-ready
+/// snapshots and applies the scene's range / settings / delete messages.
 @MainActor
-public final class ActivityPage: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+public final class ActivityPage: NSObject, WKScriptMessageHandler {
     public static let shared = ActivityPage()
 
     private var store: ActivityStore?
@@ -23,31 +22,20 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler, WKNavigationD
     /// Called once at launch with the shared store (see BlockerAppDelegate).
     public func configure(store: ActivityStore) { self.store = store }
 
-    public func makeView() -> NSView {
-        if let webView { return webView }
-        let config = WKWebViewConfiguration()
-        config.userContentController.add(self, name: "activity")
-        // Served like the Vault editor, so the page loads the shared look
-        // (vault-ui.css / vault-ui.js) beside it.
-        if let assetsDir = WebAssetsLocator.assetsDirectory {
-            config.setURLSchemeHandler(WebAssetSchemeHandler(assetsDirectory: assetsDir), forURLScheme: WebAssetSchemeHandler.scheme)
-        }
-        let webView = WKWebView(frame: .zero, configuration: config)
-        webView.navigationDelegate = self
-        webView.setValue(false, forKey: "drawsBackground")
-        // Match the other scenes (Vault + Classifier are light): force a light
-        // appearance so the dashboard doesn't follow the system into dark and
-        // clash with the rest of the window. One shared theme across the app.
-        webView.appearance = NSAppearance(named: .aqua)
-        if WebAssetsLocator.assetsDirectory != nil {
-            webView.load(URLRequest(url: URL(string: "\(WebAssetSchemeHandler.scheme)://\(WebAssetSchemeHandler.host)/activity.html")!))
-        }
-        self.webView = webView
-        return webView
+    /// The scene's place in the editor's web view (its files are part of the
+    /// editor's own assets).
+    public var scene: WebScene {
+        WebScene(
+            install: { [unowned self] configuration in
+                configuration.userContentController.add(self, name: "activity")
+            },
+            attach: { [unowned self] webView in self.webView = webView },
+            reloaded: { [unowned self] in self.loaded = false }
+        )
     }
 
-    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        loaded = true
+    /// The scene came to the front: show the newest numbers.
+    public func sceneShown() {
         pushSnapshot()
     }
 
@@ -55,6 +43,7 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler, WKNavigationD
         guard let body = message.body as? [String: Any], let kind = body["kind"] as? String else { return }
         switch kind {
         case "ready", "range":
+            loaded = true
             if let range = body["range"] as? String { self.range = range }
             pushSnapshot()
         case "setSettings":
@@ -63,12 +52,6 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler, WKNavigationD
         case "delete":
             applyDelete(body)
             pushSnapshot()
-        case "switch-scene":
-            #if os(macOS)
-            if let scene = body["scene"] as? String {
-                NotificationCenter.default.post(name: .vaultSwitchScene, object: nil, userInfo: ["scene": scene])
-            }
-            #endif
         default:
             break
         }
