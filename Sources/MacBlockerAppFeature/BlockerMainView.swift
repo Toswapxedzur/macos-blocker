@@ -6,9 +6,9 @@ import MacBlockerMacControl
 import VaultClassifierApp
 #endif
 
-/// Top-level app surface. Hosts the ported customBlocker editor in a WKWebView
-/// with macOS enforcement wired up, and — on macOS — the Vault Classifier as a
-/// second page of the same window.
+/// Top-level app surface: one WKWebView, one document. The ported customBlocker
+/// editor (the Vault scene) with macOS enforcement wired up, and — on macOS —
+/// the Classifier and Activity scenes beside it in the same page.
 @MainActor
 public struct BlockerMainView: View {
     /// The process-wide engine: it runs from launch to quit, not with this
@@ -21,50 +21,23 @@ public struct BlockerMainView: View {
     private let connection = ConnectionHub.shared
     #endif
 
-    #if os(macOS)
-    /// The window's pages. All stay alive while hidden, so switching never
-    /// reloads the editor, the classifier, or the activity dashboard.
-    fileprivate enum Page: String, Hashable, CaseIterable {
-        case vault, classifier, activity
-    }
-    @State private var page: Page = .vault
-    #endif
-
     public init() {}
 
     public var body: some View {
         #if os(macOS)
-        // The three scenes share one window; each scene's own web header carries
-        // the Vault/Classifier/Activity switch, which posts a notification the
-        // shell listens for. All stay alive while hidden, so switching never
-        // reloads the editor, the classifier, or the activity dashboard.
-        ZStack {
-            // WKWebViews don't reliably honor SwiftUI .opacity, so the active
-            // page is also brought to front with zIndex: an opaque, full-bleed
-            // web view on top covers the (still-alive) hidden ones.
-            editorContent
-                .opacity(page == .vault ? 1 : 0)
-                .allowsHitTesting(page == .vault)
-                .zIndex(page == .vault ? 1 : 0)
-            ClassifierPageView()
-                .opacity(page == .classifier ? 1 : 0)
-                .allowsHitTesting(page == .classifier)
-                .zIndex(page == .classifier ? 1 : 0)
-            ActivityPageView()
-                .opacity(page == .activity ? 1 : 0)
-                .allowsHitTesting(page == .activity)
-                .zIndex(page == .activity ? 1 : 0)
-        }
-        .onAppear {
-            enforcement.start()
-            VaultClassifierPage.shared.setPageVisible(page == .classifier)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .vaultSwitchScene)) { note in
-            guard let raw = note.userInfo?["scene"] as? String, let next = Page(rawValue: raw) else { return }
-            page = next
-            // The hidden classifier page stops rebuilding its web snapshot.
-            VaultClassifierPage.shared.setPageVisible(next == .classifier)
-        }
+        // The scenes switch inside the page (scenes.js); the native side only
+        // follows: the Classifier builds snapshots only while it shows, and
+        // Activity refreshes when it comes to the front.
+        editorContent
+            .onAppear {
+                enforcement.start()
+                VaultClassifierPage.shared.setPageVisible(false)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .vaultSceneShown)) { note in
+                let scene = note.userInfo?["scene"] as? String
+                VaultClassifierPage.shared.setPageVisible(scene == "classifier")
+                if scene == "activity" { ActivityPage.shared.sceneShown() }
+            }
         #else
         VStack(spacing: 0) {
             editorContent
@@ -92,7 +65,17 @@ public struct BlockerMainView: View {
                                             targetGroupId: (message["targetGroupId"] as? String) ?? "")
                     : connection.unlinkGroup(program: ConnectionHub.localProgram, groupId: groupId)
             },
-            tagNames: { platform in MainActor.assumeIsolated { VaultClassifierPage.shared.tagNames(platformID: platform) } }
+            tagNames: { platform in MainActor.assumeIsolated { VaultClassifierPage.shared.tagNames(platformID: platform) } },
+            scenes: [
+                WebScene(
+                    assetsPrefix: "classifier",
+                    assetsDirectory: VaultClassifierPage.webAssetsDirectory,
+                    install: { VaultClassifierPage.shared.install(in: $0) },
+                    attach: { VaultClassifierPage.shared.attach($0) },
+                    reloaded: { VaultClassifierPage.shared.pageReloaded() }
+                ),
+                ActivityPage.shared.scene,
+            ]
         )
         #else
         return BlockerWebPanel()
@@ -103,24 +86,3 @@ public struct BlockerMainView: View {
     }
 }
 
-#if os(macOS)
-/// The Vault Classifier page. The classifier component owns one live web view
-/// per process (started by the app delegate at launch); this only embeds it.
-private struct ClassifierPageView: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        VaultClassifierPage.shared.makeView()
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {}
-}
-
-/// The Activity dashboard page (configured with the shared store at launch).
-private struct ActivityPageView: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        ActivityPage.shared.makeView()
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {}
-}
-
-#endif

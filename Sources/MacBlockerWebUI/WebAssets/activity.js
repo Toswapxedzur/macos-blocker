@@ -1,83 +1,30 @@
-<!DOCTYPE html>
-<!--
-  Activity (see macosBlocker/docs/ACTIVITY-LOG.md). A renderer only: Mac Vault
-  computes everything (ActivityDashboard) and pushes it with
-  window.activityApply(snapshot, icons). The look is vault-ui.css, shared with
-  the Vault and Classifier sections (owner 2026-09-28): one list at a time
-  (apps, websites, watched), big icons, one day strip, and the recording
-  settings out of the way under Settings.
--->
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Activity</title>
-<link rel="stylesheet" href="vault-ui.css" />
-<style>
-  html, body { height: 100%; }
-  body { display: flex; flex-direction: column; padding: 10px 12px; }
-  /* Range switch: the extension's pills — the chosen one navy, the rest grey. */
-  .ranges { display: flex; gap: 8px; }
-  .ranges button { background: #e2e8f0; color: #0f172a; }
-  .ranges button.active { background: var(--navy-700); color: #ffffff; }
-  main { flex: 1; min-height: 0; overflow: auto; }
-  .page { max-width: 880px; margin: 0 auto; }
-  .panel { background: rgba(255, 255, 255, 0.92); border-radius: 16px; box-shadow: var(--vui-panel-shadow); padding: 16px 18px 18px; }
-  .lists { display: flex; align-items: baseline; gap: 16px; margin-bottom: 14px; }
-  .lists button { padding: 0; border-radius: 0; background: none; font-size: 16px; font-weight: 700; color: #94a3b8; }
-  .lists button.active { color: #1f2937; }
-  .lists button:hover { filter: none; color: #64748b; }
-  .lists button.active:hover { color: #1f2937; }
-  .total { margin-left: auto; color: var(--vui-muted); }
-  .total strong { color: var(--vui-text); font-size: var(--vui-size-title); font-weight: 700; margin-left: 4px; }
-  /* day strip */
-  .strip { position: relative; height: 14px; border-radius: 99px; background: var(--vui-fill); overflow: hidden; }
-  .strip .seg { position: absolute; top: 0; bottom: 0; min-width: 2px; }
-  .strip .day { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255, 255, 255, 0.9); }
-  .axis { display: flex; justify-content: space-between; color: var(--vui-muted); font-size: var(--vui-size-small); margin: 4px 2px 14px; }
-  /* rows */
-  .row { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 7px 4px; border-radius: var(--vui-radius-sm); }
-  .row:hover { background: #f8fafc; }
-  .icon { width: 36px; height: 36px; border-radius: 9px; display: flex; align-items: center; justify-content: center; overflow: hidden; background: var(--navy-100); color: var(--navy-700); font-weight: 700; font-size: 14px; }
-  .icon img { width: 36px; height: 36px; object-fit: contain; }
-  .row-body { min-width: 0; }
-  .row-name { overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-  .row-bar { height: 5px; margin-top: 5px; border-radius: 99px; background: var(--vui-fill); overflow: hidden; }
-  .row-bar span { display: block; height: 100%; border-radius: 99px; }
-  .row-time { color: var(--vui-muted); font-variant-numeric: tabular-nums; min-width: 56px; text-align: right; }
-  .empty { color: var(--vui-muted); padding: 14px 4px; }
-  .off { display: flex; align-items: center; gap: 8px; color: var(--vui-muted); padding: 10px 4px; }
-  /* settings */
-  .settings { margin-top: 12px; }
-  .settings-row { display: flex; align-items: center; gap: 12px; padding: 6px 4px; }
-  .settings-row .name { flex: 1; }
-  .settings-row label { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; }
-  .settings-row .vui-select { width: auto; }
-  .c0{background:#5b7fc7}.c1{background:#e8914a}.c2{background:#5fa86a}.c3{background:#d9656a}
-  .c4{background:#6fb3ae}.c5{background:#d9b945}.c6{background:#a27bb0}.c7{background:#e99aa6}
-  .c8{background:#9a7a64}.c9{background:#8ccf7f}.c10{background:#86b8c7}.c11{background:#c97aa0}
-</style>
-</head>
-<body>
-<header class="vui-topbar">
-  <nav class="vui-tabs" id="sceneTabs" aria-label="Scene">
-    <button type="button" class="vui-tab" data-scene="vault">Vault</button>
-    <button type="button" class="vui-tab" data-scene="classifier">Classifier</button>
-    <button type="button" class="vui-tab is-active" data-scene="activity">Activity</button>
-  </nav>
-  <div class="vui-topbar-links">
-    <div class="ranges" id="ranges">
-      <button type="button" data-range="today" class="active">Today</button>
-      <button type="button" data-range="7d">7 days</button>
-      <button type="button" data-range="30d">30 days</button>
-    </div>
-  </div>
-</header>
-<main><div class="page" id="page"><p class="empty">Loading…</p></div></main>
-<script src="vault-ui.js"></script>
-<script>
+/* Mac Vault's Activity scene (see ACTIVITY-LOG.md). A renderer only: Mac
+ * Vault computes everything (ActivityDashboard) and pushes it with
+ * window.activityApply(snapshot, icons). It lives in a shadow root beside the
+ * Vault editor in the one document (scenes.js).
+ */
 "use strict";
 (function () {
+  // The scene's shadow root (Mac Vault's scenes.js): the page is built and
+  // listened to inside it.
+  var scope = window.VaultScenes.scope("activity");
+  scope.getElementById("activity").innerHTML = [
+    '<header class="vui-topbar">',
+    '<nav class="vui-tabs" aria-label="Scene">',
+    '<button type="button" class="vui-tab" data-scene="vault">Vault</button>',
+    '<button type="button" class="vui-tab" data-scene="classifier">Classifier</button>',
+    '<button type="button" class="vui-tab is-active" data-scene="activity">Activity</button>',
+    "</nav>",
+    '<div class="vui-topbar-links">',
+    '<div class="ranges" id="ranges">',
+    '<button type="button" data-range="today" class="active">Today</button>',
+    '<button type="button" data-range="7d">7 days</button>',
+    '<button type="button" data-range="30d">30 days</button>',
+    "</div>",
+    "</div>",
+    "</header>",
+    '<main><div class="page" id="page"><p class="empty">Loading…</p></div></main>'
+  ].join("");
   var RETENTIONS = [[7, "7 days"], [30, "30 days"], [90, "90 days"], [0, "Forever"]];
   var LISTS = [
     { id: "appUsage", key: "app-usage", title: "Apps", lens: "app" },
@@ -193,7 +140,7 @@
   }
 
   function render() {
-    var page = document.getElementById("page");
+    var page = scope.getElementById("page");
     page.textContent = "";
     if (!snapshot) { page.appendChild(el("p", "empty", "Loading…")); return; }
     var s = snapshot.settings || {};
@@ -228,19 +175,12 @@
 
   window.activityApply = function (data, iconMap) { snapshot = data; icons = iconMap || {}; render(); };
 
-  document.getElementById("ranges").addEventListener("click", function (e) {
+  scope.getElementById("ranges").addEventListener("click", function (e) {
     var b = e.target.closest("button[data-range]"); if (!b) return;
     [].forEach.call(this.querySelectorAll("button"), function (x) { x.classList.toggle("active", x === b); });
     send({ kind: "range", range: b.dataset.range });
   });
 
-  document.getElementById("sceneTabs").addEventListener("click", function (e) {
-    var b = e.target.closest(".vui-tab"); if (!b || b.classList.contains("is-active")) return;
-    send({ kind: "switch-scene", scene: b.dataset.scene });
-  });
-
+  window.VaultUI.observe(scope);
   send({ kind: "ready" });
 })();
-</script>
-</body>
-</html>

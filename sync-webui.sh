@@ -2,10 +2,11 @@
 # Sync the Mac Vault web editor from the extension (customBlocker).
 #
 # The Mac app hosts the SAME editor as the browser extension (popup.html/js/css
-# and their modules) inside a WKWebView; the only Mac-specific files are
-# chrome-shim.js (the chrome.* surface backed by the native bridge), the
-# activity page, the icons and the Mac manual. Never hand-edit a synced file
-# here — change customBlocker and re-run this script.
+# and their modules) inside its one WKWebView; the only Mac-specific files are
+# chrome-shim.js (the chrome.* surface backed by the native bridge), scenes.js/
+# scenes.css (the Classifier and Activity scenes beside the editor, in the same
+# document), the activity scene, the icons and the Mac manual. Never hand-edit
+# a synced file here — change customBlocker and re-run this script.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -33,25 +34,27 @@ for file in "${SYNCED_FILES[@]}"; do
 done
 
 # popup.html: identical, except that chrome-shim.js must load before any other
-# script (it defines the chrome.* surface the editor expects).
+# script (it defines the chrome.* surface the editor expects) and that the
+# Mac's other scenes (scenes.css/js) join the document after the editor.
 python3 - "$SRC/popup.html" "$DEST/popup.html" <<'PY'
 import sys
 src, dest = sys.argv[1], sys.argv[2]
 html = open(src, encoding="utf-8").read()
-marker = '    <script src="browser-compat.js"></script>\n'
-assert html.count(marker) == 1, "popup.html: expected one browser-compat.js script tag"
-html = html.replace(marker, '    <!-- Mac Vault: chrome-shim.js provides chrome.* over the native bridge; it must load first. -->\n    <script src="chrome-shim.js"></script>\n' + marker)
+def insert(marker, before="", after=""):
+    global html
+    assert html.count(marker) == 1, "popup.html: expected one " + marker.strip()
+    html = html.replace(marker, before + marker + after)
+insert('    <script src="browser-compat.js"></script>\n',
+       before='    <!-- Mac Vault: chrome-shim.js provides chrome.* over the native bridge; it must load first. -->\n    <script src="chrome-shim.js"></script>\n')
+insert('    <link rel="stylesheet" href="popup.css" />\n',
+       after='    <link rel="stylesheet" href="scenes.css" />\n')
+insert('    <script src="popup.js"></script>\n',
+       after='    <!-- Mac Vault: the Classifier and Activity scenes, in this same document. -->\n    <script src="scenes.js"></script>\n')
 open(dest, "w", encoding="utf-8").write(html)
 PY
 
 rm -rf "$DEST/translation"
 cp -R "$SRC/translation" "$DEST/translation"
-
-# The shared look (owner 2026-09-28: every Vault section looks the same): the
-# Classifier section loads it too.
-for file in vault-ui.css vault-ui.js; do
-  cp "$SRC/$file" "$ROOT/classifier/Sources/VaultClassifierApp/WebAssets/$file"
-done
 
 echo "[sync-webui] synced ${#SYNCED_FILES[@]} files + popup.html + translation/ from $SRC"
 
