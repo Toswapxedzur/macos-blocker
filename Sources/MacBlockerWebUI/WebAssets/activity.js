@@ -77,20 +77,24 @@
     return box;
   }
 
+  // `seconds` null = a row shown by name only (a browser in Usage).
   function row(item, seconds, fraction, kind) {
     var line = el("div", "row");
-    line.title = (item.label || item.key) + " — " + fmt(seconds);
+    line.title = item.label || item.key;
+    if (seconds !== null) line.title += " — " + fmt(seconds);
     line.appendChild(icon(item.key, item.label));
     var body = el("div", "row-body");
     var name = el("div", "row-name");
     name.appendChild(el("span", "row-label", item.label || item.key));
     if (kind) name.appendChild(el("span", "row-kind", kind));
     body.appendChild(name);
-    var bar = el("div", "row-bar"), fill = paint(el("span"), item.colorIndex);
-    fill.style.width = Math.max(1.5, fraction * 100) + "%";
-    bar.appendChild(fill); body.appendChild(bar);
+    if (seconds !== null) {
+      var bar = el("div", "row-bar"), fill = paint(el("span"), item.colorIndex);
+      fill.style.width = Math.max(1.5, fraction * 100) + "%";
+      bar.appendChild(fill); body.appendChild(bar);
+    }
     line.appendChild(body);
-    line.appendChild(el("div", "row-time", fmt(seconds)));
+    line.appendChild(el("div", "row-time", seconds === null ? "" : fmt(seconds)));
     return line;
   }
 
@@ -101,9 +105,11 @@
     return wrap;
   }
 
-  // Apps and websites in one ranked list, each marked. A browser's own row
-  // keeps only its time not spent on a recorded site (those sites have their
-  // rows), so the rows add up to the total.
+  // Apps and websites in one ranked list, each marked. A browser whose sites
+  // are recorded is listed by name only (owner 2026-09-28: its time would
+  // dominate — its sites have their own rows); it is ranked, and counted in
+  // the total, by its time not spent on a recorded site. A browser without
+  // recorded sites (no Vault extension) keeps its time.
   function usageItems(apps, sites, attribution, spanSeconds) {
     var items = [];
     apps.forEach(function (b) {
@@ -113,7 +119,7 @@
         var siteSeconds = Object.keys(inSites).reduce(function (sum, key) { return sum + inSites[key] * spanSeconds; }, 0);
         seconds = Math.max(0, b.seconds - siteSeconds);
       }
-      if (seconds >= 1) items.push({ item: b, seconds: seconds, kind: "App" });
+      if (seconds >= 1) items.push({ item: b, seconds: seconds, kind: "App", nameOnly: !!inSites });
     });
     sites.forEach(function (b) { items.push({ item: b, seconds: b.seconds, kind: "Website" }); });
     return items.sort(function (x, y) { return y.seconds - x.seconds; });
@@ -122,9 +128,10 @@
   function usageRows(items) {
     var wrap = el("div");
     if (!items.length) { wrap.appendChild(el("p", "empty", "Nothing in this range.")); return wrap; }
-    var top = Math.max(items[0].seconds, 1);
+    var shown = items.filter(function (entry) { return !entry.nameOnly; });
+    var top = Math.max(shown.length ? shown[0].seconds : 1, 1);
     items.slice(0, 20).forEach(function (entry) {
-      wrap.appendChild(row(entry.item, entry.seconds, entry.seconds / top, entry.kind));
+      wrap.appendChild(row(entry.item, entry.nameOnly ? null : entry.seconds, entry.seconds / top, entry.kind));
     });
     return wrap;
   }
