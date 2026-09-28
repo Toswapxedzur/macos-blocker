@@ -26,12 +26,16 @@
     '<main><div class="page" id="page"><p class="empty">Loading…</p></div></main>'
   ].join("");
   var RETENTIONS = [[7, "7 days"], [30, "30 days"], [90, "90 days"], [0, "Forever"]];
-  var LISTS = [
-    { id: "appUsage", key: "app-usage", title: "Apps", lens: "app" },
-    { id: "webVisit", key: "web-visit", title: "Websites", lens: "web" },
-    { id: "contentWatched", key: "content-watched", title: "Watched", lens: null }
+  // What is recorded (each kind has its own switch under Recording).
+  var KINDS = [
+    { id: "appUsage", key: "app-usage", title: "Apps" },
+    { id: "webVisit", key: "web-visit", title: "Websites" },
+    { id: "contentWatched", key: "content-watched", title: "Watched" }
   ];
-  var current = "appUsage";
+  // What is shown: apps and websites together (a browser's time lists the
+  // sites visited in it), or the videos watched.
+  var VIEWS = [{ id: "usage", title: "Usage" }, { id: "watched", title: "Watched" }];
+  var current = "usage";
   var snapshot = null;
   var icons = {};
 
@@ -73,23 +77,89 @@
     return box;
   }
 
+  function row(item, seconds, fraction, nested) {
+    var line = el("div", nested ? "row nested" : "row");
+    line.title = (item.label || item.key) + " — " + fmt(seconds);
+    line.appendChild(icon(item.key, item.label));
+    var body = el("div", "row-body");
+    body.appendChild(el("div", "row-name", item.label || item.key));
+    var bar = el("div", "row-bar"), fill = paint(el("span"), item.colorIndex);
+    fill.style.width = Math.max(1.5, fraction * 100) + "%";
+    bar.appendChild(fill); body.appendChild(bar);
+    line.appendChild(body);
+    line.appendChild(el("div", "row-time", fmt(seconds)));
+    return line;
+  }
+
   function rows(bars) {
     var wrap = el("div");
     if (!bars.length) { wrap.appendChild(el("p", "empty", "Nothing in this range.")); return wrap; }
-    bars.slice(0, 20).forEach(function (b) {
-      var row = el("div", "row");
-      row.title = (b.label || b.key) + " — " + fmt(b.seconds);
-      row.appendChild(icon(b.key, b.label));
-      var body = el("div", "row-body");
-      body.appendChild(el("div", "row-name", b.label || b.key));
-      var bar = el("div", "row-bar"), fill = paint(el("span"), b.colorIndex);
-      fill.style.width = Math.max(1.5, b.fraction * 100) + "%";
-      bar.appendChild(fill); body.appendChild(bar);
-      row.appendChild(body);
-      row.appendChild(el("div", "row-time", fmt(b.seconds)));
-      wrap.appendChild(row);
-    });
+    bars.slice(0, 20).forEach(function (b) { wrap.appendChild(row(b, b.seconds, b.fraction)); });
     return wrap;
+  }
+
+  // Apps, and under each browser the sites visited in it (time inside the
+  // browser's own time, so nothing counts twice); sites seen outside any
+  // recorded browser time come last.
+  var MAX_SITES_PER_BROWSER = 8;
+  function usageRows(apps, siteBars, attribution, spanSeconds) {
+    var wrap = el("div");
+    var siteByKey = {};
+    siteBars.forEach(function (b) { siteByKey[b.key] = b; });
+    var top = Math.max(apps.length ? apps[0].seconds : 0, 1);
+    function siteRows(fractions) {
+      Object.keys(fractions)
+        .map(function (key) { return { site: siteByKey[key], seconds: fractions[key] * spanSeconds }; })
+        .filter(function (entry) { return entry.site && entry.seconds >= 1; })
+        .sort(function (x, y) { return y.seconds - x.seconds; })
+        .forEach(function (entry, index, all) {
+          if (index < MAX_SITES_PER_BROWSER) {
+            wrap.appendChild(row(entry.site, entry.seconds, entry.seconds / top, true));
+          } else if (index === MAX_SITES_PER_BROWSER) {
+            var rest = all.slice(index).reduce(function (sum, e) { return sum + e.seconds; }, 0);
+            wrap.appendChild(el("div", "row-more", "+ " + (all.length - index) + " more sites · " + fmt(rest)));
+          }
+        });
+    }
+    apps.slice(0, 20).forEach(function (b) {
+      wrap.appendChild(row(b, b.seconds, b.fraction));
+      if (attribution.byBrowser[b.key]) siteRows(attribution.byBrowser[b.key]);
+    });
+    var outside = {};
+    Object.keys(attribution.outside).forEach(function (key) {
+      if (attribution.outside[key] * spanSeconds >= 60) outside[key] = attribution.outside[key];
+    });
+    if (Object.keys(outside).length) {
+      wrap.appendChild(el("div", "row-group", "Websites outside a recorded browser"));
+      siteRows(outside);
+    }
+    if (!wrap.children.length) wrap.appendChild(el("p", "empty", "Nothing in this range."));
+    return wrap;
+  }
+
+  // The sites visited while a browser was in front: each site segment clipped
+  // to each browser segment. `pieces` feed the strip, `byBrowser` the list;
+  // `outside` is site time that fell in no recorded browser time (fractions
+  // of the range throughout).
+  function attributeSites(apps, sites) {
+    var pieces = [], byBrowser = {}, inside = {}, outside = {};
+    apps.forEach(function (s) {
+      if (!BROWSERS[s.key]) return;
+      var from = s.startFraction, to = s.startFraction + s.widthFraction;
+      sites.forEach(function (w) {
+        var a = Math.max(from, w.startFraction), b = Math.min(to, w.startFraction + w.widthFraction);
+        if (b <= a) return;
+        pieces.push({ from: a, to: b, site: w, browser: s });
+        var perSite = byBrowser[s.key] || (byBrowser[s.key] = {});
+        perSite[w.key] = (perSite[w.key] || 0) + (b - a);
+        inside[w.key] = (inside[w.key] || 0) + (b - a);
+      });
+    });
+    sites.forEach(function (w) { outside[w.key] = (outside[w.key] || 0) + w.widthFraction; });
+    Object.keys(outside).forEach(function (key) {
+      outside[key] = Math.max(0, outside[key] - (inside[key] || 0));
+    });
+    return { pieces: pieces, byBrowser: byBrowser, outside: outside };
   }
 
   function clock(ms) { return new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
@@ -113,9 +183,9 @@
     node.style.width = ((to - from) * 100) + "%";
   }
 
-  // `sites` (the websites timeline) is drawn inside the browser segments of
-  // `segments` (the apps timeline); omit it for a strip of one kind.
-  function strip(segments, startMs, endMs, sites) {
+  // `pieces` (attributeSites) draw the sites inside the browser segments of
+  // `segments`; omit them for a strip of one kind.
+  function strip(segments, startMs, endMs, pieces) {
     var wrap = el("div");
     var track = el("div", "strip");
     var span = endMs - startMs;
@@ -126,54 +196,41 @@
         var line = el("div", "day"); line.style.left = ((d.getTime() - startMs) / span * 100) + "%"; track.appendChild(line);
       }
     }
-    var shownSites = {}; // key -> { label, colorIndex, fraction } drawn in browser time
     segments.forEach(function (s) {
       var seg = paint(el("div", "seg"), s.colorIndex);
-      var from = s.startFraction, to = s.startFraction + s.widthFraction;
-      place(seg, from, to);
+      place(seg, s.startFraction, s.startFraction + s.widthFraction);
       seg.title = segmentTitle(s);
       track.appendChild(seg);
-      if (!sites || !BROWSERS[s.key]) return;
-      // The sites visited while this browser was in front, clipped to it (a
-      // site's colour is never an app's: the snapshot numbers them apart).
-      sites.forEach(function (w) {
-        var a = Math.max(from, w.startFraction), b = Math.min(to, w.startFraction + w.widthFraction);
-        if (b <= a) return;
-        var index = w.colorIndex;
-        var site = paint(el("div", "seg site"), index);
-        place(site, a, b);
-        site.title = segmentTitle(w) + " (" + (s.label || s.key) + ")";
-        track.appendChild(site);
-        var shown = shownSites[w.key] || (shownSites[w.key] = { label: w.label || w.key, colorIndex: index, fraction: 0 });
-        shown.fraction += b - a;
-      });
+    });
+    // Sites on top of their browser's time; the browser's colour stays below.
+    (pieces || []).forEach(function (piece) {
+      var w = piece.site;
+      var site = paint(el("div", "seg site"), w.colorIndex);
+      place(site, piece.from, piece.to);
+      site.title = segmentTitle(w) + " (" + (piece.browser.label || piece.browser.key) + ")";
+      track.appendChild(site);
     });
     wrap.appendChild(track);
     var axis = el("div", "axis");
     axis.appendChild(el("span", null, multiDay ? day(startMs) : clock(startMs)));
     axis.appendChild(el("span", null, multiDay ? day(endMs) : clock(endMs)));
     wrap.appendChild(axis);
-    // Name the sites drawn in browser time (their colours are not in the list).
-    var legendSites = Object.keys(shownSites).map(function (k) { return shownSites[k]; })
-      .sort(function (x, y) { return y.fraction - x.fraction; }).slice(0, 8);
-    if (legendSites.length) {
-      var legend = el("div", "legend");
-      legend.appendChild(el("span", "legend-title", "In browsers"));
-      legendSites.forEach(function (site) {
-        var item = el("span", "legend-item");
-        item.appendChild(paint(el("span", "dot"), site.colorIndex));
-        item.appendChild(document.createTextNode(site.label));
-        legend.appendChild(item);
-      });
-      wrap.appendChild(legend);
-    }
     return wrap;
+  }
+
+  function notRecorded(categories) {
+    var off = el("div", "off");
+    off.appendChild(el("span", null, "Not recorded."));
+    off.appendChild(textButton("Turn on", function () {
+      categories.forEach(function (category) { send({ kind: "setSettings", category: category, enabled: true }); });
+    }));
+    return off;
   }
 
   function settingsPanel(s) {
     var box = el("details", "vui-expand settings");
     box.appendChild(el("summary", null, "Recording"));
-    LISTS.forEach(function (c) {
+    KINDS.forEach(function (c) {
       var cat = s[c.id] || { enabled: false, retentionDays: 30 };
       var row = el("div", "settings-row");
       row.appendChild(el("span", "name", c.title));
@@ -206,28 +263,36 @@
     var panel = el("div", "panel");
 
     var head = el("div", "lists vui-tabs");
-    LISTS.forEach(function (c) {
-      var b = textButton(c.title, function () { current = c.id; render(); }, c.id === current ? "vui-tab is-active" : "vui-tab");
-      head.appendChild(b);
+    VIEWS.forEach(function (view) {
+      head.appendChild(textButton(view.title, function () { current = view.id; render(); },
+        view.id === current ? "vui-tab is-active" : "vui-tab"));
     });
-    var def = LISTS.filter(function (c) { return c.id === current; })[0];
-    var lens = def.lens ? snapshot[def.lens] : null;
-    var bars = lens ? lens.bars : (snapshot.watched || []);
-    var total = lens ? lens.totalSeconds : bars.reduce(function (a, b) { return a + b.seconds; }, 0);
-    var totalEl = el("span", "total", "Total"); totalEl.appendChild(el("strong", null, fmt(total)));
+    var totalEl = el("span", "total", "Total");
     head.appendChild(totalEl);
     panel.appendChild(head);
 
-    var cat = s[def.id] || { enabled: false };
-    if (!cat.enabled) {
-      var off = el("div", "off");
-      off.appendChild(el("span", null, "Not recorded."));
-      off.appendChild(textButton("Turn on", function () { send({ kind: "setSettings", category: def.key, enabled: true }); }));
-      panel.appendChild(off);
+    if (current === "watched") {
+      var watched = snapshot.watched || [];
+      totalEl.appendChild(el("strong", null, fmt(watched.reduce(function (a, b) { return a + b.seconds; }, 0))));
+      if (!(s.contentWatched && s.contentWatched.enabled)) panel.appendChild(notRecorded(["content-watched"]));
+      else panel.appendChild(rows(watched));
     } else {
-      var sites = def.lens === "app" && snapshot.web ? snapshot.web.timeline : null;
-      if (lens && lens.timeline.length) panel.appendChild(strip(lens.timeline, snapshot.rangeStartMs, snapshot.rangeEndMs, sites));
-      panel.appendChild(rows(bars));
+      var apps = snapshot.app || { totalSeconds: 0, bars: [], timeline: [] };
+      var web = snapshot.web || { totalSeconds: 0, bars: [], timeline: [] };
+      var attribution = attributeSites(apps.timeline, web.timeline);
+      var spanSeconds = (snapshot.rangeEndMs - snapshot.rangeStartMs) / 1000;
+      var outsideSeconds = Object.keys(attribution.outside).reduce(function (sum, key) {
+        var seconds = attribution.outside[key] * spanSeconds;
+        return sum + (seconds >= 60 ? seconds : 0);
+      }, 0);
+      totalEl.appendChild(el("strong", null, fmt(apps.totalSeconds + outsideSeconds)));
+      var appsOn = s.appUsage && s.appUsage.enabled, webOn = s.webVisit && s.webVisit.enabled;
+      if (!appsOn && !webOn) {
+        panel.appendChild(notRecorded(["app-usage", "web-visit"]));
+      } else {
+        if (apps.timeline.length) panel.appendChild(strip(apps.timeline, snapshot.rangeStartMs, snapshot.rangeEndMs, attribution.pieces));
+        panel.appendChild(usageRows(apps.bars, web.bars, attribution, spanSeconds));
+      }
     }
     panel.appendChild(settingsPanel(s));
     page.appendChild(panel);
