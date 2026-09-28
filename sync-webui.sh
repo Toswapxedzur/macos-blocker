@@ -24,6 +24,8 @@ SYNCED_FILES=(
   bridge-protocol.js
   browser-compat.js
   rule-core.js
+  vault-ui.css
+  vault-ui.js
 )
 
 for file in "${SYNCED_FILES[@]}"; do
@@ -44,6 +46,12 @@ PY
 
 rm -rf "$DEST/translation"
 cp -R "$SRC/translation" "$DEST/translation"
+
+# The shared look (owner 2026-09-28: every Vault section looks the same): the
+# Classifier section loads it too.
+for file in vault-ui.css vault-ui.js; do
+  cp "$SRC/$file" "$ROOT/classifier/Sources/VaultClassifierApp/WebAssets/$file"
+done
 
 echo "[sync-webui] synced ${#SYNCED_FILES[@]} files + popup.html + translation/ from $SRC"
 
