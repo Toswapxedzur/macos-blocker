@@ -45,15 +45,16 @@ body {
   min-height: 0;
   display: grid;
   grid-template-columns: var(--navigation-panel-width) 10px minmax(0, 1fr);
-  padding: 0 14px 14px;
+  padding: 0 12px 10px;
 }
 
 .navigation-panel,
 .editor-panel {
   min-height: 0;
   overflow: auto;
-  background: var(--vui-surface);
+  background: rgba(255, 255, 255, 0.92);
   border-radius: var(--vui-radius);
+  box-shadow: var(--vui-panel-shadow);
 }
 
 .navigation-panel { padding: 14px 10px 14px 14px; }
@@ -89,13 +90,13 @@ body {
 .eyebrow {
   display: block;
   color: var(--vui-muted);
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .field-label {
   display: block;
   margin-bottom: 5px;
-  font-weight: 500;
+  font-weight: 700;
 }
 
 .field-hint {
@@ -114,9 +115,9 @@ body {
 }
 
 .sidebar-group-title {
-  margin: 10px 4px 4px 0;
+  margin: 10px 4px 8px 0;
   color: var(--vui-muted);
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .sidebar-group-title:first-child { margin-top: 0; }
@@ -124,32 +125,46 @@ body {
 .classifier-type-nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 10px;
+  padding-right: 4px;
 }
 
 .classifier-type-row { display: block; }
 
+/* Rows are the Vault editor's group cards. */
 .sidebar-row {
   display: flex;
   align-items: center;
   gap: 9px;
   width: 100%;
-  padding: 8px 10px;
-  border-radius: var(--vui-radius-sm);
+  padding: 10px 11px;
+  border-radius: 12px;
   color: var(--vui-text);
+  background: var(--vui-navy-50);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
   font-weight: 400;
   text-align: left;
   white-space: normal;
 }
 
-.sidebar-row:hover:not(:disabled) { background: var(--vui-fill); }
+.sidebar-row:hover:not(:disabled) {
+  background: var(--vui-navy-50);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.1);
+}
+
 .sidebar-row.active,
-.sidebar-row.active:hover { background: var(--vui-accent-soft); }
+.sidebar-row.active:hover:not(:disabled) {
+  background: var(--vui-accent-soft);
+  box-shadow: 0 8px 18px rgba(30, 58, 138, 0.16);
+}
+
+.sidebar-more .sidebar-row { margin-top: 10px; }
 
 .sidebar-symbol {
   width: 16px;
   flex: none;
-  color: var(--vui-muted);
+  color: var(--vui-accent);
   text-align: center;
 }
 
@@ -158,7 +173,7 @@ body {
 .sidebar-name {
   display: block;
   overflow: hidden;
-  font-weight: 600;
+  font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -179,7 +194,7 @@ body {
 
 .sidebar-add {
   align-self: flex-start;
-  margin-top: 4px;
+  margin-top: 10px;
 }
 
 .sidebar-more { margin-top: 10px; }
@@ -221,8 +236,8 @@ body {
 .type-section { display: flex; flex-direction: column; gap: 8px; }
 
 .type-section-title {
-  color: var(--vui-muted);
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .type-section > .workspace { padding: 0; }
@@ -247,43 +262,27 @@ body {
   cursor: pointer;
 }
 
-/* Buttons stay small: the main action is a light accent chip, the rest text. */
-.primary {
-  background: var(--vui-accent-soft);
-}
-
-.primary:hover:not(:disabled) {
-  background: #d9e2f7;
-}
-
-.danger,
-.danger:hover:not(:disabled) {
-  color: var(--vui-danger);
-}
-
-.danger:hover:not(:disabled) {
-  background: var(--vui-danger-soft);
-}
-
 /* Status: a quiet tinted label, never a coloured card. */
 .status-pill,
 .badge {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 2px 8px;
+  padding: 4px 9px;
   border-radius: 999px;
   color: var(--vui-muted);
   background: var(--vui-fill);
-  font-size: var(--vui-size-small);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
   white-space: nowrap;
 }
 
-.status-pill.navy,
-.status-pill.cyan { color: var(--vui-accent); background: var(--vui-accent-soft); }
-.status-pill.green { color: var(--vui-ok); background: #e6f3ec; }
+.status-pill.navy { color: var(--vui-accent); background: var(--vui-accent-soft); }
+.status-pill.cyan { color: var(--vui-cyan-text); background: var(--vui-cyan-50); }
+.status-pill.green { color: var(--vui-ok); background: #f0fdf4; }
 .status-pill.gold,
-.status-pill.danger { color: #8a6212; background: #fbf2de; }
+.status-pill.danger { color: var(--vui-gold-text); background: var(--vui-gold-50); }
 .status-pill.red,
 .status-pill.pink,
 .status-pill.reject { color: var(--vui-danger); background: var(--vui-danger-soft); }
@@ -296,10 +295,10 @@ body {
   background: var(--vui-fill);
 }
 
-.notice.navy,
-.notice.cyan { color: var(--vui-accent); background: var(--vui-accent-soft); }
-.notice.green { color: var(--vui-ok); background: #e6f3ec; }
-.notice.gold { color: #8a6212; background: #fbf2de; }
+.notice.navy { color: var(--vui-accent); background: var(--vui-accent-soft); }
+.notice.cyan { color: var(--vui-cyan-text); background: var(--vui-cyan-50); }
+.notice.green { color: var(--vui-ok); background: #f0fdf4; }
+.notice.gold { color: var(--vui-gold-text); background: var(--vui-gold-50); }
 .notice.red,
 .notice.pink { color: var(--vui-danger); background: var(--vui-danger-soft); }
 
@@ -615,8 +614,10 @@ body {
 .tree-workspace-scoped .tree-map-title { display: none; }
 .tree-workspace-scoped .tree-connection-mode { top: 12px; }
 
-/* Nodes wear their tag's colour; the fixed node width keeps the smaller text. */
-.tree-map-node {
+/* Nodes wear their tag's colour; the fixed node width keeps the smaller text.
+   Scoped to the layer so the depth classes (primary/secondary…) never pick up
+   the shared button pills. */
+.tree-node-layer .tree-map-node {
   position: absolute;
   top: 0;
   left: 0;
@@ -635,16 +636,17 @@ body {
   user-select: none;
   -webkit-user-drag: none;
   touch-action: none;
+  font-size: 11px;
   cursor: grab;
 }
 
-.tree-map-node:hover:not(:disabled) { background: var(--tag-color-light); box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--vui-accent); }
-.tree-map-node:active { cursor: grabbing; }
-.tree-map-node > span { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: rgba(0, 0, 0, 0.72); }
-.tree-map-node strong { overflow: hidden; color: #000; font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; text-overflow: ellipsis; }
-.tree-map-node.active { z-index: 3; box-shadow: 0 0 0 2px #fff, 0 0 0 4px #b45309; }
-.tree-map-node.connection-source { z-index: 3; box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--vui-accent); }
-.tree-map-node.retired { opacity: 0.55; }
+.tree-node-layer .tree-map-node:hover:not(:disabled) { background: var(--tag-color-light); box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--vui-accent); }
+.tree-node-layer .tree-map-node:active { cursor: grabbing; }
+.tree-node-layer .tree-map-node > span { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: rgba(0, 0, 0, 0.72); }
+.tree-node-layer .tree-map-node strong { overflow: hidden; color: #000; font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; text-overflow: ellipsis; }
+.tree-node-layer .tree-map-node.active { z-index: 3; box-shadow: 0 0 0 2px #fff, 0 0 0 4px #b45309; }
+.tree-node-layer .tree-map-node.connection-source { z-index: 3; box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--vui-accent); }
+.tree-node-layer .tree-map-node.retired { opacity: 0.55; }
 
 .tree-map-empty {
   position: absolute;
@@ -874,10 +876,20 @@ body {
 
 .utility-resource-section,
 .utility-research-section {
-  padding: 14px 16px;
-  border-radius: var(--vui-radius-sm);
-  background: var(--vui-fill);
+  padding: 14px 16px 16px;
+  border-radius: var(--vui-radius-card);
+  background: var(--vui-navy-50);
+  box-shadow: var(--vui-card-shadow);
 }
+
+.utility-research-section { background: var(--vui-cyan-50); }
+
+.utility-resource-section .vui-select-button,
+.utility-research-section .vui-select-button,
+.utility-resource-section input,
+.utility-research-section input,
+.utility-resource-section textarea,
+.utility-research-section textarea { background: var(--vui-surface); }
 
 .utility-llm-section .section-copy { margin: 2px 0 8px; }
 .utility-toggles { display: grid; gap: 4px; }
@@ -912,8 +924,8 @@ body {
   flex-direction: column;
   align-items: flex-start;
   gap: 4px;
-  padding: 9px 11px;
-  border-radius: var(--vui-radius-sm);
+  padding: 10px 12px;
+  border-radius: 11px;
   background: var(--vui-fill);
   text-align: left;
   cursor: pointer;
@@ -925,7 +937,7 @@ body {
 .dial-card.active,
 .dial-card:has(input:checked),
 .strictness-option.active,
-.strictness-option:has(input:checked) { background: var(--vui-accent-soft); }
+.strictness-option:has(input:checked) { background: #e0e7ff; }
 
 .dial-card input[type="radio"],
 .strictness-option input[type="radio"] { position: absolute; opacity: 0; pointer-events: none; }
