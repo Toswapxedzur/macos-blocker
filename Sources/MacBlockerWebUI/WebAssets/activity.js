@@ -53,7 +53,17 @@
     return Math.floor(m / 60) + "h " + (m % 60) + "m";
   }
   function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
-  function color(i) { return "c" + (((i % 12) + 12) % 12); }
+  // Every item on the page has its own colour index (Mac Vault numbers apps,
+  // then sites, then watched videos). The first twelve are the base palette;
+  // past it, golden-angle hues keep every further colour different.
+  var PALETTE = ["#5b7fc7", "#e8914a", "#5fa86a", "#d9656a", "#6fb3ae", "#d9b945",
+    "#a27bb0", "#e99aa6", "#9a7a64", "#8ccf7f", "#86b8c7", "#c97aa0"];
+  function colorOf(i) {
+    if (i >= 0 && i < PALETTE.length) return PALETTE[i];
+    var n = i - PALETTE.length;
+    return "hsl(" + ((n * 137.508 + 20) % 360).toFixed(1) + ", " + (n % 3 === 1 ? 45 : 58) + "%, " + (n % 2 ? 62 : 50) + "%)";
+  }
+  function paint(node, i) { node.style.background = colorOf(i); return node; }
   function textButton(label, onClick, cls) { var b = el("button", cls || null, label); b.type = "button"; b.addEventListener("click", onClick); return b; }
 
   function icon(key, label) {
@@ -72,7 +82,7 @@
       row.appendChild(icon(b.key, b.label));
       var body = el("div", "row-body");
       body.appendChild(el("div", "row-name", b.label || b.key));
-      var bar = el("div", "row-bar"), fill = el("span", color(b.colorIndex));
+      var bar = el("div", "row-bar"), fill = paint(el("span"), b.colorIndex);
       fill.style.width = Math.max(1.5, b.fraction * 100) + "%";
       bar.appendChild(fill); body.appendChild(bar);
       row.appendChild(body);
@@ -118,19 +128,19 @@
     }
     var shownSites = {}; // key -> { label, colorIndex, fraction } drawn in browser time
     segments.forEach(function (s) {
-      var seg = el("div", "seg " + color(s.colorIndex));
+      var seg = paint(el("div", "seg"), s.colorIndex);
       var from = s.startFraction, to = s.startFraction + s.widthFraction;
       place(seg, from, to);
       seg.title = segmentTitle(s);
       track.appendChild(seg);
       if (!sites || !BROWSERS[s.key]) return;
-      // The sites visited while this browser was in front, clipped to it; a
-      // site never takes the browser's own colour.
+      // The sites visited while this browser was in front, clipped to it (a
+      // site's colour is never an app's: the snapshot numbers them apart).
       sites.forEach(function (w) {
         var a = Math.max(from, w.startFraction), b = Math.min(to, w.startFraction + w.widthFraction);
         if (b <= a) return;
-        var index = w.colorIndex === s.colorIndex ? w.colorIndex + 6 : w.colorIndex;
-        var site = el("div", "seg site " + color(index));
+        var index = w.colorIndex;
+        var site = paint(el("div", "seg site"), index);
         place(site, a, b);
         site.title = segmentTitle(w) + " (" + (s.label || s.key) + ")";
         track.appendChild(site);
@@ -151,7 +161,7 @@
       legend.appendChild(el("span", "legend-title", "In browsers"));
       legendSites.forEach(function (site) {
         var item = el("span", "legend-item");
-        item.appendChild(el("span", "dot " + color(site.colorIndex)));
+        item.appendChild(paint(el("span", "dot"), site.colorIndex));
         item.appendChild(document.createTextNode(site.label));
         legend.appendChild(item);
       });
