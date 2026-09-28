@@ -40,6 +40,3 @@ main { flex: 1; min-height: 0; overflow: auto; }
 .settings-row .name { flex: 1; }
 .settings-row label { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; }
 .settings-row .vui-select { width: auto; }
-.c0{background:#5b7fc7}.c1{background:#e8914a}.c2{background:#5fa86a}.c3{background:#d9656a}
-.c4{background:#6fb3ae}.c5{background:#d9b945}.c6{background:#a27bb0}.c7{background:#e99aa6}
-.c8{background:#9a7a64}.c9{background:#8ccf7f}.c10{background:#86b8c7}.c11{background:#c97aa0}
