@@ -60,6 +60,8 @@
   // A group can only be created through this dialog.
   let pendingCreateType = null;
   let utilityPanel = null;
+  // "More" / "Options" expands the user opened: the page re-renders on every update.
+  const openExpands = new Set();
   // Which classifier type is open in the left-panel list (client-only UI state).
   let selectedTypeID = null;
   // Which trash entry's recover/delete panel is expanded in the left panel.
@@ -706,7 +708,7 @@
         field("research.model", "research.modelHint", "llmModelIdentifier", research.llmModelIdentifier || "", "text", 'list="research-model-suggestions" maxlength="256"')
       }<datalist id="research-model-suggestions">${modelSuggestions.map((model) => `<option value="${esc(model)}"></option>`).join("")}</datalist></div><p class="small-copy">${tx("research.constantsNote")}</p><p class="small-copy">${tx("research.usageToday", { used: research.tokensUsedToday ?? 0, limit: research.dailyTokenLimit ?? 10000 })}</p>${researchStatusBlock(research.status)}<div class="action-row"><button class="primary" data-action="saveResearchSettings" data-form="utility-research-form">${tx("research.save")}</button></div></section>`;
       const packageSection = `<section class="utility-settings-section utility-resource-section" data-form-id="utility-package-form"><h3 class="utility-settings-section-title">${tx("settings.packageUpdates")}</h3><div class="utility-settings-fields">${selectField("settings.packageUpdates", "settings.packageUpdatesCopy", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div><div class="action-row"><button class="primary" data-action="savePackageSettings" data-form="utility-package-form">${tx("common.save")}</button></div></section>`;
-      content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${llmSection}${researchSection}${packageSection}</div></section>`;
+      content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${llmSection}${researchSection}${packageSection}<section class="utility-settings-section"><h3 class="utility-settings-section-title">${tx("language.label")}</h3>${languageSelection()}</section></div></section>`;
     }
     if (!content) return "";
     return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}"></button><div class="utility-popover" role="dialog" aria-modal="true" aria-label="${esc(tx("utility.settings.title"))}">${content}</div></div>`;
@@ -757,18 +759,20 @@
       <div class="sidebar-group-title">${tx("navigation.classifierTypes")}</div>
       <div class="classifier-type-nav" data-classifier-type-nav>${typeRows}</div>
       <button class="sidebar-add" type="button" data-action="newType"><span aria-hidden="true">＋</span> ${tx("navigation.newType")}</button>
-      <div class="sidebar-divider" role="separator"></div>
-      ${navButton("classificationData", "▤", "navigation.classificationData", "navigation.classificationDataMeta")}
-      ${navButton("knowledge", "✦", "navigation.knowledge", "navigation.knowledgeMeta")}
-      ${navButton("llmAssist", "◌", "navigation.apiKeys", "navigation.apiKeysMeta")}
-      ${trashSection}`;
+      <details class="vui-expand sidebar-more" data-expand="sidebar"${openExpands.has("sidebar") || ["classificationData", "knowledge", "llmAssist", "trash"].includes(state.workspace) ? " open" : ""}>
+        <summary>${tx("navigation.more")}</summary>
+        ${navButton("classificationData", "▤", "navigation.classificationData", "navigation.classificationDataMeta")}
+        ${navButton("knowledge", "✦", "navigation.knowledge", "navigation.knowledgeMeta")}
+        ${navButton("llmAssist", "◌", "navigation.apiKeys", "navigation.apiKeysMeta")}
+        ${trashSection}
+      </details>`;
   }
 
   function shell(content) {
     return `<div class="popup">
-      <header class="hero">
-        <div class="hero-copy"><span class="hero-mark" aria-hidden="true">V</span><nav class="scene-tabs" aria-label="Scene"><button type="button" class="scene-tab" data-action="switchScene" data-scene="vault">Vault</button><button type="button" class="scene-tab is-active" data-action="switchScene" data-scene="classifier">Classifier</button><button type="button" class="scene-tab" data-action="switchScene" data-scene="activity">Activity</button></nav></div>
-        <div class="hero-controls"><span class="settings-popover-anchor"><button class="header-tool" data-action="openUtilityPanel" data-utility-panel="settings" aria-haspopup="dialog" aria-expanded="${utilityPanel ? "true" : "false"}">${tx("utility.settings.button")}</button>${utilityPanelContent()}</span>${languageSelection()}<div class="hero-status"><span class="status-dot"></span>${tx(state.settings?.research?.enabled ? "hero.researchEnabled" : "hero.offline")}</div></div>
+      <header class="vui-topbar">
+        <nav class="vui-tabs" aria-label="Scene"><button type="button" class="vui-tab" data-action="switchScene" data-scene="vault">Vault</button><button type="button" class="vui-tab is-active" data-action="switchScene" data-scene="classifier">Classifier</button><button type="button" class="vui-tab" data-action="switchScene" data-scene="activity">Activity</button></nav>
+        <div class="vui-topbar-links"><span class="settings-popover-anchor"><button type="button" data-action="openUtilityPanel" data-utility-panel="settings" aria-haspopup="dialog" aria-expanded="${utilityPanel ? "true" : "false"}">${tx("utility.settings.button")}</button>${utilityPanelContent()}</span></div>
       </header>
       <div class="layout">
         <aside class="navigation-panel" aria-label="${tx("navigation.aria")}">
@@ -977,17 +981,12 @@
   function browserBridgeWorkspace() {
     const assets = state.assets;
     const classifierTypes = assets.classifierTypes || [];
-    const trees = assets.trees || [];
-    const datasets = assets.datasets || [];
     const profiles = assets.providerProfiles || [];
     const platformDefinitions = new Map((assets.collectionPlatforms || []).map((platform) => [platform.id, platform]));
     const typeForm = (classifierType) => {
       const formID = `classifier-type-${classifierType.id}`;
       const applicablePlatformID = typeof classifierType.applicablePlatformID === "string" ? classifierType.applicablePlatformID : "";
       const applicableBinding = (assets.bindings || []).find((binding) => binding.id === applicablePlatformID);
-      // A type owns its own tree; the binding only supplies the shared dataset.
-      const selectedTree = trees.find((tree) => tree.id === classifierType.treeID);
-      const selectedDataset = datasets.find((dataset) => dataset.id === applicableBinding?.datasetID);
       const applicablePlatform = platformDefinitions.get(applicablePlatformID);
       const supportsLocalModel = applicablePlatform?.supportsLocalModel === true;
       // A platform belongs to at most one classifier type: hide platforms another
@@ -1012,7 +1011,6 @@
           : boundPlatformAPIProfile
             ? t("bridge.platformDataBound", { profile: boundPlatformAPIProfile.name })
             : t("bridge.platformDataMissingKey", { platform: applicablePlatform.name });
-      const typeStatus = applicablePlatformID ? t("bridge.configured") : t("bridge.needsSource");
       const localOverrides = classifierType.localModelOverrides || null;
       const localModelFormID = `classifier-local-model-form-${classifierType.id}`;
       const globalLLM = state.settings?.localLLM || {};
@@ -1029,11 +1027,14 @@
       const researchMode = classifierType.researchEnabled === true ? "on" : classifierType.researchEnabled === false ? "off" : "inherit";
       const researchOverrideSection = supportsLocalModel ? `<section class="classifier-type-section classifier-research-overrides"><div class="section-header"><div><h3>${tx("bridge.researchOverrides")}</h3><p class="section-copy">${tx("bridge.researchOverridesCopy")}</p></div></div><div data-form-id="${esc(researchFormID)}"><div class="utility-settings-fields">${valueSelectField("bridge.researchMode", "", "researchMode", researchMode, [["inherit", t("bridge.researchMode.inherit")], ["on", t("bridge.researchMode.on")], ["off", t("bridge.researchMode.off")]])}</div><p class="small-copy research-master-note">${tx("bridge.researchMasterGate")}</p><div class="action-row"><button type="button" class="primary" data-action="saveClassifierTypeResearch" data-form="${esc(researchFormID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div></div></section>` : "";
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}">
-        <div class="classifier-type-head"><div><p class="section-copy">${tx("bridge.typeMatchCopy", { tree: selectedTree?.name || t("bridge.missingAsset"), data: selectedDataset?.name || t("bridge.missingAsset") })}</p></div><div class="classifier-type-head-pills">${statusPill(typeStatus, applicablePlatformID ? "navy" : "muted")}</div></div>
-        <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}<button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("bridge.saveType")}</button><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}" data-name="${esc(classifierType.name)}">${tx("bridge.deleteType")}</button></div>
-        <section class="classifier-type-section classifier-applicable-platform-section"><div class="section-header"><div><h3>${tx("bridge.applicablePlatform")}</h3><p class="section-copy">${tx("bridge.assetSelectionCopy")}</p></div></div><div class="classifier-applicable-platform-row">${valueSelectField("bridge.applicablePlatform", "bridge.applicablePlatformCopy", "applicablePlatformID", applicablePlatformID, applicablePlatformOptions)}<div class="classifier-platform-data-status"><span class="eyebrow">${tx("bridge.platformData")}</span><p class="small-copy">${esc(platformDataStatus)}</p></div></div>${applicablePlatform && !supportsLocalModel ? `<p class="small-copy" data-collection-only-platform-note>${tx("bridge.collectionOnlyCopy")}</p>` : ""}</section>
+        <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}</div>
+        <section class="classifier-type-section classifier-applicable-platform-section"><div class="classifier-applicable-platform-row">${valueSelectField("bridge.applicablePlatform", "", "applicablePlatformID", applicablePlatformID, applicablePlatformOptions)}<p class="small-copy classifier-platform-data-status">${esc(platformDataStatus)}</p></div>${applicablePlatform && !supportsLocalModel ? `<p class="small-copy" data-collection-only-platform-note>${tx("bridge.collectionOnlyCopy")}</p>` : ""}</section>
+        <div class="action-row"><button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div>
+        <details class="vui-expand classifier-type-more" data-expand="type-options-${esc(classifierType.id)}"${openExpands.has(`type-options-${classifierType.id}`) ? " open" : ""}><summary>${tx("navigation.options")}</summary>
         ${localModelOverrideSection}
         ${researchOverrideSection}
+          <div class="action-row"><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}" data-name="${esc(classifierType.name)}">${tx("bridge.deleteType")}</button></div>
+        </details>
       </section>`;
     };
     // A type now targets one platform at creation and owns a fresh tree. The
@@ -1041,13 +1042,11 @@
     // and owned tree together.
     const selectedType = selectedTypeID ? classifierTypes.find((type) => type.id === selectedTypeID) : null;
     if (selectedType) {
-      const platformDef = (assets.collectionPlatforms || []).find((definition) => definition.id === selectedType.applicablePlatformID);
-      // Config and Tag tree are stacked in one continuous scroll.
+      // The type (its name is the editable title) and its tag tree, in one scroll.
       const section = (labelKey, inner) => `<section class="type-section"><h3 class="type-section-title">${tx(labelKey)}</h3>${inner}</section>`;
       return `<div class="workspace classifier-type-workspace">
-        <div class="type-detail-head"><div><span class="eyebrow">${tx("bridge.typeLibrary")}</span><h2>${esc(selectedType.name)}</h2><p class="section-copy">${esc(platformDef ? platformDef.name : tx("bridge.noApplicablePlatform"))}</p></div></div>
         <div class="type-detail-body">
-          ${section("bridge.tabConfig", typeForm(selectedType))}
+          <section class="type-section">${typeForm(selectedType)}</section>
           ${section("bridge.tabTree", tagTreeWorkspace(selectedType.treeID))}
         </div></div>`;
     }
@@ -1828,6 +1827,11 @@
       if (details.open) collapsedCollectionCreatorLists.delete(details.dataset.collectionCreatorsPlatform);
       else collapsedCollectionCreatorLists.add(details.dataset.collectionCreatorsPlatform);
     }
+  }, true);
+
+  document.addEventListener("toggle", (event) => {
+    const key = event.target.matches?.("details[data-expand]") ? event.target.dataset.expand : null;
+    if (key) event.target.open ? openExpands.add(key) : openExpands.delete(key);
   }, true);
 
   document.addEventListener("change", (event) => {

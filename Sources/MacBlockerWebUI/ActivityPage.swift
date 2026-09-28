@@ -27,6 +27,11 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler, WKNavigationD
         if let webView { return webView }
         let config = WKWebViewConfiguration()
         config.userContentController.add(self, name: "activity")
+        // Served like the Vault editor, so the page loads the shared look
+        // (vault-ui.css / vault-ui.js) beside it.
+        if let assetsDir = WebAssetsLocator.assetsDirectory {
+            config.setURLSchemeHandler(WebAssetSchemeHandler(assetsDirectory: assetsDir), forURLScheme: WebAssetSchemeHandler.scheme)
+        }
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
         webView.setValue(false, forKey: "drawsBackground")
@@ -34,8 +39,8 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler, WKNavigationD
         // appearance so the dashboard doesn't follow the system into dark and
         // clash with the rest of the window. One shared theme across the app.
         webView.appearance = NSAppearance(named: .aqua)
-        if let html = Self.pageHTML() {
-            webView.loadHTMLString(html, baseURL: nil)
+        if WebAssetsLocator.assetsDirectory != nil {
+            webView.load(URLRequest(url: URL(string: "\(WebAssetSchemeHandler.scheme)://\(WebAssetSchemeHandler.host)/activity.html")!))
         }
         self.webView = webView
         return webView
@@ -165,10 +170,5 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler, WKNavigationD
         }
     }
 
-    private static func pageHTML() -> String? {
-        guard let dir = WebAssetsLocator.assetsDirectory else { return nil }
-        let url = dir.appendingPathComponent("activity.html", isDirectory: false)
-        return try? String(contentsOf: url, encoding: .utf8)
-    }
 }
 #endif
