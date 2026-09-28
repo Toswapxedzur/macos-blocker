@@ -15,17 +15,19 @@
 <link rel="stylesheet" href="vault-ui.css" />
 <style>
   html, body { height: 100%; }
-  body { display: flex; flex-direction: column; }
-  .ranges { display: flex; gap: 2px; }
-  .ranges button { color: var(--vui-muted); }
-  .ranges button.active { color: var(--vui-accent); background: var(--vui-accent-soft); }
-  main { flex: 1; overflow: auto; padding: 0 14px 20px; }
+  body { display: flex; flex-direction: column; padding: 10px 12px; }
+  /* Range switch: the extension's pills — the chosen one navy, the rest grey. */
+  .ranges { display: flex; gap: 8px; }
+  .ranges button { background: #e2e8f0; color: #0f172a; }
+  .ranges button.active { background: var(--navy-700); color: #ffffff; }
+  main { flex: 1; min-height: 0; overflow: auto; }
   .page { max-width: 880px; margin: 0 auto; }
-  .panel { background: rgba(255, 255, 255, 0.92); border-radius: var(--vui-radius); box-shadow: var(--vui-panel-shadow); padding: 18px 22px 22px; }
-  .lists { display: flex; align-items: baseline; gap: 6px; margin-bottom: 14px; }
-  .lists button { font-size: var(--vui-size-title); font-weight: 700; color: var(--vui-muted); padding: 2px 6px; }
-  .lists button.active { color: var(--vui-text); }
-  .lists button:hover { background: none; color: var(--vui-text); }
+  .panel { background: rgba(255, 255, 255, 0.92); border-radius: 16px; box-shadow: var(--vui-panel-shadow); padding: 16px 18px 18px; }
+  .lists { display: flex; align-items: baseline; gap: 16px; margin-bottom: 14px; }
+  .lists button { padding: 0; border-radius: 0; background: none; font-size: 16px; font-weight: 700; color: #94a3b8; }
+  .lists button.active { color: #1f2937; }
+  .lists button:hover { filter: none; color: #64748b; }
+  .lists button.active:hover { color: #1f2937; }
   .total { margin-left: auto; color: var(--vui-muted); }
   .total strong { color: var(--vui-text); font-size: var(--vui-size-title); font-weight: 700; margin-left: 4px; }
   /* day strip */
@@ -35,11 +37,11 @@
   .axis { display: flex; justify-content: space-between; color: var(--vui-muted); font-size: var(--vui-size-small); margin: 4px 2px 14px; }
   /* rows */
   .row { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 7px 4px; border-radius: var(--vui-radius-sm); }
-  .row:hover { background: #f8f9fb; }
-  .icon { width: 36px; height: 36px; border-radius: 9px; display: flex; align-items: center; justify-content: center; overflow: hidden; background: var(--vui-fill); color: var(--vui-muted); font-weight: 600; font-size: var(--vui-size-title); }
+  .row:hover { background: #f8fafc; }
+  .icon { width: 36px; height: 36px; border-radius: 9px; display: flex; align-items: center; justify-content: center; overflow: hidden; background: var(--navy-100); color: var(--navy-700); font-weight: 700; font-size: 14px; }
   .icon img { width: 36px; height: 36px; object-fit: contain; }
   .row-body { min-width: 0; }
-  .row-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row-name { overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
   .row-bar { height: 5px; margin-top: 5px; border-radius: 99px; background: var(--vui-fill); overflow: hidden; }
   .row-bar span { display: block; height: 100%; border-radius: 99px; }
   .row-time { color: var(--vui-muted); font-variant-numeric: tabular-nums; min-width: 56px; text-align: right; }
@@ -49,7 +51,8 @@
   .settings { margin-top: 12px; }
   .settings-row { display: flex; align-items: center; gap: 12px; padding: 6px 4px; }
   .settings-row .name { flex: 1; }
-  .settings-row label { display: inline-flex; align-items: center; gap: 7px; color: var(--vui-muted); }
+  .settings-row label { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; }
+  .settings-row .vui-select { width: auto; }
   .c0{background:#5b7fc7}.c1{background:#e8914a}.c2{background:#5fa86a}.c3{background:#d9656a}
   .c4{background:#6fb3ae}.c5{background:#d9b945}.c6{background:#a27bb0}.c7{background:#e99aa6}
   .c8{background:#9a7a64}.c9{background:#8ccf7f}.c10{background:#86b8c7}.c11{background:#c97aa0}
