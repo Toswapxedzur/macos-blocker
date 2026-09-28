@@ -32,8 +32,8 @@
     { id: "webVisit", key: "web-visit", title: "Websites" },
     { id: "contentWatched", key: "content-watched", title: "Watched" }
   ];
-  // What is shown: apps and websites together (a browser's time lists the
-  // sites visited in it), or the videos watched.
+  // What is shown: apps and websites together in one ranked list, or the
+  // videos watched.
   var VIEWS = [{ id: "usage", title: "Usage" }, { id: "watched", title: "Watched" }];
   var current = "usage";
   var snapshot = null;
@@ -77,12 +77,15 @@
     return box;
   }
 
-  function row(item, seconds, fraction, nested) {
-    var line = el("div", nested ? "row nested" : "row");
+  function row(item, seconds, fraction, kind) {
+    var line = el("div", "row");
     line.title = (item.label || item.key) + " — " + fmt(seconds);
     line.appendChild(icon(item.key, item.label));
     var body = el("div", "row-body");
-    body.appendChild(el("div", "row-name", item.label || item.key));
+    var name = el("div", "row-name");
+    name.appendChild(el("span", "row-label", item.label || item.key));
+    if (kind) name.appendChild(el("span", "row-kind", kind));
+    body.appendChild(name);
     var bar = el("div", "row-bar"), fill = paint(el("span"), item.colorIndex);
     fill.style.width = Math.max(1.5, fraction * 100) + "%";
     bar.appendChild(fill); body.appendChild(bar);
@@ -98,51 +101,39 @@
     return wrap;
   }
 
-  // Apps, and under each browser the sites visited in it (time inside the
-  // browser's own time, so nothing counts twice); sites seen outside any
-  // recorded browser time come last.
-  var MAX_SITES_PER_BROWSER = 8;
-  function usageRows(apps, siteBars, attribution, spanSeconds) {
+  // Apps and websites in one ranked list, each marked. A browser's own row
+  // keeps only its time not spent on a recorded site (those sites have their
+  // rows), so the rows add up to the total.
+  function usageItems(apps, sites, attribution, spanSeconds) {
+    var items = [];
+    apps.forEach(function (b) {
+      var seconds = b.seconds;
+      var inSites = attribution.byBrowser[b.key];
+      if (inSites) {
+        var siteSeconds = Object.keys(inSites).reduce(function (sum, key) { return sum + inSites[key] * spanSeconds; }, 0);
+        seconds = Math.max(0, b.seconds - siteSeconds);
+      }
+      if (seconds >= 1) items.push({ item: b, seconds: seconds, kind: "App" });
+    });
+    sites.forEach(function (b) { items.push({ item: b, seconds: b.seconds, kind: "Website" }); });
+    return items.sort(function (x, y) { return y.seconds - x.seconds; });
+  }
+
+  function usageRows(items) {
     var wrap = el("div");
-    var siteByKey = {};
-    siteBars.forEach(function (b) { siteByKey[b.key] = b; });
-    var top = Math.max(apps.length ? apps[0].seconds : 0, 1);
-    function siteRows(fractions) {
-      Object.keys(fractions)
-        .map(function (key) { return { site: siteByKey[key], seconds: fractions[key] * spanSeconds }; })
-        .filter(function (entry) { return entry.site && entry.seconds >= 1; })
-        .sort(function (x, y) { return y.seconds - x.seconds; })
-        .forEach(function (entry, index, all) {
-          if (index < MAX_SITES_PER_BROWSER) {
-            wrap.appendChild(row(entry.site, entry.seconds, entry.seconds / top, true));
-          } else if (index === MAX_SITES_PER_BROWSER) {
-            var rest = all.slice(index).reduce(function (sum, e) { return sum + e.seconds; }, 0);
-            wrap.appendChild(el("div", "row-more", "+ " + (all.length - index) + " more sites · " + fmt(rest)));
-          }
-        });
-    }
-    apps.slice(0, 20).forEach(function (b) {
-      wrap.appendChild(row(b, b.seconds, b.fraction));
-      if (attribution.byBrowser[b.key]) siteRows(attribution.byBrowser[b.key]);
+    if (!items.length) { wrap.appendChild(el("p", "empty", "Nothing in this range.")); return wrap; }
+    var top = Math.max(items[0].seconds, 1);
+    items.slice(0, 20).forEach(function (entry) {
+      wrap.appendChild(row(entry.item, entry.seconds, entry.seconds / top, entry.kind));
     });
-    var outside = {};
-    Object.keys(attribution.outside).forEach(function (key) {
-      if (attribution.outside[key] * spanSeconds >= 60) outside[key] = attribution.outside[key];
-    });
-    if (Object.keys(outside).length) {
-      wrap.appendChild(el("div", "row-group", "Websites outside a recorded browser"));
-      siteRows(outside);
-    }
-    if (!wrap.children.length) wrap.appendChild(el("p", "empty", "Nothing in this range."));
     return wrap;
   }
 
   // The sites visited while a browser was in front: each site segment clipped
-  // to each browser segment. `pieces` feed the strip, `byBrowser` the list;
-  // `outside` is site time that fell in no recorded browser time (fractions
-  // of the range throughout).
+  // to each browser segment (fractions of the range). `pieces` feed the strip,
+  // `byBrowser` the browsers' own time in the list.
   function attributeSites(apps, sites) {
-    var pieces = [], byBrowser = {}, inside = {}, outside = {};
+    var pieces = [], byBrowser = {};
     apps.forEach(function (s) {
       if (!BROWSERS[s.key]) return;
       var from = s.startFraction, to = s.startFraction + s.widthFraction;
@@ -152,14 +143,9 @@
         pieces.push({ from: a, to: b, site: w, browser: s });
         var perSite = byBrowser[s.key] || (byBrowser[s.key] = {});
         perSite[w.key] = (perSite[w.key] || 0) + (b - a);
-        inside[w.key] = (inside[w.key] || 0) + (b - a);
       });
     });
-    sites.forEach(function (w) { outside[w.key] = (outside[w.key] || 0) + w.widthFraction; });
-    Object.keys(outside).forEach(function (key) {
-      outside[key] = Math.max(0, outside[key] - (inside[key] || 0));
-    });
-    return { pieces: pieces, byBrowser: byBrowser, outside: outside };
+    return { pieces: pieces, byBrowser: byBrowser };
   }
 
   function clock(ms) { return new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
@@ -281,17 +267,14 @@
       var web = snapshot.web || { totalSeconds: 0, bars: [], timeline: [] };
       var attribution = attributeSites(apps.timeline, web.timeline);
       var spanSeconds = (snapshot.rangeEndMs - snapshot.rangeStartMs) / 1000;
-      var outsideSeconds = Object.keys(attribution.outside).reduce(function (sum, key) {
-        var seconds = attribution.outside[key] * spanSeconds;
-        return sum + (seconds >= 60 ? seconds : 0);
-      }, 0);
-      totalEl.appendChild(el("strong", null, fmt(apps.totalSeconds + outsideSeconds)));
+      var items = usageItems(apps.bars, web.bars, attribution, spanSeconds);
+      totalEl.appendChild(el("strong", null, fmt(items.reduce(function (sum, entry) { return sum + entry.seconds; }, 0))));
       var appsOn = s.appUsage && s.appUsage.enabled, webOn = s.webVisit && s.webVisit.enabled;
       if (!appsOn && !webOn) {
         panel.appendChild(notRecorded(["app-usage", "web-visit"]));
       } else {
         if (apps.timeline.length) panel.appendChild(strip(apps.timeline, snapshot.rangeStartMs, snapshot.rangeEndMs, attribution.pieces));
-        panel.appendChild(usageRows(apps.bars, web.bars, attribution, spanSeconds));
+        panel.appendChild(usageRows(items));
       }
     }
     panel.appendChild(settingsPanel(s));
