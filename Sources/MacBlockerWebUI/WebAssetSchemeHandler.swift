@@ -23,13 +23,18 @@ public final class WebAssetSchemeHandler: NSObject, WKURLSchemeHandler {
     public static let inventoryPath = "app-inventory.json"
 
     private let assetsDirectory: URL
+    /// Other components' web files, served under a first path component
+    /// ("classifier/app.js" -> <classifier assets>/app.js).
+    private let componentDirectories: [String: URL]
     private let inventoryJSONProvider: (() -> String?)?
 
     public init(
         assetsDirectory: URL,
+        componentDirectories: [String: URL] = [:],
         inventoryJSONProvider: (() -> String?)? = nil
     ) {
         self.assetsDirectory = assetsDirectory.standardizedFileURL
+        self.componentDirectories = componentDirectories.mapValues(\.standardizedFileURL)
         self.inventoryJSONProvider = inventoryJSONProvider
     }
 
@@ -70,12 +75,18 @@ public final class WebAssetSchemeHandler: NSObject, WKURLSchemeHandler {
             relativePath = "popup.html"
         }
 
-        let fileURL = assetsDirectory
+        var root = assetsDirectory
+        let parts = relativePath.split(separator: "/", maxSplits: 1).map(String.init)
+        if parts.count == 2, let component = componentDirectories[parts[0]] {
+            root = component
+            relativePath = parts[1]
+        }
+        let fileURL = root
             .appendingPathComponent(relativePath)
             .standardizedFileURL
 
-        // Prevent path traversal outside the assets directory.
-        guard fileURL.path.hasPrefix(assetsDirectory.path),
+        // Prevent path traversal outside the served directory.
+        guard fileURL.path.hasPrefix(root.path + "/"),
               let data = try? Data(contentsOf: fileURL) else {
             urlSchemeTask.didFailWithError(Self.error("Not found: \(relativePath)"))
             return

@@ -1,0 +1,17 @@
+/* Mac Vault's scenes (see scenes.js): one shows at a time. The Vault scene is
+   the editor itself; the others fill the window beside it. Mac-only. */
+.vault-scene {
+  position: fixed;
+  inset: 0;
+  display: none;
+}
+
+body[data-scene="classifier"] > .vault-scene[data-scene="classifier"],
+body[data-scene="activity"] > .vault-scene[data-scene="activity"] {
+  display: block;
+}
+
+body[data-scene="classifier"] > main.popup,
+body[data-scene="activity"] > main.popup {
+  display: none;
+}

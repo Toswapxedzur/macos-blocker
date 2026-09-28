@@ -1,4 +1,4 @@
-:root {
+:host {
   --navigation-panel-width: 300px;
   --navy-700: #1e3a8a;
   --navy-800: #172554;
@@ -35,8 +35,9 @@
 
 * { box-sizing: border-box; }
 
-html,
-body,
+/* The scene's shadow root (Mac Vault's scenes.js) stands where the page's
+   html/body used to. */
+:host,
 #app {
   width: 100%;
   height: 100%;
@@ -44,7 +45,7 @@ body,
   color-scheme: light;
 }
 
-body {
+:host {
   overflow: hidden;
   color: var(--ink);
   background: linear-gradient(180deg, var(--canvas) 0%, var(--navy-100) 100%);
@@ -143,36 +144,6 @@ button:disabled {
   box-shadow: 0 5px 12px rgba(30, 58, 138, 0.26);
   font-size: 13px;
   font-weight: 800;
-}
-
-/* Scene switch (Vault / Classifier / Activity) in the header. Three text
-   labels; the active one carries a blue underline. Classifier is active here. */
-.scene-tabs { position: relative; display: flex; align-items: flex-end; gap: 24px; }
-.scene-tab {
-  position: relative;
-  border: 0;
-  background: transparent;
-  padding: 0 0 8px;
-  font: inherit;
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  line-height: 1.1;
-  color: #94a3b8;
-  cursor: pointer;
-  transition: color 0.2s ease;
-}
-.scene-tab:hover { color: #64748b; }
-.scene-tab.is-active { color: #1f2937; }
-.scene-tab.is-active::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 3px;
-  border-radius: 3px;
-  background: #2563eb;
 }
 
 h1,
