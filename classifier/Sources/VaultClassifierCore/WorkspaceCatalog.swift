@@ -13,7 +13,6 @@ public enum WorkspaceCatalogError: Error, Equatable, LocalizedError, Sendable {
     case invalidCollectedEntry(String)
     case invalidProviderProfile(String)
     case invalidClassifierType(String)
-    case treeInUse(String)
     case duplicateApplicablePlatform(String)
 
     public var errorDescription: String? {
@@ -27,7 +26,6 @@ public enum WorkspaceCatalogError: Error, Equatable, LocalizedError, Sendable {
         case .invalidCollectedEntry(let value): return "The collected platform entry is invalid: \(value)."
         case .invalidProviderProfile(let value): return "The API provider profile is invalid: \(value)."
         case .invalidClassifierType(let value): return "The classifier type has incompatible local assets: \(value)."
-        case .treeInUse(let value): return "The tag tree is still used by a classifier type or platform: \(value)."
         case .duplicateApplicablePlatform(let value): return "That platform is already assigned to another classifier type: \(value). A platform can belong to only one type."
         }
     }
@@ -409,21 +407,6 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         return entry
     }
 
-    /// Moves an unreferenced tag tree into trash. A tree still referenced by any
-    /// classifier type or platform binding cannot be trashed; the caller must
-    /// remove those dependents first.
-    @discardableResult
-    public mutating func trashTagTree(_ treeID: String) throws -> TrashedEntry? {
-        guard let index = trees.firstIndex(where: { $0.id == treeID }) else { return nil }
-        if bindings.contains(where: { $0.treeID == treeID }) || classifierTypes.contains(where: { $0.treeID == treeID }) {
-            throw WorkspaceCatalogError.treeInUse(treeID)
-        }
-        let tree = trees.remove(at: index)
-        let entry = TrashedEntry(kind: .tagTree, name: tree.name, tree: tree)
-        trash.append(entry)
-        return entry
-    }
-
     /// Re-inserts a trashed entry and every dependent configuration it captured.
     @discardableResult
     public mutating func restoreTrashedEntry(_ id: String) -> Bool {
@@ -477,6 +460,11 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         for index in datasets.indices {
             datasets[index].collectedEntries.removeAll { !supported($0.platformID) }
         }
+        // A tree belongs to its type (made with it, trashed with it); once
+        // nothing refers to it — its type purged from the trash — it goes.
+        let usedTrees = Set(classifierTypes.map(\.treeID) + bindings.map(\.treeID)
+            + trash.compactMap { $0.classifierType?.treeID })
+        trees.removeAll { !usedTrees.contains($0.id) }
         for index in trees.indices {
             TagColorAssignment.reconcileColors(in: &trees[index])
         }

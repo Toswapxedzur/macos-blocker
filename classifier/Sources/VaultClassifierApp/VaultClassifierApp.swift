@@ -19,7 +19,6 @@ final class VaultClassifierViewModel: ObservableObject {
         var researchEnabled: Bool?
     }
     enum Workspace: String, CaseIterable, Identifiable, Hashable {
-        case tagTree
         case llmAssist
         case browserBridge
         case classificationData
@@ -28,7 +27,7 @@ final class VaultClassifierViewModel: ObservableObject {
         var id: String { rawValue }
     }
 
-    @Published var workspace: Workspace = .tagTree
+    @Published var workspace: Workspace = .browserBridge
     @Published var issue: String?
     @Published var localState: LocalClassifierState?
     @Published var packageUpdateMode: PackageUpdateMode = .automatic

@@ -35,7 +35,7 @@ final class ViewModelCharacterizationTests: XCTestCase {
         XCTAssertNil(vm.issue, "headless construction must not surface an error")
         XCTAssertNotNil(vm.localState)
         XCTAssertEqual(vm.llmEngineStatus, "disabled")
-        XCTAssertEqual(vm.workspace, .tagTree)
+        XCTAssertEqual(vm.workspace, .browserBridge)
     }
 
     func testWebSnapshotTopLevelShapeIsPinned() throws {
@@ -48,7 +48,7 @@ final class ViewModelCharacterizationTests: XCTestCase {
             ["workspace", "issue", "notices", "settings", "backup", "assets", "trash"]
         )
         XCTAssertTrue(JSONSerialization.isValidJSONObject(snapshot), "snapshot must be JSON-serialisable for the bridge")
-        XCTAssertEqual(snapshot["workspace"] as? String, "tagTree")
+        XCTAssertEqual(snapshot["workspace"] as? String, "browserBridge")
         XCTAssertTrue(snapshot["issue"] is NSNull)
     }
 
@@ -118,22 +118,22 @@ final class ViewModelCharacterizationTests: XCTestCase {
     /// routed action either succeeds or fails on a missing/invalid field, but
     /// never with the `default:` "unsupported action" error. A case dropped
     /// while moving methods between files shows up here as exactly that error.
-    /// (All 45 are safe headless with empty data — the backup ones throw on the
+    /// (All 42 are safe headless with empty data — the backup ones throw on the
     /// missing owner code / directory or on "locked" before touching the Keychain.)
     func testEveryKnownWebActionIsRouted() throws {
         let actions = [
-            "state", "workspace", "createTree", "addCollectionPlatform", "confirmDeleteCollectionPlatform",
+            "state", "workspace", "addCollectionPlatform", "confirmDeleteCollectionPlatform",
             "restoreTrashedEntry", "permanentlyDeleteTrashedEntry", "setCollectionEnabled", "clearCollectionDiagnostics",
             "setActiveClassifierType", "createClassifierType", "reorderClassifierTypes", "configureClassifierType",
             "confirmDeleteClassifierType", "createProviderProfile", "testProviderProfile", "updateProviderConnection",
-            "probeProviderModelCatalog", "confirmDeleteProviderProfile", "renameTree", "deleteTree", "rearrangeTree",
+            "probeProviderModelCatalog", "confirmDeleteProviderProfile", "rearrangeTree",
             "addTag", "moveTag", "renameTag", "updateTag", "connectTag", "disconnectTag", "deleteTag",
             "savePackageSettings", "saveLocalLLMSettings", "downloadModel", "cancelModelDownload", "deleteModelFile",
             "deleteKnowledgeEntry", "editKnowledgeEntry", "retryFailedResearch", "saveResearchSettings", "submitCorrection",
             "saveClassifierTypeLocalModel", "saveClassifierTypeResearch", "setBackupOwnerCode", "unlockBackup",
             "saveBackup", "backupNow",
         ]
-        XCTAssertEqual(actions.count, 45)
+        XCTAssertEqual(actions.count, 42)
         let unsupported = WebBridgeInputError.invalidChoice("action").localizedDescription
         for action in actions {
             let vm = try makeViewModel()

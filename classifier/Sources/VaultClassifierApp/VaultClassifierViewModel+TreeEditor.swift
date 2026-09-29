@@ -3,54 +3,11 @@ import VaultClassifierCore
 import VaultClassifierBridge
 import VaultClassifierLLM
 
-// The tag-tree graph editor: create/rename/delete/rearrange trees and add/move/rename/update/connect/disconnect/delete tags, bumping the tree revision.
+// The tag-tree graph editor: rearrange a type's tree and add/move/rename/update/connect/disconnect/delete tags, bumping the tree revision. A tree is made and trashed with its type.
 // Split out of VaultClassifierApp.swift (CLASSIFIER-INDEPENDENCE §7, Phase 5):
 // same type, same behaviour — pinned by ViewModelCharacterizationTests.
 @MainActor
 extension VaultClassifierViewModel {
-    func createTree(name: String) {
-        do {
-            let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !cleaned.isEmpty else { throw WebBridgeInputError.invalidChoice("tree name") }
-            guard var catalog = localState?.workspaceCatalog else { return }
-            catalog.trees.append(.init(name: cleaned, nodes: []))
-            try coordinator?.updateWorkspaceCatalog(catalog)
-            refreshLocalState()
-        } catch { issue = error.localizedDescription }
-    }
-
-    func renameTree(treeID: String, name: String, refreshState: Bool = true) {
-        do {
-            guard var catalog = localState?.workspaceCatalog,
-                  let treeIndex = catalog.trees.firstIndex(where: { $0.id == treeID }) else {
-                throw WebBridgeInputError.invalidChoice("tag tree")
-            }
-            let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !cleaned.isEmpty else { throw WebBridgeInputError.invalidChoice("tree name") }
-            catalog.trees[treeIndex].name = cleaned
-            catalog.trees[treeIndex].updatedAtMilliseconds = WorkspaceCatalog.now()
-            try coordinator?.updateWorkspaceCatalog(catalog)
-            if refreshState { refreshLocalState() }
-        } catch { issue = error.localizedDescription }
-    }
-
-    func deleteTree(treeID: String) {
-        do {
-            guard var catalog = localState?.workspaceCatalog else {
-                throw WebBridgeInputError.invalidChoice("tag tree")
-            }
-            // A referenced ("bounded") tree cannot be trashed; trashTagTree
-            // throws treeInUse and the message names why. Only an unreferenced
-            // tree moves to trash.
-            guard try catalog.trashTagTree(treeID) != nil else {
-                throw WebBridgeInputError.invalidChoice("tag tree")
-            }
-            try coordinator?.updateWorkspaceCatalog(catalog)
-            refreshLocalState()
-            issue = nil
-        } catch { issue = error.localizedDescription }
-    }
-
     func rearrangeTree(treeID: String) {
         do {
             guard var catalog = localState?.workspaceCatalog,

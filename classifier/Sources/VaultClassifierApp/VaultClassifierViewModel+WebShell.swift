@@ -274,8 +274,6 @@ extension VaultClassifierViewModel {
                 // switches workspaces optimistically. Avoid echoing the same
                 // multi-megabyte state back across the bridge for navigation.
                 return false
-            case "createTree":
-                createTree(name: try webString(data, key: "name", limit: 128))
             case "addCollectionPlatform":
                 addCollectionPlatform(platformID: try webString(data, key: "platformID", limit: 64))
             case "confirmDeleteCollectionPlatform":
@@ -333,10 +331,6 @@ extension VaultClassifierViewModel {
                 probeProviderModelCatalog(profileID: try webString(data, key: "profileID", limit: 128))
             case "confirmDeleteProviderProfile":
                 confirmProviderProfileDeletion(profileID: try webString(data, key: "profileID", limit: 128))
-            case "renameTree":
-                renameTree(treeID: try webString(data, key: "treeID", limit: 256), name: try webString(data, key: "name", limit: 128))
-            case "deleteTree":
-                deleteTree(treeID: try webString(data, key: "treeID", limit: 256))
             case "rearrangeTree":
                 rearrangeTree(treeID: try webString(data, key: "treeID", limit: 256))
             case "addTag":

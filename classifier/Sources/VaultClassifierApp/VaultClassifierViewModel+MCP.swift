@@ -25,8 +25,7 @@ public struct ClassifierWebActionDescriptor: Equatable, Sendable {
 public enum ClassifierWebActionCatalog {
     public static let actions: [ClassifierWebActionDescriptor] = [
         .init(name: "state", keys: [], summary: "Refresh local state from the store."),
-        .init(name: "workspace", keys: ["workspace"], summary: "Switch the page's workspace (tagTree, llmAssist, browserBridge, classificationData, knowledge)."),
-        .init(name: "createTree", keys: ["name"], summary: "Create an empty tag tree."),
+        .init(name: "workspace", keys: ["workspace"], summary: "Switch the page's workspace (llmAssist, browserBridge, classificationData, knowledge)."),
         .init(name: "addCollectionPlatform", keys: ["platformID"], summary: "Add a platform binding (collection on)."),
         .init(name: "confirmDeleteCollectionPlatform", keys: ["platformID"], summary: "Remove a platform binding and its collected data (trash)."),
         .init(name: "restoreTrashedEntry", keys: ["id"], summary: "Restore a trashed entry."),
@@ -43,8 +42,6 @@ public enum ClassifierWebActionCatalog {
         .init(name: "updateProviderConnection", keys: ["profileID", "credential", "customEndpoint", "testModelIdentifier"], summary: "Update a provider profile's connection fields."),
         .init(name: "probeProviderModelCatalog", keys: ["profileID"], summary: "Fetch a provider's model list."),
         .init(name: "confirmDeleteProviderProfile", keys: ["profileID"], summary: "Delete a provider profile."),
-        .init(name: "renameTree", keys: ["treeID", "name"], summary: "Rename a tree."),
-        .init(name: "deleteTree", keys: ["treeID"], summary: "Delete a tree."),
         .init(name: "rearrangeTree", keys: ["treeID"], summary: "Auto-layout a tree's canvas."),
         .init(name: "addTag", keys: ["treeID", "name", "description", "parentID", "positionX", "positionY"], summary: "Add a tag (optionally under parentID) at a canvas position."),
         .init(name: "moveTag", keys: ["treeID", "nodeID", "positionX", "positionY"], summary: "Move a tag on the canvas."),
