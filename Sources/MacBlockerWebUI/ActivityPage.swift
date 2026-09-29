@@ -19,14 +19,43 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
 
     private override init() { super.init() }
 
-    /// Watched key → { creator, tags: [{ id, name, color }] }, from the
-    /// classifier (Mac Vault's own component; injected, this module can't see it).
-    private var watchedFacts: ([String]) -> [String: Any] = { _ in [:] }
+    /// Mac Vault's classifier (injected; this module can't see it): watched
+    /// videos' tags, and recording their authors into the store.
+    private var watchedTags: ([String]) -> [String: [[String: String]]] = { _ in [:] }
+    private var recordAuthors: ([String]) -> Void = { _ in }
 
     /// Called once at launch with the shared store (see BlockerAppDelegate).
-    public func configure(store: ActivityStore, watchedFacts: @escaping ([String]) -> [String: Any]) {
+    public func configure(
+        store: ActivityStore,
+        watchedTags: @escaping ([String]) -> [String: [[String: String]]],
+        recordAuthors: @escaping ([String]) -> Void
+    ) {
         self.store = store
-        self.watchedFacts = watchedFacts
+        self.watchedTags = watchedTags
+        self.recordAuthors = recordAuthors
+    }
+
+    /// Watched key → { creator, creatorIcon, tags } for the page. Authors come
+    /// from the store; ones still missing (or without an icon) are looked up
+    /// first.
+    private func watchedFacts(keys: [String], store: ActivityStore) -> [String: Any] {
+        var authors = store.watchedAuthors(for: keys)
+        let missing = keys.filter { authors[$0]?.icon == nil }
+        if !missing.isEmpty {
+            recordAuthors(missing)
+            authors = store.watchedAuthors(for: keys)
+        }
+        let tags = watchedTags(keys)
+        var facts: [String: Any] = [:]
+        for key in keys {
+            var fact: [String: Any] = ["tags": tags[key] ?? []]
+            if let author = authors[key] {
+                fact["creator"] = author.name
+                if let icon = author.icon { fact["creatorIcon"] = icon }
+            }
+            facts[key] = fact
+        }
+        return facts
     }
 
     /// The scene's place in the editor's web view (its files are part of the
@@ -111,7 +140,7 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(snapshot), let json = String(data: data, encoding: .utf8) else { return }
         let icons = resolveIcons(snapshot: snapshot, store: store)
-        let facts = watchedFacts(snapshot.watched.map(\.key))
+        let facts = watchedFacts(keys: snapshot.watched.map(\.key), store: store)
         guard let iconsData = try? JSONSerialization.data(withJSONObject: icons),
               let iconsJSON = String(data: iconsData, encoding: .utf8),
               let factsData = try? JSONSerialization.data(withJSONObject: facts),

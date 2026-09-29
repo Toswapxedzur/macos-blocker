@@ -754,7 +754,14 @@ final class ConnectionHub: ObservableObject {
         case "activity-record":
             let settings = store.loadSettings()
             var stored = 0
-            for record in ActivityWire.records(from: body) where store.record(record, settings: settings) { stored += 1 }
+            var watchedKeys: [String] = []
+            for record in ActivityWire.records(from: body) where store.record(record, settings: settings) {
+                stored += 1
+                if record.category == .contentWatched { watchedKeys.append(record.key) }
+            }
+            if !watchedKeys.isEmpty {
+                DispatchQueue.main.async { MainActor.assumeIsolated { WatchedAuthorRecorder.record(keys: watchedKeys, in: store) } }
+            }
             if let icons = body["icons"] as? [String: String] { store.mergeWebIcons(icons) }
             send(source, dict: ["kind": "classifier-response", "requestID": requestID, "operation": operation, "body": ["stored": stored]])
         case "activity-settings":
