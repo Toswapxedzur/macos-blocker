@@ -32,10 +32,6 @@
     { id: "webVisit", key: "web-visit", title: "Websites" },
     { id: "contentWatched", key: "content-watched", title: "Watched" }
   ];
-  // What is shown: apps and websites together in one ranked list, or the
-  // videos watched.
-  var VIEWS = [{ id: "usage", title: "Usage" }, { id: "watched", title: "Watched" }];
-  var current = "usage";
   var snapshot = null;
   // Details follows one pick: "all", an app ("app|<bundle id>"), a website
   // ("web|<domain>") or a group ("group|<id>"). Mac Vault answers with its
@@ -857,6 +853,18 @@
     box.appendChild(daySection(itemHistory.days));
   }
 
+  // One column's head: its title and its total.
+  function columnHead(title, seconds) {
+    var head = el("div", "column-head");
+    head.appendChild(el("h2", null, title));
+    var total = el("span", "total");
+    total.appendChild(el("strong", null, fmt(seconds)));
+    head.appendChild(total);
+    return head;
+  }
+
+  // Usage and Watched side by side (owner 2026-09-29: "enough space for all of
+  // them"), the day strip above both.
   function render() {
     var page = scope.getElementById("page");
     page.textContent = "";
@@ -865,46 +873,38 @@
     var s = snapshot.settings || {};
     var panel = el("div", "panel");
 
-    var head = el("div", "lists vui-tabs");
-    VIEWS.forEach(function (view) {
-      head.appendChild(textButton(view.title, function () { current = view.id; render(); },
-        view.id === current ? "vui-tab is-active" : "vui-tab"));
-    });
-    var totalEl = el("span", "total", "Total");
-    head.appendChild(totalEl);
-    panel.appendChild(head);
+    var apps = snapshot.app || { totalSeconds: 0, bars: [], timeline: [] };
+    var web = snapshot.web || { totalSeconds: 0, bars: [], timeline: [] };
+    var attribution = attributeSites(apps.timeline, web.timeline);
+    var spanSeconds = (snapshot.rangeEndMs - snapshot.rangeStartMs) / 1000;
+    usageItemsRaw = usageItems(apps.bars, web.bars, attribution, spanSeconds);
+    var items = mergeItems(usageItemsRaw);
+    usageItemsShown = items;
+    var appsOn = s.appUsage && s.appUsage.enabled, webOn = s.webVisit && s.webVisit.enabled;
+    if ((appsOn || webOn) && apps.timeline.length) {
+      panel.appendChild(strip(apps.timeline, snapshot.rangeStartMs, snapshot.rangeEndMs, attribution.pieces));
+    }
 
-    if (current === "watched") {
-      var watched = snapshot.watched || [];
-      totalEl.appendChild(el("strong", null, fmt(watched.reduce(function (a, b) { return a + b.seconds; }, 0))));
-      if (!(s.contentWatched && s.contentWatched.enabled)) panel.appendChild(notRecorded(["content-watched"]));
-      else panel.appendChild(rows(watched));
-    } else {
-      var apps = snapshot.app || { totalSeconds: 0, bars: [], timeline: [] };
-      var web = snapshot.web || { totalSeconds: 0, bars: [], timeline: [] };
-      var attribution = attributeSites(apps.timeline, web.timeline);
-      var spanSeconds = (snapshot.rangeEndMs - snapshot.rangeStartMs) / 1000;
-      usageItemsRaw = usageItems(apps.bars, web.bars, attribution, spanSeconds);
-      var items = mergeItems(usageItemsRaw);
-      totalEl.appendChild(el("strong", null, fmt(items.reduce(function (sum, entry) { return sum + entry.seconds; }, 0))));
-      var appsOn = s.appUsage && s.appUsage.enabled, webOn = s.webVisit && s.webVisit.enabled;
-      if (!appsOn && !webOn) {
-        panel.appendChild(notRecorded(["app-usage", "web-visit"]));
-      } else {
-        if (apps.timeline.length) panel.appendChild(strip(apps.timeline, snapshot.rangeStartMs, snapshot.rangeEndMs, attribution.pieces));
-        panel.appendChild(usageRows(items));
-      }
-      usageItemsShown = items;
-    }
+    var columns = el("div", "columns");
+    var usage = el("section", "column");
+    usage.appendChild(columnHead("Usage", items.reduce(function (sum, entry) { return sum + entry.seconds; }, 0)));
+    usage.appendChild(appsOn || webOn ? usageRows(items) : notRecorded(["app-usage", "web-visit"]));
+    columns.appendChild(usage);
+
+    var watched = snapshot.watched || [];
+    var watchedColumn = el("section", "column");
+    watchedColumn.appendChild(columnHead("Watched", watched.reduce(function (a, b) { return a + b.seconds; }, 0)));
+    watchedColumn.appendChild(s.contentWatched && s.contentWatched.enabled ? rows(watched) : notRecorded(["content-watched"]));
+    columns.appendChild(watchedColumn);
+    panel.appendChild(columns);
+
     panel.appendChild(settingsPanel(s));
-    if (current === "usage") panel.appendChild(groupsPanel());
+    panel.appendChild(groupsPanel());
     page.appendChild(panel);
-    if (current === "usage") {
-      var details = el("div", "panel details");
-      details.id = "details";
-      page.appendChild(details);
-      renderDetails();
-    }
+    var details = el("div", "panel details");
+    details.id = "details";
+    page.appendChild(details);
+    renderDetails();
   }
 
   window.activityApply = function (data, iconMap) {

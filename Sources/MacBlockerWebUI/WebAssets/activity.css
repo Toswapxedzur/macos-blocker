@@ -1,13 +1,16 @@
-/* Mac Vault's Activity scene (see scenes.js / activity.js): Usage (apps and
-   websites in one ranked list, each marked) or Watched, big icons, one day
-   strip, the recording settings out of the way. The shared look is vault-ui.css. */
+/* Mac Vault's Activity scene (see scenes.js / activity.js): one day strip,
+   then Usage (apps and websites in one ranked list, each marked) and Watched
+   side by side, big icons, the recording settings out of the way. The shared look is vault-ui.css. */
 /* The scene's mount stands where the page's body used to. */
 #activity { display: flex; flex-direction: column; height: 100%; padding: 10px 12px; }
 main { flex: 1; min-height: 0; overflow: auto; }
-.page { max-width: 880px; margin: 0 auto; }
+.page { max-width: 1080px; margin: 0 auto; }
 .panel { background: rgba(255, 255, 255, 0.92); border-radius: 16px; box-shadow: var(--vui-panel-shadow); padding: 16px 18px 18px; }
-/* The list switch is the shared .vui-tabs; the total sits at its right. */
-.lists { margin-bottom: 14px; }
+/* Usage and Watched: two columns, stacked when the window is narrow. */
+.columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px 28px; }
+.column { min-width: 0; }
+.column-head { display: flex; align-items: baseline; gap: 12px; margin: 0 4px 6px; }
+.column-head h2 { font-size: var(--vui-size-title); }
 .total { margin-left: auto; color: var(--vui-muted); }
 .total strong { color: var(--vui-text); font-size: var(--vui-size-title); font-weight: 700; margin-left: 4px; }
 /* day strip */
@@ -17,7 +20,7 @@ main { flex: 1; min-height: 0; overflow: auto; }
    visible as the band below it. */
 .strip .seg.site { bottom: 15%; }
 .strip .day { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255, 255, 255, 0.9); }
-.axis { display: flex; justify-content: space-between; color: var(--vui-muted); font-size: var(--vui-size-small); margin: 4px 2px 14px; }
+.axis { display: flex; justify-content: space-between; color: var(--vui-muted); font-size: var(--vui-size-small); margin: 4px 2px 16px; }
 /* rows */
 .row { position: relative; display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 7px 4px; border-radius: var(--vui-radius-sm); }
 /* "+ Group" floats over a row's end on hover (it takes no column). */
