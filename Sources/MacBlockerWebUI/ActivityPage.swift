@@ -102,18 +102,18 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
         webView.evaluateJavaScript("window.activityApply(\(json), \(iconsJSON));", completionHandler: nil)
     }
 
-    /// The detail charts' data for the picked item: `lens` "app" or "web",
-    /// `key` nil = all usage, `hourDays` how many days the hour-by-hour bars
-    /// compare. Echoes the request so the page ignores a stale answer.
+    /// The Details panel's data: the picked item's 180-day map (`lens` "app"
+    /// or "web", `key` nil = all usage) and all usage for the last `barDays`
+    /// days (the day bars). Echoes the request so the page ignores a stale answer.
     private func pushHistory(_ body: [String: Any]) {
         guard loaded, let store, let webView else { return }
         let category: ActivityCategory = (body["lens"] as? String) == "web" ? .webVisit : .appUsage
         let key = body["key"] as? String
-        let hourDays = max(1, min((body["hourDays"] as? Int) ?? 3, 14))
-        let history = store.itemHistory(category: category, key: key, days: Self.historyDays, hourDays: hourDays)
-        guard let data = try? JSONEncoder().encode(history),
+        let barDays = max(1, min((body["barDays"] as? Int) ?? 3, 14))
+        let detail = store.detail(category: category, key: key, mapDays: Self.historyDays, barDays: barDays)
+        guard let data = try? JSONEncoder().encode(detail),
               let json = String(data: data, encoding: .utf8),
-              let requestData = try? JSONSerialization.data(withJSONObject: ["lens": category == .webVisit ? "web" : "app", "key": (key as Any?) ?? NSNull(), "hourDays": hourDays] as [String: Any]),
+              let requestData = try? JSONSerialization.data(withJSONObject: ["lens": category == .webVisit ? "web" : "app", "key": (key as Any?) ?? NSNull(), "barDays": barDays] as [String: Any]),
               let requestJSON = String(data: requestData, encoding: .utf8) else { return }
         webView.evaluateJavaScript("window.activityHistory && window.activityHistory(\(requestJSON), \(json));", completionHandler: nil)
     }

@@ -150,13 +150,25 @@ public final class ActivityStore: @unchecked Sendable {
             .sorted { $0.startedAt < $1.startedAt }
     }
 
-    /// One item's history for the detail charts: `key` nil = every record of
-    /// the category (all usage). See `ActivityDashboard.history`.
-    public func itemHistory(category: ActivityCategory, key: String?, days: Int, hourDays: Int) -> ActivityItemHistory {
+    /// The Details panel's data: the picked item's per-day map over `mapDays`
+    /// (`key` nil = every record of the category, all usage) and all usage for
+    /// the last `barDays` days.
+    public func detail(category: ActivityCategory, key: String?, mapDays: Int, barDays: Int) -> ActivityDetail {
         let now = now()
-        let first = calendar.date(byAdding: .day, value: -(max(1, days) - 1), to: calendar.startOfDay(for: now)) ?? now
-        let matching = records(category: category, from: first, to: now).filter { key == nil || $0.key == key }
-        return ActivityDashboard.history(records: matching, days: days, hourDays: hourDays, now: now, calendar: calendar)
+        func since(_ days: Int) -> Date {
+            calendar.date(byAdding: .day, value: -days, to: calendar.startOfDay(for: now)) ?? now
+        }
+        // A day before the first day, so a session running into it is clipped in.
+        let picked = records(category: category, from: since(max(1, mapDays)), to: now).filter { key == nil || $0.key == key }
+        let barsFrom = since(max(1, barDays))
+        return ActivityDetail(
+            map: ActivityDashboard.history(records: picked, days: mapDays, now: now, calendar: calendar),
+            days: ActivityDashboard.dayUsage(
+                app: records(category: .appUsage, from: barsFrom, to: now),
+                web: records(category: .webVisit, from: barsFrom, to: now),
+                days: barDays, now: now, calendar: calendar
+            )
+        )
     }
 
     /// The render-ready dashboard snapshot for a range (bars + timeline + the
