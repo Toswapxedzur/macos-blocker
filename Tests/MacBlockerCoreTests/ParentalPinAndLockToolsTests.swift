@@ -147,6 +147,29 @@ final class ParentalPinAndLockToolsTests: XCTestCase {
         XCTAssertNotEqual(ended?["activeMsApplied"] as? Bool, true, "the engine counts it once, as a snooze that ran out")
     }
 
+    /// Owner 2026-09-29: the snooze kind is an editor setting the tools set
+    /// too; a budget snooze adds the snooze minutes and lapses at the reset.
+    func testATimeLimitGroupsBudgetSnoozeFromTheTools() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("budgetsnooze-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let shared = SharedAppGroupStore(baseDirectory: dir)
+        var raw = document().raw
+        raw["usageResetAtMs"] = ["a": 1_000_000]
+        shared.writeData(try JSONSerialization.data(withJSONObject: raw), to: SharedAppGroupStore.webStoreFileName)
+        let now = Date(timeIntervalSince1970: 1_600)   // 1_600_000 ms, inside the period that began at 1_000_000
+        let tools = VaultMCPTools.groupTools(store: GroupStore(shared: shared), clock: { now })
+        func call(_ name: String, _ args: [String: Any]) -> MCPToolResult { tools.first { $0.name == name }!.handler(args) }
+        let refused = call("set_group", ["id": "a", "patch": ["snoozeKind": "forever"]])
+        XCTAssertTrue(refused.isError && refused.text.contains("snoozeKind"), "an unknown kind is refused: \(refused.text)")
+        let set = call("set_group", ["id": "a", "patch": ["mode": "after-minutes", "resetIntervalHours": 2, "snoozeKind": "budget", "snoozeMinutes": 10]])
+        XCTAssertFalse(set.isError, set.text)
+        XCTAssertFalse(call("snooze_group", ["id": "a"]).isError)
+        let entry = (GroupStore(shared: shared).load().raw["groupSnoozes"] as? [String: Any])?["a"] as? [String: Any]
+        XCTAssertEqual(entry?["kind"] as? String, "budget")
+        XCTAssertEqual((entry?["extraMs"] as? NSNumber)?.doubleValue, 600_000, "the snooze minutes become extra allowance")
+        XCTAssertEqual((entry?["untilMs"] as? NSNumber)?.doubleValue, 1_000_000 + 7_200_000, "it lapses at the next reset")
+    }
+
     func testTheRunToolIsTheEditorsRun() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("runtool-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: dir); VaultMCPTools.runRule = nil }

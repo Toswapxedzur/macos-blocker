@@ -278,6 +278,25 @@ final class GuardEngineTests: XCTestCase {
         XCTAssertTrue(modes.isEmpty)
     }
 
+    /// Owner 2026-09-29: a budget snooze keeps a time-limit group in effect and
+    /// adds its minutes to the allowance; a time snooze exempts the group.
+    func testABudgetSnoozeRaisesTheAllowanceInsteadOfExempting() {
+        let group = appGroup(id: "g", bundleID: "com.app", mode: .afterMinutes, allowedMinutes: 15)
+        let now = Date()
+        let budget = SnoozeState(startsAt: now.addingTimeInterval(-60), until: now.addingTimeInterval(3_600), budgetExtra: 600)
+        func blocked(usedMinutes: Double, snooze: SnoozeState) -> Bool {
+            let usage = UsageSnapshot(usageByGroupSeconds: ["g": usedMinutes * 60], snoozesByGroup: ["g": snooze])
+            return !AppBlockPolicy.blockedApplications(groups: [group], usage: usage, now: now).isEmpty
+        }
+        XCTAssertFalse(blocked(usedMinutes: 20, snooze: budget), "20 of 15 + 10 minutes: still allowed")
+        XCTAssertTrue(blocked(usedMinutes: 25, snooze: budget), "the extra is used up: blocked again")
+        XCTAssertTrue(group.isEnforcing(snoozes: ["g": budget], at: now), "a budget snooze doesn't exempt the group")
+        let time = SnoozeState(startsAt: now.addingTimeInterval(-60), until: now.addingTimeInterval(600))
+        XCTAssertFalse(blocked(usedMinutes: 99, snooze: time), "a time snooze exempts it")
+        let lapsed = SnoozeState(startsAt: now.addingTimeInterval(-7_200), until: now.addingTimeInterval(-1), budgetExtra: 600)
+        XCTAssertTrue(blocked(usedMinutes: 20, snooze: lapsed), "a lapsed budget snooze adds nothing")
+    }
+
     // Owner 2026-09-26: the picker and the "+" offer only apps a block can act on.
     func testOnlyBlockableAppsAreOffered() {
         XCTAssertTrue(GuardPolicy.canBlock("com.hnc.Discord"))

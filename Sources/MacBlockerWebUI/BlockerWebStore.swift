@@ -159,15 +159,31 @@ public final class BlockerWebStore: @unchecked Sendable {
     }
 
     /// The document with finished snoozes counted, or nil when none finished.
+    /// As the browser's worker does (group-actions.js): a budget snooze whose
+    /// extra room is used up ends now, and a finished snooze adds to the total
+    /// once — its clock time, or the extra minutes a budget snooze actually gave.
     private static func countFinishedSnoozes(in document: [String: Any], nowMs: Double) -> [String: Any]? {
         guard var snoozes = document["groupSnoozes"] as? [String: Any] else { return nil }
         var totals = document["groupSnoozeTotalsMs"] as? [String: Any] ?? [:]
+        let groups = Dictionary((document["blockedGroups"] as? [[String: Any]] ?? []).compactMap { group in
+            (group["id"] as? String).map { ($0, group) }
+        }, uniquingKeysWith: { first, _ in first })
+        let timers = document["usageTimersMs"] as? [String: Any] ?? [:]
         var changed = false
         for (groupID, value) in snoozes {
-            guard var entry = value as? [String: Any], entry["activeMsApplied"] as? Bool != true,
-                  let start = (entry["startsAtMs"] as? NSNumber)?.doubleValue,
+            guard var entry = value as? [String: Any] else { continue }
+            let group: Any = groups[groupID] ?? NSNull()
+            let used = (timers[groupID] as? NSNumber)?.doubleValue ?? 0
+            if (entry["kind"] as? String) == "budget",
+               let settled = GroupActionsRuntime.shared.call("settleBudgetSnooze", [entry, group, used, nowMs]) as? [String: Any] {
+                entry = settled
+                snoozes[groupID] = entry
+                changed = true
+            }
+            guard entry["activeMsApplied"] as? Bool != true,
                   let until = (entry["untilMs"] as? NSNumber)?.doubleValue, nowMs >= until else { continue }
-            totals[groupID] = ((totals[groupID] as? NSNumber)?.doubleValue ?? 0) + max(0, until - start)
+            let counted = (GroupActionsRuntime.shared.call("snoozeCountedMs", [entry, group, used]) as? NSNumber)?.doubleValue ?? 0
+            totals[groupID] = ((totals[groupID] as? NSNumber)?.doubleValue ?? 0) + max(0, counted)
             entry["activeMsApplied"] = true
             snoozes[groupID] = entry
             changed = true
@@ -350,9 +366,11 @@ public final class BlockerWebStore: @unchecked Sendable {
                 guard let ms = (entry[key] as? NSNumber)?.doubleValue, ms > 0 else { return nil }
                 return Date(timeIntervalSince1970: ms / 1000)
             }
+            let extraMs = (entry["extraMs"] as? NSNumber)?.doubleValue ?? 0
             return SnoozeState(startsAt: date("startsAtMs"), until: date("untilMs"),
                                cooldownUntil: date("cooldownUntilMs"),
-                               justification: (entry["justification"] as? String) ?? "")
+                               justification: (entry["justification"] as? String) ?? "",
+                               budgetExtra: (entry["kind"] as? String) == "budget" && extraMs > 0 ? extraMs / 1000 : nil)
         }
     }
 

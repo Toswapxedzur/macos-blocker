@@ -601,7 +601,9 @@ public struct WebStoreDocument {
         guard let current = viewed(id) else { throw GroupStoreError.groupNotFound(id) }
         if let refusal = try snoozePlan(id: id, now: now).refusal { return .refused(refusal) }
         let nowMs = (now.timeIntervalSince1970 * 1000).rounded()
-        guard let entry = GroupActionsRuntime.shared.call("snoozeEntry", [current, nowMs]) else { return .refused("internal") }
+        // The budget anchor sets when a budget snooze's extra room lapses.
+        let resetAt: Any = (raw["usageResetAtMs"] as? [String: Any])?[id] ?? NSNull()
+        guard let entry = GroupActionsRuntime.shared.call("snoozeEntry", [current, nowMs, resetAt]) else { return .refused("internal") }
         var snoozes = raw["groupSnoozes"] as? [String: Any] ?? [:]
         snoozes[id] = entry
         raw["groupSnoozes"] = snoozes
