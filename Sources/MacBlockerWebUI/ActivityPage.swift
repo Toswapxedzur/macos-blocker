@@ -52,6 +52,8 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
         case "delete":
             applyDelete(body)
             pushSnapshot()
+        case "history":
+            pushHistory(body)
         default:
             break
         }
@@ -99,6 +101,25 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
               let iconsJSON = String(data: iconsData, encoding: .utf8) else { return }
         webView.evaluateJavaScript("window.activityApply(\(json), \(iconsJSON));", completionHandler: nil)
     }
+
+    /// The detail charts' data for the picked item: `lens` "app" or "web",
+    /// `key` nil = all usage, `hourDays` how many days the hour-by-hour bars
+    /// compare. Echoes the request so the page ignores a stale answer.
+    private func pushHistory(_ body: [String: Any]) {
+        guard loaded, let store, let webView else { return }
+        let category: ActivityCategory = (body["lens"] as? String) == "web" ? .webVisit : .appUsage
+        let key = body["key"] as? String
+        let hourDays = max(1, min((body["hourDays"] as? Int) ?? 3, 14))
+        let history = store.itemHistory(category: category, key: key, days: Self.historyDays, hourDays: hourDays)
+        guard let data = try? JSONEncoder().encode(history),
+              let json = String(data: data, encoding: .utf8),
+              let requestData = try? JSONSerialization.data(withJSONObject: ["lens": category == .webVisit ? "web" : "app", "key": (key as Any?) ?? NSNull(), "hourDays": hourDays] as [String: Any]),
+              let requestJSON = String(data: requestData, encoding: .utf8) else { return }
+        webView.evaluateJavaScript("window.activityHistory && window.activityHistory(\(requestJSON), \(json));", completionHandler: nil)
+    }
+
+    /// The day map's span.
+    static let historyDays = 180
 
     /// Local icons keyed by bar key: app icons resolved from the bundle id via
     /// NSWorkspace, website favicons from the store's local cache (data URIs the

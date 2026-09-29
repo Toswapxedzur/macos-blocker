@@ -154,12 +154,12 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertFalse(loaded.isEnabled(.appUsage))
     }
 
-    func testDefaultsAreOffThirtyDaysSixtySecondIdle() throws {
+    func testDefaultsAreOffHundredEightyDaysSixtySecondIdle() throws {
         let settings = ActivitySettings()
         XCTAssertEqual(settings.idleThresholdSeconds, 60)
         for c in ActivityCategory.allCases {
             XCTAssertFalse(settings.isEnabled(c))
-            XCTAssertEqual(settings.settings(for: c).retentionDays, 30)
+            XCTAssertEqual(settings.settings(for: c).retentionDays, 180)
         }
     }
 }

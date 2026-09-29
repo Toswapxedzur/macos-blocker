@@ -150,6 +150,15 @@ public final class ActivityStore: @unchecked Sendable {
             .sorted { $0.startedAt < $1.startedAt }
     }
 
+    /// One item's history for the detail charts: `key` nil = every record of
+    /// the category (all usage). See `ActivityDashboard.history`.
+    public func itemHistory(category: ActivityCategory, key: String?, days: Int, hourDays: Int) -> ActivityItemHistory {
+        let now = now()
+        let first = calendar.date(byAdding: .day, value: -(max(1, days) - 1), to: calendar.startOfDay(for: now)) ?? now
+        let matching = records(category: category, from: first, to: now).filter { key == nil || $0.key == key }
+        return ActivityDashboard.history(records: matching, days: days, hourDays: hourDays, now: now, calendar: calendar)
+    }
+
     /// The render-ready dashboard snapshot for a range (bars + timeline + the
     /// watched-content bars + the current settings). Reads app-usage / web-visit /
     /// content-watched records for the range and builds geometry via

@@ -54,7 +54,7 @@ screen lock.
 - **Local-only, no egress.** No network sink exists. Cross-device merge would need
   outward sync, which is precluded; timelines are per-machine (the native app plus
   the browsers on that machine, merged over the loopback HMAC hub).
-- **Retention you control.** Per-category window (`retentionDays`, default 30; `0`
+- **Retention you control.** Per-category window (`retentionDays`, default 180 — the day map shows 180 days; `0`
   = keep forever). A reaper prunes on a schedule. Plus delete-all, delete-a-range,
   delete-one now — a real delete of raw records, not a tombstone.
 - Any future export or send is gated behind an explicit consent dialog; none is

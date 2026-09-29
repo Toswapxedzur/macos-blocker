@@ -39,3 +39,26 @@ main { flex: 1; min-height: 0; overflow: auto; }
 .settings-row .name { flex: 1; }
 .settings-row label { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; }
 .settings-row .vui-select { width: auto; }
+/* A Usage row picks the item the Details charts show. */
+.row.pickable { cursor: pointer; }
+/* Details: the picked item's 180-day map, hour-by-hour bars and the pie. */
+.details { margin-top: 14px; }
+.details-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.details-head .vui-select, .chart-head .vui-select { width: auto; }
+.details-row { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 18px; }
+.details-row > .chart:first-child { flex: 2 1 380px; min-width: 0; }
+.details-row > .chart:last-child { flex: 1 1 220px; }
+.chart-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.chart-title { font-weight: 700; margin-bottom: 6px; }
+.chart-head .chart-title { margin-bottom: 0; }
+.map-scroll { overflow-x: auto; }
+.map, .hours, .pie { display: block; }
+.axis-label { fill: var(--vui-muted); font-size: 10px; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; color: var(--vui-muted); font-size: var(--vui-size-small); }
+.legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.legend-item .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.legend-note { color: var(--vui-muted); }
+.chart-legend .legend-note { margin-left: auto; }
+.pie-body { display: flex; align-items: center; gap: 16px; }
+.pie-legend { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: var(--vui-size-small); }
+.pie-legend .legend-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px; }
