@@ -53,7 +53,9 @@ public enum ActivityWire {
         var byCategory: [String: [String: Any]] = [:]
         for category in ActivityCategory.allCases {
             let value = settings.settings(for: category)
-            byCategory[category.rawValue] = ["enabled": value.enabled, "retentionDays": value.retentionDays]
+            var entry: [String: Any] = ["enabled": value.enabled]
+            if let days = value.retentionDays { entry["retentionDays"] = days } // absent = follows the global Keep
+            byCategory[category.rawValue] = entry
         }
         return ["byCategory": byCategory, "idleThresholdSeconds": settings.idleThresholdSeconds]
     }

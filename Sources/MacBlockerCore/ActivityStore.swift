@@ -18,7 +18,7 @@ public final class ActivityStore: @unchecked Sendable {
     private static let colorsFileName = "colors.json"
     private static let groupsFileName = "groups.json"
     private static let maxWebIcons = 500
-    private static let authorsFileName = "watched-authors.json"
+    private static let factsFileName = "watched-facts.json"
     private static let maxAuthorIconBytes = 24_000
     private static let maxWebIconBytes = 24_000
 
@@ -99,47 +99,79 @@ public final class ActivityStore: @unchecked Sendable {
         return icons
     }
 
-    // MARK: - Watched videos' authors (owner 2026-09-29)
+    // MARK: - Watched videos' authors and tags (owner 2026-09-29)
 
-    /// Who made each watched video, with the author's icon, recorded when the
-    /// video is watched (the classifier, where it comes from, forgets old
-    /// videos). Watched key → author; one icon per author. Local only.
-    public func watchedAuthors(for keys: [String]) -> [String: ActivityAuthor] {
+    /// Who made each watched video (with the author's icon) and its tags,
+    /// saved when the video is watched: the classifier they come from forgets
+    /// old videos. Tags missing then are picked up once, later, and never
+    /// change after. Kept as long as the video's watched records (Watched's
+    /// Keep). Local only.
+    public func watchedFacts(for keys: [String]) -> [String: ActivityWatchedFacts] {
         lock.lock(); defer { lock.unlock() }
-        let file = loadAuthorsLocked()
-        var result: [String: ActivityAuthor] = [:]
+        let file = loadFactsLocked()
+        var result: [String: ActivityWatchedFacts] = [:]
         for key in keys {
-            if let id = file.videos[key], let author = file.authors[id] { result[key] = author }
+            guard let video = file.videos[key] else { continue }
+            result[key] = ActivityWatchedFacts(author: video.author.flatMap { file.authors[$0] }, tags: video.tags)
         }
         return result
     }
 
-    /// Records authors (a known author keeps its icon when a new one is missing).
-    public func recordAuthors(_ entries: [ActivityAuthorEntry]) {
+    /// Saves what was found. A known author keeps its icon when the new
+    /// lookup has none; a video's tags are saved once and then kept as they are.
+    public func recordWatchedFacts(_ entries: [ActivityWatchedEntry]) {
         guard !entries.isEmpty else { return }
         lock.lock(); defer { lock.unlock() }
-        var file = loadAuthorsLocked()
-        var changed = false
-        for entry in entries where !entry.authorID.isEmpty && !entry.name.isEmpty {
-            var author = file.authors[entry.authorID] ?? ActivityAuthor(name: entry.name, icon: nil)
-            author.name = entry.name
-            if let icon = entry.icon, icon.hasPrefix("data:image/"), icon.utf8.count <= Self.maxAuthorIconBytes { author.icon = icon }
-            if file.authors[entry.authorID] != author { file.authors[entry.authorID] = author; changed = true }
-            if file.videos[entry.videoKey] != entry.authorID { file.videos[entry.videoKey] = entry.authorID; changed = true }
+        var file = loadFactsLocked()
+        let before = file
+        for entry in entries {
+            var video = file.videos[entry.videoKey] ?? SavedVideo()
+            if let id = entry.authorID, !id.isEmpty, let name = entry.authorName, !name.isEmpty {
+                var author = file.authors[id] ?? ActivityAuthor(name: name, icon: nil)
+                author.name = name
+                if let icon = entry.authorIcon, icon.hasPrefix("data:image/"), icon.utf8.count <= Self.maxAuthorIconBytes {
+                    author.icon = icon
+                }
+                file.authors[id] = author
+                video.author = id
+            }
+            if video.tags == nil, let tags = entry.tags, !tags.isEmpty { video.tags = tags }
+            if video.author != nil || video.tags != nil { file.videos[entry.videoKey] = video }
         }
-        if changed { write(encode(file), to: rootDirectory.appendingPathComponent(Self.authorsFileName)) }
+        if file != before { write(encode(file), to: rootDirectory.appendingPathComponent(Self.factsFileName)) }
     }
 
-    private struct AuthorsFile: Codable {
-        var videos: [String: String] = [:]
+    private struct SavedVideo: Codable, Equatable {
+        var author: String?
+        var tags: [ActivityTag]?
+    }
+
+    private struct FactsFile: Codable, Equatable {
+        var videos: [String: SavedVideo] = [:]
         var authors: [String: ActivityAuthor] = [:]
     }
 
-    private func loadAuthorsLocked() -> AuthorsFile {
-        let url = rootDirectory.appendingPathComponent(Self.authorsFileName)
+    private func loadFactsLocked() -> FactsFile {
+        let url = rootDirectory.appendingPathComponent(Self.factsFileName)
         guard let data = try? Data(contentsOf: url),
-              let file = try? JSONDecoder().decode(AuthorsFile.self, from: data) else { return AuthorsFile() }
+              let file = try? JSONDecoder().decode(FactsFile.self, from: data) else { return FactsFile() }
         return file
+    }
+
+    /// Drops the saved facts of videos no longer in the watched history (and
+    /// authors no video names).
+    private func pruneFactsLocked() {
+        var file = loadFactsLocked()
+        guard !file.videos.isEmpty else { return }
+        var kept = Set<String>()
+        for url in dayFiles(for: .contentWatched) {
+            for record in readRecords(at: url) { kept.insert(record.key) }
+        }
+        let before = file
+        file.videos = file.videos.filter { kept.contains($0.key) }
+        let named = Set(file.videos.values.compactMap(\.author))
+        file.authors = file.authors.filter { named.contains($0.key) }
+        if file != before { write(encode(file), to: rootDirectory.appendingPathComponent(Self.factsFileName)) }
     }
 
     // MARK: - Colours (owner rule 2026-09-29)
@@ -361,7 +393,7 @@ public final class ActivityStore: @unchecked Sendable {
         let effective = settings ?? loadSettingsLocked()
         let today = calendar.startOfDay(for: now())
         for category in ActivityCategory.allCases {
-            let days = effective.settings(for: category).retentionDays
+            let days = effective.effectiveRetentionDays(for: category)
             guard days > 0 else { continue }
             guard let cutoff = calendar.date(byAdding: .day, value: -days, to: today) else { continue }
             for url in dayFiles(for: category) {
@@ -370,6 +402,7 @@ public final class ActivityStore: @unchecked Sendable {
                 try? fileManager.removeItem(at: url)
             }
         }
+        pruneFactsLocked()
     }
 
     /// Removes every activity record and the whole `Activity` tree (settings are
@@ -380,7 +413,7 @@ public final class ActivityStore: @unchecked Sendable {
             try? fileManager.removeItem(at: categoryDirectory(category))
         }
         try? fileManager.removeItem(at: rootDirectory.appendingPathComponent(Self.webIconsFileName))
-        try? fileManager.removeItem(at: rootDirectory.appendingPathComponent(Self.authorsFileName))
+        try? fileManager.removeItem(at: rootDirectory.appendingPathComponent(Self.factsFileName))
     }
 
     public func delete(category: ActivityCategory) {
@@ -390,7 +423,7 @@ public final class ActivityStore: @unchecked Sendable {
             try? fileManager.removeItem(at: rootDirectory.appendingPathComponent(Self.webIconsFileName))
         }
         if category == .contentWatched {
-            try? fileManager.removeItem(at: rootDirectory.appendingPathComponent(Self.authorsFileName))
+            try? fileManager.removeItem(at: rootDirectory.appendingPathComponent(Self.factsFileName))
         }
     }
 

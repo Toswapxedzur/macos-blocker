@@ -179,6 +179,8 @@ final class ActivityDashboardTests: XCTestCase {
         let view = ActivityDashboard.settingsView(settings)
         XCTAssertTrue(view.webVisit.enabled)
         XCTAssertEqual(view.webVisit.retentionDays, 90)
+        XCTAssertNil(view.appUsage.retentionDays)
+        XCTAssertEqual(view.retentionDays, 180)
         XCTAssertFalse(view.appUsage.enabled)
     }
 }

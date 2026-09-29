@@ -37,21 +37,34 @@ final class ActivityStoreTests: XCTestCase {
 
     // MARK: privacy invariant
 
-    func testWatchedAuthorsAreRecordedAndKeepTheirIcon() throws {
+    func testWatchedFactsSaveAuthorsOnceAndFreezeTags() throws {
         let s = store(now: day("2026-09-29T12:00:00Z"))
-        let icon = "data:image/png;base64,AAAA"
-        s.recordAuthors([
-            ActivityAuthorEntry(videoKey: "youtube:a", authorID: "youtube:channel:UC1", name: "Chan", icon: icon),
-            ActivityAuthorEntry(videoKey: "youtube:b", authorID: "youtube:channel:UC1", name: "Chan", icon: nil),
-            ActivityAuthorEntry(videoKey: "youtube:c", authorID: "youtube:channel:UC2", name: "Other", icon: "https://not-a-data-uri")
+        s.record(ActivityRecord(id: "w1", category: .contentWatched, startedAt: day("2026-09-29T09:00:00Z"), seconds: 60, key: "youtube:a", label: "A"), settings: allEnabled())
+        let icon = "data:image/jpeg;base64,AAAA"
+        let math = ActivityTag(id: "t1", name: "Math", color: "#2563eb")
+        s.recordWatchedFacts([
+            ActivityWatchedEntry(videoKey: "youtube:a", authorID: "youtube:channel:UC1", authorName: "Chan", authorIcon: icon),
+            ActivityWatchedEntry(videoKey: "youtube:b", authorID: "youtube:channel:UC1", authorName: "Chan", tags: [math]),
+            ActivityWatchedEntry(videoKey: "youtube:c", authorID: "youtube:channel:UC2", authorName: "Other", authorIcon: "https://not-a-data-uri")
         ])
-        let authors = s.watchedAuthors(for: ["youtube:a", "youtube:b", "youtube:c", "youtube:z"])
-        XCTAssertEqual(authors["youtube:a"], ActivityAuthor(name: "Chan", icon: icon))
-        XCTAssertEqual(authors["youtube:b"], ActivityAuthor(name: "Chan", icon: icon))  // one icon per author
-        XCTAssertEqual(authors["youtube:c"], ActivityAuthor(name: "Other", icon: nil))  // only data URIs
-        XCTAssertNil(authors["youtube:z"])
+        // Tags come later for a, once; b's tags never change after.
+        s.recordWatchedFacts([
+            ActivityWatchedEntry(videoKey: "youtube:a", tags: [math]),
+            ActivityWatchedEntry(videoKey: "youtube:b", tags: [ActivityTag(id: "t2", name: "Music", color: "#db2777")])
+        ])
+        let facts = s.watchedFacts(for: ["youtube:a", "youtube:b", "youtube:c", "youtube:z"])
+        XCTAssertEqual(facts["youtube:a"]?.author, ActivityAuthor(name: "Chan", icon: icon))
+        XCTAssertEqual(facts["youtube:a"]?.tags, [math])
+        XCTAssertEqual(facts["youtube:b"]?.author?.icon, icon)  // one icon per author
+        XCTAssertEqual(facts["youtube:b"]?.tags, [math])
+        XCTAssertEqual(facts["youtube:c"]?.author, ActivityAuthor(name: "Other", icon: nil))  // only data URIs
+        XCTAssertNil(facts["youtube:c"]?.tags)
+        XCTAssertNil(facts["youtube:z"])
+        // Kept as long as the video's watched records: b and c have none.
+        s.prune(settings: allEnabled())
+        XCTAssertEqual(Set(s.watchedFacts(for: ["youtube:a", "youtube:b", "youtube:c"]).keys), ["youtube:a"])
         s.delete(category: .contentWatched)
-        XCTAssertTrue(s.watchedAuthors(for: ["youtube:a"]).isEmpty)
+        XCTAssertTrue(s.watchedFacts(for: ["youtube:a"]).isEmpty)
     }
 
     func testDisabledCategoryWritesNothing() throws {
@@ -124,6 +137,28 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(s.records(category: .appUsage, from: day("2026-08-01T00:00:00Z"), to: day("2026-09-19T23:59:59Z")).map(\.id), ["new"])
     }
 
+    func testKindsFollowTheGlobalKeepUnlessSet() throws {
+        let s = store(now: day("2026-09-19T12:00:00Z"))
+        var settings = allEnabled()
+        settings.retentionDays = 7
+        settings.set(ActivityCategorySettings(enabled: true, retentionDays: 0), for: .webVisit)
+        s.record(record("oldApp", .appUsage, at: day("2026-09-01T09:00:00Z"), seconds: 100), settings: settings)
+        s.record(record("oldWeb", .webVisit, at: day("2026-09-01T09:00:00Z"), seconds: 100), settings: settings)
+        s.prune(settings: settings)
+        let range = (day("2026-08-01T00:00:00Z"), day("2026-09-19T23:59:59Z"))
+        XCTAssertTrue(s.records(category: .appUsage, from: range.0, to: range.1).isEmpty)  // follows the global 7 days
+        XCTAssertEqual(s.records(category: .webVisit, from: range.0, to: range.1).map(\.id), ["oldWeb"])  // its own: forever
+    }
+
+    func testSettingsSavedBeforeTheGlobalKeepFollowIt() throws {
+        let old = #"{"byCategory":{"app-usage":{"enabled":true,"retentionDays":30}},"idleThresholdSeconds":60}"#
+        let settings = try JSONDecoder().decode(ActivitySettings.self, from: Data(old.utf8))
+        XCTAssertEqual(settings.retentionDays, 180)
+        XCTAssertNil(settings.settings(for: .appUsage).retentionDays)
+        XCTAssertTrue(settings.isEnabled(.appUsage))
+        XCTAssertEqual(settings.effectiveRetentionDays(for: .appUsage), 180)
+    }
+
     func testRetentionZeroKeepsEverything() throws {
         let s = store(now: day("2026-12-31T12:00:00Z"))
         var settings = allEnabled()
@@ -176,7 +211,9 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(settings.idleThresholdSeconds, 60)
         for c in ActivityCategory.allCases {
             XCTAssertFalse(settings.isEnabled(c))
-            XCTAssertEqual(settings.settings(for: c).retentionDays, 180)
+            XCTAssertNil(settings.settings(for: c).retentionDays)  // follows the global Keep
+            XCTAssertEqual(settings.effectiveRetentionDays(for: c), 180)
         }
+        XCTAssertEqual(settings.retentionDays, 180)
     }
 }

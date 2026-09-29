@@ -49,10 +49,9 @@
   var groupMenu = null;
   var expandedGroups = {};   // merge group id -> its Usage row shows its members      // the Usage row's Add to group menu: { id, x, y, message, conflicts, group }
   var icons = {};
-  // Watched (owner 2026-09-29): list by video, author or tag; per watched key
+  // Watched (owner 2026-09-29): videos, authors and tags; per watched key
   // { creator, creatorIcon, tags: [{ id, name, color }] } (Mac Vault records
   // the author when the video is watched; the tags are the classifier's).
-  var watchedBy = "video";
   var watchedFacts = {};
   var expandedWatched = {};  // author/tag row key -> shows its videos
   var knownIcons = {};       // the editor's items' icons (Mac Vault sends them with the list)
@@ -472,21 +471,39 @@
     return off;
   }
 
+  function keepSelect(value, follow, onChange) {
+    var sel = el("select");
+    var choices = (follow ? [[-1, "Same as all (" + follow + ")"]] : []).concat(RETENTIONS);
+    choices.forEach(function (r) { var o = el("option", null, r[1]); o.value = String(r[0]); o.selected = r[0] === value; sel.appendChild(o); });
+    sel.addEventListener("change", function () { onChange(parseInt(sel.value, 10)); });
+    return sel;
+  }
+
   function settingsPanel(s) {
     var box = el("details", "vui-expand settings");
     box.appendChild(el("summary", null, "Recording"));
+    // The global Keep (owner 2026-09-29); each kind follows it unless set.
+    var global = typeof s.retentionDays === "number" ? s.retentionDays : 180;
+    var globalName = (RETENTIONS.filter(function (r) { return r[0] === global; })[0] || [0, global + " days"])[1];
+    var all = el("div", "settings-row");
+    all.appendChild(el("span", "name", "All history"));
+    var allKeep = el("label"); allKeep.appendChild(document.createTextNode("Keep"));
+    allKeep.appendChild(keepSelect(global, null, function (days) { send({ kind: "setSettings", retentionDays: days }); }));
+    all.appendChild(allKeep);
+    box.appendChild(all);
     KINDS.forEach(function (c) {
-      var cat = s[c.id] || { enabled: false, retentionDays: 30 };
+      var cat = s[c.id] || { enabled: false, retentionDays: null };
       var row = el("div", "settings-row");
       row.appendChild(el("span", "name", c.title));
       var rec = el("label"); var sw = el("input"); sw.type = "checkbox"; sw.checked = !!cat.enabled;
       sw.addEventListener("change", function () { send({ kind: "setSettings", category: c.key, enabled: sw.checked }); });
       rec.appendChild(sw); rec.appendChild(document.createTextNode("Record")); row.appendChild(rec);
       var keep = el("label"); keep.appendChild(document.createTextNode("Keep"));
-      var sel = el("select");
-      RETENTIONS.forEach(function (r) { var o = el("option", null, r[1]); o.value = String(r[0]); o.selected = r[0] === cat.retentionDays; sel.appendChild(o); });
-      sel.addEventListener("change", function () { send({ kind: "setSettings", category: c.key, retentionDays: parseInt(sel.value, 10) }); });
-      keep.appendChild(sel); row.appendChild(keep);
+      var own = typeof cat.retentionDays === "number" ? cat.retentionDays : -1;
+      keep.appendChild(keepSelect(own, globalName.toLowerCase(), function (days) {
+        send({ kind: "setSettings", category: c.key, retentionDays: days });
+      }));
+      row.appendChild(keep);
       // No native dialog: the first click asks, a second one within 4 s deletes.
       var armed = null;
       var del = textButton("Delete history", function () {
@@ -1110,7 +1127,8 @@
     if (!groups.length) { wrap.appendChild(el("p", "empty", "Nothing in this range.")); return wrap; }
     var top = Math.max(groups[0].seconds, 1);
     groups.slice(0, 30).forEach(function (g) {
-      var line = row(g.item, g.seconds, g.seconds / top, g.videos.length + (g.videos.length === 1 ? " video" : " videos"));
+      var line = row(g.item, g.seconds, g.seconds / top);
+      line.querySelector(".row-name").appendChild(el("span", "row-count", g.videos.length + (g.videos.length === 1 ? " video" : " videos")));
       var open = !!expandedWatched[g.item.key];
       var toggle = el("button", open ? "row-expand is-open" : "row-expand", "›");
       toggle.type = "button";
@@ -1130,26 +1148,26 @@
     return wrap;
   }
 
-  function watchedPanel(s) {
+  // Videos, Authors and Tags: three panels (owner 2026-09-29), the tag pie
+  // on top of the Tags panel.
+  function watchedPanels(s) {
     var watched = snapshot.watched || [];
-    var panel = el("section", "panel board");
-    panel.appendChild(columnHead("Watched", watched.reduce(function (a, b) { return a + b.seconds; }, 0)));
-    if (!(s.contentWatched && s.contentWatched.enabled)) { panel.appendChild(notRecorded(["content-watched"])); return panel; }
-    var modes = el("div", "vui-tabs watched-by");
-    [["video", "Videos"], ["author", "Authors"], ["tag", "Tags"]].forEach(function (mode) {
-      modes.appendChild(textButton(mode[1], function () { watchedBy = mode[0]; render(); },
-        mode[0] === watchedBy ? "vui-tab is-active" : "vui-tab"));
+    var total = watched.reduce(function (a, b) { return a + b.seconds; }, 0);
+    var on = s.contentWatched && s.contentWatched.enabled;
+    return [["video", "Videos"], ["author", "Authors"], ["tag", "Tags"]].map(function (kind) {
+      var panel = el("section", "panel board");
+      panel.appendChild(columnHead(kind[1], total));
+      if (!on) { panel.appendChild(notRecorded(["content-watched"])); return panel; }
+      if (kind[0] === "video") { panel.appendChild(rows(watched)); return panel; }
+      var groups = watchedGroups(watched, kind[0]);
+      if (kind[0] === "tag" && groups.length) {
+        var chart = pie(groups, "Share");
+        chart.classList.add("watched-pie");
+        panel.appendChild(chart);
+      }
+      panel.appendChild(watchedRows(groups));
+      return panel;
     });
-    panel.appendChild(modes);
-    if (watchedBy === "video") { panel.appendChild(rows(watched)); return panel; }
-    var groups = watchedGroups(watched, watchedBy);
-    if (watchedBy === "tag" && groups.length) {
-      var chart = pie(groups, "Tags");
-      chart.classList.add("watched-pie");
-      panel.appendChild(chart);
-    }
-    panel.appendChild(watchedRows(groups));
-    return panel;
   }
 
   // One column's head: its title and its total.
@@ -1191,7 +1209,7 @@
     usage.appendChild(appsOn || webOn ? usageRows(items) : notRecorded(["app-usage", "web-visit"]));
     boards.appendChild(usage);
 
-    boards.appendChild(watchedPanel(s));
+    watchedPanels(s).forEach(function (panel) { boards.appendChild(panel); });
     boards.appendChild(groupsPanel());
     page.appendChild(boards);
 

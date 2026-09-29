@@ -1,6 +1,6 @@
 /* Mac Vault's Activity scene (see scenes.js / activity.js): separate panels —
    the day strip; Usage (apps and websites in one ranked list, each marked),
-   Watched and Groups side by side; Details; the recording settings. The shared look is vault-ui.css. */
+   Videos, Authors, Tags and Groups side by side; Details; the recording settings. The shared look is vault-ui.css. */
 /* The scene's mount stands where the page's body used to. */
 #activity { display: flex; flex-direction: column; height: 100%; padding: 10px 12px; }
 main { flex: 1; min-height: 0; overflow: auto; }
@@ -9,8 +9,8 @@ main { flex: 1; min-height: 0; overflow: auto; }
 .panel { background: rgba(255, 255, 255, 0.92); border-radius: 16px; box-shadow: var(--vui-panel-shadow); padding: 16px 18px 18px; }
 .strip-panel { padding: 14px 18px 2px; }
 .settings-panel { padding: 8px 18px; }
-/* Usage, Watched and Groups: three panels, wrapping when the window is narrow. */
-.boards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; align-items: start; }
+/* Usage, Videos, Authors, Tags and Groups: panels side by side, wrapping. */
+.boards { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; align-items: start; }
 .board { min-width: 0; }
 .column-head { display: flex; align-items: center; gap: 12px; margin: 0 4px 6px; min-height: 22px; }
 .head-button { margin-left: auto; }
@@ -134,6 +134,5 @@ main { flex: 1; min-height: 0; overflow: auto; }
 rect.is-hot, path.is-hot, circle.is-hot { stroke: #1e3a8a; stroke-width: 1.5; }
 .legend-item.is-hot .legend-label { color: var(--navy-700); }
 .legend-item { cursor: default; }
-/* Watched: by video, author or tag; the tag pie above the tag rows. */
-.watched-by { margin: 0 4px 10px; }
+/* Tags: the tag pie above the tag rows. */
 .watched-pie { margin: 0 4px 12px; }
