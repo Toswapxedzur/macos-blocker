@@ -90,3 +90,11 @@ main { flex: 1; min-height: 0; overflow: auto; }
 .group-menu-title { font-weight: 700; padding: 2px 6px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .group-menu .group-menu-item { background: none; color: #1f2937; font-size: 12px; font-weight: 400; text-align: left; padding: 6px 8px; }
 .group-menu .group-menu-item:hover { background: var(--navy-100); filter: none; }
+/* A merge group's row opens to its members (indented, their own colours). */
+.row-expand { background: none; color: var(--navy-700); padding: 0 4px; font-size: 16px; line-height: 1; transition: transform 120ms ease; }
+.row-expand:hover { background: var(--navy-100); filter: none; }
+.row-expand.is-open { transform: rotate(90deg); }
+.row.member { margin-left: 48px; grid-template-columns: 24px minmax(0, 1fr) auto; padding: 4px; }
+.row.member .icon { width: 24px; height: 24px; border-radius: 6px; font-size: 11px; }
+.row.member .icon img { width: 24px; height: 24px; }
+.row.member .row-name { font-weight: 400; }
