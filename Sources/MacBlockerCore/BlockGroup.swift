@@ -142,20 +142,23 @@ extension BlockGroup {
 
 public extension BlockGroup {
     /// On, inside its schedule and not snoozed: its rule runs and its time
-    /// counts right now. The one "enforcing now" test for the Mac.
+    /// counts right now. The one "enforcing now" test for the Mac. A budget
+    /// snooze keeps the group in effect (it raises the allowance instead).
     func isEnforcing(snoozes: [String: SnoozeState], at now: Date, calendar: Calendar = .current) -> Bool {
-        isActive(at: now, calendar: calendar) && snoozes[id]?.phase(at: now) != .active
+        isActive(at: now, calendar: calendar) && snoozes[id]?.exempts(at: now) != true
     }
 
-    /// Allowance left in seconds; nil for an instant group.
-    func remainingSeconds(usedSeconds: TimeInterval) -> TimeInterval? {
+    /// Allowance left in seconds, a running budget snooze's extra included;
+    /// nil for an instant group.
+    func remainingSeconds(usedSeconds: TimeInterval, extraSeconds: TimeInterval = 0) -> TimeInterval? {
         guard mode.isTimed else { return nil }
-        return max(0, TimeInterval(max(0, allowedMinutes) * 60) - usedSeconds)
+        return max(0, TimeInterval(max(0, allowedMinutes) * 60) + max(0, extraSeconds) - usedSeconds)
     }
 
     /// Enforcing, and instant or out of allowance: its lines block right now.
     func blocksNow(usage: UsageSnapshot, at now: Date, calendar: Calendar = .current) -> Bool {
         isEnforcing(snoozes: usage.snoozesByGroup, at: now, calendar: calendar)
-            && (remainingSeconds(usedSeconds: usage.usageByGroupSeconds[id] ?? 0) ?? 0) <= 0
+            && (remainingSeconds(usedSeconds: usage.usageByGroupSeconds[id] ?? 0,
+                                 extraSeconds: usage.snoozesByGroup[id]?.extraSeconds(at: now) ?? 0) ?? 0) <= 0
     }
 }

@@ -98,6 +98,27 @@ final class BlockerWebStoreRoutingTests: XCTestCase {
         XCTAssertEqual((tidy?["groupSnoozeTotalsMs"] as? [String: Any])?.isEmpty, true)
         XCTAssertEqual(tidy?["quickAddGroupId"] as? String, "")
         XCTAssertNil(BlockerWebStore.tidied(["blockedGroups": [["id": "g1", "lockedAtMs": NSNull()]], "usageTimersMs": ["g1": 5]], nowMs: 0), "nothing to tidy: no write")
+
+    /// As the browser's worker (group-actions.js): a used-up budget snooze ends
+    /// on the tick and counts the extra minutes it gave; one that lapses at the
+    /// reset counts only the extra used before it.
+    func testABudgetSnoozeEndsWhenUsedUpAndCountsOnlyTheExtraUsed() {
+        let group: [String: Any] = ["id": "g1", "name": "Focus", "mode": "after-minutes", "allowedMinutes": 15,
+                                    "resetIntervalHours": 2, "snoozeKind": "budget", "snoozeMinutes": 10]
+        let entry: [String: Any] = ["kind": "budget", "extraMs": 600_000, "startsAtMs": 1_000_000, "untilMs": 8_200_000,
+                                    "cooldownUntilMs": 8_320_000, "confirmationCount": 0, "changedAtMs": 1_000_000]
+        let usedUp = BlockerWebStore.tidied(["blockedGroups": [group], "usageTimersMs": ["g1": 1_500_000],
+                                             "groupSnoozes": ["g1": entry]], nowMs: 2_000_000)
+        let ended = (usedUp?["groupSnoozes"] as? [String: Any])?["g1"] as? [String: Any]
+        XCTAssertEqual((ended?["untilMs"] as? NSNumber)?.doubleValue, 2_000_000, "ended now: the block returns")
+        XCTAssertEqual((ended?["cooldownUntilMs"] as? NSNumber)?.doubleValue, 2_120_000, "its cooldown runs from now")
+        XCTAssertEqual(((usedUp?["groupSnoozeTotalsMs"] as? [String: Any])?["g1"] as? NSNumber)?.doubleValue, 600_000, "all 10 extra minutes counted")
+        let lapsed = BlockerWebStore.tidied(["blockedGroups": [group], "usageTimersMs": ["g1": 1_140_000],
+                                             "groupSnoozes": ["g1": entry]], nowMs: 8_300_000)
+        XCTAssertEqual(((lapsed?["groupSnoozeTotalsMs"] as? [String: Any])?["g1"] as? NSNumber)?.doubleValue, 240_000, "19 of 15 minutes: 4 extra counted")
+        let view = BlockerWebStore.enforcementView(of: ["blockedGroups": [group], "groupSnoozes": ["g1": entry]])
+        XCTAssertEqual(view.snoozes["g1"]?.budgetExtra, 600, "enforcement reads the extra")
+    }
         let legacy = BlockerWebStore.tidied(["blockedGroups": [["id": "g1", "freezeMode": "strict", "frozenAtMs": 5, "strictFreezeHours": 3]]], nowMs: 0)
         let converted = (legacy?["blockedGroups"] as? [[String: Any]])?.first
         XCTAssertEqual((converted?["lockedAtMs"] as? NSNumber)?.doubleValue, 5, "an old strict freeze becomes the editor's lock once")
