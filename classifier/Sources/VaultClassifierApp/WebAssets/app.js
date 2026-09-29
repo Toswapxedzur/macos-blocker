@@ -819,7 +819,7 @@
       const panelState = activeTagPanel?.treeID === tree.id ? activeTagPanel : null;
       const contentWidth = Math.max(0, ...[...positions.values()].map((position) => position.x + 126)) + 28;
       const contentHeight = Math.max(240, Math.max(0, ...[...positions.values()].map((position) => position.y + 22)) + 28,
-        panelState ? panelState.y + 360 : 0);
+        panelState ? 380 : 0);  // room for the popover, placed in view below
       const selectedNodeID = selectedTagNode?.treeID === tree.id ? selectedTagNode.nodeID : "";
       const popoverNode = panelState?.nodeID ? nodeByID.get(panelState.nodeID) : null;
       const connectionState = connectionSource?.treeID === tree.id ? connectionSource : null;
@@ -860,7 +860,8 @@
   }
 
   // A tag's popover sits beside its anchor, flipped left when the visible
-  // part of the canvas has no room on the right.
+  // part of the canvas has no room on the right, and moved up so all of it
+  // shows.
   function placeTreePopovers() {
     root.querySelectorAll("[data-tree-map]").forEach((map) => {
       const popover = map.querySelector("[data-tree-popover]");
@@ -873,7 +874,10 @@
       if (left + width > viewRight - 8) left = x - width - 12;
       left = Math.max(viewLeft + 8, Math.min(left, viewRight - width - 8));
       popover.style.left = `${Math.round(left)}px`;
-      popover.style.top = `${Number(popover.dataset.anchorY) || 0}px`;
+      const viewTop = map.scrollTop;
+      const viewBottom = map.scrollTop + map.clientHeight;
+      const top = Math.max(viewTop + 8, Math.min(Number(popover.dataset.anchorY) || 0, viewBottom - popover.offsetHeight - 8));
+      popover.style.top = `${Math.round(top)}px`;
     });
   }
 
@@ -1993,8 +1997,9 @@
     const content = map.querySelector(".tree-map-content");
     const contentRect = content.getBoundingClientRect();
     const node = event.target.closest(".tree-map-node");
-    const nodeX = node ? Number(node.dataset.positionX) || 0 : Math.max(12, Math.round(event.clientX - contentRect.left + map.scrollLeft));
-    const nodeY = node ? Number(node.dataset.positionY) || 0 : Math.max(12, Math.round(event.clientY - contentRect.top + map.scrollTop));
+    // The content's rect already moves with the canvas's scroll.
+    const nodeX = node ? Number(node.dataset.positionX) || 0 : Math.max(12, Math.round(event.clientX - contentRect.left));
+    const nodeY = node ? Number(node.dataset.positionY) || 0 : Math.max(12, Math.round(event.clientY - contentRect.top));
     connectionSource = null;
     if (node) {
       openTagEditor(map.dataset.treeId, node.dataset.nodeId);
