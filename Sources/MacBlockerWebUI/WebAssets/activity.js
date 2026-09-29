@@ -314,8 +314,102 @@
     "com.operasoftware.Opera": 1, "com.apple.Safari": 1, "org.mozilla.firefox": 1
   };
 
-  function segmentTitle(s) {
-    return (s.label || s.key) + " — " + new Date(s.startedAtMs).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) + " · " + fmt(s.seconds);
+  // ── Hover card (owner 2026-09-29: hover any bar or pie for details) ──
+  // Our own card, not the system tooltip. A chart part registers what it
+  // shows: { title, color, key, lines: [text], list: [[label, time]] }.
+  var hoverInfo = new WeakMap();
+  var hot = null;
+  function hoverable(node, info) { hoverInfo.set(node, info); return node; }
+  function share(part, whole, of) {
+    var p = part / whole * 100;
+    return (p > 0 && p < 1 ? "<1%" : Math.round(p) + "%") + " of " + of;
+  }
+  function timeSpan(fromMs, toMs, withDay) {
+    var text = clock(fromMs) + " – " + clock(toMs);
+    return withDay ? day(fromMs) + ", " + text : text;
+  }
+
+  function hideHover() {
+    var card = scope.getElementById("hovercard");
+    if (card) card.hidden = true;
+    if (hot) { hot.classList.remove("is-hot"); hot = null; }
+  }
+
+  function showHover(node, info, x, y) {
+    var card = scope.getElementById("hovercard");
+    if (!card) {
+      card = el("div", "hovercard");
+      card.id = "hovercard";
+      scope.getElementById("activity").appendChild(card);
+    }
+    if (hot !== node) {
+      if (hot) hot.classList.remove("is-hot");
+      hot = node;
+      node.classList.add("is-hot");
+      card.textContent = "";
+      var head = el("div", "hover-head");
+      if (info.key) head.appendChild(icon(info.key, info.title));
+      else if (info.color) { var dot = el("span", "dot"); dot.style.background = info.color; head.appendChild(dot); }
+      head.appendChild(el("span", "hover-title", info.title));
+      card.appendChild(head);
+      (info.lines || []).forEach(function (line) { if (line) card.appendChild(el("div", "hover-line", line)); });
+      if (info.list && info.list.length) {
+        var list = el("div", "hover-list");
+        info.list.forEach(function (pair) {
+          var item = el("div", "hover-item");
+          item.appendChild(el("span", "hover-item-label", pair[0]));
+          item.appendChild(el("span", "hover-item-time", pair[1]));
+          list.appendChild(item);
+        });
+        card.appendChild(list);
+      }
+    }
+    card.hidden = false;
+    var w = card.offsetWidth, h = card.offsetHeight;
+    var left = x + 14, top = y + 14;
+    if (left + w > window.innerWidth - 8) left = Math.max(8, x - w - 14);
+    if (top + h > window.innerHeight - 8) top = Math.max(8, y - h - 14);
+    card.style.left = left + "px";
+    card.style.top = top + "px";
+  }
+
+  scope.addEventListener("mousemove", function (event) {
+    var path = event.composedPath();
+    for (var i = 0; i < path.length; i++) {
+      var info = hoverInfo.get(path[i]);
+      if (info) { showHover(path[i], info, event.clientX, event.clientY); return; }
+    }
+    hideHover();
+  });
+  scope.addEventListener("mouseout", function (event) { if (!event.relatedTarget) hideHover(); });
+  scope.addEventListener("scroll", hideHover, true);
+
+  // A strip segment: an app's or site's stretch of time.
+  function segmentInfo(s, kind, fromMs, toMs, multiDay, browser) {
+    return {
+      title: s.label || s.key,
+      key: s.key,
+      lines: [kind + (browser ? " · in " + (browser.label || browser.key) : ""),
+        timeSpan(fromMs, toMs, multiDay) + " · " + fmt((toMs - fromMs) / 1000)]
+    };
+  }
+
+  // A Usage entry (an app, a site, a merge group, a browser's leftover).
+  function entryInfo(entry, lines) {
+    var kind = entry.kind === "Group"
+      ? "Merge group · " + entry.group.members.length + (entry.group.members.length === 1 ? " member" : " members")
+      : entry.nameOnly ? "App · browser, time outside recorded sites" : entry.kind;
+    return { title: entry.item.label || entry.item.key, key: entry.item.key, lines: [kind].concat(lines) };
+  }
+
+  // What Details shows, by name.
+  function pickName() {
+    if (picked === "all") return "All usage";
+    if (picked.indexOf("group|") === 0) {
+      var g = groupsList().filter(function (x) { return "group|" + x.id === picked; })[0];
+      return g ? g.name : "Group";
+    }
+    return memberLabel(picked);
   }
 
   function place(node, from, to) {
@@ -339,7 +433,7 @@
     segments.forEach(function (s) {
       var seg = paint(el("div", "seg"), colorIndexFor("app", s.key, s.colorIndex));
       place(seg, s.startFraction, s.startFraction + s.widthFraction);
-      seg.title = segmentTitle(s);
+      hoverable(seg, segmentInfo(s, BROWSERS[s.key] ? "App · browser" : "App", s.startedAtMs, s.startedAtMs + s.seconds * 1000, multiDay));
       track.appendChild(seg);
     });
     // Sites on top of their browser's time; the browser's colour stays below.
@@ -347,7 +441,7 @@
       var w = piece.site;
       var site = paint(el("div", "seg site"), colorIndexFor("web", w.key, w.colorIndex));
       place(site, piece.from, piece.to);
-      site.title = segmentTitle(w) + " (" + (piece.browser.label || piece.browser.key) + ")";
+      hoverable(site, segmentInfo(w, "Website", startMs + piece.from * span, startMs + piece.to * span, multiDay, piece.browser));
       track.appendChild(site);
     });
     wrap.appendChild(track);
@@ -459,9 +553,12 @@
         x: left + week * (cell + gap), y: top + weekday * (cell + gap), width: cell, height: cell, rx: 3,
         fill: level === 0 ? "#e8ecf2" : navy([0, 0.3, 0.5, 0.72, 1][level])
       });
-      var title = svg("title", {});
-      title.textContent = DAY_NAMES[date.getDay()] + " " + MONTHS[date.getMonth()] + " " + date.getDate() + " · " + (seconds > 0 ? fmt(seconds) : "none");
-      square.appendChild(title);
+      hoverable(square, {
+        title: DAY_NAMES[date.getDay()] + " " + MONTHS[date.getMonth()] + " " + date.getDate() + ", " + date.getFullYear(),
+        color: level === 0 ? "#e8ecf2" : navy([0, 0.3, 0.5, 0.72, 1][level]),
+        lines: [pickName() + ": " + (seconds > 0 ? fmt(seconds) : "not used"),
+          seconds > 0 ? share(seconds, max, "the busiest day") : null]
+      });
       chart.appendChild(square);
     });
     var scroller = el("div", "map-scroll");
@@ -510,11 +607,10 @@
       label.textContent = dayLabel(day, d, days.length);
       frame.chart.appendChild(label);
     });
-    frame.block = function (x, y, w, h, colorIndex, text) {
+    frame.block = function (x, y, w, h, colorIndex, info) {
       var rect = svg("rect", { x: x, y: y, width: w, height: Math.max(0.8, h), fill: colorOf(colorIndex) });
-      var title = svg("title", {});
-      title.textContent = text;
-      rect.appendChild(title);
+      info.color = colorOf(colorIndex);
+      hoverable(rect, info);
       frame.chart.appendChild(rect);
     };
     frame.barX = function (d) { return left + frame.group * d + (frame.group - frame.barWidth) / 2; };
@@ -537,12 +633,18 @@
       var x = f.barX(d);
       f.chart.appendChild(svg("rect", { x: x, y: f.top, width: f.barWidth, height: f.plot, rx: 4, fill: "#f1f4f8" }));
       day.app.forEach(function (seg) {
-        f.block(x, f.base - (seg.startFraction + seg.widthFraction) * f.plot, f.barWidth, seg.widthFraction * f.plot, colorIndexFor("app", seg.key, seg.colorIndex),
-          (seg.label || seg.key) + " · " + timeOfDay(seg.startFraction) + "–" + timeOfDay(seg.startFraction + seg.widthFraction));
+        f.block(x, f.base - (seg.startFraction + seg.widthFraction) * f.plot, f.barWidth, seg.widthFraction * f.plot, colorIndexFor("app", seg.key, seg.colorIndex), {
+          title: seg.label || seg.key, key: seg.key,
+          lines: [(BROWSERS[seg.key] ? "App · browser" : "App") + " · " + dayLabel(day, d, days.length),
+            timeOfDay(seg.startFraction) + " – " + timeOfDay(seg.startFraction + seg.widthFraction) + " · " + fmt(seg.widthFraction * 86400)]
+        });
       });
       attributeSites(day.app, day.web).pieces.forEach(function (piece) {
-        f.block(x, f.base - piece.to * f.plot, f.barWidth * 0.85, (piece.to - piece.from) * f.plot, colorIndexFor("web", piece.site.key, piece.site.colorIndex),
-          (piece.site.label || piece.site.key) + " · " + timeOfDay(piece.from) + "–" + timeOfDay(piece.to) + " (" + (piece.browser.label || piece.browser.key) + ")");
+        f.block(x, f.base - piece.to * f.plot, f.barWidth * 0.85, (piece.to - piece.from) * f.plot, colorIndexFor("web", piece.site.key, piece.site.colorIndex), {
+          title: piece.site.label || piece.site.key, key: piece.site.key,
+          lines: ["Website · in " + (piece.browser.label || piece.browser.key) + " · " + dayLabel(day, d, days.length),
+            timeOfDay(piece.from) + " – " + timeOfDay(piece.to) + " · " + fmt((piece.to - piece.from) * 86400)]
+        });
       });
     });
     wrap.appendChild(f.chart);
@@ -565,10 +667,14 @@
     var f = dayFrame(days, ticks);
     perDay.forEach(function (items, d) {
       var x = f.barX(d), y = f.base;
-      items.forEach(function (entry) {
+      var dayTotal = items.reduce(function (sum, entry) { return sum + entry.seconds; }, 0);
+      items.forEach(function (entry, rank) {
         var h = (entry.seconds / top) * f.plot;
         y -= h;
-        f.block(x, y, f.barWidth, h, entry.item.colorIndex, (entry.item.label || entry.item.key) + " · " + fmt(entry.seconds));
+        f.block(x, y, f.barWidth, h, entry.item.colorIndex, entryInfo(entry, [
+          dayLabel(days[d], d, days.length) + " · #" + (rank + 1) + " of " + items.length,
+          fmt(entry.seconds) + " · " + share(entry.seconds, dayTotal, "the day (" + fmt(dayTotal) + ")")
+        ]));
       });
     });
     wrap.appendChild(f.chart);
@@ -597,7 +703,6 @@
     wrap.appendChild(head);
     wrap.appendChild(inOrderGraph(days));
     wrap.appendChild(totalsGraph(days));
-    wrap.appendChild(el("div", "chart-legend", "Hover a block for its name and time."));
     return wrap;
   }
 
@@ -635,17 +740,27 @@
     var split = splitSlices(items, total);
     var slices = split.named.map(function (entry) {
       var label = entry.item.label || entry.item.key;
-      return { label: label, title: label, seconds: entry.seconds, color: colorOf(entry.item.colorIndex) };
+      return { label: label, entry: entry, seconds: entry.seconds, color: colorOf(entry.item.colorIndex) };
     });
     if (split.otherSeconds > 0) {
-      var names = split.other.slice(0, 15).map(function (entry) { return entry.item.label || entry.item.key; });
-      if (split.other.length > 15) names.push("…");
       slices.push({
         label: "Other · " + split.other.length + (split.other.length === 1 ? " item" : " items"),
-        title: "Other: " + names.join(", "),
+        other: split.other,
         seconds: split.otherSeconds,
         color: "#cbd5e1"
       });
+    }
+    function sliceInfo(slice) {
+      var line = fmt(slice.seconds) + " · " + share(slice.seconds, total, "the total (" + fmt(total) + ")");
+      if (slice.entry) return entryInfo(slice.entry, [line]);
+      var list = slice.other.slice(0, 12).map(function (entry) {
+        return [entry.item.label || entry.item.key, entry.nameOnly ? "outside sites" : fmt(entry.seconds)];
+      });
+      if (slice.other.length > 12) list.push(["and " + (slice.other.length - 12) + " more", ""]);
+      var why = [];
+      if (slice.other.some(function (entry) { return !entry.nameOnly; })) why.push("items under 2% each");
+      if (slice.other.some(function (entry) { return entry.nameOnly; })) why.push("browsers' time outside recorded sites");
+      return { title: slice.label, color: slice.color, lines: [line, why.join(", and ")], list: list };
     }
     var size = 140, r = 64, c = size / 2;
     var chart = svg("svg", { viewBox: "0 0 " + size + " " + size, width: size, height: size, class: "pie" });
@@ -663,9 +778,7 @@
           fill: slice.color, stroke: "#ffffff", "stroke-width": 1
         });
       }
-      var title = svg("title", {});
-      title.textContent = slice.title + " · " + fmt(slice.seconds) + " · " + Math.round(part * 100) + "%";
-      shape.appendChild(title);
+      hoverable(shape, sliceInfo(slice));
       chart.appendChild(shape);
       angle = next;
     });
@@ -674,7 +787,7 @@
     var legend = el("div", "pie-legend");
     slices.forEach(function (slice) {
       var item = el("div", "legend-item");
-      item.title = slice.title;
+      hoverable(item, sliceInfo(slice));
       var dot = el("span", "dot");
       dot.style.background = slice.color;
       item.appendChild(dot);

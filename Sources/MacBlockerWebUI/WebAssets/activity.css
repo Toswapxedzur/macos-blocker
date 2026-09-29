@@ -116,3 +116,21 @@ main { flex: 1; min-height: 0; overflow: auto; }
 .row.member .icon { width: 24px; height: 24px; border-radius: 6px; font-size: 11px; }
 .row.member .icon img { width: 24px; height: 24px; }
 .row.member .row-name { font-weight: 400; }
+/* The hover card (activity.js showHover): our own, never the system tooltip. */
+.hovercard { position: fixed; z-index: 30; max-width: 280px; padding: 10px 12px; border-radius: 12px; background: #ffffff; box-shadow: 0 12px 34px rgba(15, 23, 42, 0.18); pointer-events: none; display: flex; flex-direction: column; gap: 3px; }
+.hovercard[hidden] { display: none; }
+.hover-head { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.hover-head .icon { width: 24px; height: 24px; border-radius: 6px; font-size: 11px; flex: none; }
+.hover-head .icon img { width: 24px; height: 24px; }
+.hover-head .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.hover-title { font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hover-line { color: var(--vui-copy); font-size: var(--vui-size-small); font-variant-numeric: tabular-nums; }
+.hover-list { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; font-size: var(--vui-size-small); }
+.hover-item { display: flex; gap: 12px; }
+.hover-item-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hover-item-time { margin-left: auto; color: var(--vui-muted); flex: none; font-variant-numeric: tabular-nums; }
+/* The part under the pointer. */
+.strip .seg.is-hot { box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.95); z-index: 1; }
+rect.is-hot, path.is-hot, circle.is-hot { stroke: #1e3a8a; stroke-width: 1.5; }
+.legend-item.is-hot .legend-label { color: var(--navy-700); }
+.legend-item { cursor: default; }
