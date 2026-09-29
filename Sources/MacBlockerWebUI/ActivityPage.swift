@@ -162,12 +162,18 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
         pushSnapshot()
     }
 
-    /// The apps and websites a group can hold (seen in the day map's span).
+    /// The apps and websites a group can hold (seen in the day map's span),
+    /// with their icons (the editor shows them).
     private func pushKnownItems() {
         guard loaded, let store, let webView else { return }
         let items = store.knownItems(days: Self.historyDays)
-        guard let data = try? JSONEncoder().encode(items), let json = String(data: data, encoding: .utf8) else { return }
-        webView.evaluateJavaScript("window.activityKnownItems && window.activityKnownItems(\(json));", completionHandler: nil)
+        let web = store.webIcons()
+        var icons: [String: String] = [:]
+        for item in items { if let uri = iconDataURI(id: item.id, web: web) { icons[String(item.id.dropFirst(4))] = uri } }
+        guard let data = try? JSONEncoder().encode(items), let json = String(data: data, encoding: .utf8),
+              let iconsData = try? JSONSerialization.data(withJSONObject: icons),
+              let iconsJSON = String(data: iconsData, encoding: .utf8) else { return }
+        webView.evaluateJavaScript("window.activityKnownItems && window.activityKnownItems(\(json), \(iconsJSON));", completionHandler: nil)
     }
 
     /// Something outside the page changed Activity (an AI tool edited a group):
@@ -179,19 +185,28 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
     /// The day map's span.
     static let historyDays = 180
 
-    /// Local icons keyed by bar key: app icons resolved from the bundle id via
-    /// NSWorkspace, website favicons from the store's local cache (data URIs the
-    /// extension supplied). No network.
+    /// Local icons keyed by bar key (bundle id / domain): app icons resolved
+    /// from the bundle id via NSWorkspace, website favicons from the store's
+    /// local cache (data URIs the extension supplied). No network. Every group
+    /// member gets one too (a group's icon is made of its members' icons).
     private func resolveIcons(snapshot: ActivityDashboardSnapshot, store: ActivityStore) -> [String: String] {
-        var icons: [String: String] = [:]
-        for bar in snapshot.app.bars {
-            if let uri = appIconDataURI(bundleID: bar.key) { icons[bar.key] = uri }
-        }
         let web = store.webIcons()
-        for bar in snapshot.web.bars where web[bar.key] != nil {
-            icons[bar.key] = web[bar.key]
+        var ids = snapshot.app.bars.map { "app|" + $0.key } + snapshot.web.bars.map { "web|" + $0.key }
+        for group in snapshot.groups { ids += group.members }
+        var icons: [String: String] = [:]
+        for id in ids {
+            let key = String(id.dropFirst(4))
+            if icons[key] == nil, let uri = iconDataURI(id: id, web: web) { icons[key] = uri }
         }
         return icons
+    }
+
+    /// "app|<bundle id>" or "web|<domain>" → its icon, when there is one.
+    private func iconDataURI(id: String, web: [String: String]) -> String? {
+        let key = String(id.dropFirst(4))
+        if id.hasPrefix("app|") { return appIconDataURI(bundleID: key) }
+        if id.hasPrefix("web|") { return web[key] }
+        return nil
     }
 
     private func appIconDataURI(bundleID: String) -> String? {
