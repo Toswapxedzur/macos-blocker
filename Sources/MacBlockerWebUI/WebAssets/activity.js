@@ -49,8 +49,9 @@
   var groupMenu = null;
   var expandedGroups = {};   // merge group id -> its Usage row shows its members      // the Usage row's Add to group menu: { id, x, y, message, conflicts, group }
   var icons = {};
-  // Watched (owner 2026-09-29): list by video, author or tag; the classifier's
-  // facts per watched key: { creator, tags: [{ id, name, color }] }.
+  // Watched (owner 2026-09-29): list by video, author or tag; per watched key
+  // { creator, creatorIcon, tags: [{ id, name, color }] } (Mac Vault records
+  // the author when the video is watched; the tags are the classifier's).
   var watchedBy = "video";
   var watchedFacts = {};
   var expandedWatched = {};  // author/tag row key -> shows its videos
@@ -1207,6 +1208,13 @@
     snapshot = data;
     icons = iconMap || {};
     watchedFacts = facts || {};
+    // A watched video, and its author's row, show the author's icon.
+    Object.keys(watchedFacts).forEach(function (key) {
+      var fact = watchedFacts[key];
+      if (!fact.creatorIcon) return;
+      icons[key] = fact.creatorIcon;
+      if (fact.creator) icons["author|" + fact.creator] = fact.creatorIcon;
+    });
     render();
     requestHistory();
   };

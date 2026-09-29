@@ -77,9 +77,11 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
         let activityStore = ActivityStore.standard()
         ConnectionHub.shared.activityStore = activityStore
         MainActor.assumeIsolated {
-            ActivityPage.shared.configure(store: activityStore, watchedFacts: { keys in
-                MainActor.assumeIsolated { VaultClassifierPage.shared.watchedFacts(keys: keys) }
-            })
+            ActivityPage.shared.configure(
+                store: activityStore,
+                watchedTags: { keys in MainActor.assumeIsolated { VaultClassifierPage.shared.watchedTags(keys: keys) } },
+                recordAuthors: { keys in MainActor.assumeIsolated { WatchedAuthorRecorder.record(keys: keys, in: activityStore) } }
+            )
         }
         let activityRecorder = ActivityRecorderService(store: activityStore, maxStepSeconds: 4)
         MainActor.assumeIsolated { MacEnforcementBridge.shared.activityRecorder = activityRecorder }
