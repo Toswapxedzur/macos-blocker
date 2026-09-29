@@ -397,32 +397,52 @@
     return wrap;
   }
 
-  // How many rows get their own slice: at least the top 8, and more while the
-  // rest together would not be the smallest slice (owner 2026-09-29: Other is
-  // always the smallest). `seconds` is sorted largest first.
-  function namedSliceCount(seconds) {
-    var count = Math.min(8, seconds.length);
-    var rest = seconds.slice(count).reduce(function (sum, value) { return sum + value; }, 0);
-    while (count < seconds.length && rest >= seconds[count - 1]) {
-      rest -= seconds[count];
-      count += 1;
+  // What gets its own slice (owner 2026-09-29). Other holds the items under
+  // 2% of the total and a browser's leftover time (its time outside recorded
+  // sites — the list shows no number for it, so neither does the pie). At
+  // most 12 named slices; while there is room, Other's largest items get
+  // their own slice so Other stays the smallest. `items` is sorted largest first.
+  var OTHER_SHARE = 0.02, MAX_NAMED = 12;
+  function splitSlices(items, total) {
+    var named = [], other = [];
+    items.forEach(function (entry) {
+      if (!entry.nameOnly && entry.seconds / total >= OTHER_SHARE && named.length < MAX_NAMED) named.push(entry);
+      else other.push(entry);
+    });
+    var otherSeconds = other.reduce(function (sum, entry) { return sum + entry.seconds; }, 0);
+    while (named.length < MAX_NAMED && otherSeconds > 0) {
+      var smallest = named.length ? named[named.length - 1].seconds : 0;
+      if (otherSeconds < smallest) break;
+      var index = other.findIndex(function (entry) { return !entry.nameOnly; });
+      if (index < 0) break;
+      var promoted = other.splice(index, 1)[0];
+      named.push(promoted);
+      otherSeconds -= promoted.seconds;
     }
-    return count;
+    return { named: named, other: other, otherSeconds: otherSeconds };
   }
 
-  // Share of the chosen range (Today / 7 / 30 days): the Usage rows, the tail
-  // as Other.
+  // Share of the chosen range (Today / 7 / 30 days): the Usage rows.
   function pie(items) {
     var wrap = el("div", "chart");
     wrap.appendChild(el("div", "chart-title", "Share"));
     var total = items.reduce(function (sum, entry) { return sum + entry.seconds; }, 0);
     if (!total) { wrap.appendChild(el("p", "empty", "Nothing in this range.")); return wrap; }
-    var named = namedSliceCount(items.map(function (entry) { return entry.seconds; }));
-    var slices = items.slice(0, named).map(function (entry) {
-      return { label: entry.item.label || entry.item.key, seconds: entry.seconds, color: colorOf(entry.item.colorIndex) };
+    var split = splitSlices(items, total);
+    var slices = split.named.map(function (entry) {
+      var label = entry.item.label || entry.item.key;
+      return { label: label, title: label, seconds: entry.seconds, color: colorOf(entry.item.colorIndex) };
     });
-    var rest = items.slice(named).reduce(function (sum, entry) { return sum + entry.seconds; }, 0);
-    if (rest > 0) slices.push({ label: "Other", seconds: rest, color: "#cbd5e1" });
+    if (split.otherSeconds > 0) {
+      var names = split.other.slice(0, 15).map(function (entry) { return entry.item.label || entry.item.key; });
+      if (split.other.length > 15) names.push("…");
+      slices.push({
+        label: "Other · " + split.other.length + (split.other.length === 1 ? " item" : " items"),
+        title: "Other: " + names.join(", "),
+        seconds: split.otherSeconds,
+        color: "#cbd5e1"
+      });
+    }
     var size = 140, r = 64, c = size / 2;
     var chart = svg("svg", { viewBox: "0 0 " + size + " " + size, width: size, height: size, class: "pie" });
     var angle = -Math.PI / 2;
@@ -440,7 +460,7 @@
         });
       }
       var title = svg("title", {});
-      title.textContent = slice.label + " · " + fmt(slice.seconds) + " · " + Math.round(part * 100) + "%";
+      title.textContent = slice.title + " · " + fmt(slice.seconds) + " · " + Math.round(part * 100) + "%";
       shape.appendChild(title);
       chart.appendChild(shape);
       angle = next;
@@ -450,6 +470,7 @@
     var legend = el("div", "pie-legend");
     slices.forEach(function (slice) {
       var item = el("div", "legend-item");
+      item.title = slice.title;
       var dot = el("span", "dot");
       dot.style.background = slice.color;
       item.appendChild(dot);
