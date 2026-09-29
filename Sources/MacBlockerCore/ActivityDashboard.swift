@@ -45,6 +45,9 @@ public struct ActivityDashboardSnapshot: Codable, Equatable, Sendable {
     /// Watched content as ranked bars (time per video), plus its title/platform.
     public var watched: [ActivityBar]
     public var settings: ActivityDashboardSettings
+    /// The user's groups with their colours (a merge group stands in for its
+    /// members on the page).
+    public var groups: [ActivityGroupView]
 }
 
 /// One item's time (an app, a website, or all usage) per day, for the
@@ -155,6 +158,25 @@ public enum ActivityDashboard {
     public static func dayStarts(days: Int, now: Date, calendar: Calendar) -> [Date] {
         let today = calendar.startOfDay(for: now)
         return (0..<max(1, days)).reversed().compactMap { calendar.date(byAdding: .day, value: -$0, to: today) }
+    }
+
+    /// The time `records` cover, overlaps counted once: one record per stretch
+    /// (a group's app and a site inside it, or two members open at once, are
+    /// one stretch of the group's time).
+    public static func union(_ records: [ActivityRecord]) -> [ActivityRecord] {
+        var stretches: [(start: Date, end: Date)] = []
+        for record in records.sorted(by: { $0.startedAt < $1.startedAt }) {
+            let end = record.startedAt.addingTimeInterval(record.seconds)
+            if let last = stretches.last, record.startedAt <= last.end {
+                stretches[stretches.count - 1].end = max(last.end, end)
+            } else {
+                stretches.append((record.startedAt, end))
+            }
+        }
+        return stretches.enumerated().map { index, stretch in
+            ActivityRecord(id: "union-\(index)", category: .appUsage, startedAt: stretch.start,
+                           seconds: stretch.end.timeIntervalSince(stretch.start), key: "union", label: "union")
+        }
     }
 
     /// Per-day totals of `records` for the `days` days ending today (local
