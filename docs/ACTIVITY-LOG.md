@@ -120,9 +120,12 @@ Activity/
   everywhere — one "Group" row in Usage, one colour in the strip, pie and day
   bars — so an item may be in many groups but in at most one merge group
   (saving refuses, or moves it with `move`). A group's time is its members'
-  time with overlaps counted once. Edited in the page (Groups expand, or a
-  row's "+ Group") or by the AI tools `list_activity_groups`,
-  `save_activity_group`, `delete_activity_group`.
+  time with overlaps counted once. Edited in the page (the Groups panel beside
+  Usage and Watched, or a Usage row's "+ Group") or by the AI tools
+  `list_activity_groups`, `save_activity_group`, `delete_activity_group`. A
+  group's icon is made of slices of its members' icons (1 whole, 2 halves,
+  3 wedges, 4 quarters, more = three and "+N"), so Mac Vault sends an icon for
+  every group member and every item the editor lists.
 - **Colours**: every app, website and group has one permanent colour index
   (`colors.json`, assigned once, never reused, kept when history is deleted);
   the page paints 12 base colours, then golden-angle hues.

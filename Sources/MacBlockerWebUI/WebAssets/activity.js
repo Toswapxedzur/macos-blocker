@@ -43,13 +43,13 @@
   var usageItemsRaw = [];    // the same before folding (a group's members)
   // Groups (owner 2026-09-29): member id -> its merge group, for this render.
   var mergeOf = {};
-  var groupsOpen = false;    // the Groups expand
   var editing = null;        // { id, name, merge, members, message, conflicts }
   var knownItems = null;     // what a group can hold (Mac Vault's list)
   var groupSearch = "";
   var groupMenu = null;
   var expandedGroups = {};   // merge group id -> its Usage row shows its members      // the Usage row's Add to group menu: { id, x, y, message, conflicts, group }
   var icons = {};
+  var knownIcons = {};       // the editor's items' icons (Mac Vault sends them with the list)
 
   function send(msg) {
     try {
@@ -82,10 +82,68 @@
   function paint(node, i) { node.style.background = colorOf(i); return node; }
   function textButton(label, onClick, cls) { var b = el("button", cls || null, label); b.type = "button"; b.addEventListener("click", onClick); return b; }
 
+  function iconURI(key) { return icons[key] || knownIcons[key] || null; }
+  function initial(text) { return ((text || "?").trim()[0] || "?").toUpperCase(); }
+
   function icon(key, label) {
+    if (key && key.indexOf("group|") === 0) {
+      var g = groupsList().filter(function (x) { return "group|" + x.id === key; })[0];
+      if (g) return groupIcon(g);
+    }
     var box = el("span", "icon");
-    if (icons[key]) { var img = el("img"); img.src = icons[key]; img.alt = ""; box.appendChild(img); }
-    else box.textContent = ((label || key || "?").trim()[0] || "?").toUpperCase();
+    if (iconURI(key)) { var img = el("img"); img.src = iconURI(key); img.alt = ""; box.appendChild(img); }
+    else box.textContent = initial(label || key);
+    return box;
+  }
+
+  // A group's icon is made of slices of its members' icons (owner
+  // 2026-09-29): 1 whole, 2 halves, 3 wedges from the centre, 4 quarters;
+  // more than 4 = three members and "+N". Each slice shows the middle of its
+  // member's icon (a real corner of an icon is mostly empty).
+  var SLICES = {
+    1: [["0 0, 100% 0, 100% 100%, 0 100%", 50, 50]],
+    2: [["0 0, 50% 0, 50% 100%, 0 100%", 25, 50], ["50% 0, 100% 0, 100% 100%, 50% 100%", 75, 50]],
+    3: [["50% 50%, 50% 0, 0 0, 0 78.9%", 24, 34], ["50% 50%, 50% 0, 100% 0, 100% 78.9%", 76, 34],
+        ["50% 50%, 100% 78.9%, 100% 100%, 0 100%, 0 78.9%", 50, 80]],
+    4: [["0 0, 50% 0, 50% 50%, 0 50%", 25, 25], ["50% 0, 100% 0, 100% 50%, 50% 50%", 75, 25],
+        ["0 50%, 50% 50%, 50% 100%, 0 100%", 25, 75], ["50% 50%, 100% 50%, 100% 100%, 50% 100%", 75, 75]]
+  };
+  function groupIcon(g, big) {
+    var box = el("span", big ? "icon group-icon big" : "icon group-icon");
+    var members = g.members || [];
+    if (!members.length) { box.textContent = initial(g.name); return box; }
+    var shown = members.length > 4 ? members.slice(0, 3) : members;
+    var slices = SLICES[Math.min(members.length, 4)];
+    shown.forEach(function (id, i) {
+      var slice = el("span", "slice");
+      slice.style.clipPath = "polygon(" + slices[i][0] + ")";
+      var key = id.slice(4);
+      if (iconURI(key)) {
+        var face = el("img", "face");
+        face.src = iconURI(key);
+        face.alt = "";
+        face.style.left = (slices[i][1] - 50) + "%";
+        face.style.top = (slices[i][2] - 50) + "%";
+        slice.appendChild(face);
+      } else {
+        // no icon: its letter, at the slice's middle
+        slice.classList.add("lettered");
+        var letter = el("span", "letter", initial(memberLabel(id)));
+        letter.style.left = slices[i][1] + "%";
+        letter.style.top = slices[i][2] + "%";
+        if (members.length === 1) letter.style.fontSize = "14px";
+        slice.appendChild(letter);
+      }
+      box.appendChild(slice);
+    });
+    if (members.length > 4) {
+      var more = el("span", "slice more");
+      more.style.clipPath = "polygon(" + slices[3][0] + ")";
+      var label = el("span", "letter", "+" + (members.length - 3));
+      label.style.left = "75%"; label.style.top = "75%";
+      more.appendChild(label);
+      box.appendChild(more);
+    }
     return box;
   }
 
@@ -629,20 +687,26 @@
     return wrap;
   }
 
-  // ── Groups editor (under the Usage list, like Recording) ──
+  // Group editor helpers.
 
+  // An app's or website's name: from this range's rows, the editor's list,
+  // or else its bundle id's last part / its domain.
   function memberLabel(id) {
+    var entry = usageItemsRaw.filter(function (x) { return entryID(x) === id; })[0];
+    if (entry) return entry.item.label || entry.item.key;
     var known = (knownItems || []).filter(function (item) { return item.id === id; })[0];
-    return known ? known.label : id.slice(4);
+    if (known) return known.label;
+    return id.indexOf("app|") === 0 ? id.slice(4).split(".").pop() : id.slice(4);
   }
 
   function saveGroup(group, move, request) {
     send({ kind: "group-save", group: { id: group.id || "", name: group.name, merge: !!group.merge, members: group.members }, move: !!move, request: request });
   }
 
-  window.activityKnownItems = function (list) {
+  window.activityKnownItems = function (list, iconMap) {
     knownItems = list || [];
-    if (editing) render();
+    knownIcons = iconMap || {};
+    if (editing) refreshGroups();
   };
 
   // Mac Vault's answer to a save: saved (the snapshot follows), or refused —
@@ -657,103 +721,131 @@
     if (!target) return;
     target.message = answer.message || "Not saved.";
     target.conflicts = answer.conflicts || null;
-    if (answer.request === "menu") renderGroupMenu(); else render();
+    if (answer.request === "menu") renderGroupMenu(); else refreshGroups();
   };
 
   function openEditor(group) {
     editing = group
       ? { id: group.id, name: group.name, merge: group.merge, members: group.members.slice() }
       : { id: "", name: "", merge: false, members: [] };
-    groupsOpen = true;
     groupSearch = "";
-    if (!knownItems) send({ kind: "known-items" });
-    render();
+    send({ kind: "known-items" });
+    refreshGroups();
+    var panel = scope.getElementById("groups");
+    if (panel) panel.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
 
+  // The Groups panel (owner 2026-09-29: "a third [panel] … all about
+  // groups"): the groups with their time in this range, or the editor.
   function groupsPanel() {
-    var box = el("details", "vui-expand groups");
-    box.open = groupsOpen;
-    box.addEventListener("toggle", function () {
-      groupsOpen = box.open;
-      if (box.open && !knownItems) send({ kind: "known-items" });
-    });
-    box.appendChild(el("summary", null, "Groups"));
+    var box = el("section", "panel board groups");
+    box.id = "groups";
+    var head = el("div", "column-head");
+    head.appendChild(el("h2", null, "Groups"));
+    if (!editing) head.appendChild(textButton("New group", function () { openEditor(null); }, "head-button"));
+    box.appendChild(head);
     if (editing) { box.appendChild(groupForm()); return box; }
-    var list = el("div", "group-list");
-    groupsList().forEach(function (g) {
-      var line = el("div", "group-row");
-      var dot = paint(el("span", "dot"), g.colorIndex);
-      line.appendChild(dot);
-      line.appendChild(el("span", "name", g.name));
-      line.appendChild(el("span", "row-kind", g.merge ? "Merge" : "View"));
-      line.appendChild(el("span", "group-count", g.members.length + (g.members.length === 1 ? " member" : " members")));
-      line.appendChild(textButton("Edit", function () { openEditor(g); }, "secondary"));
-      var armed = null;
-      var del = textButton("Delete", function () {
-        if (armed) { clearTimeout(armed); send({ kind: "group-delete", id: g.id }); return; }
-        del.textContent = "Click again to delete";
-        armed = setTimeout(function () { armed = null; del.textContent = "Delete"; }, 4000);
-      }, "danger");
-      line.appendChild(del);
-      list.appendChild(line);
+    var list = groupsList().map(function (g) {
+      var seconds = usageItemsRaw.reduce(function (sum, entry) {
+        return g.members.indexOf(entryID(entry)) >= 0 ? sum + entry.seconds : sum;
+      }, 0);
+      return { g: g, seconds: seconds };
+    }).sort(function (x, y) { return (y.g.merge - x.g.merge) || (y.seconds - x.seconds); });
+    if (!list.length) {
+      box.appendChild(el("p", "empty", "No groups yet. A group shows its apps and websites together in Details; a merge group also stands in for them everywhere."));
+      return box;
+    }
+    var top = Math.max.apply(null, list.map(function (x) { return x.seconds; }).concat([1]));
+    list.forEach(function (x) {
+      var g = x.g;
+      var line = row({ key: "group|" + g.id, label: g.name, colorIndex: g.colorIndex }, x.seconds, x.seconds / top,
+        g.merge ? "Merge" : "View", function () { pick("group|" + g.id); });
+      line.querySelector(".row-name").appendChild(el("span", "row-count",
+        g.members.length + (g.members.length === 1 ? " member" : " members")));
+      var edit = el("button", "row-add secondary", "Edit");
+      edit.type = "button";
+      edit.addEventListener("click", function (event) { event.stopPropagation(); openEditor(g); });
+      line.appendChild(edit);
+      box.appendChild(line);
     });
-    if (!groupsList().length) list.appendChild(el("p", "empty", "No groups yet. A group shows its apps and websites together in Details; a merge group also stands in for them everywhere."));
-    box.appendChild(list);
-    box.appendChild(textButton("New group", function () { openEditor(null); }));
     return box;
+  }
+
+  // Redraw only the Groups panel (the editor's own changes).
+  function refreshGroups() {
+    var old = scope.getElementById("groups");
+    if (old) old.replaceWith(groupsPanel());
   }
 
   function groupForm() {
     var form = el("div", "group-form");
+    var top = el("div", "group-top");
+    top.appendChild(groupIcon(editing, true));
     var name = el("input");
     name.type = "text";
     name.placeholder = "Group name";
     name.value = editing.name;
     name.addEventListener("input", function () { editing.name = name.value; });
-    form.appendChild(name);
+    top.appendChild(name);
+    form.appendChild(top);
     var mergeRow = el("label", "group-merge");
     var merge = el("input");
     merge.type = "checkbox";
     merge.checked = editing.merge;
     merge.addEventListener("change", function () { editing.merge = merge.checked; });
     mergeRow.appendChild(merge);
-    mergeRow.appendChild(document.createTextNode("Merge — show its members as one, in one colour, everywhere"));
+    mergeRow.appendChild(document.createTextNode("Merge — show as one, in one colour, everywhere"));
     form.appendChild(mergeRow);
+
+    var chips = el("div", "chips");
+    if (!editing.members.length) chips.appendChild(el("span", "vui-muted", "No members yet."));
+    editing.members.forEach(function (id) {
+      var chip = el("span", "chip");
+      chip.appendChild(icon(id.slice(4), memberLabel(id)));
+      chip.appendChild(el("span", "chip-label", memberLabel(id)));
+      chip.appendChild(el("span", "row-kind", id.indexOf("web|") === 0 ? "Website" : "App"));
+      chip.appendChild(textButton("×", function () {
+        editing.members = editing.members.filter(function (m) { return m !== id; });
+        refreshGroups();
+      }, "chip-remove"));
+      chips.appendChild(chip);
+    });
+    form.appendChild(chips);
+
     var search = el("input");
     search.type = "search";
-    search.placeholder = "Search apps and websites";
+    search.placeholder = "Add an app or website";
     search.value = groupSearch;
     form.appendChild(search);
-    var list = el("div", "group-members");
-    var entries = (knownItems || []).slice();
-    editing.members.forEach(function (id) {
-      if (!entries.some(function (item) { return item.id === id; })) entries.unshift({ id: id, label: id.slice(4), seconds: 0 });
-    });
-    if (!knownItems) list.appendChild(el("p", "empty", "Loading…"));
-    entries.forEach(function (item) {
-      var line = el("label", "member-row");
-      line.dataset.search = (item.label + " " + item.id).toLowerCase();
-      var box = el("input");
-      box.type = "checkbox";
-      box.checked = editing.members.indexOf(item.id) >= 0;
-      box.addEventListener("change", function () {
-        if (box.checked) { if (editing.members.indexOf(item.id) < 0) editing.members.push(item.id); }
-        else editing.members = editing.members.filter(function (m) { return m !== item.id; });
-      });
-      line.appendChild(box);
-      line.appendChild(icon(item.id.slice(4), item.label));
-      line.appendChild(el("span", "name", item.label));
-      line.appendChild(el("span", "row-kind", item.id.indexOf("web|") === 0 ? "Website" : "App"));
-      if (item.seconds) line.appendChild(el("span", "group-count", fmt(item.seconds)));
-      list.appendChild(line);
-    });
-    function filter() {
+    var found = el("div", "group-members");
+    function fill() {
+      found.textContent = "";
+      if (!knownItems) { found.appendChild(el("p", "empty", "Loading…")); return; }
       var q = groupSearch.trim().toLowerCase();
-      [].forEach.call(list.querySelectorAll(".member-row"), function (line) { line.hidden = !!q && line.dataset.search.indexOf(q) < 0; });
+      var matches = knownItems.filter(function (item) {
+        return editing.members.indexOf(item.id) < 0 && (!q || (item.label + " " + item.id).toLowerCase().indexOf(q) >= 0);
+      }).slice(0, 8);
+      if (!matches.length) found.appendChild(el("p", "empty", q ? "Nothing matches." : "Everything is in."));
+      matches.forEach(function (item) {
+        var line = el("button", "member-row");
+        line.type = "button";
+        line.appendChild(icon(item.id.slice(4), item.label));
+        line.appendChild(el("span", "name", item.label));
+        line.appendChild(el("span", "row-kind", item.id.indexOf("web|") === 0 ? "Website" : "App"));
+        if (item.seconds) line.appendChild(el("span", "group-count", fmt(item.seconds)));
+        line.addEventListener("click", function () {
+          editing.members.push(item.id);
+          refreshGroups();
+          var again = scope.querySelector("#groups input[type=search]");
+          if (again) again.focus();
+        });
+        found.appendChild(line);
+      });
     }
-    search.addEventListener("input", function () { groupSearch = search.value; filter(); });
-    filter();
-    form.appendChild(list);
+    search.addEventListener("input", function () { groupSearch = search.value; fill(); });
+    fill();
+    form.appendChild(found);
+
     if (editing.message) {
       var note = el("div", "group-note", editing.message + ".");
       if (editing.conflicts) {
@@ -763,7 +855,17 @@
     }
     var actions = el("div", "group-actions");
     actions.appendChild(textButton("Save", function () { editing.message = null; saveGroup(editing, false, "editor"); }));
-    actions.appendChild(textButton("Cancel", function () { editing = null; render(); }, "secondary"));
+    actions.appendChild(textButton("Cancel", function () { editing = null; refreshGroups(); }, "secondary"));
+    if (editing.id) {
+      var id = editing.id, armed = null;
+      var del = textButton("Delete group", function () {
+        if (armed) { clearTimeout(armed); editing = null; send({ kind: "group-delete", id: id }); return; }
+        del.textContent = "Click again to delete";
+        armed = setTimeout(function () { armed = null; del.textContent = "Delete group"; }, 4000);
+      }, "danger");
+      del.classList.add("push-right");
+      actions.appendChild(del);
+    }
     form.appendChild(actions);
     return form;
   }
@@ -863,15 +965,14 @@
     return head;
   }
 
-  // Usage and Watched side by side (owner 2026-09-29: "enough space for all of
-  // them"), the day strip above both.
+  // Separate panels (owner 2026-09-29): the day strip, then Usage, Watched
+  // and Groups side by side, then Details, then the recording settings.
   function render() {
     var page = scope.getElementById("page");
     page.textContent = "";
     if (!snapshot) { page.appendChild(el("p", "empty", "Loading…")); return; }
     refreshMergeMap();
     var s = snapshot.settings || {};
-    var panel = el("div", "panel");
 
     var apps = snapshot.app || { totalSeconds: 0, bars: [], timeline: [] };
     var web = snapshot.web || { totalSeconds: 0, bars: [], timeline: [] };
@@ -882,29 +983,32 @@
     usageItemsShown = items;
     var appsOn = s.appUsage && s.appUsage.enabled, webOn = s.webVisit && s.webVisit.enabled;
     if ((appsOn || webOn) && apps.timeline.length) {
-      panel.appendChild(strip(apps.timeline, snapshot.rangeStartMs, snapshot.rangeEndMs, attribution.pieces));
+      var day = el("div", "panel strip-panel");
+      day.appendChild(strip(apps.timeline, snapshot.rangeStartMs, snapshot.rangeEndMs, attribution.pieces));
+      page.appendChild(day);
     }
 
-    var columns = el("div", "columns");
-    var usage = el("section", "column");
+    var boards = el("div", "boards");
+    var usage = el("section", "panel board");
     usage.appendChild(columnHead("Usage", items.reduce(function (sum, entry) { return sum + entry.seconds; }, 0)));
     usage.appendChild(appsOn || webOn ? usageRows(items) : notRecorded(["app-usage", "web-visit"]));
-    columns.appendChild(usage);
+    boards.appendChild(usage);
 
     var watched = snapshot.watched || [];
-    var watchedColumn = el("section", "column");
-    watchedColumn.appendChild(columnHead("Watched", watched.reduce(function (a, b) { return a + b.seconds; }, 0)));
-    watchedColumn.appendChild(s.contentWatched && s.contentWatched.enabled ? rows(watched) : notRecorded(["content-watched"]));
-    columns.appendChild(watchedColumn);
-    panel.appendChild(columns);
+    var watchedPanel = el("section", "panel board");
+    watchedPanel.appendChild(columnHead("Watched", watched.reduce(function (a, b) { return a + b.seconds; }, 0)));
+    watchedPanel.appendChild(s.contentWatched && s.contentWatched.enabled ? rows(watched) : notRecorded(["content-watched"]));
+    boards.appendChild(watchedPanel);
+    boards.appendChild(groupsPanel());
+    page.appendChild(boards);
 
-    panel.appendChild(settingsPanel(s));
-    panel.appendChild(groupsPanel());
-    page.appendChild(panel);
     var details = el("div", "panel details");
     details.id = "details";
     page.appendChild(details);
     renderDetails();
+    var recording = el("div", "panel settings-panel");
+    recording.appendChild(settingsPanel(s));
+    page.appendChild(recording);
   }
 
   window.activityApply = function (data, iconMap) {

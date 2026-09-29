@@ -1,15 +1,19 @@
-/* Mac Vault's Activity scene (see scenes.js / activity.js): one day strip,
-   then Usage (apps and websites in one ranked list, each marked) and Watched
-   side by side, big icons, the recording settings out of the way. The shared look is vault-ui.css. */
+/* Mac Vault's Activity scene (see scenes.js / activity.js): separate panels —
+   the day strip; Usage (apps and websites in one ranked list, each marked),
+   Watched and Groups side by side; Details; the recording settings. The shared look is vault-ui.css. */
 /* The scene's mount stands where the page's body used to. */
 #activity { display: flex; flex-direction: column; height: 100%; padding: 10px 12px; }
 main { flex: 1; min-height: 0; overflow: auto; }
-.page { max-width: 1080px; margin: 0 auto; }
+.page { max-width: 1320px; margin: 0 auto; }
+.page { display: flex; flex-direction: column; gap: 12px; }
 .panel { background: rgba(255, 255, 255, 0.92); border-radius: 16px; box-shadow: var(--vui-panel-shadow); padding: 16px 18px 18px; }
-/* Usage and Watched: two columns, stacked when the window is narrow. */
-.columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px 28px; }
-.column { min-width: 0; }
-.column-head { display: flex; align-items: baseline; gap: 12px; margin: 0 4px 6px; }
+.strip-panel { padding: 14px 18px 2px; }
+.settings-panel { padding: 8px 18px; }
+/* Usage, Watched and Groups: three panels, wrapping when the window is narrow. */
+.boards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; align-items: start; }
+.board { min-width: 0; }
+.column-head { display: flex; align-items: center; gap: 12px; margin: 0 4px 6px; min-height: 22px; }
+.head-button { margin-left: auto; }
 .column-head h2 { font-size: var(--vui-size-title); }
 .total { margin-left: auto; color: var(--vui-muted); }
 .total strong { color: var(--vui-text); font-size: var(--vui-size-title); font-weight: 700; margin-left: 4px; }
@@ -20,7 +24,7 @@ main { flex: 1; min-height: 0; overflow: auto; }
    visible as the band below it. */
 .strip .seg.site { bottom: 15%; }
 .strip .day { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255, 255, 255, 0.9); }
-.axis { display: flex; justify-content: space-between; color: var(--vui-muted); font-size: var(--vui-size-small); margin: 4px 2px 16px; }
+.axis { display: flex; justify-content: space-between; color: var(--vui-muted); font-size: var(--vui-size-small); margin: 4px 2px 10px; }
 /* rows */
 .row { position: relative; display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 7px 4px; border-radius: var(--vui-radius-sm); }
 /* "+ Group" floats over a row's end on hover (it takes no column). */
@@ -40,7 +44,7 @@ main { flex: 1; min-height: 0; overflow: auto; }
 .empty { color: var(--vui-muted); padding: 14px 4px; }
 .off { display: flex; align-items: center; gap: 8px; color: var(--vui-muted); padding: 10px 4px; }
 /* settings */
-.settings { margin-top: 12px; }
+.settings { margin: 0; }
 .settings-row { display: flex; align-items: center; gap: 12px; padding: 6px 4px; }
 .settings-row .name { flex: 1; }
 .settings-row label { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; }
@@ -48,7 +52,6 @@ main { flex: 1; min-height: 0; overflow: auto; }
 /* A Usage row picks the item the Details charts show. */
 .row.pickable { cursor: pointer; }
 /* Details: the picked item's 180-day map, hour-by-hour bars and the pie. */
-.details { margin-top: 14px; }
 .details-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .details-head .vui-select, .chart-head .vui-select { width: auto; }
 .details-row { display: flex; flex-wrap: wrap; gap: 24px; margin-bottom: 18px; }
@@ -70,25 +73,37 @@ main { flex: 1; min-height: 0; overflow: auto; }
 .pie-body { display: flex; align-items: center; gap: 16px; }
 .pie-legend { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: var(--vui-size-small); }
 .pie-legend .legend-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px; }
-/* Groups (owner 2026-09-29): the editor under the list, and the row menu. */
-.groups { margin-top: 6px; }
-.group-list { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 10px; }
-.group-row { display: flex; align-items: center; gap: 10px; padding: 4px; }
-.group-row .dot, .member-row .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
-.group-row .name { font-weight: 700; }
-.group-count { color: var(--vui-muted); font-size: var(--vui-size-small); margin-right: auto; }
-.group-form { display: flex; flex-direction: column; gap: 10px; margin: 8px 0 4px; }
+/* A group's icon: slices of its members' icons (activity.js groupIcon). */
+.group-icon { position: relative; background: var(--vui-fill); }
+.group-icon .slice { position: absolute; inset: 0; }
+.group-icon .face { position: absolute; width: 100%; height: 100%; }
+.group-icon .lettered { background: var(--navy-100); }
+.group-icon .letter { position: absolute; transform: translate(-50%, -50%); font-size: 10px; }
+.group-icon .more { background: #475569; color: #ffffff; }
+.group-icon.big { width: 44px; height: 44px; border-radius: 11px; flex: none; }
+.row-count { flex: none; color: var(--vui-muted); font-size: var(--vui-size-small); font-weight: 400; }
+/* The editor, in the Groups panel. */
+.group-form { display: flex; flex-direction: column; gap: 10px; margin: 4px 0; }
+.group-top { display: flex; align-items: center; gap: 10px; }
 .group-merge { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; }
-.group-members { max-height: 280px; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
-.member-row { display: flex; align-items: center; gap: 10px; padding: 4px; border-radius: 8px; cursor: pointer; }
-.member-row:hover { background: #f8fafc; }
-.member-row[hidden] { display: none; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 3px 4px 3px 3px; border-radius: 10px; background: var(--vui-fill); }
+.chip .icon { width: 20px; height: 20px; border-radius: 5px; font-size: 10px; }
+.chip .icon img { width: 20px; height: 20px; }
+.chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip .row-kind { background: #ffffff; }
+.chip-remove { background: none; color: var(--vui-muted); padding: 0 4px; font-size: 13px; line-height: 1; }
+.chip-remove:hover { color: var(--red-text); filter: none; }
+.group-members { display: flex; flex-direction: column; gap: 2px; }
+.member-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 4px; border-radius: 8px; background: none; color: #1f2937; font-size: 12px; font-weight: 400; text-align: left; }
+.member-row:hover { background: var(--navy-100); filter: none; }
 .member-row .icon { width: 24px; height: 24px; border-radius: 6px; font-size: 11px; }
 .member-row .icon img { width: 24px; height: 24px; }
 .member-row .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.member-row .group-count { margin-left: auto; margin-right: 0; }
+.group-count { color: var(--vui-muted); font-size: var(--vui-size-small); margin-left: auto; }
 .group-note { display: flex; align-items: center; gap: 10px; color: var(--red-text); font-size: var(--vui-size-small); }
 .group-actions { display: flex; gap: 8px; }
+.push-right { margin-left: auto; }
 .group-menu { position: fixed; z-index: 20; width: 240px; padding: 8px; border-radius: 12px; background: #ffffff; box-shadow: 0 12px 34px rgba(15, 23, 42, 0.18); display: flex; flex-direction: column; gap: 2px; }
 .group-menu-title { font-weight: 700; padding: 2px 6px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .group-menu .group-menu-item { background: none; color: #1f2937; font-size: 12px; font-weight: 400; text-align: left; padding: 6px 8px; }
