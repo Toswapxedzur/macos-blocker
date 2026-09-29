@@ -51,7 +51,8 @@
   var editing = null;        // { id, name, merge, members, message, conflicts }
   var knownItems = null;     // what a group can hold (Mac Vault's list)
   var groupSearch = "";
-  var groupMenu = null;      // the Usage row's Add to group menu: { id, x, y, message, conflicts, group }
+  var groupMenu = null;
+  var expandedGroups = {};   // merge group id -> its Usage row shows its members      // the Usage row's Add to group menu: { id, x, y, message, conflicts, group }
   var icons = {};
 
   function send(msg) {
@@ -187,6 +188,30 @@
     items.slice(0, 20).forEach(function (entry) {
       var line = row(entry.item, entry.nameOnly ? null : entry.seconds, entry.seconds / top, entry.kind,
         function () { pick(entryID(entry)); });
+      if (entry.kind === "Group") {
+        // Expand a merge group's row to its members' own times (owner 2026-09-29).
+        var open = !!expandedGroups[entry.group.id];
+        var toggle = el("button", open ? "row-expand is-open" : "row-expand", "›");
+        toggle.type = "button";
+        toggle.title = open ? "Hide members" : "Show members";
+        toggle.addEventListener("click", function (event) {
+          event.stopPropagation();
+          expandedGroups[entry.group.id] = !open;
+          render();
+        });
+        line.querySelector(".row-name").insertBefore(toggle, line.querySelector(".row-label"));
+        wrap.appendChild(line);
+        if (open) {
+          usageItemsRaw.filter(function (member) { return entry.group.members.indexOf(entryID(member)) >= 0; })
+            .forEach(function (member) {
+              var memberLine = row(member.item, member.nameOnly ? null : member.seconds, member.seconds / top, member.kind,
+                function () { pick(entryID(member)); });
+              memberLine.classList.add("member");
+              wrap.appendChild(memberLine);
+            });
+        }
+        return;
+      }
       if (entry.kind !== "Group") {
         var add = el("button", "row-add secondary", "+ Group");
         add.type = "button";
