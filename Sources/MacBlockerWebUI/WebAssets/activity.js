@@ -397,17 +397,31 @@
     return wrap;
   }
 
-  // Share of the chosen range (Today / 7 / 30 days): top 8 items, the rest
-  // as Other — the same rows as the Usage list.
+  // How many rows get their own slice: at least the top 8, and more while the
+  // rest together would not be the smallest slice (owner 2026-09-29: Other is
+  // always the smallest). `seconds` is sorted largest first.
+  function namedSliceCount(seconds) {
+    var count = Math.min(8, seconds.length);
+    var rest = seconds.slice(count).reduce(function (sum, value) { return sum + value; }, 0);
+    while (count < seconds.length && rest >= seconds[count - 1]) {
+      rest -= seconds[count];
+      count += 1;
+    }
+    return count;
+  }
+
+  // Share of the chosen range (Today / 7 / 30 days): the Usage rows, the tail
+  // as Other.
   function pie(items) {
     var wrap = el("div", "chart");
     wrap.appendChild(el("div", "chart-title", "Share"));
     var total = items.reduce(function (sum, entry) { return sum + entry.seconds; }, 0);
     if (!total) { wrap.appendChild(el("p", "empty", "Nothing in this range.")); return wrap; }
-    var slices = items.slice(0, 8).map(function (entry) {
+    var named = namedSliceCount(items.map(function (entry) { return entry.seconds; }));
+    var slices = items.slice(0, named).map(function (entry) {
       return { label: entry.item.label || entry.item.key, seconds: entry.seconds, color: colorOf(entry.item.colorIndex) };
     });
-    var rest = items.slice(8).reduce(function (sum, entry) { return sum + entry.seconds; }, 0);
+    var rest = items.slice(named).reduce(function (sum, entry) { return sum + entry.seconds; }, 0);
     if (rest > 0) slices.push({ label: "Other", seconds: rest, color: "#cbd5e1" });
     var size = 140, r = 64, c = size / 2;
     var chart = svg("svg", { viewBox: "0 0 " + size + " " + size, width: size, height: size, class: "pie" });
