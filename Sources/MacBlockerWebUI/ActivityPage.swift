@@ -54,6 +54,13 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
             pushSnapshot()
         case "history":
             pushHistory(body)
+        case "group-save":
+            saveGroup(body)
+        case "group-delete":
+            if let id = body["id"] as? String { store?.deleteGroup(id: id) }
+            pushSnapshot()
+        case "known-items":
+            pushKnownItems()
         default:
             break
         }
@@ -102,20 +109,71 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
         webView.evaluateJavaScript("window.activityApply(\(json), \(iconsJSON));", completionHandler: nil)
     }
 
-    /// The Details panel's data: the picked item's 180-day map (`lens` "app"
-    /// or "web", `key` nil = all usage) and all usage for the last `barDays`
-    /// days (the day bars). Echoes the request so the page ignores a stale answer.
+    /// The Details panel's data for the pick ("all", "app|<bundle id>",
+    /// "web|<domain>" or "group|<id>") and the last `barDays` days. Echoes the
+    /// request so the page ignores a stale answer.
     private func pushHistory(_ body: [String: Any]) {
         guard loaded, let store, let webView else { return }
-        let category: ActivityCategory = (body["lens"] as? String) == "web" ? .webVisit : .appUsage
-        let key = body["key"] as? String
+        let pickID = (body["pick"] as? String) ?? "all"
         let barDays = max(1, min((body["barDays"] as? Int) ?? 3, 14))
-        let detail = store.detail(category: category, key: key, mapDays: Self.historyDays, barDays: barDays)
+        let detail = store.detail(pick: Self.pick(pickID), mapDays: Self.historyDays, barDays: barDays)
         guard let data = try? JSONEncoder().encode(detail),
               let json = String(data: data, encoding: .utf8),
-              let requestData = try? JSONSerialization.data(withJSONObject: ["lens": category == .webVisit ? "web" : "app", "key": (key as Any?) ?? NSNull(), "barDays": barDays] as [String: Any]),
-              let requestJSON = String(data: requestData, encoding: .utf8) else { return }
+              let requestJSON = Self.json(["pick": pickID, "barDays": barDays]) else { return }
         webView.evaluateJavaScript("window.activityHistory && window.activityHistory(\(requestJSON), \(json));", completionHandler: nil)
+    }
+
+    private static func pick(_ id: String) -> ActivityStore.DetailPick {
+        if id.hasPrefix("app|") { return .item(.appUsage, String(id.dropFirst(4))) }
+        if id.hasPrefix("web|") { return .item(.webVisit, String(id.dropFirst(4))) }
+        if id.hasPrefix("group|") { return .group(String(id.dropFirst(6))) }
+        return .all
+    }
+
+    private static func json(_ object: Any) -> String? {
+        guard let data = try? JSONSerialization.data(withJSONObject: object) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// Saves a group from the editor (or the Usage row's Add to group) and
+    /// answers with the result: saved (its id), or refused (a merge group's
+    /// member already in another merge group — the page offers to move it).
+    private func saveGroup(_ body: [String: Any]) {
+        guard let store, let webView, let raw = body["group"] as? [String: Any] else { return }
+        let group = ActivityGroup(
+            id: (raw["id"] as? String) ?? "",
+            name: (raw["name"] as? String) ?? "",
+            merge: (raw["merge"] as? Bool) ?? false,
+            members: (raw["members"] as? [String]) ?? []
+        )
+        var answer: [String: Any] = ["request": (body["request"] as? String) ?? ""]
+        switch store.saveGroup(group, move: (body["move"] as? Bool) ?? false) {
+        case .success(let id):
+            answer["ok"] = true
+            answer["id"] = id
+        case .failure(let refusal):
+            answer["ok"] = false
+            answer["message"] = refusal.message
+            if case .inAnotherMergeGroup(let owners) = refusal { answer["conflicts"] = owners }
+        }
+        if let json = Self.json(answer) {
+            webView.evaluateJavaScript("window.activityGroupSaved && window.activityGroupSaved(\(json));", completionHandler: nil)
+        }
+        pushSnapshot()
+    }
+
+    /// The apps and websites a group can hold (seen in the day map's span).
+    private func pushKnownItems() {
+        guard loaded, let store, let webView else { return }
+        let items = store.knownItems(days: Self.historyDays)
+        guard let data = try? JSONEncoder().encode(items), let json = String(data: data, encoding: .utf8) else { return }
+        webView.evaluateJavaScript("window.activityKnownItems && window.activityKnownItems(\(json));", completionHandler: nil)
+    }
+
+    /// Something outside the page changed Activity (an AI tool edited a group):
+    /// show it.
+    public func refresh() {
+        pushSnapshot()
     }
 
     /// The day map's span.

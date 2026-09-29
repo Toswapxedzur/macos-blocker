@@ -37,13 +37,21 @@
   var VIEWS = [{ id: "usage", title: "Usage" }, { id: "watched", title: "Watched" }];
   var current = "usage";
   var snapshot = null;
-  // The detail charts follow one picked item: an app or a website (lens
-  // "app" / "web"), or all usage (key null). Mac Vault answers with its
+  // Details follows one pick: "all", an app ("app|<bundle id>"), a website
+  // ("web|<domain>") or a group ("group|<id>"). Mac Vault answers with its
   // history (window.activityHistory).
-  var picked = { lens: "app", key: null };
+  var picked = "all";
   var barDays = 3;
   var itemHistory = null;
-  var usageItemsShown = [];
+  var usageItemsShown = [];  // the Usage rows (merge groups folded in)
+  var usageItemsRaw = [];    // the same before folding (a group's members)
+  // Groups (owner 2026-09-29): member id -> its merge group, for this render.
+  var mergeOf = {};
+  var groupsOpen = false;    // the Groups expand
+  var editing = null;        // { id, name, merge, members, message, conflicts }
+  var knownItems = null;     // what a group can hold (Mac Vault's list)
+  var groupSearch = "";
+  var groupMenu = null;      // the Usage row's Add to group menu: { id, x, y, message, conflicts, group }
   var icons = {};
 
   function send(msg) {
@@ -133,14 +141,65 @@
     return items.sort(function (x, y) { return y.seconds - x.seconds; });
   }
 
+  // ── Groups ──────────────────────────────────────────────────────────────
+
+  function groupsList() { return (snapshot && snapshot.groups) || []; }
+
+  function refreshMergeMap() {
+    mergeOf = {};
+    groupsList().forEach(function (g) {
+      if (g.merge) g.members.forEach(function (m) { if (!mergeOf[m]) mergeOf[m] = g; });
+    });
+  }
+
+  // A merge group's members take its colour everywhere (one colour).
+  function colorIndexFor(lens, key, own) {
+    var g = mergeOf[lens + "|" + key];
+    return g ? g.colorIndex : own;
+  }
+
+  function entryID(entry) {
+    if (entry.kind === "Group") return entry.item.key;
+    return (entry.kind === "Website" ? "web|" : "app|") + entry.item.key;
+  }
+
+  // A merge group stands in for its members: one "Group" row with their time.
+  function mergeItems(items) {
+    var out = [], byGroup = {};
+    items.forEach(function (entry) {
+      var g = mergeOf[entryID(entry)];
+      if (!g) { out.push(entry); return; }
+      var merged = byGroup[g.id];
+      if (!merged) {
+        merged = byGroup[g.id] = { item: { key: "group|" + g.id, label: g.name, colorIndex: g.colorIndex }, seconds: 0, kind: "Group", group: g };
+        out.push(merged);
+      }
+      merged.seconds += entry.seconds;
+    });
+    return out.sort(function (x, y) { return y.seconds - x.seconds; });
+  }
+
   function usageRows(items) {
     var wrap = el("div");
     if (!items.length) { wrap.appendChild(el("p", "empty", "Nothing in this range.")); return wrap; }
     var shown = items.filter(function (entry) { return !entry.nameOnly; });
     var top = Math.max(shown.length ? shown[0].seconds : 1, 1);
     items.slice(0, 20).forEach(function (entry) {
-      wrap.appendChild(row(entry.item, entry.nameOnly ? null : entry.seconds, entry.seconds / top, entry.kind,
-        function () { pick(entry.kind === "Website" ? "web" : "app", entry.item.key); }));
+      var line = row(entry.item, entry.nameOnly ? null : entry.seconds, entry.seconds / top, entry.kind,
+        function () { pick(entryID(entry)); });
+      if (entry.kind !== "Group") {
+        var add = el("button", "row-add secondary", "+ Group");
+        add.type = "button";
+        add.title = "Add to group";
+        add.addEventListener("click", function (event) {
+          event.stopPropagation();
+          var box = line.getBoundingClientRect();
+          groupMenu = { id: entryID(entry), label: entry.item.label || entry.item.key, x: box.right, y: box.top + 30 };
+          renderGroupMenu();
+        });
+        line.appendChild(add);
+      }
+      wrap.appendChild(line);
     });
     return wrap;
   }
@@ -199,7 +258,7 @@
       }
     }
     segments.forEach(function (s) {
-      var seg = paint(el("div", "seg"), s.colorIndex);
+      var seg = paint(el("div", "seg"), colorIndexFor("app", s.key, s.colorIndex));
       place(seg, s.startFraction, s.startFraction + s.widthFraction);
       seg.title = segmentTitle(s);
       track.appendChild(seg);
@@ -207,7 +266,7 @@
     // Sites on top of their browser's time; the browser's colour stays below.
     (pieces || []).forEach(function (piece) {
       var w = piece.site;
-      var site = paint(el("div", "seg site"), w.colorIndex);
+      var site = paint(el("div", "seg site"), colorIndexFor("web", w.key, w.colorIndex));
       place(site, piece.from, piece.to);
       site.title = segmentTitle(w) + " (" + (piece.browser.label || piece.browser.key) + ")";
       track.appendChild(site);
@@ -259,19 +318,19 @@
 
   // ── Details: the picked item's 180-day map, hour-by-hour bars, and the pie ──
 
-  function pick(lens, key) {
-    picked = { lens: lens, key: key };
+  function pick(id) {
+    picked = id;
     itemHistory = null;
     requestHistory();
     renderDetails();
   }
 
   function requestHistory() {
-    send({ kind: "history", lens: picked.lens, key: picked.key, barDays: barDays });
+    send({ kind: "history", pick: picked, barDays: barDays });
   }
 
   window.activityHistory = function (request, data) {
-    if (request.lens !== picked.lens || request.key !== picked.key || request.barDays !== barDays) return;
+    if (request.pick !== picked || request.barDays !== barDays) return;
     itemHistory = data;
     renderDetails();
   };
@@ -343,7 +402,7 @@
       });
       return Object.keys(by).map(function (k) { return by[k]; }).sort(function (x, y) { return y.seconds - x.seconds; });
     }
-    return usageItems(bars(day.app), bars(day.web), attribution, DAY);
+    return mergeItems(usageItems(bars(day.app), bars(day.web), attribution, DAY));
   }
 
   function dayLabel(day, index, count) {
@@ -399,11 +458,11 @@
       var x = f.barX(d);
       f.chart.appendChild(svg("rect", { x: x, y: f.top, width: f.barWidth, height: f.plot, rx: 4, fill: "#f1f4f8" }));
       day.app.forEach(function (seg) {
-        f.block(x, f.base - (seg.startFraction + seg.widthFraction) * f.plot, f.barWidth, seg.widthFraction * f.plot, seg.colorIndex,
+        f.block(x, f.base - (seg.startFraction + seg.widthFraction) * f.plot, f.barWidth, seg.widthFraction * f.plot, colorIndexFor("app", seg.key, seg.colorIndex),
           (seg.label || seg.key) + " · " + timeOfDay(seg.startFraction) + "–" + timeOfDay(seg.startFraction + seg.widthFraction));
       });
       attributeSites(day.app, day.web).pieces.forEach(function (piece) {
-        f.block(x, f.base - piece.to * f.plot, f.barWidth * 0.85, (piece.to - piece.from) * f.plot, piece.site.colorIndex,
+        f.block(x, f.base - piece.to * f.plot, f.barWidth * 0.85, (piece.to - piece.from) * f.plot, colorIndexFor("web", piece.site.key, piece.site.colorIndex),
           (piece.site.label || piece.site.key) + " · " + timeOfDay(piece.from) + "–" + timeOfDay(piece.to) + " (" + (piece.browser.label || piece.browser.key) + ")");
       });
     });
@@ -549,6 +608,194 @@
     return wrap;
   }
 
+  // ── Groups editor (under the Usage list, like Recording) ──
+
+  function memberLabel(id) {
+    var known = (knownItems || []).filter(function (item) { return item.id === id; })[0];
+    return known ? known.label : id.slice(4);
+  }
+
+  function saveGroup(group, move, request) {
+    send({ kind: "group-save", group: { id: group.id || "", name: group.name, merge: !!group.merge, members: group.members }, move: !!move, request: request });
+  }
+
+  window.activityKnownItems = function (list) {
+    knownItems = list || [];
+    if (editing) render();
+  };
+
+  // Mac Vault's answer to a save: saved (the snapshot follows), or refused —
+  // a merge group's member already in another merge group can be moved.
+  window.activityGroupSaved = function (answer) {
+    var target = answer.request === "menu" ? groupMenu : editing;
+    if (answer.ok) {
+      if (answer.request === "menu") groupMenu = null; else editing = null;
+      renderGroupMenu();
+      return;
+    }
+    if (!target) return;
+    target.message = answer.message || "Not saved.";
+    target.conflicts = answer.conflicts || null;
+    if (answer.request === "menu") renderGroupMenu(); else render();
+  };
+
+  function openEditor(group) {
+    editing = group
+      ? { id: group.id, name: group.name, merge: group.merge, members: group.members.slice() }
+      : { id: "", name: "", merge: false, members: [] };
+    groupsOpen = true;
+    groupSearch = "";
+    if (!knownItems) send({ kind: "known-items" });
+    render();
+  }
+
+  function groupsPanel() {
+    var box = el("details", "vui-expand groups");
+    box.open = groupsOpen;
+    box.addEventListener("toggle", function () {
+      groupsOpen = box.open;
+      if (box.open && !knownItems) send({ kind: "known-items" });
+    });
+    box.appendChild(el("summary", null, "Groups"));
+    if (editing) { box.appendChild(groupForm()); return box; }
+    var list = el("div", "group-list");
+    groupsList().forEach(function (g) {
+      var line = el("div", "group-row");
+      var dot = paint(el("span", "dot"), g.colorIndex);
+      line.appendChild(dot);
+      line.appendChild(el("span", "name", g.name));
+      line.appendChild(el("span", "row-kind", g.merge ? "Merge" : "View"));
+      line.appendChild(el("span", "group-count", g.members.length + (g.members.length === 1 ? " member" : " members")));
+      line.appendChild(textButton("Edit", function () { openEditor(g); }, "secondary"));
+      var armed = null;
+      var del = textButton("Delete", function () {
+        if (armed) { clearTimeout(armed); send({ kind: "group-delete", id: g.id }); return; }
+        del.textContent = "Click again to delete";
+        armed = setTimeout(function () { armed = null; del.textContent = "Delete"; }, 4000);
+      }, "danger");
+      line.appendChild(del);
+      list.appendChild(line);
+    });
+    if (!groupsList().length) list.appendChild(el("p", "empty", "No groups yet. A group shows its apps and websites together in Details; a merge group also stands in for them everywhere."));
+    box.appendChild(list);
+    box.appendChild(textButton("New group", function () { openEditor(null); }));
+    return box;
+  }
+
+  function groupForm() {
+    var form = el("div", "group-form");
+    var name = el("input");
+    name.type = "text";
+    name.placeholder = "Group name";
+    name.value = editing.name;
+    name.addEventListener("input", function () { editing.name = name.value; });
+    form.appendChild(name);
+    var mergeRow = el("label", "group-merge");
+    var merge = el("input");
+    merge.type = "checkbox";
+    merge.checked = editing.merge;
+    merge.addEventListener("change", function () { editing.merge = merge.checked; });
+    mergeRow.appendChild(merge);
+    mergeRow.appendChild(document.createTextNode("Merge — show its members as one, in one colour, everywhere"));
+    form.appendChild(mergeRow);
+    var search = el("input");
+    search.type = "search";
+    search.placeholder = "Search apps and websites";
+    search.value = groupSearch;
+    form.appendChild(search);
+    var list = el("div", "group-members");
+    var entries = (knownItems || []).slice();
+    editing.members.forEach(function (id) {
+      if (!entries.some(function (item) { return item.id === id; })) entries.unshift({ id: id, label: id.slice(4), seconds: 0 });
+    });
+    if (!knownItems) list.appendChild(el("p", "empty", "Loading…"));
+    entries.forEach(function (item) {
+      var line = el("label", "member-row");
+      line.dataset.search = (item.label + " " + item.id).toLowerCase();
+      var box = el("input");
+      box.type = "checkbox";
+      box.checked = editing.members.indexOf(item.id) >= 0;
+      box.addEventListener("change", function () {
+        if (box.checked) { if (editing.members.indexOf(item.id) < 0) editing.members.push(item.id); }
+        else editing.members = editing.members.filter(function (m) { return m !== item.id; });
+      });
+      line.appendChild(box);
+      line.appendChild(icon(item.id.slice(4), item.label));
+      line.appendChild(el("span", "name", item.label));
+      line.appendChild(el("span", "row-kind", item.id.indexOf("web|") === 0 ? "Website" : "App"));
+      if (item.seconds) line.appendChild(el("span", "group-count", fmt(item.seconds)));
+      list.appendChild(line);
+    });
+    function filter() {
+      var q = groupSearch.trim().toLowerCase();
+      [].forEach.call(list.querySelectorAll(".member-row"), function (line) { line.hidden = !!q && line.dataset.search.indexOf(q) < 0; });
+    }
+    search.addEventListener("input", function () { groupSearch = search.value; filter(); });
+    filter();
+    form.appendChild(list);
+    if (editing.message) {
+      var note = el("div", "group-note", editing.message + ".");
+      if (editing.conflicts) {
+        note.appendChild(textButton("Move them here", function () { saveGroup(editing, true, "editor"); }, "secondary"));
+      }
+      form.appendChild(note);
+    }
+    var actions = el("div", "group-actions");
+    actions.appendChild(textButton("Save", function () { editing.message = null; saveGroup(editing, false, "editor"); }));
+    actions.appendChild(textButton("Cancel", function () { editing = null; render(); }, "secondary"));
+    form.appendChild(actions);
+    return form;
+  }
+
+  // The Usage row's "+ Group": tick the groups this app or site is in.
+  function renderGroupMenu() {
+    var old = scope.getElementById("group-menu");
+    if (old) old.remove();
+    if (!groupMenu) return;
+    var menu = el("div", "group-menu");
+    menu.id = "group-menu";
+    menu.style.left = Math.max(8, groupMenu.x - 240) + "px";
+    menu.style.top = groupMenu.y + "px";
+    menu.addEventListener("click", function (event) { event.stopPropagation(); });
+    menu.appendChild(el("div", "group-menu-title", groupMenu.label));
+    groupsList().forEach(function (g) {
+      var inIt = g.members.indexOf(groupMenu.id) >= 0;
+      var item = textButton((inIt ? "✓ " : "") + g.name + (g.merge ? " · Merge" : ""), function () {
+        var members = inIt ? g.members.filter(function (m) { return m !== groupMenu.id; }) : g.members.concat([groupMenu.id]);
+        groupMenu.group = { id: g.id, name: g.name, merge: g.merge, members: members };
+        groupMenu.message = null;
+        saveGroup(groupMenu.group, false, "menu");
+      }, "group-menu-item");
+      menu.appendChild(item);
+    });
+    menu.appendChild(textButton("New group with this…", function () {
+      var id = groupMenu.id;
+      groupMenu = null;
+      renderGroupMenu();
+      openEditor({ id: "", name: "", merge: false, members: [id] });
+    }, "group-menu-item"));
+    if (groupMenu.message) {
+      var note = el("div", "group-note", groupMenu.message + ".");
+      if (groupMenu.conflicts && groupMenu.group) {
+        note.appendChild(textButton("Move it", function () { saveGroup(groupMenu.group, true, "menu"); }, "secondary"));
+      }
+      menu.appendChild(note);
+    }
+    scope.getElementById("activity").appendChild(menu);
+  }
+
+  scope.addEventListener("click", function () {
+    if (groupMenu) { groupMenu = null; renderGroupMenu(); }
+  });
+
+  // A picked group's pie shows its members; otherwise the Usage rows.
+  function pieItems() {
+    if (picked.indexOf("group|") !== 0) return usageItemsShown;
+    var g = groupsList().filter(function (x) { return "group|" + x.id === picked; })[0];
+    if (!g) return usageItemsShown;
+    return usageItemsRaw.filter(function (entry) { return g.members.indexOf(entryID(entry)) >= 0; });
+  }
+
   function renderDetails() {
     var box = scope.getElementById("details");
     if (!box) return;
@@ -556,29 +803,31 @@
     var head = el("div", "details-head");
     head.appendChild(el("h2", null, "Details"));
     var select = el("select");
-    var choices = [{ value: "app|", label: "All usage" }];
-    usageItemsShown.forEach(function (entry) {
-      var lens = entry.kind === "Website" ? "web" : "app";
-      choices.push({ value: lens + "|" + entry.item.key, label: (entry.item.label || entry.item.key) + " · " + entry.kind });
+    var choices = [{ value: "all", label: "All usage" }];
+    groupsList().forEach(function (g) {
+      choices.push({ value: "group|" + g.id, label: g.name + " · " + (g.merge ? "Merge group" : "View group") });
     });
-    var chosen = picked.lens + "|" + (picked.key || "");
-    if (!choices.some(function (c) { return c.value === chosen; })) choices.push({ value: chosen, label: picked.key });
+    usageItemsShown.forEach(function (entry) {
+      if (entry.kind !== "Group") choices.push({ value: entryID(entry), label: (entry.item.label || entry.item.key) + " · " + entry.kind });
+    });
+    var chosen = picked;
+    if (!choices.some(function (c) { return c.value === chosen; })) {
+      if (chosen.indexOf("group|") === 0) { chosen = picked = "all"; } // a deleted group
+      else choices.push({ value: chosen, label: chosen.slice(4) });
+    }
     choices.forEach(function (choice) {
       var option = el("option", null, choice.label);
       option.value = choice.value;
       option.selected = choice.value === chosen;
       select.appendChild(option);
     });
-    select.addEventListener("change", function () {
-      var parts = select.value.split("|");
-      pick(parts[0], parts.slice(1).join("|") || null);
-    });
+    select.addEventListener("change", function () { pick(select.value); });
     head.appendChild(select);
     box.appendChild(head);
     if (!itemHistory) { box.appendChild(el("p", "empty", "Loading…")); return; }
     var upper = el("div", "details-row");
     upper.appendChild(dayMap(itemHistory.map));
-    upper.appendChild(pie(usageItemsShown));
+    upper.appendChild(pie(pieItems()));
     box.appendChild(upper);
     box.appendChild(daySection(itemHistory.days));
   }
@@ -587,6 +836,7 @@
     var page = scope.getElementById("page");
     page.textContent = "";
     if (!snapshot) { page.appendChild(el("p", "empty", "Loading…")); return; }
+    refreshMergeMap();
     var s = snapshot.settings || {};
     var panel = el("div", "panel");
 
@@ -609,7 +859,8 @@
       var web = snapshot.web || { totalSeconds: 0, bars: [], timeline: [] };
       var attribution = attributeSites(apps.timeline, web.timeline);
       var spanSeconds = (snapshot.rangeEndMs - snapshot.rangeStartMs) / 1000;
-      var items = usageItems(apps.bars, web.bars, attribution, spanSeconds);
+      usageItemsRaw = usageItems(apps.bars, web.bars, attribution, spanSeconds);
+      var items = mergeItems(usageItemsRaw);
       totalEl.appendChild(el("strong", null, fmt(items.reduce(function (sum, entry) { return sum + entry.seconds; }, 0))));
       var appsOn = s.appUsage && s.appUsage.enabled, webOn = s.webVisit && s.webVisit.enabled;
       if (!appsOn && !webOn) {
@@ -621,6 +872,7 @@
       usageItemsShown = items;
     }
     panel.appendChild(settingsPanel(s));
+    if (current === "usage") panel.appendChild(groupsPanel());
     page.appendChild(panel);
     if (current === "usage") {
       var details = el("div", "panel details");

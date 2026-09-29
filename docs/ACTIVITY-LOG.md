@@ -111,6 +111,22 @@ Activity/
 6. **Downstream (later)** — screen-time limits and reports off the aggregates, and
    the opt-in classifier feed from watched history.
 
+## 6b. Groups and colours (owner 2026-09-29)
+
+- **Groups** (`ActivityGroups.swift`, `groups.json`): a user-made set of apps and
+  websites (members `app|<bundle id>` / `web|<domain>`). Every group can be
+  picked in Details (its 180-day map, its members' Day by day, a pie of its
+  members). A group with **Merge** on also stands in for its members
+  everywhere — one "Group" row in Usage, one colour in the strip, pie and day
+  bars — so an item may be in many groups but in at most one merge group
+  (saving refuses, or moves it with `move`). A group's time is its members'
+  time with overlaps counted once. Edited in the page (Groups expand, or a
+  row's "+ Group") or by the AI tools `list_activity_groups`,
+  `save_activity_group`, `delete_activity_group`.
+- **Colours**: every app, website and group has one permanent colour index
+  (`colors.json`, assigned once, never reused, kept when history is deleted);
+  the page paints 12 base colours, then golden-angle hues.
+
 ## 7. What v1 excludes
 Window titles, full URLs off supported platforms, Vault's own events
 (blocks/snoozes/corrections), cross-device sync, and the optional
