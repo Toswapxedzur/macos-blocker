@@ -25,7 +25,7 @@
     "</header>",
     '<main><div class="page" id="page"><p class="empty">Loading…</p></div></main>'
   ].join("");
-  var RETENTIONS = [[7, "7 days"], [30, "30 days"], [90, "90 days"], [0, "Forever"]];
+  var RETENTIONS = [[7, "7 days"], [30, "30 days"], [90, "90 days"], [180, "180 days"], [0, "Forever"]];
   // What is recorded (each kind has its own switch under Recording).
   var KINDS = [
     { id: "appUsage", key: "app-usage", title: "Apps" },
@@ -37,6 +37,13 @@
   var VIEWS = [{ id: "usage", title: "Usage" }, { id: "watched", title: "Watched" }];
   var current = "usage";
   var snapshot = null;
+  // The detail charts follow one picked item: an app or a website (lens
+  // "app" / "web"), or all usage (key null). Mac Vault answers with its
+  // history (window.activityHistory).
+  var picked = { lens: "app", key: null };
+  var hourDays = 3;
+  var itemHistory = null;
+  var usageItemsShown = [];
   var icons = {};
 
   function send(msg) {
@@ -78,8 +85,9 @@
   }
 
   // `seconds` null = a row shown by name only (a browser in Usage).
-  function row(item, seconds, fraction, kind) {
-    var line = el("div", "row");
+  function row(item, seconds, fraction, kind, onPick) {
+    var line = el("div", onPick ? "row pickable" : "row");
+    if (onPick) line.addEventListener("click", onPick);
     line.title = item.label || item.key;
     if (seconds !== null) line.title += " — " + fmt(seconds);
     line.appendChild(icon(item.key, item.label));
@@ -131,7 +139,8 @@
     var shown = items.filter(function (entry) { return !entry.nameOnly; });
     var top = Math.max(shown.length ? shown[0].seconds : 1, 1);
     items.slice(0, 20).forEach(function (entry) {
-      wrap.appendChild(row(entry.item, entry.nameOnly ? null : entry.seconds, entry.seconds / top, entry.kind));
+      wrap.appendChild(row(entry.item, entry.nameOnly ? null : entry.seconds, entry.seconds / top, entry.kind,
+        function () { pick(entry.kind === "Website" ? "web" : "app", entry.item.key); }));
     });
     return wrap;
   }
@@ -248,6 +257,231 @@
     return box;
   }
 
+  // ── Details: the picked item's 180-day map, hour-by-hour bars, and the pie ──
+
+  function pick(lens, key) {
+    picked = { lens: lens, key: key };
+    itemHistory = null;
+    requestHistory();
+    renderDetails();
+  }
+
+  function requestHistory() {
+    send({ kind: "history", lens: picked.lens, key: picked.key, hourDays: hourDays });
+  }
+
+  window.activityHistory = function (request, data) {
+    if (request.lens !== picked.lens || request.key !== picked.key || request.hourDays !== hourDays) return;
+    itemHistory = data;
+    renderDetails();
+  };
+
+  var NAVY = [30, 58, 138];
+  function navy(alpha) { return "rgba(" + NAVY.join(",") + "," + alpha + ")"; }
+  var DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  function svg(tag, attrs) {
+    var node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for (var name in attrs) node.setAttribute(name, attrs[name]);
+    return node;
+  }
+
+  // GitHub-style: one column per week (Monday on top), one square per day,
+  // darker = more time.
+  function dayMap(h) {
+    var wrap = el("div", "chart");
+    wrap.appendChild(el("div", "chart-title", "Last " + h.daySeconds.length + " days"));
+    var max = Math.max.apply(null, h.daySeconds.concat([1]));
+    var cell = 13, gap = 3, top = 16, left = 28;
+    var firstDay = new Date(h.dayStartsMs[0]);
+    var lead = (firstDay.getDay() + 6) % 7; // Monday = 0
+    var weeks = Math.ceil((lead + h.daySeconds.length) / 7);
+    var width = left + weeks * (cell + gap), height = top + 7 * (cell + gap);
+    var chart = svg("svg", { viewBox: "0 0 " + width + " " + height, width: width, height: height, class: "map" });
+    ["Mon", "Wed", "Fri"].forEach(function (name, i) {
+      var label = svg("text", { x: 0, y: top + (i * 2) * (cell + gap) + cell - 2, class: "axis-label" });
+      label.textContent = name;
+      chart.appendChild(label);
+    });
+    var lastMonth = -1;
+    h.daySeconds.forEach(function (seconds, i) {
+      var slot = lead + i, week = Math.floor(slot / 7), weekday = slot % 7;
+      var date = new Date(h.dayStartsMs[i]);
+      if (weekday === 0 || i === 0) {
+        if (date.getMonth() !== lastMonth && week * (cell + gap) + left < width - 20) {
+          var month = svg("text", { x: left + week * (cell + gap), y: 10, class: "axis-label" });
+          month.textContent = MONTHS[date.getMonth()];
+          chart.appendChild(month);
+          lastMonth = date.getMonth();
+        }
+      }
+      var level = seconds <= 0 ? 0 : Math.min(4, Math.ceil((seconds / max) * 4));
+      var square = svg("rect", {
+        x: left + week * (cell + gap), y: top + weekday * (cell + gap), width: cell, height: cell, rx: 3,
+        fill: level === 0 ? "#e8ecf2" : navy([0, 0.3, 0.5, 0.72, 1][level])
+      });
+      var title = svg("title", {});
+      title.textContent = DAY_NAMES[date.getDay()] + " " + MONTHS[date.getMonth()] + " " + date.getDate() + " · " + (seconds > 0 ? fmt(seconds) : "none");
+      square.appendChild(title);
+      chart.appendChild(square);
+    });
+    var scroller = el("div", "map-scroll");
+    scroller.appendChild(chart);
+    wrap.appendChild(scroller);
+    return wrap;
+  }
+
+  // 24 hour slots; in each, one bar per compared day (oldest lightest,
+  // today darkest), so the same hour reads across days.
+  function hourBars(h) {
+    var wrap = el("div", "chart");
+    var head = el("div", "chart-head");
+    head.appendChild(el("div", "chart-title", "By hour"));
+    var select = el("select");
+    [1, 2, 3, 4, 5, 6, 7].forEach(function (n) {
+      var option = el("option", null, n === 1 ? "Today" : "Last " + n + " days");
+      option.value = String(n);
+      option.selected = n === hourDays;
+      select.appendChild(option);
+    });
+    select.addEventListener("change", function () {
+      hourDays = parseInt(select.value, 10);
+      itemHistory = null;
+      requestHistory();
+    });
+    head.appendChild(select);
+    wrap.appendChild(head);
+
+    var days = h.hourSeconds.length;
+    var max = 60;
+    h.hourSeconds.forEach(function (hours) { hours.forEach(function (v) { if (v > max) max = v; }); });
+    var width = 600, height = 150, bottom = 18, plot = height - bottom;
+    var slot = width / 24, inner = slot * 0.8, barWidth = inner / days;
+    var chart = svg("svg", { viewBox: "0 0 " + width + " " + height, width: "100%", class: "hours", preserveAspectRatio: "none" });
+    function shade(dayIndex) { return days === 1 ? navy(1) : navy(0.25 + 0.75 * (dayIndex / (days - 1))); }
+    h.hourSeconds.forEach(function (hours, d) {
+      hours.forEach(function (seconds, hour) {
+        if (seconds <= 0) return;
+        var barHeight = Math.max(1, (seconds / max) * (plot - 4));
+        var bar = svg("rect", {
+          x: hour * slot + (slot - inner) / 2 + d * barWidth, y: plot - barHeight,
+          width: Math.max(1, barWidth - 1), height: barHeight, rx: 1.5, fill: shade(d)
+        });
+        var title = svg("title", {});
+        var date = new Date(h.hourDayStartsMs[d]);
+        title.textContent = DAY_NAMES[date.getDay()] + " " + hour + ":00 · " + fmt(seconds);
+        bar.appendChild(title);
+        chart.appendChild(bar);
+      });
+    });
+    chart.appendChild(svg("line", { x1: 0, x2: width, y1: plot, y2: plot, stroke: "#e2e8f0", "stroke-width": 1 }));
+    [0, 6, 12, 18].forEach(function (hour) {
+      var label = svg("text", { x: hour * slot + 2, y: height - 4, class: "axis-label" });
+      label.textContent = hour + ":00";
+      chart.appendChild(label);
+    });
+    wrap.appendChild(chart);
+    var legend = el("div", "chart-legend");
+    h.hourDayStartsMs.forEach(function (ms, d) {
+      var item = el("span", "legend-item");
+      var dot = el("span", "dot");
+      dot.style.background = shade(d);
+      item.appendChild(dot);
+      var date = new Date(ms);
+      item.appendChild(document.createTextNode(d === days - 1 ? "Today" : DAY_NAMES[date.getDay()] + " " + date.getDate()));
+      legend.appendChild(item);
+    });
+    legend.appendChild(el("span", "legend-note", "Tallest: " + fmt(max)));
+    wrap.appendChild(legend);
+    return wrap;
+  }
+
+  // Share of the chosen range (Today / 7 / 30 days): top 8 items, the rest
+  // as Other — the same rows as the Usage list.
+  function pie(items) {
+    var wrap = el("div", "chart");
+    wrap.appendChild(el("div", "chart-title", "Share"));
+    var total = items.reduce(function (sum, entry) { return sum + entry.seconds; }, 0);
+    if (!total) { wrap.appendChild(el("p", "empty", "Nothing in this range.")); return wrap; }
+    var slices = items.slice(0, 8).map(function (entry) {
+      return { label: entry.item.label || entry.item.key, seconds: entry.seconds, color: colorOf(entry.item.colorIndex) };
+    });
+    var rest = items.slice(8).reduce(function (sum, entry) { return sum + entry.seconds; }, 0);
+    if (rest > 0) slices.push({ label: "Other", seconds: rest, color: "#cbd5e1" });
+    var size = 140, r = 64, c = size / 2;
+    var chart = svg("svg", { viewBox: "0 0 " + size + " " + size, width: size, height: size, class: "pie" });
+    var angle = -Math.PI / 2;
+    slices.forEach(function (slice) {
+      var part = slice.seconds / total, next = angle + part * Math.PI * 2;
+      var shape;
+      if (part >= 0.9999) {
+        shape = svg("circle", { cx: c, cy: c, r: r, fill: slice.color });
+      } else {
+        var large = part > 0.5 ? 1 : 0;
+        shape = svg("path", {
+          d: "M" + c + "," + c + " L" + (c + r * Math.cos(angle)) + "," + (c + r * Math.sin(angle)) +
+             " A" + r + "," + r + " 0 " + large + " 1 " + (c + r * Math.cos(next)) + "," + (c + r * Math.sin(next)) + " Z",
+          fill: slice.color, stroke: "#ffffff", "stroke-width": 1
+        });
+      }
+      var title = svg("title", {});
+      title.textContent = slice.label + " · " + fmt(slice.seconds) + " · " + Math.round(part * 100) + "%";
+      shape.appendChild(title);
+      chart.appendChild(shape);
+      angle = next;
+    });
+    var body = el("div", "pie-body");
+    body.appendChild(chart);
+    var legend = el("div", "pie-legend");
+    slices.forEach(function (slice) {
+      var item = el("div", "legend-item");
+      var dot = el("span", "dot");
+      dot.style.background = slice.color;
+      item.appendChild(dot);
+      item.appendChild(el("span", "legend-label", slice.label));
+      item.appendChild(el("span", "legend-note", Math.round((slice.seconds / total) * 100) + "%"));
+      legend.appendChild(item);
+    });
+    body.appendChild(legend);
+    wrap.appendChild(body);
+    return wrap;
+  }
+
+  function renderDetails() {
+    var box = scope.getElementById("details");
+    if (!box) return;
+    box.textContent = "";
+    var head = el("div", "details-head");
+    head.appendChild(el("h2", null, "Details"));
+    var select = el("select");
+    var choices = [{ value: "app|", label: "All usage" }];
+    usageItemsShown.forEach(function (entry) {
+      var lens = entry.kind === "Website" ? "web" : "app";
+      choices.push({ value: lens + "|" + entry.item.key, label: (entry.item.label || entry.item.key) + " · " + entry.kind });
+    });
+    var chosen = picked.lens + "|" + (picked.key || "");
+    if (!choices.some(function (c) { return c.value === chosen; })) choices.push({ value: chosen, label: picked.key });
+    choices.forEach(function (choice) {
+      var option = el("option", null, choice.label);
+      option.value = choice.value;
+      option.selected = choice.value === chosen;
+      select.appendChild(option);
+    });
+    select.addEventListener("change", function () {
+      var parts = select.value.split("|");
+      pick(parts[0], parts.slice(1).join("|") || null);
+    });
+    head.appendChild(select);
+    box.appendChild(head);
+    if (!itemHistory) { box.appendChild(el("p", "empty", "Loading…")); return; }
+    box.appendChild(dayMap(itemHistory));
+    var lower = el("div", "details-row");
+    lower.appendChild(hourBars(itemHistory));
+    lower.appendChild(pie(usageItemsShown));
+    box.appendChild(lower);
+  }
+
   function render() {
     var page = scope.getElementById("page");
     page.textContent = "";
@@ -283,12 +517,24 @@
         if (apps.timeline.length) panel.appendChild(strip(apps.timeline, snapshot.rangeStartMs, snapshot.rangeEndMs, attribution.pieces));
         panel.appendChild(usageRows(items));
       }
+      usageItemsShown = items;
     }
     panel.appendChild(settingsPanel(s));
     page.appendChild(panel);
+    if (current === "usage") {
+      var details = el("div", "panel details");
+      details.id = "details";
+      page.appendChild(details);
+      renderDetails();
+    }
   }
 
-  window.activityApply = function (data, iconMap) { snapshot = data; icons = iconMap || {}; render(); };
+  window.activityApply = function (data, iconMap) {
+    snapshot = data;
+    icons = iconMap || {};
+    render();
+    requestHistory();
+  };
 
   scope.getElementById("ranges").addEventListener("click", function (e) {
     var b = e.target.closest("button[data-range]"); if (!b) return;

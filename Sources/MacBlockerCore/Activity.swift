@@ -53,10 +53,11 @@ public struct ActivityRecord: Codable, Equatable, Sendable {
 public struct ActivityCategorySettings: Codable, Equatable, Sendable {
     /// Default OFF — recording is opt-in (see ACTIVITY-LOG.md §3).
     public var enabled: Bool
-    /// Days of history to keep; `0` = keep forever. Default 30.
+    /// Days of history to keep; `0` = keep forever. Default 180 — the day map
+    /// shows 180 days (owner 2026-09-29: keep every detail; it is small).
     public var retentionDays: Int
 
-    public init(enabled: Bool = false, retentionDays: Int = 30) {
+    public init(enabled: Bool = false, retentionDays: Int = 180) {
         self.enabled = enabled
         self.retentionDays = max(0, retentionDays)
     }

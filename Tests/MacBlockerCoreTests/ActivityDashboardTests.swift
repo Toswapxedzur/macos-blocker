@@ -67,6 +67,48 @@ final class ActivityDashboardTests: XCTestCase {
         XCTAssertEqual(Set(all.map(\.colorIndex)).count, 5, "no two items share a colour")
     }
 
+    private var utc: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
+    }
+
+    private func iso(_ text: String) -> Date { ISO8601DateFormatter().date(from: text)! }
+
+    func testHistorySplitsSessionsAtMidnightAndHours() {
+        // 23:30 → 00:45 next day: 30 min on the 28th (hour 23), 45 min on the 29th (hour 0).
+        let session = ActivityRecord(id: "a", category: .appUsage, startedAt: iso("2026-09-28T23:30:00Z"), seconds: 75 * 60, key: "k", label: "k")
+        let history = ActivityDashboard.history(records: [session], days: 3, hourDays: 2, now: iso("2026-09-29T12:00:00Z"), calendar: utc)
+        XCTAssertEqual(history.dayStartsMs.count, 3)
+        XCTAssertEqual(history.dayStartsMs.last, iso("2026-09-29T00:00:00Z").timeIntervalSince1970 * 1000)
+        XCTAssertEqual(history.daySeconds, [0, 1800, 2700])
+        XCTAssertEqual(history.hourDayStartsMs.count, 2)
+        XCTAssertEqual(history.hourSeconds[0][23], 30 * 60)
+        XCTAssertEqual(history.hourSeconds[1][0], 45 * 60)
+        XCTAssertEqual(history.hourSeconds.flatMap { $0 }.reduce(0, +), 75 * 60)
+    }
+
+    func testHistoryIgnoresTimeBeforeItsDays() {
+        let old = ActivityRecord(id: "a", category: .appUsage, startedAt: iso("2026-01-01T10:00:00Z"), seconds: 600, key: "k", label: "k")
+        let history = ActivityDashboard.history(records: [old], days: 180, hourDays: 3, now: iso("2026-09-29T12:00:00Z"), calendar: utc)
+        XCTAssertEqual(history.daySeconds.count, 180)
+        XCTAssertEqual(history.daySeconds.reduce(0, +), 0)
+    }
+
+    func testStoreHistoryFollowsThePickedKey() {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let now = iso("2026-09-29T12:00:00Z")
+        let store = ActivityStore(directory: directory, now: { now }, calendar: utc)
+        store.updateSettings { $0.setEnabled(true, for: .appUsage) }
+        for (key, minutes) in [("chrome", 10.0), ("code", 20.0)] {
+            XCTAssertTrue(store.record(ActivityRecord(id: key, category: .appUsage, startedAt: iso("2026-09-29T09:00:00Z"), seconds: minutes * 60, key: key, label: key)))
+        }
+        XCTAssertEqual(store.itemHistory(category: .appUsage, key: "code", days: 7, hourDays: 1).daySeconds.last, 20 * 60)
+        XCTAssertEqual(store.itemHistory(category: .appUsage, key: nil, days: 7, hourDays: 1).daySeconds.last, 30 * 60)
+        XCTAssertEqual(store.itemHistory(category: .appUsage, key: nil, days: 7, hourDays: 1).hourSeconds[0][9], 30 * 60)
+    }
+
     func testTimelinePositionsSegmentsWithinRange() {
         // range [1000, 11000] ms (10s span). A 2s session starting at +4s →
         // start 0.4, width 0.2.
