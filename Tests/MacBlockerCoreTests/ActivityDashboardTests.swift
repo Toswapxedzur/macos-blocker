@@ -10,7 +10,7 @@ final class ActivityDashboardTests: XCTestCase {
         let bars = ActivityDashboard.bars(from: [
             rec("chrome", at: 0, seconds: 100), rec("chrome", at: 10, seconds: 50),
             rec("code", at: 0, seconds: 300),
-        ])
+        ]) { _, rank in rank }
         XCTAssertEqual(bars.map(\.key), ["code", "chrome"])
         XCTAssertEqual(bars[0].seconds, 300)
         XCTAssertEqual(bars[0].fraction, 1, accuracy: 1e-9)
@@ -18,25 +18,33 @@ final class ActivityDashboardTests: XCTestCase {
         XCTAssertEqual(bars[1].fraction, 0.5, accuracy: 1e-9)
     }
 
-    func testColorsAreDistinctByRankAndMatchTimeline() {
-        // Ranked colours: top items get distinct indices (the dot is a legend);
-        // a key's bar and its timeline segment share the colour.
+    func testBarAndTimelineTakeTheKeysColour() {
+        // A key's bar and its timeline segments share the colour it is given.
         let lens = ActivityDashboard.lens(
             from: [rec("code", at: 0, seconds: 300), rec("chrome", at: 1000, seconds: 100)],
-            rangeStartMs: 0, rangeEndMs: 10000
+            rangeStartMs: 0, rangeEndMs: 10000,
+            colorFor: { ["code": 7, "chrome": 3][$0] ?? -1 }
         )
-        XCTAssertEqual(lens.bars.map(\.colorIndex), [0, 1], "distinct colours by rank")
+        XCTAssertEqual(lens.bars.map(\.colorIndex), [7, 3])
         let barColor = Dictionary(uniqueKeysWithValues: lens.bars.map { ($0.key, $0.colorIndex) })
         for segment in lens.timeline {
             XCTAssertEqual(segment.colorIndex, barColor[segment.key])
         }
     }
 
-    func testColorsNeverRepeatPastTheBasePalette() {
-        // 30 keys → 30 different colours (no wrap-around at 12).
-        let records = (0..<30).map { rec("app\($0)", at: Double($0) * 10, seconds: Double(100 - $0)) }
-        let bars = ActivityDashboard.bars(from: records)
-        XCTAssertEqual(Set(bars.map(\.colorIndex)).count, 30)
+    func testRegistryGivesEachAppAndSiteOnePermanentColour() {
+        // Owner rule 2026-09-29: unique, and stable across rankings and deletion.
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ActivityStore(directory: directory)
+        let first = store.colorIndices(for: (0..<30).map { "app|app\($0)" })
+        XCTAssertEqual(Set(first.values).count, 30, "30 items, 30 colours — no wrap at 12")
+        let later = store.colorIndices(for: ["web|youtube.com", "app|app29", "app|app0"])
+        XCTAssertEqual(later["app|app29"], first["app|app29"], "a known item keeps its colour")
+        XCTAssertEqual(later["app|app0"], first["app|app0"])
+        XCTAssertEqual(later["web|youtube.com"], 30, "a new item gets the next unused colour")
+        store.deleteAllRecords()
+        XCTAssertEqual(store.colorIndices(for: [])["app|app5"], first["app|app5"], "deleting history keeps the colours")
     }
 
     func testSnapshotColoursAreUniqueAcrossAppsSitesAndWatched() {
@@ -94,7 +102,9 @@ final class ActivityDashboardTests: XCTestCase {
     func testDayUsageClipsSessionsIntoEachDay() {
         let late = ActivityRecord(id: "a", category: .appUsage, startedAt: iso("2026-09-28T18:00:00Z"), seconds: 8 * 3600, key: "code", label: "Code")
         let site = ActivityRecord(id: "b", category: .webVisit, startedAt: iso("2026-09-29T06:00:00Z"), seconds: 3600, key: "youtube.com", label: "youtube.com")
-        let days = ActivityDashboard.dayUsage(app: [late], web: [site], days: 2, now: iso("2026-09-29T12:00:00Z"), calendar: utc)
+        let days = ActivityDashboard.dayUsage(app: [late], web: [site], days: 2, now: iso("2026-09-29T12:00:00Z"), calendar: utc,
+                                              appColor: { _ in 1 }, webColor: { _ in 2 })
+        XCTAssertEqual(days[0].app.first?.colorIndex, 1)
         XCTAssertEqual(days.count, 2)
         // 18:00-24:00 on the 28th (0.75-1.0), 00:00-02:00 on the 29th (0-1/12).
         XCTAssertEqual(days[0].app.count, 1)
@@ -152,7 +162,7 @@ final class ActivityDashboardTests: XCTestCase {
     }
 
     func testLensTotalIsSumOfSeconds() {
-        let lens = ActivityDashboard.lens(from: [rec("a", at: 0, seconds: 30), rec("b", at: 1000, seconds: 70)], rangeStartMs: 0, rangeEndMs: 10000)
+        let lens = ActivityDashboard.lens(from: [rec("a", at: 0, seconds: 30), rec("b", at: 1000, seconds: 70)], rangeStartMs: 0, rangeEndMs: 10000) { _ in 0 }
         XCTAssertEqual(lens.totalSeconds, 100)
         XCTAssertEqual(lens.bars.count, 2)
         XCTAssertEqual(lens.timeline.count, 2)
@@ -160,7 +170,7 @@ final class ActivityDashboardTests: XCTestCase {
 
     func testEmptyRangeYieldsNoGeometry() {
         XCTAssertTrue(ActivityDashboard.timeline(from: [rec("a", at: 0, seconds: 5)], rangeStartMs: 5000, rangeEndMs: 5000) { _ in 0 }.isEmpty)
-        XCTAssertTrue(ActivityDashboard.bars(from: []).isEmpty)
+        XCTAssertTrue(ActivityDashboard.bars(from: []) { _, rank in rank }.isEmpty)
     }
 
     func testSnapshotSettingsViewMirrorsSettings() {
