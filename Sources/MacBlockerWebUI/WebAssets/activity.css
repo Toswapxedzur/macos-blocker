@@ -45,9 +45,10 @@ main { flex: 1; min-height: 0; overflow: auto; }
 .details { margin-top: 14px; }
 .details-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .details-head .vui-select, .chart-head .vui-select { width: auto; }
-.details-row { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 18px; }
-.details-row > .chart:first-child { flex: 2 1 380px; min-width: 0; }
-.details-row > .chart:last-child { flex: 1 1 220px; }
+.details-row { display: flex; flex-wrap: wrap; gap: 24px; margin-bottom: 18px; }
+.details-row > .chart:first-child { flex: 0 1 auto; min-width: 0; }
+.details-row > .chart:last-child { flex: 1 1 260px; }
+.days { display: block; }
 .chart-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
 .chart-title { font-weight: 700; margin-bottom: 6px; }
 .chart-head .chart-title { margin-bottom: 0; }

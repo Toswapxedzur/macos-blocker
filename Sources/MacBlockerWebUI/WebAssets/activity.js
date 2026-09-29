@@ -41,7 +41,7 @@
   // "app" / "web"), or all usage (key null). Mac Vault answers with its
   // history (window.activityHistory).
   var picked = { lens: "app", key: null };
-  var hourDays = 3;
+  var barDays = 3;
   var itemHistory = null;
   var usageItemsShown = [];
   var icons = {};
@@ -267,11 +267,11 @@
   }
 
   function requestHistory() {
-    send({ kind: "history", lens: picked.lens, key: picked.key, hourDays: hourDays });
+    send({ kind: "history", lens: picked.lens, key: picked.key, barDays: barDays });
   }
 
   window.activityHistory = function (request, data) {
-    if (request.lens !== picked.lens || request.key !== picked.key || request.hourDays !== hourDays) return;
+    if (request.lens !== picked.lens || request.key !== picked.key || request.barDays !== barDays) return;
     itemHistory = data;
     renderDetails();
   };
@@ -332,68 +332,125 @@
     return wrap;
   }
 
-  // 24 hour slots; in each, one bar per compared day (oldest lightest,
-  // today darkest), so the same hour reads across days.
-  function hourBars(h) {
+  // Colours by key for the day bars: an item keeps its colour from the list;
+  // an item not in the list's range gets the next unused colour (largest
+  // first), so no two items ever share one.
+  function barColors(days) {
+    var color = {}, next = 0;
+    function own(lens, bars) {
+      (bars || []).forEach(function (b) { color[lens + "|" + b.key] = b.colorIndex; next = Math.max(next, b.colorIndex + 1); });
+    }
+    own("app", snapshot.app && snapshot.app.bars);
+    own("web", snapshot.web && snapshot.web.bars);
+    (snapshot.watched || []).forEach(function (b) { next = Math.max(next, b.colorIndex + 1); });
+    var unseen = {};
+    days.forEach(function (day) {
+      [["app", day.app], ["web", day.web]].forEach(function (pair) {
+        pair[1].forEach(function (seg) {
+          var id = pair[0] + "|" + seg.key;
+          if (color[id] === undefined) unseen[id] = (unseen[id] || 0) + seg.widthFraction;
+        });
+      });
+    });
+    Object.keys(unseen).sort(function (x, y) { return unseen[y] - unseen[x]; })
+      .forEach(function (id) { color[id] = next++; });
+    return function (lens, key) { return colorOf(color[lens + "|" + key]); };
+  }
+
+  // One day's rows, like the Usage list: apps, sites, a browser's leftover.
+  function dayTotals(day, attribution) {
+    var DAY = 86400;
+    function bars(segments) {
+      var by = {};
+      segments.forEach(function (seg) {
+        var bar = by[seg.key] || (by[seg.key] = { key: seg.key, label: seg.label, seconds: 0 });
+        bar.seconds += seg.widthFraction * DAY;
+      });
+      return Object.keys(by).map(function (k) { return by[k]; }).sort(function (x, y) { return y.seconds - x.seconds; });
+    }
+    return usageItems(bars(day.app), bars(day.web), attribution, DAY);
+  }
+
+  // Each day: two bars on a 24-hour scale, 00:00 at the bottom. Left, the day
+  // in order (empty where nothing was used; a browser's time shows its sites,
+  // the browser's colour in a thin band). Right, each item's total that day,
+  // stacked largest first (owner 2026-09-29).
+  function dayBars(days) {
     var wrap = el("div", "chart");
     var head = el("div", "chart-head");
-    head.appendChild(el("div", "chart-title", "By hour"));
+    head.appendChild(el("div", "chart-title", "Day by day"));
     var select = el("select");
     [1, 2, 3, 4, 5, 6, 7].forEach(function (n) {
       var option = el("option", null, n === 1 ? "Today" : "Last " + n + " days");
       option.value = String(n);
-      option.selected = n === hourDays;
+      option.selected = n === barDays;
       select.appendChild(option);
     });
     select.addEventListener("change", function () {
-      hourDays = parseInt(select.value, 10);
+      barDays = parseInt(select.value, 10);
       itemHistory = null;
       requestHistory();
+      renderDetails();
     });
     head.appendChild(select);
     wrap.appendChild(head);
 
-    var days = h.hourSeconds.length;
-    var max = 60;
-    h.hourSeconds.forEach(function (hours) { hours.forEach(function (v) { if (v > max) max = v; }); });
-    var width = 600, height = 150, bottom = 18, plot = height - bottom;
-    var slot = width / 24, inner = slot * 0.8, barWidth = inner / days;
-    var chart = svg("svg", { viewBox: "0 0 " + width + " " + height, width: "100%", class: "hours", preserveAspectRatio: "none" });
-    function shade(dayIndex) { return days === 1 ? navy(1) : navy(0.25 + 0.75 * (dayIndex / (days - 1))); }
-    h.hourSeconds.forEach(function (hours, d) {
-      hours.forEach(function (seconds, hour) {
-        if (seconds <= 0) return;
-        var barHeight = Math.max(1, (seconds / max) * (plot - 4));
-        var bar = svg("rect", {
-          x: hour * slot + (slot - inner) / 2 + d * barWidth, y: plot - barHeight,
-          width: Math.max(1, barWidth - 1), height: barHeight, rx: 1.5, fill: shade(d)
-        });
-        var title = svg("title", {});
-        var date = new Date(h.hourDayStartsMs[d]);
-        title.textContent = DAY_NAMES[date.getDay()] + " " + hour + ":00 · " + fmt(seconds);
-        bar.appendChild(title);
-        chart.appendChild(bar);
-      });
-    });
-    chart.appendChild(svg("line", { x1: 0, x2: width, y1: plot, y2: plot, stroke: "#e2e8f0", "stroke-width": 1 }));
-    [0, 6, 12, 18].forEach(function (hour) {
-      var label = svg("text", { x: hour * slot + 2, y: height - 4, class: "axis-label" });
+    var colorFor = barColors(days);
+    // Drawn at about the panel's width, so text stays at its real size.
+    var width = 860, height = 300, left = 38, top = 8, bottom = 34;
+    var plot = height - top - bottom, base = top + plot;
+    var group = (width - left) / days.length;
+    var barWidth = Math.min(30, group * 0.32);
+    var chart = svg("svg", { viewBox: "0 0 " + width + " " + height, width: "100%", class: "days" });
+    [0, 6, 12, 18, 24].forEach(function (hour) {
+      var y = base - (hour / 24) * plot;
+      chart.appendChild(svg("line", { x1: left, x2: width, y1: y, y2: y, stroke: "#eef1f6", "stroke-width": 1 }));
+      var label = svg("text", { x: 0, y: y + 3, class: "axis-label" });
       label.textContent = hour + ":00";
       chart.appendChild(label);
     });
-    wrap.appendChild(chart);
-    var legend = el("div", "chart-legend");
-    h.hourDayStartsMs.forEach(function (ms, d) {
-      var item = el("span", "legend-item");
-      var dot = el("span", "dot");
-      dot.style.background = shade(d);
-      item.appendChild(dot);
-      var date = new Date(ms);
-      item.appendChild(document.createTextNode(d === days - 1 ? "Today" : DAY_NAMES[date.getDay()] + " " + date.getDate()));
-      legend.appendChild(item);
+    function block(x, y, w, h, fill, text) {
+      var rect = svg("rect", { x: x, y: y, width: w, height: Math.max(0.8, h), fill: fill });
+      var title = svg("title", {});
+      title.textContent = text;
+      rect.appendChild(title);
+      chart.appendChild(rect);
+    }
+    function timeOfDay(fraction) {
+      var minutes = Math.round(fraction * 1440);
+      return Math.floor(minutes / 60) + ":" + String(minutes % 60).padStart(2, "0");
+    }
+    days.forEach(function (day, d) {
+      var mid = left + group * d + group / 2;
+      var orderX = mid - barWidth - 3, totalX = mid + 3;
+      [orderX, totalX].forEach(function (x) {
+        chart.appendChild(svg("rect", { x: x, y: top, width: barWidth, height: plot, rx: 4, fill: "#f1f4f8" }));
+      });
+      // In order: each session at its time.
+      day.app.forEach(function (seg) {
+        block(orderX, base - (seg.startFraction + seg.widthFraction) * plot, barWidth, seg.widthFraction * plot,
+          colorFor("app", seg.key), (seg.label || seg.key) + " · " + timeOfDay(seg.startFraction) + "–" + timeOfDay(seg.startFraction + seg.widthFraction));
+      });
+      var attribution = attributeSites(day.app, day.web);
+      attribution.pieces.forEach(function (piece) {
+        block(orderX, base - piece.to * plot, barWidth * 0.85, (piece.to - piece.from) * plot,
+          colorFor("web", piece.site.key), (piece.site.label || piece.site.key) + " · " + timeOfDay(piece.from) + "–" + timeOfDay(piece.to) + " (" + (piece.browser.label || piece.browser.key) + ")");
+      });
+      // Totals: each item's day, stacked largest first from the bottom.
+      var y = base;
+      dayTotals(day, attribution).forEach(function (entry) {
+        var h = (entry.seconds / 86400) * plot;
+        y -= h;
+        block(totalX, y, barWidth, h, colorFor(entry.kind === "Website" ? "web" : "app", entry.item.key),
+          (entry.item.label || entry.item.key) + " · " + fmt(entry.seconds));
+      });
+      var date = new Date(day.dayStartMs);
+      var label = svg("text", { x: mid, y: height - 16, "text-anchor": "middle", class: "axis-label" });
+      label.textContent = d === days.length - 1 ? "Today" : DAY_NAMES[date.getDay()] + " " + date.getDate();
+      chart.appendChild(label);
     });
-    legend.appendChild(el("span", "legend-note", "Tallest: " + fmt(max)));
-    wrap.appendChild(legend);
+    wrap.appendChild(chart);
+    wrap.appendChild(el("div", "chart-legend", "Each day: left, in order (empty = not used); right, each app's and site's total. Hover for names."));
     return wrap;
   }
 
@@ -510,11 +567,11 @@
     head.appendChild(select);
     box.appendChild(head);
     if (!itemHistory) { box.appendChild(el("p", "empty", "Loading…")); return; }
-    box.appendChild(dayMap(itemHistory));
-    var lower = el("div", "details-row");
-    lower.appendChild(hourBars(itemHistory));
-    lower.appendChild(pie(usageItemsShown));
-    box.appendChild(lower);
+    var upper = el("div", "details-row");
+    upper.appendChild(dayMap(itemHistory.map));
+    upper.appendChild(pie(usageItemsShown));
+    box.appendChild(upper);
+    box.appendChild(dayBars(itemHistory.days));
   }
 
   function render() {
