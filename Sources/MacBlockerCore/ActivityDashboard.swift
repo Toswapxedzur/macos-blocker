@@ -3,10 +3,10 @@ import Foundation
 /// Render-ready geometry for the Activity dashboard (see docs/ACTIVITY-LOG.md).
 /// Built in Swift and unit tested, so the web view only draws rectangles: a
 /// ranked **bar graph** of totals per key, and a single **segmented timeline
-/// bar** of the exact sessions across the range. `colorIndex` is unique per key
-/// across the whole snapshot (apps, then sites, then watched videos — no two
-/// items ever share a colour) and ties a key's bar to its timeline segments;
-/// the page maps the index to a colour.
+/// bar** of the exact sessions across the range. `colorIndex` comes from the
+/// store's permanent colour registry (owner rule 2026-09-29: every app and
+/// website has one unique colour everywhere) and ties a key's bar to its
+/// timeline segments; the page maps the index to a colour.
 
 public struct ActivityBar: Codable, Equatable, Sendable {
     public var key: String
@@ -58,7 +58,7 @@ public struct ActivityItemHistory: Codable, Equatable, Sendable {
 
 /// One day of all usage for the day bars: its app and website sessions as
 /// fractions of the day (a session across midnight is clipped into each day).
-/// `colorIndex` is not set here (-1): the page colours by key, like its list.
+/// Segments carry the registry's colours, like the list.
 public struct ActivityDayUsage: Codable, Equatable, Sendable {
     public var dayStartMs: Double
     public var app: [ActivitySegment]
@@ -84,10 +84,9 @@ public struct ActivityDashboardSettings: Codable, Equatable, Sendable {
 }
 
 public enum ActivityDashboard {
-    /// Ranked bars (largest first) of total seconds per key. Colours go by rank,
-    /// counting on from `firstColor`, so every key gets its own; a key's colour
-    /// holds between its bar and its timeline segments.
-    public static func bars(from records: [ActivityRecord], firstColor: Int = 0) -> [ActivityBar] {
+    /// Ranked bars (largest first) of total seconds per key; `colorFor` gives a
+    /// key's colour (its rank is passed for items outside the registry).
+    public static func bars(from records: [ActivityRecord], colorFor: (_ key: String, _ rank: Int) -> Int) -> [ActivityBar] {
         var totals: [String: (label: String, seconds: Double, platform: String?)] = [:]
         for record in records {
             let existing = totals[record.key]
@@ -103,7 +102,7 @@ public enum ActivityDashboard {
                 label: item.label,
                 seconds: item.seconds,
                 fraction: maxSeconds > 0 ? item.seconds / maxSeconds : 0,
-                colorIndex: firstColor + index,
+                colorIndex: colorFor(item.key, index),
                 platform: item.platform
             )
         }
@@ -141,14 +140,14 @@ public enum ActivityDashboard {
             }
     }
 
-    public static func lens(from records: [ActivityRecord], rangeStartMs: Double, rangeEndMs: Double, firstColor: Int = 0) -> ActivityLensView {
-        let bars = bars(from: records, firstColor: firstColor)
+    public static func lens(from records: [ActivityRecord], rangeStartMs: Double, rangeEndMs: Double, colorFor: (String) -> Int) -> ActivityLensView {
+        let bars = bars(from: records) { key, _ in colorFor(key) }
         var colorByKey: [String: Int] = [:]
         for bar in bars { colorByKey[bar.key] = bar.colorIndex }
         return ActivityLensView(
             totalSeconds: records.reduce(0) { $0 + $1.seconds },
             bars: bars,
-            timeline: timeline(from: records, rangeStartMs: rangeStartMs, rangeEndMs: rangeEndMs) { colorByKey[$0] ?? firstColor }
+            timeline: timeline(from: records, rangeStartMs: rangeStartMs, rangeEndMs: rangeEndMs) { colorByKey[$0] ?? colorFor($0) }
         )
     }
 
@@ -181,14 +180,22 @@ public enum ActivityDashboard {
 
     /// The `days` days ending today, each with its app and website sessions
     /// placed within that day (see `timeline`).
-    public static func dayUsage(app: [ActivityRecord], web: [ActivityRecord], days: Int, now: Date, calendar: Calendar) -> [ActivityDayUsage] {
+    public static func dayUsage(
+        app: [ActivityRecord],
+        web: [ActivityRecord],
+        days: Int,
+        now: Date,
+        calendar: Calendar,
+        appColor: (String) -> Int,
+        webColor: (String) -> Int
+    ) -> [ActivityDayUsage] {
         dayStarts(days: days, now: now, calendar: calendar).map { start in
             let startMs = start.timeIntervalSince1970 * 1000
             let endMs = (calendar.date(byAdding: .day, value: 1, to: start) ?? start).timeIntervalSince1970 * 1000
             return ActivityDayUsage(
                 dayStartMs: startMs,
-                app: timeline(from: app, rangeStartMs: startMs, rangeEndMs: endMs) { _ in -1 },
-                web: timeline(from: web, rangeStartMs: startMs, rangeEndMs: endMs) { _ in -1 }
+                app: timeline(from: app, rangeStartMs: startMs, rangeEndMs: endMs, colorForKey: appColor),
+                web: timeline(from: web, rangeStartMs: startMs, rangeEndMs: endMs, colorForKey: webColor)
             )
         }
     }

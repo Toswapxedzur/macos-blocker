@@ -15,6 +15,7 @@ public final class ActivityStore: @unchecked Sendable {
 
     private static let settingsFileName = "settings.json"
     private static let webIconsFileName = "web-icons.json"
+    private static let colorsFileName = "colors.json"
     private static let maxWebIcons = 500
     private static let maxWebIconBytes = 24_000
 
@@ -95,6 +96,36 @@ public final class ActivityStore: @unchecked Sendable {
         return icons
     }
 
+    // MARK: - Colours (owner rule 2026-09-29)
+
+    /// Every app and website has one permanent, unique colour index:
+    /// "app|<bundle id>" / "web|<domain>" → index, assigned once (the next
+    /// unused index, in the order given) and never reused or removed — not
+    /// even when history is deleted. Returns the whole mapping.
+    public func colorIndices(for ids: [String]) -> [String: Int] {
+        lock.lock(); defer { lock.unlock() }
+        let url = rootDirectory.appendingPathComponent(Self.colorsFileName)
+        var mapping = (try? JSONDecoder().decode([String: Int].self, from: Data(contentsOf: url))) ?? [:]
+        var next = (mapping.values.max() ?? -1) + 1
+        var added = false
+        for id in ids where mapping[id] == nil {
+            mapping[id] = next
+            next += 1
+            added = true
+        }
+        if added { write(encode(mapping), to: url) }
+        return mapping
+    }
+
+    /// The registry's colours for these app and website records (new keys are
+    /// registered largest first, so a range's top items get the base colours).
+    private func colors(app: [ActivityRecord], web: [ActivityRecord]) -> (app: (String) -> Int, web: (String) -> Int, next: Int) {
+        let rank = { (records: [ActivityRecord]) in ActivityDashboard.bars(from: records) { _, _ in 0 }.map(\.key) }
+        let mapping = colorIndices(for: rank(app).map { "app|" + $0 } + rank(web).map { "web|" + $0 })
+        let next = (mapping.values.max() ?? -1) + 1
+        return ({ mapping["app|" + $0] ?? 0 }, { mapping["web|" + $0] ?? 0 }, next)
+    }
+
     // MARK: - Recording
 
     /// Appends a record. No-op when the record's category is disabled (the
@@ -161,12 +192,14 @@ public final class ActivityStore: @unchecked Sendable {
         // A day before the first day, so a session running into it is clipped in.
         let picked = records(category: category, from: since(max(1, mapDays)), to: now).filter { key == nil || $0.key == key }
         let barsFrom = since(max(1, barDays))
+        let app = records(category: .appUsage, from: barsFrom, to: now)
+        let web = records(category: .webVisit, from: barsFrom, to: now)
+        let color = colors(app: app, web: web)
         return ActivityDetail(
             map: ActivityDashboard.history(records: picked, days: mapDays, now: now, calendar: calendar),
             days: ActivityDashboard.dayUsage(
-                app: records(category: .appUsage, from: barsFrom, to: now),
-                web: records(category: .webVisit, from: barsFrom, to: now),
-                days: barDays, now: now, calendar: calendar
+                app: app, web: web, days: barDays, now: now, calendar: calendar,
+                appColor: color.app, webColor: color.web
             )
         )
     }
@@ -181,16 +214,17 @@ public final class ActivityStore: @unchecked Sendable {
         let app = records(category: .appUsage, from: start, to: end)
         let web = records(category: .webVisit, from: start, to: end)
         let watched = records(category: .contentWatched, from: start, to: end)
-        // One colour order for the whole page: apps, then sites (so a site drawn
-        // inside a browser's time never looks like an app), then watched videos.
-        let appLens = ActivityDashboard.lens(from: app, rangeStartMs: startMs, rangeEndMs: endMs)
-        let webLens = ActivityDashboard.lens(from: web, rangeStartMs: startMs, rangeEndMs: endMs, firstColor: appLens.bars.count)
+        // Apps and sites take their permanent colours; watched videos take
+        // indices after the registry's, so they never collide with one.
+        let color = colors(app: app, web: web)
+        let appLens = ActivityDashboard.lens(from: app, rangeStartMs: startMs, rangeEndMs: endMs, colorFor: color.app)
+        let webLens = ActivityDashboard.lens(from: web, rangeStartMs: startMs, rangeEndMs: endMs, colorFor: color.web)
         return ActivityDashboardSnapshot(
             rangeStartMs: startMs,
             rangeEndMs: endMs,
             app: appLens,
             web: webLens,
-            watched: ActivityDashboard.bars(from: watched, firstColor: appLens.bars.count + webLens.bars.count),
+            watched: ActivityDashboard.bars(from: watched) { _, rank in color.next + rank },
             settings: ActivityDashboard.settingsView(loadSettings())
         )
     }

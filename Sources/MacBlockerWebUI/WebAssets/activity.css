@@ -48,7 +48,8 @@ main { flex: 1; min-height: 0; overflow: auto; }
 .details-row { display: flex; flex-wrap: wrap; gap: 24px; margin-bottom: 18px; }
 .details-row > .chart:first-child { flex: 0 1 auto; min-width: 0; }
 .details-row > .chart:last-child { flex: 1 1 260px; }
-.days { display: block; }
+.days { display: block; margin-bottom: 12px; }
+.day-section .chart-head { margin-bottom: 10px; }
 .chart-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
 .chart-title { font-weight: 700; margin-bottom: 6px; }
 .chart-head .chart-title { margin-bottom: 0; }
