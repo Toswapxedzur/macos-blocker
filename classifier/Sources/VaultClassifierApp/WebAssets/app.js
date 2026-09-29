@@ -43,7 +43,6 @@
   let suppressTagClick = false;
   let connectionSource = null;
   let selectedTagNode = null;
-  const layoutTraceSignatures = new Map();
   const treeViewportPositions = new Map();
   const editorViewportPositions = new Map();
   const pendingTagRenames = new Map();
@@ -77,7 +76,7 @@
   let navigationPanelWidth = navigationWidthRange.fallback;
   let navigationResize = null;
   const collectionRowHeight = 48;
-  const workspaceNames = new Set(["tagTree", "llmAssist", "browserBridge", "classificationData", "knowledge"]);
+  const workspaceNames = new Set(["llmAssist", "browserBridge", "classificationData", "knowledge"]);
   const virtualLists = new Map();
   const virtualListScrollByKey = new Map();
   let virtualListSequence = 0;
@@ -801,8 +800,11 @@
       <section class="section-card cyan"><div class="form-stack">${line("integration.app", "integration.ready")}${line("integration.pairing", "integration.keychain")}${line("integration.host", "integration.notRegistered")}${line("integration.server", "integration.notRequired")}</div></section><div class="notice cyan">${tx("integration.notice")}</div></div>`;
   }
 
-  function tagTreeWorkspace(scopeTreeID = null) {
-    const assets = state.assets;
+  // A classifier type's own tag tree (the tree belongs to its type: made and
+  // trashed with it). The canvas is as tall as its tags (at most 520 px) and
+  // shows no scroll bars (owner 2026-09-30): drag empty space or use the
+  // trackpad to pan a tree wider than the panel.
+  function tagTreeWorkspace(treeID) {
     const coordinate = (value, fallback) => {
       const number = Number(value);
       return Number.isFinite(number) && number >= 0 ? number : fallback;
@@ -814,79 +816,65 @@
         x: coordinate(node.positionX, 24 + (index % 4) * 154),
         y: coordinate(node.positionY, 24 + Math.floor(index / 4) * 48),
       }]));
-      const depthFor = (node) => {
-        let depth = 0;
-        let current = node;
-        const visited = new Set([node.id]);
-        while (current.parentID && nodeByID.has(current.parentID) && !visited.has(current.parentID)) {
-          current = nodeByID.get(current.parentID);
-          visited.add(current.id);
-          depth += 1;
-        }
-        return depth;
-      };
       const panelState = activeTagPanel?.treeID === tree.id ? activeTagPanel : null;
-      const nodeExtentX = Math.max(0, ...[...positions.values()].map((position) => position.x + 136));
-      const nodeExtentY = Math.max(0, ...[...positions.values()].map((position) => position.y + 30));
-      const panelExtentX = panelState ? panelState.x + 256 : 0;
-      const panelExtentY = panelState ? panelState.y + 340 : 0;
-      const mapWidth = Math.max(640, nodeExtentX + 28, panelExtentX + 20);
-      const mapHeight = Math.max(320, nodeExtentY + 28, panelExtentY + 20);
+      const contentWidth = Math.max(0, ...[...positions.values()].map((position) => position.x + 126)) + 28;
+      const contentHeight = Math.max(240, Math.max(0, ...[...positions.values()].map((position) => position.y + 22)) + 28,
+        panelState ? panelState.y + 360 : 0);
       const selectedNodeID = selectedTagNode?.treeID === tree.id ? selectedTagNode.nodeID : "";
       const popoverNode = panelState?.nodeID ? nodeByID.get(panelState.nodeID) : null;
       const connectionState = connectionSource?.treeID === tree.id ? connectionSource : null;
       const popover = panelState ? (() => {
-        const isTreeEdit = panelState.kind === "tree";
-        const isTreeDelete = panelState.kind === "delete-tree";
         const isEdit = panelState.kind === "edit" && popoverNode;
         const nodeID = isEdit ? popoverNode.id : "";
-        const titleKey = isTreeDelete ? "tree.confirmDelete" : isTreeEdit ? "tree.renameTree" : isEdit ? "tree.editNode" : "tree.createNode";
         const nameField = field(
-          isTreeEdit ? "tree.treeName" : isEdit ? "tree.nodeName" : "tree.tagName",
+          isEdit ? "tree.nodeName" : "tree.tagName",
           "",
           "name",
-          isTreeEdit ? tree.name : isEdit ? popoverNode.name : "",
+          isEdit ? popoverNode.name : "",
           "text",
           isEdit ? `data-live-tag-name data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}"` : ""
         );
-        const descriptionField = !isTreeDelete && !isTreeEdit
-          ? textareaField(
-            "tree.tagDescription",
-            "tree.tagDescriptionCopy",
-            "description",
-            isEdit ? popoverNode.description || "" : "",
-            "maxlength=\"1024\""
-          )
-          : "";
-        const actions = isTreeDelete
-          ? `<button class="secondary" data-action="cancelTagPanel">${tx("tree.cancel")}</button><button class="danger" data-action="confirmDeleteTree" data-tree-id="${esc(tree.id)}">${tx("tree.confirmDeleteAction")}</button>`
-          : isTreeEdit
-            ? `<button class="primary" data-action="saveTreeName" data-form="tag-popover-form" data-tree-id="${esc(tree.id)}">${tx("tree.saveTreeName")}</button>`
-            : isEdit
+        const descriptionField = textareaField(
+          "tree.tagDescription",
+          "tree.tagDescriptionCopy",
+          "description",
+          isEdit ? popoverNode.description || "" : "",
+          "maxlength=\"1024\""
+        );
+        const actions = isEdit
           ? `<button class="primary" data-action="saveTagName" data-form="tag-popover-form" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.saveNode")}</button><button class="secondary" data-action="beginConnection" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.connection")}</button><button class="secondary" data-action="disconnectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}"${disabled(!popoverNode.parentID)}>${tx("tree.disconnection")}</button><button class="danger" data-action="deleteTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.deleteNode")}</button>`
           : `<button class="primary" data-action="addTag" data-form="tag-popover-form" data-tree-id="${esc(tree.id)}">${tx("tree.createNode")}</button>`;
-        const content = isTreeDelete
-          ? `<p class="small-copy">${tx("tree.confirmDeleteCopy")}</p><div class="action-row">${actions}</div>`
-          : `${nameField}${descriptionField}${actions ? `<div class="action-row">${actions}</div>` : ""}`;
-        return `<section class="tree-popover" style="left:${panelState.x}px;top:${panelState.y}px" data-tree-popover data-form-id="tag-popover-form"><div class="tree-popover-head"><span class="eyebrow">${tx(titleKey)}</span><button class="tree-popover-close" data-action="cancelTagPanel" title="${tx("tree.cancel")}" aria-label="${tx("tree.cancel")}">×</button></div><div class="tree-form">${content}</div></section>`;
+        // Placed beside its anchor, inside the visible part (placeTreePopovers).
+        return `<section class="tree-popover" data-anchor-x="${panelState.x}" data-anchor-y="${panelState.y}" data-anchor-w="${panelState.w || 0}" data-tree-popover data-form-id="tag-popover-form"><div class="tree-popover-head"><span class="eyebrow">${tx(isEdit ? "tree.editNode" : "tree.createNode")}</span><button class="tree-popover-close" data-action="cancelTagPanel" title="${tx("tree.cancel")}" aria-label="${tx("tree.cancel")}">×</button></div><div class="tree-form">${nameField}${descriptionField}<div class="action-row">${actions}</div></div></section>`;
       })() : "";
-      const map = `<div class="tree-map" data-tree-map data-tree-id="${esc(tree.id)}"><div class="tree-map-title">${esc(tree.name)}</div>${connectionState ? `<div class="tree-connection-mode">${tx("tree.connectionHint")}</div>` : ""}<div class="tree-map-content" style="width:max(${mapWidth}px, calc(100% + 480px)); height:max(${mapHeight}px, calc(100% + 280px))"><svg class="tree-links" aria-hidden="true"></svg><div class="tree-node-layer">${nodes.map((node) => {
+      const map = `<div class="tree-map" data-tree-map data-tree-id="${esc(tree.id)}">${connectionState ? `<div class="tree-connection-mode">${tx("tree.connectionHint")}</div>` : ""}<div class="tree-map-content" style="width:max(${contentWidth}px, 100%);height:${contentHeight}px"><svg class="tree-links" aria-hidden="true"></svg><div class="tree-node-layer">${nodes.map((node) => {
         const position = positions.get(node.id);
-        const depth = depthFor(node);
-        const tier = depth === 0 ? "primary" : depth === 1 ? "secondary" : depth === 2 ? "tertiary" : "quaternary";
         const colorStyle = tagColorStyle(node);
-        return `<button class="tree-map-node ${tier}${panelState?.nodeID === node.id || selectedNodeID === node.id ? " active" : ""}${connectionState?.nodeID === node.id ? " connection-source" : ""}${node.retired ? " retired" : ""}" style="left:${position.x}px;top:${position.y}px;${colorStyle}" data-action="selectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(node.id)}" data-parent-id="${esc(node.parentID || "")}" data-position-x="${position.x}" data-position-y="${position.y}" title="${tx("tree.contextHint")}"><span aria-hidden="true"></span><strong>${esc(node.name)}</strong></button>`;
+        return `<button class="tree-map-node${panelState?.nodeID === node.id || selectedNodeID === node.id ? " active" : ""}${connectionState?.nodeID === node.id ? " connection-source" : ""}${node.retired ? " retired" : ""}" style="left:${position.x}px;top:${position.y}px;${colorStyle}" data-action="selectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(node.id)}" data-parent-id="${esc(node.parentID || "")}" data-position-x="${position.x}" data-position-y="${position.y}" title="${tx("tree.contextHint")}"><span aria-hidden="true"></span><strong>${esc(node.name)}</strong></button>`;
       }).join("")}</div>${nodes.length ? "" : `<div class="tree-map-empty">${tx("tree.empty")}</div>`}${popover}</div></div>`;
-      const treeActions = `<div class="tree-canvas-actions"><button class="secondary" data-action="renameTree" data-tree-id="${esc(tree.id)}">${tx("tree.rename")}</button><button class="danger" data-action="deleteTree" data-tree-id="${esc(tree.id)}">${tx("tree.delete")}</button><button class="secondary" data-action="rearrangeTree" data-tree-id="${esc(tree.id)}">${tx("tree.rearrange")}</button></div>`;
+      const treeActions = `<div class="tree-canvas-actions"><button class="secondary" data-action="rearrangeTree" data-tree-id="${esc(tree.id)}">${tx("tree.rearrange")}</button></div>`;
       return `<section class="tree-panel">${map}<div class="tree-canvas-hint"><span>${tx("tree.canvasHint")}</span>${treeActions}</div></section>`;
     };
-    // Scoped to one type's tree: no shared-library header, create box, or trash.
-    if (scopeTreeID) {
-      const scopedTrees = assets.trees.filter((tree) => tree.id === scopeTreeID);
-      return `<div class="workspace tree-workspace tree-workspace-scoped"><div class="tree-panels">${scopedTrees.map(panel).join("") || `<div class="empty">${tx("tree.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
-    }
-    return `<div class="workspace tree-workspace">${header("tree.title", "tree.copy", t("tree.sharedLibrary"), "cyan")}
-      <section class="tree-create" data-form-id="new-tree-form">${field("tree.treeName", "", "name", "")}<button class="primary" data-action="createTree" data-form="new-tree-form">${tx("tree.create")}</button><span class="small-copy">${tx("tree.multiplePanels")}</span></section><div class="tree-panels">${assets.trees.map(panel).join("")}</div>${notice(state.issue, "red")}</div>`;
+    const tree = state.assets.trees.find((candidate) => candidate.id === treeID);
+    return `<div class="workspace tree-workspace tree-workspace-scoped">${tree ? panel(tree) : `<div class="empty">${tx("tree.empty")}</div>`}${notice(state.issue, "red")}</div>`;
+  }
+
+  // A tag's popover sits beside its anchor, flipped left when the visible
+  // part of the canvas has no room on the right.
+  function placeTreePopovers() {
+    root.querySelectorAll("[data-tree-map]").forEach((map) => {
+      const popover = map.querySelector("[data-tree-popover]");
+      if (!popover) return;
+      const x = Number(popover.dataset.anchorX) || 0;
+      const width = popover.offsetWidth;
+      const viewLeft = map.scrollLeft;
+      const viewRight = map.scrollLeft + map.clientWidth;
+      let left = x + (Number(popover.dataset.anchorW) || 0) + 12;
+      if (left + width > viewRight - 8) left = x - width - 12;
+      left = Math.max(viewLeft + 8, Math.min(left, viewRight - width - 8));
+      popover.style.left = `${Math.round(left)}px`;
+      popover.style.top = `${Number(popover.dataset.anchorY) || 0}px`;
+    });
   }
 
   function providerTypeLabelKey(type) {
@@ -1174,7 +1162,7 @@
       case "browserBridge": return browserBridgeWorkspace();
       case "classificationData": return classificationDataWorkspace();
       case "knowledge": return knowledgeWorkspace();
-      default: return tagTreeWorkspace();
+      default: return browserBridgeWorkspace();
     }
   }
 
@@ -1204,53 +1192,6 @@
         const bendY = Math.round((startY + endY) / 2);
         return `<path d="M ${startX} ${startY} V ${bendY} H ${endX} V ${endY}"/>`;
       }).join("");
-    });
-  }
-
-  function traceTreeLayout() {
-    root.querySelectorAll("[data-tree-map]").forEach((map) => {
-      const content = map.querySelector(".tree-map-content");
-      if (!content) return;
-      const contentRect = content.getBoundingClientRect();
-      const nodes = [...content.querySelectorAll(".tree-map-node")].slice(0, 12).map((node) => {
-        const rect = node.getBoundingClientRect();
-        return {
-          id: node.dataset.nodeId,
-          dataX: node.dataset.positionX,
-          dataY: node.dataset.positionY,
-          cssLeft: window.getComputedStyle(node).left,
-          cssTop: window.getComputedStyle(node).top,
-          renderX: Math.round(rect.left - contentRect.left + map.scrollLeft),
-          renderY: Math.round(rect.top - contentRect.top + map.scrollTop),
-        };
-      });
-      const popover = content.querySelector("[data-tree-popover]");
-      const panel = popover ? {
-        cssLeft: window.getComputedStyle(popover).left,
-        cssTop: window.getComputedStyle(popover).top,
-        renderX: Math.round(popover.getBoundingClientRect().left - contentRect.left + map.scrollLeft),
-        renderY: Math.round(popover.getBoundingClientRect().top - contentRect.top + map.scrollTop),
-      } : null;
-      const detail = JSON.stringify({ scrollX: map.scrollLeft, scrollY: map.scrollTop, nodes, panel });
-      const signature = `${map.dataset.treeId}:${detail}`;
-      if (layoutTraceSignatures.get(map.dataset.treeId) === signature) return;
-      layoutTraceSignatures.set(map.dataset.treeId, signature);
-      send("layoutTrace", { phase: "render", treeID: map.dataset.treeId, detail });
-    });
-  }
-
-  function traceTagDrag(phase, drag) {
-    const node = drag.node;
-    send("layoutTrace", {
-      phase,
-      treeID: drag.treeID,
-      detail: JSON.stringify({
-        id: drag.nodeID,
-        dataX: node.dataset.positionX,
-        dataY: node.dataset.positionY,
-        cssLeft: window.getComputedStyle(node).left,
-        cssTop: window.getComputedStyle(node).top,
-      }),
     });
   }
 
@@ -1288,21 +1229,7 @@
     selectedTagNode = { treeID, nodeID };
     const nodeX = Number(node.dataset.positionX) || 0;
     const nodeY = Number(node.dataset.positionY) || 0;
-    activeTagPanel = { kind: "edit", treeID, nodeID, x: nodeX + node.offsetWidth + 12, y: nodeY };
-    render();
-  }
-
-  function openTreePanel(treeID, kind) {
-    const map = root.querySelector(`[data-tree-map][data-tree-id="${treeID}"]`);
-    if (!map) return;
-    selectedTagNode = null;
-    connectionSource = null;
-    activeTagPanel = {
-      kind,
-      treeID,
-      x: map.scrollLeft + Math.max(16, Math.round((map.clientWidth - 256) / 2)),
-      y: map.scrollTop + Math.max(56, Math.round((map.clientHeight - 174) / 2)),
-    };
+    activeTagPanel = { kind: "edit", treeID, nodeID, x: nodeX, y: nodeY, w: node.offsetWidth };
     render();
   }
 
@@ -1545,7 +1472,7 @@
       restoreEditorViewportPosition();
       restoreTreeViewportPositions();
       drawTreeConnections();
-      traceTreeLayout();
+      placeTreePopovers();
     });
   }
 
@@ -1762,35 +1689,12 @@
       send("deleteTag", { treeID: button.dataset.treeId, nodeID: button.dataset.nodeId });
       return;
     }
-    if (action === "renameTree") {
-      openTreePanel(button.dataset.treeId, "tree");
-      return;
-    }
-    if (action === "saveTreeName") {
-      if (!data.name?.trim()) return;
-      activeTagPanel = null;
-      render();
-      send("renameTree", { treeID: button.dataset.treeId, name: data.name });
-      return;
-    }
     if (action === "rearrangeTree") {
       selectedTagNode = null;
       connectionSource = null;
       activeTagPanel = null;
       render();
       send("rearrangeTree", { treeID: button.dataset.treeId });
-      return;
-    }
-    if (action === "deleteTree") {
-      openTreePanel(button.dataset.treeId, "delete-tree");
-      return;
-    }
-    if (action === "confirmDeleteTree") {
-      connectionSource = null;
-      selectedTagNode = null;
-      activeTagPanel = null;
-      render();
-      send("deleteTree", { treeID: button.dataset.treeId });
       return;
     }
     if (action === "deleteProviderProfile") {
@@ -2101,6 +2005,30 @@
     }
   });
 
+  // With no scroll bars, dragging the canvas's empty space pans it.
+  let treePan = null;
+  function beginTreePan(event) {
+    const map = event.target.closest("[data-tree-map]");
+    if (!map || event.button !== 0 || treePan || event.target.closest(".tree-map-node, [data-tree-popover]")) return;
+    treePan = { map, x: event.clientX, y: event.clientY, left: map.scrollLeft, top: map.scrollTop };
+    map.classList.add("panning");
+  }
+  function moveTreePan(event) {
+    if (!treePan) return;
+    treePan.map.scrollLeft = treePan.left - (event.clientX - treePan.x);
+    treePan.map.scrollTop = treePan.top - (event.clientY - treePan.y);
+    event.preventDefault();
+  }
+  function finishTreePan() {
+    if (!treePan) return;
+    treePan.map.classList.remove("panning");
+    treePan = null;
+  }
+  scope.addEventListener("pointerdown", beginTreePan);
+  scope.addEventListener("pointermove", moveTreePan);
+  scope.addEventListener("pointerup", finishTreePan);
+  scope.addEventListener("pointercancel", finishTreePan);
+
   function beginTagDrag(event) {
     const node = event.target.closest(".tree-map-node");
     if (!node || event.button !== 0 || tagDrag) return;
@@ -2143,7 +2071,6 @@
       moved: false,
     };
     if (event.pointerId != null) node.setPointerCapture?.(event.pointerId);
-    traceTagDrag("drag-start", tagDrag);
   }
 
   function moveTagDrag(event) {
@@ -2177,7 +2104,6 @@
     const drag = tagDrag;
     tagDrag = null;
     if (!drag.moved) return;
-    traceTagDrag("drag-end", drag);
     suppressTagClick = true;
     window.setTimeout(() => { suppressTagClick = false; }, 0);
     send("moveTag", {
@@ -2209,8 +2135,6 @@
       if (selectedTypeID && !typeIDs.has(selectedTypeID)) selectedTypeID = null;
       // Close the trash panel if that entry was restored or purged.
       if (selectedTrashID && !(Array.isArray(state.trash) ? state.trash : []).some((entry) => entry.id === selectedTrashID)) selectedTrashID = null;
-      // Tag trees are rendered inside their owning type, not as a top-level page.
-      if (state.workspace === "tagTree") state.workspace = "browserBridge";
       // Open a just-created type: the one id absent before "New type" was clicked.
       if (pendingSelectNewType) {
         const created = (state.assets?.classifierTypes || []).find((type) => !pendingSelectNewType.has(type.id));

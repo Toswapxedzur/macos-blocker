@@ -51,21 +51,13 @@ final class TrashTests: XCTestCase {
         XCTAssertTrue(catalog.trash.isEmpty)
     }
 
-    func testTrashTagTreeBlocksWhileReferencedAndAllowsUnreferenced() throws {
+    func testTreesNothingRefersToAreDroppedOnReconcile() throws {
         var catalog = WorkspaceCatalog.starter()
         _ = try catalog.ensurePlatformBinding("youtube")
-        let referencedTreeID = catalog.trees[0].id
-        XCTAssertThrowsError(try catalog.trashTagTree(referencedTreeID)) { error in
-            XCTAssertEqual(error as? WorkspaceCatalogError, .treeInUse(referencedTreeID))
-        }
-        XCTAssertTrue(catalog.trees.contains(where: { $0.id == referencedTreeID }))
-
-        catalog.trees.append(TagTreeAsset(id: "extra", name: "Extra", nodes: []))
-        let entry = try catalog.trashTagTree("extra")
-        XCTAssertEqual(entry?.name, "Extra")
-        XCTAssertFalse(catalog.trees.contains(where: { $0.id == "extra" }))
-        XCTAssertTrue(catalog.restoreTrashedEntry(entry!.id))
-        XCTAssertTrue(catalog.trees.contains(where: { $0.id == "extra" }))
+        let kept = Set(catalog.trees.map(\.id))
+        catalog.trees.append(TagTreeAsset(id: "orphan", name: "Orphan", nodes: []))
+        catalog.reconcileClassifierTypes()
+        XCTAssertEqual(Set(catalog.trees.map(\.id)), kept)
     }
 
     func testPurgeExpiredTrashRemovesOnlyEntriesPastTTL() {
