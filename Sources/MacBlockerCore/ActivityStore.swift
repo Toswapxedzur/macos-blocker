@@ -16,6 +16,7 @@ public final class ActivityStore: @unchecked Sendable {
     private static let settingsFileName = "settings.json"
     private static let webIconsFileName = "web-icons.json"
     private static let colorsFileName = "colors.json"
+    private static let groupsFileName = "groups.json"
     private static let maxWebIcons = 500
     private static let maxWebIconBytes = 24_000
 
@@ -117,13 +118,61 @@ public final class ActivityStore: @unchecked Sendable {
         return mapping
     }
 
-    /// The registry's colours for these app and website records (new keys are
-    /// registered largest first, so a range's top items get the base colours).
-    private func colors(app: [ActivityRecord], web: [ActivityRecord]) -> (app: (String) -> Int, web: (String) -> Int, next: Int) {
+    /// The registry's colours for these app and website records and the
+    /// groups (new keys are registered largest first, so a range's top items
+    /// get the base colours; a group has a colour of its own too).
+    private func colors(app: [ActivityRecord], web: [ActivityRecord]) -> (app: (String) -> Int, web: (String) -> Int, group: (String) -> Int, next: Int) {
         let rank = { (records: [ActivityRecord]) in ActivityDashboard.bars(from: records) { _, _ in 0 }.map(\.key) }
-        let mapping = colorIndices(for: rank(app).map { "app|" + $0 } + rank(web).map { "web|" + $0 })
+        let mapping = colorIndices(for: rank(app).map { "app|" + $0 } + rank(web).map { "web|" + $0 } + groups().map { "group|" + $0.id })
         let next = (mapping.values.max() ?? -1) + 1
-        return ({ mapping["app|" + $0] ?? 0 }, { mapping["web|" + $0] ?? 0 }, next)
+        return ({ mapping["app|" + $0] ?? 0 }, { mapping["web|" + $0] ?? 0 }, { mapping["group|" + $0] ?? 0 }, next)
+    }
+
+    // MARK: - Groups (owner 2026-09-29)
+
+    public func groups() -> [ActivityGroup] {
+        lock.lock(); defer { lock.unlock() }
+        return loadGroupsLocked()
+    }
+
+    private func loadGroupsLocked() -> [ActivityGroup] {
+        let url = rootDirectory.appendingPathComponent(Self.groupsFileName)
+        return (try? JSONDecoder().decode([ActivityGroup].self, from: Data(contentsOf: url))) ?? []
+    }
+
+    /// Saves a group (new when its id is empty or unknown); returns its id. A
+    /// merge group may not take another merge group's member unless `move`.
+    public func saveGroup(_ group: ActivityGroup, move: Bool = false) -> Result<String, ActivityGroupRefusal> {
+        lock.lock(); defer { lock.unlock() }
+        switch ActivityGroups.saving(group, into: loadGroupsLocked(), move: move, newID: { UUID().uuidString }) {
+        case .failure(let refusal):
+            return .failure(refusal)
+        case .success(let saved):
+            write(encode(saved.groups), to: rootDirectory.appendingPathComponent(Self.groupsFileName))
+            return .success(saved.id)
+        }
+    }
+
+    @discardableResult
+    public func deleteGroup(id: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        var groups = loadGroupsLocked()
+        guard let index = groups.firstIndex(where: { $0.id == id }) else { return false }
+        groups.remove(at: index)
+        write(encode(groups), to: rootDirectory.appendingPathComponent(Self.groupsFileName))
+        return true
+    }
+
+    /// Every app and website seen in the last `days` days, most used first —
+    /// what a group can hold.
+    public func knownItems(days: Int) -> [ActivityKnownItem] {
+        let now = now()
+        let from = calendar.date(byAdding: .day, value: -max(1, days), to: calendar.startOfDay(for: now)) ?? now
+        func items(_ category: ActivityCategory, _ prefix: String) -> [ActivityKnownItem] {
+            ActivityDashboard.bars(from: records(category: category, from: from, to: now)) { _, _ in 0 }
+                .map { ActivityKnownItem(id: prefix + $0.key, label: $0.label, seconds: $0.seconds) }
+        }
+        return (items(.appUsage, "app|") + items(.webVisit, "web|")).sorted { $0.seconds > $1.seconds }
     }
 
     // MARK: - Recording
@@ -181,22 +230,50 @@ public final class ActivityStore: @unchecked Sendable {
             .sorted { $0.startedAt < $1.startedAt }
     }
 
-    /// The Details panel's data: the picked item's per-day map over `mapDays`
-    /// (`key` nil = every record of the category, all usage) and all usage for
-    /// the last `barDays` days.
-    public func detail(category: ActivityCategory, key: String?, mapDays: Int, barDays: Int) -> ActivityDetail {
+    /// What the Details panel shows: all usage, one app or website, or a group.
+    public enum DetailPick: Equatable, Sendable {
+        case all
+        case item(ActivityCategory, String)
+        case group(String)
+    }
+
+    /// The Details panel's data: the pick's per-day map over `mapDays`, and the
+    /// last `barDays` days of usage — all usage, or only a group's members when
+    /// a group is picked. A group's time is its members' time with overlaps
+    /// counted once (a browser and a site inside it, two members at once).
+    public func detail(pick: DetailPick, mapDays: Int, barDays: Int) -> ActivityDetail {
         let now = now()
         func since(_ days: Int) -> Date {
             calendar.date(byAdding: .day, value: -days, to: calendar.startOfDay(for: now)) ?? now
         }
         // A day before the first day, so a session running into it is clipped in.
-        let picked = records(category: category, from: since(max(1, mapDays)), to: now).filter { key == nil || $0.key == key }
+        let mapFrom = since(max(1, mapDays))
         let barsFrom = since(max(1, barDays))
-        let app = records(category: .appUsage, from: barsFrom, to: now)
-        let web = records(category: .webVisit, from: barsFrom, to: now)
+        var members: Set<String>? = nil
+        let mapRecords: [ActivityRecord]
+        switch pick {
+        case .all:
+            mapRecords = records(category: .appUsage, from: mapFrom, to: now)
+        case .item(let category, let key):
+            mapRecords = records(category: category, from: mapFrom, to: now).filter { $0.key == key }
+        case .group(let id):
+            let group = groups().first { $0.id == id }
+            let set = Set(group?.members ?? [])
+            members = set
+            mapRecords = ActivityDashboard.union(
+                records(category: .appUsage, from: mapFrom, to: now).filter { set.contains("app|" + $0.key) }
+                + records(category: .webVisit, from: mapFrom, to: now).filter { set.contains("web|" + $0.key) }
+            )
+        }
+        var app = records(category: .appUsage, from: barsFrom, to: now)
+        var web = records(category: .webVisit, from: barsFrom, to: now)
+        if let members {
+            app = app.filter { members.contains("app|" + $0.key) }
+            web = web.filter { members.contains("web|" + $0.key) }
+        }
         let color = colors(app: app, web: web)
         return ActivityDetail(
-            map: ActivityDashboard.history(records: picked, days: mapDays, now: now, calendar: calendar),
+            map: ActivityDashboard.history(records: mapRecords, days: mapDays, now: now, calendar: calendar),
             days: ActivityDashboard.dayUsage(
                 app: app, web: web, days: barDays, now: now, calendar: calendar,
                 appColor: color.app, webColor: color.web
@@ -225,7 +302,8 @@ public final class ActivityStore: @unchecked Sendable {
             app: appLens,
             web: webLens,
             watched: ActivityDashboard.bars(from: watched) { _, rank in color.next + rank },
-            settings: ActivityDashboard.settingsView(loadSettings())
+            settings: ActivityDashboard.settingsView(loadSettings()),
+            groups: groups().map { ActivityGroupView(id: $0.id, name: $0.name, merge: $0.merge, members: $0.members, colorIndex: color.group($0.id)) }
         )
     }
 

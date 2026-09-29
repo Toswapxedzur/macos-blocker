@@ -125,11 +125,11 @@ final class ActivityDashboardTests: XCTestCase {
         for (key, minutes) in [("chrome", 10.0), ("code", 20.0)] {
             XCTAssertTrue(store.record(ActivityRecord(id: key, category: .appUsage, startedAt: iso("2026-09-29T09:00:00Z"), seconds: minutes * 60, key: key, label: key)))
         }
-        let picked = store.detail(category: .appUsage, key: "code", mapDays: 7, barDays: 2)
+        let picked = store.detail(pick: .item(.appUsage, "code"), mapDays: 7, barDays: 2)
         XCTAssertEqual(picked.map.daySeconds.last, 20 * 60)
         XCTAssertEqual(picked.days.count, 2)
         XCTAssertEqual(Set(picked.days[1].app.map(\.key)), ["chrome", "code"], "the day bars show all usage")
-        XCTAssertEqual(store.detail(category: .appUsage, key: nil, mapDays: 7, barDays: 1).map.daySeconds.last, 30 * 60)
+        XCTAssertEqual(store.detail(pick: .all, mapDays: 7, barDays: 1).map.daySeconds.last, 30 * 60)
     }
 
     func testTimelinePositionsSegmentsWithinRange() {
