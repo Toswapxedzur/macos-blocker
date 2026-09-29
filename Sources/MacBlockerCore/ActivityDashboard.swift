@@ -47,17 +47,29 @@ public struct ActivityDashboardSnapshot: Codable, Equatable, Sendable {
     public var settings: ActivityDashboardSettings
 }
 
-/// One item's time (an app, a website, or all usage) over recent days, for the
-/// Activity detail charts: a total per day (the 180-day map) and per hour for
-/// the last few days (the hour-by-hour bars). Sessions are split at day and
-/// hour boundaries, so a session across midnight counts on both days.
+/// One item's time (an app, a website, or all usage) per day, for the
+/// 180-day map. Sessions are split at midnight, so a session across midnight
+/// counts on both days.
 public struct ActivityItemHistory: Codable, Equatable, Sendable {
     /// Local midnight of each day, oldest first, and that day's seconds.
     public var dayStartsMs: [Double]
     public var daySeconds: [Double]
-    /// The last few days, oldest first: their midnights and 24 hourly totals each.
-    public var hourDayStartsMs: [Double]
-    public var hourSeconds: [[Double]]
+}
+
+/// One day of all usage for the day bars: its app and website sessions as
+/// fractions of the day (a session across midnight is clipped into each day).
+/// `colorIndex` is not set here (-1): the page colours by key, like its list.
+public struct ActivityDayUsage: Codable, Equatable, Sendable {
+    public var dayStartMs: Double
+    public var app: [ActivitySegment]
+    public var web: [ActivitySegment]
+}
+
+/// What the Activity Details panel asks for: the picked item's 180-day map and
+/// the last few days of all usage.
+public struct ActivityDetail: Codable, Equatable, Sendable {
+    public var map: ActivityItemHistory
+    public var days: [ActivityDayUsage]
 }
 
 /// A flat, web-friendly view of the settings the dashboard shows and edits.
@@ -140,49 +152,45 @@ public enum ActivityDashboard {
         )
     }
 
-    /// Splits `records` into per-day totals for the `days` days ending today and
-    /// per-hour totals for the last `hourDays` of them (local calendar).
-    public static func history(
-        records: [ActivityRecord],
-        days: Int,
-        hourDays: Int,
-        now: Date,
-        calendar: Calendar
-    ) -> ActivityItemHistory {
-        let dayCount = max(1, days)
-        let hourDayCount = max(1, min(hourDays, dayCount))
+    /// The local midnights of the `days` days ending today, oldest first.
+    public static func dayStarts(days: Int, now: Date, calendar: Calendar) -> [Date] {
         let today = calendar.startOfDay(for: now)
-        let dayStarts: [Date] = (0..<dayCount).reversed().compactMap {
-            calendar.date(byAdding: .day, value: -$0, to: today)
-        }
-        var dayIndex: [Date: Int] = [:]
-        for (index, start) in dayStarts.enumerated() { dayIndex[start] = index }
-        var daySeconds = [Double](repeating: 0, count: dayStarts.count)
-        let firstHourDay = dayStarts.count - hourDayCount
-        var hourSeconds = [[Double]](repeating: [Double](repeating: 0, count: 24), count: hourDayCount)
+        return (0..<max(1, days)).reversed().compactMap { calendar.date(byAdding: .day, value: -$0, to: today) }
+    }
 
+    /// Per-day totals of `records` for the `days` days ending today (local
+    /// calendar), each session split at midnight.
+    public static func history(records: [ActivityRecord], days: Int, now: Date, calendar: Calendar) -> ActivityItemHistory {
+        let starts = dayStarts(days: days, now: now, calendar: calendar)
+        var dayIndex: [Date: Int] = [:]
+        for (index, start) in starts.enumerated() { dayIndex[start] = index }
+        var daySeconds = [Double](repeating: 0, count: starts.count)
         for record in records {
             var cursor = record.startedAt
             let end = record.startedAt.addingTimeInterval(record.seconds)
             while cursor < end {
-                guard let hour = calendar.dateInterval(of: .hour, for: cursor) else { break }
-                let chunkEnd = min(end, hour.end)
-                let seconds = chunkEnd.timeIntervalSince(cursor)
-                if let index = dayIndex[calendar.startOfDay(for: cursor)] {
-                    daySeconds[index] += seconds
-                    if index >= firstHourDay {
-                        hourSeconds[index - firstHourDay][calendar.component(.hour, from: cursor)] += seconds
-                    }
-                }
+                let dayStart = calendar.startOfDay(for: cursor)
+                guard let nextDay = calendar.date(byAdding: .day, value: 1, to: dayStart) else { break }
+                let chunkEnd = min(end, nextDay)
+                if let index = dayIndex[dayStart] { daySeconds[index] += chunkEnd.timeIntervalSince(cursor) }
                 cursor = chunkEnd
             }
         }
-        return ActivityItemHistory(
-            dayStartsMs: dayStarts.map { $0.timeIntervalSince1970 * 1000 },
-            daySeconds: daySeconds,
-            hourDayStartsMs: dayStarts.suffix(hourDayCount).map { $0.timeIntervalSince1970 * 1000 },
-            hourSeconds: hourSeconds
-        )
+        return ActivityItemHistory(dayStartsMs: starts.map { $0.timeIntervalSince1970 * 1000 }, daySeconds: daySeconds)
+    }
+
+    /// The `days` days ending today, each with its app and website sessions
+    /// placed within that day (see `timeline`).
+    public static func dayUsage(app: [ActivityRecord], web: [ActivityRecord], days: Int, now: Date, calendar: Calendar) -> [ActivityDayUsage] {
+        dayStarts(days: days, now: now, calendar: calendar).map { start in
+            let startMs = start.timeIntervalSince1970 * 1000
+            let endMs = (calendar.date(byAdding: .day, value: 1, to: start) ?? start).timeIntervalSince1970 * 1000
+            return ActivityDayUsage(
+                dayStartMs: startMs,
+                app: timeline(from: app, rangeStartMs: startMs, rangeEndMs: endMs) { _ in -1 },
+                web: timeline(from: web, rangeStartMs: startMs, rangeEndMs: endMs) { _ in -1 }
+            )
+        }
     }
 
     public static func settingsView(_ settings: ActivitySettings) -> ActivityDashboardSettings {

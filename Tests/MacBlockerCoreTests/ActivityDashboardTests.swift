@@ -75,27 +75,38 @@ final class ActivityDashboardTests: XCTestCase {
 
     private func iso(_ text: String) -> Date { ISO8601DateFormatter().date(from: text)! }
 
-    func testHistorySplitsSessionsAtMidnightAndHours() {
-        // 23:30 → 00:45 next day: 30 min on the 28th (hour 23), 45 min on the 29th (hour 0).
+    func testHistorySplitsSessionsAtMidnight() {
+        // 23:30 → 00:45 next day: 30 min on the 28th, 45 min on the 29th.
         let session = ActivityRecord(id: "a", category: .appUsage, startedAt: iso("2026-09-28T23:30:00Z"), seconds: 75 * 60, key: "k", label: "k")
-        let history = ActivityDashboard.history(records: [session], days: 3, hourDays: 2, now: iso("2026-09-29T12:00:00Z"), calendar: utc)
+        let history = ActivityDashboard.history(records: [session], days: 3, now: iso("2026-09-29T12:00:00Z"), calendar: utc)
         XCTAssertEqual(history.dayStartsMs.count, 3)
         XCTAssertEqual(history.dayStartsMs.last, iso("2026-09-29T00:00:00Z").timeIntervalSince1970 * 1000)
         XCTAssertEqual(history.daySeconds, [0, 1800, 2700])
-        XCTAssertEqual(history.hourDayStartsMs.count, 2)
-        XCTAssertEqual(history.hourSeconds[0][23], 30 * 60)
-        XCTAssertEqual(history.hourSeconds[1][0], 45 * 60)
-        XCTAssertEqual(history.hourSeconds.flatMap { $0 }.reduce(0, +), 75 * 60)
     }
 
     func testHistoryIgnoresTimeBeforeItsDays() {
         let old = ActivityRecord(id: "a", category: .appUsage, startedAt: iso("2026-01-01T10:00:00Z"), seconds: 600, key: "k", label: "k")
-        let history = ActivityDashboard.history(records: [old], days: 180, hourDays: 3, now: iso("2026-09-29T12:00:00Z"), calendar: utc)
+        let history = ActivityDashboard.history(records: [old], days: 180, now: iso("2026-09-29T12:00:00Z"), calendar: utc)
         XCTAssertEqual(history.daySeconds.count, 180)
         XCTAssertEqual(history.daySeconds.reduce(0, +), 0)
     }
 
-    func testStoreHistoryFollowsThePickedKey() {
+    func testDayUsageClipsSessionsIntoEachDay() {
+        let late = ActivityRecord(id: "a", category: .appUsage, startedAt: iso("2026-09-28T18:00:00Z"), seconds: 8 * 3600, key: "code", label: "Code")
+        let site = ActivityRecord(id: "b", category: .webVisit, startedAt: iso("2026-09-29T06:00:00Z"), seconds: 3600, key: "youtube.com", label: "youtube.com")
+        let days = ActivityDashboard.dayUsage(app: [late], web: [site], days: 2, now: iso("2026-09-29T12:00:00Z"), calendar: utc)
+        XCTAssertEqual(days.count, 2)
+        // 18:00-24:00 on the 28th (0.75-1.0), 00:00-02:00 on the 29th (0-1/12).
+        XCTAssertEqual(days[0].app.count, 1)
+        XCTAssertEqual(days[0].app[0].startFraction, 0.75, accuracy: 1e-9)
+        XCTAssertEqual(days[0].app[0].widthFraction, 0.25, accuracy: 1e-9)
+        XCTAssertEqual(days[1].app[0].startFraction, 0, accuracy: 1e-9)
+        XCTAssertEqual(days[1].app[0].widthFraction, 2.0 / 24, accuracy: 1e-9)
+        XCTAssertTrue(days[0].web.isEmpty)
+        XCTAssertEqual(days[1].web[0].startFraction, 0.25, accuracy: 1e-9)
+    }
+
+    func testStoreDetailFollowsThePickedKeyAndShowsAllUsage() {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let now = iso("2026-09-29T12:00:00Z")
@@ -104,9 +115,11 @@ final class ActivityDashboardTests: XCTestCase {
         for (key, minutes) in [("chrome", 10.0), ("code", 20.0)] {
             XCTAssertTrue(store.record(ActivityRecord(id: key, category: .appUsage, startedAt: iso("2026-09-29T09:00:00Z"), seconds: minutes * 60, key: key, label: key)))
         }
-        XCTAssertEqual(store.itemHistory(category: .appUsage, key: "code", days: 7, hourDays: 1).daySeconds.last, 20 * 60)
-        XCTAssertEqual(store.itemHistory(category: .appUsage, key: nil, days: 7, hourDays: 1).daySeconds.last, 30 * 60)
-        XCTAssertEqual(store.itemHistory(category: .appUsage, key: nil, days: 7, hourDays: 1).hourSeconds[0][9], 30 * 60)
+        let picked = store.detail(category: .appUsage, key: "code", mapDays: 7, barDays: 2)
+        XCTAssertEqual(picked.map.daySeconds.last, 20 * 60)
+        XCTAssertEqual(picked.days.count, 2)
+        XCTAssertEqual(Set(picked.days[1].app.map(\.key)), ["chrome", "code"], "the day bars show all usage")
+        XCTAssertEqual(store.detail(category: .appUsage, key: nil, mapDays: 7, barDays: 1).map.daySeconds.last, 30 * 60)
     }
 
     func testTimelinePositionsSegmentsWithinRange() {
