@@ -19,8 +19,15 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
 
     private override init() { super.init() }
 
+    /// Watched key → { creator, tags: [{ id, name, color }] }, from the
+    /// classifier (Mac Vault's own component; injected, this module can't see it).
+    private var watchedFacts: ([String]) -> [String: Any] = { _ in [:] }
+
     /// Called once at launch with the shared store (see BlockerAppDelegate).
-    public func configure(store: ActivityStore) { self.store = store }
+    public func configure(store: ActivityStore, watchedFacts: @escaping ([String]) -> [String: Any]) {
+        self.store = store
+        self.watchedFacts = watchedFacts
+    }
 
     /// The scene's place in the editor's web view (its files are part of the
     /// editor's own assets).
@@ -104,9 +111,12 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(snapshot), let json = String(data: data, encoding: .utf8) else { return }
         let icons = resolveIcons(snapshot: snapshot, store: store)
+        let facts = watchedFacts(snapshot.watched.map(\.key))
         guard let iconsData = try? JSONSerialization.data(withJSONObject: icons),
-              let iconsJSON = String(data: iconsData, encoding: .utf8) else { return }
-        webView.evaluateJavaScript("window.activityApply(\(json), \(iconsJSON));", completionHandler: nil)
+              let iconsJSON = String(data: iconsData, encoding: .utf8),
+              let factsData = try? JSONSerialization.data(withJSONObject: facts),
+              let factsJSON = String(data: factsData, encoding: .utf8) else { return }
+        webView.evaluateJavaScript("window.activityApply(\(json), \(iconsJSON), \(factsJSON));", completionHandler: nil)
     }
 
     /// The Details panel's data for the pick ("all", "app|<bundle id>",
