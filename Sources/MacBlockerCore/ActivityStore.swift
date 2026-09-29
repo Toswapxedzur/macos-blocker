@@ -18,6 +18,8 @@ public final class ActivityStore: @unchecked Sendable {
     private static let colorsFileName = "colors.json"
     private static let groupsFileName = "groups.json"
     private static let maxWebIcons = 500
+    private static let authorsFileName = "watched-authors.json"
+    private static let maxAuthorIconBytes = 24_000
     private static let maxWebIconBytes = 24_000
 
     public init(
@@ -95,6 +97,49 @@ public final class ActivityStore: @unchecked Sendable {
         guard let data = try? Data(contentsOf: url),
               let icons = try? JSONDecoder().decode([String: String].self, from: data) else { return [:] }
         return icons
+    }
+
+    // MARK: - Watched videos' authors (owner 2026-09-29)
+
+    /// Who made each watched video, with the author's icon, recorded when the
+    /// video is watched (the classifier, where it comes from, forgets old
+    /// videos). Watched key → author; one icon per author. Local only.
+    public func watchedAuthors(for keys: [String]) -> [String: ActivityAuthor] {
+        lock.lock(); defer { lock.unlock() }
+        let file = loadAuthorsLocked()
+        var result: [String: ActivityAuthor] = [:]
+        for key in keys {
+            if let id = file.videos[key], let author = file.authors[id] { result[key] = author }
+        }
+        return result
+    }
+
+    /// Records authors (a known author keeps its icon when a new one is missing).
+    public func recordAuthors(_ entries: [ActivityAuthorEntry]) {
+        guard !entries.isEmpty else { return }
+        lock.lock(); defer { lock.unlock() }
+        var file = loadAuthorsLocked()
+        var changed = false
+        for entry in entries where !entry.authorID.isEmpty && !entry.name.isEmpty {
+            var author = file.authors[entry.authorID] ?? ActivityAuthor(name: entry.name, icon: nil)
+            author.name = entry.name
+            if let icon = entry.icon, icon.hasPrefix("data:image/"), icon.utf8.count <= Self.maxAuthorIconBytes { author.icon = icon }
+            if file.authors[entry.authorID] != author { file.authors[entry.authorID] = author; changed = true }
+            if file.videos[entry.videoKey] != entry.authorID { file.videos[entry.videoKey] = entry.authorID; changed = true }
+        }
+        if changed { write(encode(file), to: rootDirectory.appendingPathComponent(Self.authorsFileName)) }
+    }
+
+    private struct AuthorsFile: Codable {
+        var videos: [String: String] = [:]
+        var authors: [String: ActivityAuthor] = [:]
+    }
+
+    private func loadAuthorsLocked() -> AuthorsFile {
+        let url = rootDirectory.appendingPathComponent(Self.authorsFileName)
+        guard let data = try? Data(contentsOf: url),
+              let file = try? JSONDecoder().decode(AuthorsFile.self, from: data) else { return AuthorsFile() }
+        return file
     }
 
     // MARK: - Colours (owner rule 2026-09-29)
@@ -335,6 +380,7 @@ public final class ActivityStore: @unchecked Sendable {
             try? fileManager.removeItem(at: categoryDirectory(category))
         }
         try? fileManager.removeItem(at: rootDirectory.appendingPathComponent(Self.webIconsFileName))
+        try? fileManager.removeItem(at: rootDirectory.appendingPathComponent(Self.authorsFileName))
     }
 
     public func delete(category: ActivityCategory) {
@@ -342,6 +388,9 @@ public final class ActivityStore: @unchecked Sendable {
         try? fileManager.removeItem(at: categoryDirectory(category))
         if category == .webVisit {
             try? fileManager.removeItem(at: rootDirectory.appendingPathComponent(Self.webIconsFileName))
+        }
+        if category == .contentWatched {
+            try? fileManager.removeItem(at: rootDirectory.appendingPathComponent(Self.authorsFileName))
         }
     }
 

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import VaultClassifierCore
 import VaultClassifierBridge
@@ -301,28 +302,20 @@ extension VaultClassifierViewModel {
 extension VaultClassifierViewModel {
     /// A platform's classifier types and their tags (the in-page correction
     /// taxonomy and the editor's tag suggestions).
-    /// Author and tags per watched key (see `VaultClassifierPage.watchedFacts`).
-    /// A watched key is `<platform>:<video id>`; the classifier stores the same
-    /// video as platform `<platform>`, entry `<platform>:video:<video id>`. Tags
-    /// are the ones the extension's pills show (every type for the platform,
-    /// first type wins a shared tag); the author is the collected entry's name.
-    func watchedFacts(keys: [String]) -> [String: Any] {
+    /// Tags per watched key (see `VaultClassifierPage.watchedTags`). A watched
+    /// key is `<platform>:<video id>`; the classifier stores the same video as
+    /// platform `<platform>`, entry `<platform>:video:<video id>`. The tags are
+    /// the ones the extension's pills show (every type for the platform, first
+    /// type wins a shared tag).
+    func watchedTags(keys: [String]) -> [String: [[String: String]]] {
         guard let coordinator, !keys.isEmpty else { return [:] }
         let catalog = coordinator.snapshot().workspaceCatalog
         var classifications: [String: VideoClassification] = [:]
         for classification in catalog.videoClassifications { classifications[classification.identityKey] = classification }
-        var creators: [String: String] = [:]
-        for dataset in catalog.datasets {
-            for entry in dataset.collectedEntries where !entry.creatorName.isEmpty {
-                creators["\(entry.platformID)\u{1F}\(entry.entryID)"] = entry.creatorName
-            }
-        }
         var taxonomies: [String: Taxonomy] = [:]
-        var facts: [String: Any] = [:]
+        var result: [String: [[String: String]]] = [:]
         for key in keys {
-            guard let colon = key.firstIndex(of: ":") else { continue }
-            let platformID = String(key[..<colon])
-            let entryID = platformID + ":video:" + key[key.index(after: colon)...]
+            guard let (platformID, entryID) = Self.watchedEntry(key) else { continue }
             var tags: [[String: String]] = []
             var seen = Set<String>()
             for type in LocalClassifierCoordinator.orderedTypes(for: platformID, in: catalog) {
@@ -340,13 +333,76 @@ extension VaultClassifierViewModel {
                                  "color": TagColorAssignment.normalizedHex(node.lightColorHex) ?? ""])
                 }
             }
-            let creator = creators["\(platformID)\u{1F}\(entryID)"]
-            guard creator != nil || !tags.isEmpty else { continue }
-            var fact: [String: Any] = ["tags": tags]
-            if let creator { fact["creator"] = creator }
-            facts[key] = fact
+            if !tags.isEmpty { result[key] = tags }
         }
-        return facts
+        return result
+    }
+
+    /// Each watched video's author as the classifier collected it: id, name
+    /// and — once the classifier has downloaded it — the icon as a small PNG
+    /// data URI. A watch page often carries no author icon, so the author's
+    /// icon from any other collected video of theirs counts too. An icon not
+    /// downloaded yet is asked for, for the next lookup.
+    func watchedAuthors(keys: [String]) -> [String: [String: String]] {
+        guard let coordinator, !keys.isEmpty else { return [:] }
+        let catalog = coordinator.snapshot().workspaceCatalog
+        let wanted = Set(keys.compactMap { Self.watchedEntry($0).map { "\($0.0)\u{1F}\($0.1)" } })
+        var entries: [String: CollectedPlatformEntry] = [:]
+        var iconURLs: [String: [String]] = [:]  // author id or alias → icon URLs seen
+        for dataset in catalog.datasets {
+            for entry in dataset.collectedEntries {
+                let id = "\(entry.platformID)\u{1F}\(entry.entryID)"
+                if wanted.contains(id), !entry.creatorName.isEmpty { entries[id] = entry }
+                if let url = entry.sourceIconURL, SourceIconURLPolicy.isAccepted(platformID: entry.platformID, value: url) {
+                    for author in [entry.creatorID] + entry.sourceAliases where !(iconURLs[author]?.contains(url) ?? false) {
+                        iconURLs[author, default: []].append(url)
+                    }
+                }
+            }
+        }
+        var result: [String: [String: String]] = [:]
+        for key in keys {
+            guard let (platformID, entryID) = Self.watchedEntry(key),
+                  let entry = entries["\(platformID)\u{1F}\(entryID)"] else { continue }
+            var author = ["id": entry.creatorID, "name": entry.creatorName]
+            let candidates = ([entry.sourceIconURL].compactMap { $0 }
+                .filter { SourceIconURLPolicy.isAccepted(platformID: platformID, value: $0) })
+                + ([entry.creatorID] + entry.sourceAliases).flatMap { iconURLs[$0] ?? [] }
+            if let icon = candidates.lazy.compactMap({ self.sourceIconDataURI(remoteURL: $0) }).first {
+                author["icon"] = icon
+            } else if let first = candidates.first {
+                cacheSourceIcon(remoteURL: first)
+            }
+            result[key] = author
+        }
+        return result
+    }
+
+    /// "<platform>:<id>" → (platform, "<platform>:video:<id>").
+    static func watchedEntry(_ key: String) -> (String, String)? {
+        guard let colon = key.firstIndex(of: ":") else { return nil }
+        let platformID = String(key[..<colon])
+        return (platformID, platformID + ":video:" + key[key.index(after: colon)...])
+    }
+
+    /// A downloaded source icon, shrunk to 64×64 pixels, as a JPEG data URI
+    /// (a few KB; author icons are photos).
+    func sourceIconDataURI(remoteURL: String) -> String? {
+        guard let cache = sourceIconCache, let url = cache.cachedURL(for: remoteURL),
+              let image = cache.response(for: url).flatMap({ NSImage(data: $0.data) }),
+              let rep = NSBitmapImageRep(
+                  bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 64, bitsPerSample: 8, samplesPerPixel: 4,
+                  hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+              ) else { return nil }
+        rep.size = NSSize(width: 64, height: 64)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        NSColor.white.setFill()
+        NSRect(x: 0, y: 0, width: 64, height: 64).fill()
+        image.draw(in: NSRect(x: 0, y: 0, width: 64, height: 64), from: .zero, operation: .sourceOver, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+        guard let jpeg = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.85]) else { return nil }
+        return "data:image/jpeg;base64," + jpeg.base64EncodedString()
     }
 
     func taxonomy(platformID: String) -> [NativeClassifierTypeTaxonomy] {

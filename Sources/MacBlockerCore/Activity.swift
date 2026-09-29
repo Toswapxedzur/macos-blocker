@@ -128,3 +128,31 @@ public struct ActivityAggregate: Codable, Equatable, Sendable {
         self.seconds = seconds
     }
 }
+
+/// A watched video's author (see `ActivityStore.watchedAuthors`).
+public struct ActivityAuthor: Codable, Equatable, Sendable {
+    public var name: String
+    /// A small PNG data URI, when one was found.
+    public var icon: String?
+
+    public init(name: String, icon: String?) {
+        self.name = name
+        self.icon = icon
+    }
+}
+
+/// One watched video's author, as recorded.
+public struct ActivityAuthorEntry: Equatable, Sendable {
+    public var videoKey: String
+    /// The platform's own id for the author (stable across renames).
+    public var authorID: String
+    public var name: String
+    public var icon: String?
+
+    public init(videoKey: String, authorID: String, name: String, icon: String?) {
+        self.videoKey = videoKey
+        self.authorID = authorID
+        self.name = name
+        self.icon = icon
+    }
+}

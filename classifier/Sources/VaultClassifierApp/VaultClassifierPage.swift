@@ -81,12 +81,18 @@ public final class VaultClassifierPage {
             .filter { seen.insert($0.lowercased()).inserted }
     }
 
-    /// What the classifier knows about watched videos (Mac Vault's Activity):
-    /// watched key ("youtube:<id>" / "bilibili:<BV id>") → its author's name and
-    /// its tags (id, name, colour), for the keys it has seen. JSON-ready.
-    public func watchedFacts(keys: [String]) -> [String: Any] {
+    /// Watched videos' tags (Mac Vault's Activity): watched key
+    /// ("youtube:<id>" / "bilibili:<BV id>") → [{ id, name, color }].
+    public func watchedTags(keys: [String]) -> [String: [[String: String]]] {
         start()
-        return model?.watchedFacts(keys: keys) ?? [:]
+        return model?.watchedTags(keys: keys) ?? [:]
+    }
+
+    /// Watched videos' authors: watched key → { id, name, icon? } (icon = a
+    /// small PNG data URI, once the classifier has downloaded it).
+    public func watchedAuthors(keys: [String]) -> [String: [String: String]] {
+        start()
+        return model?.watchedAuthors(keys: keys) ?? [:]
     }
 
     /// Runs one page action with the page's own validation; returns the issue

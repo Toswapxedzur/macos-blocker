@@ -37,6 +37,23 @@ final class ActivityStoreTests: XCTestCase {
 
     // MARK: privacy invariant
 
+    func testWatchedAuthorsAreRecordedAndKeepTheirIcon() throws {
+        let s = store(now: day("2026-09-29T12:00:00Z"))
+        let icon = "data:image/png;base64,AAAA"
+        s.recordAuthors([
+            ActivityAuthorEntry(videoKey: "youtube:a", authorID: "youtube:channel:UC1", name: "Chan", icon: icon),
+            ActivityAuthorEntry(videoKey: "youtube:b", authorID: "youtube:channel:UC1", name: "Chan", icon: nil),
+            ActivityAuthorEntry(videoKey: "youtube:c", authorID: "youtube:channel:UC2", name: "Other", icon: "https://not-a-data-uri")
+        ])
+        let authors = s.watchedAuthors(for: ["youtube:a", "youtube:b", "youtube:c", "youtube:z"])
+        XCTAssertEqual(authors["youtube:a"], ActivityAuthor(name: "Chan", icon: icon))
+        XCTAssertEqual(authors["youtube:b"], ActivityAuthor(name: "Chan", icon: icon))  // one icon per author
+        XCTAssertEqual(authors["youtube:c"], ActivityAuthor(name: "Other", icon: nil))  // only data URIs
+        XCTAssertNil(authors["youtube:z"])
+        s.delete(category: .contentWatched)
+        XCTAssertTrue(s.watchedAuthors(for: ["youtube:a"]).isEmpty)
+    }
+
     func testDisabledCategoryWritesNothing() throws {
         let s = store(now: day("2026-09-19T12:00:00Z"))
         // default settings = all categories OFF

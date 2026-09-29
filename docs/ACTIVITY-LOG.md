@@ -128,13 +128,18 @@ Activity/
   every group member and every item the editor lists.
 - **Watched by author / by tag** (owner 2026-09-29): the Watched panel lists
   videos, or one row per author or per tag (expandable to its videos), with a
-  pie of the tags. Author and tags are not recorded — Mac Vault looks each
-  watched key (`youtube:<id>`, `bilibili:<BV id>`) up in its classifier
-  (`VaultClassifierPage.watchedFacts`): the collected entry's author name and
-  the video's tags as the extension's pills show them (platform
-  `<platform>`, entry `<platform>:video:<id>`). A video with several tags
-  gives each an equal share of its time; no tags = "Untagged", no author =
-  "Unknown author".
+  pie of the tags. A video with several tags gives each an equal share of its
+  time; no tags = "Untagged", no author = "Unknown author".
+  - **Authors are recorded** (`watched-authors.json`: watched key → author id;
+    author id → name + a 64 px JPEG icon ≤ 24 KB) when a watched record
+    arrives, and again for videos still without one whenever Activity is
+    shown. They come from Mac Vault's classifier, which forgets old videos:
+    the collected entry of the watched key (`youtube:<id>` → platform
+    `youtube`, entry `youtube:video:<id>`), its author's icon from any
+    collected video of theirs (a watch page often has none), taken from the
+    classifier's downloaded icons. Deleting Watched history deletes the file.
+  - **Tags are looked up live** in the classifier (`watchedTags`): the tags
+    the extension's pills show (every type for the platform).
 - **Colours**: every app, website and group has one permanent colour index
   (`colors.json`, assigned once, never reused, kept when history is deleted);
   the page paints 12 base colours, then golden-angle hues.
