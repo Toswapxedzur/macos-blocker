@@ -49,6 +49,11 @@
   var groupMenu = null;
   var expandedGroups = {};   // merge group id -> its Usage row shows its members      // the Usage row's Add to group menu: { id, x, y, message, conflicts, group }
   var icons = {};
+  // Watched (owner 2026-09-29): list by video, author or tag; the classifier's
+  // facts per watched key: { creator, tags: [{ id, name, color }] }.
+  var watchedBy = "video";
+  var watchedFacts = {};
+  var expandedWatched = {};  // author/tag row key -> shows its videos
   var knownIcons = {};       // the editor's items' icons (Mac Vault sends them with the list)
 
   function send(msg) {
@@ -153,14 +158,17 @@
     if (onPick) line.addEventListener("click", onPick);
     line.title = item.label || item.key;
     if (seconds !== null) line.title += " — " + fmt(seconds);
-    line.appendChild(icon(item.key, item.label));
+    var mark = icon(item.key, item.label);
+    if (item.color && !iconURI(item.key)) { mark.style.background = item.color; mark.style.color = "#ffffff"; }
+    line.appendChild(mark);
     var body = el("div", "row-body");
     var name = el("div", "row-name");
     name.appendChild(el("span", "row-label", item.label || item.key));
     if (kind) name.appendChild(el("span", "row-kind", kind));
     body.appendChild(name);
     if (seconds !== null) {
-      var bar = el("div", "row-bar"), fill = paint(el("span"), item.colorIndex);
+      var bar = el("div", "row-bar"), fill = item.color ? el("span") : paint(el("span"), item.colorIndex);
+      if (item.color) fill.style.background = item.color;
       fill.style.width = Math.max(1.5, fraction * 100) + "%";
       bar.appendChild(fill); body.appendChild(bar);
     }
@@ -398,7 +406,9 @@
   function entryInfo(entry, lines) {
     var kind = entry.kind === "Group"
       ? "Merge group · " + entry.group.members.length + (entry.group.members.length === 1 ? " member" : " members")
-      : entry.nameOnly ? "App · browser, time outside recorded sites" : entry.kind;
+      : entry.nameOnly ? "App · browser, time outside recorded sites"
+      : entry.videos ? entry.kind + " · " + entry.videos.length + (entry.videos.length === 1 ? " video" : " videos") : entry.kind;
+    if (entry.item.color) return { title: entry.item.label, color: entry.item.color, lines: [kind].concat(lines) };
     return { title: entry.item.label || entry.item.key, key: entry.item.key, lines: [kind].concat(lines) };
   }
 
@@ -732,15 +742,15 @@
   }
 
   // Share of the chosen range (Today / 7 / 30 days): the Usage rows.
-  function pie(items) {
+  function pie(items, title) {
     var wrap = el("div", "chart");
-    wrap.appendChild(el("div", "chart-title", "Share"));
+    wrap.appendChild(el("div", "chart-title", title || "Share"));
     var total = items.reduce(function (sum, entry) { return sum + entry.seconds; }, 0);
     if (!total) { wrap.appendChild(el("p", "empty", "Nothing in this range.")); return wrap; }
     var split = splitSlices(items, total);
     var slices = split.named.map(function (entry) {
       var label = entry.item.label || entry.item.key;
-      return { label: label, entry: entry, seconds: entry.seconds, color: colorOf(entry.item.colorIndex) };
+      return { label: label, entry: entry, seconds: entry.seconds, color: entry.item.color || colorOf(entry.item.colorIndex) };
     });
     if (split.otherSeconds > 0) {
       slices.push({
@@ -1068,6 +1078,79 @@
     box.appendChild(daySection(itemHistory.days));
   }
 
+  // Watched videos by author or by tag (owner 2026-09-29): one row each,
+  // largest first, opening to its videos. A video with several tags gives
+  // each an equal share of its time, so the tags add up to the real time.
+  var UNTAGGED = { id: "", name: "Untagged", color: "#94a3b8" };
+  function watchedGroups(watched, by) {
+    var groups = {};
+    watched.forEach(function (bar) {
+      var fact = watchedFacts[bar.key] || {};
+      var parts = by === "author"
+        ? [{ id: fact.creator || "", name: fact.creator || "Unknown author", color: fact.creator ? null : "#cbd5e1" }]
+        : (fact.tags && fact.tags.length ? fact.tags : [UNTAGGED]);
+      parts.forEach(function (part) {
+        var id = by + "|" + part.id;
+        var g = groups[id] || (groups[id] = {
+          item: { key: id, label: part.name, color: part.color || (by === "author" ? "#1e3a8a" : "#94a3b8") },
+          seconds: 0, kind: by === "author" ? "Author" : "Tag", videos: []
+        });
+        var share = bar.seconds / parts.length;
+        g.seconds += share;
+        g.videos.push({ bar: bar, seconds: share });
+      });
+    });
+    return Object.keys(groups).map(function (k) { return groups[k]; })
+      .sort(function (x, y) { return y.seconds - x.seconds; });
+  }
+
+  function watchedRows(groups) {
+    var wrap = el("div");
+    if (!groups.length) { wrap.appendChild(el("p", "empty", "Nothing in this range.")); return wrap; }
+    var top = Math.max(groups[0].seconds, 1);
+    groups.slice(0, 30).forEach(function (g) {
+      var line = row(g.item, g.seconds, g.seconds / top, g.videos.length + (g.videos.length === 1 ? " video" : " videos"));
+      var open = !!expandedWatched[g.item.key];
+      var toggle = el("button", open ? "row-expand is-open" : "row-expand", "›");
+      toggle.type = "button";
+      toggle.title = open ? "Hide videos" : "Show videos";
+      line.classList.add("pickable");
+      line.addEventListener("click", function () { expandedWatched[g.item.key] = !open; render(); });
+      line.querySelector(".row-name").insertBefore(toggle, line.querySelector(".row-label"));
+      wrap.appendChild(line);
+      if (!open) return;
+      g.videos.forEach(function (video) {
+        var child = row(video.bar, video.seconds, video.seconds / top);
+        if (video.seconds < video.bar.seconds) child.title += " (" + fmt(video.bar.seconds) + " watched, shared among its tags)";
+        child.classList.add("member");
+        wrap.appendChild(child);
+      });
+    });
+    return wrap;
+  }
+
+  function watchedPanel(s) {
+    var watched = snapshot.watched || [];
+    var panel = el("section", "panel board");
+    panel.appendChild(columnHead("Watched", watched.reduce(function (a, b) { return a + b.seconds; }, 0)));
+    if (!(s.contentWatched && s.contentWatched.enabled)) { panel.appendChild(notRecorded(["content-watched"])); return panel; }
+    var modes = el("div", "vui-tabs watched-by");
+    [["video", "Videos"], ["author", "Authors"], ["tag", "Tags"]].forEach(function (mode) {
+      modes.appendChild(textButton(mode[1], function () { watchedBy = mode[0]; render(); },
+        mode[0] === watchedBy ? "vui-tab is-active" : "vui-tab"));
+    });
+    panel.appendChild(modes);
+    if (watchedBy === "video") { panel.appendChild(rows(watched)); return panel; }
+    var groups = watchedGroups(watched, watchedBy);
+    if (watchedBy === "tag" && groups.length) {
+      var chart = pie(groups, "Tags");
+      chart.classList.add("watched-pie");
+      panel.appendChild(chart);
+    }
+    panel.appendChild(watchedRows(groups));
+    return panel;
+  }
+
   // One column's head: its title and its total.
   function columnHead(title, seconds) {
     var head = el("div", "column-head");
@@ -1107,11 +1190,7 @@
     usage.appendChild(appsOn || webOn ? usageRows(items) : notRecorded(["app-usage", "web-visit"]));
     boards.appendChild(usage);
 
-    var watched = snapshot.watched || [];
-    var watchedPanel = el("section", "panel board");
-    watchedPanel.appendChild(columnHead("Watched", watched.reduce(function (a, b) { return a + b.seconds; }, 0)));
-    watchedPanel.appendChild(s.contentWatched && s.contentWatched.enabled ? rows(watched) : notRecorded(["content-watched"]));
-    boards.appendChild(watchedPanel);
+    boards.appendChild(watchedPanel(s));
     boards.appendChild(groupsPanel());
     page.appendChild(boards);
 
@@ -1124,9 +1203,10 @@
     page.appendChild(recording);
   }
 
-  window.activityApply = function (data, iconMap) {
+  window.activityApply = function (data, iconMap, facts) {
     snapshot = data;
     icons = iconMap || {};
+    watchedFacts = facts || {};
     render();
     requestHistory();
   };

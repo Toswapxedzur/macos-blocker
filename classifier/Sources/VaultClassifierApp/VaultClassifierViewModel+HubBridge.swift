@@ -301,6 +301,54 @@ extension VaultClassifierViewModel {
 extension VaultClassifierViewModel {
     /// A platform's classifier types and their tags (the in-page correction
     /// taxonomy and the editor's tag suggestions).
+    /// Author and tags per watched key (see `VaultClassifierPage.watchedFacts`).
+    /// A watched key is `<platform>:<video id>`; the classifier stores the same
+    /// video as platform `<platform>`, entry `<platform>:video:<video id>`. Tags
+    /// are the ones the extension's pills show (every type for the platform,
+    /// first type wins a shared tag); the author is the collected entry's name.
+    func watchedFacts(keys: [String]) -> [String: Any] {
+        guard let coordinator, !keys.isEmpty else { return [:] }
+        let catalog = coordinator.snapshot().workspaceCatalog
+        var classifications: [String: VideoClassification] = [:]
+        for classification in catalog.videoClassifications { classifications[classification.identityKey] = classification }
+        var creators: [String: String] = [:]
+        for dataset in catalog.datasets {
+            for entry in dataset.collectedEntries where !entry.creatorName.isEmpty {
+                creators["\(entry.platformID)\u{1F}\(entry.entryID)"] = entry.creatorName
+            }
+        }
+        var taxonomies: [String: Taxonomy] = [:]
+        var facts: [String: Any] = [:]
+        for key in keys {
+            guard let colon = key.firstIndex(of: ":") else { continue }
+            let platformID = String(key[..<colon])
+            let entryID = platformID + ":video:" + key[key.index(after: colon)...]
+            var tags: [[String: String]] = []
+            var seen = Set<String>()
+            for type in LocalClassifierCoordinator.orderedTypes(for: platformID, in: catalog) {
+                guard let classification = classifications["\(type.id)\u{1F}\(platformID)\u{1F}\(entryID)"] else { continue }
+                let taxonomy: Taxonomy
+                if let known = taxonomies[type.treeID] { taxonomy = known } else {
+                    guard let tree = catalog.trees.first(where: { $0.id == type.treeID }),
+                          let built = try? tree.inferenceTaxonomy() else { continue }
+                    taxonomies[type.treeID] = built
+                    taxonomy = built
+                }
+                for scored in classification.tags {
+                    guard let node = taxonomy.nodes[scored.tagID], seen.insert(node.id).inserted else { continue }
+                    tags.append(["id": node.id, "name": node.name,
+                                 "color": TagColorAssignment.normalizedHex(node.lightColorHex) ?? ""])
+                }
+            }
+            let creator = creators["\(platformID)\u{1F}\(entryID)"]
+            guard creator != nil || !tags.isEmpty else { continue }
+            var fact: [String: Any] = ["tags": tags]
+            if let creator { fact["creator"] = creator }
+            facts[key] = fact
+        }
+        return facts
+    }
+
     func taxonomy(platformID: String) -> [NativeClassifierTypeTaxonomy] {
         guard let coordinator else { return [] }
         let catalog = coordinator.snapshot().workspaceCatalog
