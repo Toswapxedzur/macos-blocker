@@ -79,11 +79,14 @@ public struct ActivityDetail: Codable, Equatable, Sendable {
 public struct ActivityDashboardSettings: Codable, Equatable, Sendable {
     public struct Category: Codable, Equatable, Sendable {
         public var enabled: Bool
-        public var retentionDays: Int
+        /// Its own Keep; nil = follows the global one.
+        public var retentionDays: Int?
     }
     public var appUsage: Category
     public var webVisit: Category
     public var contentWatched: Category
+    /// The global Keep (days, 0 = forever).
+    public var retentionDays: Int
 }
 
 public enum ActivityDashboard {
@@ -230,7 +233,8 @@ public enum ActivityDashboard {
         return ActivityDashboardSettings(
             appUsage: category(.appUsage),
             webVisit: category(.webVisit),
-            contentWatched: category(.contentWatched)
+            contentWatched: category(.contentWatched),
+            retentionDays: settings.retentionDays
         )
     }
 }

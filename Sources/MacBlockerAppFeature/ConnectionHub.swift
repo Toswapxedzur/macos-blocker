@@ -760,7 +760,7 @@ final class ConnectionHub: ObservableObject {
                 if record.category == .contentWatched { watchedKeys.append(record.key) }
             }
             if !watchedKeys.isEmpty {
-                DispatchQueue.main.async { MainActor.assumeIsolated { WatchedAuthorRecorder.record(keys: watchedKeys, in: store) } }
+                DispatchQueue.main.async { MainActor.assumeIsolated { WatchedFactsRecorder.record(keys: watchedKeys, in: store) } }
             }
             if let icons = body["icons"] as? [String: String] { store.mergeWebIcons(icons) }
             send(source, dict: ["kind": "classifier-response", "requestID": requestID, "operation": operation, "body": ["stored": stored]])

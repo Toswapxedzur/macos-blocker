@@ -53,13 +53,13 @@ public struct ActivityRecord: Codable, Equatable, Sendable {
 public struct ActivityCategorySettings: Codable, Equatable, Sendable {
     /// Default OFF — recording is opt-in (see ACTIVITY-LOG.md §3).
     public var enabled: Bool
-    /// Days of history to keep; `0` = keep forever. Default 180 — the day map
-    /// shows 180 days (owner 2026-09-29: keep every detail; it is small).
-    public var retentionDays: Int
+    /// Days of history to keep; `0` = keep forever; nil (the default) =
+    /// follow the global Keep (owner 2026-09-29).
+    public var retentionDays: Int?
 
-    public init(enabled: Bool = false, retentionDays: Int = 180) {
+    public init(enabled: Bool = false, retentionDays: Int? = nil) {
         self.enabled = enabled
-        self.retentionDays = max(0, retentionDays)
+        self.retentionDays = retentionDays.map { max(0, $0) }
     }
 }
 
@@ -72,10 +72,16 @@ public struct ActivitySettings: Codable, Equatable, Sendable {
     /// now (owner decision 2026-09-19), so this is stored but unused. Kept so the
     /// feature can return without a settings migration. Default 60.
     public var idleThresholdSeconds: Int
+    /// The global Keep, in days (`0` = forever): every kind that doesn't set
+    /// its own follows it, and so do watched videos' saved authors and tags.
+    /// Default 180 — the day map shows 180 days (owner 2026-09-29: keep every
+    /// detail; it is small).
+    public var retentionDays: Int
 
     public init(
         categories: [ActivityCategory: ActivityCategorySettings] = [:],
-        idleThresholdSeconds: Int = 60
+        idleThresholdSeconds: Int = 60,
+        retentionDays: Int = 180
     ) {
         var map: [String: ActivityCategorySettings] = [:]
         for category in ActivityCategory.allCases {
@@ -83,6 +89,7 @@ public struct ActivitySettings: Codable, Equatable, Sendable {
         }
         self.byCategory = map
         self.idleThresholdSeconds = max(5, idleThresholdSeconds)
+        self.retentionDays = max(0, retentionDays)
     }
 
     public init(from decoder: Decoder) throws {
@@ -95,6 +102,18 @@ public struct ActivitySettings: Codable, Equatable, Sendable {
         self.byCategory = map
         let idle = try container.decodeIfPresent(Int.self, forKey: .idleThresholdSeconds) ?? 60
         self.idleThresholdSeconds = max(5, idle)
+        if let global = try container.decodeIfPresent(Int.self, forKey: .retentionDays) {
+            self.retentionDays = max(0, global)
+        } else {
+            // Saved before the global Keep: every kind follows it (default).
+            self.retentionDays = 180
+            for key in map.keys { byCategory[key]?.retentionDays = nil }
+        }
+    }
+
+    /// The days a kind actually keeps: its own Keep, or the global one.
+    public func effectiveRetentionDays(for category: ActivityCategory) -> Int {
+        settings(for: category).retentionDays ?? retentionDays
     }
 
     public func settings(for category: ActivityCategory) -> ActivityCategorySettings {
@@ -129,10 +148,10 @@ public struct ActivityAggregate: Codable, Equatable, Sendable {
     }
 }
 
-/// A watched video's author (see `ActivityStore.watchedAuthors`).
+/// A watched video's author (see `ActivityStore.watchedFacts`).
 public struct ActivityAuthor: Codable, Equatable, Sendable {
     public var name: String
-    /// A small PNG data URI, when one was found.
+    /// A small image data URI, when one was found.
     public var icon: String?
 
     public init(name: String, icon: String?) {
@@ -141,18 +160,41 @@ public struct ActivityAuthor: Codable, Equatable, Sendable {
     }
 }
 
-/// One watched video's author, as recorded.
-public struct ActivityAuthorEntry: Equatable, Sendable {
+/// One of a watched video's tags, as the classifier named and coloured it.
+public struct ActivityTag: Codable, Equatable, Sendable {
+    public var id: String
+    public var name: String
+    /// "#rrggbb", or "" when the tag has no valid colour.
+    public var color: String
+
+    public init(id: String, name: String, color: String) {
+        self.id = id
+        self.name = name
+        self.color = color
+    }
+}
+
+/// What is saved about a watched video.
+public struct ActivityWatchedFacts: Equatable, Sendable {
+    public var author: ActivityAuthor?
+    /// nil = none saved yet.
+    public var tags: [ActivityTag]?
+}
+
+/// What a lookup found about one watched video, to save.
+public struct ActivityWatchedEntry: Equatable, Sendable {
     public var videoKey: String
     /// The platform's own id for the author (stable across renames).
-    public var authorID: String
-    public var name: String
-    public var icon: String?
+    public var authorID: String?
+    public var authorName: String?
+    public var authorIcon: String?
+    public var tags: [ActivityTag]?
 
-    public init(videoKey: String, authorID: String, name: String, icon: String?) {
+    public init(videoKey: String, authorID: String? = nil, authorName: String? = nil, authorIcon: String? = nil, tags: [ActivityTag]? = nil) {
         self.videoKey = videoKey
         self.authorID = authorID
-        self.name = name
-        self.icon = icon
+        self.authorName = authorName
+        self.authorIcon = authorIcon
+        self.tags = tags
     }
 }

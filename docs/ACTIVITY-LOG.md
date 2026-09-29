@@ -54,8 +54,12 @@ screen lock.
 - **Local-only, no egress.** No network sink exists. Cross-device merge would need
   outward sync, which is precluded; timelines are per-machine (the native app plus
   the browsers on that machine, merged over the loopback HMAC hub).
-- **Retention you control.** Per-category window (`retentionDays`, default 180 — the day map shows 180 days; `0`
-  = keep forever). A reaper prunes on a schedule. Plus delete-all, delete-a-range,
+- **Retention you control.** One global Keep (`ActivitySettings.retentionDays`,
+  default 180 — the day map shows 180 days; `0` = keep forever), and a Keep per
+  category that follows it unless set (`retentionDays` nil = follow; owner
+  2026-09-29). Settings saved before the global Keep follow it. Watched videos'
+  saved authors and tags last as long as the video's watched records. A reaper
+  prunes at launch. Plus delete-all, delete-a-range,
   delete-one now — a real delete of raw records, not a tombstone.
 - Any future export or send is gated behind an explicit consent dialog; none is
   built.
@@ -126,20 +130,21 @@ Activity/
   group's icon is made of slices of its members' icons (1 whole, 2 halves,
   3 wedges, 4 quarters, more = three and "+N"), so Mac Vault sends an icon for
   every group member and every item the editor lists.
-- **Watched by author / by tag** (owner 2026-09-29): the Watched panel lists
-  videos, or one row per author or per tag (expandable to its videos), with a
-  pie of the tags. A video with several tags gives each an equal share of its
-  time; no tags = "Untagged", no author = "Unknown author".
-  - **Authors are recorded** (`watched-authors.json`: watched key → author id;
-    author id → name + a 64 px JPEG icon ≤ 24 KB) when a watched record
-    arrives, and again for videos still without one whenever Activity is
-    shown. They come from Mac Vault's classifier, which forgets old videos:
-    the collected entry of the watched key (`youtube:<id>` → platform
-    `youtube`, entry `youtube:video:<id>`), its author's icon from any
-    collected video of theirs (a watch page often has none), taken from the
-    classifier's downloaded icons. Deleting Watched history deletes the file.
-  - **Tags are looked up live** in the classifier (`watchedTags`): the tags
-    the extension's pills show (every type for the platform).
+- **Videos, Authors, Tags** (owner 2026-09-29): three panels — the watched
+  videos; one row per author; one row per tag with a pie of the tags (rows
+  open to their videos). A video with several tags gives each an equal share
+  of its time; no tags = "Untagged", no author = "Unknown author".
+  - **Authors and tags are saved** (`watched-facts.json`: watched key →
+    author id + tags; author id → name + a 64 px JPEG icon ≤ 24 KB) when a
+    watched record arrives, and for videos still missing an author icon or
+    tags whenever Activity is shown. They are read from Mac Vault's
+    classifier (which forgets old videos), never asked of it: the collected
+    entry of the watched key (`youtube:<id>` → platform `youtube`, entry
+    `youtube:video:<id>`), the author's icon from any collected video of
+    theirs, the tags the extension's pills show. A video's tags are saved
+    once and never change; one without tags picks them up once the
+    classifier has tagged it on its own. Deleting Watched history deletes
+    the file; pruning drops videos no longer in the history.
 - **Colours**: every app, website and group has one permanent colour index
   (`colors.json`, assigned once, never reused, kept when history is deleted);
   the page paints 12 base colours, then golden-angle hues.

@@ -19,41 +19,34 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
 
     private override init() { super.init() }
 
-    /// Mac Vault's classifier (injected; this module can't see it): watched
-    /// videos' tags, and recording their authors into the store.
-    private var watchedTags: ([String]) -> [String: [[String: String]]] = { _ in [:] }
-    private var recordAuthors: ([String]) -> Void = { _ in }
+    /// Saves watched videos' authors and tags from Mac Vault's classifier
+    /// (injected; this module can't see it).
+    private var recordWatchedFacts: ([String]) -> Void = { _ in }
 
     /// Called once at launch with the shared store (see BlockerAppDelegate).
-    public func configure(
-        store: ActivityStore,
-        watchedTags: @escaping ([String]) -> [String: [[String: String]]],
-        recordAuthors: @escaping ([String]) -> Void
-    ) {
+    public func configure(store: ActivityStore, recordWatchedFacts: @escaping ([String]) -> Void) {
         self.store = store
-        self.watchedTags = watchedTags
-        self.recordAuthors = recordAuthors
+        self.recordWatchedFacts = recordWatchedFacts
     }
 
-    /// Watched key → { creator, creatorIcon, tags } for the page. Authors come
-    /// from the store; ones still missing (or without an icon) are looked up
-    /// first.
+    /// Watched key → { creator, creatorIcon, tags } for the page, from what is
+    /// saved; videos still missing an author icon or tags are looked up first.
     private func watchedFacts(keys: [String], store: ActivityStore) -> [String: Any] {
-        var authors = store.watchedAuthors(for: keys)
-        let missing = keys.filter { authors[$0]?.icon == nil }
+        var saved = store.watchedFacts(for: keys)
+        let missing = keys.filter { saved[$0]?.author?.icon == nil || saved[$0]?.tags == nil }
         if !missing.isEmpty {
-            recordAuthors(missing)
-            authors = store.watchedAuthors(for: keys)
+            recordWatchedFacts(missing)
+            saved = store.watchedFacts(for: keys)
         }
-        let tags = watchedTags(keys)
         var facts: [String: Any] = [:]
         for key in keys {
-            var fact: [String: Any] = ["tags": tags[key] ?? []]
-            if let author = authors[key] {
-                fact["creator"] = author.name
-                if let icon = author.icon { fact["creatorIcon"] = icon }
+            guard let fact = saved[key] else { continue }
+            var entry: [String: Any] = ["tags": (fact.tags ?? []).map { ["id": $0.id, "name": $0.name, "color": $0.color] }]
+            if let author = fact.author {
+                entry["creator"] = author.name
+                if let icon = author.icon { entry["creatorIcon"] = icon }
             }
-            facts[key] = fact
+            facts[key] = entry
         }
         return facts
     }
@@ -104,13 +97,21 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
 
     // MARK: - Store bridge
 
+    /// A kind's Record / Keep (`retentionDays` -1 = follow the global Keep),
+    /// or, without a category, the global Keep.
     private func applySettings(_ body: [String: Any]) {
-        guard let store, let categoryRaw = body["category"] as? String,
-              let category = ActivityCategory(rawValue: categoryRaw) else { return }
+        guard let store else { return }
+        guard let categoryRaw = body["category"] as? String,
+              let category = ActivityCategory(rawValue: categoryRaw) else {
+            if let retention = body["retentionDays"] as? Int {
+                store.updateSettings { $0.retentionDays = max(0, retention) }
+            }
+            return
+        }
         store.updateSettings { settings in
             var value = settings.settings(for: category)
             if let enabled = body["enabled"] as? Bool { value.enabled = enabled }
-            if let retention = body["retentionDays"] as? Int { value.retentionDays = max(0, retention) }
+            if let retention = body["retentionDays"] as? Int { value.retentionDays = retention < 0 ? nil : retention }
             settings.set(value, for: category)
         }
     }
