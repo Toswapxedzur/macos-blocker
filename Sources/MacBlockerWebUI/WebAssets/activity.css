@@ -134,3 +134,6 @@ main { flex: 1; min-height: 0; overflow: auto; }
 rect.is-hot, path.is-hot, circle.is-hot { stroke: #1e3a8a; stroke-width: 1.5; }
 .legend-item.is-hot .legend-label { color: var(--navy-700); }
 .legend-item { cursor: default; }
+/* Watched: by video, author or tag; the tag pie above the tag rows. */
+.watched-by { margin: 0 4px 10px; }
+.watched-pie { margin: 0 4px 12px; }
