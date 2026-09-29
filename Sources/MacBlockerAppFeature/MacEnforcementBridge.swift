@@ -323,7 +323,8 @@ public final class MacEnforcementBridge: ObservableObject {
         let frontExempt = !GuardPolicy.canBlock(frontmost)
         let rows: [TimerOverlayRow] = groups.reversed().compactMap { group in
             guard group.isEnforcing(snoozes: usage.snoozesByGroup, at: now),
-                  let remaining = group.remainingSeconds(usedSeconds: usage.usageByGroupSeconds[group.id] ?? 0),
+                  let remaining = group.remainingSeconds(usedSeconds: usage.usageByGroupSeconds[group.id] ?? 0,
+                                                         extraSeconds: usage.snoozesByGroup[group.id]?.extraSeconds(at: now) ?? 0),
                   group.groupType == .custom || frontmost.map({ group.countsApplication($0, exempt: frontExempt) }) == true
             else { return nil }
             return TimerOverlayRow(id: group.id, name: group.name, remainingSeconds: remaining)
@@ -612,8 +613,10 @@ public final class MacEnforcementBridge: ObservableObject {
             // A snoozed group spends nothing, as in the extension.
             if let frontmost, elapsed > 0, group.isEnforcing(snoozes: snoozes, at: now),
                group.countsApplication(frontmost, exempt: !GuardPolicy.canBlock(frontmost)) {
-                // Time counts up to the allowance, as in the extension.
+                // Time counts up to the allowance (a running budget snooze's
+                // extra included), as in the extension.
                 let allowedMs = max(0, group.allowedMinutes) * 60_000
+                    + (snoozes[gid]?.extraSeconds(at: now) ?? 0) * 1000
                 addedMs = min(elapsed * 1000, max(0, allowedMs - (timers[gid] ?? 0)))
             }
 
