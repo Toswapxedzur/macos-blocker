@@ -664,10 +664,11 @@
     if (panel) panel.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
 
-  // The Groups panel (owner 2026-09-29: "a third [panel] … all about
-  // groups"): the groups with their time in this range, or the editor.
+  // The Groups panel (owner 2026-09-30): always shown, the page's top, one
+  // fixed height; the groups side by side as cards (scrolling sideways), or
+  // the editor in columns.
   function groupsPanel() {
-    var box = el("section", "panel board groups");
+    var box = el("section", "panel groups");
     box.id = "groups";
     var head = el("div", "column-head");
     head.appendChild(el("h2", null, "Groups"));
@@ -681,22 +682,34 @@
       return { g: g, seconds: seconds };
     }).sort(function (x, y) { return (y.g.merge - x.g.merge) || (y.seconds - x.seconds); });
     if (!list.length) {
-      box.appendChild(el("p", "empty", "No groups yet. A group shows its apps and websites together in Details; a merge group also stands in for them everywhere."));
+      box.appendChild(el("p", "empty", "No groups yet. A group shows its apps and websites together in Usage; a merge group also stands in for them everywhere."));
       return box;
     }
+    var cards = el("div", "group-cards");
     var top = Math.max.apply(null, list.map(function (x) { return x.seconds; }).concat([1]));
     list.forEach(function (x) {
       var g = x.g;
-      var line = row({ key: "group|" + g.id, label: g.name, colorIndex: g.colorIndex }, x.seconds, x.seconds / top,
-        g.merge ? "Merge" : "View", function () { pick("group|" + g.id); });
-      line.querySelector(".row-name").appendChild(el("span", "row-count",
-        g.members.length + (g.members.length === 1 ? " member" : " members")));
-      var edit = el("button", "row-add secondary", "Edit");
-      edit.type = "button";
-      edit.addEventListener("click", function (event) { event.stopPropagation(); openEditor(g); });
-      line.appendChild(edit);
-      box.appendChild(line);
+      var card = el("div", usageFocus === "group|" + g.id ? "group-card is-focus" : "group-card");
+      card.addEventListener("click", function () { pick("group|" + g.id); });
+      var name = el("div", "group-card-top");
+      name.appendChild(groupIcon(g));
+      var label = el("div", "group-card-name");
+      label.appendChild(el("span", "row-label", g.name));
+      label.appendChild(el("span", "row-kind", g.merge ? "Merge" : "View"));
+      name.appendChild(label);
+      card.appendChild(name);
+      var bar = el("div", "row-bar"), fill = paint(el("span"), g.colorIndex);
+      fill.style.width = Math.max(1.5, x.seconds / top * 100) + "%";
+      bar.appendChild(fill);
+      card.appendChild(bar);
+      var foot = el("div", "group-card-foot");
+      foot.appendChild(el("span", null, g.members.length + (g.members.length === 1 ? " member" : " members") + " · " + fmt(x.seconds)));
+      var edit = textButton("Edit", function (event) { event.stopPropagation(); openEditor(g); }, "secondary");
+      foot.appendChild(edit);
+      card.appendChild(foot);
+      cards.appendChild(card);
     });
+    box.appendChild(cards);
     return box;
   }
 
@@ -708,6 +721,8 @@
 
   function groupForm() {
     var form = el("div", "group-form");
+    var first = el("div", "group-col"), second = el("div", "group-col"), third = el("div", "group-col group-add");
+    form.appendChild(first); form.appendChild(second); form.appendChild(third);
     var top = el("div", "group-top");
     top.appendChild(groupIcon(editing, true));
     var name = el("input");
@@ -716,7 +731,7 @@
     name.value = editing.name;
     name.addEventListener("input", function () { editing.name = name.value; });
     top.appendChild(name);
-    form.appendChild(top);
+    first.appendChild(top);
     var mergeRow = el("label", "group-merge");
     var merge = el("input");
     merge.type = "checkbox";
@@ -724,7 +739,7 @@
     merge.addEventListener("change", function () { editing.merge = merge.checked; });
     mergeRow.appendChild(merge);
     mergeRow.appendChild(document.createTextNode("Merge — show as one, in one colour, everywhere"));
-    form.appendChild(mergeRow);
+    first.appendChild(mergeRow);
 
     var chips = el("div", "chips");
     if (!editing.members.length) chips.appendChild(el("span", "vui-muted", "No members yet."));
@@ -739,13 +754,14 @@
       }, "chip-remove"));
       chips.appendChild(chip);
     });
-    form.appendChild(chips);
+    second.appendChild(el("div", "chart-subtitle", "Members"));
+    second.appendChild(chips);
 
     var search = el("input");
     search.type = "search";
     search.placeholder = "Add an app or website";
     search.value = groupSearch;
-    form.appendChild(search);
+    third.appendChild(search);
     var found = el("div", "group-members");
     function fill() {
       found.textContent = "";
@@ -753,7 +769,7 @@
       var q = groupSearch.trim().toLowerCase();
       var matches = knownItems.filter(function (item) {
         return editing.members.indexOf(item.id) < 0 && (!q || (item.label + " " + item.id).toLowerCase().indexOf(q) >= 0);
-      }).slice(0, 8);
+      }).slice(0, 60);
       if (!matches.length) found.appendChild(el("p", "empty", q ? "Nothing matches." : "Everything is in."));
       matches.forEach(function (item) {
         var line = el("button", "member-row");
@@ -773,14 +789,14 @@
     }
     search.addEventListener("input", function () { groupSearch = search.value; fill(); });
     fill();
-    form.appendChild(found);
+    third.appendChild(found);
 
     if (editing.message) {
       var note = el("div", "group-note", editing.message + ".");
       if (editing.conflicts) {
         note.appendChild(textButton("Move them here", function () { saveGroup(editing, true, "editor"); }, "secondary"));
       }
-      form.appendChild(note);
+      first.appendChild(note);
     }
     var actions = el("div", "group-actions");
     actions.appendChild(textButton("Save", function () { editing.message = null; saveGroup(editing, false, "editor"); }));
@@ -792,10 +808,9 @@
         del.textContent = "Click again to delete";
         armed = setTimeout(function () { armed = null; del.textContent = "Delete group"; }, 4000);
       }, "danger");
-      del.classList.add("push-right");
       actions.appendChild(del);
     }
-    form.appendChild(actions);
+    first.appendChild(actions);
     return form;
   }
 
@@ -824,7 +839,6 @@
   var contentYear = null;       // the content year map for contentFocus
   var tagNodes = [];            // the classifier's tags: { id, name, color, parentID }
   var showRecording = false;
-  var showGroups = false;
 
   function dayStart(ms) { var d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); }
   function rangeDayStarts() {
@@ -1129,6 +1143,7 @@
     usageFocus = id;
     usageHistory = null;
     renderSection("usage");
+    if (!editing) refreshGroups();
     requestUsageHistory();
   }
 
@@ -1137,7 +1152,6 @@
     var head = el("div", "section-head");
     head.appendChild(el("h2", null, "Usage"));
     head.appendChild(usageFocusSelect());
-    head.appendChild(textButton(showGroups ? "Close groups" : "Groups", function () { showGroups = !showGroups; renderSection("usage"); }, "secondary"));
     var appsOn = s.appUsage && s.appUsage.enabled, webOn = s.webVisit && s.webVisit.enabled;
     if (!appsOn && !webOn) {
       section.appendChild(head);
@@ -1150,7 +1164,6 @@
     summary.appendChild(document.createTextNode(" used · " + fmt(data.empty) + " empty"));
     head.appendChild(summary);
     section.appendChild(head);
-    if (showGroups) section.appendChild(groupsPanel());
     section.appendChild(usageStrip(data));
     var grid = el("div", "act-grid");
     var mapPanel = el("div", "act-cell");
@@ -1463,12 +1476,14 @@
     if (!snapshot) { page.appendChild(el("p", "empty", "Loading…")); return; }
     refreshMergeMap();
     var s = snapshot.settings || {};
+    var usage = usageSection(s); usage.id = "usage-section";
+    page.appendChild(groupsPanel());
     if (showRecording) {
       var recording = el("div", "panel settings-panel");
       recording.appendChild(settingsPanel(s));
       page.appendChild(recording);
     }
-    var usage = usageSection(s); usage.id = "usage-section"; page.appendChild(usage);
+    page.appendChild(usage);
     var content = contentSection(s); content.id = "content-section"; page.appendChild(content);
     [].forEach.call(page.querySelectorAll(".scroll-list, .colour-map, .strip-scroll, .totals-scroll, .map-scroll"), function (node, i) {
       if (scrolls[i] && !freshScroll) { node.scrollLeft = scrolls[i][0]; node.scrollTop = scrolls[i][1]; }
