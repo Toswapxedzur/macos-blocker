@@ -388,6 +388,11 @@ extension VaultClassifierViewModel {
     /// A downloaded source icon, shrunk to 64×64 pixels, as a JPEG data URI
     /// (a few KB; author icons are photos).
     func sourceIconDataURI(remoteURL: String) -> String? {
+        sourceIconJPEG(remoteURL: remoteURL).map { "data:image/jpeg;base64," + $0.base64EncodedString() }
+    }
+
+    /// A downloaded source icon, shrunk to 64×64 pixels, as JPEG data.
+    func sourceIconJPEG(remoteURL: String) -> Data? {
         guard let cache = sourceIconCache, let url = cache.cachedURL(for: remoteURL),
               let image = cache.response(for: url).flatMap({ NSImage(data: $0.data) }),
               let rep = NSBitmapImageRep(
@@ -401,8 +406,7 @@ extension VaultClassifierViewModel {
         NSRect(x: 0, y: 0, width: 64, height: 64).fill()
         image.draw(in: NSRect(x: 0, y: 0, width: 64, height: 64), from: .zero, operation: .sourceOver, fraction: 1)
         NSGraphicsContext.restoreGraphicsState()
-        guard let jpeg = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.85]) else { return nil }
-        return "data:image/jpeg;base64," + jpeg.base64EncodedString()
+        return rep.representation(using: .jpeg, properties: [.compressionFactor: 0.85])
     }
 
     func taxonomy(platformID: String) -> [NativeClassifierTypeTaxonomy] {

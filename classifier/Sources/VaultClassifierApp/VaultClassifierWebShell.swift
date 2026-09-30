@@ -20,7 +20,7 @@ final class VaultClassifierWebShell {
     init(model: VaultClassifierViewModel) {
         self.model = model
         self.coordinator = Coordinator(model: model)
-        self.sourceIconSchemeHandler = SourceIconSchemeHandler(cache: model.sourceIconCache)
+        self.sourceIconSchemeHandler = SourceIconSchemeHandler(cache: model.sourceIconCache, pictures: model.creatorPictures)
         Task { @MainActor [weak coordinator] in
             model.onWebStateChange = { [weak coordinator] in
                 Task { @MainActor [weak coordinator] in coordinator?.sendState() }
