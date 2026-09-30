@@ -233,8 +233,16 @@ extension LocalClassifierCoordinator {
         guard let datasetIndex = state.workspaceCatalog.datasets.firstIndex(where: { $0.id == binding.datasetID }) else {
             throw WorkspaceCatalogError.missingDataset(binding.datasetID)
         }
+        guard WorkspaceCatalog.isValidCollectedEntry(collected) else {
+            throw WorkspaceCatalogError.invalidCollectedEntry(collected.id)
+        }
         let inserted = state.workspaceCatalog.datasets[datasetIndex].upsertCollectedEntry(collected)
-        try state.workspaceCatalog.validate()
+        // Each platform's Keep, applied at most hourly while collecting.
+        let now = WorkspaceCatalog.now()
+        if now - lastCollectionPrune > 3_600_000 {
+            lastCollectionPrune = now
+            state.workspaceCatalog.pruneCollectedEntries(nowMilliseconds: now)
+        }
         try stateFile.save(state)
         return inserted
     }

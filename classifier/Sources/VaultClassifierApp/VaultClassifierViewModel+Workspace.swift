@@ -36,6 +36,27 @@ extension VaultClassifierViewModel {
         } catch { issue = error.localizedDescription }
     }
 
+    /// The Collection page's Keep: a platform's (`platformID`; -1 = the same
+    /// as all) or, without one, the Keep for all platforms. Entries past it go now.
+    func setCollectionKeep(platformID: String?, days: Int) {
+        do {
+            guard var catalog = localState?.workspaceCatalog else { throw WebBridgeInputError.invalidChoice("collection keep") }
+            if let platformID {
+                guard days >= -1, let index = catalog.bindings.firstIndex(where: { $0.id == platformID }) else {
+                    throw WebBridgeInputError.invalidChoice("collection platform")
+                }
+                catalog.bindings[index].collectionKeepDays = days
+            } else {
+                guard days >= 0 else { throw WebBridgeInputError.invalidChoice("collection keep") }
+                catalog.collectionKeepDays = days
+            }
+            catalog.pruneCollectedEntries()
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
     func setCollectionEnabled(platformID: String, enabled: Bool) {
         do {
             guard var catalog = localState?.workspaceCatalog,

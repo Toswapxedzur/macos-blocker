@@ -76,13 +76,51 @@ public final class LocalStateFile: @unchecked Sendable {
     private static let lock = NSLock()
     private static var pending: [String: LocalClassifierState] = [:]
     private static var scheduled: Set<String> = []
+    /// Per state file: each collected-entries day file last written → its
+    /// signature, so a save rewrites only the days that changed.
+    private static var writtenDays: [String: [String: CollectedDaySignature]] = [:]
 
     public init(url: URL) { self.url = url }
+
+    /// Collected entries live beside the state (owner 2026-09-30: kept for
+    /// months, they would make one file rewritten on every save huge):
+    /// `collected/<dataset>/<platform>/<yyyy-MM-dd>.json`, by the day an entry
+    /// was first seen.
+    var collectedDirectory: URL { Self.collectedDirectory(for: url) }
+
+    static func collectedDirectory(for url: URL) -> URL {
+        url.deletingLastPathComponent().appendingPathComponent("collected", isDirectory: true)
+    }
 
     public func load(or defaultState: LocalClassifierState = .init()) throws -> LocalClassifierState {
         Self.ioQueue.sync {}
         guard FileManager.default.fileExists(atPath: url.path) else { return defaultState }
-        return try JSONDecoder().decode(LocalClassifierState.self, from: Data(contentsOf: url))
+        var state = try JSONDecoder().decode(LocalClassifierState.self, from: Data(contentsOf: url))
+        let directory = collectedDirectory
+        let manager = FileManager.default
+        // Entries inside the state file (saved before the split) are not in any
+        // day file yet: the first save then writes every day.
+        let savedInside = state.workspaceCatalog.datasets.contains { !$0.collectedEntries.isEmpty }
+        for index in state.workspaceCatalog.datasets.indices {
+            let datasetDirectory = directory.appendingPathComponent(Self.pathComponent(state.workspaceCatalog.datasets[index].id), isDirectory: true)
+            // Entries still inside the state (saved before the split) stay; the
+            // next save moves them out.
+            var known = Set(state.workspaceCatalog.datasets[index].collectedEntries.map(\.id))
+            for platform in (try? manager.contentsOfDirectory(at: datasetDirectory, includingPropertiesForKeys: nil)) ?? [] {
+                for day in (try? manager.contentsOfDirectory(at: platform, includingPropertiesForKeys: nil)) ?? [] where day.pathExtension == "json" {
+                    guard let data = try? Data(contentsOf: day),
+                          let entries = try? JSONDecoder().decode([CollectedPlatformEntry].self, from: data) else { continue }
+                    for entry in entries where known.insert(entry.id).inserted {
+                        state.workspaceCatalog.datasets[index].collectedEntries.append(entry)
+                    }
+                }
+            }
+        }
+        let signatures = savedInside ? [:] : Self.collectedDays(of: state).mapValues(Self.signature)
+        Self.lock.lock()
+        Self.writtenDays[url.path] = signatures
+        Self.lock.unlock()
+        return state
     }
 
     public func save(_ state: LocalClassifierState) throws {
@@ -115,19 +153,93 @@ public final class LocalStateFile: @unchecked Sendable {
 
     private static func writeToDisk(_ state: LocalClassifierState, url: URL) {
         do {
-            try FileManager.default.createDirectory(
+            let manager = FileManager.default
+            try manager.createDirectory(
                 at: url.deletingLastPathComponent(),
                 withIntermediateDirectories: true,
                 attributes: [.posixPermissions: 0o700]
             )
+            // The collected entries go to their day files; the state file holds the rest.
+            let days = collectedDays(of: state)
+            var slim = state
+            for index in slim.workspaceCatalog.datasets.indices { slim.workspaceCatalog.datasets[index].collectedEntries = [] }
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(state).write(to: url, options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            let directory = collectedDirectory(for: url)
+            lock.lock()
+            let previous = writtenDays[url.path] ?? [:]
+            lock.unlock()
+            var written: [String: CollectedDaySignature] = [:]
+            let compact = JSONEncoder()
+            for (relative, entries) in days {
+                let signature = signature(entries)
+                written[relative] = signature
+                guard previous[relative] != signature else { continue }
+                let file = directory.appendingPathComponent(relative)
+                try manager.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+                try compact.encode(entries).write(to: file, options: .atomic)
+                try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+            }
+            for relative in previous.keys where written[relative] == nil {
+                try? manager.removeItem(at: directory.appendingPathComponent(relative))
+            }
+            lock.lock()
+            writtenDays[url.path] = written
+            lock.unlock()
+            try encoder.encode(slim).write(to: url, options: .atomic)
+            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         } catch {
             // Best-effort background persistence; the session state remains authoritative.
         }
     }
+
+    /// Collected entries grouped by their day file ("<dataset>/<platform>/<day>.json").
+    static func collectedDays(of state: LocalClassifierState) -> [String: [CollectedPlatformEntry]] {
+        var days: [String: [CollectedPlatformEntry]] = [:]
+        var dayNames: [Int64: String] = [:]
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.dateFormat = "yyyy-MM-dd"
+        for dataset in state.workspaceCatalog.datasets {
+            let datasetPart = pathComponent(dataset.id)
+            for entry in dataset.collectedEntries {
+                let dayNumber = entry.firstObservedAtMilliseconds / 86_400_000
+                let dayName = dayNames[dayNumber] ?? {
+                    let name = formatter.string(from: Date(timeIntervalSince1970: TimeInterval(dayNumber) * 86_400))
+                    dayNames[dayNumber] = name
+                    return name
+                }()
+                days["\(datasetPart)/\(pathComponent(entry.platformID))/\(dayName).json", default: []].append(entry)
+            }
+        }
+        return days
+    }
+
+    /// Cheap change detector for one day file: an update to an entry moves its
+    /// last-seen time or observation count.
+    static func signature(_ entries: [CollectedPlatformEntry]) -> CollectedDaySignature {
+        var signature = CollectedDaySignature()
+        for entry in entries {
+            signature.count += 1
+            signature.lastSeen &+= entry.lastObservedAtMilliseconds
+            signature.observations &+= entry.observationCount
+            signature.textBytes &+= (entry.text?.utf8.count ?? 0) + entry.title.utf8.count + entry.creatorName.utf8.count
+        }
+        return signature
+    }
+
+    static func pathComponent(_ value: String) -> String {
+        String(value.map { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" || $0 == "." ? $0 : "_" })
+    }
+}
+
+struct CollectedDaySignature: Equatable, Sendable {
+    var count = 0
+    var lastSeen: Int64 = 0
+    var observations = 0
+    var textBytes = 0
 }
 
 public enum PlatformCollectionError: Error, Equatable, LocalizedError, Sendable {
@@ -173,6 +285,8 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
     var onDeviceLLMEngineResolver: (any OnDeviceLLMEngineResolving)?
     var classificationHouseRules: String?
     var groundedResearchQueue: GroundedResearchQueue?
+    /// When the collection Keep was last applied (see `collect`).
+    var lastCollectionPrune: Int64 = 0
     var onVideoReclassifiedCallback: (@Sendable (String, String, VideoTagsProjection) -> Void)?
 
     public convenience init(
@@ -230,6 +344,7 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         var loaded = try stateFile.load()
         let original = loaded
         loaded.workspaceCatalog.reconcileClassifierTypes()
+        loaded.workspaceCatalog.pruneCollectedEntries()
         try loaded.workspaceCatalog.validate()
         loaded.activeModelIdentity = identity
 

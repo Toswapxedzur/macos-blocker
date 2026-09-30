@@ -69,7 +69,7 @@ extension VaultClassifierViewModel {
                     "id": dataset.id,
                     "name": dataset.name,
                     "revision": dataset.revision,
-                    // Collected entries per platform (a type's Options shows the count).
+                    // Collected entries per platform (the Collection page shows them).
                     "entryCounts": Dictionary(grouping: dataset.collectedEntries, by: \.platformID).mapValues(\.count),
                 ] as [String: Any]
             }
@@ -231,8 +231,9 @@ extension VaultClassifierViewModel {
                 })
         assets["bindings"] = catalog.bindings.map { binding in
                 let definition = CollectionPlatformRegistry.definition(for: binding.id)
-                return ["id": binding.id, "name": binding.name, "browser": binding.browser, "treeID": binding.treeID, "datasetID": binding.datasetID, "activeClassifierTypeID": binding.activeClassifierTypeID ?? NSNull(), "collectionEnabled": binding.collectionEnabled, "sourceKind": definition?.sourceKind.rawValue ?? CollectionSourceKind.creator.rawValue, "supportsLocalModel": definition?.supportsLocalModel ?? false] as [String: Any]
+                return ["id": binding.id, "name": binding.name, "browser": binding.browser, "treeID": binding.treeID, "datasetID": binding.datasetID, "activeClassifierTypeID": binding.activeClassifierTypeID ?? NSNull(), "collectionEnabled": binding.collectionEnabled, "collectionKeepDays": binding.collectionKeepDays, "sourceKind": definition?.sourceKind.rawValue ?? CollectionSourceKind.creator.rawValue, "supportsLocalModel": definition?.supportsLocalModel ?? false] as [String: Any]
             }
+        assets["collectionKeepDays"] = catalog.collectionKeepDays
         assets["collectionPlatforms"] = CollectionPlatformRegistry.definitions.map { definition in
                 ["id": definition.id, "name": definition.name, "browser": definition.browser, "sourceKind": definition.sourceKind.rawValue, "collectorAvailable": definition.collectorAvailable, "supportsLocalModel": definition.supportsLocalModel, "apiProviderType": definition.apiProviderType?.rawValue ?? NSNull()] as [String: Any]
             }
@@ -339,6 +340,9 @@ extension VaultClassifierViewModel {
                 restoreTrashedEntry(entryID: try webString(data, key: "id", limit: 64))
             case "permanentlyDeleteTrashedEntry":
                 permanentlyDeleteTrashedEntry(entryID: try webString(data, key: "id", limit: 64))
+            case "setCollectionKeep":
+                guard let days = (data["days"] as? NSNumber)?.intValue else { throw WebBridgeInputError.missingValue("days") }
+                setCollectionKeep(platformID: try webOptionalString(data, key: "platformID", limit: 64), days: days)
             case "setCollectionEnabled":
                 setCollectionEnabled(
                     platformID: try webString(data, key: "platformID", limit: 64),

@@ -121,11 +121,11 @@ final class ViewModelCharacterizationTests: XCTestCase {
     /// routed action either succeeds or fails on a missing/invalid field, but
     /// never with the `default:` "unsupported action" error. A case dropped
     /// while moving methods between files shows up here as exactly that error.
-    /// (All 39 are safe headless with empty data — the backup ones throw on the
+    /// (All 40 are safe headless with empty data — the backup ones throw on the
     /// missing owner code / directory or on "locked" before touching the Keychain.)
     func testEveryKnownWebActionIsRouted() throws {
         let actions = [
-            "state", "workspace", "clearCollectedData", "restoreTrashedEntry", "permanentlyDeleteTrashedEntry", "setCollectionEnabled", "createClassifierType", "reorderClassifierTypes", "configureClassifierType",
+            "state", "workspace", "clearCollectedData", "restoreTrashedEntry", "permanentlyDeleteTrashedEntry", "setCollectionEnabled", "setCollectionKeep", "createClassifierType", "reorderClassifierTypes", "configureClassifierType",
             "confirmDeleteClassifierType", "createProviderProfile", "testProviderProfile", "updateProviderConnection",
             "probeProviderModelCatalog", "confirmDeleteProviderProfile", "rearrangeTree",
             "addTag", "moveTag", "renameTag", "updateTag", "connectTag", "disconnectTag", "deleteTag",
@@ -133,7 +133,7 @@ final class ViewModelCharacterizationTests: XCTestCase {
             "deleteKnowledgeEntry", "addKnowledgeCreator", "editKnowledgeEntry", "retryFailedResearch", "saveResearchSettings", "saveClassifierTypeLocalModel", "saveClassifierTypeResearch", "setBackupOwnerCode", "unlockBackup",
             "saveBackup", "backupNow",
         ]
-        XCTAssertEqual(actions.count, 39)
+        XCTAssertEqual(actions.count, 40)
         let unsupported = WebBridgeInputError.invalidChoice("action").localizedDescription
         for action in actions {
             let vm = try makeViewModel()

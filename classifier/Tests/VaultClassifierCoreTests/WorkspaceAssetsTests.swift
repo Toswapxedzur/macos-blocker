@@ -8,8 +8,65 @@ final class WorkspaceAssetsTests: XCTestCase {
         for definition in CollectionPlatformRegistry.definitions {
             let binding = try catalog.ensurePlatformBinding(definition.id)
             XCTAssertEqual(binding.id, definition.id)
-            XCTAssertTrue(binding.collectionEnabled)
+            // Recorded by default only where something classifies (owner 2026-09-30).
+            XCTAssertEqual(binding.collectionEnabled, definition.supportsLocalModel)
+            XCTAssertEqual(binding.collectionKeepDays, -1, "follows the Keep for all platforms")
         }
+    }
+
+    func testOnlyYouTubeBilibiliRedditAndXClassify() {
+        XCTAssertEqual(
+            Set(CollectionPlatformRegistry.definitions.filter(\.supportsLocalModel).map(\.id)),
+            ["youtube", "bilibili", "reddit", "twitter"]
+        )
+    }
+
+    func testBindingsSavedBeforeTheKeepRecordOnlyWhereSomethingClassifies() throws {
+        let old = #"[{"id":"twitch","name":"Twitch","treeID":"t","datasetID":"d","collectionEnabled":true},{"id":"youtube","name":"YouTube","treeID":"t","datasetID":"d","collectionEnabled":true},{"id":"reddit","name":"Reddit","treeID":"t","datasetID":"d","collectionEnabled":false,"collectionKeepDays":30}]"#
+        let bindings = try JSONDecoder().decode([PlatformBinding].self, from: Data(old.utf8))
+        XCTAssertEqual(bindings.map(\.collectionEnabled), [false, true, false])
+        XCTAssertEqual(bindings.map(\.collectionKeepDays), [-1, -1, 30])
+    }
+
+    func testPruneKeepsEachPlatformsDays() throws {
+        var catalog = WorkspaceCatalog.starter()
+        let day: Int64 = 86_400_000
+        let now: Int64 = 1_000 * day
+        func entry(_ id: String, _ platform: String, daysAgo: Int64) -> CollectedPlatformEntry {
+            CollectedPlatformEntry(id: id, platformID: platform, entryID: "\(platform):post:\(id)", creatorID: "\(platform):account:a", creatorName: "A", entryType: "post", title: "T", firstObservedAtMilliseconds: now - daysAgo * day, lastObservedAtMilliseconds: now - daysAgo * day)
+        }
+        catalog.collectionKeepDays = 180
+        let redditIndex = try XCTUnwrap(catalog.bindings.firstIndex(where: { $0.id == "reddit" }))
+        catalog.bindings[redditIndex].collectionKeepDays = 7
+        catalog.datasets[0].collectedEntries = [
+            entry("y1", "youtube", daysAgo: 100), entry("y2", "youtube", daysAgo: 200),
+            entry("r1", "reddit", daysAgo: 3), entry("r2", "reddit", daysAgo: 10),
+        ]
+        XCTAssertTrue(catalog.pruneCollectedEntries(nowMilliseconds: now))
+        XCTAssertEqual(catalog.datasets[0].collectedEntries.map(\.id), ["y1", "r1"])
+        catalog.collectionKeepDays = 0
+        catalog.datasets[0].collectedEntries.append(entry("y3", "youtube", daysAgo: 5000))
+        XCTAssertFalse(catalog.pruneCollectedEntries(nowMilliseconds: now), "0 = forever")
+    }
+
+    func testCollectedEntriesAreSavedPerPlatformAndDayAndLoadBack() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("collected-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = LocalStateFile(url: directory.appendingPathComponent("state.json"))
+        var state = LocalClassifierState()
+        state.workspaceCatalog.datasets[0].collectedEntries = [
+            CollectedPlatformEntry(id: "a", platformID: "youtube", entryID: "youtube:video:a", creatorID: "youtube:handle:@a", creatorName: "A", entryType: "video", title: "A", firstObservedAtMilliseconds: 0, lastObservedAtMilliseconds: 0),
+            CollectedPlatformEntry(id: "b", platformID: "reddit", entryID: "reddit:post:b", creatorID: "reddit:subreddit:b", creatorName: "r/b", entryType: "post", title: "B", firstObservedAtMilliseconds: 86_400_000, lastObservedAtMilliseconds: 86_400_000),
+        ]
+        try file.save(state)
+        file.flushSynchronously()
+        let stateJSON = try String(contentsOf: directory.appendingPathComponent("state.json"), encoding: .utf8)
+        XCTAssertFalse(stateJSON.contains("youtube:video:a"), "entries are not inside the state file")
+        let datasetDirectory = directory.appendingPathComponent("collected/local-dataset")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: datasetDirectory.appendingPathComponent("youtube/1970-01-01.json").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: datasetDirectory.appendingPathComponent("reddit/1970-01-02.json").path))
+        let loaded = try LocalStateFile(url: directory.appendingPathComponent("state.json")).load()
+        XCTAssertEqual(Set(loaded.workspaceCatalog.datasets[0].collectedEntries.map(\.id)), ["a", "b"])
     }
 
     func testCreatorIdentityIndexMergesCollectedAliases() {

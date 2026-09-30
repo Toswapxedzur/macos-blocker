@@ -8,7 +8,7 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
 
-        for liveWorkspace in ["llmAssist", "browserBridge", "knowledge"] {
+        for liveWorkspace in ["llmAssist", "browserBridge", "knowledge", "collection"] {
             XCTAssertTrue(script.contains(liveWorkspace))
         }
         for retired in [
