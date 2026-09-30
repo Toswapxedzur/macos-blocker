@@ -52,6 +52,7 @@ final class VaultClassifierViewModel: ObservableObject {
     var collectionDiagnostics: CollectionDiagnosticsStore?
     var providerModelCatalogStore: ProviderModelCatalogStore?
     private(set) var sourceIconCache: SourceIconCache?
+    private(set) var creatorPictures: CreatorPictureStore?
     var testingProviderProfileIDs = Set<String>()
     var successfulProviderTestProfileIDs = Set<String>()
     /// Model identifiers and model-list capability signals come from explicit
@@ -73,6 +74,7 @@ final class VaultClassifierViewModel: ObservableObject {
                 directory: vaultDirectory.appendingPathComponent("source-icons", isDirectory: true),
                 retiredDirectory: vaultDirectory.appendingPathComponent("creator-avatars", isDirectory: true)
             )
+            self.creatorPictures = CreatorPictureStore(directory: vaultDirectory.appendingPathComponent("creator-pictures", isDirectory: true))
             collectionDiagnostics.record(event: "app-started", outcome: "ready")
             let coordinator = try LocalClassifierCoordinator(verifiedPackage: package, stateFile: LocalStateFile(url: vaultDirectory.appendingPathComponent("state.json")))
             self.coordinator = coordinator
@@ -124,6 +126,7 @@ final class VaultClassifierViewModel: ObservableObject {
             directory: vaultDirectory.appendingPathComponent("source-icons", isDirectory: true),
             retiredDirectory: vaultDirectory.appendingPathComponent("creator-avatars", isDirectory: true)
         )
+        self.creatorPictures = CreatorPictureStore(directory: vaultDirectory.appendingPathComponent("creator-pictures", isDirectory: true))
         let coordinator = try LocalClassifierCoordinator(verifiedPackage: package, stateFile: LocalStateFile(url: vaultDirectory.appendingPathComponent("state.json")))
         self.coordinator = coordinator
         self.localState = coordinator.snapshot()
