@@ -115,7 +115,7 @@ final class WorkspaceAssetsTests: XCTestCase {
     }
 
     /// A platform belongs to at most one classifier type: the classify path runs
-    /// every type whose applicablePlatformID matches, so two types on one platform
+    /// every type whose applicablePlatformIDs hold it, so two types on one platform
     /// double all engine work. validate() asserts it; reconcile repairs stale
     /// state by UNBINDING extras (never deleting), the binding's chosen type first.
     func testAPlatformBelongsToAtMostOneClassifierType() throws {
@@ -126,7 +126,7 @@ final class WorkspaceAssetsTests: XCTestCase {
         let make = { (id: String) in
             ClassifierTypeAsset(
                 id: id, name: id, treeID: tree.id, treeRevision: tree.revision,
-                datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformID: "youtube")
+                datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformIDs: ["youtube"])
         }
         catalog.classifierTypes = [make("first"), make("second")]
         let bindingIndex = try XCTUnwrap(catalog.bindings.firstIndex { $0.id == "youtube" })
@@ -140,18 +140,49 @@ final class WorkspaceAssetsTests: XCTestCase {
         chosen.bindings[bindingIndex].activeClassifierTypeID = "second"
         chosen.reconcileClassifierTypes()
         XCTAssertEqual(chosen.classifierTypes.map(\.id), ["first", "second"], "no type is deleted")
-        XCTAssertNil(chosen.classifierTypes.first { $0.id == "first" }?.applicablePlatformID)
-        XCTAssertEqual(chosen.classifierTypes.first { $0.id == "second" }?.applicablePlatformID, "youtube")
+        XCTAssertEqual(chosen.classifierTypes.first { $0.id == "first" }?.applicablePlatformIDs, [])
+        XCTAssertEqual(chosen.classifierTypes.first { $0.id == "second" }?.applicablePlatformIDs, ["youtube"])
         XCTAssertEqual(chosen.bindings[bindingIndex].activeClassifierTypeID, "second")
         XCTAssertNoThrow(try chosen.validate())
 
         // With no chosen type the first claimant wins and becomes the sole, auto-selected type.
         var unchosen = catalog
         unchosen.reconcileClassifierTypes()
-        XCTAssertEqual(unchosen.classifierTypes.first { $0.id == "first" }?.applicablePlatformID, "youtube")
-        XCTAssertNil(unchosen.classifierTypes.first { $0.id == "second" }?.applicablePlatformID)
+        XCTAssertEqual(unchosen.classifierTypes.first { $0.id == "first" }?.applicablePlatformIDs, ["youtube"])
+        XCTAssertEqual(unchosen.classifierTypes.first { $0.id == "second" }?.applicablePlatformIDs, [])
         XCTAssertEqual(unchosen.bindings[bindingIndex].activeClassifierTypeID, "first")
         XCTAssertNoThrow(try unchosen.validate())
+    }
+
+    /// One type may take several platforms (owner 2026-09-30), each still held
+    /// by at most one type: a second type claiming one of them loses only that one.
+    func testOneTypeHoldsSeveralPlatformsEachOnlyOnce() throws {
+        var catalog = WorkspaceCatalog.starter()
+        let youtube = try catalog.ensurePlatformBinding("youtube")
+        _ = try catalog.ensurePlatformBinding("bilibili")
+        let tree = try XCTUnwrap(catalog.trees.first { $0.id == youtube.treeID })
+        let dataset = try XCTUnwrap(catalog.datasets.first { $0.id == youtube.datasetID })
+        let make = { (id: String, platforms: [String]) in
+            ClassifierTypeAsset(
+                id: id, name: id, treeID: tree.id, treeRevision: tree.revision,
+                datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformIDs: platforms)
+        }
+        catalog.classifierTypes = [make("both", ["youtube", "bilibili"])]
+        XCTAssertNoThrow(try catalog.validate(), "one type on two platforms is valid")
+        catalog.reconcileClassifierTypes()
+        XCTAssertEqual(catalog.classifierTypes.first?.applicablePlatformIDs, ["youtube", "bilibili"])
+        XCTAssertEqual(catalog.bindings.first { $0.id == "youtube" }?.activeClassifierTypeID, "both")
+        XCTAssertEqual(catalog.bindings.first { $0.id == "bilibili" }?.activeClassifierTypeID, "both")
+
+        catalog.classifierTypes.append(make("late", ["bilibili"]))
+        XCTAssertThrowsError(try catalog.validate()) { error in
+            XCTAssertEqual(error as? WorkspaceCatalogError, .duplicateApplicablePlatform("bilibili"))
+        }
+        catalog.reconcileClassifierTypes()
+        XCTAssertEqual(catalog.classifierTypes.first { $0.id == "both" }?.applicablePlatformIDs, ["youtube", "bilibili"],
+                       "the binding's chosen type keeps its platforms")
+        XCTAssertEqual(catalog.classifierTypes.first { $0.id == "late" }?.applicablePlatformIDs, [])
+        XCTAssertNoThrow(try catalog.validate())
     }
 
     /// A stored catalog from before a platform was retired (TikTok, 2026-09-24)
@@ -166,14 +197,14 @@ final class WorkspaceAssetsTests: XCTestCase {
         catalog.bindings.append(PlatformBinding(id: "tiktok", name: "TikTok", treeID: tree.id, datasetID: dataset.id, activeClassifierTypeID: "old"))
         catalog.classifierTypes = [ClassifierTypeAsset(
             id: "old", name: "TikTok tags", treeID: tree.id, treeRevision: tree.revision,
-            datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformID: "tiktok")]
+            datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformIDs: ["tiktok"])]
         XCTAssertThrowsError(try catalog.validate())
 
         catalog.reconcileClassifierTypes()
         XCTAssertNoThrow(try catalog.validate())
         XCTAssertFalse(catalog.bindings.contains { $0.id == "tiktok" })
         XCTAssertEqual(catalog.classifierTypes.map(\.id), ["old"], "the type is kept")
-        XCTAssertNil(catalog.classifierTypes.first?.applicablePlatformID, "…unbound")
+        XCTAssertEqual(catalog.classifierTypes.first?.applicablePlatformIDs, [], "…unbound")
     }
 
     func testClassifierTypeLocalModelOverridesLegacyAndRoundTrip() throws {
@@ -185,7 +216,7 @@ final class WorkspaceAssetsTests: XCTestCase {
 
         let value = ClassifierTypeAsset(
             id: "type", name: "Type", treeID: "tree", treeRevision: 1,
-            datasetID: "dataset", datasetRevision: 1, applicablePlatformID: "youtube",
+            datasetID: "dataset", datasetRevision: 1, applicablePlatformIDs: ["youtube"],
             localModelOverrides: .init(houseRules: "Prefer documentaries.", speedQuality: .best, strictness: .strict),
             researchEnabled: false
         )

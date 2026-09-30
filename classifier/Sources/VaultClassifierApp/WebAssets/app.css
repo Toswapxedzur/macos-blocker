@@ -446,9 +446,10 @@ h3 { font-size: 14px; }
   color: #0e7490;
 }
 .resident-model-note { margin: 8px 0 12px; color: var(--muted); }
-.classifier-applicable-platform-row { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr); gap: 14px; align-items: end; }
-.classifier-platform-data-status { border: 0; box-shadow: inset 0 0 0 1px var(--line); border-radius: 10px; background: none; padding: 9px 11px; min-height: 56px; }
-.classifier-platform-data-status .small-copy { margin: 4px 0 0; }
+/* A type's platforms: a checklist (one taken by another type is disabled). */
+.platform-choices { display: grid; gap: 8px; margin-top: 2px; }
+.platform-choice:has(input:disabled) { color: var(--muted); }
+.classifier-applicable-platform-section .small-copy { margin: 6px 0 0; }
 .compact-empty { padding: 13px; }
 
 @media (max-width: 1120px) {
@@ -458,8 +459,7 @@ h3 { font-size: 14px; }
 
 @media (max-width: 760px) {
   .classifier-type-create,
-  .classifier-name-row,
-  .classifier-applicable-platform-row { grid-template-columns: 1fr; }
+  .classifier-name-row { grid-template-columns: 1fr; }
 }
 
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; }
@@ -1041,13 +1041,6 @@ textarea:focus {
   background: #f1f5f9;
 }
 
-.classifier-platform-data-status {
-  min-height: 0;
-  margin-top: 6px;
-  padding: 0;
-  box-shadow: none;
-  background: none;
-}
 
 .utility-resource-section,
 .utility-research-section {
@@ -1110,18 +1103,6 @@ textarea:focus {
 
 .classifier-type-panel > .action-row {
   padding: 4px 14px 12px 18px;
-}
-
-.classifier-type-more {
-  padding: 0 14px 12px 18px;
-}
-
-.classifier-type-more > .classifier-type-section {
-  padding: 10px 0 0;
-}
-
-.classifier-type-more > .action-row {
-  margin-top: 12px;
 }
 
 .sidebar-more {

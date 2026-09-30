@@ -13,7 +13,7 @@ final class TrashTests: XCTestCase {
             treeRevision: tree.revision,
             datasetID: dataset.id,
             datasetRevision: dataset.revision,
-            applicablePlatformID: "youtube"
+            applicablePlatformIDs: ["youtube"]
         )]
         let entry = catalog.trashClassifierType("type")
         XCTAssertEqual(entry?.name, "My Type")

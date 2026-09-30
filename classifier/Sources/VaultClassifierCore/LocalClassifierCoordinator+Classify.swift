@@ -273,7 +273,7 @@ extension LocalClassifierCoordinator {
 
     public static func orderedTypes(for platformID: String, in catalog: WorkspaceCatalog) -> [ClassifierTypeAsset] {
         catalog.classifierTypes
-            .filter { $0.applicablePlatformID == platformID }
+            .filter { $0.applicablePlatformIDs.contains(platformID) }
             .sorted { ($0.order, $0.id) < ($1.order, $1.id) }
     }
 

@@ -14,7 +14,7 @@ extension LocalClassifierCoordinator {
     public func hasClassifierTypes(platformID: String) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return state.workspaceCatalog.classifierTypes.contains { $0.applicablePlatformID == platformID }
+        return state.workspaceCatalog.classifierTypes.contains { $0.applicablePlatformIDs.contains(platformID) }
     }
 
     /// Stores an authoritative human correction and updates the cached
@@ -34,7 +34,7 @@ extension LocalClassifierCoordinator {
             callback: (@Sendable (String, String, VideoTagsProjection) -> Void)?
         ) in
             guard let typeIndex = state.workspaceCatalog.classifierTypes.firstIndex(where: {
-                $0.id == classifierTypeID && $0.applicablePlatformID == platformID
+                $0.id == classifierTypeID && $0.applicablePlatformIDs.contains(platformID)
             }) else { throw CorrectionSubmissionError.invalidClassifierType }
             let type = state.workspaceCatalog.classifierTypes[typeIndex]
             guard let tree = state.workspaceCatalog.trees.first(where: {

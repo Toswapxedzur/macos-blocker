@@ -89,7 +89,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertEqual(inheritedRequests, [])
 
         var catalog = coordinator.snapshot().workspaceCatalog
-        let index = try XCTUnwrap(catalog.classifierTypes.firstIndex(where: { $0.applicablePlatformID == "youtube" }))
+        let index = try XCTUnwrap(catalog.classifierTypes.firstIndex(where: { $0.applicablePlatformIDs.contains("youtube") }))
         // The type's own Speed↔Quality tier names the per-type engine; its own
         // Strict↔Broad position rides on every request.
         catalog.classifierTypes[index].localModelOverrides = .init(speedQuality: .best, strictness: .strict)
@@ -123,12 +123,12 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         let dataset = catalog.datasets[0]
         catalog.classifierTypes.append(ClassifierTypeAsset(
             id: "type", name: "YT", treeID: tree.id, treeRevision: tree.revision,
-            datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformID: "youtube"
+            datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformIDs: ["youtube"]
         ))
         try coordinator.updateWorkspaceCatalog(catalog)
         // Sanity: the type survived reconciliation and targets youtube.
         let live = coordinator.snapshot().workspaceCatalog
-        XCTAssertEqual(live.classifierTypes.first?.applicablePlatformID, "youtube")
+        XCTAssertEqual(live.classifierTypes.first?.applicablePlatformIDs, ["youtube"])
         return (coordinator, fixture.root)
     }
 
@@ -201,7 +201,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             .init(
                 id: "a", name: "A", treeID: treeA.id, treeRevision: treeA.revision,
                 datasetID: dataset.id, datasetRevision: dataset.revision,
-                applicablePlatformID: "youtube",
+                applicablePlatformIDs: ["youtube"],
                 localModelOverrides: .init(houseRules: "Type A rule.", strictness: .strictest), order: 0
             ),
             // A platform belongs to at most one classifier type, so the second
@@ -209,7 +209,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             .init(
                 id: "b", name: "B", treeID: treeB.id, treeRevision: treeB.revision,
                 datasetID: dataset.id, datasetRevision: dataset.revision,
-                applicablePlatformID: "bilibili", order: 1
+                applicablePlatformIDs: ["bilibili"], order: 1
             ),
         ]
         _ = try catalog.ensurePlatformBinding("bilibili")
@@ -608,7 +608,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         }
         let type = ClassifierTypeAsset(
             id: "t", name: "YT", treeID: "tree", treeRevision: 1,
-            datasetID: "d", datasetRevision: 1, applicablePlatformID: "youtube"
+            datasetID: "d", datasetRevision: 1, applicablePlatformIDs: ["youtube"]
         )
         // The engine serving the inherited tier (the global dial's file is loaded).
         let serving = "llamacpp/Qwen2.5-7B-Instruct-Q4_K_M.gguf"

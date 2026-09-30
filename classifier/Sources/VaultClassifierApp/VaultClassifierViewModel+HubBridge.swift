@@ -418,7 +418,7 @@ extension VaultClassifierViewModel {
         guard let coordinator else { return [] }
         let catalog = coordinator.snapshot().workspaceCatalog
         let types = catalog.classifierTypes
-            .filter { $0.applicablePlatformID == platformID }
+            .filter { $0.applicablePlatformIDs.contains(platformID) }
             .sorted { ($0.order, $0.id) < ($1.order, $1.id) }
         return types
             .compactMap { type -> NativeClassifierTypeTaxonomy? in

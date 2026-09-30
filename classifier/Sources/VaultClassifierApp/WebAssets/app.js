@@ -54,6 +54,8 @@
   // Non-null while the "create a group" dialog is open: { platformID, name? }.
   // A group can only be created through this dialog.
   let pendingCreateType = null;
+  // A type's ticked platforms not saved yet (typeID → ids).
+  const draftPlatforms = new Map();
   let utilityPanel = null;
   // "More" / "Options" expands the user opened: the page re-renders on every update.
   const openExpands = new Set();
@@ -360,9 +362,11 @@
   }
 
   function classifierTypeRow(type) {
-    const platform = (state.assets?.collectionPlatforms || []).find((definition) => definition.id === type.applicablePlatformID);
+    const names = (type.applicablePlatformIDs || [])
+      .map((id) => (state.assets?.collectionPlatforms || []).find((definition) => definition.id === id)?.name)
+      .filter(Boolean);
     const active = selectedTypeID === type.id ? " active" : "";
-    const meta = platform ? platform.name : tx("bridge.noApplicablePlatform");
+    const meta = names.length ? names.join(", ") : tx("bridge.noApplicablePlatform");
     return `<div class="classifier-type-row${active}" data-type-id="${esc(type.id)}">
       <button class="sidebar-row classifier-type-select${active}" type="button" data-action="selectType" data-type-id="${esc(type.id)}"><span class="sidebar-symbol" aria-hidden="true">◧</span><span class="sidebar-copy"><span class="sidebar-name">${esc(type.name)}</span><span class="sidebar-meta">${esc(meta)}</span></span></button>
     </div>`;
@@ -604,6 +608,27 @@
     return `<div class="workspace provider-workspace">${header("llm.title", "llm.copy", t("llm.keyLibrary"), "gold")}<div class="notice navy provider-local-only">${tx("llm.localOnlyDisclosure")}</div><section class="provider-create" data-form-id="new-provider-profile-form">${groupedValueSelectField("llm.providerType", "", "type", "", profileTypeGroups)}<button class="gold-action" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button><span class="small-copy">${tx("llm.createCopy")}</span></section><div class="provider-panels">${profiles.length ? profiles.map(panel).join("") : `<div class="empty">${tx("llm.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
   }
 
+  // The classifiable platforms as a checklist (owner 2026-09-30: a type may take
+  // several; a platform belongs to at most one type, so one another type holds
+  // is shown disabled with that type's name).
+  function platformChoices(selectedIDs, typeID) {
+    const selected = new Set(selectedIDs);
+    const owners = new Map();
+    for (const type of state.assets?.classifierTypes || []) {
+      for (const id of type.applicablePlatformIDs || []) owners.set(id, type);
+    }
+    const platforms = (state.assets?.collectionPlatforms || []).filter((platform) => platform.supportsLocalModel === true);
+    return `<div class="platform-choices">${platforms.map((platform) => {
+      const owner = owners.get(platform.id);
+      const taken = Boolean(owner && owner.id !== typeID);
+      return `<label class="toggle-row platform-choice"><input type="checkbox" value="${esc(platform.id)}" data-platform-choice${selected.has(platform.id) ? " checked" : ""}${taken ? " disabled" : ""}><span>${esc(platform.name)}</span>${taken ? `<span class="field-hint">${tx("bridge.platformTakenBy", { name: owner.name })}</span>` : ""}</label>`;
+    }).join("")}</div>`;
+  }
+
+  function checkedPlatforms(container) {
+    return Array.from(container?.querySelectorAll("input[data-platform-choice]:checked") || []).map((input) => input.value);
+  }
+
   function browserBridgeWorkspace() {
     const assets = state.assets;
     const classifierTypes = assets.classifierTypes || [];
@@ -611,32 +636,19 @@
     const platformDefinitions = new Map((assets.collectionPlatforms || []).map((platform) => [platform.id, platform]));
     const typeForm = (classifierType) => {
       const formID = `classifier-type-${classifierType.id}`;
-      const applicablePlatformID = typeof classifierType.applicablePlatformID === "string" ? classifierType.applicablePlatformID : "";
-      const applicableBinding = (assets.bindings || []).find((binding) => binding.id === applicablePlatformID);
-      const applicablePlatform = platformDefinitions.get(applicablePlatformID);
-      const supportsLocalModel = applicablePlatform?.supportsLocalModel === true;
-      // A platform belongs to at most one classifier type: hide platforms another
-      // type already claims (this type's own current platform stays selectable).
-      const claimedElsewhere = new Set(classifierTypes
-        .filter((other) => other.id !== classifierType.id && typeof other.applicablePlatformID === "string" && other.applicablePlatformID)
-        .map((other) => other.applicablePlatformID));
-      const applicablePlatformOptions = [["", t("bridge.noApplicablePlatform")], ...(assets.collectionPlatforms || []).filter((definition) => !claimedElsewhere.has(definition.id)).map((definition) => {
-        const hasBinding = (assets.bindings || []).some((binding) => binding.id === definition.id);
-        return [definition.id, `${definition.name} · ${definition.browser}${hasBinding ? "" : ` · ${t("bridge.platformDataAutoCreate")}`}${!definition.supportsLocalModel ? ` · ${t("bridge.collectionOnly")}` : ""}`];
-      })];
-      const platformAPIProfiles = applicablePlatform?.apiProviderType
-        ? profiles.filter((profile) => profile.type === applicablePlatform.apiProviderType)
-        : [];
-      const boundPlatformAPIProfile = platformAPIProfiles.find((profile) => profile.hasCredential);
-      const platformDataStatus = !applicablePlatform
-        ? t("bridge.platformDataChoose")
-        : !applicableBinding
-          ? t("bridge.platformDataWillCreate", { platform: applicablePlatform.name })
-        : !applicablePlatform.apiProviderType
-          ? t("bridge.platformDataUnavailable", { platform: applicablePlatform.name })
-          : boundPlatformAPIProfile
-            ? t("bridge.platformDataBound", { profile: boundPlatformAPIProfile.name })
-            : t("bridge.platformDataMissingKey", { platform: applicablePlatform.name });
+      const chosen = draftPlatforms.get(classifierType.id) || classifierType.applicablePlatformIDs || [];
+      // Platform data (an API key some platforms use) and a recording that is
+      // off, for the chosen platforms.
+      const platformNotes = chosen.map((id) => platformDefinitions.get(id)).filter(Boolean).flatMap((platform) => {
+        const notes = [];
+        if (platform.apiProviderType) {
+          const bound = profiles.find((profile) => profile.type === platform.apiProviderType && profile.hasCredential);
+          notes.push(bound ? t("bridge.platformDataBound", { profile: bound.name }) : t("bridge.platformDataMissingKey", { platform: platform.name }));
+        }
+        const binding = (assets.bindings || []).find((candidate) => candidate.id === platform.id);
+        if (binding && !binding.collectionEnabled) notes.push(`${platform.name}: ${t("bridge.recordingOff")}`);
+        return notes;
+      });
       const localOverrides = classifierType.localModelOverrides || null;
       const localModelFormID = `classifier-local-model-form-${classifierType.id}`;
       const globalLLM = state.settings?.localLLM || {};
@@ -648,22 +660,20 @@
       const positionName = (position) => `${position} · ${t(`localModel.strictness.${position}.name`)}`;
       const typeStrictnessOptions = [["", t("localModel.strictness.followGlobal", { name: positionName(globalLLM.strictness ?? 3) })]]
         .concat(STRICTNESS_POSITIONS.map((position) => [String(position), positionName(position)]));
-      const localModelOverrideSection = supportsLocalModel ? `<section class="classifier-type-section classifier-local-model-overrides" data-local-model-section><div class="section-header"><div><h3>${tx("bridge.localModelOverrides")}</h3><p class="section-copy">${tx("bridge.localModelOverridesCopy")}</p></div></div><div data-form-id="${esc(localModelFormID)}"><div class="utility-settings-fields">${valueSelectField("localModel.speedQuality", "localModel.speedQualityHint", "speedQuality", localOverrides?.speedQuality || "", typeSpeedOptions)}${valueSelectField("localModel.strictness", "localModel.strictnessHint", "strictness", localOverrides?.strictness != null ? String(localOverrides.strictness) : "", typeStrictnessOptions)}</div><p class="small-copy resident-model-note">${tx("bridge.localModelResidentNote")}</p>${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", localOverrides?.houseRules ?? "", 'rows="4"')}<div class="action-row"><button type="button" class="primary" data-action="saveClassifierTypeLocalModel" data-form="${esc(localModelFormID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div></div></section>` : "";
+      const localModelOverrideSection = `<section class="classifier-type-section classifier-local-model-overrides" data-local-model-section><div class="section-header"><div><h3>${tx("bridge.localModelOverrides")}</h3><p class="section-copy">${tx("bridge.localModelOverridesCopy")}</p></div></div><div data-form-id="${esc(localModelFormID)}"><div class="utility-settings-fields">${valueSelectField("localModel.speedQuality", "localModel.speedQualityHint", "speedQuality", localOverrides?.speedQuality || "", typeSpeedOptions)}${valueSelectField("localModel.strictness", "localModel.strictnessHint", "strictness", localOverrides?.strictness != null ? String(localOverrides.strictness) : "", typeStrictnessOptions)}</div><p class="small-copy resident-model-note">${tx("bridge.localModelResidentNote")}</p>${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", localOverrides?.houseRules ?? "", 'rows="4"')}<div class="action-row"><button type="button" class="primary" data-action="saveClassifierTypeLocalModel" data-form="${esc(localModelFormID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div></div></section>`;
       const researchFormID = `classifier-research-form-${classifierType.id}`;
       const researchMode = classifierType.researchEnabled === true ? "on" : classifierType.researchEnabled === false ? "off" : "inherit";
-      const researchOverrideSection = supportsLocalModel ? `<section class="classifier-type-section classifier-research-overrides"><div class="section-header"><div><h3>${tx("bridge.researchOverrides")}</h3><p class="section-copy">${tx("bridge.researchOverridesCopy")}</p></div></div><div data-form-id="${esc(researchFormID)}"><div class="utility-settings-fields">${valueSelectField("bridge.researchMode", "", "researchMode", researchMode, [["inherit", t("bridge.researchMode.inherit")], ["on", t("bridge.researchMode.on")], ["off", t("bridge.researchMode.off")]])}</div><p class="small-copy research-master-note">${tx("bridge.researchMasterGate")}</p><div class="action-row"><button type="button" class="primary" data-action="saveClassifierTypeResearch" data-form="${esc(researchFormID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div></div></section>` : "";
+      const researchOverrideSection = `<section class="classifier-type-section classifier-research-overrides"><div class="section-header"><div><h3>${tx("bridge.researchOverrides")}</h3><p class="section-copy">${tx("bridge.researchOverridesCopy")}</p></div></div><div data-form-id="${esc(researchFormID)}"><div class="utility-settings-fields">${valueSelectField("bridge.researchMode", "", "researchMode", researchMode, [["inherit", t("bridge.researchMode.inherit")], ["on", t("bridge.researchMode.on")], ["off", t("bridge.researchMode.off")]])}</div><p class="small-copy research-master-note">${tx("bridge.researchMasterGate")}</p><div class="action-row"><button type="button" class="primary" data-action="saveClassifierTypeResearch" data-form="${esc(researchFormID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div></div></section>`;
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}">
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}</div>
-        <section class="classifier-type-section classifier-applicable-platform-section"><div class="classifier-applicable-platform-row">${valueSelectField("bridge.applicablePlatform", "", "applicablePlatformID", applicablePlatformID, applicablePlatformOptions)}<p class="small-copy classifier-platform-data-status">${esc(platformDataStatus)}</p></div>${applicablePlatform && !supportsLocalModel ? `<p class="small-copy" data-collection-only-platform-note>${tx("bridge.collectionOnlyCopy")}</p>` : ""}${applicableBinding && !applicableBinding.collectionEnabled ? `<p class="small-copy">${tx("bridge.recordingOff")}</p>` : ""}</section>
+        <section class="classifier-type-section classifier-applicable-platform-section"><span class="field-label">${tx("bridge.applicablePlatform")}</span>${platformChoices(chosen, classifierType.id)}${platformNotes.map((note) => `<p class="small-copy">${esc(note)}</p>`).join("")}</section>
         <div class="action-row"><button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div>
-        <details class="vui-expand classifier-type-more" data-expand="type-options-${esc(classifierType.id)}"${openExpands.has(`type-options-${classifierType.id}`) ? " open" : ""}><summary>${tx("navigation.options")}</summary>
         ${localModelOverrideSection}
         ${researchOverrideSection}
-          <div class="action-row"><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}">${deleteLabel(`type:${classifierType.id}`, tx("bridge.deleteType"))}</button></div>
-        </details>
+        <div class="action-row classifier-type-delete"><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}">${deleteLabel(`type:${classifierType.id}`, tx("bridge.deleteType"))}</button></div>
       </section>`;
     };
-    // A type now targets one platform at creation and owns a fresh tree. The
+    // A type targets one or more platforms and owns a fresh tree. The
     // left panel selects which type is open; a selected type shows its config
     // and owned tree together.
     const selectedType = selectedTypeID ? classifierTypes.find((type) => type.id === selectedTypeID) : null;
@@ -930,27 +940,6 @@
     editor.scrollTop = position.y;
   }
 
-  function applyApplicablePlatformCapabilities() {
-    const definitions = new Map((state?.assets?.collectionPlatforms || []).map((platform) => [platform.id, platform]));
-    root.querySelectorAll(".classifier-type-panel").forEach((panel) => {
-      const sourceControl = panel.querySelector('[data-field="applicablePlatformID"]');
-      if (!sourceControl) return;
-      const platform = definitions.get(sourceControl.value);
-      const supportsLocalModel = platform?.supportsLocalModel === true;
-      const isCollectionOnlyPlatform = Boolean(platform && !supportsLocalModel);
-      panel.querySelectorAll("[data-local-model-section]").forEach((section) => { section.hidden = !supportsLocalModel; });
-      let note = panel.querySelector("[data-collection-only-platform-note]");
-      if (!note) {
-        note = document.createElement("p");
-        note.className = "small-copy";
-        note.dataset.collectionOnlyPlatformNote = "";
-        note.textContent = t("bridge.collectionOnlyCopy");
-        panel.querySelector(".classifier-applicable-platform-section")?.append(note);
-      }
-      if (note) note.hidden = !isCollectionOnlyPlatform;
-    });
-  }
-
   // A deleted entity leaves a small in-place tombstone (name + restore /
   // permanently-delete). It auto-purges 24h after deletion (native, on launch).
   function trashTombstone(entry) {
@@ -968,12 +957,9 @@
   // dials, house rules and research switch until given its own.
   function createTypeModal() {
     if (!pendingCreateType) return "";
-    const platforms = state.assets?.collectionPlatforms || [];
-    if (!platforms.length) return "";
-    const selectedPlatformID = pendingCreateType.platformID || platforms[0].id;
-    const platformOptions = platforms.map((platform) => `<option value="${esc(platform.id)}"${platform.id === selectedPlatformID ? " selected" : ""}>${esc(platform.name)} · ${esc(platform.browser)}</option>`).join("");
-    return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelCreateType" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog create-type-dialog" role="dialog" aria-modal="true"><h3>${tx("createType.title")}</h3><p class="section-copy">${tx("createType.copy")}</p><label class="field"><span class="field-label">${tx("createType.platformLabel")}</span><select data-create-type-platform>${platformOptions}</select></label><label class="field"><span class="field-label">${tx("createType.nameLabel")}</span><input type="text" data-create-type-name autocomplete="off" spellcheck="false" value="${esc(pendingCreateType.name != null ? pendingCreateType.name : t("createType.defaultName"))}"></label><div class="action-row"><button class="secondary" data-action="cancelCreateType">${tx("common.cancel")}</button><button class="primary" data-action="confirmCreateType">${tx("createType.create")}</button></div></div></div>`;
+    return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelCreateType" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog create-type-dialog" role="dialog" aria-modal="true" data-create-type-dialog><h3>${tx("createType.title")}</h3><p class="section-copy">${tx("createType.copy")}</p><div class="field"><span class="field-label">${tx("createType.platformLabel")}</span>${platformChoices(pendingCreateType.platformIDs || [], null)}</div><label class="field"><span class="field-label">${tx("createType.nameLabel")}</span><input type="text" data-create-type-name autocomplete="off" spellcheck="false" value="${esc(pendingCreateType.name != null ? pendingCreateType.name : t("createType.defaultName"))}"></label><div class="action-row"><button class="secondary" data-action="cancelCreateType">${tx("common.cancel")}</button><button class="primary" data-action="confirmCreateType">${tx("createType.create")}</button></div></div></div>`;
   }
+
 
   function render() {
     if (!state) {
@@ -992,7 +978,6 @@
     rememberEditorViewportPosition();
     root.innerHTML = markup;
     lastRenderedMarkup = markup;
-    applyApplicablePlatformCapabilities();
     bindTreeMapWheel();
     applyKnowledgeSearch();
     window.requestAnimationFrame(() => {
@@ -1067,10 +1052,11 @@
       return;
     }
     if (action === "newType") {
-      const platforms = state.assets?.collectionPlatforms || [];
-      if (!platforms.length) return;
-      // Open the create-a-group dialog; there is no direct-create path.
-      pendingCreateType = { platformID: platforms[0].id };
+      // Open the create-a-group dialog (there is no direct-create path), with
+      // the first classifiable platform no type holds yet ticked.
+      const held = new Set((state.assets?.classifierTypes || []).flatMap((type) => type.applicablePlatformIDs || []));
+      const free = (state.assets?.collectionPlatforms || []).find((platform) => platform.supportsLocalModel === true && !held.has(platform.id));
+      pendingCreateType = { platformIDs: free ? [free.id] : [] };
       render();
       return;
     }
@@ -1082,14 +1068,12 @@
     if (action === "confirmCreateType") {
       if (!pendingCreateType) return;
       const nameInput = root.querySelector("[data-create-type-name]");
-      const platformSelect = root.querySelector("[data-create-type-platform]");
       const name = ((nameInput?.value) || t("createType.defaultName")).trim() || t("createType.defaultName");
-      const platformID = platformSelect?.value || pendingCreateType.platformID;
-      if (!platformID) return;
+      const platformIDs = checkedPlatforms(root.querySelector("[data-create-type-dialog]"));
       pendingSelectNewType = new Set((state.assets?.classifierTypes || []).map((type) => type.id));
       pendingCreateType = null;
       render();
-      send("createClassifierType", { name, platformID });
+      send("createClassifierType", { name, platformIDs });
       return;
     }
     if (action === "confirmDeleteClassifierType") {
@@ -1110,6 +1094,10 @@
     if (button.dataset.entryId) data.entryID = button.dataset.entryId;
     if (button.dataset.fileName) data.fileName = button.dataset.fileName;
     if (action === "testProviderProfile") Object.assign(data, providerConnectionPayload(data, button.dataset.form));
+    if (action === "configureClassifierType") {
+      data.applicablePlatformIDs = checkedPlatforms(button.closest(".classifier-type-panel"));
+      draftPlatforms.delete(button.dataset.typeId);
+    }
     if (action === "cancelTagPanel") {
       flushTagNameInput(button.closest("[data-tree-popover]")?.querySelector("input[data-live-tag-name]"));
       activeTagPanel = null;
@@ -1242,8 +1230,18 @@
       send("updateProviderConnection", { profileID, ...providerConnectionPayload(values, formID) });
       return;
     }
-    if (event.target.closest('[data-field="applicablePlatformID"]')) {
-      applyApplicablePlatformCapabilities();
+    // A platform ticked or unticked: kept until saved (or created), so the
+    // page's re-renders do not lose it.
+    const choice = event.target.closest("input[data-platform-choice]");
+    if (choice) {
+      const dialog = choice.closest("[data-create-type-dialog]");
+      if (dialog && pendingCreateType) {
+        pendingCreateType.platformIDs = checkedPlatforms(dialog);
+        pendingCreateType.name = root.querySelector("[data-create-type-name]")?.value;
+      } else {
+        const panel = choice.closest(".classifier-type-panel");
+        if (panel) draftPlatforms.set(panel.dataset.typeId, checkedPlatforms(panel));
+      }
       return;
     }
   });

@@ -228,7 +228,7 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         XCTAssertTrue(script.contains("cancelCreateType"))
         let confirmStart = try XCTUnwrap(script.range(of: "action === \"confirmCreateType\""))
         let confirmBody = String(script[confirmStart.lowerBound...].prefix(1000))
-        XCTAssertTrue(confirmBody.contains("send(\"createClassifierType\", { name, platformID })"))
+        XCTAssertTrue(confirmBody.contains("send(\"createClassifierType\", { name, platformIDs })"))
         XCTAssertFalse(script.contains("send(\"createClassifierType\", { name: t(\"navigation.newType\")"))
         // Presets are gone: no picker, no provenance badge.
         for retired in ["preset", "selectCreatePreset", "modifiedFromPreset", "presetNameKey"] {

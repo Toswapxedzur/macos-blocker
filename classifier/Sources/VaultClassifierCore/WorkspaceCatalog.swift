@@ -252,13 +252,15 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             _ = dataset
         }
         // A platform belongs to at most one classifier type. The classify path
-        // runs EVERY type whose applicablePlatformID matches, so two types on
-        // one platform silently double all engine work.
+        // runs EVERY type whose applicablePlatformIDs hold it, so two types on
+        // one platform silently double all engine work. (One type may hold
+        // several platforms, owner 2026-09-30.)
         var claimedPlatforms = Set<String>()
         for classifierType in classifierTypes {
-            guard let platformID = classifierType.applicablePlatformID else { continue }
-            guard claimedPlatforms.insert(platformID).inserted else {
-                throw WorkspaceCatalogError.duplicateApplicablePlatform(platformID)
+            for platformID in classifierType.applicablePlatformIDs {
+                guard claimedPlatforms.insert(platformID).inserted else {
+                    throw WorkspaceCatalogError.duplicateApplicablePlatform(platformID)
+                }
             }
         }
         for dataset in datasets {
@@ -277,12 +279,12 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                   tree.revision == classifierType.treeRevision,
                   let dataset = datasets.first(where: { $0.id == classifierType.datasetID }),
                   dataset.revision == classifierType.datasetRevision,
-                  (classifierType.applicablePlatformID == nil || (classifierType.applicablePlatformID?.count ?? 0) <= 64),
-                  (classifierType.applicablePlatformID == nil || bindings.contains(where: { binding in
-                      // Multiple types may target one platform, each owning its own
-                      // tree; only the platform + shared dataset must match here.
-                      binding.id == classifierType.applicablePlatformID && binding.datasetID == dataset.id
-                  })) else {
+                  classifierType.applicablePlatformIDs.allSatisfy({ platformID in
+                      // Each of the type's platforms: a binding on the shared dataset.
+                      platformID.count <= 64 && bindings.contains(where: { binding in
+                          binding.id == platformID && binding.datasetID == dataset.id
+                      })
+                  }) else {
                 throw WorkspaceCatalogError.invalidClassifierType(classifierType.id)
             }
         }
@@ -293,7 +295,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             }
             guard classifierType.treeID == binding.treeID,
                   classifierType.datasetID == binding.datasetID,
-                  classifierType.applicablePlatformID == binding.id,
+                  classifierType.applicablePlatformIDs.contains(binding.id),
                   let tree = trees.first(where: { $0.id == binding.treeID }),
                   let dataset = datasets.first(where: { $0.id == binding.datasetID }),
                   classifierType.treeRevision == tree.revision,
@@ -538,12 +540,11 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             // A type owns its own tree now; the binding only supplies the shared
             // dataset and the platform. Do not require the binding to hold the
             // type's tree (that would orphan the platform on every reconcile).
-            let applicableBinding = reconciled.applicablePlatformID.flatMap { platformID in
-                bindings.first(where: { binding in
+            reconciled.applicablePlatformIDs = reconciled.applicablePlatformIDs.filter { platformID in
+                bindings.contains(where: { binding in
                     binding.id == platformID && binding.datasetID == dataset.id
                 })
             }
-            reconciled.applicablePlatformID = applicableBinding?.id
             reconciled.updatedAtMilliseconds = WorkspaceCatalog.now()
             return reconciled
         }
@@ -552,13 +553,13 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         // engine work). Resolve stale duplicates by UNBINDING the extras — never
         // deleting a type: the binding's chosen active type wins, else the first.
         // Deliberate duplicate assignments are refused earlier, at the write path.
-        for platformID in Set(classifierTypes.compactMap(\.applicablePlatformID)) {
-            let claimants = classifierTypes.indices.filter { classifierTypes[$0].applicablePlatformID == platformID }
+        for platformID in Set(classifierTypes.flatMap(\.applicablePlatformIDs)) {
+            let claimants = classifierTypes.indices.filter { classifierTypes[$0].applicablePlatformIDs.contains(platformID) }
             guard claimants.count > 1 else { continue }
             let activeID = bindings.first(where: { $0.id == platformID })?.activeClassifierTypeID
             let winner = claimants.first(where: { classifierTypes[$0].id == activeID }) ?? claimants[0]
             for index in claimants where index != winner {
-                classifierTypes[index].applicablePlatformID = nil
+                classifierTypes[index].applicablePlatformIDs.removeAll { $0 == platformID }
             }
         }
         for index in bindings.indices {
@@ -569,7 +570,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                let tree = trees.first(where: { $0.id == bindings[index].treeID }),
                let dataset = datasets.first(where: { $0.id == bindings[index].datasetID }) {
                 let compatible = classifierTypes.filter { candidate in
-                    guard candidate.applicablePlatformID == bindings[index].id,
+                    guard candidate.applicablePlatformIDs.contains(bindings[index].id),
                           candidate.treeID == tree.id,
                           candidate.treeRevision == tree.revision,
                           candidate.datasetID == dataset.id,
@@ -590,7 +591,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                   classifierType.treeRevision == tree.revision,
                   classifierType.datasetID == dataset.id,
                   classifierType.datasetRevision == dataset.revision,
-                  classifierType.applicablePlatformID == bindings[index].id else {
+                  classifierType.applicablePlatformIDs.contains(bindings[index].id) else {
                 bindings[index].activeClassifierTypeID = nil
                 continue
             }

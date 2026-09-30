@@ -46,7 +46,7 @@ extension LocalClassifierCoordinator {
         guard let target else { return false }
         return await target.queue.enqueue(.init(
             classifierTypeID: target.type.id,
-            platformID: target.type.applicablePlatformID ?? "",
+            platformID: target.type.applicablePlatformIDs.first ?? "",
             entryID: "",
             creatorID: "",
             subjects: [researchSubject],
@@ -63,7 +63,7 @@ extension LocalClassifierCoordinator {
         let target: (queue: GroundedResearchQueue, type: ClassifierTypeAsset)? = lock.withLock {
             guard let queue = groundedResearchQueue,
                   let type = state.workspaceCatalog.classifierTypes.first(where: {
-                      $0.applicablePlatformID == platformID
+                      $0.applicablePlatformIDs.contains(platformID)
                           && Self.effectiveResearchSettings(global: state.settings.research, for: $0) != nil
                   }) else { return nil }
             return (queue, type)

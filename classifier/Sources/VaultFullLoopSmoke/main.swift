@@ -69,7 +69,7 @@ guard let binding = catalog.bindings.first(where: { $0.id == "youtube" }),
 let dataset = catalog.datasets[datasetIndex]
 catalog.classifierTypes.append(ClassifierTypeAsset(
     id: "type", name: "YT topics", treeID: tree.id, treeRevision: tree.revision,
-    datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformID: "youtube"
+    datasetID: dataset.id, datasetRevision: dataset.revision, applicablePlatformIDs: ["youtube"]
 ))
 catalog.providerProfiles.append(geminiProfile)
 _ = catalog.datasets[datasetIndex].upsertCollectedEntry(.init(

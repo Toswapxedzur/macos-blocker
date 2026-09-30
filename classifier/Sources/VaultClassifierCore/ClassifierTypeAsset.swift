@@ -13,9 +13,10 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     public var treeRevision: Int
     public var datasetID: String
     public var datasetRevision: Int
-    /// One platform binding supplies this type's tree and collected local
-    /// classification data. A type cannot combine platform sources.
-    public var applicablePlatformID: String?
+    /// The platforms this type classifies (owner 2026-09-30: one type may take
+    /// several; a platform belongs to at most one type — WorkspaceCatalog). Their
+    /// bindings share the one collected dataset.
+    public var applicablePlatformIDs: [String]
     /// This type's own dial positions and house rules (nil / empty = follow the
     /// global settings). Runtime constants apply to every resident engine.
     public var localModelOverrides: LocalModelOverrides?
@@ -36,7 +37,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         treeRevision: Int,
         datasetID: String,
         datasetRevision: Int,
-        applicablePlatformID: String? = nil,
+        applicablePlatformIDs: [String] = [],
         localModelOverrides: LocalModelOverrides? = nil,
         researchEnabled: Bool? = nil,
         order: Int = 0,
@@ -48,12 +49,19 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         self.treeRevision = treeRevision
         self.datasetID = datasetID
         self.datasetRevision = datasetRevision
-        let cleanedPlatformID = applicablePlatformID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        self.applicablePlatformID = cleanedPlatformID.isEmpty ? nil : cleanedPlatformID
+        self.applicablePlatformIDs = Self.cleanedPlatformIDs(applicablePlatformIDs)
         self.localModelOverrides = localModelOverrides?.isEmpty == false ? localModelOverrides : nil
         self.researchEnabled = researchEnabled
         self.order = order
         self.updatedAtMilliseconds = updatedAtMilliseconds
+    }
+
+    /// Trimmed, non-empty and each once, in the given order.
+    public static func cleanedPlatformIDs(_ ids: [String]) -> [String] {
+        var seen = Set<String>()
+        return ids
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
     /// The GGUF this type loads when it holds its own Speed↔Quality position
@@ -61,10 +69,12 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     public var modelFileName: String? { localModelOverrides?.speedQuality?.ggufFileName }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, treeID, treeRevision, datasetID, datasetRevision, applicablePlatformID,
+        case id, name, treeID, treeRevision, datasetID, datasetRevision, applicablePlatformIDs,
              localModelOverrides, researchEnabled, order, updatedAtMilliseconds
         // Pre-dial keys (before 2026-09-23), read only to find the nearest position.
         case modelFileName, researchOverrides
+        // The single platform of before 2026-09-30, read once into the list.
+        case applicablePlatformID
     }
 
 
@@ -76,8 +86,11 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         treeRevision = try container.decode(Int.self, forKey: .treeRevision)
         datasetID = try container.decode(String.self, forKey: .datasetID)
         datasetRevision = try container.decode(Int.self, forKey: .datasetRevision)
-        let decodedPlatformID = (try container.decodeIfPresent(String.self, forKey: .applicablePlatformID)?.trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
-        applicablePlatformID = decodedPlatformID.isEmpty ? nil : decodedPlatformID
+        if let list = try container.decodeIfPresent([String].self, forKey: .applicablePlatformIDs) {
+            applicablePlatformIDs = Self.cleanedPlatformIDs(list)
+        } else {
+            applicablePlatformIDs = Self.cleanedPlatformIDs([try container.decodeIfPresent(String.self, forKey: .applicablePlatformID) ?? ""])
+        }
         var decodedOverrides = try container.decodeIfPresent(LocalModelOverrides.self, forKey: .localModelOverrides)
             ?? LocalModelOverrides()
         // A pre-dial per-type model file becomes that tier's position.
@@ -108,7 +121,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         try container.encode(treeRevision, forKey: .treeRevision)
         try container.encode(datasetID, forKey: .datasetID)
         try container.encode(datasetRevision, forKey: .datasetRevision)
-        try container.encodeIfPresent(applicablePlatformID, forKey: .applicablePlatformID)
+        try container.encode(applicablePlatformIDs, forKey: .applicablePlatformIDs)
         try container.encodeIfPresent(localModelOverrides, forKey: .localModelOverrides)
         try container.encodeIfPresent(researchEnabled, forKey: .researchEnabled)
         try container.encode(order, forKey: .order)

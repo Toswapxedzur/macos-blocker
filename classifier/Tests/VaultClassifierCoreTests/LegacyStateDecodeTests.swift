@@ -54,7 +54,7 @@ final class LegacyStateDecodeTests: XCTestCase {
         XCTAssertEqual(decoded.settings.localLLM.maximumTags, 3)
         XCTAssertEqual(decoded.settings.localLLM.minimumTags, 1)
         let type = try XCTUnwrap(decoded.workspaceCatalog.classifierTypes.first)
-        XCTAssertEqual(type.applicablePlatformID, "youtube")
+        XCTAssertEqual(type.applicablePlatformIDs, ["youtube"])
         XCTAssertEqual(type.localModelOverrides?.strictness, .broadest)
         XCTAssertNoThrow(try decoded.workspaceCatalog.validate())
 
