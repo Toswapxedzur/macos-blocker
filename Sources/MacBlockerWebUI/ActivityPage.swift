@@ -6,6 +6,28 @@ import MacBlockerCore
 /// The Activity scene (activity.js / activity.css, in the editor's one web
 /// view and document) bridged to the ActivityStore: it pushes render-ready
 /// snapshots and applies the scene's range / settings / delete messages.
+/// The classifier's per-platform recording, reached from Activity → Recording
+/// (Mac Vault's classifier is a component this module can't see; injected).
+public struct ActivityCollectionBridge {
+    public var state: () -> [String: Any]
+    public var setRecord: (String, Bool) -> Void
+    /// A platform's Keep (-1 = same as all), or with nil the Keep for all.
+    public var setKeep: (String?, Int) -> Void
+    public var clear: (String) -> Void
+
+    public init(
+        state: @escaping () -> [String: Any],
+        setRecord: @escaping (String, Bool) -> Void,
+        setKeep: @escaping (String?, Int) -> Void,
+        clear: @escaping (String) -> Void
+    ) {
+        self.state = state
+        self.setRecord = setRecord
+        self.setKeep = setKeep
+        self.clear = clear
+    }
+}
+
 @MainActor
 public final class ActivityPage: NSObject, WKScriptMessageHandler {
     public static let shared = ActivityPage()
@@ -22,11 +44,26 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
     /// Saves watched videos' authors and tags from Mac Vault's classifier
     /// (injected; this module can't see it).
     private var recordWatchedFacts: ([String]) -> Void = { _ in }
+    private var collection: ActivityCollectionBridge?
 
     /// Called once at launch with the shared store (see BlockerAppDelegate).
-    public func configure(store: ActivityStore, recordWatchedFacts: @escaping ([String]) -> Void) {
+    public func configure(store: ActivityStore, recordWatchedFacts: @escaping ([String]) -> Void, collection: ActivityCollectionBridge) {
         self.store = store
         self.recordWatchedFacts = recordWatchedFacts
+        self.collection = collection
+    }
+
+    /// What each platform records for the classifier, for Recording (owner
+    /// 2026-09-30: it lives with the rest of what Vault records). Its Keep for
+    /// all platforms is the one "Keep all history".
+    private func collectionState(allKeepDays: Int) -> [String: Any] {
+        guard let collection else { return [:] }
+        var state = collection.state()
+        if let keep = state["keepDays"] as? Int, keep != allKeepDays {
+            collection.setKeep(nil, allKeepDays)
+            state = collection.state()
+        }
+        return state
     }
 
     /// Watched key → { creator, creatorIcon, tags } for the page, from what is
@@ -75,6 +112,19 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
             loaded = true
             if let range = body["range"] as? String { self.range = range }
             pushSnapshot()
+        case "collection-record":
+            if let platformID = body["platformID"] as? String, let record = body["record"] as? Bool {
+                collection?.setRecord(platformID, record)
+            }
+            pushSnapshot()
+        case "collection-keep":
+            if let platformID = body["platformID"] as? String, let days = body["days"] as? Int, days >= -1 {
+                collection?.setKeep(platformID, days)
+            }
+            pushSnapshot()
+        case "collection-clear":
+            if let platformID = body["platformID"] as? String { collection?.clear(platformID) }
+            pushSnapshot()
         case "setSettings":
             applySettings(body)
             pushSnapshot()
@@ -105,6 +155,7 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
               let category = ActivityCategory(rawValue: categoryRaw) else {
             if let retention = body["retentionDays"] as? Int {
                 store.updateSettings { $0.retentionDays = max(0, retention) }
+                collection?.setKeep(nil, max(0, retention))
             }
             return
         }
@@ -142,11 +193,14 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
         guard let data = try? encoder.encode(snapshot), let json = String(data: data, encoding: .utf8) else { return }
         let icons = resolveIcons(snapshot: snapshot, store: store)
         let facts = watchedFacts(keys: snapshot.watched.map(\.key), store: store)
+        let platforms = collectionState(allKeepDays: store.loadSettings().retentionDays)
         guard let iconsData = try? JSONSerialization.data(withJSONObject: icons),
               let iconsJSON = String(data: iconsData, encoding: .utf8),
               let factsData = try? JSONSerialization.data(withJSONObject: facts),
-              let factsJSON = String(data: factsData, encoding: .utf8) else { return }
-        webView.evaluateJavaScript("window.activityApply(\(json), \(iconsJSON), \(factsJSON));", completionHandler: nil)
+              let factsJSON = String(data: factsData, encoding: .utf8),
+              let platformsData = try? JSONSerialization.data(withJSONObject: platforms),
+              let platformsJSON = String(data: platformsData, encoding: .utf8) else { return }
+        webView.evaluateJavaScript("window.activityApply(\(json), \(iconsJSON), \(factsJSON), \(platformsJSON));", completionHandler: nil)
     }
 
     /// The Details panel's data for the pick ("all", "app|<bundle id>",

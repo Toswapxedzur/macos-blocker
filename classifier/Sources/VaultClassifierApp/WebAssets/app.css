@@ -1225,11 +1225,3 @@ textarea:focus {
 .tree-popover .action-row { flex-wrap: wrap; gap: 6px; }
 .tree-canvas-hint { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 8px 12px; color: #64748b; background: #fff; font-size: 11px; }
 .tree-canvas-actions { display: flex; flex: 0 0 auto; gap: 6px; }
-
-/* Collection (owner 2026-09-30): one row per platform. */
-.collection-list { display: grid; gap: 4px; }
-.collection-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; gap: 14px; padding: 8px 4px; }
-.collection-row-all { grid-template-columns: minmax(0, 1fr) auto; }
-.collection-row-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.collection-record, .collection-keep { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; }
-.collection-keep .vui-select { width: auto; }

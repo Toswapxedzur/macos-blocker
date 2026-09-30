@@ -63,7 +63,7 @@
   let selectedLanguage = "en";
   let navigationPanelWidth = navigationWidthRange.fallback;
   let navigationResize = null;
-  const workspaceNames = new Set(["llmAssist", "browserBridge", "knowledge", "collection"]);
+  const workspaceNames = new Set(["llmAssist", "browserBridge", "knowledge"]);
   let lastRenderedMarkup = null;
 
   try {
@@ -390,10 +390,9 @@
       <div class="sidebar-group-title">${tx("navigation.classifierTypes")}</div>
       <div class="classifier-type-nav" data-classifier-type-nav>${typeRows}</div>
       <button class="sidebar-add" type="button" data-action="newType"><span aria-hidden="true">＋</span> ${tx("navigation.newType")}</button>
-      <details class="vui-expand sidebar-more" data-expand="sidebar"${openExpands.has("sidebar") || ["knowledge", "collection", "llmAssist", "trash"].includes(state.workspace) ? " open" : ""}>
+      <details class="vui-expand sidebar-more" data-expand="sidebar"${openExpands.has("sidebar") || ["knowledge", "llmAssist", "trash"].includes(state.workspace) ? " open" : ""}>
         <summary>${tx("navigation.more")}</summary>
         ${navButton("knowledge", "✦", "navigation.knowledge", "navigation.knowledgeMeta")}
-        ${navButton("collection", "▤", "navigation.collection", "navigation.collectionMeta")}
         ${navButton("llmAssist", "◌", "navigation.apiKeys", "navigation.apiKeysMeta")}
         ${trashSection}
       </details>`;
@@ -652,7 +651,7 @@
       const researchOverrideSection = supportsLocalModel ? `<section class="classifier-type-section classifier-research-overrides"><div class="section-header"><div><h3>${tx("bridge.researchOverrides")}</h3><p class="section-copy">${tx("bridge.researchOverridesCopy")}</p></div></div><div data-form-id="${esc(researchFormID)}"><div class="utility-settings-fields">${valueSelectField("bridge.researchMode", "", "researchMode", researchMode, [["inherit", t("bridge.researchMode.inherit")], ["on", t("bridge.researchMode.on")], ["off", t("bridge.researchMode.off")]])}</div><p class="small-copy research-master-note">${tx("bridge.researchMasterGate")}</p><div class="action-row"><button type="button" class="primary" data-action="saveClassifierTypeResearch" data-form="${esc(researchFormID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div></div></section>` : "";
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}">
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}</div>
-        <section class="classifier-type-section classifier-applicable-platform-section"><div class="classifier-applicable-platform-row">${valueSelectField("bridge.applicablePlatform", "", "applicablePlatformID", applicablePlatformID, applicablePlatformOptions)}<p class="small-copy classifier-platform-data-status">${esc(platformDataStatus)}</p></div>${applicablePlatform && !supportsLocalModel ? `<p class="small-copy" data-collection-only-platform-note>${tx("bridge.collectionOnlyCopy")}</p>` : ""}</section>
+        <section class="classifier-type-section classifier-applicable-platform-section"><div class="classifier-applicable-platform-row">${valueSelectField("bridge.applicablePlatform", "", "applicablePlatformID", applicablePlatformID, applicablePlatformOptions)}<p class="small-copy classifier-platform-data-status">${esc(platformDataStatus)}</p></div>${applicablePlatform && !supportsLocalModel ? `<p class="small-copy" data-collection-only-platform-note>${tx("bridge.collectionOnlyCopy")}</p>` : ""}${applicableBinding && !applicableBinding.collectionEnabled ? `<p class="small-copy">${tx("bridge.recordingOff")}</p>` : ""}</section>
         <div class="action-row"><button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div>
         <details class="vui-expand classifier-type-more" data-expand="type-options-${esc(classifierType.id)}"${openExpands.has(`type-options-${classifierType.id}`) ? " open" : ""}><summary>${tx("navigation.options")}</summary>
         ${localModelOverrideSection}
@@ -752,37 +751,11 @@
     box.innerHTML = matches.map((creator) => `<button type="button" class="knowledge-suggestion" data-knowledge-pick="${esc(creator.name)}"><span dir="auto">${esc(creator.name)}</span><span class="knowledge-id">${esc(creator.id)}</span></button>`).join("");
   }
 
-  // Collection (owner 2026-09-30): what each platform records for the
-  // classifier and how long it is kept. One Keep for all platforms; each
-  // platform follows it unless it sets its own. Changes apply at once.
-  const COLLECTION_KEEPS = [[7, "7 days"], [30, "30 days"], [90, "90 days"], [180, "180 days"], [0, "Forever"]];
-  function collectionWorkspace() {
-    const assets = state.assets;
-    const allDays = Number(assets.collectionKeepDays ?? 180);
-    const keepName = (days) => (COLLECTION_KEEPS.find(([value]) => value === days) || [days, `${days} days`])[1];
-    const counts = {};
-    (assets.datasets || []).forEach((dataset) => Object.entries(dataset.entryCounts || {}).forEach(([platformID, count]) => {
-      counts[platformID] = (counts[platformID] || 0) + Number(count);
-    }));
-    const keepSelect = (platformID, value, withFollow) => {
-      const options = (withFollow ? [[-1, t("collection.sameAsAll", { keep: keepName(allDays).toLowerCase() })]] : []).concat(COLLECTION_KEEPS);
-      return `<select class="select-control" data-collection-keep data-platform-id="${esc(platformID)}" aria-label="${tx("collection.keep")}">${options.map(([days, label]) => `<option value="${days}"${days === value ? " selected" : ""}>${esc(label)}</option>`).join("")}</select>`;
-    };
-    const bindings = (assets.bindings || []).slice().sort((a, b) => (b.supportsLocalModel === true) - (a.supportsLocalModel === true) || String(a.name).localeCompare(String(b.name)));
-    const row = (binding) => {
-      const count = counts[binding.id] || 0;
-      const keep = Number(binding.collectionKeepDays ?? -1);
-      return `<div class="collection-row"><div class="collection-row-name"><strong>${esc(binding.name)}</strong><span class="small-copy">${tx(binding.supportsLocalModel ? "collection.classifies" : "collection.notClassified")} · ${tx("collection.entries", { count })}</span></div><label class="collection-record"><input type="checkbox" data-collection-record data-platform-id="${esc(binding.id)}"${binding.collectionEnabled ? " checked" : ""}>${tx("collection.record")}</label><label class="collection-keep"><span>${tx("collection.keep")}</span>${keepSelect(binding.id, keep, true)}</label><button class="danger" data-action="clearCollectedData" data-platform-id="${esc(binding.id)}" data-name="${esc(binding.name)}"${disabled(!count)}>${tx("collection.delete")}</button></div>`;
-    };
-    return `<div class="workspace collection-workspace">${header("collection.title", "collection.copy", t("collection.badge"), "cyan")}<section class="section-card cyan"><div class="collection-row collection-row-all"><div class="collection-row-name"><strong>${tx("collection.allPlatforms")}</strong><span class="small-copy">${tx("collection.allPlatformsHint")}</span></div><label class="collection-keep"><span>${tx("collection.keep")}</span>${keepSelect("", allDays, false)}</label></div></section><section class="section-card collection-list">${bindings.map(row).join("")}</section>${notice(state.issue, "red")}</div>`;
-  }
-
   function workspace() {
     switch (state.workspace) {
       case "llmAssist": return llmAssistWorkspace();
       case "browserBridge": return browserBridgeWorkspace();
       case "knowledge": return knowledgeWorkspace();
-      case "collection": return collectionWorkspace();
       default: return browserBridgeWorkspace();
     }
   }
@@ -1220,18 +1193,6 @@
   }, true);
 
   scope.addEventListener("change", (event) => {
-    const collectionRecord = event.target.closest("input[data-collection-record]");
-    if (collectionRecord) {
-      send("setCollectionEnabled", { platformID: collectionRecord.dataset.platformId, enabled: collectionRecord.checked });
-      return;
-    }
-    const collectionKeep = event.target.closest("select[data-collection-keep]");
-    if (collectionKeep) {
-      const payload = { days: Number(collectionKeep.value) };
-      if (collectionKeep.dataset.platformId) payload.platformID = collectionKeep.dataset.platformId;
-      send("setCollectionKeep", payload);
-      return;
-    }
     const knowledgePlatform = event.target.closest("[data-knowledge-platform]");
     if (knowledgePlatform) {
       knowledgeAddPlatform = knowledgePlatform.value;
