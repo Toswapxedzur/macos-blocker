@@ -136,3 +136,9 @@ rect.is-hot, path.is-hot, circle.is-hot { stroke: #1e3a8a; stroke-width: 1.5; }
 .legend-item { cursor: default; }
 /* Tags: the tag pie above the tag rows. */
 .watched-pie { margin: 0 4px 12px; }
+/* Recording → Platform feeds (the classifier's per-platform recording). */
+.feeds { margin-top: 10px; }
+.feeds-title { font-weight: 700; padding: 6px 4px 0; }
+.feeds-hint { color: var(--vui-muted); font-size: var(--vui-size-small); padding: 2px 4px 4px; margin: 0; }
+.settings-row .name { display: flex; flex-direction: column; gap: 1px; }
+.feeds-meta { color: var(--vui-muted); font-size: var(--vui-size-small); }
