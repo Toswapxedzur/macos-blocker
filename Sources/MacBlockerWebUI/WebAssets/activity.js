@@ -51,6 +51,8 @@
     } catch (_) {}
   }
 
+  var CLICK_AGAIN = "Click again to delete";
+
   // Durations read as the Vault editor's (owner 2026-09-30): 01:20:00.
   function fmt(seconds) {
     var s = Math.max(0, Math.round(seconds));
@@ -140,8 +142,7 @@
   function row(item, seconds, fraction, kind, onPick) {
     var line = el("div", onPick ? "row pickable" : "row");
     if (onPick) line.addEventListener("click", onPick);
-    line.title = item.label || item.key;
-    if (seconds !== null) line.title += " — " + fmt(seconds);
+    line.dataset.hint = (item.label || item.key) + (seconds !== null ? " — " + fmt(seconds) : "");
     var mark = icon(item.key, item.label);
     if (item.color && !iconURI(item.key)) { mark.style.background = item.color; mark.style.color = "#ffffff"; }
     line.appendChild(mark);
@@ -408,12 +409,9 @@
         send({ kind: "setSettings", category: c.key, retentionDays: days });
       }));
       row.appendChild(keep);
-      // No native dialog: the first click asks, a second one within 4 s deletes.
-      var armed = null;
+      // Every delete asks once more (VaultUI.confirmClick, as in every section).
       var del = textButton("Delete history", function () {
-        if (armed) { clearTimeout(armed); armed = null; del.textContent = "Delete history"; send({ kind: "delete", scope: "category", category: c.key }); return; }
-        del.textContent = "Click again to delete";
-        armed = setTimeout(function () { armed = null; del.textContent = "Delete history"; }, 4000);
+        if (VaultUI.confirmClick(del, CLICK_AGAIN)) send({ kind: "delete", scope: "category", category: c.key });
       }, "danger");
       row.appendChild(del);
       box.appendChild(row);
@@ -443,11 +441,8 @@
         send({ kind: "collection-keep", platformID: p.id, days: days });
       }));
       row.appendChild(keep);
-      var armed = null;
       var del = textButton("Delete collected data", function () {
-        if (armed) { clearTimeout(armed); armed = null; del.textContent = "Delete collected data"; send({ kind: "collection-clear", platformID: p.id }); return; }
-        del.textContent = "Click again to delete";
-        armed = setTimeout(function () { armed = null; del.textContent = "Delete collected data"; }, 4000);
+        if (VaultUI.confirmClick(del, CLICK_AGAIN)) send({ kind: "collection-clear", platformID: p.id });
       }, "danger");
       del.disabled = !p.entries;
       row.appendChild(del);
@@ -794,11 +789,11 @@
     actions.appendChild(textButton("Save", function () { editing.message = null; saveGroup(editing, false, "editor"); }));
     actions.appendChild(textButton("Cancel", function () { editing = null; refreshGroups(); }, "secondary"));
     if (editing.id) {
-      var id = editing.id, armed = null;
+      var id = editing.id;
       var del = textButton("Delete group", function () {
-        if (armed) { clearTimeout(armed); editing = null; send({ kind: "group-delete", id: id }); return; }
-        del.textContent = "Click again to delete";
-        armed = setTimeout(function () { armed = null; del.textContent = "Delete group"; }, 4000);
+        if (!VaultUI.confirmClick(del, CLICK_AGAIN)) return;
+        editing = null;
+        send({ kind: "group-delete", id: id });
       }, "danger");
       actions.appendChild(del);
     }
