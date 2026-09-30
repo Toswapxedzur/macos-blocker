@@ -78,7 +78,8 @@ main { flex: 1; min-height: 0; overflow: auto; }
 .group-cards { flex: 1; min-height: 0; display: flex; gap: 10px; overflow-x: auto; overflow-y: hidden; padding-bottom: 4px; }
 .group-card { flex: none; width: 210px; display: flex; flex-direction: column; justify-content: space-between; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--vui-fill); cursor: pointer; }
 .group-card:hover { background: var(--navy-100); }
-.group-card.is-focus { box-shadow: inset 0 0 0 2px var(--navy-700); }
+.group-card.is-focus { background: #dfe6fb; }
+.group-card.is-focus .row-label { color: var(--navy-700); }
 .group-card-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .group-card-name { display: flex; align-items: center; gap: 6px; min-width: 0; font-weight: 700; }
 .group-card .row-kind { background: #ffffff; }
@@ -121,8 +122,9 @@ main { flex: 1; min-height: 0; overflow: auto; }
 .hover-item-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hover-item-time { margin-left: auto; color: var(--vui-muted); flex: none; font-variant-numeric: tabular-nums; }
 /* The part under the pointer. */
-.strip .seg.is-hot { box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.95); z-index: 1; }
-rect.is-hot, path.is-hot, circle.is-hot { stroke: #1e3a8a; stroke-width: 1.5; }
+/* Hovered: lighter, never outlined (no borders). */
+.strip .seg.is-hot { filter: brightness(1.18) saturate(1.1); z-index: 1; }
+rect.is-hot, path.is-hot, circle.is-hot { opacity: 0.72; }
 .legend-item.is-hot .legend-label { color: var(--navy-700); }
 .legend-item { cursor: default; }
 /* Recording → Platform feeds (the classifier's per-platform recording). */
@@ -183,7 +185,10 @@ rect.is-hot, path.is-hot, circle.is-hot { stroke: #1e3a8a; stroke-width: 1.5; }
 .picker-weekday { text-align: center; color: var(--vui-muted); font-size: 10px; font-weight: 700; padding: 2px 0; }
 .picker-day { height: 30px; padding: 0; border-radius: 8px; background: none; color: var(--vui-text); font-size: 12px; font-weight: 400; }
 .picker-day:hover { background: var(--navy-100); filter: none; }
-.picker-day.is-today { font-weight: 700; box-shadow: inset 0 0 0 1px var(--navy-700); }
+/* Today: bold navy with a dot under it (no outline). */
+.picker-day { position: relative; }
+.picker-day.is-today { font-weight: 700; color: var(--navy-700); }
+.picker-day.is-today::after { content: ""; position: absolute; left: 50%; bottom: 3px; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: currentColor; }
 .picker-day.is-chosen { background: var(--navy-700); color: #ffffff; }
 .picker-day:disabled { color: #cbd5e1; background: none; }
 .picker-note { color: var(--vui-muted); font-size: var(--vui-size-small); text-align: center; }
