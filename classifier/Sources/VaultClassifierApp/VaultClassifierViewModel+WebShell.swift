@@ -155,7 +155,7 @@ extension VaultClassifierViewModel {
                     "treeRevision": classifierType.treeRevision,
                     "datasetID": classifierType.datasetID,
                     "datasetRevision": classifierType.datasetRevision,
-                    "applicablePlatformID": classifierType.applicablePlatformID ?? NSNull(),
+                    "applicablePlatformIDs": classifierType.applicablePlatformIDs,
                     // nil / absent = the type follows the global dials and rules.
                     "localModelOverrides": classifierType.localModelOverrides.map { overrides in
                         [
@@ -351,7 +351,7 @@ extension VaultClassifierViewModel {
             case "createClassifierType":
                 createClassifierType(
                     name: try webString(data, key: "name", limit: ClassifierTypeAsset.maximumNameLength),
-                    platformID: try webString(data, key: "platformID", limit: 64)
+                    platformIDs: try webStringArray(data, key: "platformIDs", limit: 16, elementLimit: 64)
                 )
             case "reorderClassifierTypes":
                 reorderClassifierTypes(orderedIDs: try webStringArray(data, key: "orderedIDs", limit: 256, elementLimit: 256))
@@ -359,7 +359,7 @@ extension VaultClassifierViewModel {
                 configureClassifierType(
                     typeID: try webString(data, key: "typeID", limit: 256),
                     name: try webString(data, key: "name", limit: ClassifierTypeAsset.maximumNameLength),
-                    applicablePlatformID: try webString(data, key: "applicablePlatformID", limit: 64)
+                    applicablePlatformIDs: try webStringArray(data, key: "applicablePlatformIDs", limit: 16, elementLimit: 64)
                 )
             case "confirmDeleteClassifierType":
                 deleteClassifierType(typeID: try webString(data, key: "typeID", limit: 256))

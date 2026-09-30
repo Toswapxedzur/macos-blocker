@@ -102,7 +102,7 @@ public final class VaultClassifierPage {
         guard let catalog = model?.localState?.workspaceCatalog else { return [] }
         var seen = Set<String>()
         var nodes: [[String: String]] = []
-        for type in catalog.classifierTypes where type.applicablePlatformID != nil {
+        for type in catalog.classifierTypes where !type.applicablePlatformIDs.isEmpty {
             guard let tree = catalog.trees.first(where: { $0.id == type.treeID }) else { continue }
             for node in tree.nodes where !node.isRetired && seen.insert(node.id).inserted {
                 nodes.append([

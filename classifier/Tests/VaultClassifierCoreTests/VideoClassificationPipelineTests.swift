@@ -31,7 +31,7 @@ final class VideoClassificationPipelineTests: XCTestCase {
     private func makeType() -> ClassifierTypeAsset {
         ClassifierTypeAsset(
             id: "type", name: "YT", treeID: "tree", treeRevision: 1,
-            datasetID: "ds", datasetRevision: 1, applicablePlatformID: "youtube"
+            datasetID: "ds", datasetRevision: 1, applicablePlatformIDs: ["youtube"]
         )
     }
 

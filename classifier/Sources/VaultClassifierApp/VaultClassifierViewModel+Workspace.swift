@@ -70,24 +70,44 @@ extension VaultClassifierViewModel {
         } catch { issue = error.localizedDescription }
     }
 
-    /// Creates a classifier type (a "group") for one platform. It starts with an
-    /// empty tree of its own and follows the global dials, house rules and
-    /// research switch until the person gives it positions of its own.
-    func createClassifierType(name: String, platformID: String) {
+    /// The platforms a type may take (owner 2026-09-30): classifiable ones only,
+    /// each once, none held by another type (a platform belongs to at most one
+    /// type — refused here so the owner sees why, rather than reconciled away).
+    /// Makes sure each has its binding; returns them with the shared dataset.
+    private func claimPlatforms(
+        _ ids: [String],
+        forType typeID: String?,
+        in catalog: inout WorkspaceCatalog
+    ) throws -> (ids: [String], dataset: ClassificationDataset) {
+        let cleaned = ClassifierTypeAsset.cleanedPlatformIDs(ids)
+        var datasetID = catalog.datasets.first?.id
+        for platformID in cleaned {
+            guard CollectionPlatformRegistry.definition(for: platformID)?.supportsLocalModel == true else {
+                throw WebBridgeInputError.invalidChoice("platform")
+            }
+            if catalog.classifierTypes.contains(where: { $0.id != typeID && $0.applicablePlatformIDs.contains(platformID) }) {
+                throw WorkspaceCatalogError.duplicateApplicablePlatform(platformID)
+            }
+            datasetID = try catalog.ensurePlatformBinding(platformID).datasetID
+        }
+        guard let dataset = catalog.datasets.first(where: { $0.id == datasetID }) else {
+            throw WebBridgeInputError.invalidChoice("classifier type")
+        }
+        return (cleaned, dataset)
+    }
+
+    /// Creates a classifier type (a "group") for the chosen platforms. It starts
+    /// with an empty tree of its own and follows the global dials, house rules
+    /// and research switch until the person gives it positions of its own.
+    func createClassifierType(name: String, platformIDs: [String]) {
         do {
             let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleaned.isEmpty,
                   cleaned.count <= ClassifierTypeAsset.maximumNameLength,
-                  CollectionPlatformRegistry.definition(for: platformID) != nil,
                   var catalog = localState?.workspaceCatalog else {
                 throw WebBridgeInputError.invalidChoice("classifier type")
             }
-            // Every platform is collectable by default; make sure its binding (the
-            // shared dataset + collection toggle) exists before binding the type.
-            let binding = try catalog.ensurePlatformBinding(platformID)
-            guard let dataset = catalog.datasets.first(where: { $0.id == binding.datasetID }) else {
-                throw WebBridgeInputError.invalidChoice("classifier type")
-            }
+            let (platforms, dataset) = try claimPlatforms(platformIDs, forType: nil, in: &catalog)
             // Each type owns a fresh, empty tree — its own taxonomy.
             let tree = TagTreeAsset(name: cleaned, nodes: [])
             catalog.trees.append(tree)
@@ -98,7 +118,7 @@ extension VaultClassifierViewModel {
                 treeRevision: tree.revision,
                 datasetID: dataset.id,
                 datasetRevision: dataset.revision,
-                applicablePlatformID: platformID,
+                applicablePlatformIDs: platforms,
                 order: nextOrder
             ))
             try coordinator?.updateWorkspaceCatalog(catalog)
@@ -130,7 +150,7 @@ extension VaultClassifierViewModel {
     func configureClassifierType(
         typeID: String,
         name: String,
-        applicablePlatformID: String
+        applicablePlatformIDs: [String]
     ) {
         do {
             let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -141,22 +161,13 @@ extension VaultClassifierViewModel {
                 throw WebBridgeInputError.invalidChoice("classifier type")
             }
             let existingClassifierType = catalog.classifierTypes[typeIndex]
-            guard CollectionPlatformRegistry.definition(for: applicablePlatformID) != nil else {
-                throw WebBridgeInputError.invalidChoice("classifier type")
-            }
-            // A platform belongs to at most one classifier type. Refuse the
-            // assignment outright — updateWorkspaceCatalog reconciles before it
-            // validates, which would otherwise silently unbind one of the two —
-            // so the owner sees exactly why it was not applied.
-            if catalog.classifierTypes.contains(where: { $0.id != typeID && $0.applicablePlatformID == applicablePlatformID }) {
-                throw WorkspaceCatalogError.duplicateApplicablePlatform(applicablePlatformID)
-            }
-            let selectedBinding = try catalog.ensurePlatformBinding(applicablePlatformID)
-            guard
-                  // A type owns its own tree; the binding only supplies the shared
-                  // dataset and the platform.
-                  let tree = catalog.trees.first(where: { $0.id == existingClassifierType.treeID }),
-                  let dataset = catalog.datasets.first(where: { $0.id == selectedBinding.datasetID }) else {
+            // A platform belongs to at most one classifier type; claimPlatforms
+            // refuses outright — updateWorkspaceCatalog reconciles before it
+            // validates, which would otherwise silently unbind one of the two.
+            let (platforms, dataset) = try claimPlatforms(applicablePlatformIDs, forType: typeID, in: &catalog)
+            // A type owns its own tree; the bindings only supply the shared
+            // dataset and the platforms.
+            guard let tree = catalog.trees.first(where: { $0.id == existingClassifierType.treeID }) else {
                 throw WebBridgeInputError.invalidChoice("classifier type")
             }
             catalog.classifierTypes[typeIndex] = .init(
@@ -166,7 +177,7 @@ extension VaultClassifierViewModel {
                 treeRevision: tree.revision,
                 datasetID: dataset.id,
                 datasetRevision: dataset.revision,
-                applicablePlatformID: selectedBinding.id,
+                applicablePlatformIDs: platforms,
                 localModelOverrides: existingClassifierType.localModelOverrides,
                 researchEnabled: existingClassifierType.researchEnabled,
                 order: catalog.classifierTypes[typeIndex].order
