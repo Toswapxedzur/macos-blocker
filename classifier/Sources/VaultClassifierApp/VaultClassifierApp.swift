@@ -22,7 +22,6 @@ final class VaultClassifierViewModel: ObservableObject {
         case llmAssist
         case browserBridge
         case knowledge
-        case collection
 
         var id: String { rawValue }
     }

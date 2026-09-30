@@ -30,7 +30,7 @@
   var KINDS = [
     { id: "appUsage", key: "app-usage", title: "Apps" },
     { id: "webVisit", key: "web-visit", title: "Websites" },
-    { id: "contentWatched", key: "content-watched", title: "Watched" }
+    { id: "contentWatched", key: "content-watched", title: "Content" }
   ];
   var snapshot = null;
   // Details follows one pick: "all", an app ("app|<bundle id>"), a website
@@ -479,8 +479,13 @@
     return sel;
   }
 
+  var recordingOpen = false; // the Recording expand stays open across updates
+  var platformFeeds = {};    // what each platform records for the classifier
+
   function settingsPanel(s) {
     var box = el("details", "vui-expand settings");
+    box.open = recordingOpen;
+    box.addEventListener("toggle", function () { recordingOpen = box.open; });
     box.appendChild(el("summary", null, "Recording"));
     // The global Keep (owner 2026-09-29); each kind follows it unless set.
     var global = typeof s.retentionDays === "number" ? s.retentionDays : 180;
@@ -514,7 +519,42 @@
       row.appendChild(del);
       box.appendChild(row);
     });
+    box.appendChild(feedsGroup(globalName));
     return box;
+  }
+
+  // Platform feeds (owner 2026-09-30): what the classifier records from each
+  // platform's pages — everything shown, opened or not — to tag it. Only the
+  // platforms that classify need it; each keeps "Keep all history" unless set.
+  function feedsGroup(globalName) {
+    var group = el("div", "feeds");
+    group.appendChild(el("div", "feeds-title", "Platform feeds (for the classifier)"));
+    group.appendChild(el("p", "feeds-hint", "Everything the classifier sees on a platform's pages, opened or not, so it can tag it. A platform that classifies is tagged only while its feed is recorded."));
+    (platformFeeds.platforms || []).forEach(function (p) {
+      var row = el("div", "settings-row");
+      var name = el("span", "name");
+      name.appendChild(el("span", null, p.name));
+      name.appendChild(el("span", "feeds-meta", (p.classifies ? "Classifies" : "Not classified") + " · " + p.entries + (p.entries === 1 ? " entry" : " entries")));
+      row.appendChild(name);
+      var rec = el("label"); var sw = el("input"); sw.type = "checkbox"; sw.checked = !!p.record;
+      sw.addEventListener("change", function () { send({ kind: "collection-record", platformID: p.id, record: sw.checked }); });
+      rec.appendChild(sw); rec.appendChild(document.createTextNode("Record")); row.appendChild(rec);
+      var keep = el("label"); keep.appendChild(document.createTextNode("Keep"));
+      keep.appendChild(keepSelect(typeof p.keepDays === "number" ? p.keepDays : -1, globalName.toLowerCase(), function (days) {
+        send({ kind: "collection-keep", platformID: p.id, days: days });
+      }));
+      row.appendChild(keep);
+      var armed = null;
+      var del = textButton("Delete collected data", function () {
+        if (armed) { clearTimeout(armed); armed = null; del.textContent = "Delete collected data"; send({ kind: "collection-clear", platformID: p.id }); return; }
+        del.textContent = "Click again to delete";
+        armed = setTimeout(function () { armed = null; del.textContent = "Delete collected data"; }, 4000);
+      }, "danger");
+      del.disabled = !p.entries;
+      row.appendChild(del);
+      group.appendChild(row);
+    });
+    return group;
   }
 
   // ── Details: the picked item's 180-day map, hour-by-hour bars, and the pie ──
@@ -1236,8 +1276,9 @@
     page.appendChild(recording);
   }
 
-  window.activityApply = function (data, iconMap, facts) {
+  window.activityApply = function (data, iconMap, facts, feeds) {
     snapshot = data;
+    platformFeeds = feeds || {};
     icons = iconMap || {};
     watchedFacts = facts || {};
     // A watched video, and its author's row, show the author's icon.

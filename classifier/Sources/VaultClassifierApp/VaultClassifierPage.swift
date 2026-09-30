@@ -95,6 +95,56 @@ public final class VaultClassifierPage {
         return model?.watchedAuthors(keys: keys) ?? [:]
     }
 
+    // MARK: What each platform records for the classifier (shown in Activity → Recording)
+
+    /// The platforms' recording: `{ keepDays, platforms: [{ id, name, classifies,
+    /// record, keepDays (-1 = same as all), entries }] }`.
+    public func collectionState() -> [String: Any] {
+        start()
+        guard let catalog = model?.localState?.workspaceCatalog else { return [:] }
+        var counts: [String: Int] = [:]
+        for dataset in catalog.datasets {
+            for entry in dataset.collectedEntries { counts[entry.platformID, default: 0] += 1 }
+        }
+        let platforms = catalog.bindings
+            .sorted { lhs, rhs in
+                let l = CollectionPlatformRegistry.definition(for: lhs.id)?.supportsLocalModel == true
+                let r = CollectionPlatformRegistry.definition(for: rhs.id)?.supportsLocalModel == true
+                return l != r ? l : lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+            .map { binding -> [String: Any] in
+                [
+                    "id": binding.id,
+                    "name": binding.name,
+                    "classifies": CollectionPlatformRegistry.definition(for: binding.id)?.supportsLocalModel == true,
+                    "record": binding.collectionEnabled,
+                    "keepDays": binding.collectionKeepDays,
+                    "entries": counts[binding.id] ?? 0,
+                ]
+            }
+        return ["keepDays": catalog.collectionKeepDays, "platforms": platforms]
+    }
+
+    public func setCollectionRecord(platformID: String, record: Bool) {
+        start()
+        model?.setCollectionEnabled(platformID: platformID, enabled: record)
+        model?.onWebStateChange?()
+    }
+
+    /// A platform's Keep (-1 = same as all), or with nil the Keep for all.
+    public func setCollectionKeep(platformID: String?, days: Int) {
+        start()
+        model?.setCollectionKeep(platformID: platformID, days: days)
+        model?.onWebStateChange?()
+    }
+
+    /// Moves a platform's collected entries to the trash (restorable for a day).
+    public func clearCollectedData(platformID: String) {
+        start()
+        model?.clearCollectedData(platformID: platformID)
+        model?.onWebStateChange?()
+    }
+
     /// Runs one page action with the page's own validation; returns the issue
     /// the page would show (nil = success) and whether it would re-render.
     public func mcpPerform(action: String, data: [String: Any]) -> ClassifierMCPActionOutcome {
