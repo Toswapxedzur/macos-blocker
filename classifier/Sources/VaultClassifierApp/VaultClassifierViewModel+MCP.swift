@@ -54,6 +54,7 @@ public enum ClassifierWebActionCatalog {
         .init(name: "deleteModelFile", keys: ["fileName"], summary: "Delete a downloaded model file."),
         .init(name: "deleteKnowledgeEntry", keys: ["id"], summary: "Delete a knowledge entry (creator or term)."),
         .init(name: "addKnowledgeTerm", keys: ["subject", "meaning"], summary: "Add a term (meaning may be empty to look it up through research)."),
+        .init(name: "addKnowledgeCreator", keys: ["platformID", "creator", "meaning"], summary: "Add knowledge about a creator (youtube, bilibili, reddit, twitter): creator = a link, @handle, r/name or a name already seen; blank meaning = look it up (needs research on)."),
         .init(name: "editKnowledgeEntry", keys: ["id", "meaning"], summary: "Edit a knowledge entry's one sentence."),
         .init(name: "retryFailedResearch", keys: [], summary: "Clear research cooldowns and re-queue failed subjects."),
         .init(name: "saveResearchSettings", keys: ["enabled", "llmProviderProfileID", "llmModelIdentifier"], summary: "Research on/off and the provider profile + model that answers."),

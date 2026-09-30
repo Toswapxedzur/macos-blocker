@@ -53,14 +53,28 @@ extension LocalClassifierCoordinator {
         lock.lock()
         defer { lock.unlock() }
         state.workspaceCatalog.upsertKnowledgeEntry(
-            KnowledgeEntry(kind: .term, subject: subject, meaning: String(meaning.prefix(KnowledgeEntry.maximumMeaningLength))))
+            KnowledgeEntry(kind: .term, subject: subject, meaning: String(meaning.prefix(KnowledgeEntry.maximumMeaningLength)), writtenByUser: true))
         try stateFile.save(state)
         return true
     }
 
-    /// Edits the grounded description of an existing knowledge entry, keeping its
-    /// kind, subject, id, and sources. A creator description edited here steers
-    /// that creator's low-confidence classifications.
+    /// Stores what the USER wrote about a creator (Knowledge → add a creator):
+    /// `creatorID` is the platform's creator id (see `CreatorReference`). It is
+    /// kept as written — a creator with a description is never looked up again.
+    public func addKnowledgeCreator(creatorID: String, meaning: String) throws {
+        let meaning = meaning.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !meaning.isEmpty else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        state.workspaceCatalog.upsertKnowledgeEntry(
+            KnowledgeEntry(kind: .creator, subject: creatorID, meaning: meaning, writtenByUser: true))
+        try stateFile.save(state)
+    }
+
+    /// Edits the description of an existing knowledge entry, keeping its kind,
+    /// subject and id; it counts as written by the user from then on. A creator
+    /// description edited here steers that creator's low-confidence
+    /// classifications.
     @discardableResult
     public func updateKnowledgeEntryMeaning(id: String, meaning: String) throws -> Bool {
         lock.lock()
@@ -74,7 +88,7 @@ extension LocalClassifierCoordinator {
                 subject: existing.subject,
                 meaning: trimmed,
                 contextTagHints: existing.contextTagHints,
-                sourceURLs: existing.sourceURLs,
+                writtenByUser: true,
                 createdAtMilliseconds: existing.createdAtMilliseconds,
                 updatedAtMilliseconds: WorkspaceCatalog.now()
             )

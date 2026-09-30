@@ -68,15 +68,15 @@ public enum GroundedGenerationProtocol {
         return .init(plan: plan, operation: .generateText, prompt: userPrompt, body: body)
     }
 
-    /// Grounded text + best-effort source URLs. Text reuses the shared,
-    /// format-aware parser; sources are extracted per family and may be empty
-    /// (the distilled meaning is still stored either way).
+    /// Grounded text (the shared, format-aware parser). The provider's
+    /// citation links are not kept: they are opaque redirects that expire, and
+    /// nothing reads them (owner 2026-09-30).
     public static func parseGroundedGeneration(
         _ data: Data,
         format: ProviderRequestBodyFormat
-    ) throws -> (text: String, sourceURLs: [String], usage: ProviderTestUsage) {
+    ) throws -> (text: String, usage: ProviderTestUsage) {
         let parsed = try ProviderTestProtocol.parseResponse(data, format: format, operation: .generateText)
-        return (parsed.content, extractSourceURLs(data, format: format), parsed.usage)
+        return (parsed.content, parsed.usage)
     }
 
     // MARK: - Request bodies (generation + native search tool)
@@ -120,34 +120,5 @@ public enum GroundedGenerationProtocol {
             throw ProviderTestProtocolError.unsupportedProvider
         }
         return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
-    }
-
-    // MARK: - Best-effort source extraction
-
-    static func extractSourceURLs(_ data: Data, format: ProviderRequestBodyFormat) -> [String] {
-        guard let root = try? JSONSerialization.jsonObject(with: data) else { return [] }
-        var urls: [String] = []
-        var seen = Set<String>()
-        func add(_ value: Any?) {
-            guard let string = value as? String,
-                  let url = URL(string: string),
-                  let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
-                  seen.insert(string).inserted else { return }
-            urls.append(string)
-        }
-        // A tolerant recursive scan for the citation URL keys each family uses
-        // (Gemini groundingChunks[].web.uri, OpenAI url_citation.url, Anthropic
-        // web_search results .url). Scanning avoids brittle path assumptions
-        // across provider response revisions.
-        func walk(_ node: Any) {
-            if let dict = node as? [String: Any] {
-                for key in ["uri", "url"] { add(dict[key]) }
-                for value in dict.values { walk(value) }
-            } else if let array = node as? [Any] {
-                for value in array { walk(value) }
-            }
-        }
-        walk(root)
-        return Array(urls.prefix(16))
     }
 }

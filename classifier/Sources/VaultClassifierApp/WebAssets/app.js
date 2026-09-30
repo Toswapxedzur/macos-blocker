@@ -687,28 +687,76 @@
       <div class="empty">${tx(classifierTypes.length ? "bridge.selectType" : "bridge.emptyTypes")}</div>${notice(state.issue, "red")}</div>`;
   }
 
+  // Knowledge (owner 2026-09-30): terms are shared by every platform; known
+  // creators are listed per platform, each with its name and picture. What
+  // you write is marked "By you", lookups "Looked up". No source links.
+  const KNOWLEDGE_PLATFORMS = [["youtube", "YouTube"], ["bilibili", "Bilibili"], ["reddit", "Reddit"], ["twitter", "X"]];
+  let knowledgeQuery = "";
+  let knowledgeAddPlatform = "youtube";
+
   function knowledgeWorkspace() {
     const knowledge = state.assets?.knowledge || { creators: [], terms: [] };
     const creators = knowledge.creators || [];
     const terms = knowledge.terms || [];
 
-    const entryCard = (entry, kind, index) => {
-      const formID = `knowledge-edit-${kind}-${index}`;
-      const sources = Array.isArray(entry.sourceURLs) ? entry.sourceURLs : [];
-      const sourceLine = sources.length
-        ? `<div class="knowledge-sources">${sources.map((url) => `<a href="${esc(url)}" target="_blank" rel="noreferrer noopener">${esc(url)}</a>`).join("")}</div>`
+    const origin = (entry) => statusPill(tx(entry.writtenByUser ? "knowledge.byYou" : "knowledge.lookedUp"), entry.writtenByUser ? "gold" : "cyan");
+    const entryCard = (entry, kind) => {
+      const formID = `knowledge-edit-${entry.id}`;
+      const name = kind === "creator" ? (entry.name || entry.subject) : entry.subject;
+      const face = kind === "creator"
+        ? (entry.icon ? `<img class="knowledge-face" src="${esc(entry.icon)}" alt="" aria-hidden="true" loading="lazy">` : `<span class="knowledge-face knowledge-face-empty" aria-hidden="true">${esc((name || "?").trim().charAt(0).toUpperCase())}</span>`)
         : "";
-      const badge = kind === "creator" ? statusPill(tx("knowledge.permanent"), "cyan") : "";
-      return `<article class="knowledge-card" data-form-id="${formID}"><div class="knowledge-card-head"><span class="knowledge-subject" dir="auto">${esc(entry.subject)}</span>${badge}</div><label class="field wide"><span class="field-label">${tx("knowledge.description")}</span><textarea data-field="meaning" rows="3" maxlength="2000">${esc(entry.meaning || "")}</textarea></label>${sourceLine}<div class="action-row"><button class="primary" data-action="editKnowledgeEntry" data-form="${formID}" data-id="${esc(entry.id)}">${tx("common.save")}</button><button class="danger" data-action="deleteKnowledgeEntry" data-id="${esc(entry.id)}">${tx("knowledge.delete")}</button></div></article>`;
+      const idLine = kind === "creator" ? `<span class="knowledge-id" dir="auto">${esc(entry.subject)}</span>` : "";
+      const search = `${name} ${entry.subject} ${entry.meaning || ""}`.toLowerCase();
+      return `<article class="knowledge-card" data-form-id="${esc(formID)}" data-knowledge-search="${esc(search)}"><div class="knowledge-card-head">${face}<span class="knowledge-name"><span class="knowledge-subject" dir="auto">${esc(name)}</span>${idLine}</span>${origin(entry)}</div><label class="field wide"><span class="field-label">${tx("knowledge.description")}</span><textarea data-field="meaning" rows="3" maxlength="2000">${esc(entry.meaning || "")}</textarea></label><div class="action-row"><button class="primary" data-action="editKnowledgeEntry" data-form="${esc(formID)}" data-id="${esc(entry.id)}">${tx("common.save")}</button><button class="danger" data-action="deleteKnowledgeEntry" data-id="${esc(entry.id)}">${tx("knowledge.delete")}</button></div></article>`;
     };
 
-    const group = (titleKey, hintKey, items, kind) => `<section class="knowledge-group"><div class="section-header"><div><h3>${tx(titleKey)} <span class="knowledge-count">${items.length}</span></h3><p class="section-copy">${tx(hintKey)}</p></div></div>${items.length ? `<div class="knowledge-list">${items.map((entry, index) => entryCard(entry, kind, index)).join("")}</div>` : `<div class="empty">${tx("knowledge.empty")}</div>`}</section>`;
+    const group = (title, hint, items, kind) => `<section class="knowledge-group" data-knowledge-group><div class="section-header"><div><h3>${esc(title)} <span class="knowledge-count" data-knowledge-count>${items.length}</span></h3>${hint ? `<p class="section-copy">${esc(hint)}</p>` : ""}</div></div>${items.length ? `<div class="knowledge-list">${items.map((entry) => entryCard(entry, kind)).join("")}</div>` : `<div class="empty">${tx("knowledge.empty")}</div>`}</section>`;
 
     // Terms are only ever added here, by the user: name the term, and either
     // write what it means or leave that blank to have it looked up.
     const addTerm = `<section class="knowledge-group" data-form-id="knowledge-add-term"><div class="section-header"><div><h3>${tx("knowledge.addTerm")}</h3><p class="section-copy">${tx("knowledge.addTermHint")}</p></div></div><div class="form-stack">${field("knowledge.termSubject", "knowledge.termSubjectHint", "subject", "", "text", 'maxlength="120"')}<label class="field wide"><span class="field-label">${tx("knowledge.description")}</span><textarea data-field="meaning" rows="2" maxlength="2000" placeholder="${tx("knowledge.termMeaningPlaceholder")}"></textarea></label><div class="action-row"><button class="primary" data-action="addKnowledgeTerm" data-form="knowledge-add-term">${tx("knowledge.addTermButton")}</button></div></div></section>`;
 
-    return `<div class="workspace knowledge-workspace">${header("knowledge.title", "knowledge.copy", tx("knowledge.badge"), "gold")}<div class="notice navy">${tx("knowledge.disclosure")}</div>${notice(state.notices?.knowledge, "navy")}${notice(state.issue, "red")}${addTerm}${group("knowledge.terms", "knowledge.termsHint", terms, "term")}${group("knowledge.creators", "knowledge.creatorsHint", creators, "creator")}</div>`;
+    // A creator: pick the platform, then a link, @handle, r/name or the name of
+    // one already seen (suggested as you type).
+    const addCreator = `<section class="knowledge-group" data-form-id="knowledge-add-creator"><div class="section-header"><div><h3>${tx("knowledge.addCreator")}</h3><p class="section-copy">${tx("knowledge.addCreatorHint")}</p></div></div><div class="form-stack">${valueSelectField("knowledge.platform", "", "platformID", knowledgeAddPlatform, KNOWLEDGE_PLATFORMS, "data-knowledge-platform")}<label class="field"><span class="field-label">${tx("knowledge.creator")}<span class="field-hint"> · ${tx("knowledge.creatorHint")}</span></span><input type="text" data-field="creator" data-knowledge-creator maxlength="512" autocomplete="off" spellcheck="false"></label><div class="knowledge-suggestions" data-knowledge-suggestions></div><label class="field wide"><span class="field-label">${tx("knowledge.description")}</span><textarea data-field="meaning" rows="2" maxlength="2000" placeholder="${tx("knowledge.creatorMeaningPlaceholder")}"></textarea></label><div class="action-row"><button class="primary" data-action="addKnowledgeCreator" data-form="knowledge-add-creator">${tx("knowledge.addCreatorButton")}</button></div></div></section>`;
+
+    const searchBox = `<label class="field knowledge-search"><span class="field-label">${tx("knowledge.search")}</span><input type="search" data-knowledge-search-input value="${esc(knowledgeQuery)}" autocomplete="off" spellcheck="false"></label>`;
+    const creatorGroups = KNOWLEDGE_PLATFORMS.map(([platformID, label]) =>
+      group(t("knowledge.creatorsOn", { platform: label }), "", creators.filter((entry) => entry.platformID === platformID), "creator")).join("");
+
+    return `<div class="workspace knowledge-workspace">${header("knowledge.title", "knowledge.copy", tx("knowledge.badge"), "gold")}<div class="notice navy">${tx("knowledge.disclosure")}</div>${notice(state.notices?.knowledge, "navy")}${notice(state.issue, "red")}${addTerm}${addCreator}${searchBox}${group(t("knowledge.terms"), t("knowledge.termsHint"), terms, "term")}<p class="small-copy">${tx("knowledge.creatorsHint")}</p>${creatorGroups}</div>`;
+  }
+
+  // Show only the cards matching the search (no re-render: nothing is lost
+  // while typing) and keep each group's count honest.
+  function applyKnowledgeSearch() {
+    const query = knowledgeQuery.trim().toLowerCase();
+    root.querySelectorAll("[data-knowledge-group]").forEach((groupElement) => {
+      let shown = 0;
+      groupElement.querySelectorAll("[data-knowledge-search]").forEach((card) => {
+        const match = !query || card.dataset.knowledgeSearch.includes(query);
+        card.hidden = !match;
+        if (match) shown += 1;
+      });
+      const count = groupElement.querySelector("[data-knowledge-count]");
+      if (count && groupElement.querySelector("[data-knowledge-search]")) count.textContent = String(shown);
+    });
+  }
+
+  // "Add a creator" suggestions: creators already collected on the chosen
+  // platform whose name contains what is typed.
+  function showKnowledgeSuggestions(input) {
+    const box = root.querySelector("[data-knowledge-suggestions]");
+    if (!box) return;
+    const query = input.value.trim().toLowerCase();
+    const known = (state.assets?.knowledge?.knownCreators || []).filter((creator) => creator.platformID === knowledgeAddPlatform);
+    const rank = (name) => (name.startsWith(query) ? 0 : name.split(/\s+/).some((word) => word.startsWith(query)) ? 1 : 2);
+    const matches = query.length < 2 ? [] : known
+      .filter((creator) => creator.name.toLowerCase().includes(query))
+      .sort((a, b) => rank(a.name.toLowerCase()) - rank(b.name.toLowerCase()))
+      .slice(0, 6);
+    box.innerHTML = matches.map((creator) => `<button type="button" class="knowledge-suggestion" data-knowledge-pick="${esc(creator.name)}"><span dir="auto">${esc(creator.name)}</span><span class="knowledge-id">${esc(creator.id)}</span></button>`).join("");
   }
 
   function workspace() {
@@ -788,6 +836,17 @@
   }
 
   scope.addEventListener("input", (event) => {
+    const knowledgeSearch = event.target.closest("input[data-knowledge-search-input]");
+    if (knowledgeSearch) {
+      knowledgeQuery = knowledgeSearch.value;
+      applyKnowledgeSearch();
+      return;
+    }
+    const creatorInput = event.target.closest("input[data-knowledge-creator]");
+    if (creatorInput) {
+      showKnowledgeSuggestions(creatorInput);
+      return;
+    }
     const deletionInput = event.target.closest("[data-deletion-name-input]");
     if (deletionInput) {
       const confirmButton = root.querySelector('[data-action="confirmPendingDeletion"]');
@@ -904,6 +963,7 @@
     lastRenderedMarkup = markup;
     applyApplicablePlatformCapabilities();
     bindTreeMapWheel();
+    applyKnowledgeSearch();
     window.requestAnimationFrame(() => {
       applyNavigationPanelWidth();
       restoreEditorViewportPosition();
@@ -923,6 +983,13 @@
 
   scope.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-action]");
+    const pick = event.target.closest("button[data-knowledge-pick]");
+    if (pick) {
+      const creatorInput = root.querySelector("input[data-knowledge-creator]");
+      if (creatorInput) creatorInput.value = pick.dataset.knowledgePick;
+      pick.parentElement.innerHTML = "";
+      return;
+    }
     if (!button) {
       const map = event.target.closest("[data-tree-map]");
       if (map && !event.target.closest(".tree-map-node, [data-tree-popover]")) {
@@ -1134,6 +1201,13 @@
   }, true);
 
   scope.addEventListener("change", (event) => {
+    const knowledgePlatform = event.target.closest("[data-knowledge-platform]");
+    if (knowledgePlatform) {
+      knowledgeAddPlatform = knowledgePlatform.value;
+      const creatorInput = root.querySelector("input[data-knowledge-creator]");
+      if (creatorInput) showKnowledgeSuggestions(creatorInput);
+      return;
+    }
     const languageControl = event.target.closest("[data-language-selection]");
     if (languageControl) {
       if (!languageChoices.some(([identifier]) => identifier === languageControl.value)) return;

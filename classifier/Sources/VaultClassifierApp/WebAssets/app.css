@@ -381,20 +381,23 @@ h3 { font-size: 13px; }
   display: grid;
   gap: 8px;
   padding: 12px 14px;
-  border: 1px solid var(--line);
+  border: none;
   border-radius: 12px;
   background: #fff;
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.06);
 }
-.knowledge-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
+.knowledge-card[hidden] { display: none; }
+.knowledge-card-head { display: flex; align-items: center; gap: 10px; }
+.knowledge-face { width: 28px; height: 28px; flex: none; border-radius: 50%; object-fit: cover; }
+.knowledge-face-empty { display: inline-flex; align-items: center; justify-content: center; background: var(--navy-100); color: var(--navy-700); font-weight: 700; font-size: 12px; }
+.knowledge-name { display: flex; flex-direction: column; min-width: 0; margin-right: auto; }
 .knowledge-subject { font-weight: 700; overflow-wrap: anywhere; }
+.knowledge-id { color: #64748b; font-size: 11px; overflow-wrap: anywhere; }
 .knowledge-card textarea { min-height: 60px; resize: vertical; }
-.knowledge-sources { display: grid; gap: 2px; font-size: 12px; }
-.knowledge-sources a { color: var(--accent, #2563eb); overflow-wrap: anywhere; }
+.knowledge-suggestions { display: flex; flex-direction: column; gap: 2px; }
+.knowledge-suggestions:empty { display: none; }
+.knowledge-suggestion { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; border-radius: 8px; background: #fff; color: #1f2937; font-size: 12px; font-weight: 400; text-align: left; }
+.knowledge-suggestion:hover { background: var(--navy-100); filter: none; }
 
 .utility-toggles {
   display: grid;
@@ -1081,14 +1084,6 @@ textarea:focus {
 .classifier-name-row,
 .classifier-type-section {
   border: none;
-}
-
-.knowledge-card {
-  border: none;
-}
-
-.knowledge-card {
-  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.06);
 }
 
 .trash-tombstone {

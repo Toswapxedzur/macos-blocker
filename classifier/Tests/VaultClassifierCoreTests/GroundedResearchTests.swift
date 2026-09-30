@@ -62,7 +62,6 @@ final class GroundedResearchTests: XCTestCase {
         XCTAssertEqual(result.knowledge.kind, .term)
         XCTAssertEqual(result.knowledge.subject, "HermitCraft")
         XCTAssertEqual(result.knowledge.contextTagHints, [])
-        XCTAssertEqual(result.knowledge.sourceURLs, ["https://example.test/hermitcraft"])
         XCTAssertEqual(result.chargedTokenCount, 30)
         XCTAssertLessThanOrEqual(result.knowledge.meaning.count, KnowledgeEntry.maximumMeaningLength)
 

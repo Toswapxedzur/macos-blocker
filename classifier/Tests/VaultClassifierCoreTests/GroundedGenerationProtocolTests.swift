@@ -140,24 +140,17 @@ final class GroundedGenerationProtocolTests: XCTestCase {
 
     // MARK: - Response parsing (text + best-effort sources)
 
-    func testParsesGeminiGroundedTextAndSourceURLs() throws {
+    func testParsesGeminiGroundedText() throws {
         let data = Data(#"""
         {"candidates":[{"content":{"parts":[{"text":"HermitCraft is a collaborative Minecraft server."}]},"groundingMetadata":{"groundingChunks":[{"web":{"uri":"https://example.test/hc","title":"HC"}},{"web":{"uri":"https://example.test/hc2"}}]}}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":8}}
         """#.utf8)
         let parsed = try GroundedGenerationProtocol.parseGroundedGeneration(data, format: .geminiGenerateContent)
         XCTAssertTrue(parsed.text.contains("collaborative Minecraft server"))
-        XCTAssertEqual(parsed.sourceURLs, ["https://example.test/hc", "https://example.test/hc2"])
-    }
-
-    func testSourceExtractionSkipsNonHTTPAndDeduplicates() throws {
-        let data = Data(#"{"a":{"url":"https://example.test/x"},"b":[{"uri":"https://example.test/x"},{"uri":"ftp://example.test/y"}]}"#.utf8)
-        let urls = GroundedGenerationProtocol.extractSourceURLs(data, format: .geminiGenerateContent)
-        XCTAssertEqual(urls, ["https://example.test/x"])
     }
 
     // MARK: - Executor provider-grounding branch (single call, sources kept)
 
-    func testExecutorProviderGroundingUsesSingleCallAndKeepsSources() async throws {
+    func testExecutorProviderGroundingUsesSingleCall() async throws {
         let grounded = Data(#"""
         {"candidates":[{"content":{"parts":[{"text":"HermitCraft is a collaborative Minecraft survival series."}]},"groundingMetadata":{"groundingChunks":[{"web":{"uri":"https://example.test/hc"}}]}}],"usageMetadata":{"promptTokenCount":12,"candidatesTokenCount":9}}
         """#.utf8)
@@ -176,7 +169,6 @@ final class GroundedGenerationProtocolTests: XCTestCase {
         XCTAssertEqual(result.knowledge.subject, "HermitCraft")
         XCTAssertTrue(result.knowledge.meaning.contains("collaborative Minecraft"))
         XCTAssertEqual(result.knowledge.contextTagHints, [])
-        XCTAssertEqual(result.knowledge.sourceURLs, ["https://example.test/hc"])
 
         let outbound = String(decoding: try XCTUnwrap(http.capturedRequests.first?.httpBody), as: UTF8.self)
         XCTAssertTrue(outbound.contains("google_search"))

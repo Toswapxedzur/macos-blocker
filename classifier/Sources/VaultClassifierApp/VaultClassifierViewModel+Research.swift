@@ -150,6 +150,37 @@ extension VaultClassifierViewModel {
         }
     }
 
+    /// Knowledge → "Add a creator": the creator named by a link, an @handle,
+    /// r/name or a name the classifier has seen on `platformID`. With a
+    /// description it is stored as written; without one it is looked up (when a
+    /// type on that platform has research on) and appears when the lookup lands.
+    func addKnowledgeCreator(platformID: String, creator: String, meaning: String) {
+        guard let coordinator else { return }
+        knowledgeNotice = nil
+        let known = coordinator.snapshot().workspaceCatalog.datasets.flatMap(\.collectedEntries)
+        guard CreatorReference.platforms.contains(platformID),
+              let creatorID = CreatorReference.creatorID(platformID: platformID, input: creator, known: known) else {
+            issue = "That creator was not recognised. Paste a link to their page, their @handle (r/name on Reddit), or the exact name of a creator already seen here."
+            return
+        }
+        if !meaning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            do {
+                try coordinator.addKnowledgeCreator(creatorID: creatorID, meaning: meaning)
+                issue = nil
+                refreshLocalState()
+            } catch {
+                issue = error.localizedDescription
+            }
+            return
+        }
+        Task { @MainActor [weak self] in
+            let queued = await coordinator.researchCreator(creatorID: creatorID, platformID: platformID)
+            self?.knowledgeNotice = queued ? "Looking up this creator. It appears under Known creators when the lookup finishes." : nil
+            self?.issue = queued ? nil : "Could not look this creator up: research is off for this platform, or it is already queued. You can write the description yourself instead."
+            self?.onWebStateChange?()
+        }
+    }
+
     /// "Retry failed subjects now": drop every persisted cooldown, then re-queue
     /// the subjects that failed this session.
     func retryFailedResearch() {

@@ -139,7 +139,6 @@ public enum KnowledgeEntryKind: String, Codable, Sendable, CaseIterable {
 public struct KnowledgeEntry: Codable, Equatable, Sendable, Identifiable {
     public static let maximumMeaningLength = 2_000
     public static let maximumContextTagHints = 16
-    public static let maximumSourceURLs = 8
 
     public var id: String
     public var kind: KnowledgeEntryKind
@@ -149,7 +148,8 @@ public struct KnowledgeEntry: Codable, Equatable, Sendable, Identifiable {
     public var meaning: String
     /// Non-authoritative tag hints (the model may ignore them).
     public var contextTagHints: [String]
-    public var sourceURLs: [String]
+    /// Written (or last edited) by the user, not looked up.
+    public var writtenByUser: Bool
     public var createdAtMilliseconds: Int64
     public var updatedAtMilliseconds: Int64
 
@@ -158,7 +158,7 @@ public struct KnowledgeEntry: Codable, Equatable, Sendable, Identifiable {
         subject: String,
         meaning: String,
         contextTagHints: [String] = [],
-        sourceURLs: [String] = [],
+        writtenByUser: Bool = false,
         createdAtMilliseconds: Int64 = WorkspaceCatalog.now(),
         updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
     ) {
@@ -167,7 +167,7 @@ public struct KnowledgeEntry: Codable, Equatable, Sendable, Identifiable {
         self.subject = subject
         self.meaning = String(meaning.prefix(Self.maximumMeaningLength))
         self.contextTagHints = Array(contextTagHints.prefix(Self.maximumContextTagHints))
-        self.sourceURLs = Array(sourceURLs.prefix(Self.maximumSourceURLs))
+        self.writtenByUser = writtenByUser
         self.createdAtMilliseconds = createdAtMilliseconds
         self.updatedAtMilliseconds = updatedAtMilliseconds
     }
@@ -266,7 +266,7 @@ public struct KnowledgeEntry: Codable, Equatable, Sendable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, kind, subject, meaning, contextTagHints, sourceURLs,
+        case id, kind, subject, meaning, contextTagHints, writtenByUser,
              createdAtMilliseconds, updatedAtMilliseconds
     }
 
@@ -277,7 +277,7 @@ public struct KnowledgeEntry: Codable, Equatable, Sendable, Identifiable {
         subject = try container.decode(String.self, forKey: .subject)
         meaning = String((try container.decodeIfPresent(String.self, forKey: .meaning) ?? "").prefix(Self.maximumMeaningLength))
         contextTagHints = Array((try container.decodeIfPresent([String].self, forKey: .contextTagHints) ?? []).prefix(Self.maximumContextTagHints))
-        sourceURLs = Array((try container.decodeIfPresent([String].self, forKey: .sourceURLs) ?? []).prefix(Self.maximumSourceURLs))
+        writtenByUser = try container.decodeIfPresent(Bool.self, forKey: .writtenByUser) ?? false
         createdAtMilliseconds = try container.decode(Int64.self, forKey: .createdAtMilliseconds)
         updatedAtMilliseconds = try container.decode(Int64.self, forKey: .updatedAtMilliseconds)
     }
