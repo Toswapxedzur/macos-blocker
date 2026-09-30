@@ -132,8 +132,8 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     public var creatorResearchAccumulators: [CreatorResearchAccumulator]
     /// Days to keep collected entries on every platform that doesn't set its
     /// own Keep (`PlatformBinding.collectionKeepDays`); 0 = forever. Default
-    /// 180 (owner 2026-09-30).
-    public var collectionKeepDays: Int = 180
+    /// 365 (owner 2026-09-30; it follows Activity's "Keep all history").
+    public var collectionKeepDays: Int = 365
 
     public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], bindings: [PlatformBinding] = [], classifierTypes: [ClassifierTypeAsset] = [], tokenUsage: [TokenUsageRecord] = [], providerRequestRecords: [ProviderRequestRecord] = [], providerProfiles: [APIKeyProviderProfile] = [], trash: [TrashedEntry] = [], videoClassifications: [VideoClassification] = [], knowledgeEntries: [KnowledgeEntry] = [], creatorKnowledge: [KnowledgeEntry] = [], researchAttempts: [ResearchAttemptRecord] = [], correctionExamples: [CorrectionExample] = [], creatorHistograms: [CreatorTagHistogram] = [], creatorResearchAccumulators: [CreatorResearchAccumulator] = []) {
         self.trees = trees
@@ -352,7 +352,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         // Rows of the retired sample-list rule decode with an empty score: drop them.
         creatorResearchAccumulators = (try container.decodeIfPresent([CreatorResearchAccumulator].self, forKey: .creatorResearchAccumulators) ?? [])
             .filter { $0.score > 0 }
-        collectionKeepDays = max(0, try container.decodeIfPresent(Int.self, forKey: .collectionKeepDays) ?? 180)
+        collectionKeepDays = max(0, try container.decodeIfPresent(Int.self, forKey: .collectionKeepDays) ?? 365)
     }
 
     private func unique(_ identifiers: [String]) throws {

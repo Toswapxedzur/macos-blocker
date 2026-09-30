@@ -44,6 +44,9 @@ public struct ActivityDashboardSnapshot: Codable, Equatable, Sendable {
     public var web: ActivityLensView
     /// Watched content as ranked bars (time per video), plus its title/platform.
     public var watched: [ActivityBar]
+    /// Each piece of content as it was watched, in time order (the Content
+    /// section's strip, day totals, authors and raw list).
+    public var watchedTimeline: [ActivitySegment]
     public var settings: ActivityDashboardSettings
     /// The user's groups with their colours (a merge group stands in for its
     /// members on the page).

@@ -180,7 +180,7 @@ final class ActivityDashboardTests: XCTestCase {
         XCTAssertTrue(view.webVisit.enabled)
         XCTAssertEqual(view.webVisit.retentionDays, 90)
         XCTAssertNil(view.appUsage.retentionDays)
-        XCTAssertEqual(view.retentionDays, 180)
+        XCTAssertEqual(view.retentionDays, 365)
         XCTAssertFalse(view.appUsage.enabled)
     }
 }

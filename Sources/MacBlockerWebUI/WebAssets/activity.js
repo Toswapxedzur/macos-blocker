@@ -20,12 +20,15 @@
     '<button type="button" data-range="today" class="vui-tab is-active">Today</button>',
     '<button type="button" data-range="7d" class="vui-tab">7 days</button>',
     '<button type="button" data-range="30d" class="vui-tab">30 days</button>',
+    '<button type="button" data-range="90d" class="vui-tab">90 days</button>',
+    '<button type="button" id="range-since" class="vui-tab" hidden></button>',
+    '<button type="button" id="recording-toggle" class="vui-tab">Recording</button>',
     "</div>",
     "</div>",
     "</header>",
     '<main><div class="page" id="page"><p class="empty">Loading…</p></div></main>'
   ].join("");
-  var RETENTIONS = [[7, "7 days"], [30, "30 days"], [90, "90 days"], [180, "180 days"], [0, "Forever"]];
+  var RETENTIONS = [[7, "7 days"], [30, "30 days"], [90, "90 days"], [180, "180 days"], [365, "365 days"], [0, "Forever"]];
   // What is recorded (each kind has its own switch under Recording).
   var KINDS = [
     { id: "appUsage", key: "app-usage", title: "Apps" },
@@ -33,12 +36,6 @@
     { id: "contentWatched", key: "content-watched", title: "Content" }
   ];
   var snapshot = null;
-  // Details follows one pick: "all", an app ("app|<bundle id>"), a website
-  // ("web|<domain>") or a group ("group|<id>"). Mac Vault answers with its
-  // history (window.activityHistory).
-  var picked = "all";
-  var barDays = 3;
-  var itemHistory = null;
   var usageItemsShown = [];  // the Usage rows (merge groups folded in)
   var usageItemsRaw = [];    // the same before folding (a group's members)
   // Groups (owner 2026-09-29): member id -> its merge group, for this render.
@@ -46,14 +43,11 @@
   var editing = null;        // { id, name, merge, members, message, conflicts }
   var knownItems = null;     // what a group can hold (Mac Vault's list)
   var groupSearch = "";
-  var groupMenu = null;
-  var expandedGroups = {};   // merge group id -> its Usage row shows its members      // the Usage row's Add to group menu: { id, x, y, message, conflicts, group }
   var icons = {};
   // Watched (owner 2026-09-29): videos, authors and tags; per watched key
   // { creator, creatorIcon, tags: [{ id, name, color }] } (Mac Vault records
   // the author when the video is watched; the tags are the classifier's).
   var watchedFacts = {};
-  var expandedWatched = {};  // author/tag row key -> shows its videos
   var knownIcons = {};       // the editor's items' icons (Mac Vault sends them with the list)
 
   function send(msg) {
@@ -176,13 +170,6 @@
     return line;
   }
 
-  function rows(bars) {
-    var wrap = el("div");
-    if (!bars.length) { wrap.appendChild(el("p", "empty", "Nothing in this range.")); return wrap; }
-    bars.slice(0, 20).forEach(function (b) { wrap.appendChild(row(b, b.seconds, b.fraction)); });
-    return wrap;
-  }
-
   // Apps and websites in one ranked list, each marked. A browser whose sites
   // are recorded is listed by name only (owner 2026-09-28: its time would
   // dominate — its sites have their own rows); it is ranked, and counted in
@@ -239,55 +226,6 @@
       merged.seconds += entry.seconds;
     });
     return out.sort(function (x, y) { return y.seconds - x.seconds; });
-  }
-
-  function usageRows(items) {
-    var wrap = el("div");
-    if (!items.length) { wrap.appendChild(el("p", "empty", "Nothing in this range.")); return wrap; }
-    var shown = items.filter(function (entry) { return !entry.nameOnly; });
-    var top = Math.max(shown.length ? shown[0].seconds : 1, 1);
-    items.slice(0, 20).forEach(function (entry) {
-      var line = row(entry.item, entry.nameOnly ? null : entry.seconds, entry.seconds / top, entry.kind,
-        function () { pick(entryID(entry)); });
-      if (entry.kind === "Group") {
-        // Expand a merge group's row to its members' own times (owner 2026-09-29).
-        var open = !!expandedGroups[entry.group.id];
-        var toggle = el("button", open ? "row-expand is-open" : "row-expand", "›");
-        toggle.type = "button";
-        toggle.title = open ? "Hide members" : "Show members";
-        toggle.addEventListener("click", function (event) {
-          event.stopPropagation();
-          expandedGroups[entry.group.id] = !open;
-          render();
-        });
-        line.querySelector(".row-name").insertBefore(toggle, line.querySelector(".row-label"));
-        wrap.appendChild(line);
-        if (open) {
-          usageItemsRaw.filter(function (member) { return entry.group.members.indexOf(entryID(member)) >= 0; })
-            .forEach(function (member) {
-              var memberLine = row(member.item, member.nameOnly ? null : member.seconds, member.seconds / top, member.kind,
-                function () { pick(entryID(member)); });
-              memberLine.classList.add("member");
-              wrap.appendChild(memberLine);
-            });
-        }
-        return;
-      }
-      if (entry.kind !== "Group") {
-        var add = el("button", "row-add secondary", "+ Group");
-        add.type = "button";
-        add.title = "Add to group";
-        add.addEventListener("click", function (event) {
-          event.stopPropagation();
-          var box = line.getBoundingClientRect();
-          groupMenu = { id: entryID(entry), label: entry.item.label || entry.item.key, x: box.right, y: box.top + 30 };
-          renderGroupMenu();
-        });
-        line.appendChild(add);
-      }
-      wrap.appendChild(line);
-    });
-    return wrap;
   }
 
   // The sites visited while a browser was in front: each site segment clipped
@@ -409,16 +347,6 @@
       : entry.videos ? entry.kind + " · " + entry.videos.length + (entry.videos.length === 1 ? " item" : " items") : entry.kind;
     if (entry.item.color) return { title: entry.item.label, color: entry.item.color, lines: [kind].concat(lines) };
     return { title: entry.item.label || entry.item.key, key: entry.item.key, lines: [kind].concat(lines) };
-  }
-
-  // What Details shows, by name.
-  function pickName() {
-    if (picked === "all") return "All usage";
-    if (picked.indexOf("group|") === 0) {
-      var g = groupsList().filter(function (x) { return "group|" + x.id === picked; })[0];
-      return g ? g.name : "Group";
-    }
-    return memberLabel(picked);
   }
 
   function place(node, from, to) {
@@ -556,25 +484,6 @@
     return group;
   }
 
-  // ── Details: the picked item's 180-day map, hour-by-hour bars, and the pie ──
-
-  function pick(id) {
-    picked = id;
-    itemHistory = null;
-    requestHistory();
-    renderDetails();
-  }
-
-  function requestHistory() {
-    send({ kind: "history", pick: picked, barDays: barDays });
-  }
-
-  window.activityHistory = function (request, data) {
-    if (request.pick !== picked || request.barDays !== barDays) return;
-    itemHistory = data;
-    renderDetails();
-  };
-
   var NAVY = [30, 58, 138];
   function navy(alpha) { return "rgba(" + NAVY.join(",") + "," + alpha + ")"; }
   var DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -588,7 +497,7 @@
 
   // GitHub-style: one column per week (Monday on top), one square per day,
   // darker = more time.
-  function dayMap(h) {
+  function dayMap(h, name) {
     var wrap = el("div", "chart");
     wrap.appendChild(el("div", "chart-title", "Last " + h.daySeconds.length + " days"));
     var max = Math.max.apply(null, h.daySeconds.concat([1]));
@@ -623,153 +532,16 @@
       hoverable(square, {
         title: DAY_NAMES[date.getDay()] + " " + MONTHS[date.getMonth()] + " " + date.getDate() + ", " + date.getFullYear(),
         color: level === 0 ? "#e8ecf2" : navy([0, 0.3, 0.5, 0.72, 1][level]),
-        lines: [pickName() + ": " + (seconds > 0 ? fmt(seconds) : "not used"),
+        lines: [name + ": " + (seconds > 0 ? fmt(seconds) : "not used"),
           seconds > 0 ? share(seconds, max, "the busiest day") : null]
       });
+      square.style.cursor = "pointer";
+      square.addEventListener("click", function () { trackSince(h.dayStartsMs[i]); });
       chart.appendChild(square);
     });
     var scroller = el("div", "map-scroll");
     scroller.appendChild(chart);
     wrap.appendChild(scroller);
-    return wrap;
-  }
-
-  // One day's rows, like the Usage list: apps, sites, a browser's leftover.
-  function dayTotals(day, attribution) {
-    var DAY = 86400;
-    function bars(segments) {
-      var by = {};
-      segments.forEach(function (seg) {
-        var bar = by[seg.key] || (by[seg.key] = { key: seg.key, label: seg.label, colorIndex: seg.colorIndex, seconds: 0 });
-        bar.seconds += seg.widthFraction * DAY;
-      });
-      return Object.keys(by).map(function (k) { return by[k]; }).sort(function (x, y) { return y.seconds - x.seconds; });
-    }
-    return mergeItems(usageItems(bars(day.app), bars(day.web), attribution, DAY));
-  }
-
-  function dayLabel(day, index, count) {
-    var date = new Date(day.dayStartMs);
-    return index === count - 1 ? "Today" : DAY_NAMES[date.getDay()] + " " + date.getDate();
-  }
-
-  // One graph frame: horizontal grid lines with labels, one column per day.
-  function dayFrame(days, ticks) {
-    var width = 860, height = 240, left = 44, top = 8, bottom = 26;
-    var frame = {
-      width: width, left: left, top: top, plot: height - top - bottom, base: height - bottom,
-      group: (width - left) / days.length,
-      chart: svg("svg", { viewBox: "0 0 " + width + " " + height, width: "100%", class: "days" })
-    };
-    frame.barWidth = Math.min(46, frame.group * 0.5);
-    ticks.forEach(function (tick) {
-      var y = frame.base - tick.at * frame.plot;
-      frame.chart.appendChild(svg("line", { x1: left, x2: width, y1: y, y2: y, stroke: "#eef1f6", "stroke-width": 1 }));
-      var label = svg("text", { x: 0, y: y + 3, class: "axis-label" });
-      label.textContent = tick.text;
-      frame.chart.appendChild(label);
-    });
-    days.forEach(function (day, d) {
-      var label = svg("text", { x: left + frame.group * d + frame.group / 2, y: height - 8, "text-anchor": "middle", class: "axis-label" });
-      label.textContent = dayLabel(day, d, days.length);
-      frame.chart.appendChild(label);
-    });
-    frame.block = function (x, y, w, h, colorIndex, info) {
-      var rect = svg("rect", { x: x, y: y, width: w, height: Math.max(0.8, h), fill: colorOf(colorIndex) });
-      info.color = colorOf(colorIndex);
-      hoverable(rect, info);
-      frame.chart.appendChild(rect);
-    };
-    frame.barX = function (d) { return left + frame.group * d + (frame.group - frame.barWidth) / 2; };
-    return frame;
-  }
-
-  function timeOfDay(fraction) {
-    var minutes = Math.round(fraction * 1440);
-    return Math.floor(minutes / 60) + ":" + String(minutes % 60).padStart(2, "0");
-  }
-
-  // In order: each day on a 24-hour scale, 00:00 at the bottom — every app
-  // and site at its time, empty where nothing was used; a browser's time
-  // shows its sites with the browser's colour as a thin band.
-  function inOrderGraph(days) {
-    var wrap = el("div", "chart");
-    wrap.appendChild(el("div", "chart-title", "In order"));
-    var f = dayFrame(days, [0, 6, 12, 18, 24].map(function (h) { return { at: h / 24, text: h + ":00" }; }));
-    days.forEach(function (day, d) {
-      var x = f.barX(d);
-      f.chart.appendChild(svg("rect", { x: x, y: f.top, width: f.barWidth, height: f.plot, rx: 4, fill: "#f1f4f8" }));
-      day.app.forEach(function (seg) {
-        f.block(x, f.base - (seg.startFraction + seg.widthFraction) * f.plot, f.barWidth, seg.widthFraction * f.plot, colorIndexFor("app", seg.key, seg.colorIndex), {
-          title: seg.label || seg.key, key: seg.key,
-          lines: [(BROWSERS[seg.key] ? "App · browser" : "App") + " · " + dayLabel(day, d, days.length),
-            timeOfDay(seg.startFraction) + " – " + timeOfDay(seg.startFraction + seg.widthFraction) + " · " + fmt(seg.widthFraction * 86400)]
-        });
-      });
-      attributeSites(day.app, day.web).pieces.forEach(function (piece) {
-        f.block(x, f.base - piece.to * f.plot, f.barWidth * 0.85, (piece.to - piece.from) * f.plot, colorIndexFor("web", piece.site.key, piece.site.colorIndex), {
-          title: piece.site.label || piece.site.key, key: piece.site.key,
-          lines: ["Website · in " + (piece.browser.label || piece.browser.key) + " · " + dayLabel(day, d, days.length),
-            timeOfDay(piece.from) + " – " + timeOfDay(piece.to) + " · " + fmt((piece.to - piece.from) * 86400)]
-        });
-      });
-    });
-    wrap.appendChild(f.chart);
-    return wrap;
-  }
-
-  // Totals: each day's apps and sites stacked largest first from the bottom;
-  // the busiest day shown reaches the top.
-  function totalsGraph(days) {
-    var wrap = el("div", "chart");
-    wrap.appendChild(el("div", "chart-title", "Totals"));
-    var perDay = days.map(function (day) { return dayTotals(day, attributeSites(day.app, day.web)); });
-    var busiest = Math.max.apply(null, perDay.map(function (items) {
-      return items.reduce(function (sum, entry) { return sum + entry.seconds; }, 0);
-    }).concat([3600]));
-    var stepHours = busiest > 12 * 3600 ? 4 : busiest > 6 * 3600 ? 2 : 1;
-    var top = Math.ceil(busiest / (stepHours * 3600)) * stepHours * 3600;
-    var ticks = [];
-    for (var t = 0; t <= top; t += stepHours * 3600) ticks.push({ at: t / top, text: t === 0 ? "0" : (t / 3600) + "h" });
-    var f = dayFrame(days, ticks);
-    perDay.forEach(function (items, d) {
-      var x = f.barX(d), y = f.base;
-      var dayTotal = items.reduce(function (sum, entry) { return sum + entry.seconds; }, 0);
-      items.forEach(function (entry, rank) {
-        var h = (entry.seconds / top) * f.plot;
-        y -= h;
-        f.block(x, y, f.barWidth, h, entry.item.colorIndex, entryInfo(entry, [
-          dayLabel(days[d], d, days.length) + " · #" + (rank + 1) + " of " + items.length,
-          fmt(entry.seconds) + " · " + share(entry.seconds, dayTotal, "the day (" + fmt(dayTotal) + ")")
-        ]));
-      });
-    });
-    wrap.appendChild(f.chart);
-    return wrap;
-  }
-
-  // The last 1-7 days of all usage, in two graphs under one picker.
-  function daySection(days) {
-    var wrap = el("div", "day-section");
-    var head = el("div", "chart-head");
-    head.appendChild(el("h2", null, "Day by day"));
-    var select = el("select");
-    [1, 2, 3, 4, 5, 6, 7].forEach(function (n) {
-      var option = el("option", null, n === 1 ? "Today" : "Last " + n + " days");
-      option.value = String(n);
-      option.selected = n === barDays;
-      select.appendChild(option);
-    });
-    select.addEventListener("change", function () {
-      barDays = parseInt(select.value, 10);
-      itemHistory = null;
-      requestHistory();
-      renderDetails();
-    });
-    head.appendChild(select);
-    wrap.appendChild(head);
-    wrap.appendChild(inOrderGraph(days));
-    wrap.appendChild(totalsGraph(days));
     return wrap;
   }
 
@@ -892,16 +664,12 @@
   // Mac Vault's answer to a save: saved (the snapshot follows), or refused —
   // a merge group's member already in another merge group can be moved.
   window.activityGroupSaved = function (answer) {
-    var target = answer.request === "menu" ? groupMenu : editing;
-    if (answer.ok) {
-      if (answer.request === "menu") groupMenu = null; else editing = null;
-      renderGroupMenu();
-      return;
-    }
+    var target = editing;
+    if (answer.ok) { editing = null; return; }
     if (!target) return;
     target.message = answer.message || "Not saved.";
     target.conflicts = answer.conflicts || null;
-    if (answer.request === "menu") renderGroupMenu(); else refreshGroups();
+    refreshGroups();
   };
 
   function openEditor(group) {
@@ -1050,237 +818,663 @@
     return form;
   }
 
-  // The Usage row's "+ Group": tick the groups this app or site is in.
-  function renderGroupMenu() {
-    var old = scope.getElementById("group-menu");
-    if (old) old.remove();
-    if (!groupMenu) return;
-    var menu = el("div", "group-menu");
-    menu.id = "group-menu";
-    menu.style.left = Math.max(8, groupMenu.x - 240) + "px";
-    menu.style.top = groupMenu.y + "px";
-    menu.addEventListener("click", function (event) { event.stopPropagation(); });
-    menu.appendChild(el("div", "group-menu-title", groupMenu.label));
-    groupsList().forEach(function (g) {
-      var inIt = g.members.indexOf(groupMenu.id) >= 0;
-      var item = textButton((inIt ? "✓ " : "") + g.name + (g.merge ? " · Merge" : ""), function () {
-        var members = inIt ? g.members.filter(function (m) { return m !== groupMenu.id; }) : g.members.concat([groupMenu.id]);
-        groupMenu.group = { id: g.id, name: g.name, merge: g.merge, members: members };
-        groupMenu.message = null;
-        saveGroup(groupMenu.group, false, "menu");
-      }, "group-menu-item");
-      menu.appendChild(item);
-    });
-    menu.appendChild(textButton("New group with this…", function () {
-      var id = groupMenu.id;
-      groupMenu = null;
-      renderGroupMenu();
-      openEditor({ id: "", name: "", merge: false, members: [id] });
-    }, "group-menu-item"));
-    if (groupMenu.message) {
-      var note = el("div", "group-note", groupMenu.message + ".");
-      if (groupMenu.conflicts && groupMenu.group) {
-        note.appendChild(textButton("Move it", function () { saveGroup(groupMenu.group, true, "menu"); }, "secondary"));
-      }
-      menu.appendChild(note);
-    }
-    scope.getElementById("activity").appendChild(menu);
-  }
+  // ══ The page (owner 2026-09-30): two stacked sections, Usage then Content,
+  // one range for both (Today / 7 / 30 / 90 days / since a day picked on a
+  // year map), each with its own focus. Panels keep a fixed size and scroll
+  // inside. "Empty" is every hour not used (all 24 h of a day). ══
 
-  scope.addEventListener("click", function () {
-    if (groupMenu) { groupMenu = null; renderGroupMenu(); }
-  });
-
-  // A picked group's pie shows its members; otherwise the Usage rows.
-  function pieItems() {
-    if (picked.indexOf("group|") !== 0) return usageItemsShown;
-    var g = groupsList().filter(function (x) { return "group|" + x.id === picked; })[0];
-    if (!g) return usageItemsShown;
-    return usageItemsRaw.filter(function (entry) { return g.members.indexOf(entryID(entry)) >= 0; });
-  }
-
-  function renderDetails() {
-    var box = scope.getElementById("details");
-    if (!box) return;
-    box.textContent = "";
-    var head = el("div", "details-head");
-    head.appendChild(el("h2", null, "Details"));
-    var select = el("select");
-    var choices = [{ value: "all", label: "All usage" }];
-    groupsList().forEach(function (g) {
-      choices.push({ value: "group|" + g.id, label: g.name + " · " + (g.merge ? "Merge group" : "View group") });
-    });
-    usageItemsShown.forEach(function (entry) {
-      if (entry.kind !== "Group") choices.push({ value: entryID(entry), label: (entry.item.label || entry.item.key) + " · " + entry.kind });
-    });
-    var chosen = picked;
-    if (!choices.some(function (c) { return c.value === chosen; })) {
-      if (chosen.indexOf("group|") === 0) { chosen = picked = "all"; } // a deleted group
-      else choices.push({ value: chosen, label: chosen.slice(4) });
-    }
-    choices.forEach(function (choice) {
-      var option = el("option", null, choice.label);
-      option.value = choice.value;
-      option.selected = choice.value === chosen;
-      select.appendChild(option);
-    });
-    select.addEventListener("change", function () { pick(select.value); });
-    head.appendChild(select);
-    box.appendChild(head);
-    if (!itemHistory) { box.appendChild(el("p", "empty", "Loading…")); return; }
-    var upper = el("div", "details-row");
-    upper.appendChild(dayMap(itemHistory.map));
-    upper.appendChild(pie(pieItems()));
-    box.appendChild(upper);
-    box.appendChild(daySection(itemHistory.days));
-  }
-
-  // Watched videos by author or by tag (owner 2026-09-29): one row each,
-  // largest first, opening to its videos. A video with several tags gives
-  // each an equal share of its time, so the tags add up to the real time.
   var UNTAGGED = { id: "", name: "Untagged", color: "#94a3b8" };
-  function watchedGroups(watched, by) {
-    var groups = {};
-    watched.forEach(function (bar) {
-      var fact = watchedFacts[bar.key] || {};
-      var parts = by === "author"
-        ? [{ id: fact.creator || "", name: fact.creator || "Unknown author", color: fact.creator ? null : "#cbd5e1" }]
-        : (fact.tags && fact.tags.length ? fact.tags : [UNTAGGED]);
-      parts.forEach(function (part) {
-        var id = by + "|" + part.id;
-        var g = groups[id] || (groups[id] = {
-          item: { key: id, label: part.name, color: part.color || (by === "author" ? "#1e3a8a" : "#94a3b8") },
-          seconds: 0, kind: by === "author" ? "Author" : "Tag", videos: []
-        });
-        var share = bar.seconds / parts.length;
-        g.seconds += share;
-        g.videos.push({ bar: bar, seconds: share });
-      });
-    });
-    return Object.keys(groups).map(function (k) { return groups[k]; })
-      .sort(function (x, y) { return y.seconds - x.seconds; });
-  }
-
-  function watchedRows(groups) {
-    var wrap = el("div");
-    if (!groups.length) { wrap.appendChild(el("p", "empty", "Nothing in this range.")); return wrap; }
-    var top = Math.max(groups[0].seconds, 1);
-    groups.slice(0, 30).forEach(function (g) {
-      var line = row(g.item, g.seconds, g.seconds / top);
-      line.querySelector(".row-name").appendChild(el("span", "row-count", g.videos.length + (g.videos.length === 1 ? " item" : " items")));
-      var open = !!expandedWatched[g.item.key];
-      var toggle = el("button", open ? "row-expand is-open" : "row-expand", "›");
-      toggle.type = "button";
-      toggle.title = open ? "Hide items" : "Show items";
-      line.classList.add("pickable");
-      line.addEventListener("click", function () { expandedWatched[g.item.key] = !open; render(); });
-      line.querySelector(".row-name").insertBefore(toggle, line.querySelector(".row-label"));
-      wrap.appendChild(line);
-      if (!open) return;
-      g.videos.forEach(function (video) {
-        var child = row(video.bar, video.seconds, video.seconds / top);
-        if (video.seconds < video.bar.seconds) child.title += " (" + fmt(video.bar.seconds) + " watched, shared among its tags)";
-        child.classList.add("member");
-        wrap.appendChild(child);
-      });
-    });
-    return wrap;
-  }
-
-  // Videos, Authors and Tags: three panels (owner 2026-09-29), the tag pie
-  // on top of the Tags panel.
-  // Content (owner 2026-09-30): videos, posts, streams and channels from
-  // every platform, each marked with its platform.
+  var EMPTY_COLOR = "#e2e8f0";
+  var OTHER_PAGES = { id: "other-pages", name: "Other pages", color: "#cbd5e1" };
   var PLATFORM_NAMES = { youtube: "YouTube", bilibili: "Bilibili", twitch: "Twitch", reddit: "Reddit",
     twitter: "X", instagram: "Instagram", facebook: "Facebook", discord: "Discord" };
-  function contentRows(watched) {
-    var wrap = el("div");
-    if (!watched.length) { wrap.appendChild(el("p", "empty", "Nothing in this range.")); return wrap; }
-    watched.slice(0, 20).forEach(function (b) {
-      var platform = b.platform || String(b.key).split(":")[0];
-      wrap.appendChild(row(b, b.seconds, b.fraction, PLATFORM_NAMES[platform] || platform));
-    });
-    return wrap;
+  // The sites of the platforms content is recorded on (their pages that are
+  // no one piece of content are "Other pages").
+  var PLATFORM_SITES = [["youtube.com", "youtube"], ["bilibili.com", "bilibili"], ["twitch.tv", "twitch"], ["reddit.com", "reddit"],
+    ["x.com", "twitter"], ["twitter.com", "twitter"], ["instagram.com", "instagram"], ["facebook.com", "facebook"], ["discord.com", "discord"]];
+  // One colour per weekday (the authors' per-day segments).
+  var WEEKDAY_COLORS = ["#d9656a", "#5b7fc7", "#e8914a", "#5fa86a", "#9b6fb0", "#6fb3ae", "#c79a3f"];
+  var DAY_MS = 86400000;
+
+  var range = "today";          // today | 7d | 30d | 90d | since:<ms>
+  var usageFocus = "all";       // all | app|<key> | web|<key> | group|<id>
+  var contentFocus = "all";     // all | tag|<id>
+  var usageHistory = null;      // { map, days } for usageFocus over the range
+  var contentYear = null;       // the content year map for contentFocus
+  var tagNodes = [];            // the classifier's tags: { id, name, color, parentID }
+  var showRecording = false;
+  var showGroups = false;
+
+  function dayStart(ms) { var d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); }
+  function rangeDayStarts() {
+    var out = [];
+    if (!snapshot) return out;
+    var d = new Date(dayStart(snapshot.rangeStartMs));
+    for (; d.getTime() <= snapshot.rangeEndMs; d.setDate(d.getDate() + 1)) out.push(d.getTime());
+    return out;
+  }
+  function dayName(ms) {
+    var d = new Date(ms);
+    return dayStart(ms) === dayStart(Date.now()) ? "Today" : DAY_NAMES[d.getDay()] + " " + MONTHS[d.getMonth()] + " " + d.getDate();
   }
 
-  function watchedPanels(s) {
-    var watched = snapshot.watched || [];
-    var total = watched.reduce(function (a, b) { return a + b.seconds; }, 0);
-    var on = s.contentWatched && s.contentWatched.enabled;
-    return [["video", "Content"], ["author", "Authors"], ["tag", "Tags"]].map(function (kind) {
-      var panel = el("section", "panel board");
-      panel.appendChild(columnHead(kind[1], total));
-      if (!on) { panel.appendChild(notRecorded(["content-watched"])); return panel; }
-      if (kind[0] === "video") { panel.appendChild(contentRows(watched)); return panel; }
-      var groups = watchedGroups(watched, kind[0]);
-      if (kind[0] === "tag" && groups.length) {
-        var chart = pie(groups, "Share");
-        chart.classList.add("watched-pie");
-        panel.appendChild(chart);
-      }
-      panel.appendChild(watchedRows(groups));
-      return panel;
-    });
+  // ── Usage ──
+
+  function focusName(id) {
+    if (id === "all") return "All usage";
+    if (id.indexOf("group|") === 0) {
+      var g = groupsList().filter(function (x) { return "group|" + x.id === id; })[0];
+      return g ? g.name : "Group";
+    }
+    return memberLabel(id);
+  }
+  function pick(id) { setUsageFocus(id); }
+
+  // The ids the usage focus covers (null = everything).
+  function usageFocusSet() {
+    if (usageFocus === "all") return null;
+    if (usageFocus.indexOf("group|") === 0) {
+      var g = groupsList().filter(function (x) { return "group|" + x.id === usageFocus; })[0];
+      return new Set(g ? g.members : []);
+    }
+    return new Set([usageFocus]);
   }
 
-  // One column's head: its title and its total.
-  function columnHead(title, seconds) {
-    var head = el("div", "column-head");
-    head.appendChild(el("h2", null, title));
-    var total = el("span", "total");
-    total.appendChild(el("strong", null, fmt(seconds)));
-    head.appendChild(total);
-    return head;
-  }
-
-  // Separate panels (owner 2026-09-29): the day strip, then Usage, Watched
-  // and Groups side by side, then Details, then the recording settings.
-  function render() {
-    var page = scope.getElementById("page");
-    page.textContent = "";
-    if (!snapshot) { page.appendChild(el("p", "empty", "Loading…")); return; }
-    refreshMergeMap();
-    var s = snapshot.settings || {};
-
+  // The range's apps and sites (merge groups folded in unless one is focused).
+  function usageData() {
     var apps = snapshot.app || { totalSeconds: 0, bars: [], timeline: [] };
     var web = snapshot.web || { totalSeconds: 0, bars: [], timeline: [] };
     var attribution = attributeSites(apps.timeline, web.timeline);
     var spanSeconds = (snapshot.rangeEndMs - snapshot.rangeStartMs) / 1000;
     usageItemsRaw = usageItems(apps.bars, web.bars, attribution, spanSeconds);
-    var items = mergeItems(usageItemsRaw);
+    var set = usageFocusSet();
+    var items = set ? usageItemsRaw.filter(function (entry) { return set.has(entryID(entry)); }) : mergeItems(usageItemsRaw);
     usageItemsShown = items;
-    var appsOn = s.appUsage && s.appUsage.enabled, webOn = s.webVisit && s.webVisit.enabled;
-    if ((appsOn || webOn) && apps.timeline.length) {
-      var day = el("div", "panel strip-panel");
-      day.appendChild(strip(apps.timeline, snapshot.rangeStartMs, snapshot.rangeEndMs, attribution.pieces));
-      page.appendChild(day);
-    }
-
-    var boards = el("div", "boards");
-    var usage = el("section", "panel board");
-    usage.appendChild(columnHead("Usage", items.reduce(function (sum, entry) { return sum + entry.seconds; }, 0)));
-    usage.appendChild(appsOn || webOn ? usageRows(items) : notRecorded(["app-usage", "web-visit"]));
-    boards.appendChild(usage);
-
-    watchedPanels(s).forEach(function (panel) { boards.appendChild(panel); });
-    boards.appendChild(groupsPanel());
-    page.appendChild(boards);
-
-    var details = el("div", "panel details");
-    details.id = "details";
-    page.appendChild(details);
-    renderDetails();
-    var recording = el("div", "panel settings-panel");
-    recording.appendChild(settingsPanel(s));
-    page.appendChild(recording);
+    var segments = apps.timeline.filter(function (s) { return !set || set.has("app|" + s.key); });
+    var pieces = attribution.pieces.filter(function (p) { return !set || set.has("web|" + p.site.key) || set.has("app|" + p.browser.key); });
+    // Time used: the apps in front (a browser's sites are inside its time).
+    var used = set
+      ? segments.reduce(function (sum, s) { return sum + s.seconds; }, 0)
+        + pieces.filter(function (p) { return !set.has("app|" + p.browser.key); })
+          .reduce(function (sum, p) { return sum + (p.to - p.from) * spanSeconds; }, 0)
+      : apps.timeline.reduce(function (sum, s) { return sum + s.seconds; }, 0);
+    return { items: items, segments: segments, pieces: pieces, used: used, empty: Math.max(0, spanSeconds - used) };
   }
 
-  window.activityApply = function (data, iconMap, facts, feeds) {
+  // A time strip over the whole range, one fixed width per day, scrolling
+  // sideways when the range is long.
+  function stripFrame(height) {
+    var days = rangeDayStarts().length;
+    var perDay = days <= 1 ? 0 : days <= 2 ? 720 : days <= 7 ? 360 : days <= 31 ? 200 : 110;
+    var scroller = el("div", "strip-scroll");
+    var track = el("div", "strip");
+    track.style.height = height + "px";
+    if (perDay) track.style.width = (days * perDay) + "px";
+    var axis = el("div", "axis strip-axis");
+    if (perDay) axis.style.width = (days * perDay) + "px";
+    var span = snapshot.rangeEndMs - snapshot.rangeStartMs;
+    if (days > 1) {
+      rangeDayStarts().forEach(function (start, i) {
+        if (i > 0) { var line = el("div", "day"); line.style.left = ((start - snapshot.rangeStartMs) / span * 100) + "%"; track.appendChild(line); }
+        var label = el("span", "strip-day", dayName(start));
+        label.style.left = (Math.max(0, start - snapshot.rangeStartMs) / span * 100) + "%";
+        axis.appendChild(label);
+      });
+    } else {
+      axis.appendChild(el("span", null, clock(snapshot.rangeStartMs)));
+      axis.appendChild(el("span", null, clock(snapshot.rangeEndMs)));
+    }
+    scroller.appendChild(track);
+    scroller.appendChild(axis);
+    return { node: scroller, track: track, span: span, multiDay: days > 1 };
+  }
+
+  function usageStrip(data) {
+    var f = stripFrame(44);
+    data.segments.forEach(function (s) {
+      var seg = paint(el("div", "seg"), colorIndexFor("app", s.key, s.colorIndex));
+      place(seg, s.startFraction, s.startFraction + s.widthFraction);
+      hoverable(seg, segmentInfo(s, BROWSERS[s.key] ? "App · browser" : "App", s.startedAtMs, s.startedAtMs + s.seconds * 1000, f.multiDay));
+      f.track.appendChild(seg);
+    });
+    data.pieces.forEach(function (piece) {
+      var w = piece.site;
+      var site = paint(el("div", "seg site"), colorIndexFor("web", w.key, w.colorIndex));
+      place(site, piece.from, piece.to);
+      hoverable(site, segmentInfo(w, "Website", snapshot.rangeStartMs + piece.from * f.span, snapshot.rangeStartMs + piece.to * f.span, f.multiDay, piece.browser));
+      f.track.appendChild(site);
+    });
+    return f.node;
+  }
+
+  // The colour map: every app and site in view with its colour and time,
+  // and Empty. Clicking one focuses it.
+  function colourMap(entries, empty, onPick, emptyLabel) {
+    var box = el("div", "colour-map");
+    entries.forEach(function (entry) {
+      var line = el("button", "colour-row");
+      line.type = "button";
+      var swatch = el("span", "swatch");
+      swatch.style.background = entry.item.color || colorOf(entry.item.colorIndex);
+      line.appendChild(swatch);
+      if (entry.item.key) line.appendChild(icon(entry.item.key, entry.item.label));
+      line.appendChild(el("span", "colour-name", entry.item.label || entry.item.key));
+      if (entry.kind && entry.kind !== "Tag") line.appendChild(el("span", "row-kind", entry.kind));
+      line.appendChild(el("span", "colour-time", entry.nameOnly ? "" : fmt(entry.seconds)));
+      hoverable(line, entryInfo(entry, [fmt(entry.seconds)]));
+      if (onPick) line.addEventListener("click", function () { onPick(entry); });
+      box.appendChild(line);
+    });
+    if (empty) {
+      var row = el("div", "colour-row is-empty");
+      var sw = el("span", "swatch"); sw.style.background = empty.color; row.appendChild(sw);
+      row.appendChild(el("span", "colour-name", emptyLabel));
+      row.appendChild(el("span", "colour-time", fmt(empty.seconds)));
+      box.appendChild(row);
+    }
+    if (!entries.length && !empty) box.appendChild(el("p", "empty", "Nothing in this range."));
+    return box;
+  }
+
+  // Per-day totals: stacked, largest first; `rest` tops each bar (Empty up to
+  // the day's 24 h, or Other pages). Scrolls sideways when there are many days.
+  function dayTotalsChart(perDay, rest, fixedDayScale) {
+    var days = perDay.length;
+    var barGap = days <= 7 ? Math.max(48, Math.floor(820 / Math.max(1, days))) : 40;
+    var width = Math.max(820, 44 + days * barGap), height = 210, left = 40, top = 8, bottom = 24;
+    var plot = height - top - bottom, base = height - bottom;
+    var totals = perDay.map(function (d) { return d.items.reduce(function (s, e) { return s + e.seconds; }, 0) + (d.rest || 0); });
+    var topSeconds = fixedDayScale ? 86400 : Math.max(3600, Math.max.apply(null, totals.concat([0])));
+    var step = topSeconds > 12 * 3600 ? 6 * 3600 : topSeconds > 6 * 3600 ? 2 * 3600 : 3600;
+    // Few days fill the width; many scroll sideways at a fixed spacing.
+    var chart = svg("svg", { viewBox: "0 0 " + width + " " + height, width: width > 820 ? width : "100%", class: "days" });
+    for (var t = 0; t <= topSeconds + 1; t += step) {
+      var y = base - (t / topSeconds) * plot;
+      chart.appendChild(svg("line", { x1: left, x2: width, y1: y, y2: y, stroke: "#eef1f6", "stroke-width": 1 }));
+      var label = svg("text", { x: 0, y: y + 3, class: "axis-label" });
+      label.textContent = t === 0 ? "0" : (t / 3600) + "h";
+      chart.appendChild(label);
+    }
+    var barWidth = Math.min(30, barGap * 0.6);
+    perDay.forEach(function (d, i) {
+      var x = left + i * barGap + (barGap - barWidth) / 2, yy = base;
+      var dayTotal = totals[i];
+      d.items.forEach(function (entry) {
+        var h = entry.seconds / topSeconds * plot;
+        yy -= h;
+        var color = entry.item.color || colorOf(entry.item.colorIndex);
+        var rect = svg("rect", { x: x, y: yy, width: barWidth, height: Math.max(0.6, h), fill: color });
+        var info = entryInfo(entry, [dayName(d.start), fmt(entry.seconds) + " · " + share(entry.seconds, dayTotal, "the day")]);
+        info.color = color;
+        hoverable(rect, info);
+        chart.appendChild(rect);
+      });
+      if (d.rest > 0) {
+        var h = d.rest / topSeconds * plot;
+        yy -= h;
+        var restRect = svg("rect", { x: x, y: yy, width: barWidth, height: h, fill: rest.color });
+        hoverable(restRect, { title: rest.name, color: rest.color, lines: [dayName(d.start), fmt(d.rest)] });
+        chart.appendChild(restRect);
+      }
+      var dl = svg("text", { x: x + barWidth / 2, y: height - 8, "text-anchor": "middle", class: "axis-label" });
+      var date = new Date(d.start);
+      dl.textContent = days > 14 ? String(date.getDate()) : dayName(d.start).replace(/^\w+ /, days > 7 ? "" : "$&");
+      chart.appendChild(dl);
+    });
+    var scroller = el("div", "totals-scroll");
+    scroller.appendChild(chart);
+    return scroller;
+  }
+
+  function usageTotals() {
+    var box = el("div", "chart");
+    box.appendChild(el("div", "chart-title", "Day by day"));
+    if (!usageHistory) { box.appendChild(el("p", "empty", "Loading…")); return box; }
+    var set = usageFocusSet();
+    var now = Date.now();
+    var perDay = usageHistory.days.map(function (day) {
+      var attribution = attributeSites(day.app, day.web);
+      var raw = usageItems(barsOf(day.app), barsOf(day.web), attribution, 86400);
+      var items = (set ? raw.filter(function (entry) { return set.has(entryID(entry)); }) : mergeItems(raw))
+        .filter(function (entry) { return !entry.nameOnly && entry.seconds >= 1; })
+        .sort(function (a, b) { return b.seconds - a.seconds; });
+      var used = items.reduce(function (sum, e) { return sum + e.seconds; }, 0);
+      var elapsed = Math.min(86400, Math.max(0, (now - day.dayStartMs) / 1000));
+      return { start: day.dayStartMs, items: items, rest: Math.max(0, elapsed - used) };
+    });
+    box.appendChild(dayTotalsChart(perDay, { name: "Empty", color: EMPTY_COLOR }, true));
+    return box;
+  }
+
+  // A day's segments as bars (seconds per key).
+  function barsOf(segments) {
+    var by = {};
+    segments.forEach(function (seg) {
+      var bar = by[seg.key] || (by[seg.key] = { key: seg.key, label: seg.label, colorIndex: seg.colorIndex, seconds: 0 });
+      bar.seconds += seg.widthFraction * 86400;
+    });
+    return Object.keys(by).map(function (k) { return by[k]; }).sort(function (x, y) { return y.seconds - x.seconds; });
+  }
+
+  function usageFocusSelect() {
+    var select = el("select");
+    var choices = [["all", "All usage"]];
+    groupsList().forEach(function (g) { choices.push(["group|" + g.id, g.name + " · " + (g.merge ? "Merge group" : "View group")]); });
+    usageItemsRaw.forEach(function (entry) { choices.push([entryID(entry), (entry.item.label || entry.item.key) + " · " + entry.kind]); });
+    if (!choices.some(function (c) { return c[0] === usageFocus; })) choices.push([usageFocus, focusName(usageFocus)]);
+    choices.forEach(function (c) { var o = el("option", null, c[1]); o.value = c[0]; o.selected = c[0] === usageFocus; select.appendChild(o); });
+    select.addEventListener("change", function () { setUsageFocus(select.value); });
+    return select;
+  }
+
+  function setUsageFocus(id) {
+    usageFocus = id;
+    usageHistory = null;
+    render();
+    requestUsageHistory();
+  }
+
+  function usageSection(s) {
+    var section = el("section", "panel act-section");
+    var head = el("div", "section-head");
+    head.appendChild(el("h2", null, "Usage"));
+    head.appendChild(usageFocusSelect());
+    head.appendChild(textButton(showGroups ? "Close groups" : "Groups", function () { showGroups = !showGroups; render(); }, "secondary"));
+    var appsOn = s.appUsage && s.appUsage.enabled, webOn = s.webVisit && s.webVisit.enabled;
+    if (!appsOn && !webOn) {
+      section.appendChild(head);
+      section.appendChild(notRecorded(["app-usage", "web-visit"]));
+      return section;
+    }
+    var data = usageData();
+    var summary = el("span", "section-summary");
+    summary.appendChild(el("strong", null, fmt(data.used)));
+    summary.appendChild(document.createTextNode(" used · " + fmt(data.empty) + " empty"));
+    head.appendChild(summary);
+    section.appendChild(head);
+    if (showGroups) section.appendChild(groupsPanel());
+    section.appendChild(usageStrip(data));
+    var grid = el("div", "act-grid");
+    var mapPanel = el("div", "act-cell");
+    mapPanel.appendChild(el("div", "chart-title", "Colours"));
+    mapPanel.appendChild(colourMap(data.items, { seconds: data.empty, color: EMPTY_COLOR }, function (entry) {
+      setUsageFocus(entryID(entry));
+    }, "Empty"));
+    grid.appendChild(mapPanel);
+    var pieCell = el("div", "act-cell");
+    pieCell.appendChild(pie(data.items.filter(function (e) { return !e.nameOnly; }), "Share"));
+    grid.appendChild(pieCell);
+    var year = el("div", "act-cell");
+    year.id = "usage-year";
+    fillYear(year, usageHistory && usageHistory.map, focusName(usageFocus));
+    grid.appendChild(year);
+    section.appendChild(grid);
+    var totals = el("div", "act-wide");
+    totals.id = "usage-totals";
+    totals.appendChild(usageTotals());
+    section.appendChild(totals);
+    return section;
+  }
+
+  function fillYear(box, history, name) {
+    box.textContent = "";
+    if (!history) { box.appendChild(el("div", "chart-title", "Last 365 days")); box.appendChild(el("p", "empty", "Loading…")); return; }
+    box.appendChild(dayMap(history, name));
+    box.appendChild(el("p", "chart-note", "Click a day to track since it."));
+    [].forEach.call(box.querySelectorAll(".map-scroll"), scrollToNewest);
+  }
+
+  // ── Content ──
+
+  function tagByID() {
+    var map = {};
+    tagNodes.forEach(function (n) { map[n.id] = n; });
+    return map;
+  }
+  // A tag and every tag under it.
+  function tagFamily(id) {
+    var out = new Set([id]), grew = true;
+    while (grew) {
+      grew = false;
+      tagNodes.forEach(function (n) { if (n.parentID && out.has(n.parentID) && !out.has(n.id)) { out.add(n.id); grew = true; } });
+    }
+    return out;
+  }
+  function contentFocusSet() { return contentFocus === "all" ? null : tagFamily(contentFocus.slice(4)); }
+  function tagsOf(key) { return ((watchedFacts[key] || {}).tags || []).filter(function (t) { return t && t.id; }); }
+
+  // The content in the range: pieces (with their tags) and the platforms'
+  // other pages (their time not on any one piece).
+  function contentData() {
+    var set = contentFocusSet();
+    var pieces = (snapshot.watchedTimeline || []).map(function (s) {
+      var tags = tagsOf(s.key);
+      var shown = set ? tags.filter(function (t) { return set.has(t.id); }) : tags;
+      return { seg: s, startMs: s.startedAtMs, endMs: s.startedAtMs + s.seconds * 1000, tags: shown.length ? shown : [UNTAGGED] };
+    }).filter(function (p) { return !set || p.tags[0] !== UNTAGGED; });
+    var other = [];
+    if (!set) {
+      var sites = (snapshot.web && snapshot.web.timeline || []).filter(function (w) {
+        return PLATFORM_SITES.some(function (p) { return w.key === p[0] || w.key.endsWith("." + p[0]); });
+      });
+      sites.forEach(function (w) {
+        var start = w.startedAtMs, end = w.startedAtMs + w.seconds * 1000;
+        var cuts = pieces.filter(function (p) { return p.endMs > start && p.startMs < end; })
+          .sort(function (a, b) { return a.startMs - b.startMs; });
+        var cursor = start;
+        cuts.forEach(function (p) {
+          if (p.startMs > cursor) other.push({ startMs: cursor, endMs: Math.min(p.startMs, end), site: w });
+          cursor = Math.max(cursor, p.endMs);
+        });
+        if (cursor < end) other.push({ startMs: cursor, endMs: end, site: w });
+      });
+    }
+    // Tag totals: a piece with several tags gives each an equal share.
+    var byTag = {};
+    pieces.forEach(function (p) {
+      var sec = (p.endMs - p.startMs) / 1000 / p.tags.length;
+      p.tags.forEach(function (t) {
+        var e = byTag[t.id] || (byTag[t.id] = { item: { key: "", label: t.name, color: t.color || "#94a3b8", tagID: t.id }, seconds: 0, kind: "Tag" });
+        e.seconds += sec;
+      });
+    });
+    var tagEntries = Object.keys(byTag).map(function (k) { return byTag[k]; }).sort(function (a, b) { return b.seconds - a.seconds; });
+    var watched = pieces.reduce(function (sum, p) { return sum + (p.endMs - p.startMs) / 1000; }, 0);
+    var otherSeconds = other.reduce(function (sum, o) { return sum + (o.endMs - o.startMs) / 1000; }, 0);
+    return { pieces: pieces, other: other, tags: tagEntries, watched: watched, otherSeconds: otherSeconds };
+  }
+
+  function contentStrip(data) {
+    var f = stripFrame(30);
+    var fraction = function (ms) { return (ms - snapshot.rangeStartMs) / f.span; };
+    data.other.forEach(function (o) {
+      var seg = el("div", "seg");
+      seg.style.background = OTHER_PAGES.color;
+      place(seg, fraction(o.startMs), fraction(o.endMs));
+      hoverable(seg, { title: "Other pages", color: OTHER_PAGES.color, lines: [o.site.label || o.site.key, timeSpan(o.startMs, o.endMs, f.multiDay) + " · " + fmt((o.endMs - o.startMs) / 1000)] });
+      f.track.appendChild(seg);
+    });
+    data.pieces.forEach(function (p) {
+      var seg = el("div", "seg");
+      seg.style.background = p.tags[0].color || "#94a3b8";
+      place(seg, fraction(p.startMs), fraction(p.endMs));
+      var fact = watchedFacts[p.seg.key] || {};
+      hoverable(seg, { title: p.seg.label || p.seg.key, key: p.seg.key, lines: [
+        (PLATFORM_NAMES[String(p.seg.key).split(":")[0]] || "") + (fact.creator ? " · " + fact.creator : ""),
+        p.tags.map(function (t) { return t.name; }).join(", "),
+        timeSpan(p.startMs, p.endMs, f.multiDay) + " · " + fmt((p.endMs - p.startMs) / 1000)] });
+      f.track.appendChild(seg);
+    });
+    return f.node;
+  }
+
+  // Seconds of [startMs, endMs) falling on each range day.
+  function splitByDay(startMs, endMs, starts, add) {
+    starts.forEach(function (s, i) {
+      var a = Math.max(startMs, s), b = Math.min(endMs, s + DAY_MS);
+      if (b > a) add(i, (b - a) / 1000);
+    });
+  }
+
+  function contentTotals(data) {
+    var box = el("div", "chart");
+    box.appendChild(el("div", "chart-title", "Day by day"));
+    var starts = rangeDayStarts();
+    var perDay = starts.map(function (s) { return { start: s, byTag: {}, rest: 0 }; });
+    data.pieces.forEach(function (p) {
+      splitByDay(p.startMs, p.endMs, starts, function (i, sec) {
+        p.tags.forEach(function (t) {
+          var e = perDay[i].byTag[t.id] || (perDay[i].byTag[t.id] = { item: { key: "", label: t.name, color: t.color || "#94a3b8" }, seconds: 0, kind: "Tag" });
+          e.seconds += sec / p.tags.length;
+        });
+      });
+    });
+    data.other.forEach(function (o) { splitByDay(o.startMs, o.endMs, starts, function (i, sec) { perDay[i].rest += sec; }); });
+    box.appendChild(dayTotalsChart(perDay.map(function (d) {
+      return { start: d.start, rest: d.rest, items: Object.keys(d.byTag).map(function (k) { return d.byTag[k]; }).sort(function (a, b) { return b.seconds - a.seconds; }) };
+    }), OTHER_PAGES, false));
+    return box;
+  }
+
+  // Authors: total time, the bar split per day (one colour per weekday).
+  function authorsList(data) {
+    var box = el("div", "act-cell act-list");
+    box.appendChild(el("div", "chart-title", "Authors"));
+    var legend = el("div", "chart-legend");
+    ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].forEach(function (name, i) {
+      var item = el("span", "legend-item"); var dot = el("span", "dot"); dot.style.background = WEEKDAY_COLORS[(i + 1) % 7];
+      item.appendChild(dot); item.appendChild(el("span", null, name)); legend.appendChild(item);
+    });
+    box.appendChild(legend);
+    var starts = rangeDayStarts();
+    var by = {};
+    data.pieces.forEach(function (p) {
+      var fact = watchedFacts[p.seg.key] || {};
+      var name = fact.creator || "Unknown author";
+      var a = by[name] || (by[name] = { name: name, key: fact.creator ? "author|" + fact.creator : "", seconds: 0, days: starts.map(function () { return 0; }), items: 0 });
+      a.items += 1;
+      splitByDay(p.startMs, p.endMs, starts, function (i, sec) { a.days[i] += sec; a.seconds += sec; });
+    });
+    var authors = Object.keys(by).map(function (k) { return by[k]; }).sort(function (a, b) { return b.seconds - a.seconds; });
+    var top = Math.max(1, authors.length ? authors[0].seconds : 1);
+    var list = el("div", "scroll-list");
+    authors.forEach(function (a) {
+      var line = el("div", "author-row");
+      line.appendChild(icon(a.key, a.name));
+      var body = el("div", "row-body");
+      var name = el("div", "row-name");
+      name.appendChild(el("span", "row-label", a.name));
+      name.appendChild(el("span", "row-count", a.items + (a.items === 1 ? " item" : " items")));
+      body.appendChild(name);
+      var bar = el("div", "day-bar");
+      bar.style.width = Math.max(2, a.seconds / top * 100) + "%";
+      a.days.forEach(function (sec, i) {
+        if (sec <= 0) return;
+        var part = el("span");
+        part.style.flex = String(sec);
+        part.style.background = WEEKDAY_COLORS[new Date(starts[i]).getDay()];
+        hoverable(part, { title: a.name, color: part.style.background, lines: [dayName(starts[i]), fmt(sec)] });
+        bar.appendChild(part);
+      });
+      body.appendChild(bar);
+      line.appendChild(body);
+      line.appendChild(el("div", "row-time", fmt(a.seconds)));
+      list.appendChild(line);
+    });
+    if (!authors.length) list.appendChild(el("p", "empty", "Nothing in this range."));
+    box.appendChild(list);
+    return box;
+  }
+
+  // Everything watched, newest first, with its platform, author and tags.
+  function rawList(data) {
+    var box = el("div", "act-cell act-list");
+    box.appendChild(el("div", "chart-title", "Everything watched"));
+    var list = el("div", "scroll-list");
+    data.pieces.slice().sort(function (a, b) { return b.startMs - a.startMs; }).forEach(function (p) {
+      var fact = watchedFacts[p.seg.key] || {};
+      var line = el("div", "raw-row");
+      line.appendChild(icon(p.seg.key, p.seg.label));
+      var body = el("div", "row-body");
+      body.appendChild(el("div", "raw-title", p.seg.label || p.seg.key));
+      var meta = el("div", "raw-meta");
+      meta.appendChild(el("span", "row-kind", PLATFORM_NAMES[String(p.seg.key).split(":")[0]] || "Content"));
+      meta.appendChild(el("span", null, fact.creator || "Unknown author"));
+      meta.appendChild(el("span", "vui-muted", dayName(p.startMs) + " " + clock(p.startMs)));
+      p.tags.forEach(function (t) {
+        var chip = el("span", "tag-chip", t.name);
+        chip.style.background = t.color || "#94a3b8";
+        meta.appendChild(chip);
+      });
+      body.appendChild(meta);
+      line.appendChild(body);
+      line.appendChild(el("div", "row-time", fmt((p.endMs - p.startMs) / 1000)));
+      list.appendChild(line);
+    });
+    if (!data.pieces.length) list.appendChild(el("p", "empty", "Nothing in this range."));
+    box.appendChild(list);
+    return box;
+  }
+
+  function contentFocusSelect() {
+    var select = el("select");
+    var choices = [["all", "All content"]];
+    var depthOf = function (n) { var d = 0, seen = {}, cur = n, byID = tagByID(); while (cur && cur.parentID && byID[cur.parentID] && !seen[cur.id]) { seen[cur.id] = 1; cur = byID[cur.parentID]; d += 1; } return d; };
+    // Tree order: each tag followed by the tags under it.
+    var children = {};
+    tagNodes.forEach(function (n) { (children[n.parentID || ""] = children[n.parentID || ""] || []).push(n); });
+    (function walk(parent) {
+      (children[parent] || []).forEach(function (n) {
+        choices.push(["tag|" + n.id, new Array(depthOf(n) + 1).join("   ") + n.name]);
+        walk(n.id);
+      });
+    })("");
+    choices.forEach(function (c) { var o = el("option", null, c[1]); o.value = c[0]; o.selected = c[0] === contentFocus; select.appendChild(o); });
+    select.addEventListener("change", function () { setContentFocus(select.value); });
+    return select;
+  }
+
+  function setContentFocus(id) {
+    contentFocus = id;
+    contentYear = null;
+    render();
+    requestContentHistory();
+  }
+
+  function contentSection(s) {
+    var section = el("section", "panel act-section");
+    var head = el("div", "section-head");
+    head.appendChild(el("h2", null, "Content"));
+    head.appendChild(contentFocusSelect());
+    if (!(s.contentWatched && s.contentWatched.enabled)) {
+      section.appendChild(head);
+      section.appendChild(notRecorded(["content-watched"]));
+      return section;
+    }
+    var data = contentData();
+    var summary = el("span", "section-summary");
+    summary.appendChild(el("strong", null, fmt(data.watched)));
+    summary.appendChild(document.createTextNode(" on content" + (contentFocus === "all" ? " · " + fmt(data.otherSeconds) + " other pages" : "")));
+    head.appendChild(summary);
+    section.appendChild(head);
+    section.appendChild(contentStrip(data));
+    var grid = el("div", "act-grid");
+    var mapCell = el("div", "act-cell");
+    mapCell.appendChild(el("div", "chart-title", "Tags"));
+    mapCell.appendChild(colourMap(data.tags, contentFocus === "all" ? { seconds: data.otherSeconds, color: OTHER_PAGES.color } : null, function (entry) {
+      if (entry.item.tagID) setContentFocus("tag|" + entry.item.tagID);
+    }, "Other pages"));
+    grid.appendChild(mapCell);
+    var pieCell = el("div", "act-cell");
+    pieCell.appendChild(pie(data.tags, "Share"));
+    grid.appendChild(pieCell);
+    var year = el("div", "act-cell");
+    year.id = "content-year";
+    fillYear(year, contentYear, contentFocus === "all" ? "All content" : (tagByID()[contentFocus.slice(4)] || { name: "Tag" }).name);
+    grid.appendChild(year);
+    section.appendChild(grid);
+    var totals = el("div", "act-wide");
+    totals.appendChild(contentTotals(data));
+    section.appendChild(totals);
+    var lists = el("div", "act-grid two");
+    lists.appendChild(authorsList(data));
+    lists.appendChild(rawList(data));
+    section.appendChild(lists);
+    return section;
+  }
+
+  // ── The page ──
+
+  function render() {
+    var page = scope.getElementById("page");
+    // Panels that scroll keep their place across updates.
+    var scrolls = {};
+    [].forEach.call(page.querySelectorAll(".scroll-list, .colour-map, .strip-scroll, .totals-scroll, .map-scroll"), function (node, i) { scrolls[i] = [node.scrollLeft, node.scrollTop]; });
+    page.textContent = "";
+    if (!snapshot) { page.appendChild(el("p", "empty", "Loading…")); return; }
+    refreshMergeMap();
+    var s = snapshot.settings || {};
+    if (showRecording) {
+      var recording = el("div", "panel settings-panel");
+      recording.appendChild(settingsPanel(s));
+      page.appendChild(recording);
+    }
+    page.appendChild(usageSection(s));
+    page.appendChild(contentSection(s));
+    [].forEach.call(page.querySelectorAll(".scroll-list, .colour-map, .strip-scroll, .totals-scroll, .map-scroll"), function (node, i) {
+      if (scrolls[i] && !freshScroll) { node.scrollLeft = scrolls[i][0]; node.scrollTop = scrolls[i][1]; }
+      else scrollToNewest(node);
+    });
+    freshScroll = false;
+    renderRanges();
+  }
+
+  // The range's days, as Mac Vault answers them (at most a year).
+  function historyDays() { return Math.max(1, Math.min(365, rangeDayStarts().length)); }
+
+  // A new range (or first view) opens the time charts at the newest day.
+  var freshScroll = true;
+  function scrollToNewest(node) {
+    if (node.matches(".strip-scroll, .totals-scroll, .map-scroll")) node.scrollLeft = node.scrollWidth;
+  }
+
+  function requestUsageHistory() {
+    send({ kind: "history", section: "usage", pick: usageFocus, barDays: historyDays() });
+  }
+  function contentPick() {
+    var set = contentFocusSet();
+    return set ? "tag|" + Array.from(set).join(",") : "all";
+  }
+  function requestContentHistory() {
+    send({ kind: "history", section: "content", pick: contentPick() });
+  }
+
+  window.activityHistory = function (request, data) {
+    if (request.section === "content") {
+      if (request.pick !== contentPick()) return;
+      contentYear = data;
+      var box = scope.getElementById("content-year");
+      if (box) fillYear(box, contentYear, contentFocus === "all" ? "All content" : (tagByID()[contentFocus.slice(4)] || { name: "Tag" }).name);
+      return;
+    }
+    if (request.pick !== usageFocus || request.barDays !== historyDays()) return;
+    usageHistory = data;
+    var year = scope.getElementById("usage-year");
+    if (year) fillYear(year, usageHistory.map, focusName(usageFocus));
+    var totals = scope.getElementById("usage-totals");
+    if (totals) { totals.textContent = ""; totals.appendChild(usageTotals()); [].forEach.call(totals.querySelectorAll(".totals-scroll"), scrollToNewest); }
+  };
+
+  // The range: Today / 7 / 30 / 90 days, or since a day picked on a year map.
+  function setRange(value) {
+    range = value;
+    freshScroll = true;
+    usageHistory = null;
+    send({ kind: "range", range: value });
+    renderRanges();
+  }
+  function renderRanges() {
+    var bar = scope.getElementById("ranges");
+    [].forEach.call(bar.querySelectorAll("button[data-range]"), function (b) { b.classList.toggle("is-active", b.dataset.range === range); });
+    var since = scope.getElementById("range-since");
+    if (range.indexOf("since:") === 0) {
+      since.hidden = false;
+      since.classList.add("is-active");
+      since.textContent = "Since " + MONTHS[new Date(+range.slice(6)).getMonth()] + " " + new Date(+range.slice(6)).getDate() + "  ×";
+    } else {
+      since.hidden = true;
+    }
+    scope.getElementById("recording-toggle").classList.toggle("is-active", showRecording);
+  }
+  function trackSince(dayMs) { setRange("since:" + dayStart(dayMs)); }
+
+  window.activityApply = function (data, iconMap, facts, feeds, tags) {
     snapshot = data;
     platformFeeds = feeds || {};
+    tagNodes = tags || [];
     icons = iconMap || {};
     watchedFacts = facts || {};
-    // A watched video, and its author's row, show the author's icon.
+    // A watched piece, and its author's row, show the author's icon.
     Object.keys(watchedFacts).forEach(function (key) {
       var fact = watchedFacts[key];
       if (!fact.creatorIcon) return;
@@ -1288,13 +1482,15 @@
       if (fact.creator) icons["author|" + fact.creator] = fact.creatorIcon;
     });
     render();
-    requestHistory();
+    requestUsageHistory();
+    requestContentHistory();
   };
 
   scope.getElementById("ranges").addEventListener("click", function (e) {
-    var b = e.target.closest("button[data-range]"); if (!b) return;
-    [].forEach.call(this.querySelectorAll("button"), function (x) { x.classList.toggle("is-active", x === b); });
-    send({ kind: "range", range: b.dataset.range });
+    var b = e.target.closest("button[data-range]");
+    if (b) { setRange(b.dataset.range); return; }
+    if (e.target.closest("#range-since")) { setRange("today"); return; }
+    if (e.target.closest("#recording-toggle")) { showRecording = !showRecording; render(); }
   });
 
   window.VaultUI.observe(scope);
