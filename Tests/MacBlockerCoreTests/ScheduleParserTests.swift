@@ -3,24 +3,31 @@ import XCTest
 
 final class ScheduleParserTests: XCTestCase {
     func testParsesTheEditorsWindowFormat() {
-        // "HHMM-HHMM" only, as the editor writes and reads it; "09:00-10:30"
-        // is rejected there, so here too.
+        // "09:00-10:30" (owner 2026-09-30), the older "HHMM-HHMM", "H:MM" and
+        // an en dash, as the editor reads them.
         let windows = ScheduleParser.parseWindows(
             """
             09:00-10:30
             1200-1300
+            9:05 \u{2013} 9:30
             """
         )
 
-        XCTAssertEqual(windows.count, 1)
-        XCTAssertEqual(windows[0].start, TimeOfDay(hour: 12, minute: 0))
-        XCTAssertEqual(windows[0].end, TimeOfDay(hour: 13, minute: 0))
+        XCTAssertEqual(windows.count, 3)
+        XCTAssertEqual(windows[0].start, TimeOfDay(hour: 9, minute: 0))
+        XCTAssertEqual(windows[0].end, TimeOfDay(hour: 10, minute: 30))
+        XCTAssertEqual(windows[1].start, TimeOfDay(hour: 12, minute: 0))
+        XCTAssertEqual(windows[2].start, TimeOfDay(hour: 9, minute: 5))
     }
 
     func testRejectsInvalidWindow() {
         XCTAssertNil(ScheduleParser.parseWindow("2500-2600"))
         XCTAssertNil(ScheduleParser.parseWindow("1200-1200"), "an empty window is invalid")
         XCTAssertNil(ScheduleParser.parseWindow("bad"))
+        XCTAssertNil(ScheduleParser.parseWindow("9-10"), "minutes are required")
+        XCTAssertNil(ScheduleParser.parseWindow("12:5-13:00"))
+        XCTAssertNil(ScheduleParser.parseWindow("24:00-01:00"))
+        XCTAssertNil(ScheduleParser.parseWindow("+1:00-02:00"))
     }
 
     func testParsesWindowCrossingMidnight() throws {

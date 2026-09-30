@@ -80,15 +80,16 @@ public enum ScheduleParser {
             .compactMap { parseWindow(String($0)) }
     }
 
-    /// "HHMM-HHMM", exactly as the editor reads it (group-actions.js
-    /// normalizeTimeWindowLine; a test runs both on the same lines).
+    /// "09:00-10:00" or the older "0900-1000" (a dash or an en dash), exactly
+    /// as the editor reads it (group-actions.js normalizeTimeWindowLine; a test
+    /// runs both on the same lines).
     public static func parseWindow(_ text: String) -> TimeWindow? {
-        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard cleaned.range(of: #"^[0-9]{4}-[0-9]{4}$"#, options: .regularExpression) != nil else { return nil }
-        let parts = cleaned.split(separator: "-", omittingEmptySubsequences: false)
+        let parts = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .components(separatedBy: CharacterSet(charactersIn: "-\u{2013}"))
+            .map { $0.trimmingCharacters(in: .whitespaces) }
         guard parts.count == 2,
-              let start = parseTime(String(parts[0])),
-              let end = parseTime(String(parts[1])),
+              let start = parseTime(parts[0]),
+              let end = parseTime(parts[1]),
               start != end
         else {
             return nil
@@ -96,11 +97,23 @@ public enum ScheduleParser {
         return TimeWindow(start: start, end: end)
     }
 
+    /// "HH:MM" (or "H:MM"), or the older "HHMM".
     public static func parseTime(_ text: String) -> TimeOfDay? {
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard value.count == 4,
-              let hour = Int(value.prefix(2)),
-              let minute = Int(value.suffix(2)),
+        let hourText: Substring
+        let minuteText: Substring
+        if let colon = value.firstIndex(of: ":") {
+            hourText = value[..<colon]
+            minuteText = value[value.index(after: colon)...]
+            guard (1...2).contains(hourText.count), minuteText.count == 2 else { return nil }
+        } else {
+            guard value.count == 4 else { return nil }
+            hourText = value.prefix(2)
+            minuteText = value.suffix(2)
+        }
+        guard (hourText + minuteText).allSatisfy({ $0.isASCII && $0.isNumber }),
+              let hour = Int(hourText),
+              let minute = Int(minuteText),
               (0...23).contains(hour),
               (0...59).contains(minute)
         else {

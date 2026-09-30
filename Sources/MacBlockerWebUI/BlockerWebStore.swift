@@ -160,8 +160,8 @@ public final class BlockerWebStore: @unchecked Sendable {
 
     /// The document with finished snoozes counted, or nil when none finished.
     /// As the browser's worker does (group-actions.js): a budget snooze whose
-    /// extra room is used up ends now, and a finished snooze adds to the total
-    /// once — its clock time, or the extra minutes a budget snooze actually gave.
+    /// extra room is used up ends now, and a finished time snooze adds its clock
+    /// time to the total once (a budget snooze is counted as it is used).
     private static func countFinishedSnoozes(in document: [String: Any], nowMs: Double) -> [String: Any]? {
         guard var snoozes = document["groupSnoozes"] as? [String: Any] else { return nil }
         var totals = document["groupSnoozeTotalsMs"] as? [String: Any] ?? [:]
@@ -182,7 +182,7 @@ public final class BlockerWebStore: @unchecked Sendable {
             }
             guard entry["activeMsApplied"] as? Bool != true,
                   let until = (entry["untilMs"] as? NSNumber)?.doubleValue, nowMs >= until else { continue }
-            let counted = (GroupActionsRuntime.shared.call("snoozeCountedMs", [entry, group, used]) as? NSNumber)?.doubleValue ?? 0
+            let counted = (GroupActionsRuntime.shared.call("snoozeCountedMs", [entry]) as? NSNumber)?.doubleValue ?? 0
             totals[groupID] = ((totals[groupID] as? NSNumber)?.doubleValue ?? 0) + max(0, counted)
             entry["activeMsApplied"] = true
             snoozes[groupID] = entry
@@ -331,12 +331,15 @@ public final class BlockerWebStore: @unchecked Sendable {
         }
     }
 
+    /// `snoozeGivenMs` is what running budget snoozes gave this tick: added to
+    /// the groups' snooze totals (a budget snooze is counted as it is used).
     public func writeUsage(
         timersMs: [String: Double],
         resetAtMs: [String: Double],
-        bucketsMs: [String: [Double: Double]] = [:]
+        bucketsMs: [String: [Double: Double]] = [:],
+        snoozeGivenMs: [String: Double] = [:]
     ) {
-        guard !timersMs.isEmpty || !resetAtMs.isEmpty || !bucketsMs.isEmpty else { return }
+        guard !timersMs.isEmpty || !resetAtMs.isEmpty || !bucketsMs.isEmpty || !snoozeGivenMs.isEmpty else { return }
         // Under the store's file lock: an edit saved between this read and
         // write would otherwise be lost.
         GroupStore.withFileLock {
@@ -351,6 +354,9 @@ public final class BlockerWebStore: @unchecked Sendable {
             }
             if !resetAtMs.isEmpty {
                 object["usageResetAtMs"] = Self.numbers(object["usageResetAtMs"]).merging(resetAtMs) { $1 }
+            }
+            if !snoozeGivenMs.isEmpty {
+                object["groupSnoozeTotalsMs"] = Self.numbers(object["groupSnoozeTotalsMs"]).merging(snoozeGivenMs) { $0 + $1 }
             }
             write(object)
         }

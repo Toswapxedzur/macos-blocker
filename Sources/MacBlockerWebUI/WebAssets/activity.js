@@ -66,12 +66,11 @@
     } catch (_) {}
   }
 
+  // Durations read as the Vault editor's (owner 2026-09-30): 01:20:00.
   function fmt(seconds) {
-    var s = Math.round(seconds);
-    if (s < 60) return s + "s";
-    var m = Math.round(s / 60);
-    if (m < 60) return m + "m";
-    return Math.floor(m / 60) + "h " + (m % 60) + "m";
+    var s = Math.max(0, Math.round(seconds));
+    return [Math.floor(s / 3600), Math.floor((s % 3600) / 60), s % 60]
+      .map(function (n) { return String(n).padStart(2, "0"); }).join(":");
   }
   function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
   // Every item on the page has its own colour index (Mac Vault numbers apps,

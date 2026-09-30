@@ -163,7 +163,7 @@ final class GroupStoreTests: XCTestCase {
         XCTAssertThrowsError(try document.setGroup(id: "g1", patch: ["allowedMinutes": 0]))
         try document.setGroup(id: "g1", patch: ["mode": "after-minutes", "allowedMinutes": 20, "timeWindowsText": "0900-1700"])
         XCTAssertEqual(document.group(id: "g1")?["allowedMinutes"] as? Int, 20)
-        XCTAssertEqual(document.group(id: "g1")?["timeWindowsText"] as? String, "0900-1700")
+        XCTAssertEqual(document.group(id: "g1")?["timeWindowsText"] as? String, "09:00-17:00", "stored in the editor's form")
         XCTAssertNotNil(document.group(id: "g1")?["scopes"], "stored through the editor's sanitizer")
     }
 
