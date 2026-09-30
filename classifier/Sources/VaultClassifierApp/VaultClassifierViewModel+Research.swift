@@ -206,25 +206,4 @@ extension VaultClassifierViewModel {
         ]
     }
 
-    func submitCorrection(
-        classifierTypeID: String,
-        platformID: String,
-        entryID: String,
-        correctTagIDs: [String],
-        note: String?
-    ) {
-        do {
-            _ = try coordinator?.submitCorrection(
-                classifierTypeID: classifierTypeID,
-                platformID: platformID,
-                entryID: entryID,
-                correctTagIDs: correctTagIDs,
-                note: note
-            )
-            refreshLocalState()
-            issue = nil
-        } catch {
-            issue = error.localizedDescription
-        }
-    }
 }

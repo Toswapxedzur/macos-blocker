@@ -21,49 +21,19 @@ extension VaultClassifierViewModel {
         localState = coordinator?.snapshot()
     }
 
-    func addCollectionPlatform(platformID: String) {
-        do {
-            guard let definition = CollectionPlatformRegistry.definition(for: platformID),
-                  var catalog = localState?.workspaceCatalog else {
-                throw WebBridgeInputError.invalidChoice("collection platform")
-            }
-            guard !catalog.bindings.contains(where: { $0.id == definition.id }) else {
-                throw WebBridgeInputError.invalidChoice("collection platform already exists")
-            }
-            _ = try catalog.ensurePlatformBinding(definition.id)
-            try coordinator?.updateWorkspaceCatalog(catalog)
-            refreshLocalState()
-            issue = nil
-        } catch { issue = error.localizedDescription }
-    }
-
-    func deleteCollectionPlatform(platformID: String) {
+    /// A type's Options: "Delete collected data" — the platform's collected
+    /// entries go to the trash (restorable for a day); the platform and its
+    /// type stay.
+    func clearCollectedData(platformID: String) {
         do {
             guard var catalog = localState?.workspaceCatalog,
-                  catalog.trashCollectionPlatform(platformID) != nil else {
+                  catalog.trashCollectedEntries(platformID) != nil else {
                 throw WebBridgeInputError.invalidChoice("collection platform")
             }
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
             issue = nil
         } catch { issue = error.localizedDescription }
-    }
-
-    func confirmCollectionPlatformDeletion(platformID: String) {
-        guard let catalog = localState?.workspaceCatalog,
-              let binding = catalog.bindings.first(where: { $0.id == platformID }) else {
-            issue = WebBridgeInputError.invalidChoice("collection platform").localizedDescription
-            return
-        }
-        let dataset = catalog.datasets.first(where: { $0.id == binding.datasetID })
-        let entries = dataset?.collectedEntries.filter { $0.platformID == platformID }.count ?? 0
-        presentNativeConfirmation(
-            title: "Delete \(binding.name)?",
-            message: "This stops collection and removes \(entries) retained entries for this platform. Shared trees and classification data remain.",
-            confirmTitle: "Delete platform"
-        ) { [weak self] in
-            self?.deleteCollectionPlatform(platformID: platformID)
-        }
     }
 
     func setCollectionEnabled(platformID: String, enabled: Bool) {
@@ -77,11 +47,6 @@ extension VaultClassifierViewModel {
             refreshLocalState()
             issue = nil
         } catch { issue = error.localizedDescription }
-    }
-
-    func clearCollectionDiagnostics() {
-        collectionDiagnostics?.clear()
-        onWebStateChange?()
     }
 
     /// Creates a classifier type (a "group") for one platform. It starts with an
@@ -185,37 +150,6 @@ extension VaultClassifierViewModel {
                 researchEnabled: existingClassifierType.researchEnabled,
                 order: catalog.classifierTypes[typeIndex].order
             )
-            try coordinator?.updateWorkspaceCatalog(catalog)
-            refreshLocalState()
-            issue = nil
-        } catch { issue = error.localizedDescription }
-    }
-
-    func setActiveClassifierType(platformID: String, classifierTypeID: String?) {
-        do {
-            guard var catalog = localState?.workspaceCatalog,
-                  let bindingIndex = catalog.bindings.firstIndex(where: { $0.id == platformID }),
-                  let tree = catalog.trees.first(where: { $0.id == catalog.bindings[bindingIndex].treeID }),
-                  let dataset = catalog.datasets.first(where: { $0.id == catalog.bindings[bindingIndex].datasetID }) else {
-                throw WebBridgeInputError.invalidChoice("classifier type")
-            }
-            let normalizedTypeID = classifierTypeID?.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let normalizedTypeID, !normalizedTypeID.isEmpty else {
-                catalog.bindings[bindingIndex].activeClassifierTypeID = nil
-                try coordinator?.updateWorkspaceCatalog(catalog)
-                refreshLocalState()
-                issue = nil
-                return
-            }
-            guard let classifierType = catalog.classifierTypes.first(where: { $0.id == normalizedTypeID }),
-                  classifierType.treeID == tree.id,
-                  classifierType.treeRevision == tree.revision,
-                  classifierType.datasetID == dataset.id,
-                  classifierType.datasetRevision == dataset.revision,
-                  classifierType.applicablePlatformID == platformID else {
-                throw WebBridgeInputError.invalidChoice("classifier type")
-            }
-            catalog.bindings[bindingIndex].activeClassifierTypeID = normalizedTypeID
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
             issue = nil

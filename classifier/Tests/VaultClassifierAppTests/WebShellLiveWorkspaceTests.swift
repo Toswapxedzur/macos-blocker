@@ -8,7 +8,7 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
 
-        for liveWorkspace in ["tagTree", "llmAssist", "browserBridge", "classificationData"] {
+        for liveWorkspace in ["llmAssist", "browserBridge", "knowledge"] {
             XCTAssertTrue(script.contains(liveWorkspace))
         }
         for retired in [
@@ -17,17 +17,13 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
             "inspectWorkspace", "trainingWorkspace", "localModelWorkspace",
             "model-panel", "llmAssistConfiguration", "createLocalModel",
             "configureLocalModel", "selectLLMProvider",
+            // The History page (owner 2026-09-30): collection lives in a type's Options.
+            "classificationData", "loadCreatorEntries", "receiveCreatorEntries",
+            "submitCorrection", "setActiveClassifierType", "addCollectionPlatform",
+            "confirmDeleteCollectionPlatform", "clearCollectionDiagnostics",
         ] {
             XCTAssertFalse(script.contains(retired), "Retired web action or workspace remains: \(retired)")
         }
-    }
-
-    func testShellRetainsVideoCollectionLazyLoadChannel() throws {
-        let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
-        let script = try String(contentsOf: appURL, encoding: .utf8)
-        XCTAssertTrue(script.contains("loadCreatorEntries"))
-        XCTAssertTrue(script.contains("receiveCreatorEntries"))
-        XCTAssertTrue(script.contains("classificationDataWorkspace"))
     }
 
     /// The per-type local-model form holds the two dials (follow global / own
@@ -220,16 +216,6 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         }
         XCTAssertTrue(strings.contains("Models download from Hugging Face only when you press Download."))
         XCTAssertFalse(strings.contains("LATENCY NOT MEASURED"))
-    }
-
-    func testCollectionEntriesExposeCorrectionEditorWithoutANewHubOperation() throws {
-        let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
-        let script = try String(contentsOf: appURL, encoding: .utf8)
-        XCTAssertTrue(script.contains("submitCorrection"))
-        XCTAssertTrue(script.contains("correctTagIDs"))
-        XCTAssertTrue(script.contains("correctionForms"))
-        XCTAssertFalse(script.contains("correction-tags-updated"))
-        XCTAssertFalse(script.contains("research-tags-updated"))
     }
 
     func testCreateGroupFlowAsksOnlyForPlatformAndName() throws {

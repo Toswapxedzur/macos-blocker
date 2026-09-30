@@ -407,6 +407,26 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         return entry
     }
 
+    /// Moves a platform's collected entries into a trash snapshot; the platform
+    /// binding (and the type using it) stays. Restoring puts the entries back.
+    @discardableResult
+    public mutating func trashCollectedEntries(_ platformID: String) -> TrashedEntry? {
+        guard let binding = bindings.first(where: { $0.id == platformID }) else { return nil }
+        let captured = datasets.flatMap { $0.collectedEntries.filter { $0.platformID == platformID } }
+        for index in datasets.indices {
+            datasets[index].collectedEntries.removeAll { $0.platformID == platformID }
+        }
+        let entry = TrashedEntry(
+            kind: .collectionPlatform,
+            name: binding.name,
+            binding: binding,
+            datasetID: binding.datasetID,
+            collectedEntries: captured
+        )
+        trash.append(entry)
+        return entry
+    }
+
     /// Re-inserts a trashed entry and every dependent configuration it captured.
     @discardableResult
     public mutating func restoreTrashedEntry(_ id: String) -> Bool {

@@ -21,7 +21,6 @@ final class VaultClassifierViewModel: ObservableObject {
     enum Workspace: String, CaseIterable, Identifiable, Hashable {
         case llmAssist
         case browserBridge
-        case classificationData
         case knowledge
 
         var id: String { rawValue }
