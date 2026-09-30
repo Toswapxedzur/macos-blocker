@@ -86,7 +86,8 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
                     state: { MainActor.assumeIsolated { VaultClassifierPage.shared.collectionState() } },
                     setRecord: { id, record in MainActor.assumeIsolated { VaultClassifierPage.shared.setCollectionRecord(platformID: id, record: record) } },
                     setKeep: { id, days in MainActor.assumeIsolated { VaultClassifierPage.shared.setCollectionKeep(platformID: id, days: days) } },
-                    clear: { id in MainActor.assumeIsolated { VaultClassifierPage.shared.clearCollectedData(platformID: id) } }
+                    clear: { id in MainActor.assumeIsolated { VaultClassifierPage.shared.clearCollectedData(platformID: id) } },
+                    tagTree: { MainActor.assumeIsolated { VaultClassifierPage.shared.tagTree() } }
                 )
             )
         }

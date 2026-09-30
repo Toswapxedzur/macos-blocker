@@ -130,6 +130,20 @@ Activity/
   group's icon is made of slices of its members' icons (1 whole, 2 halves,
   3 wedges, 4 quarters, more = three and "+N"), so Mac Vault sends an icon for
   every group member and every item the editor lists.
+- **The page (owner 2026-09-30):** two stacked sections, **Usage** then
+  **Content**, under one range — Today / 7 / 30 / 90 days, or "since" a day
+  clicked on a year map — and each with its own focus (Usage: all, a group,
+  an app or site; Content: all, or a tag with every tag under it). Each has
+  the ordered form of its time (a strip over the whole range, one fixed width
+  per day, scrolling sideways), a colour map (every item's colour and time),
+  a pie (the unordered form), a 365-day map of the focus (not tied to the
+  range; clicking a day tracks since it) and day-by-day totals. **Empty** is
+  every hour not used — all 24 h of a day — so each Usage day bar reaches
+  24 h; Content's empty is **Other pages** (a platform's pages that are no one
+  piece of content). Content adds **Authors** (total, the bar split per day,
+  one colour per weekday) and **Everything watched** (newest first, with its
+  platform, author and tags). Panels keep a fixed size and scroll inside.
+  Recording opens from the header. Default Keep: 365 days.
 - **Content, Authors, Tags** (owner 2026-09-29/30): three panels — the
   content from every platform, each marked with its platform; one row per author; one row per tag with a pie of the tags (rows
   open to their videos). A video with several tags gives each an equal share

@@ -14,17 +14,21 @@ public struct ActivityCollectionBridge {
     /// A platform's Keep (-1 = same as all), or with nil the Keep for all.
     public var setKeep: (String?, Int) -> Void
     public var clear: (String) -> Void
+    /// The classifier's tags with their parents (Content's focus).
+    public var tagTree: () -> [[String: String]]
 
     public init(
         state: @escaping () -> [String: Any],
         setRecord: @escaping (String, Bool) -> Void,
         setKeep: @escaping (String?, Int) -> Void,
-        clear: @escaping (String) -> Void
+        clear: @escaping (String) -> Void,
+        tagTree: @escaping () -> [[String: String]]
     ) {
         self.state = state
         self.setRecord = setRecord
         self.setKeep = setKeep
         self.clear = clear
+        self.tagTree = tagTree
     }
 }
 
@@ -194,13 +198,15 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
         let icons = resolveIcons(snapshot: snapshot, store: store)
         let facts = watchedFacts(keys: snapshot.watched.map(\.key), store: store)
         let platforms = collectionState(allKeepDays: store.loadSettings().retentionDays)
+        let tags = collection?.tagTree() ?? []
         guard let iconsData = try? JSONSerialization.data(withJSONObject: icons),
               let iconsJSON = String(data: iconsData, encoding: .utf8),
               let factsData = try? JSONSerialization.data(withJSONObject: facts),
               let factsJSON = String(data: factsData, encoding: .utf8),
               let platformsData = try? JSONSerialization.data(withJSONObject: platforms),
-              let platformsJSON = String(data: platformsData, encoding: .utf8) else { return }
-        webView.evaluateJavaScript("window.activityApply(\(json), \(iconsJSON), \(factsJSON), \(platformsJSON));", completionHandler: nil)
+              let platformsJSON = String(data: platformsData, encoding: .utf8),
+              let tagsJSON = Self.json(tags) else { return }
+        webView.evaluateJavaScript("window.activityApply(\(json), \(iconsJSON), \(factsJSON), \(platformsJSON), \(tagsJSON));", completionHandler: nil)
     }
 
     /// The Details panel's data for the pick ("all", "app|<bundle id>",
@@ -209,11 +215,21 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
     private func pushHistory(_ body: [String: Any]) {
         guard loaded, let store, let webView else { return }
         let pickID = (body["pick"] as? String) ?? "all"
-        let barDays = max(1, min((body["barDays"] as? Int) ?? 3, 14))
+        // Content: its year map, all of it or by tag ("tag|<id>,<id>…").
+        if (body["section"] as? String) == "content" {
+            let tagIDs = pickID.hasPrefix("tag|") ? Set(pickID.dropFirst(4).split(separator: ",").map(String.init)) : nil
+            let map = store.contentHistory(tagIDs: tagIDs, days: Self.historyDays)
+            guard let data = try? JSONEncoder().encode(map), let json = String(data: data, encoding: .utf8),
+                  let requestJSON = Self.json(["section": "content", "pick": pickID]) else { return }
+            webView.evaluateJavaScript("window.activityHistory && window.activityHistory(\(requestJSON), \(json));", completionHandler: nil)
+            return
+        }
+        // Usage: the year map and every day of the range (up to the year).
+        let barDays = max(1, min((body["barDays"] as? Int) ?? 1, Self.historyDays))
         let detail = store.detail(pick: Self.pick(pickID), mapDays: Self.historyDays, barDays: barDays)
         guard let data = try? JSONEncoder().encode(detail),
               let json = String(data: data, encoding: .utf8),
-              let requestJSON = Self.json(["pick": pickID, "barDays": barDays]) else { return }
+              let requestJSON = Self.json(["section": "usage", "pick": pickID, "barDays": barDays]) else { return }
         webView.evaluateJavaScript("window.activityHistory && window.activityHistory(\(requestJSON), \(json));", completionHandler: nil)
     }
 
@@ -277,7 +293,7 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
     }
 
     /// The day map's span.
-    static let historyDays = 180
+    static let historyDays = 365
 
     /// Local icons keyed by bar key (bundle id / domain): app icons resolved
     /// from the bundle id via NSWorkspace, website favicons from the store's
@@ -330,13 +346,15 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
         let now = Date()
         let calendar = Calendar.current
         switch range {
-        case "7d":
-            let start = calendar.date(byAdding: .day, value: -6, to: calendar.startOfDay(for: now)) ?? now
+        case "7d", "30d", "90d":
+            let days = Int(range.dropLast()) ?? 1
+            let start = calendar.date(byAdding: .day, value: -(days - 1), to: calendar.startOfDay(for: now)) ?? now
             return (start, now)
-        case "30d":
-            let start = calendar.date(byAdding: .day, value: -29, to: calendar.startOfDay(for: now)) ?? now
-            return (start, now)
-        default: // today
+        default:
+            // "since:<ms>" — from the start of that day (owner 2026-09-30).
+            if range.hasPrefix("since:"), let ms = Double(range.dropFirst(6)), ms > 0 {
+                return (min(calendar.startOfDay(for: Date(timeIntervalSince1970: ms / 1000)), calendar.startOfDay(for: now)), now)
+            }
             return (calendar.startOfDay(for: now), now)
         }
     }
