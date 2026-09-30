@@ -38,7 +38,8 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
 
     private var store: ActivityStore?
     private weak var webView: WKWebView?
-    private var range = "today"
+    /// Each section's range: "today", "7d", "30d" or "since:<ms>".
+    private var ranges = ["usage": "today", "content": "today"]
     private var loaded = false
     /// bundle id → app-icon data URI (or "" when the app can't be resolved).
     private var appIconCache: [String: String] = [:]
@@ -122,9 +123,13 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
     public func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let body = message.body as? [String: Any], let kind = body["kind"] as? String else { return }
         switch kind {
-        case "ready", "range":
+        case "ready":
             loaded = true
-            if let range = body["range"] as? String { self.range = range }
+            pushSnapshot()
+        case "range":
+            if let section = body["section"] as? String, ranges[section] != nil, let range = body["range"] as? String {
+                ranges[section] = range
+            }
             pushSnapshot()
         case "collection-record":
             if let platformID = body["platformID"] as? String, let record = body["record"] as? Bool {
@@ -190,9 +195,6 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
             if let raw = body["category"] as? String, let category = ActivityCategory(rawValue: raw) {
                 store.delete(category: category)
             }
-        case "range":
-            let (start, end) = rangeDates()
-            store.delete(from: start, to: end)
         default:
             break
         }
@@ -200,13 +202,28 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
 
     private func pushSnapshot() {
         guard loaded, let store, let webView else { return }
-        let (start, end) = rangeDates()
+        let usageRange = ranges["usage"] ?? "today", contentRange = ranges["content"] ?? "today"
+        let (start, end) = Self.dates(for: usageRange)
         let snapshot = store.dashboardSnapshot(from: start, to: end)
+        let content: ActivityDashboardSnapshot
+        if contentRange == usageRange {
+            content = snapshot
+        } else {
+            let (contentStart, contentEnd) = Self.dates(for: contentRange)
+            content = store.dashboardSnapshot(from: contentStart, to: contentEnd)
+        }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(snapshot), let json = String(data: data, encoding: .utf8) else { return }
+        let contentJSON: String
+        if contentRange == usageRange {
+            contentJSON = "null"
+        } else {
+            guard let contentData = try? encoder.encode(content), let text = String(data: contentData, encoding: .utf8) else { return }
+            contentJSON = text
+        }
         let icons = resolveIcons(snapshot: snapshot, store: store)
-        let facts = watchedFacts(keys: snapshot.watched.map(\.key), store: store)
+        let facts = watchedFacts(keys: content.watched.map(\.key), store: store)
         let platforms = collectionState(allKeepDays: store.loadSettings().retentionDays)
         let tags = collection?.tagTree() ?? []
         guard let iconsData = try? JSONSerialization.data(withJSONObject: icons),
@@ -216,7 +233,7 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
               let platformsData = try? JSONSerialization.data(withJSONObject: platforms),
               let platformsJSON = String(data: platformsData, encoding: .utf8),
               let tagsJSON = Self.json(tags) else { return }
-        webView.evaluateJavaScript("window.activityApply(\(json), \(iconsJSON), \(factsJSON), \(platformsJSON), \(tagsJSON));", completionHandler: nil)
+        webView.evaluateJavaScript("window.activityApply(\(json), \(iconsJSON), \(factsJSON), \(platformsJSON), \(tagsJSON), \(contentJSON));", completionHandler: nil)
     }
 
     /// The Details panel's data for the pick ("all", "app|<bundle id>",
@@ -352,11 +369,13 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
         return "data:image/png;base64," + png.base64EncodedString()
     }
 
-    private func rangeDates() -> (Date, Date) {
+    /// A range's dates: today, the last 7 / 30 days (rolling), or from the
+    /// start of a picked day ("since:<ms>") up to now.
+    private static func dates(for range: String) -> (Date, Date) {
         let now = Date()
         let calendar = Calendar.current
         switch range {
-        case "7d", "30d", "90d":
+        case "7d", "30d":
             let days = Int(range.dropLast()) ?? 1
             let start = calendar.date(byAdding: .day, value: -(days - 1), to: calendar.startOfDay(for: now)) ?? now
             return (start, now)

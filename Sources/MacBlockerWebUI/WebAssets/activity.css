@@ -1,6 +1,6 @@
-/* Mac Vault's Activity scene (see scenes.js / activity.js): separate panels —
-   the day strip; Usage (apps and websites in one ranked list, each marked),
-   Videos, Authors, Tags and Groups side by side; Details; the recording settings. The shared look is vault-ui.css. */
+/* Mac Vault's Activity scene (see scenes.js / activity.js): Groups on top,
+   then Usage and Content (each with its own range and focus), Recording last.
+   The shared look is vault-ui.css. */
 /* The scene's mount stands where the page's body used to. */
 #activity { display: flex; flex-direction: column; height: 100%; padding: 10px 12px; }
 main { flex: 1; min-height: 0; overflow: auto; }
@@ -170,3 +170,20 @@ rect.is-hot, path.is-hot, circle.is-hot { stroke: #1e3a8a; stroke-width: 1.5; }
 .raw-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 2px; color: var(--vui-muted); font-size: var(--vui-size-small); }
 .tag-chip { padding: 1px 7px; border-radius: 999px; color: #000; font-size: 10px; font-weight: 700; }
 .chart-subtitle { color: var(--vui-muted); font-size: var(--vui-size-small); font-weight: 700; margin: 6px 0 2px; position: sticky; left: 0; }
+/* A section's range tabs (Today / A week / A month / Custom date). */
+.range-tabs { flex: none; }
+/* Our date picker (activity.js openPicker): a month, Monday first. */
+.date-picker { position: fixed; z-index: 31; width: 252px; padding: 10px; border-radius: 14px; background: #ffffff; box-shadow: 0 12px 34px rgba(15, 23, 42, 0.18); display: flex; flex-direction: column; gap: 6px; }
+.picker-head { display: flex; align-items: center; gap: 2px; }
+.picker-title { flex: 1; text-align: center; font-weight: 700; }
+.picker-nav { background: none; color: var(--vui-text); padding: 2px 7px; font-size: 14px; line-height: 1; border-radius: 8px; }
+.picker-nav:hover { background: var(--vui-fill); filter: none; }
+.picker-nav:disabled { opacity: 0.3; background: none; }
+.picker-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.picker-weekday { text-align: center; color: var(--vui-muted); font-size: 10px; font-weight: 700; padding: 2px 0; }
+.picker-day { height: 30px; padding: 0; border-radius: 8px; background: none; color: var(--vui-text); font-size: 12px; font-weight: 400; }
+.picker-day:hover { background: var(--navy-100); filter: none; }
+.picker-day.is-today { font-weight: 700; box-shadow: inset 0 0 0 1px var(--navy-700); }
+.picker-day.is-chosen { background: var(--navy-700); color: #ffffff; }
+.picker-day:disabled { color: #cbd5e1; background: none; }
+.picker-note { color: var(--vui-muted); font-size: var(--vui-size-small); text-align: center; }
