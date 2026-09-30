@@ -157,3 +157,4 @@ rect.is-hot, path.is-hot, circle.is-hot { stroke: #1e3a8a; stroke-width: 1.5; }
 .raw-title { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .raw-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 2px; color: var(--vui-muted); font-size: var(--vui-size-small); }
 .tag-chip { padding: 1px 7px; border-radius: 999px; color: #000; font-size: 10px; font-weight: 700; }
+.chart-subtitle { color: var(--vui-muted); font-size: var(--vui-size-small); font-weight: 700; margin: 6px 0 2px; position: sticky; left: 0; }
