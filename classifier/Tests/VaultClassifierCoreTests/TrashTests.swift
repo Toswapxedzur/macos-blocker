@@ -60,7 +60,21 @@ final class TrashTests: XCTestCase {
         XCTAssertEqual(Set(catalog.trees.map(\.id)), kept)
     }
 
-    func testPurgeExpiredTrashRemovesOnlyEntriesPastTTL() {
+    func testTrashCollectedEntriesKeepsThePlatformAndRestores() throws {
+        var catalog = WorkspaceCatalog.starter()
+        let binding = try catalog.ensurePlatformBinding("youtube")
+        let datasetIndex = try XCTUnwrap(catalog.datasets.firstIndex(where: { $0.id == binding.datasetID }))
+        catalog.datasets[datasetIndex].collectedEntries = [
+            CollectedPlatformEntry(id: "e1", platformID: "youtube", entryID: "youtube:video:a", creatorID: "youtube:channel:c", creatorName: "C", entryType: "video", title: "A")
+        ]
+        let entry = try XCTUnwrap(catalog.trashCollectedEntries("youtube"))
+        XCTAssertTrue(catalog.datasets[datasetIndex].collectedEntries.isEmpty)
+        XCTAssertTrue(catalog.bindings.contains(where: { $0.id == "youtube" }))
+        XCTAssertTrue(catalog.restoreTrashedEntry(entry.id))
+        XCTAssertEqual(catalog.datasets[datasetIndex].collectedEntries.map(\.entryID), ["youtube:video:a"])
+    }
+
+        func testPurgeExpiredTrashRemovesOnlyEntriesPastTTL() {
         var catalog = WorkspaceCatalog.starter()
         let now = WorkspaceCatalog.now()
         catalog.trash = [
