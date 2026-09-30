@@ -84,9 +84,12 @@ final class ViewModelCharacterizationTests: XCTestCase {
 
     func testWorkspaceActionSwitchesWithoutEchoingTheSnapshot() throws {
         let vm = try makeViewModel()
-        // "workspace" deliberately returns false: the shell switches optimistically
-        // and must not be sent the multi-megabyte state again for navigation.
-        XCTAssertFalse(vm.performWebAction("workspace", data: ["workspace": "knowledge"]))
+        // "workspace" returns false: the shell switches optimistically and must
+        // not be sent the multi-megabyte state again for navigation — except
+        // into Knowledge, whose creator suggestions ride along only while open.
+        XCTAssertFalse(vm.performWebAction("workspace", data: ["workspace": "llmAssist"]))
+        XCTAssertEqual(vm.workspace, .llmAssist)
+        XCTAssertTrue(vm.performWebAction("workspace", data: ["workspace": "knowledge"]))
         XCTAssertEqual(vm.workspace, .knowledge)
         XCTAssertEqual(vm.webSnapshot()["workspace"] as? String, "knowledge")
         XCTAssertTrue(vm.performWebAction("workspace", data: ["workspace": "not-a-workspace"]), "the error path re-sends the snapshot")
@@ -118,7 +121,7 @@ final class ViewModelCharacterizationTests: XCTestCase {
     /// routed action either succeeds or fails on a missing/invalid field, but
     /// never with the `default:` "unsupported action" error. A case dropped
     /// while moving methods between files shows up here as exactly that error.
-    /// (All 38 are safe headless with empty data — the backup ones throw on the
+    /// (All 39 are safe headless with empty data — the backup ones throw on the
     /// missing owner code / directory or on "locked" before touching the Keychain.)
     func testEveryKnownWebActionIsRouted() throws {
         let actions = [
@@ -127,10 +130,10 @@ final class ViewModelCharacterizationTests: XCTestCase {
             "probeProviderModelCatalog", "confirmDeleteProviderProfile", "rearrangeTree",
             "addTag", "moveTag", "renameTag", "updateTag", "connectTag", "disconnectTag", "deleteTag",
             "savePackageSettings", "saveLocalLLMSettings", "downloadModel", "cancelModelDownload", "deleteModelFile",
-            "deleteKnowledgeEntry", "editKnowledgeEntry", "retryFailedResearch", "saveResearchSettings", "saveClassifierTypeLocalModel", "saveClassifierTypeResearch", "setBackupOwnerCode", "unlockBackup",
+            "deleteKnowledgeEntry", "addKnowledgeCreator", "editKnowledgeEntry", "retryFailedResearch", "saveResearchSettings", "saveClassifierTypeLocalModel", "saveClassifierTypeResearch", "setBackupOwnerCode", "unlockBackup",
             "saveBackup", "backupNow",
         ]
-        XCTAssertEqual(actions.count, 38)
+        XCTAssertEqual(actions.count, 39)
         let unsupported = WebBridgeInputError.invalidChoice("action").localizedDescription
         for action in actions {
             let vm = try makeViewModel()

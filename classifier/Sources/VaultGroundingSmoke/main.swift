@@ -85,13 +85,7 @@ let executor = GroundedResearchExecutor(http: http)
 do {
     let result = try await executor.research(subject, using: configuration)
     print("✓ grounded description:\n\(result.knowledge.meaning)\n")
-    print("sources (\(result.knowledge.sourceURLs.count)):")
-    if result.knowledge.sourceURLs.isEmpty {
-        print("  (none returned — the description is still stored)")
-    } else {
-        for url in result.knowledge.sourceURLs { print("  - \(url)") }
-    }
-    print("\ntokens charged: \(result.chargedTokenCount)")
+    print("tokens charged: \(result.chargedTokenCount)")
     print("stored key:    \(result.knowledge.id)")
 } catch {
     // Surface the provider's raw response so a failure is diagnosable
