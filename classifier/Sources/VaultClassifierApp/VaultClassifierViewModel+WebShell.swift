@@ -76,18 +76,39 @@ extension VaultClassifierViewModel {
         // Creators as the page shows them: name and icon from what the
         // classifier collected (by id or an alias of it), else from the id.
         // An exact id wins over an alias; a "name" that is only the id is none.
+        // `icon` is the picture's web address, as collected.
         var creatorFaces: [String: (name: String?, icon: String?)] = [:]
         let collected = catalog.datasets.flatMap(\.collectedEntries)
         for aliasPass in [false, true] {
             for entry in collected {
                 let name = entry.creatorName.isEmpty || entry.creatorName == entry.creatorID ? nil : entry.creatorName
-                let icon = entry.sourceIconURL.flatMap { sourceIconCache?.cachedURL(for: $0)?.absoluteString }
+                let icon = entry.sourceIconURL.flatMap {
+                    SourceIconURLPolicy.isAccepted(platformID: entry.platformID, value: $0) ? $0 : nil
+                }
                 for id in aliasPass ? entry.sourceAliases : [entry.creatorID] {
                     let face = creatorFaces[id]
                     if aliasPass && face != nil { continue }
                     creatorFaces[id] = (face?.name ?? name, face?.icon ?? icon)
                 }
             }
+        }
+        // A creator in Knowledge keeps its picture (owner 2026-09-30): copied
+        // from the source-icon cache the first time it is there; a missing one
+        // is asked for (a few per snapshot), for a later snapshot to keep.
+        var picturesRequested = 0
+        let picture: (String) -> String? = { [self] creatorID in
+            guard let store = creatorPictures else { return nil }
+            if let kept = store.url(for: creatorID) { return kept }
+            guard let remote = creatorFaces[creatorID]?.icon else { return nil }
+            if let jpeg = sourceIconJPEG(remoteURL: remote) {
+                store.save(jpeg, for: creatorID)
+                return store.url(for: creatorID)
+            }
+            if picturesRequested < 12 {
+                picturesRequested += 1
+                cacheSourceIcon(remoteURL: remote)
+            }
+            return nil
         }
         let knowledgePayload: ([KnowledgeEntry]) -> [[String: Any]] = { entries in
             entries
@@ -104,7 +125,7 @@ extension VaultClassifierViewModel {
                         let face = creatorFaces[entry.subject]
                         row["platformID"] = CreatorReference.platformID(of: entry.subject)
                         row["name"] = face?.name ?? CreatorReference.fallbackName(of: entry.subject)
-                        row["icon"] = face?.icon.map { $0 as Any } ?? NSNull()
+                        row["icon"] = picture(entry.subject) ?? NSNull()
                     }
                     return row
                 }

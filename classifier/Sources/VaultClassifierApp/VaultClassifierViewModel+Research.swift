@@ -106,6 +106,7 @@ extension VaultClassifierViewModel {
         guard let coordinator else { return }
         do {
             try coordinator.deleteKnowledgeEntry(id: id)
+            if id.hasPrefix("creator:") { creatorPictures?.remove(creatorID: String(id.dropFirst("creator:".count))) }
             refreshLocalState()
             issue = nil
         } catch {
