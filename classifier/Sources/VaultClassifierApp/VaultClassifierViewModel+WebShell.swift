@@ -73,23 +73,58 @@ extension VaultClassifierViewModel {
                     "entryCounts": Dictionary(grouping: dataset.collectedEntries, by: \.platformID).mapValues(\.count),
                 ] as [String: Any]
             }
+        // Creators as the page shows them: name and icon from what the
+        // classifier collected (by id or an alias of it), else from the id.
+        // An exact id wins over an alias; a "name" that is only the id is none.
+        var creatorFaces: [String: (name: String?, icon: String?)] = [:]
+        let collected = catalog.datasets.flatMap(\.collectedEntries)
+        for aliasPass in [false, true] {
+            for entry in collected {
+                let name = entry.creatorName.isEmpty || entry.creatorName == entry.creatorID ? nil : entry.creatorName
+                let icon = entry.sourceIconURL.flatMap { sourceIconCache?.cachedURL(for: $0)?.absoluteString }
+                for id in aliasPass ? entry.sourceAliases : [entry.creatorID] {
+                    let face = creatorFaces[id]
+                    if aliasPass && face != nil { continue }
+                    creatorFaces[id] = (face?.name ?? name, face?.icon ?? icon)
+                }
+            }
+        }
         let knowledgePayload: ([KnowledgeEntry]) -> [[String: Any]] = { entries in
             entries
                 .sorted { $0.updatedAtMilliseconds > $1.updatedAtMilliseconds }
                 .map { entry in
-                    [
+                    var row: [String: Any] = [
                         "id": entry.id,
                         "subject": entry.subject,
                         "meaning": entry.meaning,
-                        "sourceURLs": entry.sourceURLs,
+                        "writtenByUser": entry.writtenByUser,
                         "updatedAtMilliseconds": entry.updatedAtMilliseconds,
-                    ] as [String: Any]
+                    ]
+                    if entry.kind == .creator {
+                        let face = creatorFaces[entry.subject]
+                        row["platformID"] = CreatorReference.platformID(of: entry.subject)
+                        row["name"] = face?.name ?? CreatorReference.fallbackName(of: entry.subject)
+                        row["icon"] = face?.icon.map { $0 as Any } ?? NSNull()
+                    }
+                    return row
                 }
         }
-        assets["knowledge"] = [
+        var knowledge: [String: Any] = [
             "creators": knowledgePayload(catalog.creatorKnowledge),
             "terms": knowledgePayload(catalog.knowledgeEntries),
         ]
+        // "Add a creator" suggests creators the classifier has collected (only
+        // while the Knowledge page is open: the list is long).
+        if workspace == .knowledge {
+            var seen = Set<String>()
+            knowledge["knownCreators"] = catalog.datasets.flatMap(\.collectedEntries).compactMap { entry -> [String: String]? in
+                guard !entry.creatorName.isEmpty, entry.creatorName != entry.creatorID,
+                      CreatorReference.platforms.contains(entry.platformID),
+                      seen.insert(entry.creatorID).inserted else { return nil }
+                return ["platformID": entry.platformID, "id": entry.creatorID, "name": entry.creatorName]
+            }
+        }
+        assets["knowledge"] = knowledge
         assets["classifierTypes"] = catalog.classifierTypes.map { classifierType in
                 [
                     "id": classifierType.id,
@@ -273,8 +308,10 @@ extension VaultClassifierViewModel {
                 workspace = value
                 // The WebView already owns the current bounded snapshot and
                 // switches workspaces optimistically. Avoid echoing the same
-                // multi-megabyte state back across the bridge for navigation.
-                return false
+                // multi-megabyte state back across the bridge for navigation —
+                // except into Knowledge, whose creator suggestions ride along only
+                // while it is open.
+                return value == .knowledge
             case "clearCollectedData":
                 clearCollectedData(platformID: try webString(data, key: "platformID", limit: 64))
             case "restoreTrashedEntry":
@@ -381,6 +418,12 @@ extension VaultClassifierViewModel {
             case "addKnowledgeTerm":
                 addKnowledgeTerm(
                     subject: try webString(data, key: "subject", limit: 120),
+                    meaning: try webString(data, key: "meaning", limit: KnowledgeEntry.maximumMeaningLength)
+                )
+            case "addKnowledgeCreator":
+                addKnowledgeCreator(
+                    platformID: try webString(data, key: "platformID", limit: 64),
+                    creator: try webString(data, key: "creator", limit: 512),
                     meaning: try webString(data, key: "meaning", limit: KnowledgeEntry.maximumMeaningLength)
                 )
             case "editKnowledgeEntry":

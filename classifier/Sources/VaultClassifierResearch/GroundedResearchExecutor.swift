@@ -57,8 +57,7 @@ public struct GroundedResearchExecutor: Sendable {
             kind: sanitized.kind,
             subject: sanitized.subject,
             meaning: meaning,
-            contextTagHints: [],
-            sourceURLs: parsed.sourceURLs
+            contextTagHints: []
         )
         return GroundedResearchResult(
             knowledge: knowledge,

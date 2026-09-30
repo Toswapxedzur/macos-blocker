@@ -54,6 +54,31 @@ extension LocalClassifierCoordinator {
         ))
     }
 
+    /// Looks up a creator the USER added without a description (Knowledge → add a
+    /// creator), through the research lane of a type on that platform with
+    /// research on. Returns false when there is none, or it is already queued.
+    @discardableResult
+    public func researchCreator(creatorID: String, platformID: String) async -> Bool {
+        guard let researchSubject = ResearchSubject(kind: .creator, subject: creatorID) else { return false }
+        let target: (queue: GroundedResearchQueue, type: ClassifierTypeAsset)? = lock.withLock {
+            guard let queue = groundedResearchQueue,
+                  let type = state.workspaceCatalog.classifierTypes.first(where: {
+                      $0.applicablePlatformID == platformID
+                          && Self.effectiveResearchSettings(global: state.settings.research, for: $0) != nil
+                  }) else { return nil }
+            return (queue, type)
+        }
+        guard let target else { return false }
+        return await target.queue.enqueue(.init(
+            classifierTypeID: target.type.id,
+            platformID: platformID,
+            entryID: "",
+            creatorID: creatorID,
+            subjects: [researchSubject],
+            urgency: 5
+        ))
+    }
+
     /// Drops every persisted research cooldown so the next classification of
     /// each affected video may research again. Returns how many were cleared.
     @discardableResult
@@ -111,7 +136,6 @@ extension LocalClassifierCoordinator {
                     subject: triggeringTask.creatorID,
                     meaning: entry.meaning,
                     contextTagHints: [],
-                    sourceURLs: entry.sourceURLs,
                     createdAtMilliseconds: entry.createdAtMilliseconds,
                     updatedAtMilliseconds: entry.updatedAtMilliseconds
                 )

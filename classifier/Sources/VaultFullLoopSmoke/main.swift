@@ -175,7 +175,6 @@ guard let creator = keyedCreator else {
 }
 line("creator keyed ✓")
 line("description: \(creator.meaning)")
-line("sources: \(creator.sourceURLs.count)")
 
 let termEntries = coordinator.snapshot().workspaceCatalog.knowledgeEntries
 if let term = termEntries.first {
