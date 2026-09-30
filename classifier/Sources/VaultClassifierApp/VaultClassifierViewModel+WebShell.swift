@@ -69,7 +69,8 @@ extension VaultClassifierViewModel {
                     "id": dataset.id,
                     "name": dataset.name,
                     "revision": dataset.revision,
-                    "collectedCreators": webCollectedCreators(dataset.collectedEntries),
+                    // Collected entries per platform (a type's Options shows the count).
+                    "entryCounts": Dictionary(grouping: dataset.collectedEntries, by: \.platformID).mapValues(\.count),
                 ] as [String: Any]
             }
         let knowledgePayload: ([KnowledgeEntry]) -> [[String: Any]] = { entries in
@@ -274,10 +275,8 @@ extension VaultClassifierViewModel {
                 // switches workspaces optimistically. Avoid echoing the same
                 // multi-megabyte state back across the bridge for navigation.
                 return false
-            case "addCollectionPlatform":
-                addCollectionPlatform(platformID: try webString(data, key: "platformID", limit: 64))
-            case "confirmDeleteCollectionPlatform":
-                deleteCollectionPlatform(platformID: try webString(data, key: "platformID", limit: 64))
+            case "clearCollectedData":
+                clearCollectedData(platformID: try webString(data, key: "platformID", limit: 64))
             case "restoreTrashedEntry":
                 restoreTrashedEntry(entryID: try webString(data, key: "id", limit: 64))
             case "permanentlyDeleteTrashedEntry":
@@ -286,13 +285,6 @@ extension VaultClassifierViewModel {
                 setCollectionEnabled(
                     platformID: try webString(data, key: "platformID", limit: 64),
                     enabled: try webBool(data, key: "enabled")
-                )
-            case "clearCollectionDiagnostics":
-                clearCollectionDiagnostics()
-            case "setActiveClassifierType":
-                setActiveClassifierType(
-                    platformID: try webString(data, key: "platformID", limit: 64),
-                    classifierTypeID: try webOptionalString(data, key: "classifierTypeID", limit: 256)
                 )
             case "createClassifierType":
                 createClassifierType(
@@ -404,19 +396,6 @@ extension VaultClassifierViewModel {
                     llmProviderProfileID: try webOptionalString(data, key: "llmProviderProfileID", limit: 256),
                     llmModelIdentifier: try webOptionalString(data, key: "llmModelIdentifier", limit: 256)
                 ))
-            case "submitCorrection":
-                submitCorrection(
-                    classifierTypeID: try webString(data, key: "typeID", limit: 256),
-                    platformID: try webString(data, key: "platformID", limit: 64),
-                    entryID: try webString(data, key: "entryID", limit: 256),
-                    correctTagIDs: try webStringArray(
-                        data,
-                        key: "correctTagIDs",
-                        limit: CorrectionExample.maximumTagIDs,
-                        elementLimit: 256
-                    ),
-                    note: try webOptionalString(data, key: "note", limit: CorrectionExample.maximumNoteLength)
-                )
             case "saveClassifierTypeLocalModel":
                 let input = try Self.parseClassifierTypeLocalModelWebInput(data)
                 saveClassifierTypeLocalModel(typeID: input.typeID, overrides: input.overrides)
@@ -442,153 +421,6 @@ extension VaultClassifierViewModel {
             issue = error.localizedDescription
         }
         return true
-    }
-
-    /// The primary (creator-level) list carried in every snapshot: one row per
-    /// (platform, creator) with only the fields the master lists and creator
-    /// cards render. The heavy per-entry body is intentionally excluded and
-    /// served lazily by `webCreatorEntriesPayload` when a creator is chosen, so
-    /// the collected corpus never rides along on unrelated state updates.
-    func webCollectedCreators(_ entries: [CollectedPlatformEntry]) -> [[String: Any]] {
-        struct Aggregate {
-            var platformID: String
-            var creatorID: String
-            var creatorName: String
-            var entryCount: Int
-            var firstObserved: Int64
-            var lastObserved: Int64
-            var iconURL: String?
-            var subscriberCount: String?
-            var latestObservedForFields: Int64
-        }
-        // Collapse a creator's observed identity forms (e.g. @handle + channel)
-        // into one canonical row so the same creator never appears twice.
-        let identityIndex = CreatorIdentityIndex(entries: entries)
-        var order: [String] = []
-        var groups: [String: Aggregate] = [:]
-        for entry in entries {
-            let canonicalCreatorID = identityIndex.canonical(of: entry.creatorID)
-            let key = "\(entry.platformID)\u{1F}\(canonicalCreatorID)"
-            let icon = entry.sourceIconURL.flatMap { sourceIconCache?.cachedURL(for: $0)?.absoluteString }
-            let subscriber = entry.attributes["subscriberCount"]
-            if var aggregate = groups[key] {
-                aggregate.entryCount += 1
-                aggregate.firstObserved = min(aggregate.firstObserved, entry.firstObservedAtMilliseconds)
-                aggregate.lastObserved = max(aggregate.lastObserved, entry.lastObservedAtMilliseconds)
-                // Display name/icon/subscriber follow the most recently observed
-                // entry; an older observation only fills a still-missing icon.
-                if entry.lastObservedAtMilliseconds >= aggregate.latestObservedForFields {
-                    aggregate.latestObservedForFields = entry.lastObservedAtMilliseconds
-                    aggregate.creatorName = entry.creatorName
-                    if let icon { aggregate.iconURL = icon }
-                    if let subscriber { aggregate.subscriberCount = subscriber }
-                } else if aggregate.iconURL == nil, let icon {
-                    aggregate.iconURL = icon
-                }
-                groups[key] = aggregate
-            } else {
-                order.append(key)
-                groups[key] = Aggregate(
-                    platformID: entry.platformID,
-                    creatorID: canonicalCreatorID,
-                    creatorName: entry.creatorName,
-                    entryCount: 1,
-                    firstObserved: entry.firstObservedAtMilliseconds,
-                    lastObserved: entry.lastObservedAtMilliseconds,
-                    iconURL: icon,
-                    subscriberCount: subscriber,
-                    latestObservedForFields: entry.lastObservedAtMilliseconds
-                )
-            }
-        }
-        return order.compactMap { key in
-            guard let aggregate = groups[key] else { return nil }
-            return [
-                "platformID": aggregate.platformID,
-                "creatorID": aggregate.creatorID,
-                "creatorName": aggregate.creatorName,
-                "entryCount": aggregate.entryCount,
-                "firstObservedAtMilliseconds": aggregate.firstObserved,
-                "lastObservedAtMilliseconds": aggregate.lastObserved,
-                "cachedSourceIconURL": aggregate.iconURL ?? NSNull(),
-                "subscriberCount": aggregate.subscriberCount ?? NSNull(),
-            ]
-        }
-    }
-
-    /// The full per-entry projection, delivered for one chosen creator only.
-    func webCollectedEntry(_ entry: CollectedPlatformEntry, catalog: WorkspaceCatalog) -> [String: Any] {
-        let correctionForms = catalog.classifierTypes
-            .filter { $0.applicablePlatformID == entry.platformID }
-            .sorted { ($0.order, $0.id) < ($1.order, $1.id) }
-            .compactMap { type -> [String: Any]? in
-                guard let tree = catalog.trees.first(where: {
-                    $0.id == type.treeID && $0.revision == type.treeRevision
-                }), let taxonomy = try? tree.inferenceTaxonomy() else { return nil }
-                let correction = catalog.correctionExamples.first {
-                    $0.classifierTypeID == type.id && $0.platformID == entry.platformID &&
-                        $0.entryID == entry.entryID
-                }
-                let classification = catalog.videoClassification(
-                    classifierTypeID: type.id,
-                    platformID: entry.platformID,
-                    entryID: entry.entryID
-                )
-                return [
-                    "typeID": type.id,
-                    "typeName": type.name,
-                    "tagOptions": taxonomy.nodes.values
-                        .filter(\.predictable)
-                        .sorted { ($0.name, $0.id) < ($1.name, $1.id) }
-                        .map { ["id": $0.id, "name": $0.name] },
-                    "correctTagIDs": correction?.correctTagIDs ?? classification?.tags.map(\.tagID) ?? [],
-                    "note": correction?.note ?? "",
-                    "corrected": correction != nil,
-                ] as [String: Any]
-            }
-        return [
-            "id": entry.id,
-            "platformID": entry.platformID,
-            "entryID": entry.entryID,
-            "creatorID": entry.creatorID,
-            "creatorName": entry.creatorName,
-            "entryType": entry.entryType,
-            "title": entry.title,
-            "surface": entry.surface.rawValue,
-            "text": entry.text ?? NSNull(),
-            "summary": entry.summary ?? NSNull(),
-            "suppliedTags": entry.suppliedTags,
-            "canonicalURL": entry.canonicalURL ?? NSNull(),
-            "attributes": entry.attributes,
-            "cachedSourceIconURL": entry.sourceIconURL.flatMap {
-                sourceIconCache?.cachedURL(for: $0)?.absoluteString
-            } ?? NSNull(),
-            "firstObservedAtMilliseconds": entry.firstObservedAtMilliseconds,
-            "lastObservedAtMilliseconds": entry.lastObservedAtMilliseconds,
-            "observationCount": entry.observationCount,
-            "correctionForms": correctionForms,
-        ]
-    }
-
-    /// Serves the full entries for one chosen creator, in response to a bounded
-    /// `loadCreatorEntries` web action. Delivered on its own targeted channel so
-    /// choosing a creator never re-pushes or re-renders the whole snapshot.
-    func webCreatorEntriesPayload(datasetID: String, platformID: String, creatorID: String) -> [String: Any]? {
-        let catalog = (localState ?? coordinator?.snapshot())?.workspaceCatalog
-        guard let catalog,
-              let dataset = catalog.datasets.first(where: { $0.id == datasetID }) else { return nil }
-        // The selected creator is a canonical identity; return the entries of
-        // every form in its class so a merged creator shows all its content.
-        let identityClass = CreatorIdentityIndex(entries: dataset.collectedEntries).members(of: creatorID)
-        let entries = dataset.collectedEntries
-            .filter { $0.platformID == platformID && identityClass.contains($0.creatorID) }
-            .map { webCollectedEntry($0, catalog: catalog) }
-        return [
-            "datasetID": datasetID,
-            "platformID": platformID,
-            "creatorID": creatorID,
-            "entries": entries,
-        ]
     }
 
     func webString(_ data: [String: Any], key: String, limit: Int) throws -> String {

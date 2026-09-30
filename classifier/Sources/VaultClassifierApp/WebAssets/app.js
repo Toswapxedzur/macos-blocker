@@ -46,18 +46,6 @@
   const treeViewportPositions = new Map();
   const editorViewportPositions = new Map();
   const pendingTagRenames = new Map();
-  const collapsedCollectionCreatorLists = new Set();
-  const selectedCollectionCreatorByPlatform = new Map();
-  // The snapshot carries only the creator-level primary list. A chosen
-  // creator's full entries are fetched on demand and cached here (keyed
-  // datasetID|platformID|creatorID); the pending set guards in-flight requests.
-  const loadedCreatorEntries = new Map();
-  const pendingCreatorEntryRequests = new Set();
-  // Per-platform lookup (platformID -> Map(normalized tag name -> tree node))
-  // used to color platform-supplied tags (YouTube hashtags, Reddit flair) with
-  // the matching tag-tree tag's color. Rebuilt whenever the collection workspace
-  // renders; the detail pane reads it during its targeted refreshes too.
-  const suppliedTagNodeByPlatform = new Map();
   let pendingDeletion = null;
   // Non-null while the "create a group" dialog is open: { platformID, name? }.
   // A group can only be created through this dialog.
@@ -75,27 +63,7 @@
   let selectedLanguage = "en";
   let navigationPanelWidth = navigationWidthRange.fallback;
   let navigationResize = null;
-  const collectionRowHeight = 48;
-  const workspaceNames = new Set(["llmAssist", "browserBridge", "classificationData", "knowledge"]);
-  const virtualLists = new Map();
-  const virtualListScrollByKey = new Map();
-  let virtualListSequence = 0;
-  let virtualListResizeObserver = null;
-  const keyedListRegistry = new Map();
-  const keyedListRenderedRows = new Map();
-  const liveHTMLRegistry = new Map();
-  const liveHTMLRendered = new Map();
-  // List search: raw query text per search group (persists across re-renders so a
-  // background snapshot push never wipes what the user typed), debounce timers,
-  // and a per-item normalized-haystack cache (WeakMap auto-clears when the
-  // snapshot rebuilds the item objects).
-  const listSearchQueryByGroup = new Map();
-  const listSearchTimers = new Map();
-  const searchHaystackCache = new WeakMap();
-  // Minimum fraction of a query's trigrams that must appear in a candidate for
-  // the typo-tolerant fallback to accept it. Raise toward 1 for stricter, lower
-  // toward 0 for more forgiving.
-  const trigramMatchThreshold = 0.5;
+  const workspaceNames = new Set(["llmAssist", "browserBridge", "knowledge"]);
   let lastRenderedMarkup = null;
 
   try {
@@ -210,227 +178,6 @@
     return payload;
   }
 
-  // Clears the per-render registries that shell() repopulates. Because the
-  // sequences reset to 0, identical markup re-registers with identical ids —
-  // which is what lets the render() fast path keep the existing DOM's observers
-  // valid. Observers are disconnected only on a full rebuild (in render()).
-  function resetDeferredRendering() {
-    virtualLists.clear();
-    keyedListRegistry.clear();
-    liveHTMLRegistry.clear();
-    virtualListSequence = 0;
-  }
-
-  // Windowed list: renders only the rows in (or near) the visible box, so DOM
-  // and paint cost stay constant regardless of total row count. Rows must be a
-  // single fixed height (rowHeight). A stable `key` preserves scroll position
-  // across full re-renders.
-  // Fold a raw string to a comparable form: strip diacritics and invisible
-  // bidi/zero-width controls (creator names carry both), lowercase, and collapse
-  // whitespace. CJK and digits pass through unchanged.
-  function normalizeSearch(value) {
-    return (value == null ? "" : String(value))
-      .normalize("NFKD")
-      .replace(/[̀-ͯ]/g, "")
-      .replace(/[​-‏‪-‮⁦-⁩﻿]/g, "")
-      .toLowerCase()
-      .replace(/\s+/g, " ")
-      .trim();
-  }
-
-  // Score one already-normalized haystack against a normalized, non-empty query.
-  // Exact substring tiers (exact/prefix/word-prefix/contained) always outrank the
-  // trigram-similarity fallback, so an exact match is never buried. The fallback
-  // only fires for longer, typo'd queries with no substring hit; there is no
-  // loose subsequence "scatter" matching. Returns -1 for no match.
-  function searchScore(haystack, query) {
-    const idx = haystack.indexOf(query);
-    if (idx === 0) return haystack.length === query.length ? 1200 : 1000;
-    if (idx > 0) return haystack[idx - 1] === " " ? 700 : 500 - Math.min(idx, 200);
-    // Trigram fallback needs >= 2 shingles (query length >= 4) to offer real typo
-    // tolerance. Its score stays strictly below the substring floor (300), so it
-    // only ever appears beneath exact hits.
-    if (query.length < 4) return -1;
-    const coverage = trigramCoverage(haystack, query);
-    if (coverage < trigramMatchThreshold) return -1;
-    return Math.round(50 + coverage * 150);
-  }
-
-  // Fraction of the query's distinct overlapping 3-grams that occur as substrings
-  // of the haystack. Trigram overlap requires real contiguous 3-char runs, so —
-  // unlike subsequence matching — it never rewards arbitrarily scattered
-  // characters, only genuine near-substring similarity (typos, transpositions).
-  function trigramCoverage(haystack, query) {
-    const grams = new Set();
-    for (let i = 0; i + 3 <= query.length; i += 1) grams.add(query.slice(i, i + 3));
-    if (grams.size < 2) return 0;
-    let hit = 0;
-    grams.forEach((gram) => { if (haystack.indexOf(gram) >= 0) hit += 1; });
-    return hit / grams.size;
-  }
-
-  function searchHaystack(item, searchOf) {
-    let hay = searchHaystackCache.get(item);
-    if (hay === undefined) {
-      hay = normalizeSearch(searchOf(item));
-      if (item !== null && typeof item === "object") searchHaystackCache.set(item, hay);
-    }
-    return hay;
-  }
-
-  // Filter + rank items by relevance for a raw query. Empty query returns the
-  // input untouched (stable original order). O(N·L) — fine for the few-thousand
-  // rows these lists hold; no index needed below ~50k.
-  function rankItems(items, searchOf, rawQuery) {
-    const query = normalizeSearch(rawQuery);
-    if (!query) return items;
-    const scored = [];
-    for (const item of items) {
-      const score = searchScore(searchHaystack(item, searchOf), query);
-      if (score >= 0) scored.push([score, item]);
-    }
-    scored.sort((lhs, rhs) => rhs[0] - lhs[0]);
-    return scored.map(([, item]) => item);
-  }
-
-  function listSearchBox(group, placeholderKey) {
-    const query = listSearchQueryByGroup.get(group) || "";
-    return `<div class="list-search"><span class="list-search-icon" aria-hidden="true">⌕</span><input type="search" class="list-search-input" data-list-search="${esc(group)}" value="${esc(query)}" placeholder="${esc(tx(placeholderKey))}" aria-label="${esc(tx(placeholderKey))}" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search"><span class="list-search-count" data-list-search-count="${esc(group)}"></span></div>`;
-  }
-
-  function listSearchGroupContainers(group) {
-    return [...root.querySelectorAll("[data-search-group]")].filter((container) => container.dataset.searchGroup === group);
-  }
-
-  function listSearchRegistry(container) {
-    return container.dataset.virtualList
-      ? virtualLists.get(container.dataset.virtualList)
-      : keyedListRegistry.get(container.dataset.keyedList);
-  }
-
-  // Refreshes the "N / M" count shown in each of a group's search boxes from the
-  // group's live registries.
-  function refreshListSearchMeta(group) {
-    let total = 0;
-    let shown = 0;
-    let hasRegistry = false;
-    listSearchGroupContainers(group).forEach((container) => {
-      const registry = listSearchRegistry(container);
-      if (!registry) return;
-      hasRegistry = true;
-      total += registry.allItems.length;
-      shown += registry.items.length;
-    });
-    const active = (listSearchQueryByGroup.get(group) || "").trim().length > 0;
-    root.querySelectorAll("[data-list-search-count]").forEach((element) => {
-      if (element.dataset.listSearchCount !== group) return;
-      element.textContent = (active && hasRegistry) ? tx("bridge.searchCount", { shown, total }) : "";
-    });
-  }
-
-  // Re-filters and repaints every list in a search group in place — no full
-  // render() — so search-as-you-type keeps the input focused and stays cheap.
-  function applyListSearch(group) {
-    const raw = listSearchQueryByGroup.get(group) || "";
-    listSearchGroupContainers(group).forEach((container) => {
-      const registry = listSearchRegistry(container);
-      if (!registry) return;
-      registry.items = (registry.searchOf && raw.trim())
-        ? rankItems(registry.allItems, registry.searchOf, raw)
-        : registry.allItems;
-      if (container.dataset.virtualList) {
-        const sizer = container.querySelector(".virtual-list-sizer");
-        if (sizer) sizer.style.height = `${registry.items.length * registry.rowHeight}px`;
-        container.scrollTop = 0;
-        paintVirtualList(container);
-      } else if (container.dataset.keyedList) {
-        reconcileKeyedList(container, registry);
-      }
-    });
-    refreshListSearchMeta(group);
-  }
-
-  function scheduleListSearch(group) {
-    clearTimeout(listSearchTimers.get(group));
-    listSearchTimers.set(group, setTimeout(() => applyListSearch(group), 120));
-  }
-
-  function refreshAllListSearchMeta() {
-    const groups = new Set();
-    root.querySelectorAll("[data-list-search-count]").forEach((element) => groups.add(element.dataset.listSearchCount));
-    groups.forEach(refreshListSearchMeta);
-  }
-
-  function virtualList(items, rowHeight, renderRow, { key = "", emptyMarkup = "", searchOf = null, searchGroup = "" } = {}) {
-    // A keyed list always renders its container, even when empty, so a targeted
-    // update can add rows to it later without a full re-render.
-    if (!items.length && !key && !searchGroup) return emptyMarkup;
-    const id = `virtual-list-${virtualListSequence += 1}`;
-    // Apply any persisted search query up front so a full re-render (e.g. a
-    // background snapshot push) reproduces the filtered view without a flash.
-    const rawQuery = searchGroup ? (listSearchQueryByGroup.get(searchGroup) || "") : "";
-    const filtered = (searchOf && rawQuery.trim()) ? rankItems(items, searchOf, rawQuery) : items;
-    virtualLists.set(id, { items: filtered, allItems: items, rowHeight, renderRow, key, searchOf });
-    const totalHeight = filtered.length * rowHeight;
-    return `<div class="virtual-list" data-virtual-list="${id}"${key ? ` data-virtual-key="${esc(key)}"` : ""}${searchGroup ? ` data-search-group="${esc(searchGroup)}"` : ""}><div class="virtual-list-sizer" style="height:${totalHeight}px"><div class="virtual-list-window" data-virtual-window></div></div></div>`;
-  }
-
-  // Repaints every mounted virtual list from its (freshly rebuilt) registry
-  // entry. Because resetDeferredRendering resets the id sequence, identical
-  // markup re-registers with identical ids, so each container's id still maps to
-  // its entry — letting the render() fast path refresh windowed rows in place.
-  function repaintVirtualLists() {
-    root.querySelectorAll("[data-virtual-list]").forEach((container) => {
-      const state = virtualLists.get(container.dataset.virtualList);
-      if (!state) return;
-      const sizer = container.querySelector(".virtual-list-sizer");
-      if (sizer) sizer.style.height = `${state.items.length * state.rowHeight}px`;
-      paintVirtualList(container);
-    });
-  }
-
-  function paintVirtualList(container) {
-    const state = virtualLists.get(container.dataset.virtualList);
-    const win = container.querySelector("[data-virtual-window]");
-    if (!state || !win) return;
-    const { items, rowHeight, renderRow, key } = state;
-    const scrollTop = container.scrollTop;
-    const clientHeight = container.clientHeight || rowHeight * 8;
-    const buffer = 4;
-    const start = Math.max(0, Math.floor(scrollTop / rowHeight) - buffer);
-    const visibleCount = Math.ceil(clientHeight / rowHeight) + buffer * 2;
-    const end = Math.min(items.length, start + visibleCount);
-    win.style.transform = `translateY(${start * rowHeight}px)`;
-    win.innerHTML = items.slice(start, end).map(renderRow).join("");
-    if (key) virtualListScrollByKey.set(key, scrollTop);
-  }
-
-  function scheduleVirtualPaint(container) {
-    if (container.dataset.vlScheduled === "true") return;
-    container.dataset.vlScheduled = "true";
-    window.requestAnimationFrame(() => {
-      container.dataset.vlScheduled = "false";
-      paintVirtualList(container);
-    });
-  }
-
-  function setupVirtualLists() {
-    const containers = root.querySelectorAll("[data-virtual-list]");
-    if (!containers.length) return;
-    if (!virtualListResizeObserver && "ResizeObserver" in window) {
-      virtualListResizeObserver = new ResizeObserver((entries) => {
-        entries.forEach((entry) => scheduleVirtualPaint(entry.target));
-      });
-    }
-    containers.forEach((container) => {
-      container.addEventListener("scroll", () => scheduleVirtualPaint(container), { passive: true });
-      const key = container.dataset.virtualKey;
-      if (key && virtualListScrollByKey.has(key)) container.scrollTop = virtualListScrollByKey.get(key);
-      paintVirtualList(container);
-      virtualListResizeObserver?.observe(container);
-    });
-  }
-
   function field(labelKey, hintKey, key, value, type = "text", extra = "") {
     return `<label class="field"><span class="field-label">${tx(labelKey)}${hintKey ? `<span class="field-hint"> · ${tx(hintKey)}</span>` : ""}</span><input type="${type}" data-field="${esc(key)}" value="${type === "password" ? "" : esc(value)}" ${extra}></label>`;
   }
@@ -516,123 +263,6 @@
     return `<div class="workspace-head"><div><h2>${tx(titleKey)}</h2><p class="section-copy">${tx(copyKey)}</p></div>${statusPill(badge, tone)}</div>`;
   }
 
-  function collectionSourceTerms(sourceKind) {
-    const kind = ["creator", "account", "subreddit", "server"].includes(sourceKind) ? sourceKind : "creator";
-    return {
-      singular: t(`bridge.sourceKind.${kind}`),
-      plural: t(`bridge.sourceKind.${kind}Plural`)
-    };
-  }
-
-  function collectionObservedAt(value) {
-    const numeric = Number(value);
-    return Number.isFinite(numeric)
-      ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(numeric))
-      : t("data.unknownDate");
-  }
-
-  const collectionAttributeLabel = (key) => ({
-    subscriberCount: "Subscribers",
-    viewCount: "Views",
-    published: "Published",
-    duration: "Duration",
-    details: "Details",
-    metadata: "Feed details",
-    creatorURL: "Creator page",
-    sourceKind: "Source type"
-  })[key] || String(key)
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
-    .replace(/[._-]+/g, " ")
-    .replace(/^./, (letter) => letter.toUpperCase());
-
-  function renderCollectionDetailEntry(entry) {
-    const attributes = Object.entries(entry.attributes || {})
-      .map(([key, value]) => {
-        // The YouTube "details" attribute repeats the hashtags already shown as
-        // tag pills; drop the trailing hashtag cluster so they render once.
-        const cleaned = key === "details" ? String(value).replace(/(?:\s*#\S+)+\s*$/, "").trim() : String(value);
-        return cleaned ? `${esc(collectionAttributeLabel(key))}: ${esc(cleaned)}` : "";
-      })
-      .filter(Boolean)
-      .join(" · ");
-    const colorByName = suppliedTagNodeByPlatform.get(entry.platformID);
-    const tags = Array.isArray(entry.suppliedTags) && entry.suppliedTags.length
-      ? `<span class="collection-entry-tags">${entry.suppliedTags.map((tag) => {
-          const label = String(tag).replace(/^#+/, "").trim();
-          if (!label) return "";
-          // Color a platform tag with its matching tag-tree tag's color; leave
-          // unmatched tags on the neutral pill style.
-          const light = normalizedTagColor(colorByName?.get(normalizeTagName(tag))?.lightColorHex);
-          const style = light ? ` style="background:${light};color:#000"` : "";
-          return `<span${style}>${esc(label)}</span>`;
-        }).filter(Boolean).join("")}</span>`
-      : "";
-    const summary = typeof entry.summary === "string" && entry.summary
-      ? `<span class="collection-detail-evidence" dir="auto">${esc(entry.summary)}</span>`
-      : "";
-    const text = typeof entry.text === "string" && entry.text && entry.text !== entry.summary
-      ? `<span class="collection-detail-evidence" dir="auto">${esc(entry.text)}</span>`
-      : "";
-    const canonicalURL = typeof entry.canonicalURL === "string" && entry.canonicalURL
-      ? `<span class="collection-entry-url">${esc(entry.canonicalURL)}</span>`
-      : "";
-    const attributesMarkup = attributes ? `<span class="collection-entry-attributes">${attributes}</span>` : "";
-    const entryMeta = `${esc(entry.surface || "feed")} · ${esc(entry.entryType)} · ${collectionObservedAt(entry.lastObservedAtMilliseconds)}`;
-    const correctionMarkup = (entry.correctionForms || []).map((form) => {
-      const formID = `correction-${entry.id}-${form.typeID}`;
-      const options = (form.tagOptions || []).map((tag) => [tag.id, tag.name]);
-      return `<div class="collection-correction-form" data-form-id="${esc(formID)}"><span class="collection-correction-type">${esc(form.typeName)} ${form.corrected ? statusPill(tx("data.corrected"), "cyan") : ""}</span><div class="collection-correction-fields">${
-        multiValueSelectField("data.correctTags", "data.correctTagsHint", "correctTagIDs", form.correctTagIDs || [], options, 'size="3"')
-      }${
-        field("data.correctionNote", "data.correctionNoteHint", "note", form.note || "", "text", 'maxlength="500"')
-      }</div><div class="action-row"><button class="secondary" data-action="submitCorrection" data-form="${esc(formID)}" data-type-id="${esc(form.typeID)}" data-platform-id="${esc(entry.platformID)}" data-entry-id="${esc(entry.entryID)}">${tx("data.saveCorrection")}</button></div></div>`;
-    }).join("");
-    const correctionEditor = correctionMarkup
-      ? `<details class="collection-correction"><summary>${tx("data.correctClassification")}</summary><p class="small-copy">${tx("data.correctionCopy")}</p>${correctionMarkup}</details>`
-      : "";
-    // Tags render above the evidence text so the fixed-height card never clips
-    // them (long evidence/attributes remain clamped below).
-    return `<div class="collection-detail-entry" title="${esc(entry.title)}"><span class="collection-entry-title" dir="auto">${esc(entry.title)}</span><span class="collection-entry-meta">${entryMeta}</span>${tags}${summary}${text}${attributesMarkup}${canonicalURL}${correctionEditor}</div>`;
-  }
-
-  function creatorEntriesKey(datasetID, platformID, creatorID) {
-    return `${datasetID}${platformID}${creatorID}`;
-  }
-
-  // Ask the native side for one creator's full entries. The detail body shows a
-  // loading placeholder until receiveCreatorEntries answers on its own channel.
-  function requestCreatorEntries(datasetID, platformID, creatorID) {
-    if (!datasetID || !platformID || !creatorID) return;
-    const key = creatorEntriesKey(datasetID, platformID, creatorID);
-    if (loadedCreatorEntries.has(key) || pendingCreatorEntryRequests.has(key)) return;
-    pendingCreatorEntryRequests.add(key);
-    send("loadCreatorEntries", { datasetID, platformID, creatorID });
-  }
-
-  // Builds the detail-pane body for one creator from the on-demand cache. One
-  // creator is a small slice of the dataset, so entries render plainly — which
-  // lets receiveCreatorEntries swap this pane in place with no list setup.
-  function collectionDetailBody(datasetID, platformID, creatorID, creatorName) {
-    if (!creatorID) return "";
-    const entries = loadedCreatorEntries.get(creatorEntriesKey(datasetID, platformID, creatorID));
-    const head = `<div class="collection-detail-head"><span class="collection-detail-name" dir="auto">${esc(creatorName || creatorID)}</span><span class="collection-detail-count">${entries ? tx("data.entryCount", { count: entries.length }) : ""}</span></div>`;
-    if (!entries) return `${head}<div class="collection-detail-loading empty">${tx("app.loading")}</div>`;
-    const sorted = [...entries].sort((lhs, rhs) => (Number(rhs.lastObservedAtMilliseconds) || 0) - (Number(lhs.lastObservedAtMilliseconds) || 0));
-    return `${head}<div class="collection-detail-list">${sorted.map(renderCollectionDetailEntry).join("")}</div>`;
-  }
-
-  function collectionDetailContainer(platformID) {
-    return [...root.querySelectorAll("[data-collection-detail]")].find((element) => element.dataset.platformId === platformID) || null;
-  }
-
-  // Targeted swap of a single platform's detail pane — never a full render.
-  function updateCollectionDetailPane(datasetID, platformID, creatorID, creatorName) {
-    const container = collectionDetailContainer(platformID);
-    if (!container) return;
-    container.dataset.creatorId = creatorID || "";
-    container.innerHTML = collectionDetailBody(datasetID, platformID, creatorID, creatorName);
-  }
 
   function languageSelection() {
     return `<label class="header-language"><span class="visually-hidden">${tx("language.label")}</span><select class="select-control" data-language-selection aria-label="${tx("language.label")}">${languageChoices.map(([identifier, nameKey]) => `<option value="${esc(identifier)}"${selected(selectedLanguage, identifier)}>${tx(nameKey)}</option>`).join("")}</select></label>`;
@@ -760,9 +390,8 @@
       <div class="sidebar-group-title">${tx("navigation.classifierTypes")}</div>
       <div class="classifier-type-nav" data-classifier-type-nav>${typeRows}</div>
       <button class="sidebar-add" type="button" data-action="newType"><span aria-hidden="true">＋</span> ${tx("navigation.newType")}</button>
-      <details class="vui-expand sidebar-more" data-expand="sidebar"${openExpands.has("sidebar") || ["classificationData", "knowledge", "llmAssist", "trash"].includes(state.workspace) ? " open" : ""}>
+      <details class="vui-expand sidebar-more" data-expand="sidebar"${openExpands.has("sidebar") || ["knowledge", "llmAssist", "trash"].includes(state.workspace) ? " open" : ""}>
         <summary>${tx("navigation.more")}</summary>
-        ${navButton("classificationData", "▤", "navigation.classificationData", "navigation.classificationDataMeta")}
         ${navButton("knowledge", "✦", "navigation.knowledge", "navigation.knowledgeMeta")}
         ${navButton("llmAssist", "◌", "navigation.apiKeys", "navigation.apiKeysMeta")}
         ${trashSection}
@@ -1016,6 +645,13 @@
       const positionName = (position) => `${position} · ${t(`localModel.strictness.${position}.name`)}`;
       const typeStrictnessOptions = [["", t("localModel.strictness.followGlobal", { name: positionName(globalLLM.strictness ?? 3) })]]
         .concat(STRICTNESS_POSITIONS.map((position) => [String(position), positionName(position)]));
+      // The platform's collection lives with its type (the History page is
+      // gone, owner 2026-09-30): collect on/off and delete what was collected.
+      const collectionFormID = `type-collection-${classifierType.id}`;
+      const collectedCount = applicableBinding
+        ? Number((assets.datasets || []).find((dataset) => dataset.id === applicableBinding.datasetID)?.entryCounts?.[applicableBinding.id]) || 0
+        : 0;
+      const collectionSection = applicableBinding ? `<section class="classifier-type-section classifier-collection-section" data-form-id="${esc(collectionFormID)}"><div class="section-header"><div><h3>${tx("bridge.collection")}</h3><p class="section-copy">${tx("bridge.collectionCount", { count: collectedCount })}</p></div></div>${toggle("bridge.collectToggle", "enabled", Boolean(applicableBinding.collectionEnabled))}<div class="action-row"><button class="primary" data-action="setCollectionEnabled" data-form="${esc(collectionFormID)}" data-platform-id="${esc(applicableBinding.id)}">${tx("common.save")}</button><button class="danger" data-action="clearCollectedData" data-platform-id="${esc(applicableBinding.id)}" data-name="${esc(applicableBinding.name)}"${disabled(!collectedCount)}>${tx("bridge.deleteCollected")}</button></div></section>` : "";
       const localModelOverrideSection = supportsLocalModel ? `<section class="classifier-type-section classifier-local-model-overrides" data-local-model-section><div class="section-header"><div><h3>${tx("bridge.localModelOverrides")}</h3><p class="section-copy">${tx("bridge.localModelOverridesCopy")}</p></div></div><div data-form-id="${esc(localModelFormID)}"><div class="utility-settings-fields">${valueSelectField("localModel.speedQuality", "localModel.speedQualityHint", "speedQuality", localOverrides?.speedQuality || "", typeSpeedOptions)}${valueSelectField("localModel.strictness", "localModel.strictnessHint", "strictness", localOverrides?.strictness != null ? String(localOverrides.strictness) : "", typeStrictnessOptions)}</div><p class="small-copy resident-model-note">${tx("bridge.localModelResidentNote")}</p>${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", localOverrides?.houseRules ?? "", 'rows="4"')}<div class="action-row"><button type="button" class="primary" data-action="saveClassifierTypeLocalModel" data-form="${esc(localModelFormID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div></div></section>` : "";
       const researchFormID = `classifier-research-form-${classifierType.id}`;
       const researchMode = classifierType.researchEnabled === true ? "on" : classifierType.researchEnabled === false ? "off" : "inherit";
@@ -1027,6 +663,7 @@
         <details class="vui-expand classifier-type-more" data-expand="type-options-${esc(classifierType.id)}"${openExpands.has(`type-options-${classifierType.id}`) ? " open" : ""}><summary>${tx("navigation.options")}</summary>
         ${localModelOverrideSection}
         ${researchOverrideSection}
+        ${collectionSection}
           <div class="action-row"><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}" data-name="${esc(classifierType.name)}">${tx("bridge.deleteType")}</button></div>
         </details>
       </section>`;
@@ -1074,97 +711,10 @@
     return `<div class="workspace knowledge-workspace">${header("knowledge.title", "knowledge.copy", tx("knowledge.badge"), "gold")}<div class="notice navy">${tx("knowledge.disclosure")}</div>${notice(state.notices?.knowledge, "navy")}${notice(state.issue, "red")}${addTerm}${group("knowledge.terms", "knowledge.termsHint", terms, "term")}${group("knowledge.creators", "knowledge.creatorsHint", creators, "creator")}</div>`;
   }
 
-  function classificationDataWorkspace() {
-    const assets = state.assets;
-    const bindings = assets.bindings || [];
-    const datasets = assets.datasets || [];
-    const definitions = assets.collectionPlatforms || [];
-    const datasetByID = new Map(datasets.map((dataset) => [dataset.id, dataset]));
-    const treeByID = new Map((assets.trees || []).map((tree) => [tree.id, tree]));
-    // Rebuild the platform -> (tag name -> tree node) color lookup for the detail
-    // pane. Each binding owns one tree; a supplied tag is colored by the matching
-    // tree tag, falling back to a neutral pill when the platform tag is not in
-    // the taxonomy.
-    suppliedTagNodeByPlatform.clear();
-    bindings.forEach((binding) => {
-      const tree = treeByID.get(binding.treeID);
-      if (!tree) return;
-      const nameToNode = new Map();
-      (tree.nodes || []).forEach((node) => {
-        if (node.retired) return;
-        const key = normalizeTagName(node.name);
-        if (key && !nameToNode.has(key)) nameToNode.set(key, node);
-      });
-      suppliedTagNodeByPlatform.set(binding.id, nameToNode);
-    });
-    const totalCollectedEntries = datasets.reduce((sum, dataset) => sum + (dataset.collectedCreators || []).reduce((inner, creator) => inner + (Number(creator.entryCount) || 0), 0), 0);
-    const classifierTypes = assets.classifierTypes || [];
-    const availablePlatforms = definitions.filter((definition) => !bindings.some((binding) => binding.id === definition.id));
-    const bindingPanel = (binding) => {
-      const definition = definitions.find((candidate) => candidate.id === binding.id);
-      const sourceTerms = collectionSourceTerms(definition?.sourceKind);
-      const dataset = datasetByID.get(binding.datasetID);
-      const datasetID = binding.datasetID;
-      // Only the creator-level primary list is in the snapshot; a chosen
-      // creator's entries are fetched on demand (requestCreatorEntries).
-      // Stable order: a creator keeps its slot by when it was first seen.
-      const creatorRows = (dataset?.collectedCreators || [])
-        .filter((creator) => creator.platformID === binding.id)
-        .slice()
-        .sort((lhs, rhs) => (Number(lhs.firstObservedAtMilliseconds) - Number(rhs.firstObservedAtMilliseconds)) || String(lhs.creatorID).localeCompare(String(rhs.creatorID)));
-      const entryTotal = creatorRows.reduce((sum, creator) => sum + (Number(creator.entryCount) || 0), 0);
-      // Keep the selected source stable across re-renders; fall back to the
-      // first source so the detail pane is never empty when sources exist.
-      let selectedCreatorID = selectedCollectionCreatorByPlatform.get(binding.id);
-      if (!creatorRows.some((creator) => creator.creatorID === selectedCreatorID)) {
-        selectedCreatorID = creatorRows[0]?.creatorID || "";
-        if (selectedCreatorID) selectedCollectionCreatorByPlatform.set(binding.id, selectedCreatorID);
-        else selectedCollectionCreatorByPlatform.delete(binding.id);
-      }
-      const creatorRow = (creator) => {
-        const avatarURL = typeof creator.cachedSourceIconURL === "string" ? creator.cachedSourceIconURL : "";
-        const avatar = avatarURL
-          ? `<img class="collection-creator-avatar" src="${esc(avatarURL)}" alt="" aria-hidden="true" loading="lazy" decoding="async">`
-          : `<span class="collection-creator-avatar collection-creator-avatar-empty" aria-hidden="true"></span>`;
-        const selectedClass = creator.creatorID === selectedCreatorID ? " selected" : "";
-        return `<button type="button" class="collection-creator-row${selectedClass}" data-action="selectCollectionCreator" data-dataset-id="${esc(datasetID)}" data-platform-id="${esc(binding.id)}" data-creator-id="${esc(creator.creatorID)}">${avatar}<span class="collection-creator-name" dir="auto">${esc(creator.creatorName || creator.creatorID)}</span><span class="collection-creator-count">${tx("data.entryCount", { count: Number(creator.entryCount) || 0 })}</span></button>`;
-      };
-      const creatorList = virtualList(creatorRows, collectionRowHeight, creatorRow, { key: `collection-master-${binding.id}`, searchGroup: `collection-master-${binding.id}`, searchOf: (creator) => `${creator.creatorName || ""} ${creator.creatorID || ""}` });
-      const selectedCreator = creatorRows.find((creator) => creator.creatorID === selectedCreatorID) || null;
-      const creatorListOpen = !collapsedCollectionCreatorLists.has(binding.id);
-      // Lazy-load the chosen creator's entries only while the list is open; the
-      // detail pane fills in via receiveCreatorEntries with no full re-render.
-      if (creatorListOpen && selectedCreator) requestCreatorEntries(datasetID, binding.id, selectedCreator.creatorID);
-      const detailMarkup = selectedCreator
-        ? collectionDetailBody(datasetID, binding.id, selectedCreator.creatorID, selectedCreator.creatorName)
-        : "";
-      const detailPane = `<div class="collection-detail" data-collection-detail data-dataset-id="${esc(datasetID)}" data-platform-id="${esc(binding.id)}" data-creator-id="${esc(selectedCreator?.creatorID || "")}">${detailMarkup}</div>`;
-      const formID = `collection-platform-${binding.id}`;
-      const availability = definition?.collectorAvailable ? "data.collectorAvailable" : "data.collectorPlanned";
-      const tree = treeByID.get(binding.treeID);
-      const selectableTypes = classifierTypes.filter((classifierType) => {
-        return classifierType.applicablePlatformID === binding.id
-          && classifierType.treeID === binding.treeID
-          && classifierType.datasetID === binding.datasetID
-          && classifierType.treeRevision === tree?.revision
-          && classifierType.datasetRevision === dataset?.revision;
-      });
-      const typeOptions = [["", t("data.noClassifierType")], ...selectableTypes.map((classifierType) => [classifierType.id, classifierType.name])];
-      const typeStatus = binding.activeClassifierTypeID ? "data.classifierTypeActive" : "data.classifierTypeNone";
-      const localOnlyNotice = binding.id === "discord" ? `<p class="small-copy collection-local-only">${tx("data.discordLocalOnly")}</p>` : "";
-      return `<section class="collection-platform-panel" data-form-id="${esc(formID)}"><div class="collection-platform-head"><div><span class="eyebrow">${tx("data.platformPanel")}</span><h3>${esc(binding.name)}</h3><p class="section-copy">${esc(binding.browser)} · ${tx(availability)}</p></div><div class="collection-platform-actions">${statusPill(t(binding.collectionEnabled ? "data.collecting" : "data.collectionOff"), binding.collectionEnabled ? "cyan" : "muted")}<button class="danger" data-action="confirmDeleteCollectionPlatform" data-platform-id="${esc(binding.id)}" data-name="${esc(binding.name)}">${tx("data.deletePlatform")}</button></div></div><div class="collection-platform-controls">${toggle("data.collectToggle", "enabled", Boolean(binding.collectionEnabled))}<button class="primary" data-action="setCollectionEnabled" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyCollection")}</button></div>${localOnlyNotice}<div class="collection-platform-controls">${valueSelectField("data.classifierType", "data.classifierTypeCopy", "classifierTypeID", binding.activeClassifierTypeID || "", typeOptions)}<button class="secondary" data-action="setActiveClassifierType" data-form="${esc(formID)}" data-platform-id="${esc(binding.id)}">${tx("data.applyClassifierType")}</button>${statusPill(t(typeStatus), binding.activeClassifierTypeID ? "navy" : "muted")}</div>${creatorRows.length ? `<details class="collection-creators" data-collection-creators-platform="${esc(binding.id)}"${creatorListOpen ? " open" : ""}><summary class="collection-creators-summary"><span>${tx("data.sourceCount", { count: creatorRows.length, sources: sourceTerms.plural })}</span><span>${tx("data.entryCount", { count: entryTotal })}</span></summary><div class="collection-master-detail"><div class="collection-master">${listSearchBox(`collection-master-${binding.id}`, "bridge.searchSources")}${creatorList}</div>${detailPane}</div></details>` : `<div class="empty collection-empty">${tx(binding.collectionEnabled ? "data.waitingForEntries" : "data.collectionDisabledCopy")}</div>`}</section>`;
-    };
-    return `<div class="workspace collection-workspace">${header("data.title", "data.copy", t("data.entries", { count: totalCollectedEntries }), "cyan")}
-      <section class="collection-platform-create" data-form-id="collection-platform-create-form"><div><span class="eyebrow">${tx("data.addPlatform")}</span><p class="section-copy">${tx("data.addPlatformCopy")}</p></div>${availablePlatforms.length ? `${valueSelectField("data.platform", "", "platformID", availablePlatforms[0].id, availablePlatforms.map((platform) => [platform.id, platform.name]))}<button class="primary" data-action="addCollectionPlatform" data-form="collection-platform-create-form">${tx("data.addPlatformAction")}</button>` : `<span class="small-copy">${tx("data.allPlatformsAdded")}</span>`}</section>
-      <div class="collection-platform-panels">${bindings.length ? bindings.map(bindingPanel).join("") : `<div class="empty">${tx("data.noPlatforms")}</div>`}</div>
-      ${notice(state.issue, "red")}</div>`;
-  }
-
   function workspace() {
     switch (state.workspace) {
       case "llmAssist": return llmAssistWorkspace();
       case "browserBridge": return browserBridgeWorkspace();
-      case "classificationData": return classificationDataWorkspace();
       case "knowledge": return knowledgeWorkspace();
       default: return browserBridgeWorkspace();
     }
@@ -1238,13 +788,6 @@
   }
 
   scope.addEventListener("input", (event) => {
-    const searchInput = event.target.closest("input[data-list-search]");
-    if (searchInput) {
-      const group = searchInput.dataset.listSearch;
-      listSearchQueryByGroup.set(group, searchInput.value);
-      scheduleListSearch(group);
-      return;
-    }
     const deletionInput = event.target.closest("[data-deletion-name-input]");
     if (deletionInput) {
       const confirmButton = root.querySelector('[data-action="confirmPendingDeletion"]');
@@ -1342,135 +885,25 @@
     return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelCreateType" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog create-type-dialog" role="dialog" aria-modal="true"><h3>${tx("createType.title")}</h3><p class="section-copy">${tx("createType.copy")}</p><label class="field"><span class="field-label">${tx("createType.platformLabel")}</span><select data-create-type-platform>${platformOptions}</select></label><label class="field"><span class="field-label">${tx("createType.nameLabel")}</span><input type="text" data-create-type-name autocomplete="off" spellcheck="false" value="${esc(pendingCreateType.name != null ? pendingCreateType.name : t("createType.defaultName"))}"></label><div class="action-row"><button class="secondary" data-action="cancelCreateType">${tx("common.cancel")}</button><button class="primary" data-action="confirmCreateType">${tx("createType.create")}</button></div></div></div>`;
   }
 
-  // Keyed list: rendered as an empty container in the shell (so its row data is
-  // excluded from the render signature) and populated/updated by
-  // reconcileKeyedLists. On a state push that only changes row data, render()
-  // updates just the changed rows in place and preserves the container's
-  // scroll, instead of rebuilding the page.
-  function keyedList(id, items, keyOf, renderRow, { emptyMarkup = "", listClass = "", searchOf = null, searchGroup = "" } = {}) {
-    const rawQuery = searchGroup ? (listSearchQueryByGroup.get(searchGroup) || "") : "";
-    const filtered = (searchOf && rawQuery.trim()) ? rankItems(items, searchOf, rawQuery) : items;
-    keyedListRegistry.set(id, { items: filtered, allItems: items, keyOf, renderRow, emptyMarkup, searchOf });
-    return `<div${listClass ? ` class="${esc(listClass)}"` : ""} data-keyed-list="${esc(id)}"${searchGroup ? ` data-search-group="${esc(searchGroup)}"` : ""}></div>`;
-  }
-
-  function reconcileKeyedLists() {
-    root.querySelectorAll("[data-keyed-list]").forEach((container) => {
-      const reg = keyedListRegistry.get(container.dataset.keyedList);
-      if (reg) reconcileKeyedList(container, reg);
-    });
-  }
-
-  function reconcileKeyedList(container, { items, keyOf, renderRow, emptyMarkup }) {
-    const id = container.dataset.keyedList;
-    let rendered = keyedListRenderedRows.get(id);
-    if (!rendered) { rendered = new Map(); keyedListRenderedRows.set(id, rendered); }
-    if (!items.length) {
-      if (container.dataset.keyedEmpty !== "true") { container.innerHTML = emptyMarkup; container.dataset.keyedEmpty = "true"; }
-      rendered.clear();
-      return;
-    }
-    if (container.dataset.keyedEmpty === "true") { container.innerHTML = ""; delete container.dataset.keyedEmpty; }
-    const existing = new Map();
-    container.querySelectorAll(":scope > [data-key]").forEach((el) => existing.set(el.dataset.key, el));
-    const desired = new Set();
-    let prev = null;
-    for (const item of items) {
-      const key = String(keyOf(item));
-      desired.add(key);
-      const html = renderRow(item);
-      let el = existing.get(key);
-      if (el) {
-        if (rendered.get(key) !== html) { el.innerHTML = html; rendered.set(key, html); }
-      } else {
-        el = document.createElement("div");
-        el.className = "keyed-row";
-        el.dataset.key = key;
-        el.innerHTML = html;
-        rendered.set(key, html);
-        existing.set(key, el);
-      }
-      const anchor = prev ? prev.nextSibling : container.firstChild;
-      if (el !== anchor) container.insertBefore(el, anchor);
-      prev = el;
-    }
-    existing.forEach((el, key) => {
-      if (!desired.has(key)) { el.remove(); rendered.delete(key); }
-    });
-  }
-
-  // Live region: an empty container in the shell whose inner markup is updated
-  // in place by reconcileLiveHTML — for small volatile bits (status counters)
-  // that change alongside a keyed list.
-  function liveHTML(id, html, { tag = "span", className = "" } = {}) {
-    liveHTMLRegistry.set(id, html);
-    return `<${tag}${className ? ` class="${esc(className)}"` : ""} data-live-html="${esc(id)}"></${tag}>`;
-  }
-
-  function reconcileLiveHTML() {
-    root.querySelectorAll("[data-live-html]").forEach((el) => {
-      const id = el.dataset.liveHtml;
-      const html = liveHTMLRegistry.get(id);
-      if (html == null) return;
-      if (liveHTMLRendered.get(id) !== html) { el.innerHTML = html; liveHTMLRendered.set(id, html); }
-    });
-  }
-
   function render() {
     if (!state) {
       root.innerHTML = `<div class="popup"><div class="empty">${tx("app.loading")}</div></div>`;
       lastRenderedMarkup = null;
       return;
     }
-    resetDeferredRendering();
     const markup = shell(workspace()) + deletionModal() + createTypeModal();
-    // Fast path: the signature (everything except keyed-list rows, live
-    // regions, and windowed virtual-list rows) is unchanged, so only
-    // reconcilable data differs. Update those in place and keep scroll. Virtual
-    // lists re-register with identical ids on identical markup, so their windows
-    // can be repainted here rather than forcing a full rebuild. Any failure
-    // falls back to a full rebuild, so the worst case is the previous behavior.
-    if (markup === lastRenderedMarkup && root.firstChild) {
-      try {
-        reconcileLiveHTML();
-        reconcileKeyedLists();
-        repaintVirtualLists();
-        refreshAllListSearchMeta();
-        return;
-      } catch (_) { /* fall through to full render */ }
-    }
+    // Nothing changed on the page: keep the DOM (and its scroll) as it is.
+    if (markup === lastRenderedMarkup && root.firstChild) return;
     renderFull(markup);
   }
 
   function renderFull(markup) {
     rememberTreeViewportPositions();
     rememberEditorViewportPosition();
-    // A snapshot push can rebuild the DOM while the user is typing in a list
-    // search (classification runs push often). Preserve which search box was
-    // focused and the caret so search-as-you-type is not interrupted.
-    const focusedSearch = scope.activeElement?.closest?.("input[data-list-search]");
-    const focusedSearchState = focusedSearch
-      ? { group: focusedSearch.dataset.listSearch, start: focusedSearch.selectionStart, end: focusedSearch.selectionEnd }
-      : null;
-    virtualListResizeObserver?.disconnect();
-    keyedListRenderedRows.clear();
-    liveHTMLRendered.clear();
     root.innerHTML = markup;
     lastRenderedMarkup = markup;
     applyApplicablePlatformCapabilities();
-    setupVirtualLists();
     bindTreeMapWheel();
-    reconcileLiveHTML();
-    reconcileKeyedLists();
-    refreshAllListSearchMeta();
-    if (focusedSearchState) {
-      const restored = [...root.querySelectorAll("input[data-list-search]")]
-        .find((input) => input.dataset.listSearch === focusedSearchState.group);
-      if (restored) {
-        restored.focus();
-        try { restored.setSelectionRange(focusedSearchState.start, focusedSearchState.end); } catch (_) { /* non-text input */ }
-      }
-    }
     window.requestAnimationFrame(() => {
       applyNavigationPanelWidth();
       restoreEditorViewportPosition();
@@ -1553,7 +986,7 @@
       send("createClassifierType", { name, platformID });
       return;
     }
-    if (action === "confirmDeleteClassifierType" || action === "confirmDeleteCollectionPlatform") {
+    if (action === "confirmDeleteClassifierType" || action === "clearCollectedData") {
       pendingDeletion = {
         action,
         name: button.dataset.name || "",
@@ -1590,36 +1023,7 @@
     if (button.dataset.typeId) data.typeID = button.dataset.typeId;
     if (button.dataset.entryId) data.entryID = button.dataset.entryId;
     if (button.dataset.fileName) data.fileName = button.dataset.fileName;
-    if (action === "submitCorrection") {
-      loadedCreatorEntries.forEach((entries) => {
-        const entry = entries.find((candidate) => candidate.platformID === data.platformID && candidate.entryID === data.entryID);
-        const form = entry?.correctionForms?.find((candidate) => candidate.typeID === data.typeID);
-        if (!form) return;
-        form.correctTagIDs = Array.isArray(data.correctTagIDs) ? data.correctTagIDs : [];
-        form.note = data.note || "";
-        form.corrected = true;
-      });
-      send(action, data);
-      return;
-    }
     if (action === "testProviderProfile") Object.assign(data, providerConnectionPayload(data, button.dataset.form));
-    if (action === "selectCollectionCreator") {
-      const platformID = button.dataset.platformId;
-      const creatorID = button.dataset.creatorId;
-      const datasetID = button.dataset.datasetId;
-      if (!platformID || !creatorID) return;
-      selectedCollectionCreatorByPlatform.set(platformID, creatorID);
-      // Targeted: move the selection highlight and swap only this platform's
-      // detail pane. The master list and the rest of the page are untouched —
-      // no full re-render. Entries load lazily if not already cached.
-      const master = button.closest(".collection-master");
-      master?.querySelectorAll(".collection-creator-row.selected").forEach((row) => row.classList.remove("selected"));
-      button.classList.add("selected");
-      const creatorName = button.querySelector(".collection-creator-name")?.textContent || creatorID;
-      updateCollectionDetailPane(datasetID, platformID, creatorID, creatorName);
-      requestCreatorEntries(datasetID, platformID, creatorID);
-      return;
-    }
     if (action === "cancelTagPanel") {
       flushTagNameInput(button.closest("[data-tree-popover]")?.querySelector("input[data-live-tag-name]"));
       activeTagPanel = null;
@@ -1723,15 +1127,6 @@
     utilityPanel = null;
     render();
   });
-
-  scope.addEventListener("toggle", (event) => {
-    const details = event.target;
-    if (!details?.matches?.("details")) return;
-    if (details.matches("details[data-collection-creators-platform]")) {
-      if (details.open) collapsedCollectionCreatorLists.delete(details.dataset.collectionCreatorsPlatform);
-      else collapsedCollectionCreatorLists.add(details.dataset.collectionCreatorsPlatform);
-    }
-  }, true);
 
   scope.addEventListener("toggle", (event) => {
     const key = event.target.matches?.("details[data-expand]") ? event.target.dataset.expand : null;
@@ -2147,21 +1542,6 @@
         pendingSelectNewType = null;
       }
       render();
-    },
-    // Targeted channel for one chosen creator's entries (see the native
-    // deliverCreatorEntries). Caches the result and patches only the open
-    // detail pane if this creator is still selected — never a full render.
-    receiveCreatorEntries(payload) {
-      const datasetID = payload?.datasetID;
-      const platformID = payload?.platformID;
-      const creatorID = payload?.creatorID;
-      if (!datasetID || !platformID || !creatorID) return;
-      const entries = Array.isArray(payload.entries) ? payload.entries : [];
-      pendingCreatorEntryRequests.delete(creatorEntriesKey(datasetID, platformID, creatorID));
-      loadedCreatorEntries.set(creatorEntriesKey(datasetID, platformID, creatorID), entries);
-      if (selectedCollectionCreatorByPlatform.get(platformID) === creatorID) {
-        updateCollectionDetailPane(datasetID, platformID, creatorID, entries[0]?.creatorName || creatorID);
-      }
     },
   };
 
