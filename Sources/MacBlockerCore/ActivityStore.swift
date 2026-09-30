@@ -444,23 +444,6 @@ public final class ActivityStore: @unchecked Sendable {
         }
     }
 
-    /// Deletes records whose start falls in `[start, end]`. Whole day files inside
-    /// the range are removed; the boundary days are filtered in place.
-    public func delete(from start: Date, to end: Date) {
-        lock.lock(); defer { lock.unlock() }
-        for category in ActivityCategory.allCases {
-            for day in dayStrings(from: start, to: end) {
-                let url = dayFileURL(category: category, day: day)
-                let kept = readRecords(at: url).filter { $0.startedAt < start || $0.startedAt > end }
-                if kept.isEmpty {
-                    try? fileManager.removeItem(at: url)
-                } else {
-                    write(encode(kept), to: url)
-                }
-            }
-        }
-    }
-
     // MARK: - Paths
 
     private func categoryDirectory(_ category: ActivityCategory) -> URL {

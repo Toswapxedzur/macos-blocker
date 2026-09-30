@@ -59,8 +59,8 @@ screen lock.
   category that follows it unless set (`retentionDays` nil = follow; owner
   2026-09-29). Settings saved before the global Keep follow it. Watched videos'
   saved authors and tags last as long as the video's watched records. A reaper
-  prunes at launch. Plus delete-all, delete-a-range,
-  delete-one now — a real delete of raw records, not a tombstone.
+  prunes at launch. Plus delete-all and delete-a-kind — a real delete of raw
+  records, not a tombstone.
 - Any future export or send is gated behind an explicit consent dialog; none is
   built.
 - `PRIVACY.md` gains an Activity-log section (translated at release, per policy).
@@ -130,9 +130,11 @@ Activity/
   group's icon is made of slices of its members' icons (1 whole, 2 halves,
   3 wedges, 4 quarters, more = three and "+N"), so Mac Vault sends an icon for
   every group member and every item the editor lists.
-- **The page (owner 2026-09-30):** two stacked sections, **Usage** then
-  **Content**, under one range — Today / 7 / 30 / 90 days, or "since" a day
-  clicked on a year map — and each with its own focus (Usage: all, a group,
+- **The page (owner 2026-09-30):** **Groups** on top (always open, one fixed
+  height: the groups as cards side by side, or the editor in columns), then
+  two stacked sections, **Usage** then **Content**, each with its own range —
+  Today / A week / A month (rolling) or Custom date (from a day picked in our
+  date picker, or clicked on a year map, up to now) — and its own focus (Usage: all, a group,
   an app or site; Content: all, or a tag with every tag under it). Each has
   the ordered form of its time (a strip over the whole range, one fixed width
   per day, scrolling sideways), a colour map (every item's colour and time),
@@ -143,7 +145,7 @@ Activity/
   piece of content). Content adds **Authors** (total, the bar split per day,
   one colour per weekday) and **Everything watched** (newest first, with its
   platform, author and tags). Panels keep a fixed size and scroll inside.
-  Recording opens from the header. Default Keep: 365 days.
+  Recording is last, one collapsed line. Default Keep: 365 days.
 - **Content, Authors, Tags** (owner 2026-09-29/30): three panels — the
   content from every platform, each marked with its platform; one row per author; one row per tag with a pie of the tags (rows
   open to their videos). A video with several tags gives each an equal share
