@@ -10,7 +10,6 @@ main { flex: 1; min-height: 0; overflow: auto; }
 .strip-panel { padding: 14px 18px 2px; }
 .settings-panel { padding: 8px 18px; }
 /* Usage, Videos, Authors, Tags and Groups: panels side by side, wrapping. */
-.board { min-width: 0; }
 .column-head { display: flex; align-items: center; gap: 12px; margin: 0 4px 6px; min-height: 22px; }
 .head-button { margin-left: auto; }
 .column-head h2 { font-size: var(--vui-size-title); }
@@ -73,8 +72,20 @@ main { flex: 1; min-height: 0; overflow: auto; }
 .group-icon .more { background: #475569; color: #ffffff; }
 .group-icon.big { width: 44px; height: 44px; border-radius: 11px; flex: none; }
 .row-count { flex: none; color: var(--vui-muted); font-size: var(--vui-size-small); font-weight: 400; }
-/* The editor, in the Groups panel. */
-.group-form { display: flex; flex-direction: column; gap: 10px; margin: 4px 0; }
+/* The Groups panel: the page's top, one fixed height (cards or editor). */
+.groups { height: 206px; display: flex; flex-direction: column; flex: none; }
+.groups .empty { padding: 6px 4px; }
+.group-cards { flex: 1; min-height: 0; display: flex; gap: 10px; overflow-x: auto; overflow-y: hidden; padding-bottom: 4px; }
+.group-card { flex: none; width: 210px; display: flex; flex-direction: column; justify-content: space-between; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--vui-fill); cursor: pointer; }
+.group-card:hover { background: var(--navy-100); }
+.group-card.is-focus { box-shadow: inset 0 0 0 2px var(--navy-700); }
+.group-card-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.group-card-name { display: flex; align-items: center; gap: 6px; min-width: 0; font-weight: 700; }
+.group-card .row-kind { background: #ffffff; }
+.group-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--vui-muted); font-size: var(--vui-size-small); font-variant-numeric: tabular-nums; }
+/* The editor: name, merge and actions | members | add. */
+.group-form { flex: 1; min-height: 0; display: grid; grid-template-columns: 280px minmax(0, 1fr) minmax(0, 1.3fr); gap: 16px; }
+.group-col { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
 .group-top { display: flex; align-items: center; gap: 10px; }
 .group-merge { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -85,16 +96,17 @@ main { flex: 1; min-height: 0; overflow: auto; }
 .chip .row-kind { background: #ffffff; }
 .chip-remove { background: none; color: var(--vui-muted); padding: 0 4px; font-size: 13px; line-height: 1; }
 .chip-remove:hover { color: var(--red-text); filter: none; }
-.group-members { display: flex; flex-direction: column; gap: 2px; }
-.member-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 4px; border-radius: 8px; background: none; color: #1f2937; font-size: 12px; font-weight: 400; text-align: left; }
+/* The add column: the search stays, the suggestions scroll under it. */
+.group-add { overflow: hidden; }
+.group-members { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 4px; }
+.member-row { display: flex; align-items: center; gap: 8px; width: auto; max-width: 100%; padding: 4px 8px 4px 4px; border-radius: 8px; background: none; color: #1f2937; font-size: 12px; font-weight: 400; text-align: left; }
 .member-row:hover { background: var(--navy-100); filter: none; }
 .member-row .icon { width: 24px; height: 24px; border-radius: 6px; font-size: 11px; }
 .member-row .icon img { width: 24px; height: 24px; }
 .member-row .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.group-count { color: var(--vui-muted); font-size: var(--vui-size-small); margin-left: auto; }
+.group-count { color: var(--vui-muted); font-size: var(--vui-size-small); }
 .group-note { display: flex; align-items: center; gap: 10px; color: var(--red-text); font-size: var(--vui-size-small); }
-.group-actions { display: flex; gap: 8px; }
-.push-right { margin-left: auto; }
+.group-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
 /* The hover card (activity.js showHover): our own, never the system tooltip. */
 .hovercard { position: fixed; z-index: 30; max-width: 280px; padding: 10px 12px; border-radius: 12px; background: #ffffff; box-shadow: 0 12px 34px rgba(15, 23, 42, 0.18); pointer-events: none; display: flex; flex-direction: column; gap: 3px; }
 .hovercard[hidden] { display: none; }
