@@ -28,7 +28,7 @@ let houseRulesOverride: String? = args.compactMap({ $0.hasPrefix("--house-rules-
     .flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
 
 // The evaluated classifier type + its tree (first youtube type, or the first type).
-guard let type = catalog.classifierTypes.first(where: { $0.applicablePlatformID == "youtube" })
+guard let type = catalog.classifierTypes.first(where: { $0.applicablePlatformIDs.contains("youtube") })
         ?? catalog.classifierTypes.first,
       let tree = catalog.trees.first(where: { $0.id == type.treeID && $0.revision == type.treeRevision })
 else { die("no classifier type / bound tree in state") }

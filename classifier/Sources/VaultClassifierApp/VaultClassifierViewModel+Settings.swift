@@ -96,8 +96,9 @@ extension VaultClassifierViewModel {
         do {
             guard var catalog = localState?.workspaceCatalog,
                   let index = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }),
-                  catalog.classifierTypes[index].applicablePlatformID
-                    .flatMap(CollectionPlatformRegistry.definition(for:))?.supportsLocalModel == true else {
+                  catalog.classifierTypes[index].applicablePlatformIDs.allSatisfy({
+                      CollectionPlatformRegistry.definition(for: $0)?.supportsLocalModel == true
+                  }) else {
                 throw WebBridgeInputError.invalidChoice("classifier type research")
             }
             catalog.classifierTypes[index].researchEnabled = researchEnabled
@@ -116,8 +117,9 @@ extension VaultClassifierViewModel {
         do {
             guard var catalog = localState?.workspaceCatalog,
                   let index = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }),
-                  catalog.classifierTypes[index].applicablePlatformID
-                    .flatMap(CollectionPlatformRegistry.definition(for:))?.supportsLocalModel == true else {
+                  catalog.classifierTypes[index].applicablePlatformIDs.allSatisfy({
+                      CollectionPlatformRegistry.definition(for: $0)?.supportsLocalModel == true
+                  }) else {
                 throw WebBridgeInputError.invalidChoice("classifier type local model")
             }
             catalog.classifierTypes[index].localModelOverrides = overrides?.isEmpty == false ? overrides : nil

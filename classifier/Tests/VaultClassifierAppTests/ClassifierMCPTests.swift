@@ -99,13 +99,36 @@ final class ClassifierMCPTests: XCTestCase {
 
     func testPerformRoutesThroughTheDispatcherWithItsValidation() throws {
         let vm = try VaultClassifierViewModel(headlessVaultDirectory: directory)
-        let created = vm.mcpPerform(action: "createClassifierType", data: ["name": "X posts", "platformID": "twitter"])
+        let created = vm.mcpPerform(action: "createClassifierType", data: ["name": "X posts", "platformIDs": ["twitter"]])
         XCTAssertTrue(created.rerender); XCTAssertNil(created.issue)
         let types = try XCTUnwrap((vm.mcpSnapshot(section: "assets.classifierTypes")?["assets.classifierTypes"]) as? [[String: Any]])
-        XCTAssertTrue(types.contains { ($0["name"] as? String) == "X posts" && ($0["applicablePlatformID"] as? String) == "twitter" })
-        let rejected = vm.mcpPerform(action: "createClassifierType", data: ["name": "", "platformID": "twitter"])
+        XCTAssertTrue(types.contains { ($0["name"] as? String) == "X posts" && ($0["applicablePlatformIDs"] as? [String]) == ["twitter"] })
+        let rejected = vm.mcpPerform(action: "createClassifierType", data: ["name": "", "platformIDs": ["twitter"]])
         XCTAssertNotNil(rejected.issue, "the page's validation applies unchanged")
         let unknown = vm.mcpPerform(action: "definitely-not-an-action", data: [:])
         XCTAssertNotNil(unknown.issue)
+    }
+
+    /// A type takes several classifiable platforms (owner 2026-09-30); a platform
+    /// that cannot be classified, or that another type holds, is refused.
+    func testATypeTakesSeveralClassifiablePlatformsEachHeldOnce() throws {
+        let vm = try VaultClassifierViewModel(headlessVaultDirectory: directory)
+        let types = { () throws -> [[String: Any]] in
+            try XCTUnwrap((vm.mcpSnapshot(section: "assets.classifierTypes")?["assets.classifierTypes"]) as? [[String: Any]])
+        }
+        let before = try types().count
+        XCTAssertNil(vm.mcpPerform(action: "createClassifierType", data: ["name": "Videos", "platformIDs": ["reddit", "bilibili"]]).issue)
+        let videos = try XCTUnwrap(try types().first { ($0["name"] as? String) == "Videos" })
+        XCTAssertEqual(videos["applicablePlatformIDs"] as? [String], ["reddit", "bilibili"])
+
+        XCTAssertNotNil(vm.mcpPerform(action: "createClassifierType", data: ["name": "Feeds", "platformIDs": ["facebook"]]).issue,
+                        "Facebook is collected but not classified")
+        XCTAssertNotNil(vm.mcpPerform(action: "createClassifierType", data: ["name": "Clash", "platformIDs": ["bilibili"]]).issue,
+                        "Bilibili belongs to Videos")
+        XCTAssertEqual(try types().count, before + 1)
+
+        let id = try XCTUnwrap(videos["id"] as? String)
+        XCTAssertNil(vm.mcpPerform(action: "configureClassifierType", data: ["typeID": id, "name": "Videos", "applicablePlatformIDs": ["bilibili"]]).issue)
+        XCTAssertEqual(try types().first { ($0["id"] as? String) == id }?["applicablePlatformIDs"] as? [String], ["bilibili"])
     }
 }
