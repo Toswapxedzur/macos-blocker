@@ -70,12 +70,22 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
         return state
     }
 
+    /// When each watched key was last looked up in the classifier.
+    private var factsAsked: [String: Date] = [:]
+
     /// Watched key → { creator, creatorIcon, tags } for the page, from what is
     /// saved; videos still missing an author icon or tags are looked up first.
     private func watchedFacts(keys: [String], store: ActivityStore) -> [String: Any] {
         var saved = store.watchedFacts(for: keys)
-        let missing = keys.filter { saved[$0]?.author?.icon == nil || saved[$0]?.tags == nil }
+        // Tags and icons can arrive later; ask the classifier again for a key
+        // at most every ten minutes (every push re-asking cost ~140 ms).
+        let now = Date()
+        let missing = keys.filter {
+            (saved[$0]?.author?.icon == nil || saved[$0]?.tags == nil)
+                && now.timeIntervalSince(factsAsked[$0] ?? .distantPast) > 600
+        }
         if !missing.isEmpty {
+            missing.forEach { factsAsked[$0] = now }
             recordWatchedFacts(missing)
             saved = store.watchedFacts(for: keys)
         }
