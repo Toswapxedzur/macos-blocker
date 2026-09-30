@@ -213,20 +213,6 @@ extension VaultClassifierViewModel {
         } catch { issue = error.localizedDescription }
     }
 
-    func confirmClassifierTypeDeletion(typeID: String) {
-        guard localState?.workspaceCatalog.classifierTypes.contains(where: { $0.id == typeID }) == true else {
-            issue = WebBridgeInputError.invalidChoice("classifier type").localizedDescription
-            return
-        }
-        presentNativeConfirmation(
-            title: "Delete classifier type?",
-            message: "This removes this local decision configuration. Other data and provider profiles are retained.",
-            confirmTitle: "Delete classifier type"
-        ) { [weak self] in
-            self?.deleteClassifierType(typeID: typeID)
-        }
-    }
-
     func presentNativeConfirmation(
         title: String,
         message: String,
