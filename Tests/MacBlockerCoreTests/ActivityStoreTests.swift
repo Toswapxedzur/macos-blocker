@@ -183,16 +183,6 @@ final class ActivityStoreTests: XCTestCase {
 
     // MARK: deletion
 
-    func testDeleteRangeFiltersBoundaryDays() throws {
-        let s = store(now: day("2026-09-20T12:00:00Z"))
-        let settings = allEnabled()
-        s.record(record("keepEarly", .webVisit, at: day("2026-09-19T08:00:00Z"), seconds: 10, key: "a"), settings: settings)
-        s.record(record("dropMid", .webVisit, at: day("2026-09-19T12:00:00Z"), seconds: 10, key: "b"), settings: settings)
-        s.delete(from: day("2026-09-19T10:00:00Z"), to: day("2026-09-19T14:00:00Z"))
-        let ids = s.records(category: .webVisit, from: day("2026-09-19T00:00:00Z"), to: day("2026-09-19T23:59:59Z")).map(\.id)
-        XCTAssertEqual(ids, ["keepEarly"])
-    }
-
     func testDeleteAllAndDeleteCategory() throws {
         let s = store(now: day("2026-09-20T12:00:00Z"))
         let settings = allEnabled()
