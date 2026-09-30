@@ -672,7 +672,7 @@
         return g.members.indexOf(entryID(entry)) >= 0 ? sum + entry.seconds : sum;
       }, 0);
       return { g: g, seconds: seconds };
-    }).sort(function (x, y) { return (y.g.merge - x.g.merge) || (y.seconds - x.seconds); });
+    }).sort(function (x, y) { return y.seconds - x.seconds; });   // merge or not, by time (owner 2026-09-30)
     if (!list.length) {
       box.appendChild(el("p", "empty", "No groups yet. A group shows its apps and websites together in Usage; a merge group also stands in for them everywhere."));
       return box;
