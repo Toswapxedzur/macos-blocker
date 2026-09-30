@@ -407,7 +407,7 @@
     var kind = entry.kind === "Group"
       ? "Merge group · " + entry.group.members.length + (entry.group.members.length === 1 ? " member" : " members")
       : entry.nameOnly ? "App · browser, time outside recorded sites"
-      : entry.videos ? entry.kind + " · " + entry.videos.length + (entry.videos.length === 1 ? " video" : " videos") : entry.kind;
+      : entry.videos ? entry.kind + " · " + entry.videos.length + (entry.videos.length === 1 ? " item" : " items") : entry.kind;
     if (entry.item.color) return { title: entry.item.label, color: entry.item.color, lines: [kind].concat(lines) };
     return { title: entry.item.label || entry.item.key, key: entry.item.key, lines: [kind].concat(lines) };
   }
@@ -1128,11 +1128,11 @@
     var top = Math.max(groups[0].seconds, 1);
     groups.slice(0, 30).forEach(function (g) {
       var line = row(g.item, g.seconds, g.seconds / top);
-      line.querySelector(".row-name").appendChild(el("span", "row-count", g.videos.length + (g.videos.length === 1 ? " video" : " videos")));
+      line.querySelector(".row-name").appendChild(el("span", "row-count", g.videos.length + (g.videos.length === 1 ? " item" : " items")));
       var open = !!expandedWatched[g.item.key];
       var toggle = el("button", open ? "row-expand is-open" : "row-expand", "›");
       toggle.type = "button";
-      toggle.title = open ? "Hide videos" : "Show videos";
+      toggle.title = open ? "Hide items" : "Show items";
       line.classList.add("pickable");
       line.addEventListener("click", function () { expandedWatched[g.item.key] = !open; render(); });
       line.querySelector(".row-name").insertBefore(toggle, line.querySelector(".row-label"));
@@ -1150,15 +1150,29 @@
 
   // Videos, Authors and Tags: three panels (owner 2026-09-29), the tag pie
   // on top of the Tags panel.
+  // Content (owner 2026-09-30): videos, posts, streams and channels from
+  // every platform, each marked with its platform.
+  var PLATFORM_NAMES = { youtube: "YouTube", bilibili: "Bilibili", twitch: "Twitch", reddit: "Reddit",
+    twitter: "X", instagram: "Instagram", facebook: "Facebook", discord: "Discord" };
+  function contentRows(watched) {
+    var wrap = el("div");
+    if (!watched.length) { wrap.appendChild(el("p", "empty", "Nothing in this range.")); return wrap; }
+    watched.slice(0, 20).forEach(function (b) {
+      var platform = b.platform || String(b.key).split(":")[0];
+      wrap.appendChild(row(b, b.seconds, b.fraction, PLATFORM_NAMES[platform] || platform));
+    });
+    return wrap;
+  }
+
   function watchedPanels(s) {
     var watched = snapshot.watched || [];
     var total = watched.reduce(function (a, b) { return a + b.seconds; }, 0);
     var on = s.contentWatched && s.contentWatched.enabled;
-    return [["video", "Videos"], ["author", "Authors"], ["tag", "Tags"]].map(function (kind) {
+    return [["video", "Content"], ["author", "Authors"], ["tag", "Tags"]].map(function (kind) {
       var panel = el("section", "panel board");
       panel.appendChild(columnHead(kind[1], total));
       if (!on) { panel.appendChild(notRecorded(["content-watched"])); return panel; }
-      if (kind[0] === "video") { panel.appendChild(rows(watched)); return panel; }
+      if (kind[0] === "video") { panel.appendChild(contentRows(watched)); return panel; }
       var groups = watchedGroups(watched, kind[0]);
       if (kind[0] === "tag" && groups.length) {
         var chart = pie(groups, "Share");

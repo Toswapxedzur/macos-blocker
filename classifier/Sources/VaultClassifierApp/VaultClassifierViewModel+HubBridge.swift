@@ -379,10 +379,15 @@ extension VaultClassifierViewModel {
     }
 
     /// "<platform>:<id>" → (platform, "<platform>:video:<id>").
+    /// A watched key ("<platform>:<id>") → the classifier's (platform, entry):
+    /// videos on YouTube and Bilibili, posts on Reddit, statuses on X — the
+    /// platforms that classify. Others have no classifier entry.
     static func watchedEntry(_ key: String) -> (String, String)? {
         guard let colon = key.firstIndex(of: ":") else { return nil }
         let platformID = String(key[..<colon])
-        return (platformID, platformID + ":video:" + key[key.index(after: colon)...])
+        let kinds = ["youtube": "video", "bilibili": "video", "reddit": "post", "twitter": "status"]
+        guard let kind = kinds[platformID] else { return nil }
+        return (platformID, "\(platformID):\(kind):" + key[key.index(after: colon)...])
     }
 
     /// A downloaded source icon, shrunk to 64×64 pixels, as a JPEG data URI
