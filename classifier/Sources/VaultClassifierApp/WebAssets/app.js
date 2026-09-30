@@ -43,6 +43,9 @@
   let suppressTagClick = false;
   let connectionSource = null;
   let selectedTagNode = null;
+  // The tag whose Delete was clicked once (a second click deletes it).
+  let armedTagDelete = null;
+  let armedTagDeleteTimer = null;
   const treeViewportPositions = new Map();
   const editorViewportPositions = new Map();
   const pendingTagRenames = new Map();
@@ -471,7 +474,7 @@
           "maxlength=\"1024\""
         );
         const actions = isEdit
-          ? `<button class="primary" data-action="saveTagName" data-form="tag-popover-form" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.saveNode")}</button><button class="secondary" data-action="beginConnection" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.connection")}</button><button class="secondary" data-action="disconnectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}"${disabled(!popoverNode.parentID)}>${tx("tree.disconnection")}</button><button class="danger" data-action="deleteTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.deleteNode")}</button>`
+          ? `<button class="primary" data-action="saveTagName" data-form="tag-popover-form" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.saveNode")}</button><button class="secondary" data-action="beginConnection" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.connection")}</button><button class="secondary" data-action="disconnectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}"${disabled(!popoverNode.parentID)}>${tx("tree.disconnection")}</button><button class="danger" data-action="deleteTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx(armedTagDelete === nodeID ? "tree.deleteNodeConfirm" : "tree.deleteNode")}</button>`
           : `<button class="primary" data-action="addTag" data-form="tag-popover-form" data-tree-id="${esc(tree.id)}">${tx("tree.createNode")}</button>`;
         // Placed beside its anchor, inside the visible part (placeTreePopovers).
         return `<section class="tree-popover" data-anchor-x="${panelState.x}" data-anchor-y="${panelState.y}" data-anchor-w="${panelState.w || 0}" data-tree-popover data-form-id="tag-popover-form"><div class="tree-popover-head"><span class="eyebrow">${tx(isEdit ? "tree.editNode" : "tree.createNode")}</span><button class="tree-popover-close" data-action="cancelTagPanel" title="${tx("tree.cancel")}" aria-label="${tx("tree.cancel")}">×</button></div><div class="tree-form">${nameField}${descriptionField}<div class="action-row">${actions}</div></div></section>`;
@@ -1148,6 +1151,20 @@
       return;
     }
     if (action === "deleteTag") {
+      // Asks first (owner 2026-09-30): the first click arms, a second one
+      // within 4 s deletes. Its child tags move up to its parent.
+      if (armedTagDelete !== button.dataset.nodeId) {
+        armedTagDelete = button.dataset.nodeId;
+        button.textContent = t("tree.deleteNodeConfirm");
+        clearTimeout(armedTagDeleteTimer);
+        armedTagDeleteTimer = setTimeout(() => {
+          armedTagDelete = null;
+          root.querySelectorAll('button[data-action="deleteTag"]').forEach((other) => { other.textContent = t("tree.deleteNode"); });
+        }, 4000);
+        return;
+      }
+      armedTagDelete = null;
+      clearTimeout(armedTagDeleteTimer);
       flushLiveTagRename(button.dataset.treeId, button.dataset.nodeId);
       connectionSource = null;
       selectedTagNode = null;

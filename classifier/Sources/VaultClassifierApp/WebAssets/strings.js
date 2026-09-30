@@ -209,6 +209,7 @@ window.VaultClassifierStrings = Object.freeze({
   "tree.connection": "Connection",
   "tree.disconnection": "Disconnection",
   "tree.deleteNode": "Delete node",
+  "tree.deleteNodeConfirm": "Click again to delete",
   "tree.rearrange": "Rearrange",
   "tree.canvasHint": "Right-click empty space to create a root node. Click or right-click a node to edit it. Drag a node to reposition its branch.",
   "tree.empty": "No nodes are in this local tree yet.",
