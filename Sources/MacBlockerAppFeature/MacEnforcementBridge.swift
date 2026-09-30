@@ -604,6 +604,9 @@ public final class MacEnforcementBridge: ObservableObject {
         var timerWrites: [String: Double] = [:]
         var resetWrites: [String: Double] = [:]
         var bucketWrites: [String: [Double: Double]] = [:]
+        // What running budget snoozes gave this tick, counted as it is used
+        // (group-actions.js snoozeGivenMs): the part above the plain allowance.
+        var snoozeGiven: [String: Double] = [:]
 
         for group in groups where group.enabled {
             guard group.mode.isTimed else { continue }
@@ -618,6 +621,11 @@ public final class MacEnforcementBridge: ObservableObject {
                 let allowedMs = max(0, group.allowedMinutes) * 60_000
                     + (snoozes[gid]?.extraSeconds(at: now) ?? 0) * 1000
                 addedMs = min(elapsed * 1000, max(0, allowedMs - (timers[gid] ?? 0)))
+                if (snoozes[gid]?.extraSeconds(at: now) ?? 0) > 0 {
+                    let before = timers[gid] ?? 0
+                    let given = before + addedMs - max(before, max(0, group.allowedMinutes) * 60_000)
+                    if given > 0 { snoozeGiven[gid] = given }
+                }
             }
 
             if group.rollingLimit {
@@ -723,7 +731,7 @@ public final class MacEnforcementBridge: ObservableObject {
             }
         }
 
-        webStore.writeUsage(timersMs: timerWrites, resetAtMs: resetWrites, bucketsMs: bucketWrites)
+        webStore.writeUsage(timersMs: timerWrites, resetAtMs: resetWrites, bucketsMs: bucketWrites, snoozeGivenMs: snoozeGiven)
         return timers
     }
 
