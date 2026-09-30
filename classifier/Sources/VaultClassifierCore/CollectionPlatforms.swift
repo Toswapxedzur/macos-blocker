@@ -61,8 +61,9 @@ public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
 public enum CollectionPlatformRegistry {
     public static let definitions: [CollectionPlatformDefinition] = [
         .init(id: "youtube", name: "YouTube", collectorAvailable: true),
-        .init(id: "facebook", name: "Facebook", collectorAvailable: true),
-        .init(id: "instagram", name: "Instagram", collectorAvailable: true),
+        // Only YouTube, Bilibili, Reddit and X classify (owner 2026-09-30).
+        .init(id: "facebook", name: "Facebook", collectorAvailable: true, supportsLocalModel: false),
+        .init(id: "instagram", name: "Instagram", collectorAvailable: true, supportsLocalModel: false),
         .init(id: "twitch", name: "Twitch", collectorAvailable: true, supportsLocalModel: false),
         .init(id: "reddit", name: "Reddit", sourceKind: .subreddit, collectorAvailable: true),
         .init(id: "discord", name: "Discord", sourceKind: .server, collectorAvailable: true, supportsLocalModel: false),
@@ -87,8 +88,11 @@ public struct PlatformBinding: Codable, Equatable, Sendable, Identifiable {
     /// platform binding. The browser still sends nothing unless this binding
     /// exists and its extension-side collection setting is also on.
     public var collectionEnabled: Bool
+    /// Days to keep this platform's collected entries: -1 = the same as all
+    /// platforms (`WorkspaceCatalog.collectionKeepDays`), 0 = forever.
+    public var collectionKeepDays: Int
 
-    public init(id: String, name: String, browser: String = "Chrome and Edge", treeID: String, datasetID: String, activeClassifierTypeID: String? = nil, collectionEnabled: Bool = true) {
+    public init(id: String, name: String, browser: String = "Chrome and Edge", treeID: String, datasetID: String, activeClassifierTypeID: String? = nil, collectionEnabled: Bool = true, collectionKeepDays: Int = -1) {
         self.id = id
         self.name = name
         self.browser = browser
@@ -96,10 +100,11 @@ public struct PlatformBinding: Codable, Equatable, Sendable, Identifiable {
         self.datasetID = datasetID
         self.activeClassifierTypeID = activeClassifierTypeID
         self.collectionEnabled = collectionEnabled
+        self.collectionKeepDays = max(-1, collectionKeepDays)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, browser, treeID, datasetID, activeClassifierTypeID, collectionEnabled
+        case id, name, browser, treeID, datasetID, activeClassifierTypeID, collectionEnabled, collectionKeepDays
     }
 
 
@@ -112,5 +117,14 @@ public struct PlatformBinding: Codable, Equatable, Sendable, Identifiable {
         datasetID = try container.decode(String.self, forKey: .datasetID)
         activeClassifierTypeID = try container.decodeIfPresent(String.self, forKey: .activeClassifierTypeID)
         collectionEnabled = try container.decodeIfPresent(Bool.self, forKey: .collectionEnabled) ?? true
+        if let keep = try container.decodeIfPresent(Int.self, forKey: .collectionKeepDays) {
+            collectionKeepDays = max(-1, keep)
+        } else {
+            // Saved before per-platform Keep (owner 2026-09-30): every platform
+            // was switched on by default then; a platform nothing classifies now
+            // records only when the person turns it on.
+            collectionKeepDays = -1
+            if CollectionPlatformRegistry.definition(for: id)?.supportsLocalModel != true { collectionEnabled = false }
+        }
     }
 }

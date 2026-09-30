@@ -21,7 +21,8 @@ public struct VideoTagsProjection: Sendable, Equatable {
 /// User-owned assets behind the five Vault Classifier workspaces. These remain
 /// local profile data; neither a browser nor a provider may mutate them.
 public struct CollectedPlatformEntry: Codable, Equatable, Sendable, Identifiable {
-    public static let maximumRetainedEntries = 5_000
+    /// A safety bound per platform; the Keep (days) is what normally trims.
+    public static let maximumEntriesPerPlatform = 30_000
     public static let maximumAttributes = 16
     public static let maximumAttributeKeyLength = 64
     public static let maximumAttributeValueLength = 512
@@ -194,13 +195,13 @@ public struct ClassificationDataset: Codable, Equatable, Sendable, Identifiable 
     ) {
         self.id = id
         self.name = name
-        self.collectedEntries = Array(collectedEntries.suffix(CollectedPlatformEntry.maximumRetainedEntries))
+        self.collectedEntries = collectedEntries
         self.revision = revision
     }
 
     @discardableResult
     public mutating func upsertCollectedEntry(_ entry: CollectedPlatformEntry) -> Bool {
-        if let index = collectedEntries.firstIndex(where: { $0.deduplicationKey == entry.deduplicationKey }) {
+        if let index = collectedEntries.firstIndex(where: { $0.entryID == entry.entryID && $0.platformID == entry.platformID }) {
             let existing = collectedEntries[index]
             var refreshed = entry
             refreshed.firstObservedAtMilliseconds = min(existing.firstObservedAtMilliseconds, entry.firstObservedAtMilliseconds)
@@ -227,13 +228,6 @@ public struct ClassificationDataset: Codable, Equatable, Sendable, Identifiable 
             return false
         }
         collectedEntries.append(entry)
-        if collectedEntries.count > CollectedPlatformEntry.maximumRetainedEntries {
-            collectedEntries.sort { lhs, rhs in
-                if lhs.lastObservedAtMilliseconds == rhs.lastObservedAtMilliseconds { return lhs.id < rhs.id }
-                return lhs.lastObservedAtMilliseconds > rhs.lastObservedAtMilliseconds
-            }
-            collectedEntries = Array(collectedEntries.prefix(CollectedPlatformEntry.maximumRetainedEntries))
-        }
         return true
     }
 
@@ -249,10 +243,7 @@ public struct ClassificationDataset: Codable, Equatable, Sendable, Identifiable 
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
-        collectedEntries = Array(
-            (try container.decodeIfPresent([CollectedPlatformEntry].self, forKey: .collectedEntries) ?? [])
-                .suffix(CollectedPlatformEntry.maximumRetainedEntries)
-        )
+        collectedEntries = try container.decodeIfPresent([CollectedPlatformEntry].self, forKey: .collectedEntries) ?? []
         revision = try container.decodeIfPresent(Int.self, forKey: .revision) ?? 1
     }
 }

@@ -130,6 +130,10 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     /// Per-creator (per classifier type) accumulator of derived research urgency,
     /// windowed — drives author research (RESEARCH-REDESIGN §8).
     public var creatorResearchAccumulators: [CreatorResearchAccumulator]
+    /// Days to keep collected entries on every platform that doesn't set its
+    /// own Keep (`PlatformBinding.collectionKeepDays`); 0 = forever. Default
+    /// 180 (owner 2026-09-30).
+    public var collectionKeepDays: Int = 180
 
     public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], bindings: [PlatformBinding] = [], classifierTypes: [ClassifierTypeAsset] = [], tokenUsage: [TokenUsageRecord] = [], providerRequestRecords: [ProviderRequestRecord] = [], providerProfiles: [APIKeyProviderProfile] = [], trash: [TrashedEntry] = [], videoClassifications: [VideoClassification] = [], knowledgeEntries: [KnowledgeEntry] = [], creatorKnowledge: [KnowledgeEntry] = [], researchAttempts: [ResearchAttemptRecord] = [], correctionExamples: [CorrectionExample] = [], creatorHistograms: [CreatorTagHistogram] = [], creatorResearchAccumulators: [CreatorResearchAccumulator] = []) {
         self.trees = trees
@@ -156,8 +160,8 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         // an optional import rather than an imposed first node or hierarchy.
         let tree = TagTreeAsset(id: "vault-starter", name: "Vault starter tree", nodes: [])
         let dataset = ClassificationDataset(id: "local-dataset", name: "Local classification data")
-        // Every supported platform is collected by default; the person turns any
-        // one off rather than adding them one at a time. Bindings share the local
+        // Every platform that classifies is collected by default; the others
+        // only when the person turns them on (owner 2026-09-30). Bindings share the local
         // dataset (entries self-tag with their platform); classifier types own
         // their own trees, so the shared starter tree is only the binding anchor.
         let bindings = CollectionPlatformRegistry.definitions.map { definition in
@@ -167,10 +171,72 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
                 browser: definition.browser,
                 treeID: tree.id,
                 datasetID: dataset.id,
-                collectionEnabled: true
+                collectionEnabled: definition.supportsLocalModel
             )
         }
         return .init(trees: [tree], datasets: [dataset], bindings: bindings)
+    }
+
+    /// One collected entry's shape (the collect path checks only the entry it
+    /// adds; `validate` checks them all).
+    public static func isValidCollectedEntry(_ entry: CollectedPlatformEntry) -> Bool {
+        guard CollectionPlatformRegistry.definition(for: entry.platformID) != nil,
+              !entry.id.isEmpty,
+              !entry.entryID.isEmpty,
+              !entry.creatorID.isEmpty,
+              !entry.creatorName.isEmpty,
+              !entry.entryType.isEmpty,
+              !entry.title.isEmpty,
+              entry.title.count <= EntryEvidenceValidator.titleLimit,
+              entry.text.map({ !$0.isEmpty && $0.count <= EntryEvidenceValidator.textLimit }) ?? true,
+              entry.summary.map({ !$0.isEmpty && $0.count <= EntryEvidenceValidator.summaryLimit }) ?? true,
+              entry.suppliedTags.count <= CollectedPlatformEntry.maximumSuppliedTags,
+              entry.suppliedTags.allSatisfy({
+                  !$0.isEmpty &&
+                  $0.count <= EntryEvidenceValidator.tagLengthLimit &&
+                  $0.unicodeScalars.allSatisfy({ $0.value >= 0x20 && $0.value != 0x7f })
+              }),
+              entry.sourceIconURL.map({
+                  SourceIconURLPolicy.isAccepted(platformID: entry.platformID, value: $0)
+              }) ?? true,
+              entry.attributes.count <= CollectedPlatformEntry.maximumAttributes,
+              entry.attributes.allSatisfy({ key, value in
+                  !key.isEmpty && key.count <= CollectedPlatformEntry.maximumAttributeKeyLength &&
+                  value.count <= CollectedPlatformEntry.maximumAttributeValueLength &&
+                  key.unicodeScalars.allSatisfy({ $0.value >= 0x20 && $0.value != 0x7f }) &&
+                  value.unicodeScalars.allSatisfy({ $0.value >= 0x20 && $0.value != 0x7f })
+              }),
+              entry.observationCount > 0 else { return false }
+        return true
+    }
+
+    /// Drops collected entries past their platform's Keep (by when last seen)
+    /// and, per platform, the oldest beyond the safety bound. Returns whether
+    /// anything went.
+    @discardableResult
+    public mutating func pruneCollectedEntries(nowMilliseconds: Int64 = WorkspaceCatalog.now()) -> Bool {
+        var cutoffs: [String: Int64] = [:]
+        for binding in bindings {
+            let days = binding.collectionKeepDays >= 0 ? binding.collectionKeepDays : collectionKeepDays
+            if days > 0 { cutoffs[binding.id] = nowMilliseconds - Int64(days) * 86_400_000 }
+        }
+        var changed = false
+        for index in datasets.indices {
+            let before = datasets[index].collectedEntries.count
+            datasets[index].collectedEntries.removeAll { entry in
+                cutoffs[entry.platformID].map { entry.lastObservedAtMilliseconds < $0 } ?? false
+            }
+            let counts = Dictionary(grouping: datasets[index].collectedEntries, by: \.platformID).mapValues(\.count)
+            for (platformID, count) in counts where count > CollectedPlatformEntry.maximumEntriesPerPlatform {
+                let cutoff = datasets[index].collectedEntries
+                    .filter { $0.platformID == platformID }
+                    .map(\.lastObservedAtMilliseconds)
+                    .sorted(by: >)[CollectedPlatformEntry.maximumEntriesPerPlatform - 1]
+                datasets[index].collectedEntries.removeAll { $0.platformID == platformID && $0.lastObservedAtMilliseconds < cutoff }
+            }
+            if datasets[index].collectedEntries.count != before { changed = true }
+        }
+        return changed
     }
 
     public func validate() throws {
@@ -196,38 +262,9 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             }
         }
         for dataset in datasets {
-            guard dataset.collectedEntries.count <= CollectedPlatformEntry.maximumRetainedEntries else {
-                throw WorkspaceCatalogError.invalidCollectedEntry(dataset.id)
-            }
             var seenEntries = Set<String>()
             for entry in dataset.collectedEntries {
-                guard CollectionPlatformRegistry.definition(for: entry.platformID) != nil,
-                      !entry.id.isEmpty,
-                      !entry.entryID.isEmpty,
-                      !entry.creatorID.isEmpty,
-                      !entry.creatorName.isEmpty,
-                      !entry.entryType.isEmpty,
-                      !entry.title.isEmpty,
-                      entry.title.count <= EntryEvidenceValidator.titleLimit,
-                      entry.text.map({ !$0.isEmpty && $0.count <= EntryEvidenceValidator.textLimit }) ?? true,
-                      entry.summary.map({ !$0.isEmpty && $0.count <= EntryEvidenceValidator.summaryLimit }) ?? true,
-                      entry.suppliedTags.count <= CollectedPlatformEntry.maximumSuppliedTags,
-                      entry.suppliedTags.allSatisfy({
-                          !$0.isEmpty &&
-                          $0.count <= EntryEvidenceValidator.tagLengthLimit &&
-                          $0.unicodeScalars.allSatisfy({ $0.value >= 0x20 && $0.value != 0x7f })
-                      }),
-                      entry.sourceIconURL.map({
-                          SourceIconURLPolicy.isAccepted(platformID: entry.platformID, value: $0)
-                      }) ?? true,
-                      entry.attributes.count <= CollectedPlatformEntry.maximumAttributes,
-                      entry.attributes.allSatisfy({ key, value in
-                          !key.isEmpty && key.count <= CollectedPlatformEntry.maximumAttributeKeyLength &&
-                          value.count <= CollectedPlatformEntry.maximumAttributeValueLength &&
-                          key.unicodeScalars.allSatisfy({ $0.value >= 0x20 && $0.value != 0x7f }) &&
-                          value.unicodeScalars.allSatisfy({ $0.value >= 0x20 && $0.value != 0x7f })
-                      }),
-                      entry.observationCount > 0,
+                guard Self.isValidCollectedEntry(entry),
                       seenEntries.insert(entry.deduplicationKey).inserted else {
                     throw WorkspaceCatalogError.invalidCollectedEntry(entry.id)
                 }
@@ -282,7 +319,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case trees, datasets, bindings, classifierTypes, tokenUsage, providerRequestRecords, providerProfiles, trash,
              videoClassifications, knowledgeEntries, creatorKnowledge, researchAttempts, correctionExamples, creatorHistograms,
-             creatorResearchAccumulators
+             creatorResearchAccumulators, collectionKeepDays
     }
 
 
@@ -315,6 +352,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         // Rows of the retired sample-list rule decode with an empty score: drop them.
         creatorResearchAccumulators = (try container.decodeIfPresent([CreatorResearchAccumulator].self, forKey: .creatorResearchAccumulators) ?? [])
             .filter { $0.score > 0 }
+        collectionKeepDays = max(0, try container.decodeIfPresent(Int.self, forKey: .collectionKeepDays) ?? 180)
     }
 
     private func unique(_ identifiers: [String]) throws {
@@ -346,7 +384,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
             browser: definition.browser,
             treeID: tree.id,
             datasetID: dataset.id,
-            collectionEnabled: true
+            collectionEnabled: definition.supportsLocalModel
         )
         bindings.append(binding)
         return binding

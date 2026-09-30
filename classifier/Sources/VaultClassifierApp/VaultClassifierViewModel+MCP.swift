@@ -25,11 +25,12 @@ public struct ClassifierWebActionDescriptor: Equatable, Sendable {
 public enum ClassifierWebActionCatalog {
     public static let actions: [ClassifierWebActionDescriptor] = [
         .init(name: "state", keys: [], summary: "Refresh local state from the store."),
-        .init(name: "workspace", keys: ["workspace"], summary: "Switch the page's workspace (llmAssist, browserBridge, knowledge)."),
+        .init(name: "workspace", keys: ["workspace"], summary: "Switch the page's workspace (llmAssist, browserBridge, knowledge, collection)."),
         .init(name: "clearCollectedData", keys: ["platformID"], summary: "Move a platform's collected entries to the trash (the platform and its group stay)."),
         .init(name: "restoreTrashedEntry", keys: ["id"], summary: "Restore a trashed entry."),
         .init(name: "permanentlyDeleteTrashedEntry", keys: ["id"], summary: "Purge a trashed entry."),
         .init(name: "setCollectionEnabled", keys: ["platformID", "enabled"], summary: "Turn collection on/off for a platform."),
+        .init(name: "setCollectionKeep", keys: ["platformID", "days"], summary: "Days to keep collected entries: for a platform (-1 = same as all), or without platformID for all platforms (0 = forever)."),
         .init(name: "createClassifierType", keys: ["name", "platformID"], summary: "Create a classifier group for one platform with its own empty tree; it follows the global dials until given its own."),
         .init(name: "reorderClassifierTypes", keys: ["orderedIDs"], summary: "Reorder groups (array of group ids)."),
         .init(name: "configureClassifierType", keys: ["typeID", "name", "applicablePlatformID"], summary: "Rename a group and/or move it to another platform."),
