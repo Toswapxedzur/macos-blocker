@@ -6,9 +6,9 @@
 main { flex: 1; min-height: 0; overflow: auto; }
 .page { max-width: 1320px; margin: 0 auto; }
 .page { display: flex; flex-direction: column; gap: 12px; }
-.panel { background: rgba(255, 255, 255, 0.92); border-radius: 16px; box-shadow: var(--vui-panel-shadow); padding: 16px 18px 18px; }
-.strip-panel { padding: 14px 18px 2px; }
-.settings-panel { padding: 8px 18px; }
+.panel { background: rgba(255, 255, 255, 0.92); border-radius: 16px; box-shadow: var(--vui-panel-shadow); padding: 12px; }
+.strip-panel { padding: 12px 12px 2px; }
+.settings-panel { padding: 8px 12px; }
 /* Usage, Videos, Authors, Tags and Groups: panels side by side, wrapping. */
 .column-head { display: flex; align-items: center; gap: 12px; margin: 0 4px 6px; min-height: 22px; }
 .head-button { margin-left: auto; }
@@ -76,9 +76,11 @@ main { flex: 1; min-height: 0; overflow: auto; }
 .groups { height: 206px; display: flex; flex-direction: column; flex: none; }
 .groups .empty { padding: 6px 4px; }
 .group-cards { flex: 1; min-height: 0; display: flex; gap: 10px; overflow-x: auto; overflow-y: hidden; padding-bottom: 4px; }
-.group-card { flex: none; width: 210px; display: flex; flex-direction: column; justify-content: space-between; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--vui-fill); cursor: pointer; }
-.group-card:hover { background: var(--navy-100); }
-.group-card.is-focus { background: #dfe6fb; }
+/* A group's card is the editor's (owner 2026-09-30): light navy, a soft shadow,
+   lifted on hover; the chosen one filled, never ringed. */
+.group-card { flex: none; width: 210px; display: flex; flex-direction: column; justify-content: space-between; gap: 8px; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--navy-100) 45%, #ffffff); box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06); cursor: pointer; transition: background 120ms ease, box-shadow 120ms ease, transform 120ms ease; }
+.group-card:hover { transform: translateY(-1px); box-shadow: 0 8px 18px rgba(15, 23, 42, 0.1); }
+.group-card.is-focus { background: var(--navy-100); box-shadow: 0 8px 18px rgba(30, 58, 138, 0.16); }
 .group-card.is-focus .row-label { color: var(--navy-700); }
 .group-card-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .group-card-name { display: flex; align-items: center; gap: 6px; min-width: 0; font-weight: 700; }
@@ -148,7 +150,7 @@ rect.is-hot, path.is-hot, circle.is-hot { opacity: 0.72; }
 .act-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .act-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (max-width: 900px) { .act-grid, .act-grid.two { grid-template-columns: minmax(0, 1fr); } }
-.act-cell { min-width: 0; height: 300px; display: flex; flex-direction: column; border-radius: 12px; background: #f8fafc; padding: 10px 12px; overflow: hidden; }
+.act-cell { min-width: 0; height: 300px; display: flex; flex-direction: column; border-radius: 12px; background: color-mix(in srgb, var(--navy-100) 45%, #ffffff); padding: 10px 12px; overflow: hidden; }
 .act-cell > .chart { min-height: 0; flex: 1; overflow: auto; }
 .act-list { height: 360px; }
 .act-wide { min-width: 0; }

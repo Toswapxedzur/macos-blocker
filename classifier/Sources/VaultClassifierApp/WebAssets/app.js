@@ -43,13 +43,14 @@
   let suppressTagClick = false;
   let connectionSource = null;
   let selectedTagNode = null;
-  // The tag whose Delete was clicked once (a second click deletes it).
-  let armedTagDelete = null;
-  let armedTagDeleteTimer = null;
+  // Every delete asks once more, as in the other sections (owner 2026-09-30):
+  // the first click arms it ("Click again to delete" for 4 s, kept across the
+  // page's re-renders), a second click does it. The key names the one item.
+  let armedDelete = null;
+  let armedDeleteTimer = null;
   const treeViewportPositions = new Map();
   const editorViewportPositions = new Map();
   const pendingTagRenames = new Map();
-  let pendingDeletion = null;
   // Non-null while the "create a group" dialog is open: { platformID, name? }.
   // A group can only be created through this dialog.
   let pendingCreateType = null;
@@ -255,7 +256,7 @@
       lines.push(tx("research.status.noFailures"));
     }
     const canRetry = (status.retryable ?? 0) > 0 || (status.inCooldown ?? 0) > 0;
-    return `<div class="research-status notice navy" data-research-status><strong>${tx("research.status.heading")}</strong>${lines.map((line) => `<p class="small-copy">${esc(line)}</p>`).join("")}<div class="action-row"><button class="secondary" data-action="retryFailedResearch" title="${esc(tx("research.status.retryNowHint"))}"${canRetry ? "" : " disabled"}>${tx("research.status.retryNow")}</button></div></div>`;
+    return `<div class="research-status notice navy" data-research-status><strong>${tx("research.status.heading")}</strong>${lines.map((line) => `<p class="small-copy">${esc(line)}</p>`).join("")}<div class="action-row"><button class="secondary" data-action="retryFailedResearch" data-hint="${esc(tx("research.status.retryNowHint"))}"${canRetry ? "" : " disabled"}>${tx("research.status.retryNow")}</button></div></div>`;
   }
 
   function statusPill(title, tone = "navy") {
@@ -293,7 +294,7 @@
       if (entry && stateKind === "downloading") {
         controls = `<div class="model-download-state"><span class="model-download-label">${tx("modelLibrary.downloading", { progress: percent(fraction) })}</span><div class="model-download-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(fraction * 100)}"><span style="width:${Math.round(fraction * 100)}%"></span></div></div><button type="button" class="secondary" data-action="cancelModelDownload" data-id="${esc(entry.id)}">${tx("modelLibrary.cancel")}</button>`;
       } else if (entry && stateKind === "downloaded") {
-        controls = `${statusPill(t("modelLibrary.downloaded"), "cyan")}<button type="button" class="danger" data-action="deleteModelFile" data-file-name="${esc(entry.ggufFileName)}">${tx("modelLibrary.delete")}</button>`;
+        controls = `${statusPill(t("modelLibrary.downloaded"), "cyan")}<button type="button" class="danger" data-action="deleteModelFile" data-file-name="${esc(entry.ggufFileName)}">${deleteLabel(`model:${entry.ggufFileName}`, tx("modelLibrary.delete"))}</button>`;
       }
       const meta = entry ? `<span class="dial-card-meta">${tx("localModel.tier.model", { model: entry.displayName, size: modelSizeGB(entry.downloadSizeBytes), ram: entry.minimumRAMGB })}</span>` : "";
       const ramShort = entry && systemRAMGB && Number(entry.minimumRAMGB) > systemRAMGB
@@ -333,14 +334,13 @@
       const isGroundingCapable = (profile) => protocols[profile.type]?.supportsGenerateText === true && protocols[profile.type]?.supportsNativeWebSearch === true;
       // Research is provider-grounding only, so only grounding-capable providers are offered.
       const llmProviderOptions = [["", tx("research.chooseProvider")]].concat(generationProfiles.filter(isGroundingCapable).map((profile) => [profile.id, profile.name]));
-      const modelSuggestions = assets.providerModelCatalogs?.[research.llmProviderProfileID] || [];
       const researchSection = `<section class="utility-settings-section utility-research-section" data-form-id="utility-research-form"><h3 class="utility-settings-section-title">${tx("research.title")} ${statusPill(tx(research.enabled ? "research.status.on" : "research.status.off"), research.enabled ? "cyan" : "muted")}</h3><p class="section-copy">${tx("research.copy")}</p><div class="notice navy research-data-flow">${tx("research.disclosure")}</div><div class="utility-toggles">${
         toggle("research.consent", "enabled", research.enabled === true)
       }</div><div class="utility-settings-fields">${
         valueSelectField("research.llmProvider", "research.llmProviderHint", "llmProviderProfileID", research.llmProviderProfileID || "", llmProviderOptions)
       }${
-        field("research.model", "research.modelHint", "llmModelIdentifier", research.llmModelIdentifier || "", "text", 'list="research-model-suggestions" maxlength="256"')
-      }<datalist id="research-model-suggestions">${modelSuggestions.map((model) => `<option value="${esc(model)}"></option>`).join("")}</datalist></div><p class="small-copy">${tx("research.constantsNote")}</p><p class="small-copy">${tx("research.usageToday", { used: research.tokensUsedToday ?? 0, limit: research.dailyTokenLimit ?? 10000 })}</p>${researchStatusBlock(research.status)}<div class="action-row"><button class="primary" data-action="saveResearchSettings" data-form="utility-research-form">${tx("research.save")}</button></div></section>`;
+        field("research.model", "research.modelHint", "llmModelIdentifier", research.llmModelIdentifier || "", "text", 'data-model-suggest maxlength="256" autocomplete="off" spellcheck="false"')
+      }<div class="knowledge-suggestions" data-model-suggestions></div></div><p class="small-copy">${tx("research.constantsNote")}</p><p class="small-copy">${tx("research.usageToday", { used: research.tokensUsedToday ?? 0, limit: research.dailyTokenLimit ?? 10000 })}</p>${researchStatusBlock(research.status)}<div class="action-row"><button class="primary" data-action="saveResearchSettings" data-form="utility-research-form">${tx("research.save")}</button></div></section>`;
       const packageSection = `<section class="utility-settings-section utility-resource-section" data-form-id="utility-package-form"><h3 class="utility-settings-section-title">${tx("settings.packageUpdates")}</h3><div class="utility-settings-fields">${selectField("settings.packageUpdates", "settings.packageUpdatesCopy", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div><div class="action-row"><button class="primary" data-action="savePackageSettings" data-form="utility-package-form">${tx("common.save")}</button></div></section>`;
       content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${llmSection}${researchSection}${packageSection}<section class="utility-settings-section"><h3 class="utility-settings-section-title">${tx("language.label")}</h3>${languageSelection()}</section></div></section>`;
     }
@@ -374,7 +374,7 @@
     const active = selectedTrashID === entry.id;
     return `<div class="sidebar-trash-item${active ? " active" : ""}">
       <button class="sidebar-row sidebar-trash-row${active ? " active" : ""}" type="button" data-action="selectTrash" data-id="${esc(entry.id)}"><span class="sidebar-symbol" aria-hidden="true">🗑</span><span class="sidebar-copy"><span class="sidebar-name" dir="auto">${esc(entry.name)}</span><span class="sidebar-meta">${tx("trash.deleted")}</span></span></button>
-      ${active ? `<div class="sidebar-trash-actions"><button class="secondary" data-action="restoreTrashedEntry" data-id="${esc(entry.id)}">${tx("trash.restore")}</button><button class="danger" data-action="permanentlyDeleteTrashedEntry" data-id="${esc(entry.id)}">${tx("trash.permanentlyDelete")}</button></div>` : ""}
+      ${active ? `<div class="sidebar-trash-actions"><button class="secondary" data-action="restoreTrashedEntry" data-id="${esc(entry.id)}">${tx("trash.restore")}</button><button class="danger" data-action="permanentlyDeleteTrashedEntry" data-id="${esc(entry.id)}">${deleteLabel(`trash:${entry.id}`, tx("trash.permanentlyDelete"))}</button></div>` : ""}
     </div>`;
   }
 
@@ -474,15 +474,15 @@
           "maxlength=\"1024\""
         );
         const actions = isEdit
-          ? `<button class="primary" data-action="saveTagName" data-form="tag-popover-form" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.saveNode")}</button><button class="secondary" data-action="beginConnection" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.connection")}</button><button class="secondary" data-action="disconnectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}"${disabled(!popoverNode.parentID)}>${tx("tree.disconnection")}</button><button class="danger" data-action="deleteTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx(armedTagDelete === nodeID ? "tree.deleteNodeConfirm" : "tree.deleteNode")}</button>`
+          ? `<button class="primary" data-action="saveTagName" data-form="tag-popover-form" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.saveNode")}</button><button class="secondary" data-action="beginConnection" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.connection")}</button><button class="secondary" data-action="disconnectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}"${disabled(!popoverNode.parentID)}>${tx("tree.disconnection")}</button><button class="danger" data-action="deleteTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${deleteLabel(`tag:${nodeID}`, tx("tree.deleteNode"))}</button>`
           : `<button class="primary" data-action="addTag" data-form="tag-popover-form" data-tree-id="${esc(tree.id)}">${tx("tree.createNode")}</button>`;
         // Placed beside its anchor, inside the visible part (placeTreePopovers).
-        return `<section class="tree-popover" data-anchor-x="${panelState.x}" data-anchor-y="${panelState.y}" data-anchor-w="${panelState.w || 0}" data-tree-popover data-form-id="tag-popover-form"><div class="tree-popover-head"><span class="eyebrow">${tx(isEdit ? "tree.editNode" : "tree.createNode")}</span><button class="tree-popover-close" data-action="cancelTagPanel" title="${tx("tree.cancel")}" aria-label="${tx("tree.cancel")}">×</button></div><div class="tree-form">${nameField}${descriptionField}<div class="action-row">${actions}</div></div></section>`;
+        return `<section class="tree-popover" data-anchor-x="${panelState.x}" data-anchor-y="${panelState.y}" data-anchor-w="${panelState.w || 0}" data-tree-popover data-form-id="tag-popover-form"><div class="tree-popover-head"><span class="eyebrow">${tx(isEdit ? "tree.editNode" : "tree.createNode")}</span><button class="tree-popover-close" data-action="cancelTagPanel" data-hint="${tx("tree.cancel")}" aria-label="${tx("tree.cancel")}">×</button></div><div class="tree-form">${nameField}${descriptionField}<div class="action-row">${actions}</div></div></section>`;
       })() : "";
       const map = `<div class="tree-map" data-tree-map data-tree-id="${esc(tree.id)}">${connectionState ? `<div class="tree-connection-mode">${tx("tree.connectionHint")}</div>` : ""}<div class="tree-map-content" style="width:max(${contentWidth}px, 100%);height:${contentHeight}px"><svg class="tree-links" aria-hidden="true"></svg><div class="tree-node-layer">${nodes.map((node) => {
         const position = positions.get(node.id);
         const colorStyle = tagColorStyle(node);
-        return `<button class="tree-map-node${panelState?.nodeID === node.id || selectedNodeID === node.id ? " active" : ""}${connectionState?.nodeID === node.id ? " connection-source" : ""}${node.retired ? " retired" : ""}" style="left:${position.x}px;top:${position.y}px;${colorStyle}" data-action="selectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(node.id)}" data-parent-id="${esc(node.parentID || "")}" data-position-x="${position.x}" data-position-y="${position.y}" title="${tx("tree.contextHint")}"><span aria-hidden="true"></span><strong>${esc(node.name)}</strong></button>`;
+        return `<button class="tree-map-node${panelState?.nodeID === node.id || selectedNodeID === node.id ? " active" : ""}${connectionState?.nodeID === node.id ? " connection-source" : ""}${node.retired ? " retired" : ""}" style="left:${position.x}px;top:${position.y}px;${colorStyle}" data-action="selectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(node.id)}" data-parent-id="${esc(node.parentID || "")}" data-position-x="${position.x}" data-position-y="${position.y}" data-hint="${tx("tree.contextHint")}"><span aria-hidden="true"></span><strong>${esc(node.name)}</strong></button>`;
       }).join("")}</div>${nodes.length ? "" : `<div class="tree-map-empty">${tx("tree.empty")}</div>`}${popover}</div></div>`;
       const treeActions = `<div class="tree-canvas-actions"><button class="secondary" data-action="rearrangeTree" data-tree-id="${esc(tree.id)}">${tx("tree.rearrange")}</button></div>`;
       return `<section class="tree-panel">${map}<div class="tree-canvas-hint"><span>${tx("tree.canvasHint")}</span>${treeActions}</div></section>`;
@@ -659,7 +659,7 @@
         <details class="vui-expand classifier-type-more" data-expand="type-options-${esc(classifierType.id)}"${openExpands.has(`type-options-${classifierType.id}`) ? " open" : ""}><summary>${tx("navigation.options")}</summary>
         ${localModelOverrideSection}
         ${researchOverrideSection}
-          <div class="action-row"><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}" data-name="${esc(classifierType.name)}">${tx("bridge.deleteType")}</button></div>
+          <div class="action-row"><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}">${deleteLabel(`type:${classifierType.id}`, tx("bridge.deleteType"))}</button></div>
         </details>
       </section>`;
     };
@@ -703,7 +703,7 @@
         : "";
       const idLine = kind === "creator" ? `<span class="knowledge-id" dir="auto">${esc(entry.subject)}</span>` : "";
       const search = `${name} ${entry.subject} ${entry.meaning || ""}`.toLowerCase();
-      return `<article class="knowledge-card" data-form-id="${esc(formID)}" data-knowledge-search="${esc(search)}"><div class="knowledge-card-head">${face}<span class="knowledge-name"><span class="knowledge-subject" dir="auto">${esc(name)}</span>${idLine}</span>${origin(entry)}</div><label class="field wide"><span class="field-label">${tx("knowledge.description")}</span><textarea data-field="meaning" rows="3" maxlength="2000">${esc(entry.meaning || "")}</textarea></label><div class="action-row"><button class="primary" data-action="editKnowledgeEntry" data-form="${esc(formID)}" data-id="${esc(entry.id)}">${tx("common.save")}</button><button class="danger" data-action="deleteKnowledgeEntry" data-id="${esc(entry.id)}">${tx("knowledge.delete")}</button></div></article>`;
+      return `<article class="knowledge-card" data-form-id="${esc(formID)}" data-knowledge-search="${esc(search)}"><div class="knowledge-card-head">${face}<span class="knowledge-name"><span class="knowledge-subject" dir="auto">${esc(name)}</span>${idLine}</span>${origin(entry)}</div><label class="field wide"><span class="field-label">${tx("knowledge.description")}</span><textarea data-field="meaning" rows="3" maxlength="2000">${esc(entry.meaning || "")}</textarea></label><div class="action-row"><button class="primary" data-action="editKnowledgeEntry" data-form="${esc(formID)}" data-id="${esc(entry.id)}">${tx("common.save")}</button><button class="danger" data-action="deleteKnowledgeEntry" data-id="${esc(entry.id)}">${deleteLabel(`knowledge:${entry.id}`, tx("knowledge.delete"))}</button></div></article>`;
     };
 
     const group = (title, hint, items, kind) => `<section class="knowledge-group" data-knowledge-group><div class="section-header"><div><h3>${esc(title)} <span class="knowledge-count" data-knowledge-count>${items.length}</span></h3>${hint ? `<p class="section-copy">${esc(hint)}</p>` : ""}</div></div>${items.length ? `<div class="knowledge-list">${items.map((entry) => entryCard(entry, kind)).join("")}</div>` : `<div class="empty">${tx("knowledge.empty")}</div>`}</section>`;
@@ -752,6 +752,44 @@
       .sort((a, b) => rank(a.name.toLowerCase()) - rank(b.name.toLowerCase()))
       .slice(0, 6);
     box.innerHTML = matches.map((creator) => `<button type="button" class="knowledge-suggestion" data-knowledge-pick="${esc(creator.name)}"><span dir="auto">${esc(creator.name)}</span><span class="knowledge-id">${esc(creator.id)}</span></button>`).join("");
+  }
+
+  const DELETE_KEYS = {
+    deleteModelFile: (data) => `model:${data.fileName}`,
+    permanentlyDeleteTrashedEntry: (data) => `trash:${data.id}`,
+    deleteTag: (data) => `tag:${data.nodeId}`,
+    confirmDeleteClassifierType: (data) => `type:${data.typeId}`,
+    deleteKnowledgeEntry: (data) => `knowledge:${data.id}`
+  };
+
+  function deleteLabel(key, label) {
+    return armedDelete === key ? tx("common.clickAgainToDelete") : label;
+  }
+
+  // → true when this click confirms (the button was armed); otherwise arms it.
+  function confirmDelete(key) {
+    clearTimeout(armedDeleteTimer);
+    if (armedDelete === key) {
+      armedDelete = null;
+      return true;
+    }
+    armedDelete = key;
+    armedDeleteTimer = setTimeout(() => { armedDelete = null; render(); }, 4000);
+    render();
+    return false;
+  }
+
+  // The research model field's suggestions (owner 2026-09-30: our own list,
+  // not the system's): the chosen provider's models containing what is typed.
+  function showModelSuggestions(input) {
+    const box = root.querySelector("[data-model-suggestions]");
+    if (!box) return;
+    const provider = root.querySelector('[data-form-id="utility-research-form"] [data-field="llmProviderProfileID"]')?.value || "";
+    const query = input.value.trim().toLowerCase();
+    const models = (state.assets?.providerModelCatalogs?.[provider] || [])
+      .filter((model) => model.toLowerCase().includes(query) && model !== input.value)
+      .slice(0, 8);
+    box.innerHTML = models.map((model) => `<button type="button" class="knowledge-suggestion" data-model-pick="${esc(model)}"><span>${esc(model)}</span></button>`).join("");
   }
 
   function workspace() {
@@ -830,6 +868,11 @@
     render();
   }
 
+  scope.addEventListener("focusin", (event) => {
+    const modelInput = event.target.closest?.("input[data-model-suggest]");
+    if (modelInput) showModelSuggestions(modelInput);
+  });
+
   scope.addEventListener("input", (event) => {
     const knowledgeSearch = event.target.closest("input[data-knowledge-search-input]");
     if (knowledgeSearch) {
@@ -842,10 +885,9 @@
       showKnowledgeSuggestions(creatorInput);
       return;
     }
-    const deletionInput = event.target.closest("[data-deletion-name-input]");
-    if (deletionInput) {
-      const confirmButton = root.querySelector('[data-action="confirmPendingDeletion"]');
-      if (confirmButton) confirmButton.disabled = deletionInput.value.trim() !== (pendingDeletion?.name || "").trim();
+    const modelInput = event.target.closest("input[data-model-suggest]");
+    if (modelInput) {
+      showModelSuggestions(modelInput);
       return;
     }
     const input = event.target.closest("input[data-live-tag-name]");
@@ -912,7 +954,7 @@
   // A deleted entity leaves a small in-place tombstone (name + restore /
   // permanently-delete). It auto-purges 24h after deletion (native, on launch).
   function trashTombstone(entry) {
-    return `<div class="trash-tombstone"><span class="trash-tombstone-name" dir="auto">${esc(entry.name)}</span><span class="trash-tombstone-meta">${tx("trash.deleted")}</span><span class="trash-tombstone-actions"><button class="secondary" data-action="restoreTrashedEntry" data-id="${esc(entry.id)}">${tx("trash.restore")}</button><button class="danger" data-action="permanentlyDeleteTrashedEntry" data-id="${esc(entry.id)}">${tx("trash.permanentlyDelete")}</button></span></div>`;
+    return `<div class="trash-tombstone"><span class="trash-tombstone-name" dir="auto">${esc(entry.name)}</span><span class="trash-tombstone-meta">${tx("trash.deleted")}</span><span class="trash-tombstone-actions"><button class="secondary" data-action="restoreTrashedEntry" data-id="${esc(entry.id)}">${tx("trash.restore")}</button><button class="danger" data-action="permanentlyDeleteTrashedEntry" data-id="${esc(entry.id)}">${deleteLabel(`trash:${entry.id}`, tx("trash.permanentlyDelete"))}</button></span></div>`;
   }
 
   function trashOfKind(kind) {
@@ -920,12 +962,6 @@
       .filter((entry) => entry.kind === kind)
       .map(trashTombstone)
       .join("");
-  }
-
-  // Type-the-name delete confirmation for a "massive data" entity.
-  function deletionModal() {
-    if (!pendingDeletion) return "";
-    return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelPendingDeletion" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog" role="dialog" aria-modal="true"><h3>${tx("trash.confirmTitle")}</h3><p class="section-copy">${tx("trash.confirmCopy", { name: pendingDeletion.name })}</p><label class="field"><span class="field-label">${tx("trash.typeNameLabel")}</span><input type="text" data-deletion-name-input autocomplete="off" spellcheck="false"></label><div class="action-row"><button class="secondary" data-action="cancelPendingDeletion">${tx("common.cancel")}</button><button class="danger" data-action="confirmPendingDeletion" disabled>${tx("trash.confirmDelete")}</button></div></div></div>`;
   }
 
   // Create-a-group dialog: platform and name. The new group follows the global
@@ -945,7 +981,7 @@
       lastRenderedMarkup = null;
       return;
     }
-    const markup = shell(workspace()) + deletionModal() + createTypeModal();
+    const markup = shell(workspace()) + createTypeModal();
     // Nothing changed on the page: keep the DOM (and its scroll) as it is.
     if (markup === lastRenderedMarkup && root.firstChild) return;
     renderFull(markup);
@@ -978,6 +1014,13 @@
 
   scope.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-action]");
+    const modelPick = event.target.closest("button[data-model-pick]");
+    if (modelPick) {
+      const modelInput = root.querySelector("input[data-model-suggest]");
+      if (modelInput) modelInput.value = modelPick.dataset.modelPick;
+      modelPick.parentElement.innerHTML = "";
+      return;
+    }
     const pick = event.target.closest("button[data-knowledge-pick]");
     if (pick) {
       const creatorInput = root.querySelector("input[data-knowledge-creator]");
@@ -998,6 +1041,7 @@
     }
     if (button.disabled) return;
     const action = button.dataset.action;
+    if (DELETE_KEYS[action] && !confirmDelete(DELETE_KEYS[action](button.dataset))) return;
     if (action === "workspace") {
       const nextWorkspace = button.dataset.workspace;
       if (!state || !workspaceNames.has(nextWorkspace) || state.workspace === nextWorkspace) return;
@@ -1048,29 +1092,9 @@
       send("createClassifierType", { name, platformID });
       return;
     }
-    if (action === "confirmDeleteClassifierType" || action === "clearCollectedData") {
-      pendingDeletion = {
-        action,
-        name: button.dataset.name || "",
-        payload: action === "confirmDeleteClassifierType"
-          ? { typeID: button.dataset.typeId }
-          : { platformID: button.dataset.platformId },
-      };
+    if (action === "confirmDeleteClassifierType") {
       render();
-      return;
-    }
-    if (action === "cancelPendingDeletion") {
-      pendingDeletion = null;
-      render();
-      return;
-    }
-    if (action === "confirmPendingDeletion") {
-      const input = root.querySelector("[data-deletion-name-input]");
-      if (!pendingDeletion || (input?.value || "").trim() !== pendingDeletion.name.trim()) return;
-      const pending = pendingDeletion;
-      pendingDeletion = null;
-      render();
-      send(pending.action, pending.payload);
+      send(action, { typeID: button.dataset.typeId });
       return;
     }
     const data = button.dataset.form ? collect(button.dataset.form) : {};
@@ -1151,20 +1175,7 @@
       return;
     }
     if (action === "deleteTag") {
-      // Asks first (owner 2026-09-30): the first click arms, a second one
-      // within 4 s deletes. Its child tags move up to its parent.
-      if (armedTagDelete !== button.dataset.nodeId) {
-        armedTagDelete = button.dataset.nodeId;
-        button.textContent = t("tree.deleteNodeConfirm");
-        clearTimeout(armedTagDeleteTimer);
-        armedTagDeleteTimer = setTimeout(() => {
-          armedTagDelete = null;
-          root.querySelectorAll('button[data-action="deleteTag"]').forEach((other) => { other.textContent = t("tree.deleteNode"); });
-        }, 4000);
-        return;
-      }
-      armedTagDelete = null;
-      clearTimeout(armedTagDeleteTimer);
+      // Confirmed above (click again); its child tags move up to its parent.
       flushLiveTagRename(button.dataset.treeId, button.dataset.nodeId);
       connectionSource = null;
       selectedTagNode = null;
@@ -1179,10 +1190,6 @@
       activeTagPanel = null;
       render();
       send("rearrangeTree", { treeID: button.dataset.treeId });
-      return;
-    }
-    if (action === "deleteProviderProfile") {
-      send("confirmDeleteProviderProfile", data);
       return;
     }
     if (action === "addTag") {
