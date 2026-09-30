@@ -17,11 +17,11 @@ record in all three at once, and that is correct.
 |---|---|---|---|
 | `appUsage` | app bundle id / exe | seconds an app is **foreground + focused**, minus idle | native (`NSWorkspace` on macOS, `GetForegroundWindow` on Windows) |
 | `webVisit` | domain | seconds the **active, focused tab** is on a site, minus idle | extension (content script) |
-| `contentWatched` | `platform:contentID` | each piece of content actually watched + its duration + title/creator | extension, on platforms a custom platform rule supports (YouTube/Reddit/Bilibili/…) |
+| `contentWatched` | `platform:contentID` | each piece of content + its time + title (author and tags come from the classifier) | extension: a video while it plays (YouTube, Bilibili, Twitch), a single post / thread / channel page while open and visible (Reddit, X, Instagram, Facebook, Discord server channels — not DMs); feeds count as no one piece (owner 2026-09-30) |
 
 - **App / site time = foreground + focused only.** Background apps and unfocused
   or background tabs do not accrue.
-- **`contentWatched` is item-level** (title, creator, duration) and only on
+- **`contentWatched` is item-level** (title, duration) and only on
   supported platforms; generic web stays **domain-level** (no arbitrary URLs, no
   window titles).
 - **Not captured, ever:** keystrokes, screenshots, message/content bodies,
@@ -130,8 +130,8 @@ Activity/
   group's icon is made of slices of its members' icons (1 whole, 2 halves,
   3 wedges, 4 quarters, more = three and "+N"), so Mac Vault sends an icon for
   every group member and every item the editor lists.
-- **Videos, Authors, Tags** (owner 2026-09-29): three panels — the watched
-  videos; one row per author; one row per tag with a pie of the tags (rows
+- **Content, Authors, Tags** (owner 2026-09-29/30): three panels — the
+  content from every platform, each marked with its platform; one row per author; one row per tag with a pie of the tags (rows
   open to their videos). A video with several tags gives each an equal share
   of its time; no tags = "Untagged", no author = "Unknown author".
   - **Authors and tags are saved** (`watched-facts.json`: watched key →
