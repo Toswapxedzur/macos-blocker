@@ -67,6 +67,19 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertTrue(s.watchedFacts(for: ["youtube:a"]).isEmpty)
     }
 
+    func testContentYearMapCountsOnlyTheFocusedTags() throws {
+        let s = store(now: day("2026-09-29T12:00:00Z"))
+        s.record(ActivityRecord(id: "a", category: .contentWatched, startedAt: day("2026-09-29T09:00:00Z"), seconds: 600, key: "youtube:a", label: "A"), settings: allEnabled())
+        s.record(ActivityRecord(id: "b", category: .contentWatched, startedAt: day("2026-09-29T10:00:00Z"), seconds: 300, key: "youtube:b", label: "B"), settings: allEnabled())
+        s.recordWatchedFacts([
+            ActivityWatchedEntry(videoKey: "youtube:a", tags: [ActivityTag(id: "minecraft", name: "Minecraft", color: "#00ff00")]),
+            ActivityWatchedEntry(videoKey: "youtube:b", tags: [ActivityTag(id: "music", name: "Music", color: "#ff0000")]),
+        ])
+        XCTAssertEqual(s.contentHistory(tagIDs: nil, days: 7).daySeconds.last, 900)
+        XCTAssertEqual(s.contentHistory(tagIDs: ["gaming", "minecraft"], days: 7).daySeconds.last, 600)
+        XCTAssertEqual(s.contentHistory(tagIDs: ["music"], days: 7).daySeconds.count, 7)
+    }
+
     func testDisabledCategoryWritesNothing() throws {
         let s = store(now: day("2026-09-19T12:00:00Z"))
         // default settings = all categories OFF
@@ -153,10 +166,10 @@ final class ActivityStoreTests: XCTestCase {
     func testSettingsSavedBeforeTheGlobalKeepFollowIt() throws {
         let old = #"{"byCategory":{"app-usage":{"enabled":true,"retentionDays":30}},"idleThresholdSeconds":60}"#
         let settings = try JSONDecoder().decode(ActivitySettings.self, from: Data(old.utf8))
-        XCTAssertEqual(settings.retentionDays, 180)
+        XCTAssertEqual(settings.retentionDays, 365)
         XCTAssertNil(settings.settings(for: .appUsage).retentionDays)
         XCTAssertTrue(settings.isEnabled(.appUsage))
-        XCTAssertEqual(settings.effectiveRetentionDays(for: .appUsage), 180)
+        XCTAssertEqual(settings.effectiveRetentionDays(for: .appUsage), 365)
     }
 
     func testRetentionZeroKeepsEverything() throws {
@@ -206,14 +219,14 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertFalse(loaded.isEnabled(.appUsage))
     }
 
-    func testDefaultsAreOffHundredEightyDaysSixtySecondIdle() throws {
+    func testDefaultsAreOffAYearSixtySecondIdle() throws {
         let settings = ActivitySettings()
         XCTAssertEqual(settings.idleThresholdSeconds, 60)
         for c in ActivityCategory.allCases {
             XCTAssertFalse(settings.isEnabled(c))
             XCTAssertNil(settings.settings(for: c).retentionDays)  // follows the global Keep
-            XCTAssertEqual(settings.effectiveRetentionDays(for: c), 180)
+            XCTAssertEqual(settings.effectiveRetentionDays(for: c), 365)
         }
-        XCTAssertEqual(settings.retentionDays, 180)
+        XCTAssertEqual(settings.retentionDays, 365)
     }
 }

@@ -95,6 +95,27 @@ public final class VaultClassifierPage {
         return model?.watchedAuthors(keys: keys) ?? [:]
     }
 
+    /// The tags of every classifying type's tree, for Activity's Content focus
+    /// (a parent tag covers the tags under it): [{ id, name, color, parentID }].
+    public func tagTree() -> [[String: String]] {
+        start()
+        guard let catalog = model?.localState?.workspaceCatalog else { return [] }
+        var seen = Set<String>()
+        var nodes: [[String: String]] = []
+        for type in catalog.classifierTypes where type.applicablePlatformID != nil {
+            guard let tree = catalog.trees.first(where: { $0.id == type.treeID }) else { continue }
+            for node in tree.nodes where !node.isRetired && seen.insert(node.id).inserted {
+                nodes.append([
+                    "id": node.id,
+                    "name": node.name,
+                    "color": TagColorAssignment.normalizedHex(node.lightColorHex ?? "") ?? "",
+                    "parentID": node.parentID ?? "",
+                ])
+            }
+        }
+        return nodes
+    }
+
     // MARK: What each platform records for the classifier (shown in Activity → Recording)
 
     /// The platforms' recording: `{ keepDays, platforms: [{ id, name, classifies,

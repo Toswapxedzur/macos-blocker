@@ -74,14 +74,14 @@ public struct ActivitySettings: Codable, Equatable, Sendable {
     public var idleThresholdSeconds: Int
     /// The global Keep, in days (`0` = forever): every kind that doesn't set
     /// its own follows it, and so do watched videos' saved authors and tags.
-    /// Default 180 — the day map shows 180 days (owner 2026-09-29: keep every
+    /// Default 365 — the day map shows a year (owner 2026-09-30: keep every
     /// detail; it is small).
     public var retentionDays: Int
 
     public init(
         categories: [ActivityCategory: ActivityCategorySettings] = [:],
         idleThresholdSeconds: Int = 60,
-        retentionDays: Int = 180
+        retentionDays: Int = 365
     ) {
         var map: [String: ActivityCategorySettings] = [:]
         for category in ActivityCategory.allCases {
@@ -106,7 +106,7 @@ public struct ActivitySettings: Codable, Equatable, Sendable {
             self.retentionDays = max(0, global)
         } else {
             // Saved before the global Keep: every kind follows it (default).
-            self.retentionDays = 180
+            self.retentionDays = 365
             for key in map.keys { byCategory[key]?.retentionDays = nil }
         }
     }

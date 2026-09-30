@@ -358,6 +358,22 @@ public final class ActivityStore: @unchecked Sendable {
         )
     }
 
+    /// Content's year map (owner 2026-09-30): seconds of watched content per
+    /// day over `days`, all of it or only the content carrying one of
+    /// `tagIDs` (a tag and every tag under it) by its saved tags.
+    public func contentHistory(tagIDs: Set<String>?, days: Int) -> ActivityItemHistory {
+        let now = now()
+        let from = calendar.date(byAdding: .day, value: -max(1, days), to: calendar.startOfDay(for: now)) ?? now
+        var watched = records(category: .contentWatched, from: from, to: now)
+        if let tagIDs {
+            let facts = watchedFacts(for: Array(Set(watched.map(\.key))))
+            watched = watched.filter { record in
+                (facts[record.key]?.tags ?? []).contains { tagIDs.contains($0.id) }
+            }
+        }
+        return ActivityDashboard.history(records: watched, days: days, now: now, calendar: calendar)
+    }
+
     /// The render-ready dashboard snapshot for a range (bars + timeline + the
     /// watched-content bars + the current settings). Reads app-usage / web-visit /
     /// content-watched records for the range and builds geometry via
@@ -379,6 +395,7 @@ public final class ActivityStore: @unchecked Sendable {
             app: appLens,
             web: webLens,
             watched: ActivityDashboard.bars(from: watched) { _, rank in color.next + rank },
+            watchedTimeline: ActivityDashboard.timeline(from: watched, rangeStartMs: startMs, rangeEndMs: endMs) { _ in 0 },
             settings: ActivityDashboard.settingsView(loadSettings()),
             groups: groups().map { ActivityGroupView(id: $0.id, name: $0.name, merge: $0.merge, members: $0.members, colorIndex: color.group($0.id)) }
         )
