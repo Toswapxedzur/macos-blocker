@@ -2,6 +2,8 @@
 
 > 🤖 **AI protocol:** Read `../package-info.md` (group), the group `AGENTS.md`, and `../misc/project-memory/PROJECT-MEMORY.md` before working here. Update this file when the folder changes. Never delete without owner consent; keep secrets out of git.
 
+- **Growing lists (owner 2026-10-01):** bound accumulating collections inside scroll boxes, including Knowledge, API keys, trash, editor chips and Activity members. `docs/LIST-CONTAINMENT.md` records the full UI inventory and mini1 regression fixtures. Short lists fit their contents; item counts are not truncated.
+
 - **Custom-rule logs (owner 2026-10-01):** the Log panel contains only `v.log()` output, independently retained by immutable group ID (200 entries per rule). Clear and Download operate on the selected rule. Engine errors and collection/transport diagnostics stay in developer diagnostics. Browser feed tests: `customBlocker/tests/runner-rule-log-isolation.js`; native persistence tests: `macosBlocker/Tests/RuleLogShim.test.js`.
 
 - **What:** the native macOS member of the suite (public name **Mac Vault**): Swift policy engine, WebView editor (the extension's own popup, synced into `Sources/MacBlockerWebUI/WebAssets` by `sync-webui.sh`), app inventory + enforcement adapters, and the **local Vault hub host** (dev `ws://127.0.0.1:18787`, prod 8787) the **Vault Classifier component** (`classifier/` — on-device tagging, shown as the window's **Classifier** page and started at launch so tags keep flowing after the window closes), plus an **MCP HTTP server for agents** (dev port 18788 = the `vault-dev` MCP entry in Claude's config; only reachable while the app runs).

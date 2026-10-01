@@ -29,15 +29,16 @@ try{
     return r.result.result.value;
   };
   await call('Page.enable');
-  await call('Emulation.setDeviceMetricsOverride',{width:1280,height:1000,deviceScaleFactor:1,mobile:false});
+  await call('Emulation.setDeviceMetricsOverride',{width:Number(process.env.UI_WIDTH)||1280,height:Number(process.env.UI_HEIGHT)||1000,deviceScaleFactor:1,mobile:false});
   const until=Date.now()+10000;
   while(!await evaluate('typeof runAutosaveTests === "function"')){
     if(Date.now()>until)throw Error('Fixture did not load');
     await new Promise(r=>setTimeout(r,50));
   }
-  for(const result of await evaluate('runAutosaveTests()'))console.log(result);
+  if(process.env.UI_TEST_SCRIPT) await evaluate(await fs.readFile(process.env.UI_TEST_SCRIPT,'utf8'));
+  for(const result of await evaluate(process.env.UI_TEST_SCRIPT ? 'runBoundedListTests()' : 'runAutosaveTests()'))console.log(result);
   if(process.argv[2]){
-    await evaluate('document.getElementById("host").shadowRoot.querySelectorAll(".editor-panel").forEach(node => node.scrollTop = 0)');
+    if(!process.env.UI_TEST_SCRIPT) await evaluate('document.getElementById("host").shadowRoot.querySelectorAll(".editor-panel").forEach(node => node.scrollTop = 0)');
     const shot=await call('Page.captureScreenshot',{format:'png'});
     await fs.writeFile(process.argv[2],Buffer.from(shot.result.data,'base64'));
   }
