@@ -54,13 +54,10 @@ if let path = args.compactMap({ $0.hasPrefix("--corrections-from=") ? String($0.
     print("• corrections loaded: \(added)")
 }
 
-// The house rules PRODUCTION would use for this type — identical to the
-// coordinator's `effectiveHouseRules`: a type's own rules replace the global ones.
+// The same independent group house rules used by the production coordinator.
 let productionHouseRules: String? = {
     if let houseRulesOverride { return houseRulesOverride }
-    let perType = type.localModelOverrides?.houseRules?.trimmingCharacters(in: .whitespacesAndNewlines)
-    if let perType, !perType.isEmpty { return perType }
-    let trimmed = state.settings.localLLM.houseRules.trimmingCharacters(in: .whitespacesAndNewlines)
+    let trimmed = type.localModel.houseRules.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? nil : trimmed
 }()
 
@@ -119,20 +116,19 @@ case "score":
     guard labeled.contains(where: { !$0.trueTags.isEmpty }) else { die("no items labeled yet — fill in trueTags") }
 
     let modelOverride = args.compactMap { $0.hasPrefix("--model=") ? String($0.dropFirst(8)) : nil }.first
-    guard let modelPath = modelOverride ?? VaultLocalLLMEngine.defaultModelPath(preferredFileName: state.settings.localLLM.modelFileName) else {
+    guard let modelPath = modelOverride ?? VaultLocalLLMEngine.defaultModelPath(preferredFileName: type.localModel.modelFileName) else {
         die("no .gguf model found for this environment")
     }
     let engine: VaultLocalLLMEngine
     do { engine = try VaultLocalLLMEngine(modelPath: modelPath) } catch { die("engine load failed: \(error)") }
     print("• model: \((modelPath as NSString).lastPathComponent)  •  \(labeled.count) items  •  type \"\(type.name)\"\n")
 
-    let settings = state.settings.localLLM
+    let settings = type.localModel
     let research = state.settings.research
-    let overrides = type.localModelOverrides
     let maxTags = maxOverride ?? settings.maximumTags
     let forceTag = args.contains("--no-decline")   // min-1: the model may not decline
     let minTags = args.compactMap { $0.hasPrefix("--min=") ? Int($0.dropFirst(6)) : nil }.first ?? (forceTag ? 1 : 0)
-    let extraTagOdds = (overrides?.strictness ?? settings.strictness).extraTagMinimumOdds
+    let extraTagOdds = settings.strictness.extraTagMinimumOdds
     let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: maxTags, minimumTags: minTags)
 
     // Research A/B: `--knowledge=all|none|terms|creator` chooses which stored
@@ -252,15 +248,14 @@ case "calib":
     let verbose = args.contains("-v") || args.contains("--dump")
 
     let modelOverride = args.compactMap { $0.hasPrefix("--model=") ? String($0.dropFirst(8)) : nil }.first
-    guard let modelPath = modelOverride ?? VaultLocalLLMEngine.defaultModelPath(preferredFileName: state.settings.localLLM.modelFileName) else {
+    guard let modelPath = modelOverride ?? VaultLocalLLMEngine.defaultModelPath(preferredFileName: type.localModel.modelFileName) else {
         die("no .gguf model found for this environment")
     }
     let engine: VaultLocalLLMEngine
     do { engine = try VaultLocalLLMEngine(modelPath: modelPath) } catch { die("engine load failed: \(error)") }
 
-    let settings = state.settings.localLLM
+    let settings = type.localModel
     let research = state.settings.research
-    let overrides = type.localModelOverrides
     // Default cap 3 so multi-tag videos populate the lower-confidence bins; the
     // production gate is intentionally NOT applied — calibration needs raw tags.
     let maxTags = args.compactMap { $0.hasPrefix("--max=") ? Int($0.dropFirst(6)) : nil }.first ?? 3
@@ -287,7 +282,7 @@ case "calib":
             dynamicSuffix: parts.dynamicSuffix,
             allowedTagNames: parts.allowedTagNames,
             maximumTags: maxTags,
-            extraTagMinimumOdds: (overrides?.strictness ?? settings.strictness).extraTagMinimumOdds
+            extraTagMinimumOdds: settings.strictness.extraTagMinimumOdds
         ))
         if result.tags.isEmpty { declined += 1 }
         for tag in result.tags {
@@ -338,7 +333,7 @@ case "suffixes":
     guard args.count > 2, let data = try? Data(contentsOf: URL(fileURLWithPath: args[1])),
           let set = try? JSONDecoder().decode(EvalSet.self, from: data) else { die("usage: suffixes <set.json> <out.json>") }
     let research = state.settings.research
-    let pipeline = VideoClassificationPipeline(llm: StubOnDeviceLLM(), maximumTags: state.settings.localLLM.maximumTags)
+    let pipeline = VideoClassificationPipeline(llm: StubOnDeviceLLM(), maximumTags: type.localModel.maximumTags)
     var rows: [[String: Any]] = []
     var prefix = ""
     for item in set.items {
@@ -363,14 +358,13 @@ case "latency":
     let limit = args.compactMap { $0.hasPrefix("--limit=") ? Int($0.dropFirst(8)) : nil }.first ?? 30
     let items = Array(set.items.prefix(limit))
     let modelOverride = args.compactMap { $0.hasPrefix("--model=") ? String($0.dropFirst(8)) : nil }.first
-    guard let modelPath = modelOverride ?? VaultLocalLLMEngine.defaultModelPath(preferredFileName: state.settings.localLLM.modelFileName) else {
+    guard let modelPath = modelOverride ?? VaultLocalLLMEngine.defaultModelPath(preferredFileName: type.localModel.modelFileName) else {
         die("no .gguf model found for this environment")
     }
     let engine: VaultLocalLLMEngine
     do { engine = try VaultLocalLLMEngine(modelPath: modelPath) } catch { die("engine load failed: \(error)") }
-    let settings = state.settings.localLLM
+    let settings = type.localModel
     let research = state.settings.research
-    let overrides = type.localModelOverrides
     let maxTags = args.compactMap { $0.hasPrefix("--max=") ? Int($0.dropFirst(6)) : nil }.first ?? 1
     let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: maxTags)
     var decode1: [Double] = []
@@ -385,7 +379,7 @@ case "latency":
         _ = try await engine.classify(LLMClassificationRequest(
             staticPrefix: parts.staticPrefix, dynamicSuffix: parts.dynamicSuffix,
             allowedTagNames: parts.allowedTagNames, maximumTags: maxTags,
-            extraTagMinimumOdds: (overrides?.strictness ?? settings.strictness).extraTagMinimumOdds
+            extraTagMinimumOdds: settings.strictness.extraTagMinimumOdds
         ))
         if index > 0 {   // skip the cold first video (static-prefix prefill)
             decode1.append(Date().timeIntervalSince(t0) * 1_000)
@@ -409,14 +403,13 @@ case "batch":
     let offset = args.compactMap { $0.hasPrefix("--offset=") ? Int($0.dropFirst(9)) : nil }.first ?? 0
     let items = Array(set.items.dropFirst(offset).prefix(limit))
     let modelOverride = args.compactMap { $0.hasPrefix("--model=") ? String($0.dropFirst(8)) : nil }.first
-    guard let modelPath = modelOverride ?? VaultLocalLLMEngine.defaultModelPath(preferredFileName: state.settings.localLLM.modelFileName) else {
+    guard let modelPath = modelOverride ?? VaultLocalLLMEngine.defaultModelPath(preferredFileName: type.localModel.modelFileName) else {
         die("no .gguf model found for this environment")
     }
     let engine: VaultLocalLLMEngine
     do { engine = try VaultLocalLLMEngine(modelPath: modelPath) } catch { die("engine load failed: \(error)") }
-    let settings = state.settings.localLLM
+    let settings = type.localModel
     let research = state.settings.research
-    let overrides = type.localModelOverrides
     let maxTags = args.compactMap { $0.hasPrefix("--max=") ? Int($0.dropFirst(6)) : nil }.first ?? 1
     let pipeline = VideoClassificationPipeline(llm: engine, maximumTags: maxTags)
     let requests = items.map { item -> LLMClassificationRequest in
@@ -428,7 +421,7 @@ case "batch":
         return LLMClassificationRequest(
             staticPrefix: parts.staticPrefix, dynamicSuffix: parts.dynamicSuffix,
             allowedTagNames: parts.allowedTagNames, maximumTags: maxTags,
-            extraTagMinimumOdds: (overrides?.strictness ?? settings.strictness).extraTagMinimumOdds)
+            extraTagMinimumOdds: settings.strictness.extraTagMinimumOdds)
     }
     if args.contains("--dump") {
         let sorted = requests.sorted { $0.dynamicSuffix.count > $1.dynamicSuffix.count }

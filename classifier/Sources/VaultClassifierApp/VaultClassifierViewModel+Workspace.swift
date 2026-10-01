@@ -85,8 +85,8 @@ extension VaultClassifierViewModel {
     }
 
     /// Creates a classifier type (a "group") for the chosen platforms. It starts
-    /// with an empty tree of its own and follows the global dials, house rules
-    /// and research switch until the person gives it positions of its own.
+    /// with an empty tree and independent Balanced dials and empty house rules
+    /// and follows the app-wide research consent.
     func createClassifierType(name: String, platformIDs: [String]) {
         do {
             let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)

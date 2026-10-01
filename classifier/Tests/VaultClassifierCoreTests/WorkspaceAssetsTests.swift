@@ -210,18 +210,18 @@ final class WorkspaceAssetsTests: XCTestCase {
     func testClassifierTypeLocalModelOverridesLegacyAndRoundTrip() throws {
         let legacy = Data(#"{"id":"type","name":"Type","treeID":"tree","treeRevision":1,"datasetID":"dataset","datasetRevision":1,"applicablePlatformID":"youtube","order":0}"#.utf8)
         let decodedLegacy = try JSONDecoder().decode(ClassifierTypeAsset.self, from: legacy)
-        XCTAssertNil(decodedLegacy.localModelOverrides)
-        XCTAssertNil(decodedLegacy.modelFileName)
+        XCTAssertEqual(decodedLegacy.localModel, LocalLLMSettings())
+        XCTAssertEqual(decodedLegacy.modelFileName, SpeedQualityDial.balanced.ggufFileName)
         XCTAssertNil(decodedLegacy.researchEnabled)
 
         let value = ClassifierTypeAsset(
             id: "type", name: "Type", treeID: "tree", treeRevision: 1,
             datasetID: "dataset", datasetRevision: 1, applicablePlatformIDs: ["youtube"],
-            localModelOverrides: .init(houseRules: "Prefer documentaries.", speedQuality: .best, strictness: .strict),
+            localModel: .init(speedQuality: .best, strictness: .strict, houseRules: "Prefer documentaries."),
             researchEnabled: false
         )
         let roundTrip = try JSONDecoder().decode(ClassifierTypeAsset.self, from: JSONEncoder().encode(value))
-        XCTAssertEqual(roundTrip.localModelOverrides, value.localModelOverrides)
+        XCTAssertEqual(roundTrip.localModel, value.localModel)
         XCTAssertEqual(roundTrip.modelFileName, "Qwen2.5-14B-Instruct-Q4_K_M.gguf")
         XCTAssertEqual(roundTrip.researchEnabled, false)
     }
@@ -231,8 +231,8 @@ final class WorkspaceAssetsTests: XCTestCase {
     func testPreDialClassifierTypeDecodesToDialPositions() throws {
         let old = #"{"id":"type","name":"Type","treeID":"tree","treeRevision":1,"datasetID":"dataset","datasetRevision":1,"applicablePlatformID":"youtube","order":0,"modelFileName":"Qwen2.5-3B-Instruct-Q4_K_M.gguf","localModelOverrides":{"allowDecline":false,"maximumTags":1},"researchOverrides":{"enabled":false,"requestsPerMinute":6,"dailyTokenLimit":5000,"cooldownHours":24},"presetID":"gentle"}"#
         let decoded = try JSONDecoder().decode(ClassifierTypeAsset.self, from: Data(old.utf8))
-        XCTAssertEqual(decoded.localModelOverrides, LocalModelOverrides(speedQuality: .fast, strictness: .strictest))
-        XCTAssertEqual(decoded.modelFileName, "Qwen2.5-3B-Instruct-Q4_K_M.gguf")
+        XCTAssertEqual(decoded.localModel, LocalLLMSettings(), "retired overrides reconcile only while decoding the complete state")
+        XCTAssertEqual(decoded.modelFileName, SpeedQualityDial.balanced.ggufFileName)
         XCTAssertEqual(decoded.researchEnabled, false)
         let reencoded = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
         for retired in ["presetID", "researchOverrides", "\"modelFileName\"", "allowDecline", "maximumTags"] {

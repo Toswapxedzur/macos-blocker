@@ -76,15 +76,14 @@ final class MinimumTagsTests: XCTestCase {
         let decoded = try JSONDecoder().decode(LocalLLMSettings.self, from: Data(stored.utf8))
         XCTAssertEqual(decoded.strictness, .broadest)
         XCTAssertEqual(decoded.maximumTags, 3); XCTAssertEqual(decoded.minimumTags, 1)
-        let overrides = try JSONDecoder().decode(LocalModelOverrides.self, from: Data(#"{"minimumTags":1,"expectedTags":2}"#.utf8))
+        let overrides = try JSONDecoder().decode(LocalLLMSettings.self, from: Data(#"{"minimumTags":1,"expectedTags":2}"#.utf8))
         XCTAssertEqual(overrides.strictness, .broadest)
     }
 
-    func testPerTypeBoundsInheritAndOverride() {
-        let global = LocalLLMSettings(strictness: .broadest)
-        let inherit = LocalModelOverrides().effectiveTagBounds(global: global)
-        XCTAssertEqual(inherit.minimum, 1); XCTAssertEqual(inherit.maximum, 3)
-        let override = LocalModelOverrides(strictness: .strictest).effectiveTagBounds(global: global)
-        XCTAssertEqual(override.minimum, 0); XCTAssertEqual(override.maximum, 1)
+    func testGroupBoundsDependOnlyOnItsOwnPosition() {
+        let broad = LocalLLMSettings(strictness: .broadest).strictness.tagBounds
+        XCTAssertEqual(broad.minimum, 1); XCTAssertEqual(broad.maximum, 3)
+        let strict = LocalLLMSettings(strictness: .strictest).strictness.tagBounds
+        XCTAssertEqual(strict.minimum, 0); XCTAssertEqual(strict.maximum, 1)
     }
 }

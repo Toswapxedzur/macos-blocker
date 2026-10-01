@@ -177,7 +177,7 @@ public struct EntryEvidenceValidator: Sendable {
 /// The normalized tag-count bounds for one classification: how many tags the
 /// grammar may emit. This is the SINGLE place the invariants live —
 /// `0 ≤ minimum ≤ maximum ≤ 16` —
-/// so the settings, per-type overrides, the pipeline, and the store can never
+/// so the group settings, the pipeline, and the store can never
 /// disagree about what "min/max" resolve to. Every site that used to
 /// re-derive these clamps now builds a `TagBounds` instead.
 public struct TagBounds: Equatable, Sendable {
@@ -222,8 +222,7 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
     /// Ascending probability thresholds mapping the chosen token's renormalized
     /// softmax onto confidence 2, 3, 4, 5 (below the first threshold = 1).
     public static let confidenceThresholds: [Double] = [0.20, 0.40, 0.60, 0.85]
-    /// Distinct GGUF engines kept warm by the per-type registry (a type on
-    /// another tier than the global one loads a second engine).
+    /// Distinct GGUF engines kept warm by the shared group registry.
     public static let maxResidentModels = 2
     public static let maximumResidentModels = 4
     public static let maximumHouseRulesLength = 4_000
@@ -240,7 +239,7 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
 
     // MARK: Derived values the engine and pipeline read
 
-    /// The GGUF file the global tier loads.
+    /// The GGUF file this group selects.
     public var modelFileName: String { speedQuality.ggufFileName }
     public var maximumTags: Int { strictness.maximumTags }
     public var minimumTags: Int { strictness.minimumTags }
@@ -286,67 +285,6 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
         try container.encode(speedQuality, forKey: .speedQuality)
         try container.encode(strictness, forKey: .strictness)
         try container.encode(houseRules, forKey: .houseRules)
-    }
-}
-
-/// What a classifier type may set for itself: its own dial positions (nil =
-/// follow the global dial) and its own house rules (which replace the global
-/// rules). Runtime constants are app-wide for every resident engine.
-public struct LocalModelOverrides: Codable, Equatable, Sendable {
-    public var houseRules: String?
-    public var speedQuality: SpeedQualityDial?
-    public var strictness: StrictnessDial?
-
-    public init(
-        houseRules: String? = nil,
-        speedQuality: SpeedQualityDial? = nil,
-        strictness: StrictnessDial? = nil
-    ) {
-        self.houseRules = houseRules.map { String($0.prefix(LocalLLMSettings.maximumHouseRulesLength)) }
-        self.speedQuality = speedQuality
-        self.strictness = strictness
-    }
-
-    /// The effective strictness: the per-type position when set, else the global.
-    public func effectiveStrictness(global: LocalLLMSettings) -> StrictnessDial {
-        strictness ?? global.strictness
-    }
-
-    /// Effective tag-count bounds (0 ≤ min ≤ max) for the effective strictness.
-    public func effectiveTagBounds(global: LocalLLMSettings) -> TagBounds {
-        effectiveStrictness(global: global).tagBounds
-    }
-
-    public var isEmpty: Bool {
-        houseRules == nil && speedQuality == nil && strictness == nil
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case houseRules, speedQuality, strictness
-        // Pre-dial keys, read only to find the nearest position.
-        case maximumTags, minimumTags
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let storedStrictness = try container.decodeIfPresent(Int.self, forKey: .strictness)
-        let legacyMaximumTags = try container.decodeIfPresent(Int.self, forKey: .maximumTags)
-        let legacyMinimumTags = try container.decodeIfPresent(Int.self, forKey: .minimumTags)
-        let strictness = StrictnessDial.resolve(storedStrictness)
-            ?? StrictnessDial.nearest(maximumTags: legacyMaximumTags, minimumTags: legacyMinimumTags, extraTagMinimumOdds: nil)
-        let storedSpeed = try container.decodeIfPresent(String.self, forKey: .speedQuality)
-        self.init(
-            houseRules: try container.decodeIfPresent(String.self, forKey: .houseRules),
-            speedQuality: SpeedQualityDial.resolve(storedSpeed),
-            strictness: strictness
-        )
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encodeIfPresent(houseRules, forKey: .houseRules)
-        try container.encodeIfPresent(speedQuality, forKey: .speedQuality)
-        try container.encodeIfPresent(strictness, forKey: .strictness)
     }
 }
 
@@ -446,21 +384,18 @@ public struct ClassifierSettings: Codable, Equatable, Sendable {
     /// This is only a persisted local preference. A separately configured
     /// transport must still make every manifest request and activation.
     public var packageUpdateMode: PackageUpdateMode
-    public var localLLM: LocalLLMSettings
     public var research: ResearchSettings
 
     public init(
         packageUpdateMode: PackageUpdateMode = .automatic,
-        localLLM: LocalLLMSettings = LocalLLMSettings(),
         research: ResearchSettings = ResearchSettings()
     ) {
         self.packageUpdateMode = packageUpdateMode
-        self.localLLM = localLLM
         self.research = research
     }
 
     private enum CodingKeys: String, CodingKey {
-        case packageUpdateMode, localLLM, research
+        case packageUpdateMode, research
     }
 
 
@@ -469,7 +404,6 @@ public struct ClassifierSettings: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             packageUpdateMode: try container.decodeIfPresent(PackageUpdateMode.self, forKey: .packageUpdateMode) ?? .automatic,
-            localLLM: try container.decodeIfPresent(LocalLLMSettings.self, forKey: .localLLM) ?? LocalLLMSettings(),
             research: try container.decodeIfPresent(ResearchSettings.self, forKey: .research) ?? ResearchSettings()
         )
     }

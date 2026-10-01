@@ -7,11 +7,10 @@ import VaultClassifierLLM
 
 @MainActor
 final class VaultClassifierViewModel: ObservableObject {
-    /// A type's own dial positions and house rules from the web form (nil =
-    /// everything follows the global settings).
+    /// A group's concrete dial positions and house rules from the web form.
     struct ClassifierTypeLocalModelWebInput: Equatable {
         var typeID: String
-        var overrides: LocalModelOverrides?
+        var settings: LocalLLMSettings
     }
     /// A type's research switch from the web form (nil = follow the global switch).
     struct ClassifierTypeResearchWebInput: Equatable {
@@ -29,9 +28,6 @@ final class VaultClassifierViewModel: ObservableObject {
     @Published var issue: String?
     @Published var localState: LocalClassifierState?
     @Published var packageUpdateMode: PackageUpdateMode = .automatic
-    // Local-model settings, mirrored from ClassifierSettings.localLLM.
-    @Published var llmSettings = LocalLLMSettings()
-    @Published private(set) var llmEngineStatus = "loading"
     @Published var backupOwnerCode = ""
     @Published var backupDirectory = ""
     @Published var backupEnabled = false
@@ -134,46 +130,25 @@ final class VaultClassifierViewModel: ObservableObject {
         loadResourceSettings(from: coordinator.snapshot().settings)
         loadBackupConfiguration(from: coordinator.snapshot().backupConfiguration)
         coordinator.setOnDeviceLLM(StubOnDeviceLLM())
-        llmEngineStatus = "disabled"
     }
 
-    /// Loads the in-process llama.cpp engine (final Phase-0 contract) with the
-    /// user's settings and installs it as the coordinator's on-device LLM.
-    /// Loading is a ~1–2 s mmap, done off the main actor; until it completes
-    /// (or if the chosen tier's model file is not downloaded) classification
-    /// stays on the stub.
+    /// Each group's selected model loads lazily through the shared registry.
+    /// Missing model files produce provisional stub results, never another group's tier.
     func installLocalLLMEngine(coordinator: LocalClassifierCoordinator) {
-        let configuration = llmSettings
-        coordinator.setOnDeviceLLMEngineResolver(nil)
-        guard let modelPath = VaultLocalLLMEngine.defaultModelPath(preferredFileName: configuration.modelFileName) else {
-            coordinator.setOnDeviceLLM(StubOnDeviceLLM())
-            llmEngineStatus = "no-model"
-            VaultDevLog.shared.log("llm", "engine-skipped", ["reason": "no-model-file"])
-            return
-        }
-        llmEngineStatus = "loading"
+        coordinator.setOnDeviceLLM(StubOnDeviceLLM())
         let registry = LocalLLMEngineRegistry()
+        coordinator.setOnDeviceLLMEngineResolver(registry)
+        var seen = Set<SpeedQualityDial>()
+        let configurations = coordinator.snapshot().workspaceCatalog.classifierTypes
+            .map(\.localModel).filter { seen.insert($0.speedQuality).inserted }
+            .prefix(LocalLLMSettings.maxResidentModels)
+        // Keep the normal first-video path warm without choosing an app-wide tier.
         Task.detached(priority: .userInitiated) {
-            do {
-                let engine = try await registry.engine(forModel: nil, configuration: configuration)
-                coordinator.setOnDeviceLLM(engine)
-                coordinator.setOnDeviceLLMEngineResolver(registry)
-                VaultDevLog.shared.log("llm", "engine-loaded", ["model": (modelPath as NSString).lastPathComponent])
-                await MainActor.run { [weak self] in
-                    self?.llmEngineStatus = "loaded"
-                    self?.onWebStateChange?()
-                }
-            } catch {
-                coordinator.setOnDeviceLLMEngineResolver(nil)
-                VaultDevLog.shared.log("llm", "engine-load-failed", ["error": String(describing: error)])
-                await MainActor.run { [weak self] in
-                    self?.llmEngineStatus = "failed"
-                    self?.onWebStateChange?()
-                }
+            for configuration in configurations {
+                _ = try? await registry.engine(forModel: configuration.modelFileName, configuration: configuration)
             }
         }
     }
-
 
     // Dev-only instrumentation, routed into the unified VaultDevLog file.
     static let perfEnabled = VaultDevLog.shared.isEnabled

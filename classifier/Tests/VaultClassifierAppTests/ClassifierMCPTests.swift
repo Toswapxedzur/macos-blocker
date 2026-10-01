@@ -89,7 +89,7 @@ final class ClassifierMCPTests: XCTestCase {
         let types = try XCTUnwrap(vm.mcpSnapshot(section: "assets.classifierTypes"))
         XCTAssertEqual(Set(types.keys), ["assets.classifierTypes"])
         let settings = try XCTUnwrap(vm.mcpSnapshot(section: "settings"))
-        XCTAssertNotNil((settings["settings"] as? [String: Any])?["localLLM"])
+        XCTAssertNotNil((settings["settings"] as? [String: Any])?["localModels"])
         let all = try XCTUnwrap(vm.mcpSnapshot(section: "all"))
         XCTAssertEqual(Set(all.keys), Set(vm.webSnapshot().keys))
         XCTAssertNil(vm.mcpSnapshot(section: "nope"))
@@ -97,18 +97,17 @@ final class ClassifierMCPTests: XCTestCase {
         XCTAssertTrue(JSONSerialization.isValidJSONObject(overview))
     }
 
-    func testRoutineGlobalEditsPersistWithoutRestartingTheEngine() throws {
+    func testRoutineGroupEditsPersistThroughMCP() throws {
         let vm = try VaultClassifierViewModel(headlessVaultDirectory: directory)
-        let tier = vm.llmSettings.speedQuality.rawValue
-        let status = vm.llmEngineStatus
-        XCTAssertNil(vm.mcpPerform(action: "saveLocalLLMSettings", data: [
-            "speedQuality": tier, "strictness": "4", "houseRules": "Use my group vocabulary."
+        XCTAssertNil(vm.mcpPerform(action: "createClassifierType", data: ["name": "A", "platformIDs": ["youtube"]]).issue)
+        let group = try XCTUnwrap(vm.localState?.workspaceCatalog.classifierTypes.first)
+        XCTAssertNil(vm.mcpPerform(action: "saveClassifierTypeLocalModel", data: [
+            "typeID": group.id, "speedQuality": "balanced", "strictness": "4", "houseRules": "Use my group vocabulary."
         ]).issue)
-        XCTAssertEqual(vm.llmEngineStatus, status, "Ordinary autosave must not reload the GGUF engine")
         LocalStateFile.flushAllPendingWrites()
         let reopened = try VaultClassifierViewModel(headlessVaultDirectory: directory)
-        XCTAssertEqual(reopened.llmSettings.strictness.rawValue, 4)
-        XCTAssertEqual(reopened.llmSettings.houseRules, "Use my group vocabulary.")
+        XCTAssertEqual(reopened.localState?.workspaceCatalog.classifierTypes.first?.localModel.strictness, .broad)
+        XCTAssertEqual(reopened.localState?.workspaceCatalog.classifierTypes.first?.localModel.houseRules, "Use my group vocabulary.")
     }
 
     func testPerformRoutesThroughTheDispatcherWithItsValidation() throws {

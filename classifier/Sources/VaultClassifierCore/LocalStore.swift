@@ -42,6 +42,21 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
         schemaVersion = max(2, try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 2)
         settings = try container.decodeIfPresent(ClassifierSettings.self, forKey: .settings) ?? .init()
         workspaceCatalog = try container.decodeIfPresent(WorkspaceCatalog.self, forKey: .workspaceCatalog) ?? .starter()
+        // One bounded reconciliation of the retired global defaults. New groups
+        // always own their settings; no inheritance survives decoding or encoding.
+        if let retired = try? RetiredDialState(from: decoder) {
+            let defaults = retired.settings?.localLLM ?? .init()
+            for legacy in retired.workspaceCatalog?.classifierTypes ?? [] where legacy.localModel == nil {
+                guard let index = workspaceCatalog.classifierTypes.firstIndex(where: { $0.id == legacy.id }) else { continue }
+                let old = legacy.localModelOverrides
+                let rules = old?.houseRules?.trimmingCharacters(in: .whitespacesAndNewlines)
+                workspaceCatalog.classifierTypes[index].localModel = .init(
+                    speedQuality: old?.speedQuality ?? SpeedQualityDial.nearest(modelFileName: legacy.modelFileName) ?? defaults.speedQuality,
+                    strictness: old?.strictness ?? defaults.strictness,
+                    houseRules: rules?.isEmpty == false ? (old?.houseRules ?? "") : defaults.houseRules
+                )
+            }
+        }
         backupConfiguration = try container.decodeIfPresent(LocalBackupConfiguration.self, forKey: .backupConfiguration)
         activeModelIdentity = (try? container.decodeIfPresent(ActiveModelIdentity.self, forKey: .activeModelIdentity)) ?? nil
         if activeModelIdentity?.isStructurallyValid != true { activeModelIdentity = nil }
@@ -49,6 +64,24 @@ public struct LocalClassifierState: Codable, Equatable, Sendable {
         signedRollbackIdentities = Self.normalizedRollbackIdentities(
             (try? container.decodeIfPresent([ActiveModelIdentity].self, forKey: .signedRollbackIdentities)) ?? []
         )
+    }
+
+    private struct RetiredDialState: Decodable {
+        struct Settings: Decodable { var localLLM: LocalLLMSettings? }
+        struct Catalog: Decodable { var classifierTypes: [Group]? }
+        struct Group: Decodable {
+            struct Overrides: Decodable {
+                var speedQuality: SpeedQualityDial?
+                var strictness: StrictnessDial?
+                var houseRules: String?
+            }
+            var id: String
+            var localModel: LocalLLMSettings?
+            var localModelOverrides: Overrides?
+            var modelFileName: String?
+        }
+        var settings: Settings?
+        var workspaceCatalog: Catalog?
     }
 
     public mutating func rememberSignedIdentityForRollback(_ identity: ActiveModelIdentity, limit: Int = 3) {
@@ -283,7 +316,6 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
     var state: LocalClassifierState
     var onDeviceLLM: any OnDeviceLLM = StubOnDeviceLLM()
     var onDeviceLLMEngineResolver: (any OnDeviceLLMEngineResolving)?
-    var classificationHouseRules: String?
     var groundedResearchQueue: GroundedResearchQueue?
     /// When the collection Keep was last applied (see `collect`).
     var lastCollectionPrune: Int64 = 0
@@ -366,8 +398,7 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         self.stateFile = stateFile
         self.activeVerifiedPackage = verifiedPackage
         self.state = loaded
-        let rules = loaded.settings.localLLM.houseRules.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.classificationHouseRules = rules.isEmpty ? nil : rules
+
     }
 
     public func setOnDeviceLLM(_ llm: any OnDeviceLLM) {
@@ -380,14 +411,6 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         _ resolver: (any OnDeviceLLMEngineResolving)?
     ) {
         lock.withLock { onDeviceLLMEngineResolver = resolver }
-    }
-
-    /// The global house rules (tag counts come from the Strict↔Broad dial).
-    public func setClassificationOptions(houseRules: String?) {
-        lock.lock()
-        defer { lock.unlock() }
-        let trimmed = houseRules?.trimmingCharacters(in: .whitespacesAndNewlines)
-        classificationHouseRules = (trimmed?.isEmpty ?? true) ? nil : trimmed
     }
 
     public func setOnVideoReclassified(

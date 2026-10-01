@@ -69,14 +69,10 @@ public actor LocalLLMEngineRegistry: OnDeviceLLMEngineResolving {
 
     private var cache = ResidentEngineCache<VaultLocalLLMEngine>()
     private var loads: [String: Task<VaultLocalLLMEngine, Error>] = [:]
-    /// Core holds this engine directly for the zero-actor-hop inherited path,
-    /// so the registry pins and counts it when applying the residency cap.
-    private var pinnedDefaultPath: String?
 
     public init() {}
 
-    /// The public concrete API used by the app to preload the global/default
-    /// engine before installing this registry in the coordinator.
+    /// Loads or reuses a selected model without changing any group settings.
     public func engine(
         forModel fileName: String?,
         configuration: LocalLLMSettings
@@ -85,16 +81,6 @@ public actor LocalLLMEngineRegistry: OnDeviceLLMEngineResolving {
             requestedFileName: fileName,
             configuration: configuration
         )
-        if Self.cleanedFileName(fileName) == nil {
-            pinnedDefaultPath = path
-        }
-        if let requested = Self.cleanedFileName(fileName),
-           !Self.isAvailableModelFile(requested) {
-            VaultDevLog.shared.log("llm", "model-fallback", [
-                "requested": requested,
-                "resolved": (path as NSString).lastPathComponent,
-            ])
-        }
 
         if let cached = cache.value(for: path) {
             evictIfNeeded(capacity: configuration.maxResidentModels, protecting: path)
@@ -160,7 +146,7 @@ public actor LocalLLMEngineRegistry: OnDeviceLLMEngineResolving {
     }
 
     private func evictIfNeeded(capacity requestedCapacity: Int, protecting path: String) {
-        let protectedPaths = pinnedDefaultPath.map { Set([$0]) } ?? Set([path])
+        let protectedPaths = Set([path])
         for eviction in cache.evictIfNeeded(
             capacity: requestedCapacity,
             protecting: protectedPaths
@@ -179,17 +165,14 @@ public actor LocalLLMEngineRegistry: OnDeviceLLMEngineResolving {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         availableModelFiles: [String] = VaultLocalLLMEngine.availableModelFiles()
     ) throws -> String {
-        if let requested = cleanedFileName(requestedFileName),
-           isSafeGGUFFileName(requested),
-           let directory = modelsDirectory,
+        let requested = cleanedFileName(requestedFileName) ?? configuration.modelFileName
+        if isSafeGGUFFileName(requested), let directory = modelsDirectory,
            FileManager.default.fileExists(atPath: directory.appendingPathComponent(requested).path) {
             return directory.appendingPathComponent(requested).path
         }
-        if let global = cleanedFileName(configuration.modelFileName),
-           isSafeGGUFFileName(global),
-           let directory = modelsDirectory,
-           FileManager.default.fileExists(atPath: directory.appendingPathComponent(global).path) {
-            return directory.appendingPathComponent(global).path
+        // A selected tier must never silently run a different group's model.
+        if cleanedFileName(requestedFileName) != nil {
+            throw OnDeviceLLMError.notReady("no-model-file")
         }
         if let explicit = environment["ADAMANCIA_VAULT_LLM_MODEL"], !explicit.isEmpty {
             guard FileManager.default.fileExists(atPath: explicit) else {
@@ -208,14 +191,6 @@ public actor LocalLLMEngineRegistry: OnDeviceLLMEngineResolving {
     private nonisolated static func cleanedFileName(_ fileName: String?) -> String? {
         let cleaned = fileName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return cleaned.isEmpty ? nil : cleaned
-    }
-
-    private nonisolated static func isAvailableModelFile(_ fileName: String) -> Bool {
-        guard isSafeGGUFFileName(fileName),
-              let directory = VaultLocalLLMEngine.modelsDirectory() else { return false }
-        return FileManager.default.fileExists(
-            atPath: directory.appendingPathComponent(fileName).path
-        )
     }
 
     private nonisolated static func isSafeGGUFFileName(_ fileName: String) -> Bool {

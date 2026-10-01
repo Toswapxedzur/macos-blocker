@@ -10,9 +10,9 @@ window.uiErrors=[];
 window.addEventListener('error',e=>uiErrors.push(e.message));
 window.testState = {
   presentationRevision:1,workspace:'browserBridge',issue:null,notices:{},
-  settings:{packageUpdateMode:'automatic',localLLM:{speedQuality:'balanced',strictness:3,houseRules:'',engineStatus:'disabled',modelLibrary:[]},research:{enabled:false,llmProviderProfileID:'',llmModelIdentifier:'',status:{}}},
+  settings:{packageUpdateMode:'automatic',localModels:{modelLibrary:[]},research:{enabled:false,llmProviderProfileID:'',llmModelIdentifier:'',status:{}}},
   backup:{unlocked:true,hasOwnerCode:true,enabled:false,savedEnabled:false,directory:'/tmp/test-backups'},
-  assets:{classifierTypes:[{id:'group-1',name:'Test group',treeID:'tree-1',applicablePlatformIDs:['youtube'],localModelOverrides:null,researchEnabled:null,order:0}],
+  assets:{classifierTypes:[{id:'group-1',name:'Test group',treeID:'tree-1',applicablePlatformIDs:['youtube'],localModel:{speedQuality:'balanced',strictness:3,houseRules:''},researchEnabled:null,order:0}],
     trees:[{id:'tree-1',name:'Test tags',nodes:[{id:'tag-1',name:'Science',description:'',parentID:null,positionX:24,positionY:24}]}],datasets:[],
     collectionPlatforms:[{id:'youtube',name:'YouTube',supportsLocalModel:true}],bindings:[],
     knowledge:{creators:[],terms:[{id:'term-1',subject:'Physics',meaning:'Original meaning',writtenByUser:true}],knownCreators:[]},
@@ -26,13 +26,12 @@ window.modelFetchResults={'provider-1':['test-model','test-grounded-model']};
 window.pushSnapshot=()=>{testState.presentationRevision++;VaultClassifier.receive(structuredClone(testState));};
 window.webkit={messageHandlers:{vaultClassifier:{postMessage(message){
   commands.push(structuredClone(message));
-  const {action,data}=message, type=testState.assets.classifierTypes[0];
+  const {action,data}=message, type=testState.assets.classifierTypes.find(t=>t.id===data.typeID);
   switch(action){
     case 'confirmDeleteClassifierType':testState.assets.classifierTypes=testState.assets.classifierTypes.filter(t=>t.id!==data.typeID);break;
     case 'configureClassifierType':type.name=data.name.trim();break;
-    case 'saveClassifierTypeLocalModel':type.localModelOverrides={speedQuality:data.speedQuality||null,strictness:data.strictness?Number(data.strictness):null,houseRules:data.houseRules||null};break;
+    case 'saveClassifierTypeLocalModel':type.localModel={speedQuality:data.speedQuality,strictness:Number(data.strictness),houseRules:data.houseRules||''};break;
     case 'saveClassifierTypeResearch':type.researchEnabled=data.researchMode==='inherit'?null:data.researchMode==='on';break;
-    case 'saveLocalLLMSettings':Object.assign(testState.settings.localLLM,data,{strictness:Number(data.strictness)});break;
     case 'saveResearchSettings':Object.assign(testState.settings.research,data);break;
     case 'savePackageSettings':testState.settings.packageUpdateMode=data.packageUpdateMode;break;
     case 'updateTag':Object.assign(testState.assets.trees[0].nodes[0],data);break;
@@ -77,13 +76,13 @@ window.runAutosaveTests=async()=>{
   const more='[data-expand="type-more:group-1"]';
   const knowledge=q('[data-workspace="knowledge"]');
   expect(knowledge.getClientRects().length && !knowledge.closest('details') && !q('.sidebar-more'),'Knowledge is directly visible without a sidebar More');
-  expect(!q(more).open && q(more+' summary').textContent.includes('Uses global settings') && !q('[data-field="houseRules"]').checkVisibility(),'inherited group overrides start collapsed with a visible status');
+  expect(!q(more).open && q(more+' summary').textContent.includes('Balanced') && !q('[data-field="houseRules"]').checkVisibility(),'independent group dials start collapsed with a visible status');
   q(more+' summary').click();await poll(()=>q(more).open);await new Promise(r=>setTimeout(r,0));
   expect(!q('[data-action="configureClassifierType"], [data-action="saveClassifierTypeLocalModel"], [data-action="saveClassifierTypeResearch"]'),'group has no Save buttons');
   ackDelay=450;
   input(name,'First name');await poll(()=>count('configureClassifierType')===1);
   const text=input(name,'Latest name');text.setSelectionRange(3,7);
-  testState.settings.localLLM.engineStatus='loading';pushSnapshot();
+  pushSnapshot();
   expect(q(name).value==='Latest name' && scope.activeElement===q(name) && q(name).selectionStart===3 && q(name).selectionEnd===7,'snapshot preserves pending text, focus and caret');
   expect(q(more).open,'incoming snapshot keeps group More expanded');
   await poll(()=>count('configureClassifierType')===2);
@@ -92,8 +91,19 @@ window.runAutosaveTests=async()=>{
   ackDelay=0;
   const local='[data-form-id="classifier-local-model-form-group-1"] ';
   input(local+'[data-field="houseRules"]','Keep my vocabulary');
-  change(local+'[data-field="strictness"]','4');
+  const strict=q(local+'[data-field="strictness"][value="4"]');strict.checked=true;strict.dispatchEvent(new Event('change',{bubbles:true}));
   expect(commands.at(-1).action==='saveClassifierTypeLocalModel' && commands.at(-1).data.houseRules==='Keep my vocabulary','dial saves immediately with the current house-rule draft');
+  await poll(()=>testState.assets.classifierTypes[0].localModel.strictness===4);
+  testState.assets.classifierTypes.push({id:'group-2',name:'Other group',treeID:'tree-1',applicablePlatformIDs:['reddit'],localModel:{speedQuality:'best',strictness:1,houseRules:'Other rules'},researchEnabled:null,order:1});pushSnapshot();
+  q('[data-action="selectType"][data-type-id="group-2"]').click();
+  q('[data-expand="type-more:group-2"] summary').click();
+  const other=q('[data-form-id="classifier-local-model-form-group-2"] [data-field="speedQuality"][value="fast"]');
+  other.checked=true;other.dispatchEvent(new Event('change',{bubbles:true}));
+  await poll(()=>testState.assets.classifierTypes[1].localModel.speedQuality==='fast');
+  expect(testState.assets.classifierTypes[0].localModel.speedQuality==='balanced' && testState.assets.classifierTypes[0].localModel.houseRules==='Keep my vocabulary' && testState.assets.classifierTypes[1].localModel.strictness===1, 'editing another group changes only its own dial and preserves both groups rules');
+  q('[data-action="selectType"][data-type-id="group-1"]').click();
+  testState.assets.classifierTypes.pop();pushSnapshot();
+
   change('[data-form-id="classifier-research-form-group-1"] [data-field="researchMode"]','off');
   expect(commands.at(-1).action==='saveClassifierTypeResearch','group research saves immediately');
   await poll(()=>q(more+' summary').textContent.includes('Custom house rules') && q(more+' summary').textContent.includes('Grounded research: Off'));
@@ -101,10 +111,7 @@ window.runAutosaveTests=async()=>{
   expect(!q(more).open && q(more+' summary').textContent.includes('Strict') && q(more+' summary').getClientRects().length,'collapsed More retains the active override summary across snapshots');
   q(more+' summary').click();await new Promise(r=>setTimeout(r,0));
   q('[data-action="openUtilityPanel"]').click();
-  const radio=q('[data-form-id="utility-llm-form"] [data-field="strictness"][value="5"]');radio.checked=true;radio.dispatchEvent(new Event('change',{bubbles:true}));
-  input('[data-form-id="utility-llm-form"] [data-field="houseRules"]','Global rules');
-  await poll(()=>testState.settings.localLLM.houseRules==='Global rules');
-  expect(testState.settings.localLLM.strictness===5,'global dials and house rules autosave');
+  expect(!q('[data-form-id="utility-llm-form"]') && !q('.utility-settings-modal [data-field="strictness"]'), 'Settings contains no global dial controls');
   change('[data-form-id="utility-research-form"] [data-field="llmProviderProfileID"]','provider-1');
   testState.assets.providerModelCatalogs['provider-1']=['test-model'];pushSnapshot();
   await poll(()=>q('[data-model-selector]'));q('[data-model-selector]').click();q('[data-model-pick="test-model"]').click();
@@ -139,7 +146,7 @@ window.runAutosaveTests=async()=>{
   const ime=input(name,'Before composition');
   ime.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));
   ime.value='中文分组';ime.dispatchEvent(new InputEvent('input',{bubbles:true,isComposing:true}));
-  testState.settings.localLLM.engineStatus='disabled';pushSnapshot();
+  pushSnapshot();
   expect(q(name)===ime && q(name).value==='中文分组','snapshot does not replace an active composition');
   ime.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true}));
   await poll(()=>testState.assets.classifierTypes[0].name==='中文分组');
@@ -161,9 +168,9 @@ window.runAutosaveTests=async()=>{
   scope.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true,composed:true}));
   expect(!q('.utility-popover') && scope.activeElement===q('[data-action="openUtilityPanel"]'),'Escape closes settings and returns focus');
   testState.issue=null;pushSnapshot();
-  const fields=q('[data-form-id="classifier-local-model-form-group-1"] .utility-settings-fields');
-  const widths=Array.from(fields.children).slice(0,2).map(n=>n.getBoundingClientRect().width);
-  expect(widths.length===2 && Math.abs(widths[0]-widths[1])<2,'related model selectors have equal widths');
+  const dialForm=q('[data-form-id="classifier-local-model-form-group-1"]');
+  expect(dialForm.querySelectorAll('[data-field="speedQuality"]').length===3 && dialForm.querySelectorAll('[data-field="strictness"]').length===5, 'each group contains all model tier cards and strictness positions');
+  expect(!dialForm.querySelector('option[value=""]'), 'group dials have no global inheritance choice');
   testState.trash=[{id:'retired-trash',name:'Deleted group',kind:'classifierType'}];pushSnapshot();
   expect(!q('[data-expand="trash"], [data-action="selectTrash"], [data-action="restoreTrashedEntry"]'),'obsolete Trash snapshots produce no controls');
   const deletion='[data-action="confirmDeleteClassifierType"][data-type-id="group-1"]';

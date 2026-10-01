@@ -27,21 +27,20 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         }
     }
 
-    /// The per-type local-model form holds the two dials (follow global / own
-    /// position) and house rules — nothing else survived the 2026-09-23 cut.
+    /// Each group contains independent dials and house rules.
     func testShellPerTypeFormHoldsOnlyTheTwoDialsAndHouseRules() throws {
         let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
         XCTAssertTrue(script.contains("saveClassifierTypeLocalModel"))
         XCTAssertTrue(script.contains("classifier-local-model-form-"))
         XCTAssertTrue(script.contains("localModelResidentNote"))
-        let sectionStart = try XCTUnwrap(script.range(of: "const localOverrides = classifierType.localModelOverrides"))
+        let sectionStart = try XCTUnwrap(script.range(of: "const localModel = classifierType.localModel"))
         let sectionEnd = try XCTUnwrap(script.range(of: "const researchFormID", range: sectionStart.upperBound..<script.endIndex))
         let section = String(script[sectionStart.lowerBound..<sectionEnd.lowerBound])
-        for field in ["\"speedQuality\"", "\"strictness\"", "\"houseRules\"", "localModel.speedQuality.followGlobal", "localModel.strictness.followGlobal"] {
+        for field in ["localModel.speedQuality", "localModel.strictness", "\"houseRules\"", "speedQualityCards(", "strictnessOptions("] {
             XCTAssertTrue(section.contains(field), "per-type field missing: \(field)")
         }
-        for retired in ["allowDecline", "confidenceBand", "maximumTags", "minimumTags", "modelFileName", "thumbnailOcrEvidence", "toggleLocalModelAdvanced"] {
+        for retired in ["saveLocalLLMSettings", "followGlobal", "allowDecline", "confidenceBand", "maximumTags", "minimumTags", "modelFileName", "thumbnailOcrEvidence", "toggleLocalModelAdvanced"] {
             XCTAssertFalse(script.contains(retired), "retired control still in the shell: \(retired)")
         }
     }

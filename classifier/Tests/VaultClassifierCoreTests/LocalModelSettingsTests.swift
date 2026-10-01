@@ -2,7 +2,7 @@ import XCTest
 @testable import VaultClassifierCore
 
 /// The two dials (2026-09-23) and what old state decodes to.
-final class LocalModelOverridesTests: XCTestCase {
+final class LocalModelSettingsTests: XCTestCase {
     // MARK: - Dials
 
     func testStrictnessPositionsMapToTagBoundsAndSureness() {
@@ -71,33 +71,6 @@ final class LocalModelOverridesTests: XCTestCase {
         // A stored dial wins over leftover pre-dial keys.
         let mixed = try JSONDecoder().decode(LocalLLMSettings.self, from: Data(#"{"strictness":4,"maximumTags":1}"#.utf8))
         XCTAssertEqual(mixed.strictness, .broad)
-    }
-
-    // MARK: - LocalModelOverrides
-
-    func testOverridesBoundRulesAndReportEmptiness() {
-        XCTAssertTrue(LocalModelOverrides().isEmpty)
-        let value = LocalModelOverrides(houseRules: String(repeating: "x", count: 4_100), speedQuality: .fast, strictness: .broad)
-        XCTAssertEqual(value.houseRules?.count, 4_000)
-        XCTAssertFalse(value.isEmpty)
-        XCTAssertFalse(LocalModelOverrides(houseRules: "").isEmpty, "an explicit empty rule string still overrides the global rules")
-        let global = LocalLLMSettings(strictness: .strictest)
-        XCTAssertEqual(LocalModelOverrides().effectiveStrictness(global: global), .strictest)
-        XCTAssertEqual(value.effectiveStrictness(global: global), .broad)
-        XCTAssertEqual(value.effectiveTagBounds(global: global), TagBounds(minimum: 0, maximum: 3))
-    }
-
-    func testOverridesCodableRoundTripAndPreDialDecode() throws {
-        let value = LocalModelOverrides(houseRules: "rule", speedQuality: .best, strictness: .strict)
-        XCTAssertEqual(try JSONDecoder().decode(LocalModelOverrides.self, from: JSONEncoder().encode(value)), value)
-        let old = #"{"allowDecline":false,"thumbnailOcrEvidence":true,"maximumTags":1,"confidenceThresholds":[0.1,0.3,0.6,0.9]}"#
-        let decoded = try JSONDecoder().decode(LocalModelOverrides.self, from: Data(old.utf8))
-        XCTAssertEqual(decoded, LocalModelOverrides(strictness: .strictest))
-        let reencoded = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
-        for retired in ["allowDecline", "thumbnailOcrEvidence", "maximumTags", "confidenceThresholds"] {
-            XCTAssertFalse(reencoded.contains(retired))
-        }
-        XCTAssertEqual(try JSONDecoder().decode(LocalModelOverrides.self, from: Data(#"{"minimumTags":1,"expectedTags":2}"#.utf8)), LocalModelOverrides(strictness: .broadest))
     }
 
     // MARK: - ResearchSettings
