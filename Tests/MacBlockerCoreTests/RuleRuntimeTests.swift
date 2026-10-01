@@ -4,6 +4,20 @@ import XCTest
 /// Mac Vault's custom-rule engine: rule-core.js with Mac Vault's own actions
 /// (apps only) in JavaScriptCore.
 final class RuleRuntimeTests: XCTestCase {
+    func testHandlerErrorsAreDiagnosticsAndOnlyVLogProducesLogOutput() throws {
+        let runtime = try RuleRuntime()
+        _ = try runtime.load(groupID: "a", source: #"(on,v) => { on("tick", () => { throw Error("test failure"); }); }"#, stateJSON: "{}")
+        let failed = try runtime.dispatch(type: "tick", data: [String: Any](), groupID: "a")
+        XCTAssertTrue(failed.logs.isEmpty)
+        XCTAssertEqual(failed.diagnostics.first?.groupId, "a")
+        XCTAssertTrue(failed.diagnostics.first?.message.contains("test failure") == true)
+        _ = try runtime.load(groupID: "b", source: #"(on,v) => { on("tick", () => v.log("B output")); }"#, stateJSON: "{}")
+        let logged = try runtime.dispatch(type: "tick", data: [String: Any](), groupID: "b")
+        XCTAssertEqual(logged.logs.first?.groupId, "b")
+        XCTAssertEqual(logged.logs.first?.message, "B output")
+        XCTAssertTrue(logged.diagnostics.isEmpty)
+    }
+
     func testALoadedRuleReportsItsHandlersTypesAndLogs() throws {
         let runtime = try RuleRuntime()
         let result = try runtime.load(groupID: "g", source: """

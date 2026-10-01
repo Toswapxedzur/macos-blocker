@@ -73,6 +73,7 @@
   let navigationResize = null;
   const workspaceNames = new Set(["llmAssist", "browserBridge", "knowledge"]);
   let lastRenderedMarkup = null;
+  const listViewportPositions = new Map();
 
   try {
     const storedLanguage = window.localStorage.getItem("vaultClassifier.language");
@@ -541,11 +542,11 @@
       : `<div class="empty compact-empty">${tx("navigation.noTypes")}</div>`;
     const trash = Array.isArray(state?.trash) ? state.trash : [];
     const trashSection = trash.length
-      ? `<div class="sidebar-divider" role="separator"></div><div class="sidebar-group-title">${tx("trash.title")}</div><div class="sidebar-trash">${trash.map(trashRow).join("")}</div>`
+      ? `<div class="sidebar-divider" role="separator"></div><div class="sidebar-group-title">${tx("trash.title")}</div><div class="sidebar-trash vui-list-box" data-list-key="trash" tabindex="0" aria-label="${tx("trash.title")}">${trash.map(trashRow).join("")}</div>`
       : "";
     return `
       <div class="sidebar-group-title">${tx("navigation.classifierTypes")}</div>
-      <div class="classifier-type-nav" data-classifier-type-nav>${typeRows}</div>
+      <div class="classifier-type-nav vui-list-box" data-classifier-type-nav data-list-key="types" tabindex="0" aria-label="${tx("navigation.classifierTypes")}">${typeRows}</div>
       <button class="sidebar-add" type="button" data-action="newType"><span aria-hidden="true">＋</span> ${tx("navigation.newType")}</button>
       <details class="vui-expand sidebar-more" data-expand="sidebar"${openExpands.has("sidebar") || ["knowledge", "llmAssist", "trash"].includes(state.workspace) ? " open" : ""}>
         <summary>${tx("navigation.more")}</summary>
@@ -790,7 +791,7 @@
         : "";
       return `<section class="provider-panel" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}" data-autosave-action="updateProviderConnection"><div class="provider-panel-head"><h3>${esc(profile.name)}</h3><div class="provider-panel-actions">${testButton}<button class="danger" data-action="confirmDeleteProviderProfile" data-profile-id="${esc(profile.id)}">${tx("llm.deleteProfile")}</button></div></div>${retiredSearchProvider ? `<div class="notice navy">${tx("llm.retiredSearchProvider")}</div>` : ""}<div class="provider-panel-body">${connectionFields ? `<div class="provider-connection-fields">${connectionFields}</div>` : ""}<div class="provider-request-summary">${usage}${responseDiagnostic}</div></div>${profile.testSucceeded ? notice(t("llm.testSucceeded"), "green") : ""}</section>`;
     };
-    return `<div class="workspace provider-workspace">${header("llm.title", "llm.copy", t("llm.keyLibrary"), "gold")}<div class="notice navy provider-local-only">${tx("llm.localOnlyDisclosure")}</div><section class="provider-create" data-form-id="new-provider-profile-form">${groupedValueSelectField("llm.providerType", "", "type", "", profileTypeGroups)}<button class="gold-action" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button><span class="small-copy">${tx("llm.createCopy")}</span></section><div class="provider-panels">${profiles.length ? profiles.map(panel).join("") : `<div class="empty">${tx("llm.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
+    return `<div class="workspace provider-workspace">${header("llm.title", "llm.copy", t("llm.keyLibrary"), "gold")}<div class="notice navy provider-local-only">${tx("llm.localOnlyDisclosure")}</div><section class="provider-create" data-form-id="new-provider-profile-form">${groupedValueSelectField("llm.providerType", "", "type", "", profileTypeGroups)}<button class="gold-action" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button><span class="small-copy">${tx("llm.createCopy")}</span></section><div class="provider-panels vui-list-box" data-list-key="providers" tabindex="0" aria-label="${tx("llm.keyLibrary")}">${profiles.length ? profiles.map(panel).join("") : `<div class="empty">${tx("llm.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
   }
 
   // The classifiable platforms as a checklist (owner 2026-09-30: a type may take
@@ -902,7 +903,7 @@
       return `<article class="knowledge-card" data-form-id="${esc(formID)}" data-knowledge-search="${esc(search)}" data-autosave-action="editKnowledgeEntry" data-id="${esc(entry.id)}"><div class="knowledge-card-head">${face}<span class="knowledge-name"><span class="knowledge-subject" dir="auto">${esc(name)}</span>${idLine}</span>${origin(entry)}</div><label class="field wide"><span class="field-label">${tx("knowledge.description")}</span><textarea data-field="meaning" rows="3" maxlength="2000">${esc(entry.meaning || "")}</textarea></label><div class="action-row"><button class="danger" data-action="deleteKnowledgeEntry" data-id="${esc(entry.id)}">${deleteLabel(`knowledge:${entry.id}`, tx("knowledge.delete"))}</button></div></article>`;
     };
 
-    const group = (title, hint, items, kind) => `<section class="knowledge-group" data-knowledge-group><div class="section-header"><div><h3>${esc(title)} <span class="knowledge-count" data-knowledge-count>${items.length}</span></h3>${hint ? `<p class="section-copy">${esc(hint)}</p>` : ""}</div></div>${items.length ? `<div class="knowledge-list">${items.map((entry) => entryCard(entry, kind)).join("")}</div>` : `<div class="empty">${tx("knowledge.empty")}</div>`}</section>`;
+    const group = (title, hint, items, kind) => `<section class="knowledge-group" data-knowledge-group><div class="section-header"><div><h3>${esc(title)} <span class="knowledge-count" data-knowledge-count>${items.length}</span></h3>${hint ? `<p class="section-copy">${esc(hint)}</p>` : ""}</div></div>${items.length ? `<div class="knowledge-list vui-list-box" data-list-key="knowledge:${kind}:${esc(title)}" tabindex="0" aria-label="${esc(title)}">${items.map((entry) => entryCard(entry, kind)).join("")}</div>` : `<div class="empty">${tx("knowledge.empty")}</div>`}</section>`;
 
     // Terms are only ever added here, by the user: name the term, and either
     // write what it means or leave that blank to have it looked up.
@@ -1146,6 +1147,9 @@
   function renderFull(markup) {
     rememberTreeViewportPositions();
     rememberEditorViewportPosition();
+    root.querySelectorAll("[data-list-key]").forEach((list) => {
+      listViewportPositions.set(list.dataset.listKey, { x: list.scrollLeft, y: list.scrollTop });
+    });
     const focused = captureLiveEditFocus();
     const active = scope.activeElement;
     const dialogControl = active?.closest?.('[role="dialog"]') ? {
@@ -1166,6 +1170,10 @@
       applyNavigationPanelWidth();
       restoreEditorViewportPosition();
       restoreTreeViewportPositions();
+      root.querySelectorAll("[data-list-key]").forEach((list) => {
+        const position = listViewportPositions.get(list.dataset.listKey);
+        if (position) { list.scrollLeft = position.x; list.scrollTop = position.y; }
+      });
       drawTreeConnections();
       placeTreePopovers();
     });

@@ -107,6 +107,8 @@
       if (!incoming || typeof incoming !== "object") return;
       var previous = store;
       store = incoming;
+      delete store.ruleLog;
+      pruneRuleLogs();
       try {
         window.localStorage.setItem(STORE_KEY, JSON.stringify(store));
       } catch (_) {}
@@ -182,48 +184,57 @@
     } catch (_) {}
   };
 
-  // Native rule-log push. Each entry: { timestamp, level, group, message }.
-  // Stored under the "ruleLog" key in the shim store so the popup Log panel
-  // can read it like any other chrome.storage.local value.
-  // Also dispatches each entry as a "log-feed-entry" runtime message so the
-  // popup's live Log panel updates immediately.
+  // Only v.log output, keyed by immutable group ID. Config snapshots must
+  // never overwrite this independent log store. The retired mixed buffer is ignored.
+  var RULE_LOG_KEY = "__cb_rule_logs_by_group__";
+  var ruleLogs = Object.create(null);
   var logFeedCounter = 0;
+  var logFeedSession = Date.now() + "-" + Math.random().toString(36).slice(2);
+  try {
+    var savedLogs = JSON.parse(window.localStorage.getItem(RULE_LOG_KEY) || "{}");
+    Object.keys(savedLogs || {}).forEach(function (groupId) {
+      if (!Array.isArray(savedLogs[groupId])) return;
+      ruleLogs[groupId] = savedLogs[groupId].filter(function (entry) {
+        return entry && entry.source === "v.log" && entry.groupId === groupId;
+      }).slice(-200);
+    });
+  } catch (_) {}
+  delete store.ruleLog;
+
+  function persistRuleLogs() {
+    try { window.localStorage.setItem(RULE_LOG_KEY, JSON.stringify(ruleLogs)); } catch (_) {}
+  }
+
+  function pruneRuleLogs() {
+    var ids = new Set((store.blockedGroups || []).map(function (group) { return group.id; }));
+    Object.keys(ruleLogs).forEach(function (id) { if (!ids.has(id)) delete ruleLogs[id]; });
+    persistRuleLogs();
+  }
 
   function nativeLogToFeedEntry(e) {
+    if (!e || e.source !== "v.log" || typeof e.groupId !== "string" || !e.groupId) return null;
     var ts = e.timestamp ? new Date(e.timestamp).getTime() : Date.now();
     if (!Number.isFinite(ts)) ts = Date.now();
     return {
-      id: "native-" + ts + "-" + (++logFeedCounter),
-      ts: ts,
-      level: e.level || "log",
-      eventType: e.group || "",
-      groupName: e.group || "",
-      message: e.message || ""
+      id: "native-" + logFeedSession + "-" + (++logFeedCounter),
+      ts: ts, source: "v.log", level: "log", groupId: e.groupId,
+      eventType: e.eventType || "", message: e.message || ""
     };
   }
 
   window.__cbApplyNativeRuleLog = function (json) {
     try {
       var entries = typeof json === "string" ? JSON.parse(json) : json;
-      if (!Array.isArray(entries) || entries.length === 0) return;
-      var existing = Array.isArray(store.ruleLog) ? store.ruleLog : [];
-      var merged = existing.concat(entries);
-      if (merged.length > 200) merged = merged.slice(merged.length - 200);
-      var oldValue = store.ruleLog;
-      store.ruleLog = merged;
-      try {
-        window.localStorage.setItem(STORE_KEY, JSON.stringify(store));
-      } catch (_) {}
-      notifyChanges({ ruleLog: { oldValue: oldValue, newValue: merged } });
-
-      for (var i = 0; i < entries.length; i++) {
-        try {
-          window.__cbDispatchRuntimeMessage({
-            type: "log-feed-entry",
-            entry: nativeLogToFeedEntry(entries[i])
-          });
-        } catch (_) {}
-      }
+      if (!Array.isArray(entries)) return;
+      entries.forEach(function (nativeEntry) {
+        var entry = nativeLogToFeedEntry(nativeEntry);
+        if (!entry) return;
+        var feed = ruleLogs[entry.groupId] || [];
+        feed.push(entry);
+        ruleLogs[entry.groupId] = feed.slice(-200);
+        window.__cbDispatchRuntimeMessage({ type: "log-feed-entry", entry: entry });
+      });
+      pruneRuleLogs();
     } catch (_) {}
   };
 
@@ -364,13 +375,12 @@
     var type = message && message.type;
     switch (type) {
       case "get-log-feed":
-        var feed = Array.isArray(store.ruleLog) ? store.ruleLog : [];
-        var mapped = feed.map(function (e, i) { return nativeLogToFeedEntry(e); });
-        return Promise.resolve({ ok: true, entries: mapped });
+        pruneRuleLogs();
+        return Promise.resolve({ ok: true, entries: (ruleLogs[message.groupId] || []).slice() });
       case "clear-log-feed":
-        store.ruleLog = [];
-        try { window.localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (_) {}
-        return Promise.resolve({ ok: true });
+        delete ruleLogs[message.groupId];
+        persistRuleLogs();
+        return nativeRequest("clear-rule-log", message, { ok: true });
       case "run-custom-group":
         // The rule loads in Mac Vault's own engine; its load result comes back.
         return nativeRequest("run-custom-group", message, { ok: false, error: "rules-not-running" });
