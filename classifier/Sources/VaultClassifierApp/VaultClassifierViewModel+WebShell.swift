@@ -356,10 +356,12 @@ extension VaultClassifierViewModel {
             case "reorderClassifierTypes":
                 reorderClassifierTypes(orderedIDs: try webStringArray(data, key: "orderedIDs", limit: 256, elementLimit: 256))
             case "configureClassifierType":
+                if data.keys.contains("applicablePlatformIDs") {
+                    throw WebBridgeInputError.fixedPlatforms
+                }
                 configureClassifierType(
                     typeID: try webString(data, key: "typeID", limit: 256),
-                    name: try webString(data, key: "name", limit: ClassifierTypeAsset.maximumNameLength),
-                    applicablePlatformIDs: try webStringArray(data, key: "applicablePlatformIDs", limit: 16, elementLimit: 64)
+                    name: try webString(data, key: "name", limit: ClassifierTypeAsset.maximumNameLength)
                 )
             case "confirmDeleteClassifierType":
                 deleteClassifierType(typeID: try webString(data, key: "typeID", limit: 256))
