@@ -30,7 +30,7 @@
     host.className = "vault-scene";
     host.dataset.scene = name;
     const scope = host.attachShadow({ mode: "open" });
-    scope.innerHTML = ["vault-ui.css", ...scene.styles]
+    scope.innerHTML = ["vault-ui.css", "vault-info.css", ...scene.styles]
       .map((href) => `<link rel="stylesheet" href="${href}">`)
       .join("") + scene.markup;
     document.body.appendChild(host);

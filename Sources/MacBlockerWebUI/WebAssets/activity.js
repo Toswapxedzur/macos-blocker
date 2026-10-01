@@ -1830,5 +1830,6 @@
   };
 
   window.VaultUI.observe(scope);
+  window.VaultInfo.watch(scope, { selector: ".feeds-hint,.chart-note,.picker-note" });
   send({ kind: "ready" });
 })();

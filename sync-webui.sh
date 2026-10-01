@@ -27,6 +27,8 @@ SYNCED_FILES=(
   rule-core.js
   vault-ui.css
   vault-ui.js
+  vault-info.js
+  vault-info.css
 )
 
 for file in "${SYNCED_FILES[@]}"; do
