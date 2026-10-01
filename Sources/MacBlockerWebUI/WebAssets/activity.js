@@ -1071,14 +1071,16 @@
           var prominent = bin.items.slice(0, 2), others = bin.items.slice(2);
           var pieces = prominent.map(function (item) { return { seconds: item.seconds, color: item.color }; });
           if (others.length) pieces.push({ seconds: others.reduce(function (sum, item) { return sum + item.seconds; }, 0), color: "#aeb9c8" });
-          var cursor = x;
+          // Each interval retains the full day-column width. Stack its time
+          // shares upward from the interval's start, leaving idle time above.
+          var cursor = y + h;
           pieces.forEach(function (piece) {
-            var w = barWidth * piece.seconds / blockSeconds;
-            if (w <= 0) return;
-            var rect = svg("rect", { x: cursor, y: y, width: w, height: h, fill: piece.color });
+            var pieceHeight = h * piece.seconds / blockSeconds;
+            if (pieceHeight <= 0) return;
+            cursor -= pieceHeight;
+            var rect = svg("rect", { x: x, y: cursor, width: barWidth, height: pieceHeight, fill: piece.color });
             hoverable(rect, info);
             chart.appendChild(rect);
-            cursor += w;
           });
         });
       } else {

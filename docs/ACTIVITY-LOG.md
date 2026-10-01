@@ -142,7 +142,9 @@ Activity/
   range; clicking a day tracks since it) and day-by-day totals. The ordered
   day chart groups Usage into configurable 5, 15, 30, or 60-minute blocks
   (30 minutes initially; saved in this Mac's WebView local storage). Each block
-  shows time shares for its two largest apps/sites and a neutral remainder;
+  fills the day column's width and stacks time shares vertically from the
+  interval's start: its two largest apps/sites, then a neutral remainder, with
+  unused time left gray above them;
   hover lists up to seven underlying items and their time. **Exact** restores the
   original session display. A site's time replaces its browser's corresponding
   time in a block, so a browser and a visited site are not counted twice.
