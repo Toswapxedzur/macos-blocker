@@ -19,7 +19,7 @@
     },
     activity: {
       styles: ["activity.css"],
-      scripts: ["activity.js"],
+      scripts: ["activity-time-bins.js", "activity.js"],
       markup: '<div id="activity"></div>'
     }
   };
