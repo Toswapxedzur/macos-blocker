@@ -1188,12 +1188,12 @@
     box.appendChild(el("div", "chart-title", "Day by day"));
     var scroller = el("div", "totals-scroll");
     var toolbar = el("div", "day-chart-toolbar");
-    toolbar.appendChild(el("div", "chart-subtitle", "In order"));
+    toolbar.appendChild(el("div", "chart-subtitle", "Timeline"));
     if (isUsage) {
       var control = el("label", "block-length-control");
-      control.appendChild(el("span", null, "Block length"));
+      control.appendChild(el("span", null, "Time interval"));
       var select = el("select");
-      select.setAttribute("aria-label", "Activity block length");
+      select.setAttribute("aria-label", "Activity time interval");
       [[0, "Exact"], [5, "5 min"], [15, "15 min"], [30, "30 min"], [60, "1 hour"]].forEach(function (choice) {
         var option = el("option", null, choice[1]);
         option.value = String(choice[0]);
@@ -1340,7 +1340,7 @@
     section.appendChild(usageStrip(data));
     var grid = el("div", "act-grid");
     var mapPanel = el("div", "act-cell");
-    mapPanel.appendChild(el("div", "chart-title", "Colours"));
+    mapPanel.appendChild(el("div", "chart-title", "Colors"));
     mapPanel.appendChild(colourMap(data.items, { seconds: data.empty, color: EMPTY_COLOR }, function (entry) {
       setUsageFocus(entryID(entry));
     }, "Empty"));
@@ -1364,7 +1364,7 @@
     box.textContent = "";
     if (!history) { box.appendChild(el("div", "chart-title", "Last 365 days")); box.appendChild(el("p", "empty", "Loading…")); return; }
     box.appendChild(dayMap(history, name, section));
-    box.appendChild(el("p", "chart-note", "Click a day to track since it."));
+    box.appendChild(el("p", "chart-note", "Choose a day to view activity from then until now."));
     [].forEach.call(box.querySelectorAll(".map-scroll"), scrollToNewest);
   }
 
@@ -1494,7 +1494,7 @@
   // Authors: total time, the bar split per day (one colour per weekday).
   function authorsList(data) {
     var box = el("div", "act-cell act-list");
-    box.appendChild(el("div", "chart-title", "Authors"));
+    box.appendChild(el("div", "chart-title", "Content sources"));
     var legend = el("div", "chart-legend");
     ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].forEach(function (name, i) {
       var item = el("span", "legend-item"); var dot = el("span", "dot"); dot.style.background = WEEKDAY_COLORS[(i + 1) % 7];
@@ -1505,7 +1505,7 @@
     var by = {};
     data.pieces.forEach(function (p) {
       var fact = watchedFacts[p.seg.key] || {};
-      var name = fact.creator || "Unknown author";
+      var name = fact.creator || "Unknown source";
       var a = by[name] || (by[name] = { name: name, key: fact.creator ? "author|" + fact.creator : "", seconds: 0, days: starts.map(function () { return 0; }), items: 0 });
       a.items += 1;
       splitByDay(p.startMs, p.endMs, starts, function (i, sec) { a.days[i] += sec; a.seconds += sec; });
@@ -1544,7 +1544,7 @@
   // Everything watched, newest first, with its platform, author and tags.
   function rawList(data) {
     var box = el("div", "act-cell act-list");
-    box.appendChild(el("div", "chart-title", "Everything watched"));
+    box.appendChild(el("div", "chart-title", "Content viewed"));
     var list = el("div", "scroll-list");
     data.pieces.slice().sort(function (a, b) { return b.startMs - a.startMs; }).forEach(function (p) {
       var fact = watchedFacts[p.seg.key] || {};
@@ -1554,7 +1554,7 @@
       body.appendChild(el("div", "raw-title", p.seg.label || p.seg.key));
       var meta = el("div", "raw-meta");
       meta.appendChild(el("span", "row-kind", PLATFORM_NAMES[String(p.seg.key).split(":")[0]] || "Content"));
-      meta.appendChild(el("span", null, fact.creator || "Unknown author"));
+      meta.appendChild(el("span", null, fact.creator || "Unknown source"));
       meta.appendChild(el("span", "vui-muted", dayName(p.startMs) + " " + clock(p.startMs)));
       p.tags.forEach(function (t) {
         var chip = el("span", "tag-chip", t.name);
@@ -1796,7 +1796,7 @@
       })(d.getTime());
     }
     box.appendChild(grid);
-    box.appendChild(el("div", "picker-note", "From the day picked up to now."));
+    box.appendChild(el("div", "picker-note", "From the selected day until now."));
     var r = picker.anchor.getBoundingClientRect();
     box.style.top = (r.bottom + 6) + "px";
     box.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 268)) + "px";
