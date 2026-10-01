@@ -8,6 +8,7 @@ public struct BlockerWebPanel: View {
     private let store: BlockerWebStore
     private let appInventoryJSON: (() -> String?)?
     private let ruleLogJSON: (() -> String?)?
+    private let onClearRuleLog: ((String) -> Void)?
     private let onStorePersisted: (() -> Void)?
     private let onRunCustomGroup: ((String, String) -> [String: Any])?
     private let onSnoozePress: ((String) -> Void)?
@@ -20,6 +21,7 @@ public struct BlockerWebPanel: View {
         store: BlockerWebStore = BlockerWebStore(),
         appInventoryJSON: (() -> String?)? = nil,
         ruleLogJSON: (() -> String?)? = nil,
+        onClearRuleLog: ((String) -> Void)? = nil,
         onStorePersisted: (() -> Void)? = nil,
         onRunCustomGroup: ((String, String) -> [String: Any])? = nil,
         onSnoozePress: ((String) -> Void)? = nil,
@@ -31,6 +33,7 @@ public struct BlockerWebPanel: View {
         self.store = store
         self.appInventoryJSON = appInventoryJSON
         self.ruleLogJSON = ruleLogJSON
+        self.onClearRuleLog = onClearRuleLog
         self.onStorePersisted = onStorePersisted
         self.onRunCustomGroup = onRunCustomGroup
         self.onSnoozePress = onSnoozePress
@@ -44,7 +47,7 @@ public struct BlockerWebPanel: View {
         BlockerWebView(
             store: store,
             appInventoryJSON: appInventoryJSON,
-            ruleLogJSON: ruleLogJSON,
+            ruleLogJSON: ruleLogJSON, onClearRuleLog: onClearRuleLog,
             onStorePersisted: onStorePersisted,
             onRunCustomGroup: onRunCustomGroup,
             onSnoozePress: onSnoozePress,

@@ -21,6 +21,7 @@ public struct BlockerWebView: NSViewRepresentable {
     /// Supplies rule-log entries as a JSON array string. Called on the 1-second
     /// push timer; entries are forwarded to `window.__cbApplyNativeRuleLog`.
     private let ruleLogJSON: (() -> String?)?
+    private let onClearRuleLog: ((String) -> Void)?
     /// Invoked (on the main thread) right after the editor's store has been
     /// persisted, so the host can recompile/enforce the policy immediately.
     private let onStorePersisted: (() -> Void)?
@@ -37,6 +38,7 @@ public struct BlockerWebView: NSViewRepresentable {
         store: BlockerWebStore = BlockerWebStore(),
         appInventoryJSON: (() -> String?)? = nil,
         ruleLogJSON: (() -> String?)? = nil,
+        onClearRuleLog: ((String) -> Void)? = nil,
         onStorePersisted: (() -> Void)? = nil,
         onRunCustomGroup: ((String, String) -> [String: Any])? = nil,
         onSnoozePress: ((String) -> Void)? = nil,
@@ -49,6 +51,7 @@ public struct BlockerWebView: NSViewRepresentable {
         self.scenes = scenes
         self.appInventoryJSON = appInventoryJSON
         self.ruleLogJSON = ruleLogJSON
+        self.onClearRuleLog = onClearRuleLog
         self.onStorePersisted = onStorePersisted
         self.onRunCustomGroup = onRunCustomGroup
         self.onSnoozePress = onSnoozePress
@@ -58,7 +61,7 @@ public struct BlockerWebView: NSViewRepresentable {
     }
 
     public func makeCoordinator() -> Coordinator {
-        Coordinator(store: store, ruleLogJSON: ruleLogJSON, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup, onSnoozePress: onSnoozePress, clustersJSON: clustersJSON, onLinkRequest: onLinkRequest, tagNames: tagNames, scenes: scenes)
+        Coordinator(store: store, ruleLogJSON: ruleLogJSON, onClearRuleLog: onClearRuleLog, onStorePersisted: onStorePersisted, onRunCustomGroup: onRunCustomGroup, onSnoozePress: onSnoozePress, clustersJSON: clustersJSON, onLinkRequest: onLinkRequest, tagNames: tagNames, scenes: scenes)
     }
 
     @MainActor
@@ -235,6 +238,7 @@ public struct BlockerWebView: NSViewRepresentable {
         var schemeHandler: WebAssetSchemeHandler?
         private let store: BlockerWebStore
         private let ruleLogJSON: (() -> String?)?
+        private let onClearRuleLog: ((String) -> Void)?
         private let onStorePersisted: (() -> Void)?
         private let onRunCustomGroup: ((String, String) -> [String: Any])?
         private let onSnoozePress: ((String) -> Void)?
@@ -252,6 +256,7 @@ public struct BlockerWebView: NSViewRepresentable {
         init(
             store: BlockerWebStore,
             ruleLogJSON: (() -> String?)?,
+            onClearRuleLog: ((String) -> Void)?,
             onStorePersisted: (() -> Void)?,
             onRunCustomGroup: ((String, String) -> [String: Any])?,
             onSnoozePress: ((String) -> Void)?,
@@ -263,6 +268,7 @@ public struct BlockerWebView: NSViewRepresentable {
             self.store = store
             self.scenes = scenes
             self.ruleLogJSON = ruleLogJSON
+            self.onClearRuleLog = onClearRuleLog
             self.onStorePersisted = onStorePersisted
             self.onRunCustomGroup = onRunCustomGroup
             self.onSnoozePress = onSnoozePress
@@ -363,6 +369,10 @@ public struct BlockerWebView: NSViewRepresentable {
                     store.merge(changes: changes)
                     onStorePersisted?()
                 }
+            case "clear-rule-log":
+                let payload = body["message"] as? [String: Any] ?? [:]
+                if let groupID = payload["groupId"] as? String { onClearRuleLog?(groupID) }
+                nativeReply(body, ["ok": true])
             case "run-custom-group":
                 // Run: the rule loads in Mac Vault's engine; the editor gets the result.
                 let payload = body["message"] as? [String: Any] ?? [:]
