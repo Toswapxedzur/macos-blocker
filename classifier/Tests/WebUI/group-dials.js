@@ -24,8 +24,10 @@ window.runGroupDialTests = async () => {
   expect([...grid.children].every(c=>{const r=c.getBoundingClientRect();return r.left>=box.left-1 && r.right<=box.right+1;}), 'tier cards stay inside their group at this viewport width');
   const textarea = form.querySelector('[data-field="houseRules"]');
   textarea.focus();textarea.value='Keep my group vocabulary';textarea.dispatchEvent(new InputEvent('input',{bubbles:true}));
+  testState.settings.localModels.modelLibrary[1].engineStatus='loading';
   pushSnapshot();
   expect(q('[data-form-id="classifier-local-model-form-group-1"] [data-field="houseRules"]').value==='Keep my group vocabulary', 'group rules draft survives an incoming model snapshot');
+  expect(q('[data-local-model-section] h3').textContent.includes('LOADING'), 'group status follows its selected model runtime without resetting its edits');
   await new Promise(resolve=>setTimeout(resolve,350));
   q('[data-action="selectType"][data-type-id="group-2"]').click();
   q('[data-expand="type-more:group-2"] summary').click();await tick();

@@ -30,7 +30,13 @@ extension VaultClassifierViewModel {
                         availableModelFiles: availableModelFiles,
                         downloadFractions: modelDownloadFractions,
                         systemRAMGB: HardwareProfile.physicalRAMGB()
-                    ),
+                    ).map { entry in
+                        var payload = entry
+                        let fileName = entry["ggufFileName"] as? String ?? ""
+                        payload["engineStatus"] = availableModelFiles.contains(fileName)
+                            ? (modelEngineStatuses[fileName] ?? "downloaded") : "no-model"
+                        return payload
+                    },
             ] as [String: Any],
             "research": [
                 "enabled": researchSettings.enabled,

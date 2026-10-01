@@ -28,6 +28,7 @@ final class VaultClassifierViewModel: ObservableObject {
     @Published var issue: String?
     @Published var localState: LocalClassifierState?
     @Published var packageUpdateMode: PackageUpdateMode = .automatic
+    @Published private(set) var modelEngineStatuses: [String: String] = [:]
     @Published var backupOwnerCode = ""
     @Published var backupDirectory = ""
     @Published var backupEnabled = false
@@ -136,7 +137,13 @@ final class VaultClassifierViewModel: ObservableObject {
     /// Missing model files produce provisional stub results, never another group's tier.
     func installLocalLLMEngine(coordinator: LocalClassifierCoordinator) {
         coordinator.setOnDeviceLLM(StubOnDeviceLLM())
-        let registry = LocalLLMEngineRegistry()
+        let registry = LocalLLMEngineRegistry { [weak self] fileName, status in
+            Task { @MainActor [weak self] in
+                guard let self, self.modelEngineStatuses[fileName] != status else { return }
+                self.modelEngineStatuses[fileName] = status
+                self.onWebStateChange?()
+            }
+        }
         coordinator.setOnDeviceLLMEngineResolver(registry)
         var seen = Set<SpeedQualityDial>()
         let configurations = coordinator.snapshot().workspaceCatalog.classifierTypes
