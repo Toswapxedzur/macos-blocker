@@ -550,8 +550,8 @@
     }
     const expandKey = `research-model:${providerID}`;
     const unavailable = fetched && current && !models.includes(current);
-    const choices = models.map((model) => `<button type="button" class="research-model-option${model === current ? " is-selected" : ""}" data-model-pick="${esc(model)}" aria-pressed="${model === current}">${esc(model)}</button>`).join("");
-    const picker = fetched ? `<details class="research-model-picker" data-expand="${esc(expandKey)}"${openExpands.has(expandKey) ? " open" : ""}><summary class="vui-select-button" tabindex="0" data-model-selector aria-label="${tx("research.model")}: ${current ? esc(current) : tx("research.chooseModel")}"><span class="vui-select-label">${current ? esc(current) : tx("research.chooseModel")}</span></summary><div class="research-model-menu"><input type="search" data-model-search value="${esc(researchModelQuery)}" aria-label="${tx("research.modelSearch")}" placeholder="${tx("research.modelSearch")}" autocomplete="off" spellcheck="false"><div class="research-model-list vui-list-box" data-list-key="${esc(expandKey)}" tabindex="0" aria-label="${tx("research.model")}">${choices}</div><p class="small-copy" data-model-no-matches hidden>${tx("research.noMatchingModels")}</p>${models.length ? "" : `<p class="small-copy">${tx("research.noModels")}</p>`}</div></details>` : current ? `<p class="small-copy">${tx("research.savedModel", { model: current })}</p>` : "";
+    const choices = models.map((model) => `<button type="button" class="vui-menu-item research-model-option${model === current ? " is-selected" : ""}" data-model-pick="${esc(model)}" aria-pressed="${model === current}">${esc(model)}</button>`).join("");
+    const picker = fetched ? `<details class="research-model-picker" data-expand="${esc(expandKey)}"${openExpands.has(expandKey) ? " open" : ""}><summary class="vui-select-button" tabindex="0" data-model-selector aria-label="${tx("research.model")}: ${current ? esc(current) : tx("research.chooseModel")}"><span class="vui-select-label">${current ? esc(current) : tx("research.chooseModel")}</span></summary><div class="research-model-menu vui-menu"><input type="search" data-model-search value="${esc(researchModelQuery)}" aria-label="${tx("research.modelSearch")}" placeholder="${tx("research.modelSearch")}" autocomplete="off" spellcheck="false"><div class="research-model-list vui-list-box" data-list-key="${esc(expandKey)}" tabindex="0" aria-label="${tx("research.model")}">${choices}</div><p class="small-copy" data-model-no-matches hidden>${tx("research.noMatchingModels")}</p>${models.length ? "" : `<p class="small-copy">${tx("research.noModels")}</p>`}</div></details>` : current ? `<p class="small-copy">${tx("research.savedModel", { model: current })}</p>` : "";
     return `<div class="field research-model-field"><span class="field-label">${tx("research.model")}</span><input type="hidden" data-field="llmModelIdentifier" value="${esc(current)}">${picker}${unavailable ? `<p class="small-copy research-model-unavailable">${tx("research.modelUnavailable")}</p>` : ""}<div class="action-row"><button type="button" class="secondary" data-action="probeProviderModelCatalog" data-profile-id="${esc(providerID)}" data-model-fetch${disabled(!canFetch || loading)}>${tx(loading ? "research.fetchingModels" : error ? "research.retryModels" : fetched ? "research.refreshModels" : "research.fetchModels")}</button></div>${!canFetch ? `<p class="small-copy">${tx(profile ? "research.modelKeyRequired" : "research.modelProviderRequired")}</p>` : ""}${loading ? `<p class="small-copy" role="status">${tx("research.fetchingModels")}</p>` : ""}${error ? `<div role="alert">${notice(error, "red")}</div>` : ""}</div>`;
   }
 
@@ -561,7 +561,54 @@
     options.forEach((option) => { option.hidden = !option.dataset.modelPick.toLowerCase().includes(query); });
     const noMatches = root.querySelector("[data-model-no-matches]");
     if (noMatches) noMatches.hidden = !options.length || options.some((option) => !option.hidden);
+    placeResearchModelMenu();
   }
+
+  function closeResearchModelMenu(restoreFocus = false) {
+    const picker = root.querySelector(".research-model-picker[open]");
+    if (!picker) return false;
+    picker.open = false;
+    openExpands.delete(picker.dataset.expand);
+    if (restoreFocus) picker.querySelector("summary")?.focus({ preventScroll: true });
+    return true;
+  }
+
+  // Keep the menu inside the Settings dialog for its focus trap, but out of
+  // layout flow. It uses the same white floating card as the shared selects.
+  function placeResearchModelMenu() {
+    const picker = root.querySelector(".research-model-picker[open]");
+    if (!picker) return;
+    placeClassifierMenu(picker.querySelector("summary"), picker.querySelector(".research-model-menu"));
+  }
+
+  function placeClassifierMenu(anchor, menu) {
+    const box = anchor.getBoundingClientRect();
+    const margin = 8, gap = 4;
+    const width = Math.min(Math.max(160, box.width), window.innerWidth - margin * 2);
+    menu.style.width = `${width}px`;
+    menu.style.left = `${Math.max(margin, Math.min(box.left, window.innerWidth - width - margin))}px`;
+    menu.style.maxHeight = `${Math.min(360, window.innerHeight - margin * 2)}px`;
+    const desiredHeight = menu.offsetHeight;
+    const below = window.innerHeight - box.bottom - gap - margin;
+    const above = box.top - gap - margin;
+    const opensAbove = below < desiredHeight && above > below;
+    menu.style.maxHeight = `${Math.max(0, Math.min(360, opensAbove ? above : below))}px`;
+    menu.style.top = `${Math.max(margin, Math.min(opensAbove ? box.top - gap - menu.offsetHeight : box.bottom + gap, window.innerHeight - menu.offsetHeight - margin))}px`;
+    menu.style.visibility = "visible";
+  }
+
+  document.addEventListener("pointerdown", (event) => {
+    const picker = root.querySelector(".research-model-picker[open]");
+    if (picker && !event.composedPath().includes(picker)) closeResearchModelMenu();
+    const suggestions = root.querySelector("[data-knowledge-suggestions]");
+    const creator = root.querySelector("[data-knowledge-creator]");
+    if (suggestions && !event.composedPath().includes(suggestions) && !event.composedPath().includes(creator)) closeKnowledgeSuggestions();
+  }, true);
+  scope.addEventListener("scroll", (event) => {
+    if (!event.target.closest?.(".research-model-menu")) placeResearchModelMenu();
+    placeKnowledgeSuggestions();
+  }, true);
+  window.addEventListener("resize", () => { placeResearchModelMenu(); placeKnowledgeSuggestions(); });
 
   function utilityPanelContent() {
     if (!utilityPanel) return "";
@@ -882,7 +929,7 @@
       const responseDiagnostic = latestResponseDiagnostic
         ? `<p class="provider-response-shape"><span>${tx("llm.responseShape")}</span><strong>${esc(latestResponseDiagnostic.responseShape)}</strong></p>`
         : "";
-      return `<section class="provider-panel" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}" data-autosave-action="updateProviderConnection"><div class="provider-panel-head"><h3>${esc(profile.name)}</h3><div class="provider-panel-actions">${testButton}<button class="danger" data-action="confirmDeleteProviderProfile" data-profile-id="${esc(profile.id)}">${deleteLabel(`provider:${profile.id}`, tx("llm.deleteProfile"))}</button></div></div>${retiredSearchProvider ? `<div class="notice navy">${tx("llm.retiredSearchProvider")}</div>` : ""}<div class="provider-panel-body">${connectionFields ? `<div class="provider-connection-fields">${connectionFields}</div>` : ""}<div class="provider-request-summary">${usage}${responseDiagnostic}</div></div>${profile.testSucceeded ? notice(t("llm.testSucceeded"), "green") : ""}</section>`;
+      return `<section class="provider-panel" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}" data-autosave-action="updateProviderConnection"><div class="provider-panel-head"><h3>${esc(profile.name)}</h3><div class="provider-panel-actions">${testButton}<button class="danger" data-action="confirmDeleteProviderProfile" data-profile-id="${esc(profile.id)}">${deleteLabel(`provider:${profile.id}`, tx("llm.deleteProfile"))}</button></div></div>${retiredSearchProvider ? `<div class="notice navy">${tx("llm.retiredSearchProvider")}</div>` : ""}<div class="provider-panel-body">${connectionFields ? `<div class="provider-connection-fields">${connectionFields}</div>` : ""}</div><footer class="provider-request-summary">${usage}${responseDiagnostic}</footer>${profile.testSucceeded ? notice(t("llm.testSucceeded"), "green") : ""}</section>`;
     };
     return `<section class="utility-settings-section utility-api-keys"><h3 class="utility-settings-section-title">${tx("navigation.apiKeys")}</h3><p class="section-copy">${tx("llm.copy")}</p><div class="notice navy provider-local-only">${tx("llm.localOnlyDisclosure")}</div><section class="provider-create" data-form-id="new-provider-profile-form">${groupedValueSelectField("llm.providerType", "", "type", "", profileTypeGroups)}<button class="gold-action" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button><span class="small-copy">${tx("llm.createCopy")}</span></section><div class="provider-panels vui-list-box" data-list-key="providers" tabindex="0" aria-label="${tx("llm.keyLibrary")}">${profiles.length ? profiles.map(panel).join("") : `<div class="empty">${tx("llm.empty")}</div>`}</div></section>`;
   }
@@ -990,6 +1037,8 @@
   const KNOWLEDGE_PLATFORMS = [["youtube", "YouTube"], ["bilibili", "Bilibili"], ["reddit", "Reddit"], ["twitter", "X"]];
   let knowledgeQuery = "";
   let knowledgeAddPlatform = "youtube";
+  let knowledgeCreatorDraft = "";
+  let knowledgeSuggestionsOpen = false;
 
   function knowledgeWorkspace() {
     const availability = researchAvailability();
@@ -1019,7 +1068,7 @@
 
     // A creator: pick the platform, then a link, @handle, r/name or the name of
     // one already seen (suggested as you type).
-    const addCreator = `<section class="knowledge-group" data-form-id="knowledge-add-creator"><div class="section-header"><div><h3>${tx("knowledge.addCreator")}</h3><p class="section-copy">${tx("knowledge.addCreatorHint")}</p></div></div><div class="form-stack">${valueSelectField("knowledge.platform", "", "platformID", knowledgeAddPlatform, KNOWLEDGE_PLATFORMS, "data-knowledge-platform")}<label class="field"><span class="field-label">${tx("knowledge.creator")}<span class="field-hint"> · ${tx("knowledge.creatorHint")}</span></span><input type="text" data-field="creator" data-knowledge-creator maxlength="512" autocomplete="off" spellcheck="false"></label><div class="knowledge-suggestions" data-knowledge-suggestions></div><label class="field wide"><span class="field-label">${tx("knowledge.description")}</span><textarea data-field="meaning" rows="2" maxlength="2000" placeholder="${tx("knowledge.creatorMeaningPlaceholder")}"></textarea></label><div class="action-row"><button class="primary" data-action="addKnowledgeCreator" data-form="knowledge-add-creator">${tx("knowledge.addCreatorButton")}</button></div></div></section>`;
+    const addCreator = `<section class="knowledge-group" data-form-id="knowledge-add-creator"><div class="section-header"><div><h3>${tx("knowledge.addCreator")}</h3><p class="section-copy">${tx("knowledge.addCreatorHint")}</p></div></div><div class="form-stack">${valueSelectField("knowledge.platform", "", "platformID", knowledgeAddPlatform, KNOWLEDGE_PLATFORMS, "data-knowledge-platform")}<label class="field"><span class="field-label">${tx("knowledge.creator")}<span class="field-hint"> · ${tx("knowledge.creatorHint")}</span></span><input type="text" data-field="creator" data-knowledge-creator value="${esc(knowledgeCreatorDraft)}" maxlength="512" autocomplete="off" spellcheck="false"></label><div class="knowledge-suggestions vui-menu" data-knowledge-suggestions></div><label class="field wide"><span class="field-label">${tx("knowledge.description")}</span><textarea data-field="meaning" rows="2" maxlength="2000" placeholder="${tx("knowledge.creatorMeaningPlaceholder")}"></textarea></label><div class="action-row"><button class="primary" data-action="addKnowledgeCreator" data-form="knowledge-add-creator">${tx("knowledge.addCreatorButton")}</button></div></div></section>`;
 
     const searchBox = `<label class="field knowledge-search"><span class="field-label">${tx("knowledge.search")}</span><input type="search" data-knowledge-search-input value="${esc(knowledgeQuery)}" autocomplete="off" spellcheck="false"></label>`;
     const creatorGroups = KNOWLEDGE_PLATFORMS.map(([platformID, label]) =>
@@ -1050,14 +1099,37 @@
     const box = root.querySelector("[data-knowledge-suggestions]");
     if (!box) return;
     const query = input.value.trim().toLowerCase();
+    knowledgeCreatorDraft = input.value;
     const known = (state.assets?.knowledge?.knownCreators || []).filter((creator) => creator.platformID === knowledgeAddPlatform);
     const rank = (name) => (name.startsWith(query) ? 0 : name.split(/\s+/).some((word) => word.startsWith(query)) ? 1 : 2);
     const matches = query.length < 2 ? [] : known
       .filter((creator) => creator.name.toLowerCase().includes(query))
       .sort((a, b) => rank(a.name.toLowerCase()) - rank(b.name.toLowerCase()))
       .slice(0, 6);
-    box.innerHTML = matches.map((creator) => `<button type="button" class="knowledge-suggestion" data-knowledge-pick="${esc(creator.name)}"><span dir="auto">${esc(creator.name)}</span><span class="knowledge-id">${esc(creator.id)}</span></button>`).join("");
+    box.innerHTML = matches.map((creator) => `<button type="button" class="vui-menu-item knowledge-suggestion" data-knowledge-pick="${esc(creator.name)}"><span dir="auto">${esc(creator.name)}</span><span class="knowledge-id">${esc(creator.id)}</span></button>`).join("");
+    knowledgeSuggestionsOpen = matches.length > 0;
+    if (knowledgeSuggestionsOpen) { window.VaultUI.close(); placeKnowledgeSuggestions(); }
   }
+
+  function closeKnowledgeSuggestions(restoreFocus = false) {
+    const box = root.querySelector("[data-knowledge-suggestions]");
+    if (restoreFocus) root.querySelector("[data-knowledge-creator]")?.focus({ preventScroll: true });
+    if (box) box.replaceChildren();
+    knowledgeSuggestionsOpen = false;
+  }
+
+  function placeKnowledgeSuggestions() {
+    const box = root.querySelector("[data-knowledge-suggestions]");
+    const input = root.querySelector("[data-knowledge-creator]");
+    if (box?.children.length && input) placeClassifierMenu(input, box);
+  }
+
+  scope.addEventListener("focusin", (event) => {
+    if (event.target.matches?.("[data-knowledge-creator]") && !replacingControls) showKnowledgeSuggestions(event.target);
+  });
+  scope.addEventListener("focusout", () => window.requestAnimationFrame(() => {
+    if (knowledgeSuggestionsOpen && !scope.activeElement?.matches?.("[data-knowledge-creator], [data-knowledge-pick]")) closeKnowledgeSuggestions();
+  }));
 
   const DELETE_KEYS = {
     confirmDeleteProviderProfile: (data) => `provider:${data.profileId}`,
@@ -1242,6 +1314,8 @@
       listViewportPositions.set(list.dataset.listKey, { x: list.scrollLeft, y: list.scrollTop });
     });
     const focused = captureLiveEditFocus();
+    const creatorInput = scope.activeElement?.matches("[data-knowledge-creator]") ? scope.activeElement : null;
+    const creatorSelection = creatorInput ? { start: creatorInput.selectionStart, end: creatorInput.selectionEnd } : null;
     const modelSearch = scope.activeElement?.matches("[data-model-search]") ? scope.activeElement : null;
     const searchSelection = modelSearch ? { start: modelSearch.selectionStart, end: modelSearch.selectionEnd } : null;
     const active = scope.activeElement;
@@ -1258,6 +1332,15 @@
     lastRenderedMarkup = markup;
     bindTreeMapWheel();
     applyKnowledgeSearch();
+    if (knowledgeSuggestionsOpen) {
+      const creator = root.querySelector("[data-knowledge-creator]");
+      if (creator) showKnowledgeSuggestions(creator);
+    }
+    if (creatorSelection) {
+      const creator = root.querySelector("[data-knowledge-creator]");
+      creator?.focus({ preventScroll: true });
+      creator?.setSelectionRange(creatorSelection.start, creatorSelection.end);
+    }
     filterResearchModels();
     if (searchSelection) {
       const search = root.querySelector("[data-model-search]");
@@ -1275,6 +1358,8 @@
       drawTreeConnections();
       placeTreePopovers();
       placeResearchSetup();
+      placeResearchModelMenu();
+      placeKnowledgeSuggestions();
     });
   }
 
@@ -1290,8 +1375,7 @@
     const button = event.target.closest("button[data-action]");
     const modelPick = event.target.closest("button[data-model-pick]");
     if (modelPick) {
-      const picker = modelPick.closest("details[data-expand]");
-      if (picker) { openExpands.delete(picker.dataset.expand); picker.open = false; }
+      closeResearchModelMenu();
       const modelValue = root.querySelector('[data-form-id="utility-research-form"] [data-field="llmModelIdentifier"]');
       if (modelValue) { modelValue.value = modelPick.dataset.modelPick; queueLiveEdit(modelValue, true); }
       render();
@@ -1301,8 +1385,9 @@
     const pick = event.target.closest("button[data-knowledge-pick]");
     if (pick) {
       const creatorInput = root.querySelector("input[data-knowledge-creator]");
-      if (creatorInput) creatorInput.value = pick.dataset.knowledgePick;
-      pick.parentElement.innerHTML = "";
+      knowledgeCreatorDraft = pick.dataset.knowledgePick;
+      if (creatorInput) creatorInput.value = knowledgeCreatorDraft;
+      closeKnowledgeSuggestions(true);
       return;
     }
     if (!button) {
@@ -1323,6 +1408,7 @@
     if (action === "workspace") {
       const nextWorkspace = button.dataset.workspace;
       if (!state || !workspaceNames.has(nextWorkspace) || state.workspace === nextWorkspace) return;
+      closeKnowledgeSuggestions();
       state.workspace = nextWorkspace;
       render();
       send("workspace", { workspace: nextWorkspace });
@@ -1402,6 +1488,7 @@
 
     if (action === "openResearchSetup") { openResearchSetup(); return; }
     if (action === "openUtilityPanel") {
+      closeKnowledgeSuggestions();
       researchSetupRequested = false;
       researchSetupFocusPending = false;
       const nextPanel = data.utilityPanel === "settings" ? "settings" : null;
@@ -1478,17 +1565,15 @@
       send(action, data);
       return;
     }
+    if (action === "addKnowledgeCreator") {
+      knowledgeCreatorDraft = "";
+      closeKnowledgeSuggestions();
+    }
     send(action, data);
   });
 
   function dismissClassifierDialog() {
-    const picker = root.querySelector(".research-model-picker[open]");
-    if (picker) {
-      picker.open = false;
-      openExpands.delete(picker.dataset.expand);
-      picker.querySelector("summary")?.focus({ preventScroll: true });
-      return;
-    }
+    if (closeResearchModelMenu(true)) return;
     pendingCreateType = null;
     utilityPanel = null;
     researchSetupRequested = false;
@@ -1497,14 +1582,43 @@
   }
 
   scope.addEventListener("keydown", (event) => {
+    const menu = event.target.closest?.(".research-model-menu, [data-knowledge-suggestions]")
+      || (event.target.matches?.("[data-knowledge-creator]") ? root.querySelector("[data-knowledge-suggestions]") : null);
+    if (menu && ["ArrowDown", "ArrowUp"].includes(event.key) && !event.isComposing) {
+      const options = [...menu.querySelectorAll("[data-model-pick], [data-knowledge-pick]")].filter((option) => !option.hidden);
+      if (options.length) {
+        const index = options.indexOf(scope.activeElement);
+        const next = index < 0 ? (event.key === "ArrowDown" ? 0 : options.length - 1)
+          : (index + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
+        event.preventDefault();
+        options[next].focus({ preventScroll: true });
+        options[next].scrollIntoView({ block: "nearest" });
+      }
+      return;
+    }
+    if (event.key === "Escape" && knowledgeSuggestionsOpen) {
+      event.preventDefault();
+      closeKnowledgeSuggestions(true);
+      return;
+    }
     if (event.key !== "Escape" || (!utilityPanel && !pendingCreateType)) return;
     event.preventDefault();
     dismissClassifierDialog();
   });
 
   scope.addEventListener("toggle", (event) => {
+    if (!event.target.isConnected) return;
     const key = event.target.matches?.("details[data-expand]") ? event.target.dataset.expand : null;
     if (key) event.target.open ? openExpands.add(key) : openExpands.delete(key);
+    if (event.target.matches?.(".research-model-picker") && event.target.open) {
+      window.VaultUI.close();
+      placeResearchModelMenu();
+      // A snapshot restores the current focus; only a newly opened menu
+      // moves focus from its selector into search.
+      if (scope.activeElement === event.target.querySelector("summary")) {
+        event.target.querySelector("[data-model-search]")?.focus({ preventScroll: true });
+      }
+    }
   }, true);
 
   scope.addEventListener("change", (event) => {
