@@ -4,8 +4,8 @@
 state and an in-memory native-action receiver. `autosave.mjs` serves that
 fixture and drives Chrome for Testing through CDP on mini1. It checks real
 input/change/focus/composition handlers, delayed snapshots, dialog Escape/Tab
-focus restoration, creation drafts and related selector widths;
-Knowledge access, permanent deletion confirmation, group More state and override summaries;
+focus restoration, creation drafts and complete group dial cards;
+Knowledge access, permanent deletion confirmation, group More state, independent group edits and dial summaries;
 it never connects to the owner's Classifier state or any provider.
 
 `activity.html` exercises the production Activity renderer with synthetic state:
@@ -40,3 +40,9 @@ viewport containment, keyboard navigation, outside dismissal, full-width
 API fields with a usage footer, and creator suggestion/caret preservation.
 Run with `UI_TEST_SCRIPT=classifier/Tests/WebUI/dropdown-layout.js`
 `UI_TEST_EXPRESSION='runDropdownLayoutTests()'`, at wide and narrow widths.
+
+`group-dials.js` checks independent tier selection and house rules, shared model
+Downloads/Delete/RAM controls, confined tier-card geometry, snapshot preservation
+and removal of global settings UI. Run at wide and narrow widths with
+`UI_TEST_SCRIPT=classifier/Tests/WebUI/group-dials.js`
+`UI_TEST_EXPRESSION='runGroupDialTests()'` and the same runner.

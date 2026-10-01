@@ -50,12 +50,12 @@ final class LegacyStateDecodeTests: XCTestCase {
 
         let decoded = try JSONDecoder().decode(LocalClassifierState.self, from: JSONSerialization.data(withJSONObject: state))
         XCTAssertEqual(decoded.schemaVersion, 2, "an older schema version is lifted, not rejected")
-        XCTAssertEqual(decoded.settings.localLLM.strictness, .broadest, "max 3 / min 1 → the Broadest position")
-        XCTAssertEqual(decoded.settings.localLLM.maximumTags, 3)
-        XCTAssertEqual(decoded.settings.localLLM.minimumTags, 1)
+        XCTAssertEqual(decoded.workspaceCatalog.classifierTypes[0].localModel.strictness, .broadest, "max 3 / min 1 → the Broadest position")
+        XCTAssertEqual(decoded.workspaceCatalog.classifierTypes[0].localModel.maximumTags, 3)
+        XCTAssertEqual(decoded.workspaceCatalog.classifierTypes[0].localModel.minimumTags, 1)
         let type = try XCTUnwrap(decoded.workspaceCatalog.classifierTypes.first)
         XCTAssertEqual(type.applicablePlatformIDs, ["youtube"])
-        XCTAssertEqual(type.localModelOverrides?.strictness, .broadest)
+        XCTAssertEqual(type.localModel.strictness, .broadest)
         XCTAssertNoThrow(try decoded.workspaceCatalog.validate())
 
         let rewritten = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
@@ -65,6 +65,52 @@ final class LegacyStateDecodeTests: XCTestCase {
                         "\"maximumTags\"", "\"minimumTags\"", "presetID", "researchOverrides", "\"modelFileName\""] {
             XCTAssertFalse(rewritten.contains(retired), "retired key was written back: \(retired)")
         }
+    }
+
+    func testGlobalDialsReconcileOnceIntoIndependentGroups() throws {
+        let base = WorkspaceCatalog.starter()
+        let tree = base.trees[0], dataset = base.datasets[0]
+        var catalog = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(base)) as? [String: Any])
+        func group(_ id: String) -> [String: Any] {
+            ["id": id, "name": id, "treeID": tree.id, "treeRevision": tree.revision,
+             "datasetID": dataset.id, "datasetRevision": dataset.revision]
+        }
+        var inherited = group("inherited")
+        inherited["localModelOverrides"] = NSNull()
+        var partial = group("partial")
+        partial["localModelOverrides"] = ["speedQuality": "fast", "houseRules": "  "]
+        var own = group("own")
+        own["localModelOverrides"] = ["speedQuality": "balanced", "strictness": 1, "houseRules": "own rules"]
+        var current = group("current")
+        current["localModel"] = ["speedQuality": "balanced", "strictness": 3, "houseRules": ""]
+        catalog["classifierTypes"] = [inherited, partial, own, current]
+        let raw: [String: Any] = ["workspaceCatalog": catalog,
+            "settings": ["localLLM": ["speedQuality": "best", "strictness": 5, "houseRules": "shared rules"]]]
+        var decoded = try JSONDecoder().decode(LocalClassifierState.self, from: JSONSerialization.data(withJSONObject: raw))
+        let groups = decoded.workspaceCatalog.classifierTypes
+        XCTAssertEqual(groups[0].localModel, .init(speedQuality: .best, strictness: .broadest, houseRules: "shared rules"))
+        XCTAssertEqual(groups[1].localModel, .init(speedQuality: .fast, strictness: .broadest, houseRules: "shared rules"))
+        XCTAssertEqual(groups[2].localModel, .init(speedQuality: .balanced, strictness: .strictest, houseRules: "own rules"))
+        XCTAssertEqual(groups[3].localModel, .init(), "already independent settings must not inherit retired defaults")
+        decoded.workspaceCatalog.classifierTypes[0].localModel = .init(speedQuality: .fast)
+        XCTAssertEqual(decoded.workspaceCatalog.classifierTypes[1].localModel, groups[1].localModel)
+        let encoded = try JSONEncoder().encode(decoded)
+        let json = String(decoding: encoded, as: UTF8.self)
+        XCTAssertFalse(json.contains("localLLM")); XCTAssertFalse(json.contains("localModelOverrides"))
+        XCTAssertEqual(try JSONDecoder().decode(LocalClassifierState.self, from: encoded), decoded)
+        let new = ClassifierTypeAsset(name: "new", treeID: tree.id, treeRevision: 1, datasetID: dataset.id, datasetRevision: 1)
+        XCTAssertEqual(new.localModel, .init(), "new groups never copy another group's settings")
+    }
+
+    func testMalformedRetiredGlobalDialStateIsIgnoredSafely() throws {
+        let base = WorkspaceCatalog.starter()
+        var catalog = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(base)) as? [String: Any])
+        catalog["classifierTypes"] = [["id": "old", "name": "old", "treeID": base.trees[0].id,
+            "treeRevision": 1, "datasetID": base.datasets[0].id, "datasetRevision": 1,
+            "localModelOverrides": ["speedQuality": ["malformed": true]]]]
+        let raw: [String: Any] = ["settings": ["localLLM": ["malformed"]], "workspaceCatalog": catalog]
+        let decoded = try JSONDecoder().decode(LocalClassifierState.self, from: JSONSerialization.data(withJSONObject: raw))
+        XCTAssertEqual(decoded.workspaceCatalog.classifierTypes[0].localModel, .init())
     }
 
     func testBackupManifestFromAnOlderBuildStillLoads() throws {

@@ -926,7 +926,7 @@ textarea:focus {
 /* Local model settings: advanced disclosure. The body animates via the
    grid-template-rows 0fr -> 1fr trick so height is fully content-driven;
    opacity and a small translate ride along for a soft reveal. */
-.utility-llm-section .section-copy { margin: 2px 0 10px; }
+.classifier-local-model .section-copy { margin: 2px 0 10px; }
 
 /* Two-dial local model settings (2026-09-23). */
 .dial-card { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; text-align: left; }

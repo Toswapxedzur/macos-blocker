@@ -22,7 +22,7 @@ extension LocalClassifierCoordinator {
                 classifierTypeID: type.id, platformID: platformID, entryID: entryID
             ) else { continue }
             sawClassification = true
-            guard Self.isClassificationCurrent(classification, forType: type, servingModelVersion: servingModelVersion) else {
+            guard Self.isClassificationCurrent(classification, forType: type, servingModelVersion: onDeviceLLMEngineResolver == nil ? servingModelVersion : "llamacpp/" + type.modelFileName) else {
                 return nil
             }
         }
@@ -30,25 +30,17 @@ extension LocalClassifierCoordinator {
         return Self.videoTagsProjection(entryID: entryID, platformID: platformID, types: types, catalog: catalog)
     }
 
-    /// Whether a stored classification may be served from cache without
-    /// reclassifying. It is current when a human confirmed it, or when it was
-    /// produced by the model that would classify it now: the type's own tier when
-    /// it holds one (`"llamacpp/<file>"`), else whatever engine is serving —
-    /// `servingModelVersion`, the loaded engine's `"llamacpp/<file>"` or the
-    /// stub's `"stub/v1"` while the dial's model is not downloaded. The pipeline
-    /// appends `"+<promptVersion>"`, so a prefix match is exact. Serving stub rows
-    /// while the stub is what runs avoids churning rows nothing better can replace.
-    /// (Edge case: if a type's own model file was deleted, the engine falls back
-    /// to the default, so its stored token won't match and the entry reclassifies
-    /// each time it is requested — a bounded, self-correcting cost of an
-    /// already-degraded configuration.)
+    /// Human corrections remain authoritative. Model rows must match this
+    /// group's selected tier, or the injected stub in screen-free callers.
+    /// With a live registry, provisional stub rows are retried so a completed
+    /// download is used without requiring an app restart.
     static func isClassificationCurrent(
         _ classification: VideoClassification,
         forType type: ClassifierTypeAsset,
         servingModelVersion: String
     ) -> Bool {
         if classification.source == .humanCorrected { return true }
-        let expected = type.modelFileName.map { "llamacpp/" + $0 } ?? servingModelVersion
+        let expected = servingModelVersion == "stub/v1" ? servingModelVersion : "llamacpp/" + type.modelFileName
         return classification.modelVersion == expected
             || classification.modelVersion.hasPrefix(expected + "+")
     }
@@ -80,15 +72,12 @@ extension LocalClassifierCoordinator {
                 state.workspaceCatalog,
                 onDeviceLLM,
                 onDeviceLLMEngineResolver,
-                state.settings.localLLM,
-                classificationHouseRules,
                 state.settings.research,
                 groundedResearchQueue
             )
         }
         let (
-            catalog, defaultLLM, engineResolver, localLLMSettings,
-            houseRules, globalResearchSettings, researchQueue
+            catalog, defaultLLM, engineResolver, globalResearchSettings, researchQueue
         ) = snapshot
 
         guard let binding = catalog.bindings.first(where: { $0.id == platformID }), binding.collectionEnabled else {
@@ -110,7 +99,7 @@ extension LocalClassifierCoordinator {
         for type in types {
             guard let tree = catalog.trees.first(where: { $0.id == type.treeID }),
                   type.treeRevision == tree.revision else { continue }
-            let overrides = type.localModelOverrides
+            let settings = type.localModel
             var pending: [VideoClassificationPipeline.Input] = []
             for item in items {
                 // A correction is authoritative for this taxonomy revision. Live
@@ -136,14 +125,15 @@ extension LocalClassifierCoordinator {
                 for: type,
                 defaultLLM: defaultLLM,
                 resolver: engineResolver,
-                configuration: localLLMSettings
+                configuration: settings
             )
-            // The type's own Strict↔Broad position wins over the global dial.
-            let strictness = overrides?.strictness ?? localLLMSettings.strictness
+            // Every group owns its Strict↔Broad position.
+            let strictness = settings.strictness
             let bounds = strictness.tagBounds
             let pipeline = VideoClassificationPipeline(
                 llm: llm, maximumTags: bounds.maximum, minimumTags: bounds.minimum)
-            let typeHouseRules = Self.effectiveHouseRules(global: houseRules, perType: overrides?.houseRules)
+            let trimmedRules = settings.houseRules.trimmingCharacters(in: .whitespacesAndNewlines)
+            let typeHouseRules = trimmedRules.isEmpty ? nil : trimmedRules
             let results = try await pipeline.classifyBatch(
                 pending,
                 platformID: platformID,
@@ -225,22 +215,21 @@ extension LocalClassifierCoordinator {
         resolver: (any OnDeviceLLMEngineResolving)?,
         configuration: LocalLLMSettings
     ) async -> any OnDeviceLLM {
-        // The overwhelmingly common inherited-model route deliberately avoids
-        // even an actor hop, preserving the pre-registry live pill path.
-        guard let fileName = classifierType.modelFileName,
-              let resolver else { return defaultLLM }
+        // Each group requests its exact selected model.
+        let fileName = classifierType.modelFileName
+        guard let resolver else { return defaultLLM }
         do {
             return try await resolver.resolveEngine(
                 forModel: fileName,
                 configuration: configuration
             )
         } catch {
-            VaultDevLog.shared.log("llm", "type-model-fallback", [
+            VaultDevLog.shared.log("llm", "group-model-unavailable", [
                 "type": classifierType.id,
                 "requested": fileName,
                 "error": String(describing: error),
             ])
-            return defaultLLM
+            return StubOnDeviceLLM()
         }
     }
 
@@ -253,15 +242,6 @@ extension LocalClassifierCoordinator {
     ) -> ResearchSettings? {
         guard global.enabled, classifierType.researchEnabled ?? true else { return nil }
         return global
-    }
-
-    static func effectiveHouseRules(global: String?, perType: String?) -> String? {
-        // A type's own house rules REPLACE the global rules (intentional override).
-        // Both are the user's own text; corrections never reach the model as text.
-        let trimmedPerType = perType?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let trimmedPerType, !trimmedPerType.isEmpty { return trimmedPerType }
-        let trimmedGlobal = global?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (trimmedGlobal?.isEmpty == false) ? trimmedGlobal : nil
     }
 
     /// The derived research urgency for a model classification (inverse of its

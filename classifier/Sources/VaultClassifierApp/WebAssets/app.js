@@ -239,14 +239,13 @@
     switch (edit.action) {
       case "configureClassifierType": return type && { name: type.name };
       case "saveClassifierTypeLocalModel": return type && {
-        speedQuality: type.localModelOverrides?.speedQuality || "",
-        strictness: String(type.localModelOverrides?.strictness ?? ""),
-        houseRules: type.localModelOverrides?.houseRules || "",
+        speedQuality: type.localModel?.speedQuality || "balanced",
+        strictness: String(type.localModel?.strictness ?? 3),
+        houseRules: type.localModel?.houseRules || "",
       };
       case "saveClassifierTypeResearch": return type && {
         researchMode: type.researchEnabled === true ? "on" : type.researchEnabled === false ? "off" : "inherit",
       };
-      case "saveLocalLLMSettings": return state.settings?.localLLM;
       case "saveResearchSettings": return { ...state.settings?.research,
         llmProviderProfileID: state.settings?.research?.llmProviderProfileID || "",
         llmModelIdentifier: state.settings?.research?.llmModelIdentifier || "" };
@@ -447,7 +446,7 @@
   }
 
   // One card per tier, carrying that tier's download state and controls.
-  function speedQualityCards(llm, selectedTier) {
+  function speedQualityCards(llm, selectedTier, groupID) {
     const systemRAMGB = Number(llm.systemRAMGB) || 0;
     return `<div class="dial-card-grid" role="radiogroup" aria-label="${esc(t("localModel.speedQuality"))}">${SPEED_TIERS.map((tier) => {
       const entry = tierEntry(llm, tier);
@@ -464,15 +463,15 @@
       const ramShort = entry && systemRAMGB && Number(entry.minimumRAMGB) > systemRAMGB
         ? `<span class="dial-card-warning">${tx("localModel.tier.ramShort", { ram: entry.minimumRAMGB })}</span>` : "";
       const badge = entry?.recommended ? `<span class="dial-card-badge">${tx("localModel.tier.recommended")}</span>` : "";
-      return `<label class="dial-card${active ? " active" : ""}"><input type="radio" name="speedQuality" data-field="speedQuality" value="${tier}"${active ? " checked" : ""}><span class="dial-card-head"><span class="dial-card-name">${tx(`localModel.tier.${tier}.name`)}</span>${badge}</span><span class="dial-card-desc">${tx(`localModel.tier.${tier}.desc`)}</span>${meta}${ramShort}<span class="dial-card-controls">${controls}</span></label>`;
+      return `<label class="dial-card${active ? " active" : ""}"><input type="radio" name="speedQuality-${esc(groupID)}" data-field="speedQuality" value="${tier}"${active ? " checked" : ""}><span class="dial-card-head"><span class="dial-card-name">${tx(`localModel.tier.${tier}.name`)}</span>${badge}</span><span class="dial-card-desc">${tx(`localModel.tier.${tier}.desc`)}</span>${meta}${ramShort}<span class="dial-card-controls">${controls}</span></label>`;
     }).join("")}</div>`;
   }
 
   // Five positions from Strictest to Broadest, each with what it does.
-  function strictnessOptions(selected) {
+  function strictnessOptions(selected, groupID) {
     return `<div class="strictness-options" role="radiogroup" aria-label="${esc(t("localModel.strictness"))}">${STRICTNESS_POSITIONS.map((position) => {
       const active = Number(selected) === position;
-      return `<label class="strictness-option${active ? " active" : ""}"><input type="radio" name="strictness" data-field="strictness" value="${position}"${active ? " checked" : ""}><span class="strictness-option-name">${position} · ${tx(`localModel.strictness.${position}.name`)}</span><span class="strictness-option-desc">${tx(`localModel.strictness.${position}.desc`)}</span></label>`;
+      return `<label class="strictness-option${active ? " active" : ""}"><input type="radio" name="strictness-${esc(groupID)}" data-field="strictness" value="${position}"${active ? " checked" : ""}><span class="strictness-option-name">${position} · ${tx(`localModel.strictness.${position}.name`)}</span><span class="strictness-option-desc">${tx(`localModel.strictness.${position}.desc`)}</span></label>`;
     }).join("")}</div>`;
   }
 
@@ -613,19 +612,10 @@
     let content = "";
     if (utilityPanel === "settings") {
       const settings = state.settings;
-      const llm = settings.localLLM || {};
       const research = settings.research || {};
       const assets = state.assets || {};
       const profiles = assets.providerProfiles || [];
       const protocols = assets.providerProtocols || {};
-      const statusToneByState = { loaded: "cyan", loading: "navy", disabled: "navy", "no-model": "pink", failed: "red" };
-      const llmSection = `<section class="utility-settings-section utility-llm-section" data-form-id="utility-llm-form" data-autosave-action="saveLocalLLMSettings"><h3 class="utility-settings-section-title">${tx("localModel.title")} ${statusPill(tx(`localModel.status.${llm.engineStatus || "loading"}`), statusToneByState[llm.engineStatus] || "navy")}</h3><p class="section-copy">${tx("localModel.copy")}</p><div class="field wide"><span class="field-label">${tx("localModel.speedQuality")}<span class="field-hint"> · ${tx("localModel.speedQualityHint")}</span></span>${
-        speedQualityCards(llm, llm.speedQuality || "balanced")
-      }<p class="model-library-source-note">${tx("localModel.tier.sourceNote")}</p></div><div class="field wide"><span class="field-label">${tx("localModel.strictness")}<span class="field-hint"> · ${tx("localModel.strictnessHint")}</span></span>${
-        strictnessOptions(llm.strictness ?? 3)
-      }</div>${
-        textareaField("localModel.houseRules", "localModel.houseRulesHint", "houseRules", llm.houseRules || "", 'rows="4"')
-      }</section>`;
       const generationProfiles = profiles.filter((profile) => protocols[profile.type]?.supportsGenerateText === true);
       const isGroundingCapable = (profile) => protocols[profile.type]?.supportsGenerateText === true && protocols[profile.type]?.supportsNativeWebSearch === true;
       // Research is provider-grounding only, so only grounding-capable providers are offered.
@@ -638,7 +628,7 @@
         researchModelPicker()
       }</div><p class="small-copy">${tx("research.constantsNote")}</p><p class="small-copy">${tx("research.usageToday", { used: research.tokensUsedToday ?? 0, limit: research.dailyTokenLimit ?? 10000 })}</p>${researchStatusBlock(research.status)}</section>`;
       const packageSection = `<section class="utility-settings-section utility-resource-section" data-form-id="utility-package-form" data-autosave-action="savePackageSettings"><h3 class="utility-settings-section-title">${tx("settings.packageUpdates")}</h3><div class="utility-settings-fields">${selectField("settings.packageUpdates", "settings.packageUpdatesCopy", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div></section>`;
-      content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${notice(state.issue, "red")}${llmSection}${apiKeySettings()}${researchSection}${packageSection}<section class="utility-settings-section"><h3 class="utility-settings-section-title">${tx("language.label")}</h3>${languageSelection()}</section></div></section>`;
+      content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${notice(state.issue, "red")}${apiKeySettings()}${researchSection}${packageSection}<section class="utility-settings-section"><h3 class="utility-settings-section-title">${tx("language.label")}</h3>${languageSelection()}</section></div></section>`;
     }
     if (!content) return "";
     return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}"></button><div class="utility-popover" data-list-key="settings" role="dialog" aria-modal="true" aria-label="${esc(tx("utility.settings.title"))}">${content}</div></div>`;
@@ -958,25 +948,20 @@
         if (binding && !binding.collectionEnabled) notes.push(`${platform.name}: ${t("bridge.recordingOff")}`);
         return notes;
       });
-      const localOverrides = classifierType.localModelOverrides || null;
+      const localModel = classifierType.localModel || { speedQuality: "balanced", strictness: 3, houseRules: "" };
       const localModelFormID = `classifier-local-model-form-${classifierType.id}`;
-      const globalLLM = state.settings?.localLLM || {};
+      const library = state.settings?.localModels || {};
       const tierName = (tier) => t(`localModel.tier.${tier}.name`);
-      const typeSpeedOptions = [["", t("localModel.speedQuality.followGlobal", { name: tierName(globalLLM.speedQuality || "balanced") })]].concat(SPEED_TIERS.map((tier) => {
-        const downloaded = tierEntry(globalLLM, tier)?.state?.kind === "downloaded";
-        return [tier, downloaded ? tierName(tier) : t("localModel.tier.notDownloaded", { name: tierName(tier) })];
-      }));
       const positionName = (position) => `${position} · ${t(`localModel.strictness.${position}.name`)}`;
-      const typeStrictnessOptions = [["", t("localModel.strictness.followGlobal", { name: positionName(globalLLM.strictness ?? 3) })]]
-        .concat(STRICTNESS_POSITIONS.map((position) => [String(position), positionName(position)]));
-      const localModelOverrideSection = `<section class="classifier-type-section classifier-local-model-overrides" data-local-model-section><div class="section-header"><div><h3>${tx("bridge.localModelOverrides")}</h3><p class="section-copy">${tx("bridge.localModelOverridesCopy")}</p></div></div><div data-form-id="${esc(localModelFormID)}" data-autosave-action="saveClassifierTypeLocalModel" data-type-id="${esc(classifierType.id)}"><div class="utility-settings-fields">${valueSelectField("localModel.speedQuality", "localModel.speedQualityHint", "speedQuality", localOverrides?.speedQuality || "", typeSpeedOptions)}${valueSelectField("localModel.strictness", "localModel.strictnessHint", "strictness", localOverrides?.strictness != null ? String(localOverrides.strictness) : "", typeStrictnessOptions)}</div><p class="small-copy resident-model-note">${tx("bridge.localModelResidentNote")}</p>${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", localOverrides?.houseRules ?? "", 'rows="4" maxlength="4000"')}</div></section>`;
+      const modelReady = tierEntry(library, localModel.speedQuality)?.state?.kind === "downloaded";
+      const localModelSection = `<section class="classifier-type-section classifier-local-model" data-local-model-section><div class="section-header"><div><h3>${tx("bridge.localModel")} ${statusPill(tx(modelReady ? "modelLibrary.downloaded" : "localModel.status.no-model"), modelReady ? "cyan" : "pink")}</h3><p class="section-copy">${tx("bridge.localModelCopy")}</p></div></div><div data-form-id="${esc(localModelFormID)}" data-autosave-action="saveClassifierTypeLocalModel" data-type-id="${esc(classifierType.id)}"><div class="field wide"><span class="field-label">${tx("localModel.speedQuality")}<span class="field-hint"> · ${tx("localModel.speedQualityHint")}</span></span>${speedQualityCards(library, localModel.speedQuality, classifierType.id)}<p class="model-library-source-note">${tx("localModel.tier.sourceNote")}</p></div><div class="field wide"><span class="field-label">${tx("localModel.strictness")}<span class="field-hint"> · ${tx("localModel.strictnessHint")}</span></span>${strictnessOptions(localModel.strictness, classifierType.id)}</div><p class="small-copy resident-model-note">${tx("bridge.localModelResidentNote")}</p>${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", localModel.houseRules, 'rows="4" maxlength="4000"')}</div></section>`;
       const researchFormID = `classifier-research-form-${classifierType.id}`;
       const researchMode = classifierType.researchEnabled === true ? "on" : classifierType.researchEnabled === false ? "off" : "inherit";
       const researchOverrideSection = `<section class="classifier-type-section classifier-research-overrides"><div class="section-header"><div><h3>${tx("bridge.researchOverrides")}</h3><p class="section-copy">${tx("bridge.researchOverridesCopy")}</p></div></div><div data-form-id="${esc(researchFormID)}" data-autosave-action="saveClassifierTypeResearch" data-type-id="${esc(classifierType.id)}"><div class="utility-settings-fields">${valueSelectField("bridge.researchMode", "", "researchMode", researchMode, [["inherit", t("bridge.researchMode.inherit")], ["on", t(researchAvailability().ready ? "bridge.researchMode.on" : researchAvailability().actionKey)], ["off", t("bridge.researchMode.off")]], "data-group-research-choice")}${researchMode === "on" && !researchAvailability().ready ? `<button class="secondary" data-action="openResearchSetup">${tx(researchAvailability().actionKey)}</button>` : ""}</div><p class="small-copy research-master-note">${tx("bridge.researchMasterGate")}</p></div></section>`;
       const overrideSummary = [];
-      if (localOverrides?.speedQuality) overrideSummary.push(`${t("localModel.speedQuality")}: ${tierName(localOverrides.speedQuality)}`);
-      if (localOverrides?.strictness != null) overrideSummary.push(`${t("localModel.strictness")}: ${positionName(localOverrides.strictness)}`);
-      if (localOverrides?.houseRules?.trim()) overrideSummary.push(t("bridge.overrides.houseRules"));
+      overrideSummary.push(`${t("localModel.speedQuality")}: ${tierName(localModel.speedQuality)}`);
+      overrideSummary.push(`${t("localModel.strictness")}: ${positionName(localModel.strictness)}`);
+      if (localModel.houseRules?.trim()) overrideSummary.push(t("bridge.overrides.houseRules"));
       if (researchMode !== "inherit") {
         overrideSummary.push(`${t("bridge.researchOverrides")}: ${t(`bridge.researchMode.${researchMode}`)}`);
         if (researchMode === "on" && !researchAvailability().ready) overrideSummary.push(t(researchAvailability().actionKey));
@@ -987,8 +972,8 @@
         <section class="classifier-type-section classifier-applicable-platform-section"><span class="field-label">${tx("bridge.applicablePlatform")}</span>${platformChoices(chosen, classifierType.id)}<p class="small-copy">${tx("bridge.platformsFixed")}</p>${platformNotes.map((note) => `<p class="small-copy">${esc(note)}</p>`).join("")}</section>
         <p class="small-copy">${tx("bridge.autoSave")}</p>
         <details class="vui-expand classifier-group-more" data-expand="${esc(expandKey)}"${openExpands.has(expandKey) ? " open" : ""}>
-          <summary><span>${tx("navigation.more")}</span><span class="small-copy classifier-override-summary">${esc(overrideSummary.length ? overrideSummary.join(" · ") : t("bridge.overrides.followGlobal"))}</span></summary>
-          ${localModelOverrideSection}
+          <summary><span>${tx("navigation.more")}</span><span class="small-copy classifier-override-summary">${esc(overrideSummary.join(" · "))}</span></summary>
+          ${localModelSection}
           ${researchOverrideSection}
         </details>
         <div class="action-row classifier-type-delete"><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}">${deleteLabel(`type:${classifierType.id}`, tx("bridge.deleteType"))}</button></div>

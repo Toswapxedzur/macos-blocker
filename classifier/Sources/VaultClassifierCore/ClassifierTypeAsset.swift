@@ -1,7 +1,7 @@
 import Foundation
 
 // A classifier type: its tree/dataset/platform binding and its per-type dial
-// positions, house rules and research switch (nil = follow the global setting).
+// positions, house rules and research switch. Dials are independent per group.
 // (Split out of the former WorkspaceAssets.swift; CLASSIFIER-INDEPENDENCE §7.)
 
 public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
@@ -17,9 +17,8 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
     /// several; a platform belongs to at most one type — WorkspaceCatalog). Their
     /// bindings share the one collected dataset.
     public var applicablePlatformIDs: [String]
-    /// This type's own dial positions and house rules (nil / empty = follow the
-    /// global settings). Runtime constants apply to every resident engine.
-    public var localModelOverrides: LocalModelOverrides?
+    /// This group owns concrete dial positions and house rules.
+    public var localModel: LocalLLMSettings
     /// Grounded research for this type: nil follows the global switch, false
     /// turns it off here, true keeps it on — but the app-wide research consent
     /// remains the master gate either way.
@@ -38,7 +37,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         datasetID: String,
         datasetRevision: Int,
         applicablePlatformIDs: [String] = [],
-        localModelOverrides: LocalModelOverrides? = nil,
+        localModel: LocalLLMSettings = .init(),
         researchEnabled: Bool? = nil,
         order: Int = 0,
         updatedAtMilliseconds: Int64 = WorkspaceCatalog.now()
@@ -50,7 +49,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         self.datasetID = datasetID
         self.datasetRevision = datasetRevision
         self.applicablePlatformIDs = Self.cleanedPlatformIDs(applicablePlatformIDs)
-        self.localModelOverrides = localModelOverrides?.isEmpty == false ? localModelOverrides : nil
+        self.localModel = localModel
         self.researchEnabled = researchEnabled
         self.order = order
         self.updatedAtMilliseconds = updatedAtMilliseconds
@@ -64,15 +63,14 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
             .filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
-    /// The GGUF this type loads when it holds its own Speed↔Quality position
-    /// (nil = the global tier's file).
-    public var modelFileName: String? { localModelOverrides?.speedQuality?.ggufFileName }
+    /// The GGUF selected by this group's Speed↔Quality position.
+    public var modelFileName: String { localModel.modelFileName }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, treeID, treeRevision, datasetID, datasetRevision, applicablePlatformIDs,
-             localModelOverrides, researchEnabled, order, updatedAtMilliseconds
+             localModel, researchEnabled, order, updatedAtMilliseconds
         // Pre-dial keys (before 2026-09-23), read only to find the nearest position.
-        case modelFileName, researchOverrides
+        case researchOverrides
         // The single platform of before 2026-09-30, read once into the list.
         case applicablePlatformID
     }
@@ -91,15 +89,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         } else {
             applicablePlatformIDs = Self.cleanedPlatformIDs([try container.decodeIfPresent(String.self, forKey: .applicablePlatformID) ?? ""])
         }
-        var decodedOverrides = try container.decodeIfPresent(LocalModelOverrides.self, forKey: .localModelOverrides)
-            ?? LocalModelOverrides()
-        // A pre-dial per-type model file becomes that tier's position.
-        if decodedOverrides.speedQuality == nil,
-           let legacyTier = SpeedQualityDial.nearest(
-               modelFileName: try container.decodeIfPresent(String.self, forKey: .modelFileName)) {
-            decodedOverrides.speedQuality = legacyTier
-        }
-        localModelOverrides = decodedOverrides.isEmpty ? nil : decodedOverrides
+        localModel = (try? container.decodeIfPresent(LocalLLMSettings.self, forKey: .localModel)) ?? .init()
         if let explicit = try container.decodeIfPresent(Bool.self, forKey: .researchEnabled) {
             researchEnabled = explicit
         } else if let legacy = try? container.decodeIfPresent(ResearchSettings.self, forKey: .researchOverrides) {
@@ -122,7 +112,7 @@ public struct ClassifierTypeAsset: Codable, Equatable, Sendable, Identifiable {
         try container.encode(datasetID, forKey: .datasetID)
         try container.encode(datasetRevision, forKey: .datasetRevision)
         try container.encode(applicablePlatformIDs, forKey: .applicablePlatformIDs)
-        try container.encodeIfPresent(localModelOverrides, forKey: .localModelOverrides)
+        try container.encode(localModel, forKey: .localModel)
         try container.encodeIfPresent(researchEnabled, forKey: .researchEnabled)
         try container.encode(order, forKey: .order)
         try container.encode(updatedAtMilliseconds, forKey: .updatedAtMilliseconds)

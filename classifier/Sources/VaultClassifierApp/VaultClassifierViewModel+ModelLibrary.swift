@@ -36,11 +36,6 @@ extension VaultClassifierViewModel {
                     guard let self else { return }
                     self.modelDownloadFractions.removeValue(forKey: id)
                     self.issue = nil
-                    // The Speed↔Quality dial already names the model; if this download
-                    // is the dial's tier, load it now.
-                    if entry.tier == self.llmSettings.speedQuality, let coordinator = self.coordinator {
-                        self.installLocalLLMEngine(coordinator: coordinator)
-                    }
                     self.onWebStateChange?()
                 }
             } catch is CancellationError {

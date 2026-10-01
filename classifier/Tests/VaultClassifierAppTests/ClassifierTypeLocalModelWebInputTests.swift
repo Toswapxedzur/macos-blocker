@@ -27,31 +27,17 @@ final class ClassifierTypeLocalModelWebInputTests: XCTestCase {
 
     // MARK: - Per-type local model form
 
-    func testBlankFormFollowsTheGlobalDials() throws {
+    func testBothDialPositionsAreRequiredAndEmptyRulesAreIndependent() throws {
+        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
+            "typeID": "type", "speedQuality": "", "strictness": ""
+        ]))
+        XCTAssertThrowsError(try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
+            "typeID": "type", "speedQuality": "fast"
+        ]))
         let input = try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
-            "typeID": "type", "speedQuality": "", "strictness": "", "houseRules": "   ",
+            "typeID": "type", "speedQuality": "best", "strictness": "2", "houseRules": ""
         ])
-        XCTAssertEqual(input.typeID, "type")
-        XCTAssertNil(input.overrides, "nothing set → the type follows the global dials and rules")
-    }
-
-    func testOwnPositionsAndRulesParse() throws {
-        let input = try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
-            "typeID": "type", "speedQuality": "best", "strictness": "2", "houseRules": "Type rule.",
-        ])
-        XCTAssertEqual(input.overrides, LocalModelOverrides(houseRules: "Type rule.", speedQuality: .best, strictness: .strict))
-    }
-
-    func testOnlyOneDialSetKeepsTheOtherFollowingGlobal() throws {
-        let strictOnly = try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
-            "typeID": "type", "strictness": 5,
-        ])
-        XCTAssertEqual(strictOnly.overrides, LocalModelOverrides(strictness: .broadest))
-        XCTAssertNil(strictOnly.overrides?.speedQuality)
-        let speedOnly = try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput([
-            "typeID": "type", "speedQuality": "fast", "strictness": "",
-        ])
-        XCTAssertEqual(speedOnly.overrides, LocalModelOverrides(speedQuality: .fast))
+        XCTAssertEqual(input.settings, LocalLLMSettings(speedQuality: .best, strictness: .strict))
     }
 
     func testUnknownPositionsAreRefused() {

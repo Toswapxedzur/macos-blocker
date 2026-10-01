@@ -24,13 +24,8 @@ extension VaultClassifierViewModel {
         let availableModelFiles = VaultLocalLLMEngine.availableModelFiles()
         let settingsPayload: [String: Any] = [
             "packageUpdateMode": packageUpdateMode.rawValue,
-            "localLLM": [
-                    "speedQuality": llmSettings.speedQuality.rawValue,
-                    "strictness": llmSettings.strictness.rawValue,
-                    "houseRules": llmSettings.houseRules,
-                    "modelFileName": llmSettings.modelFileName,
+            "localModels": [
                     "systemRAMGB": HardwareProfile.physicalRAMGB(),
-                    "engineStatus": llmEngineStatus,
                     "modelLibrary": Self.modelLibraryPayload(
                         availableModelFiles: availableModelFiles,
                         downloadFractions: modelDownloadFractions,
@@ -156,14 +151,11 @@ extension VaultClassifierViewModel {
                     "datasetID": classifierType.datasetID,
                     "datasetRevision": classifierType.datasetRevision,
                     "applicablePlatformIDs": classifierType.applicablePlatformIDs,
-                    // nil / absent = the type follows the global dials and rules.
-                    "localModelOverrides": classifierType.localModelOverrides.map { overrides in
-                        [
-                            "houseRules": overrides.houseRules ?? NSNull(),
-                            "speedQuality": overrides.speedQuality?.rawValue ?? NSNull(),
-                            "strictness": overrides.strictness?.rawValue ?? NSNull(),
-                        ] as [String: Any]
-                    } ?? NSNull(),
+                    "localModel": [
+                        "houseRules": classifierType.localModel.houseRules,
+                        "speedQuality": classifierType.localModel.speedQuality.rawValue,
+                        "strictness": classifierType.localModel.strictness.rawValue,
+                    ] as [String: Any],
                     // nil = follow the global research switch.
                     "researchEnabled": classifierType.researchEnabled ?? NSNull(),
                 ] as [String: Any]
@@ -410,18 +402,6 @@ extension VaultClassifierViewModel {
                 }
                 packageUpdateMode = updateMode
                 savePackageSettings()
-            case "saveLocalLLMSettings":
-                guard let speedQuality = SpeedQualityDial.resolve(try webString(data, key: "speedQuality", limit: 16)) else {
-                    throw WebBridgeInputError.invalidChoice("speedQuality")
-                }
-                guard let strictness = StrictnessDial.resolve(Int(try webString(data, key: "strictness", limit: 4))) else {
-                    throw WebBridgeInputError.invalidChoice("strictness")
-                }
-                saveLocalLLMSettings(LocalLLMSettings(
-                    speedQuality: speedQuality,
-                    strictness: strictness,
-                    houseRules: try webString(data, key: "houseRules", limit: LocalLLMSettings.maximumHouseRulesLength)
-                ))
             case "downloadModel":
                 downloadModel(id: try webString(data, key: "id", limit: 128))
             case "cancelModelDownload":
@@ -456,7 +436,7 @@ extension VaultClassifierViewModel {
                 ))
             case "saveClassifierTypeLocalModel":
                 let input = try Self.parseClassifierTypeLocalModelWebInput(data)
-                saveClassifierTypeLocalModel(typeID: input.typeID, overrides: input.overrides)
+                saveClassifierTypeLocalModel(typeID: input.typeID, settings: input.settings)
             case "saveClassifierTypeResearch":
                 let input = try Self.parseClassifierTypeResearchWebInput(data)
                 saveClassifierTypeResearch(typeID: input.typeID, researchEnabled: input.researchEnabled)

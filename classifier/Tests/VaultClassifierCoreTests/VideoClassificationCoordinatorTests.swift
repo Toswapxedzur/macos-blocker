@@ -75,7 +75,7 @@ private actor CountingEngineResolver: OnDeviceLLMEngineResolving {
 }
 
 final class VideoClassificationCoordinatorTests: XCTestCase {
-    func testInheritedModelFastPathAvoidsResolverAndExplicitModelUsesIt() async throws {
+    func testEveryGroupRequestsItsOwnSelectedTierAndStrictness() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
         defer { try? FileManager.default.removeItem(at: root) }
         let selectedRecorder = CoordinatorRequestRecorder()
@@ -86,23 +86,23 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             platformID: "youtube", entryID: "inherited", creatorID: "creator", title: "Title"
         )
         let inheritedRequests = await resolver.requestedFiles
-        XCTAssertEqual(inheritedRequests, [])
+        XCTAssertEqual(inheritedRequests, [SpeedQualityDial.balanced.ggufFileName])
 
         var catalog = coordinator.snapshot().workspaceCatalog
         let index = try XCTUnwrap(catalog.classifierTypes.firstIndex(where: { $0.applicablePlatformIDs.contains("youtube") }))
         // The type's own Speed↔Quality tier names the per-type engine; its own
         // Strict↔Broad position rides on every request.
-        catalog.classifierTypes[index].localModelOverrides = .init(speedQuality: .best, strictness: .strict)
+        catalog.classifierTypes[index].localModel = .init(speedQuality: .best, strictness: .strict)
         try coordinator.updateWorkspaceCatalog(catalog)
 
         _ = try await coordinator.classifyVideo(
             platformID: "youtube", entryID: "selected", creatorID: "creator", title: "Title"
         )
         let selectedRequests = await resolver.requestedFiles
-        XCTAssertEqual(selectedRequests, ["Qwen2.5-14B-Instruct-Q4_K_M.gguf"])
-        XCTAssertEqual(selectedRecorder.requests.count, 1)
-        XCTAssertEqual(selectedRecorder.requests.first?.extraTagMinimumOdds, 0.97)
-        XCTAssertEqual(selectedRecorder.requests.first?.maximumTags, 3)
+        XCTAssertEqual(selectedRequests, [SpeedQualityDial.balanced.ggufFileName, SpeedQualityDial.best.ggufFileName])
+        XCTAssertEqual(selectedRecorder.requests.count, 2)
+        XCTAssertEqual(selectedRecorder.requests.last?.extraTagMinimumOdds, 0.97)
+        XCTAssertEqual(selectedRecorder.requests.last?.maximumTags, 3)
     }
 
     private func temporaryStateFile() -> (root: URL, file: LocalStateFile) {
@@ -202,7 +202,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
                 id: "a", name: "A", treeID: treeA.id, treeRevision: treeA.revision,
                 datasetID: dataset.id, datasetRevision: dataset.revision,
                 applicablePlatformIDs: ["youtube"],
-                localModelOverrides: .init(houseRules: "Type A rule.", strictness: .strictest), order: 0
+                localModel: .init(strictness: .strictest, houseRules: "Type A rule."), order: 0
             ),
             // A platform belongs to at most one classifier type, so the second
             // type lives on its own platform (same shared dataset).
@@ -214,7 +214,6 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         ]
         _ = try catalog.ensurePlatformBinding("bilibili")
         try coordinator.updateWorkspaceCatalog(catalog)
-        coordinator.setClassificationOptions(houseRules: "Global rule.")
         let recorder = CoordinatorRequestRecorder()
         coordinator.setOnDeviceLLM(CoordinatorRecordingLLM(recorder: recorder))
 
@@ -228,8 +227,9 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertEqual(recorder.requests.count, 2, "one request per platform's single type")
         XCTAssertTrue(recorder.requests[0].staticPrefix.contains("Type A rule."))
         XCTAssertFalse(recorder.requests[0].staticPrefix.contains("Global rule."))
-        XCTAssertTrue(recorder.requests[1].staticPrefix.contains("Global rule."))
-        XCTAssertEqual(recorder.requests.map(\.maximumTags), [1, 3], "type A holds the Strictest position (one tag); type B follows the global Balanced dial (three)")
+        XCTAssertFalse(recorder.requests[1].staticPrefix.contains("Type A rule."))
+        XCTAssertFalse(recorder.requests[1].staticPrefix.contains("Global rule."))
+        XCTAssertEqual(recorder.requests.map(\.maximumTags), [1, 3], "type A holds the Strictest position (one tag); type B owns its Balanced dial (three)")
         XCTAssertEqual(recorder.requests.map(\.extraTagMinimumOdds), [0.90, 0.90])
     }
 
@@ -293,7 +293,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             $0.id == catalog.bindings.first(where: { $0.id == "youtube" })?.datasetID
         }))
         let typeIndex = try XCTUnwrap(catalog.classifierTypes.firstIndex(where: { $0.id == "type" }))
-        catalog.classifierTypes[typeIndex].localModelOverrides = .init(houseRules: "Manual type rule.")
+        catalog.classifierTypes[typeIndex].localModel = .init(houseRules: "Manual type rule.")
         let correctionCount = 5
         for index in 0..<correctionCount {
             _ = catalog.datasets[datasetIndex].upsertCollectedEntry(.init(
@@ -303,7 +303,6 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             ))
         }
         try coordinator.updateWorkspaceCatalog(catalog)
-        coordinator.setClassificationOptions(houseRules: "Global manual rule.")
 
         // Submitting corrections NEVER mutates the type's house rules — the manual
         // rule stays exactly as authored, at every step (no distilled block).
@@ -315,14 +314,14 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             XCTAssertEqual(projection.tags.map(\.id), ["g"])
             XCTAssertEqual(
                 coordinator.snapshot().workspaceCatalog.classifierTypes[typeIndex]
-                    .localModelOverrides?.houseRules,
+                    .localModel.houseRules,
                 "Manual type rule.",
                 "corrections must not auto-write the house-rules block"
             )
         }
 
         let saved = coordinator.snapshot().workspaceCatalog
-        let rules = saved.classifierTypes[typeIndex].localModelOverrides?.houseRules
+        let rules = saved.classifierTypes[typeIndex].localModel.houseRules
         XCTAssertEqual(rules, "Manual type rule.", "corrections never write into the house rules")
         XCTAssertEqual(saved.videoClassification(
             classifierTypeID: "type", platformID: "youtube", entryID: "v\(correctionCount - 1)"
@@ -340,7 +339,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertTrue(recorder.requests.isEmpty, "live and research refreshes preserve human-corrected rows")
 
         // Classifying a FRESH video: the manual type house rule is in the cached
-        // prefix (it intentionally overrides the global rule); the stored
+        // prefix; the stored
         // corrections appear NOWHERE in the prompt — not as a block, not as
         // exemplars, not as distilled rules (all measured 2026-09-22/23 as no gain).
         _ = try await coordinator.classifyVideo(
@@ -610,7 +609,7 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
             id: "t", name: "YT", treeID: "tree", treeRevision: 1,
             datasetID: "d", datasetRevision: 1, applicablePlatformIDs: ["youtube"]
         )
-        // The engine serving the inherited tier (the global dial's file is loaded).
+        // The engine serving the group's Balanced tier.
         let serving = "llamacpp/Qwen2.5-7B-Instruct-Q4_K_M.gguf"
         let current = LocalClassifierCoordinator.isClassificationCurrent
 
@@ -622,9 +621,9 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertFalse(current(row(.model, "llamacpp/Qwen2.5-3B-Instruct-Q4_K_M.gguf+prompt-3"), type, serving))
         // A human correction is authoritative regardless of its model version.
         XCTAssertTrue(current(row(.humanCorrected, "stub/v1"), type, serving))
-        // A type's own tier overrides whatever engine serves the inherited route.
+        // Each group matches its own tier, independent of another serving model.
         var typeWithModel = type
-        typeWithModel.localModelOverrides = .init(speedQuality: .fast)
+        typeWithModel.localModel = .init(speedQuality: .fast)
         XCTAssertTrue(current(row(.model, "llamacpp/Qwen2.5-3B-Instruct-Q4_K_M.gguf+p"), typeWithModel, serving))
         XCTAssertFalse(current(row(.model, "llamacpp/Qwen2.5-7B-Instruct-Q4_K_M.gguf+p"), typeWithModel, serving))
         // The dial's model not downloaded → the stub serves, and its own rows are
