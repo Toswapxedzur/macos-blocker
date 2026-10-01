@@ -50,7 +50,7 @@ window.runModelPickerTests=async()=>{
   q('[data-model-selector]').click();await wait();
   const query=q('[data-model-search]');query.value='does-not-exist';query.dispatchEvent(new InputEvent('input',{bubbles:true}));
   expect(!q('[data-model-no-matches]').hidden && q('[data-model-pick="second-model"]').hidden,'search exposes an empty result state');
-  query.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));expect(!q('.research-model-picker').open && q('.utility-popover'),'Escape closes the picker first');
+  query.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,composed:true,cancelable:true}));expect(!q('.research-model-picker').open && q('.utility-popover'),'Escape closes the picker first');
   q('[data-model-selector]').click();await wait();q('[data-model-search]').value='';q('[data-model-search]').dispatchEvent(new InputEvent('input',{bubbles:true}));
   expect(q('.utility-popover').scrollWidth<=q('.utility-popover').clientWidth+1,'model picker fits viewport width');
   expect(uiErrors.length===0,'no renderer exceptions');

@@ -386,7 +386,7 @@ extension VaultClassifierViewModel {
             case "probeProviderModelCatalog":
                 probeProviderModelCatalog(profileID: try webString(data, key: "profileID", limit: 128))
             case "confirmDeleteProviderProfile":
-                confirmProviderProfileDeletion(profileID: try webString(data, key: "profileID", limit: 128))
+                deleteProviderProfile(profileID: try webString(data, key: "profileID", limit: 128))
             case "rearrangeTree":
                 rearrangeTree(treeID: try webString(data, key: "treeID", limit: 256))
             case "addTag":

@@ -7,6 +7,12 @@ import XCTest
 /// killing needs live processes and is an integration concern.)
 final class GuardEngineTests: XCTestCase {
 
+    func testTimerHUDAlwaysShowsHoursMinutesAndSeconds() {
+        for (seconds, expected) in [(0.0, "00:00:00"), (0.1, "00:00:01"), (59.0, "00:00:59"), (60.0, "00:01:00"), (3600.0, "01:00:00"), (360000.0, "100:00:00")] {
+            XCTAssertEqual(TimerOverlayRow(id: "test", name: "Timer", remainingSeconds: seconds).formattedRemaining, expected)
+        }
+    }
+
     // MARK: - Matching
 
     func testMatchesBundleIdentifierCaseInsensitively() {

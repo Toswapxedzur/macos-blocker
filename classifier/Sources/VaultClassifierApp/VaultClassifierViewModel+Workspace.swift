@@ -201,29 +201,4 @@ extension VaultClassifierViewModel {
         } catch { issue = error.localizedDescription }
     }
 
-    func presentNativeConfirmation(
-        title: String,
-        message: String,
-        confirmTitle: String,
-        action: @escaping () -> Void
-    ) {
-        guard let window = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible }) else {
-            issue = WebBridgeInputError.invalidChoice("application window").localizedDescription
-            return
-        }
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        alert.addButton(withTitle: confirmTitle)
-        alert.addButton(withTitle: "Cancel")
-        NSApp.activate(ignoringOtherApps: true)
-        alert.beginSheetModal(for: window) { [weak self] response in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                guard response == .alertFirstButtonReturn else { return }
-                action()
-                self.onWebStateChange?()
-            }
-        }
-    }
 }
