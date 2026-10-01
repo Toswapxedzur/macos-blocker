@@ -18,13 +18,13 @@ collapse behavior. Classifier list positions survive incoming snapshots.
 | Vault editor | Group navigation | Remaining navigation-panel height; Add stays outside |
 | Vault editor | Applies-to entries, websites, blocked apps | Shared chip box, at most 28vh / 240px |
 | Vault editor | Creator/account filters, Discord targets | Shared chip box, at most 28vh / 240px |
-| Vault editor | Available Classifier tags | Shared suggestion box, at most 28vh / 240px |
+| Vault editor | Available Classifier tags | Searchable floating chooser; menu at most 320px, internal list at most 250px |
 | Vault editor | Installed-app search results | Existing bounded picker; explicit shrinkable results area |
 | Vault editor | Custom-rule output | Existing 220px internal scroll area |
 | Shared controls | Group/link choices and other dropdown choices | Existing bounded `vui-menu` |
 | Classifier | Types and trash navigation | Separate boxes, at most 32vh / 300px |
 | Classifier Knowledge | Terms and creators for each platform | Separate boxes, at most 52vh / 480px; headings/counts outside |
-| Classifier Settings research | Fetched provider models | Searchable picker, at most 32vh / 280px; Fetch/Refresh/Retry outside |
+| Classifier Settings research | Fetched provider models | Searchable floating picker; list at most 32vh / 280px; menu fits viewport; Fetch/Refresh/Retry outside |
 | Classifier Settings API keys | Provider profiles | Shared box, at most 52vh / 480px; creation controls outside |
 | Classifier tag tree | Growing tag graph | Existing 520px canvas with internal pan/scroll |
 | Activity | User groups | Existing 206px area, cards scroll horizontally |
@@ -34,10 +34,11 @@ collapse behavior. Classifier list positions survive incoming snapshots.
 | Activity Content | Authors and watched entries | Existing 360px panels with internal scroll lists |
 | Activity charts | Growing day ranges | Existing horizontal chart scrolling; no vertical list expansion |
 | Native custom rules | Multiple floating panels at each position | Scroll document capped at 65% of visible screen height / 640px |
+| Native custom rules | Select options | Separate white popover; internal scrolling at most 280px; parent panel size unchanged |
 | Editor dialogs | Snapshot controls | Bounded dialog body |
 
 Fixed menus (days, recording switches, platforms, model tiers, strictness and
-languages) and capped inline suggestions (six creators/eight models) cannot
+languages) and capped creator suggestions (six, in an anchored floating menu) cannot
 accumulate arbitrary entries. Manual text and input fields are not growing
 collections. The floating timer HUD is a separate noninteractive surface;
 its mouse-input policy needs an owner decision before adding interactive
