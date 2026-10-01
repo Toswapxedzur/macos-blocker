@@ -1,0 +1,37 @@
+window.runBoundedListTests=async()=>{
+  const results=[],q=s=>scope.querySelector(s), wait=()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+  const expect=(c,label)=>{if(!c)throw Error(label);results.push('PASS '+label)};
+  const bounded=(list,label)=>{
+    expect(list && getComputedStyle(list).overflowY==='auto' && list.scrollHeight>list.clientHeight,label+' scrolls inside its box');
+    const height=list.clientHeight;
+    list.scrollTop=list.scrollHeight;
+    expect(list.scrollTop>0 && list.clientHeight===height,label+' exposes its last entry without growing');
+  };
+  testState.workspace='knowledge';
+  testState.assets.knowledge.creators=Array.from({length:763},(_,i)=>({id:'creator-'+i,subject:'youtube:handle:@creator'+i,name:'Creator '+i,platformID:'youtube',meaning:'Creator description '+i,writtenByUser:false}));
+  testState.assets.knowledge.terms=Array.from({length:100},(_,i)=>({id:'term-'+i,subject:'Term '+i,meaning:'Meaning '+i,writtenByUser:true}));
+  testState.trash=Array.from({length:80},(_,i)=>({id:'trash-'+i,name:'Deleted '+i,kind:'classifierType'}));
+  pushSnapshot();await wait();
+  const creators=q('[data-list-key^="knowledge:creator:"]'),terms=q('[data-list-key^="knowledge:term:"]');
+  expect(creators.children.length===763,'all 763 creators remain available');
+  bounded(creators,'creators');bounded(terms,'terms');bounded(q('[data-list-key="trash"]'),'trash');
+  const creatorKey=creators.dataset.listKey,scroll=creators.scrollTop;
+  testState.assets.knowledge.creators[0].meaning='Snapshot update';pushSnapshot();await wait();
+  expect(Math.abs(q('[data-list-key="'+creatorKey+'"]').scrollTop-scroll)<2,'snapshot preserves the creator list scroll');
+  const search=q('[data-knowledge-search-input]');search.value='Creator 762';search.dispatchEvent(new Event('input',{bubbles:true}));
+  expect(q('[data-id="creator-762"]').hidden===false && q('[data-id="creator-0"]').hidden===true,'search reaches entries at the end of the list');
+  expect(q('[data-list-key="'+creatorKey+'"]').clientHeight<300,'one search result shrinks the box');
+  testState.workspace='llmAssist';
+  testState.assets.providerProfiles=Array.from({length:80},(_,i)=>({...testState.assets.providerProfiles[0],id:'provider-'+i,name:'Provider '+i}));
+  pushSnapshot();await wait();bounded(q('[data-list-key="providers"]'),'API keys');
+  const providers=q('[data-list-key="providers"]');expect(providers.children.length===80,'all API keys remain available');
+  const input=providers.lastElementChild.querySelector('[data-field="customEndpoint"]');input.focus();input.value='https://example.test/last';input.dispatchEvent(new Event('input',{bubbles:true}));
+  testState.issue='Synthetic snapshot';pushSnapshot();await wait();
+  expect(scope.activeElement?.value==='https://example.test/last','editing the last entry preserves focus and draft through snapshots');
+  expect(uiErrors.length===0,'no renderer exceptions');
+  testState.workspace='knowledge';testState.issue=null;pushSnapshot();await wait();
+  const resetSearch=q('[data-knowledge-search-input]');resetSearch.value='';resetSearch.dispatchEvent(new Event('input',{bubbles:true}));
+  q('[data-list-key^="knowledge:creator:"]').scrollTop=0;
+  q('[data-list-key^="knowledge:creator:"]').parentElement.scrollIntoView({block:'start'});
+  return results;
+};
