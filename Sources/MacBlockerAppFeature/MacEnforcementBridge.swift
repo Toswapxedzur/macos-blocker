@@ -39,7 +39,7 @@ public final class MacEnforcementBridge: ObservableObject {
     /// Shared store the editor persists into and we read groups back out of.
     public let webStore: BlockerWebStore
 
-    /// Rolling log of event + rule output (capped). Published so the web UI
+    /// Pending v.log output (capped independently per group). Published so the web UI
     /// can display it.
     @Published public var ruleLog: [RuleLogEntry] = []
 
@@ -125,6 +125,7 @@ public final class MacEnforcementBridge: ObservableObject {
         ruleLog.removeAll()
         let dicts: [[String: String]] = entries.map {
             ["timestamp": ISO8601DateFormatter().string(from: $0.timestamp),
+             "source": "v.log", "groupId": $0.groupId,
              "level": $0.level, "group": $0.group, "message": $0.message]
         }
         guard let data = try? JSONSerialization.data(withJSONObject: dicts),
@@ -378,12 +379,15 @@ public final class MacEnforcementBridge: ObservableObject {
         } catch RuleRuntime.RuleRuntimeError.terminated {
             quarantineRule(group: group)
         } catch {
-            appendLog(level: "error", group: group.name, message: "\(type): \(error)")
+            NSLog("[Vault rule %@] %@: %@", group.id, type, String(describing: error))
         }
     }
 
     private func apply(_ result: RuleRuntime.DispatchResult, group: BlockGroup) {
-        for log in result.logs { appendLog(level: log.level, group: group.name, message: log.message) }
+        for diagnostic in result.diagnostics {
+            NSLog("[Vault rule %@] %@", diagnostic.groupId, diagnostic.message)
+        }
+        for log in result.logs { appendLog(groupId: log.groupId, group: group.name, message: log.message) }
         for (groupID, panels) in result.panels { setPanels(panels, groupID: groupID) }
         if !result.states.isEmpty { webStore.writeRuleStates(result.states.mapValues { Optional($0) }) }
         for action in result.actions { perform(action) }
@@ -439,7 +443,7 @@ public final class MacEnforcementBridge: ObservableObject {
         do {
             ruleRuntime = try RuleRuntime()
         } catch {
-            appendLog(level: "error", group: "system", message: "The rule engine didn't start: \(error)")
+            NSLog("[Vault rule engine] %@", String(describing: error))
         }
         return ruleRuntime
     }
@@ -481,9 +485,9 @@ public final class MacEnforcementBridge: ObservableObject {
         guard let runtime = ensureRuntime() else { return nil }
         do {
             let result = try runtime.load(groupID: group.id, source: source, stateJSON: stateJSON)
-            for log in result.logs { appendLog(level: log.level, group: group.name, message: log.message) }
+            for log in result.logs { appendLog(groupId: log.groupId, group: group.name, message: log.message) }
             guard result.ok else {
-                appendLog(level: "error", group: group.name, message: result.error ?? "The rule didn't load.")
+                NSLog("[Vault rule %@] %@", group.id, result.error ?? "The rule didn't load.")
                 if result.quarantine != nil { quarantineRule(group: group) }
                 return result
             }
@@ -498,7 +502,7 @@ public final class MacEnforcementBridge: ObservableObject {
         } catch RuleRuntime.RuleRuntimeError.terminated {
             quarantineRule(group: group)
         } catch {
-            appendLog(level: "error", group: group.name, message: "The rule didn't load: \(error)")
+            NSLog("[Vault rule %@] load failed: %@", group.id, String(describing: error))
         }
         return nil
     }
@@ -540,14 +544,20 @@ public final class MacEnforcementBridge: ObservableObject {
         let source = loadedRuleSources[group.id] ?? group.customRuleSource
         unloadRule(groupID: group.id)
         quarantinedRuleSources[group.id] = source
-        appendLog(level: "error", group: group.name, message: "Rule stopped: it ran past its time. Edit it and click Run to retry.")
+        NSLog("[Vault rule %@] stopped: execution deadline exceeded", group.id)
     }
 
-    private func appendLog(level: String, group: String, message: String) {
-        let entry = RuleLogEntry(timestamp: Date(), level: level, group: group, message: message)
+    public func clearRuleLog(groupID: String) {
+        ruleLog.removeAll { $0.groupId == groupID }
+    }
+
+    private func appendLog(groupId: String, group: String, message: String) {
+        guard !groupId.isEmpty else { return }
+        let entry = RuleLogEntry(timestamp: Date(), level: "log", groupId: groupId, group: group, message: message)
         ruleLog.append(entry)
-        if ruleLog.count > 200 {
-            ruleLog.removeFirst(ruleLog.count - 200)
+        if ruleLog.filter({ $0.groupId == groupId }).count > 200,
+           let oldest = ruleLog.firstIndex(where: { $0.groupId == groupId }) {
+            ruleLog.remove(at: oldest)
         }
     }
 
@@ -743,6 +753,7 @@ public struct RuleLogEntry: Identifiable, Sendable {
     public let id = UUID()
     public let timestamp: Date
     public let level: String
+    public let groupId: String
     public let group: String
     public let message: String
 }

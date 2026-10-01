@@ -34,7 +34,7 @@ public final class RuleRuntime {
         public var quarantine: Quarantine?
     }
 
-    /// One `v.log` line (or an error the engine reports for the rule).
+    /// One `v.log` line, or a separate developer diagnostic.
     public struct Log: Decodable, Equatable, Sendable {
         public var groupId: String
         public var level: String
@@ -63,6 +63,7 @@ public final class RuleRuntime {
     /// panels changed, the states that changed (JSON text) and a quarantine.
     public struct DispatchResult: Decodable, Equatable, Sendable {
         public var actions: [Action]
+        public var diagnostics: [Log] = []
         public var logs: [Log]
         public var panels: [String: [PanelSnapshot]]
         public var states: [String: String]
