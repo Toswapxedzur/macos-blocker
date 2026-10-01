@@ -57,6 +57,8 @@
   // A group can only be created through this dialog.
   let pendingCreateType = null;
   let utilityPanel = null;
+  let researchSetupRequested = false;
+  let researchSetupFocusPending = false;
   // "More" / "Options" expands the user opened: the page re-renders on every update.
   const openExpands = new Set();
   // Which classifier type is open in the left-panel list (client-only UI state).
@@ -69,7 +71,7 @@
   let selectedLanguage = "en";
   let navigationPanelWidth = navigationWidthRange.fallback;
   let navigationResize = null;
-  const workspaceNames = new Set(["llmAssist", "browserBridge", "knowledge"]);
+  const workspaceNames = new Set(["browserBridge", "knowledge"]);
   let lastRenderedMarkup = null;
   const listViewportPositions = new Map();
 
@@ -197,6 +199,14 @@
     if (replacingControls || !control.matches?.("[data-field]") || control.disabled) return false;
     const form = control.closest("[data-autosave-action]");
     if (!form) return false;
+    // A setup choice is navigation, never a group mutation (including input/blur).
+    if (control.matches("[data-group-research-choice]") && control.value === "on" && !researchAvailability().ready) {
+      const draft = liveEdits.get(liveEditKey(form));
+      const type = (state.assets?.classifierTypes || []).find((item) => item.id === form.dataset.typeId);
+      control.value = draft?.values.researchMode ?? (type?.researchEnabled === true ? "on" : type?.researchEnabled === false ? "off" : "inherit");
+      openResearchSetup();
+      return true;
+    }
     const key = liveEditKey(form);
     const previous = liveEdits.get(key);
     window.clearTimeout(previous?.timer);
@@ -467,6 +477,54 @@
     }).join("")}</div>`;
   }
 
+  // Read only acknowledged native state: a draft key/model is not ready yet.
+  function researchAvailability() {
+    const research = state.settings?.research || {};
+    const profile = (state.assets?.providerProfiles || []).find((item) => item.id === research.llmProviderProfileID);
+    const protocol = state.assets?.providerProtocols?.[profile?.type] || {};
+    const providerReady = protocol.supportsGenerateText === true && protocol.supportsNativeWebSearch === true;
+    const keyReady = providerReady && (!protocol.credentialRequired || Boolean(profile?.credential?.trim()));
+    const modelReady = Boolean(research.llmModelIdentifier?.trim());
+    const configured = providerReady && keyReady && modelReady;
+    return { profile, providerReady, keyReady, modelReady, configured, ready: configured && research.enabled === true,
+      actionKey: !configured ? "research.setup" : research.enabled ? "research.configure" : "research.enable" };
+  }
+
+  function openResearchSetup() {
+    utilityPanel = "settings";
+    researchSetupRequested = true;
+    researchSetupFocusPending = true;
+    render();
+    window.requestAnimationFrame(placeResearchSetup);
+  }
+
+  function placeResearchSetup() {
+    if (!researchSetupRequested || utilityPanel !== "settings") return;
+    const availability = researchAvailability();
+    const missing = [];
+    if (!availability.providerReady) {
+      missing.push(root.querySelector((state.assets?.providerProfiles || []).some((profile) => {
+        const protocol = state.assets?.providerProtocols?.[profile.type];
+        return protocol?.supportsGenerateText && protocol?.supportsNativeWebSearch;
+      }) ? '[data-form-id="utility-research-form"] [data-field="llmProviderProfileID"]' : '[data-form-id="new-provider-profile-form"] [data-field="type"]'));
+    } else if (!availability.keyReady) {
+      missing.push(root.querySelector(`[data-form-id="${CSS.escape(`provider-profile-${availability.profile.id}`)}"] [data-field="credential"]`));
+    }
+    if (!availability.modelReady) missing.push(root.querySelector('[data-form-id="utility-research-form"] [data-field="llmModelIdentifier"]'));
+    if (availability.configured && !availability.ready) missing.push(root.querySelector('[data-form-id="utility-research-form"] [data-field="enabled"]'));
+    root.querySelectorAll(".research-setup-needed").forEach((field) => field.classList.remove("research-setup-needed"));
+    missing.filter(Boolean).forEach((control) => control.closest("label, .field")?.classList.add("research-setup-needed"));
+    if (!researchSetupFocusPending) return;
+    researchSetupFocusPending = false;
+    const target = missing.find(Boolean) || root.querySelector(".utility-research-section h3");
+    if (target) {
+      if (target.tagName === "H3") target.tabIndex = -1;
+      const focusTarget = target.matches("select") ? target.nextElementSibling?.querySelector(".vui-select-button") || target : target;
+      focusTarget.focus({ preventScroll: true });
+      focusTarget.scrollIntoView({ block: "center" });
+    }
+  }
+
   function utilityPanelContent() {
     if (!utilityPanel) return "";
     let content = "";
@@ -497,10 +555,10 @@
         field("research.model", "research.modelHint", "llmModelIdentifier", research.llmModelIdentifier || "", "text", 'data-model-suggest maxlength="256" autocomplete="off" spellcheck="false"')
       }<div class="knowledge-suggestions" data-model-suggestions></div></div><p class="small-copy">${tx("research.constantsNote")}</p><p class="small-copy">${tx("research.usageToday", { used: research.tokensUsedToday ?? 0, limit: research.dailyTokenLimit ?? 10000 })}</p>${researchStatusBlock(research.status)}</section>`;
       const packageSection = `<section class="utility-settings-section utility-resource-section" data-form-id="utility-package-form" data-autosave-action="savePackageSettings"><h3 class="utility-settings-section-title">${tx("settings.packageUpdates")}</h3><div class="utility-settings-fields">${selectField("settings.packageUpdates", "settings.packageUpdatesCopy", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div></section>`;
-      content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${notice(state.issue, "red")}${llmSection}${researchSection}${packageSection}<section class="utility-settings-section"><h3 class="utility-settings-section-title">${tx("language.label")}</h3>${languageSelection()}</section></div></section>`;
+      content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${notice(state.issue, "red")}${llmSection}${apiKeySettings()}${researchSection}${packageSection}<section class="utility-settings-section"><h3 class="utility-settings-section-title">${tx("language.label")}</h3>${languageSelection()}</section></div></section>`;
     }
     if (!content) return "";
-    return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}"></button><div class="utility-popover" role="dialog" aria-modal="true" aria-label="${esc(tx("utility.settings.title"))}">${content}</div></div>`;
+    return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}"></button><div class="utility-popover" data-list-key="settings" role="dialog" aria-modal="true" aria-label="${esc(tx("utility.settings.title"))}">${content}</div></div>`;
   }
 
   function navButton(workspace, symbol, titleKey, metaKey) {
@@ -550,10 +608,9 @@
       <div class="sidebar-group-title">${tx("navigation.classifierTypes")}</div>
       <div class="classifier-type-nav vui-list-box" data-classifier-type-nav data-list-key="types" tabindex="0" aria-label="${tx("navigation.classifierTypes")}">${typeRows}</div>
       <button class="sidebar-add" type="button" data-action="newType"><span aria-hidden="true">＋</span> ${tx("navigation.newType")}</button>
-      <details class="vui-expand sidebar-more" data-expand="sidebar"${openExpands.has("sidebar") || ["knowledge", "llmAssist", "trash"].includes(state.workspace) ? " open" : ""}>
+      <details class="vui-expand sidebar-more" data-expand="sidebar"${openExpands.has("sidebar") || ["knowledge", "trash"].includes(state.workspace) ? " open" : ""}>
         <summary>${tx("navigation.more")}</summary>
         ${navButton("knowledge", "✦", "navigation.knowledge", "navigation.knowledgeMeta")}
-        ${navButton("llmAssist", "◌", "navigation.apiKeys", "navigation.apiKeysMeta")}
         ${trashSection}
       </details>`;
   }
@@ -710,7 +767,7 @@
     return keys[fieldName] || "llm.protocol.protocolFamily";
   }
 
-  function llmAssistWorkspace() {
+  function apiKeySettings() {
     const profiles = state.assets.providerProfiles || [];
     const requestRecords = state.assets.providerRequestRecords || [];
     const protocols = state.assets.providerProtocols || {};
@@ -758,7 +815,7 @@
         : "";
       return `<section class="provider-panel" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}" data-autosave-action="updateProviderConnection"><div class="provider-panel-head"><h3>${esc(profile.name)}</h3><div class="provider-panel-actions">${testButton}<button class="danger" data-action="confirmDeleteProviderProfile" data-profile-id="${esc(profile.id)}">${tx("llm.deleteProfile")}</button></div></div>${retiredSearchProvider ? `<div class="notice navy">${tx("llm.retiredSearchProvider")}</div>` : ""}<div class="provider-panel-body">${connectionFields ? `<div class="provider-connection-fields">${connectionFields}</div>` : ""}<div class="provider-request-summary">${usage}${responseDiagnostic}</div></div>${profile.testSucceeded ? notice(t("llm.testSucceeded"), "green") : ""}</section>`;
     };
-    return `<div class="workspace provider-workspace">${header("llm.title", "llm.copy", t("llm.keyLibrary"), "gold")}<div class="notice navy provider-local-only">${tx("llm.localOnlyDisclosure")}</div><section class="provider-create" data-form-id="new-provider-profile-form">${groupedValueSelectField("llm.providerType", "", "type", "", profileTypeGroups)}<button class="gold-action" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button><span class="small-copy">${tx("llm.createCopy")}</span></section><div class="provider-panels vui-list-box" data-list-key="providers" tabindex="0" aria-label="${tx("llm.keyLibrary")}">${profiles.length ? profiles.map(panel).join("") : `<div class="empty">${tx("llm.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
+    return `<section class="utility-settings-section utility-api-keys"><h3 class="utility-settings-section-title">${tx("navigation.apiKeys")}</h3><p class="section-copy">${tx("llm.copy")}</p><div class="notice navy provider-local-only">${tx("llm.localOnlyDisclosure")}</div><section class="provider-create" data-form-id="new-provider-profile-form">${groupedValueSelectField("llm.providerType", "", "type", "", profileTypeGroups)}<button class="gold-action" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button><span class="small-copy">${tx("llm.createCopy")}</span></section><div class="provider-panels vui-list-box" data-list-key="providers" tabindex="0" aria-label="${tx("llm.keyLibrary")}">${profiles.length ? profiles.map(panel).join("") : `<div class="empty">${tx("llm.empty")}</div>`}</div></section>`;
   }
 
   // The classifiable platforms as a checklist (owner 2026-09-30: a type may take
@@ -816,7 +873,7 @@
       const localModelOverrideSection = `<section class="classifier-type-section classifier-local-model-overrides" data-local-model-section><div class="section-header"><div><h3>${tx("bridge.localModelOverrides")}</h3><p class="section-copy">${tx("bridge.localModelOverridesCopy")}</p></div></div><div data-form-id="${esc(localModelFormID)}" data-autosave-action="saveClassifierTypeLocalModel" data-type-id="${esc(classifierType.id)}"><div class="utility-settings-fields">${valueSelectField("localModel.speedQuality", "localModel.speedQualityHint", "speedQuality", localOverrides?.speedQuality || "", typeSpeedOptions)}${valueSelectField("localModel.strictness", "localModel.strictnessHint", "strictness", localOverrides?.strictness != null ? String(localOverrides.strictness) : "", typeStrictnessOptions)}</div><p class="small-copy resident-model-note">${tx("bridge.localModelResidentNote")}</p>${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", localOverrides?.houseRules ?? "", 'rows="4" maxlength="4000"')}</div></section>`;
       const researchFormID = `classifier-research-form-${classifierType.id}`;
       const researchMode = classifierType.researchEnabled === true ? "on" : classifierType.researchEnabled === false ? "off" : "inherit";
-      const researchOverrideSection = `<section class="classifier-type-section classifier-research-overrides"><div class="section-header"><div><h3>${tx("bridge.researchOverrides")}</h3><p class="section-copy">${tx("bridge.researchOverridesCopy")}</p></div></div><div data-form-id="${esc(researchFormID)}" data-autosave-action="saveClassifierTypeResearch" data-type-id="${esc(classifierType.id)}"><div class="utility-settings-fields">${valueSelectField("bridge.researchMode", "", "researchMode", researchMode, [["inherit", t("bridge.researchMode.inherit")], ["on", t("bridge.researchMode.on")], ["off", t("bridge.researchMode.off")]])}</div><p class="small-copy research-master-note">${tx("bridge.researchMasterGate")}</p></div></section>`;
+      const researchOverrideSection = `<section class="classifier-type-section classifier-research-overrides"><div class="section-header"><div><h3>${tx("bridge.researchOverrides")}</h3><p class="section-copy">${tx("bridge.researchOverridesCopy")}</p></div></div><div data-form-id="${esc(researchFormID)}" data-autosave-action="saveClassifierTypeResearch" data-type-id="${esc(classifierType.id)}"><div class="utility-settings-fields">${valueSelectField("bridge.researchMode", "", "researchMode", researchMode, [["inherit", t("bridge.researchMode.inherit")], ["on", t(researchAvailability().ready ? "bridge.researchMode.on" : researchAvailability().actionKey)], ["off", t("bridge.researchMode.off")]], "data-group-research-choice")}${researchMode === "on" && !researchAvailability().ready ? `<button class="secondary" data-action="openResearchSetup">${tx(researchAvailability().actionKey)}</button>` : ""}</div><p class="small-copy research-master-note">${tx("bridge.researchMasterGate")}</p></div></section>`;
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}" data-autosave-action="configureClassifierType">
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name, "text", 'maxlength="128"')}</div>
         <section class="classifier-type-section classifier-applicable-platform-section"><span class="field-label">${tx("bridge.applicablePlatform")}</span>${platformChoices(chosen, classifierType.id)}<p class="small-copy">${tx("bridge.platformsFixed")}</p>${platformNotes.map((note) => `<p class="small-copy">${esc(note)}</p>`).join("")}</section>
@@ -854,6 +911,9 @@
   let knowledgeAddPlatform = "youtube";
 
   function knowledgeWorkspace() {
+    const availability = researchAvailability();
+    const research = state.settings?.research || {};
+    const connection = `<section class="knowledge-research-connection"><div><h3>${tx("knowledge.lookupProvider")}</h3><p class="small-copy">${availability.profile ? esc(availability.profile.name) : tx("research.noProvider")}${research.llmModelIdentifier ? ` · ${esc(research.llmModelIdentifier)}` : ""}</p>${statusPill(tx(availability.ready ? "research.status.on" : availability.configured ? "research.status.off" : "research.status.setup"), availability.ready ? "cyan" : "gold")}</div><button class="secondary" data-action="openResearchSetup">${tx(availability.actionKey)}</button></section>`;
     const knowledge = state.assets?.knowledge || { creators: [], terms: [] };
     const creators = knowledge.creators || [];
     const terms = knowledge.terms || [];
@@ -884,7 +944,7 @@
     const creatorGroups = KNOWLEDGE_PLATFORMS.map(([platformID, label]) =>
       group(t("knowledge.creatorsOn", { platform: label }), "", creators.filter((entry) => entry.platformID === platformID), "creator")).join("");
 
-    return `<div class="workspace knowledge-workspace">${header("knowledge.title", "knowledge.copy", tx("knowledge.badge"), "gold")}<div class="notice navy">${tx("knowledge.disclosure")}</div>${notice(state.notices?.knowledge, "navy")}${notice(state.issue, "red")}${addTerm}${addCreator}${searchBox}${group(t("knowledge.terms"), t("knowledge.termsHint"), terms, "term")}<p class="small-copy">${tx("knowledge.creatorsHint")}</p>${creatorGroups}</div>`;
+    return `<div class="workspace knowledge-workspace">${header("knowledge.title", "knowledge.copy", tx("knowledge.badge"), "gold")}<div class="notice navy">${tx("knowledge.disclosure")}</div>${connection}${notice(state.notices?.knowledge, "navy")}${notice(state.issue, "red")}${addTerm}${addCreator}${searchBox}${group(t("knowledge.terms"), t("knowledge.termsHint"), terms, "term")}<p class="small-copy">${tx("knowledge.creatorsHint")}</p>${creatorGroups}</div>`;
   }
 
   // Show only the cards matching the search (no re-render: nothing is lost
@@ -958,7 +1018,6 @@
 
   function workspace() {
     switch (state.workspace) {
-      case "llmAssist": return llmAssistWorkspace();
       case "browserBridge": return browserBridgeWorkspace();
       case "knowledge": return knowledgeWorkspace();
       default: return browserBridgeWorkspace();
@@ -1135,6 +1194,7 @@
       });
       drawTreeConnections();
       placeTreePopovers();
+      placeResearchSetup();
     });
   }
 
@@ -1257,7 +1317,10 @@
       return;
     }
 
+    if (action === "openResearchSetup") { openResearchSetup(); return; }
     if (action === "openUtilityPanel") {
+      researchSetupRequested = false;
+      researchSetupFocusPending = false;
       const nextPanel = data.utilityPanel === "settings" ? "settings" : null;
       utilityPanel = utilityPanel === nextPanel ? null : nextPanel;
       render();
@@ -1265,6 +1328,8 @@
     }
     if (action === "closeUtilityPanel") {
       utilityPanel = null;
+      researchSetupRequested = false;
+      researchSetupFocusPending = false;
       render();
       return;
     }
@@ -1336,6 +1401,8 @@
   scope.addEventListener("keydown", (event) => {
     if (event.key !== "Escape" || !utilityPanel) return;
     utilityPanel = null;
+    researchSetupRequested = false;
+    researchSetupFocusPending = false;
     render();
   });
 
@@ -1748,6 +1815,8 @@
         renderedPresentationRevision = revision;
       }
       state = payload;
+      // Ignore a retired/unknown workspace safely; API keys now live in Settings.
+      if (!workspaceNames.has(state.workspace)) state.workspace = "browserBridge";
       // Drop a stale left-panel selection if that type no longer exists.
       const typeIDs = new Set((state.assets?.classifierTypes || []).map((type) => type.id));
       if (selectedTypeID && !typeIDs.has(selectedTypeID)) selectedTypeID = null;

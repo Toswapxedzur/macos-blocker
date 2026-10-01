@@ -1215,3 +1215,10 @@ textarea:focus {
     max-height: 34vh;
   }
 }
+
+/* Research setup lives beside the API keys it uses. */
+.utility-api-keys { min-width: 0; }
+.research-setup-needed { background: var(--gold-50); padding: 10px; border-radius: 12px; }
+.knowledge-research-connection { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 18px; border-radius: 16px; background: var(--cyan-50); }
+.knowledge-research-connection > div { display: grid; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 600px) { .knowledge-research-connection { align-items: flex-start; flex-direction: column; } }
