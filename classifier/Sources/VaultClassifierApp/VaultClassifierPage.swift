@@ -159,7 +159,7 @@ public final class VaultClassifierPage {
         model?.onWebStateChange?()
     }
 
-    /// Moves a platform's collected entries to the trash (restorable for a day).
+    /// Permanently clears a platform's collected entries.
     public func clearCollectedData(platformID: String) {
         start()
         model?.clearCollectedData(platformID: platformID)

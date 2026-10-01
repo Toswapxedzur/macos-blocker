@@ -78,7 +78,6 @@ final class VaultClassifierViewModel: ObservableObject {
             let coordinator = try LocalClassifierCoordinator(verifiedPackage: package, stateFile: LocalStateFile(url: vaultDirectory.appendingPathComponent("state.json")))
             self.coordinator = coordinator
             self.localState = coordinator.snapshot()
-            purgeExpiredTrashOnLaunch()
             let providerModelCatalogStore = ProviderModelCatalogStore(fileURL: vaultDirectory.appendingPathComponent("provider-model-catalogs.json"))
             self.providerModelCatalogStore = providerModelCatalogStore
             self.providerModelCatalogs = providerModelCatalogStore.load(allowedProfileIDs: llmProviderProfileIDs())

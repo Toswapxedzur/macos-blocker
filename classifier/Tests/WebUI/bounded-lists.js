@@ -10,12 +10,10 @@ window.runBoundedListTests=async()=>{
   testState.workspace='knowledge';
   testState.assets.knowledge.creators=Array.from({length:763},(_,i)=>({id:'creator-'+i,subject:'youtube:handle:@creator'+i,name:'Creator '+i,platformID:'youtube',meaning:'Creator description '+i,writtenByUser:false}));
   testState.assets.knowledge.terms=Array.from({length:100},(_,i)=>({id:'term-'+i,subject:'Term '+i,meaning:'Meaning '+i,writtenByUser:true}));
-  testState.trash=Array.from({length:80},(_,i)=>({id:'trash-'+i,name:'Deleted '+i,kind:'classifierType'}));
   pushSnapshot();await wait();
-  q('[data-expand="trash"] > summary').click();await wait();
   const creators=q('[data-list-key^="knowledge:creator:"]'),terms=q('[data-list-key^="knowledge:term:"]');
   expect(creators.children.length===763,'all 763 creators remain available');
-  bounded(creators,'creators');bounded(terms,'terms');bounded(q('[data-list-key="trash"]'),'trash');
+  bounded(creators,'creators');bounded(terms,'terms');
   const creatorKey=creators.dataset.listKey,scroll=creators.scrollTop;
   testState.assets.knowledge.creators[0].meaning='Snapshot update';pushSnapshot();await wait();
   expect(Math.abs(q('[data-list-key="'+creatorKey+'"]').scrollTop-scroll)<2,'snapshot preserves the creator list scroll');

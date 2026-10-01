@@ -22,7 +22,7 @@ collapse behavior. Classifier list positions survive incoming snapshots.
 | Vault editor | Installed-app search results | Existing bounded picker; explicit shrinkable results area |
 | Vault editor | Custom-rule output | Existing 220px internal scroll area |
 | Shared controls | Group/link choices and other dropdown choices | Existing bounded `vui-menu` |
-| Classifier | Types and trash navigation | Separate boxes, at most 32vh / 300px |
+| Classifier | Types navigation | Bounded box, at most 32vh / 300px |
 | Classifier Knowledge | Terms and creators for each platform | Separate boxes, at most 52vh / 480px; headings/counts outside |
 | Classifier Settings research | Fetched provider models | Searchable floating picker; list at most 32vh / 280px; menu fits viewport; Fetch/Refresh/Retry outside |
 | Classifier Settings API keys | Provider profiles | Shared box, at most 52vh / 480px; creation controls outside |
@@ -47,7 +47,7 @@ scrolling.
 ## Verification
 
 Mini1 checks use production renderers with synthetic data: 763 creators,
-100 terms, 80 trash entries/API keys, 100 block groups, 400 sites/creator
+100 terms, 80 API keys, 100 block groups, 400 sites/creator
 filters/tags, 300 blocked apps, 200 Activity groups/authors/watched entries,
 and 120 selected Activity members. Wide and narrow viewport checks cover
 scrolling to the last entry, short-list sizing, search, snapshot scroll/focus
