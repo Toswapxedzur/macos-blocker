@@ -6,7 +6,7 @@ import AppKit
 import SwiftUI
 
 /// One line in the floating timer HUD — mirrors the Chrome extension's on-page
-/// overlay rows (`Name: MM:SS`).
+/// overlay rows (`Name: HH:MM:SS`).
 public struct TimerOverlayRow: Identifiable, Equatable, Sendable {
     public let id: String
     public let name: String
@@ -18,17 +18,13 @@ public struct TimerOverlayRow: Identifiable, Equatable, Sendable {
         self.remainingSeconds = max(0, remainingSeconds)
     }
 
-    /// `H:MM:SS` once an hour is involved, otherwise `M:SS` — matching the
-    /// extension overlay's duration formatting.
+    /// HH:MM:SS, matching every other Vault duration.
     public var formattedRemaining: String {
-        let total = Int(remainingSeconds.rounded())
+        let total = Int(remainingSeconds.rounded(.up))
         let hours = total / 3600
         let minutes = (total % 3600) / 60
         let seconds = total % 60
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
-        }
-        return String(format: "%d:%02d", minutes, seconds)
+        return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
     }
 }
 
@@ -37,8 +33,7 @@ final class TimerOverlayModel: ObservableObject {
     @Published var rows: [TimerOverlayRow] = []
 }
 
-/// The HUD content. Styled to match the extension's overlay: a dark, rounded,
-/// translucent card with monospace white text.
+/// The HUD content uses the extension's fixed light appearance.
 struct TimerOverlayView: View {
     @ObservedObject var model: TimerOverlayModel
 
@@ -46,15 +41,15 @@ struct TimerOverlayView: View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(model.rows) { row in
                 Text("\(row.name): \(row.formattedRemaining)")
-                    .font(.system(size: 13, weight: .regular, design: .monospaced))
-                    .foregroundColor(Color(red: 0.973, green: 0.980, blue: 0.988))
+                    .font(.custom("Arial", size: 13)).monospacedDigit()
+                    .foregroundColor(Color(red: 0.122, green: 0.161, blue: 0.216))
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color(red: 0.059, green: 0.090, blue: 0.165).opacity(0.86))
+                .fill(Color.white)
         )
         .fixedSize()
     }
@@ -153,15 +148,13 @@ public final class TimerOverlayPanelController {
 /// SwiftUI view for a single panel control.
 struct PanelControlView: View {
     let control: PanelControlSnapshot
-    let theme: PanelTheme?
     /// (controlId, eventName, value, extra)
     let onEvent: (String, String, String, String) -> Void
     /// All current control values in this panel, for batch sending.
     let allValues: [String: String]
 
     private var accent: Color {
-        if let a = theme?.accent, let c = Color(cssHex: a) { return c }
-        return Color.accentColor
+        Color(red: 0.118, green: 0.227, blue: 0.541)
     }
 
     var body: some View {
@@ -170,7 +163,7 @@ struct PanelControlView: View {
             case "text", "html":
                 // An html control shows its text here (the browser renders the markup).
                 Text(control.text ?? control.html.map { $0.replacingOccurrences(of: "<[^>]*>", with: "", options: .regularExpression) } ?? control.label ?? "")
-                    .font(.system(size: 13))
+                    .font(.custom("Arial", size: 13))
                     .opacity(0.85)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -180,7 +173,7 @@ struct PanelControlView: View {
                     onEvent(control.id, "click", control.action ?? "", "")
                 }) {
                     Text(control.label ?? "Button")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.custom("Arial", size: 13)).fontWeight(.medium)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 6)
                 }
@@ -207,7 +200,7 @@ struct PanelControlView: View {
             case "textInput":
                 VStack(alignment: .leading, spacing: 2) {
                     if let label = control.label, !label.isEmpty {
-                        Text(label).font(.system(size: 11, weight: .medium)).opacity(0.7)
+                        Text(label).font(.custom("Arial", size: 11)).fontWeight(.medium).opacity(0.7)
                     }
                     PanelTextFieldControl(
                         control: control,
@@ -222,7 +215,7 @@ struct PanelControlView: View {
             case "textarea":
                 VStack(alignment: .leading, spacing: 2) {
                     if let label = control.label, !label.isEmpty {
-                        Text(label).font(.system(size: 11, weight: .medium)).opacity(0.7)
+                        Text(label).font(.custom("Arial", size: 11)).fontWeight(.medium).opacity(0.7)
                     }
                     PanelTextFieldControl(
                         control: control,
@@ -237,7 +230,7 @@ struct PanelControlView: View {
             case "numberInput":
                 VStack(alignment: .leading, spacing: 2) {
                     if let label = control.label, !label.isEmpty {
-                        Text(label).font(.system(size: 11, weight: .medium)).opacity(0.7)
+                        Text(label).font(.custom("Arial", size: 11)).fontWeight(.medium).opacity(0.7)
                     }
                     PanelTextFieldControl(
                         control: control,
@@ -263,7 +256,7 @@ struct PanelControlView: View {
             case "select":
                 VStack(alignment: .leading, spacing: 2) {
                     if let label = control.label, !label.isEmpty {
-                        Text(label).font(.system(size: 11, weight: .medium)).opacity(0.7)
+                        Text(label).font(.custom("Arial", size: 11)).fontWeight(.medium).opacity(0.7)
                     }
                     PanelSelectControl(
                         control: control,
@@ -275,15 +268,15 @@ struct PanelControlView: View {
             case "radio":
                 VStack(alignment: .leading, spacing: 4) {
                     if let label = control.label, !label.isEmpty {
-                        Text(label).font(.system(size: 11, weight: .medium)).opacity(0.7)
+                        Text(label).font(.custom("Arial", size: 11)).fontWeight(.medium).opacity(0.7)
                     }
                     ForEach(control.options ?? [], id: \.value) { opt in
                         HStack(spacing: 6) {
                             Image(systemName: (control.value?.stringValue ?? "") == opt.value ? "largecircle.fill.circle" : "circle")
-                                .font(.system(size: 14))
+                                .font(.custom("Arial", size: 14))
                                 .foregroundColor(accent)
                                 .onTapGesture { onEvent(control.id, "change", opt.value, "") }
-                            Text(opt.label).font(.system(size: 13))
+                            Text(opt.label).font(.custom("Arial", size: 13))
                         }
                     }
                 }
@@ -292,7 +285,7 @@ struct PanelControlView: View {
             case "color":
                 VStack(alignment: .leading, spacing: 2) {
                     if let label = control.label, !label.isEmpty {
-                        Text(label).font(.system(size: 11, weight: .medium)).opacity(0.7)
+                        Text(label).font(.custom("Arial", size: 11)).fontWeight(.medium).opacity(0.7)
                     }
                     PanelColorControl(
                         control: control,
@@ -305,11 +298,11 @@ struct PanelControlView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     if let text = control.text, !text.isEmpty {
                         Text(text)
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.custom("Arial", size: 12)).fontWeight(.semibold)
                             .opacity(0.7)
                     }
                     ForEach(control.controls ?? [], id: \.id) { child in
-                        PanelControlView(control: child, theme: theme, onEvent: onEvent, allValues: allValues)
+                        PanelControlView(control: child, onEvent: onEvent, allValues: allValues)
                     }
                 }
                 .padding(.leading, 4)
@@ -317,7 +310,7 @@ struct PanelControlView: View {
             case "date":
                 VStack(alignment: .leading, spacing: 2) {
                     if let label = control.label, !label.isEmpty {
-                        Text(label).font(.system(size: 11, weight: .medium)).opacity(0.7)
+                        Text(label).font(.custom("Arial", size: 11)).fontWeight(.medium).opacity(0.7)
                     }
                     PanelTextFieldControl(
                         control: control,
@@ -332,7 +325,7 @@ struct PanelControlView: View {
             case "time":
                 VStack(alignment: .leading, spacing: 2) {
                     if let label = control.label, !label.isEmpty {
-                        Text(label).font(.system(size: 11, weight: .medium)).opacity(0.7)
+                        Text(label).font(.custom("Arial", size: 11)).fontWeight(.medium).opacity(0.7)
                     }
                     PanelTextFieldControl(
                         control: control,
@@ -347,7 +340,7 @@ struct PanelControlView: View {
             case "pin":
                 VStack(alignment: .leading, spacing: 4) {
                     if let label = control.label, !label.isEmpty {
-                        Text(label).font(.system(size: 11, weight: .medium)).opacity(0.7)
+                        Text(label).font(.custom("Arial", size: 11)).fontWeight(.medium).opacity(0.7)
                     }
                     PanelPinControl(
                         control: control,
@@ -361,7 +354,7 @@ struct PanelControlView: View {
 
             default:
                 Text(control.label ?? control.text ?? "")
-                    .font(.system(size: 13))
+                    .font(.custom("Arial", size: 13))
             }
         }
     }
@@ -411,13 +404,18 @@ private struct PanelTextFieldControl: View {
         Group {
             if multiline {
                 TextEditor(text: $text)
-                    .font(.system(size: 13))
+                    .font(.custom("Arial", size: 13))
                     .frame(height: CGFloat(rows) * 20)
-                    .border(Color.gray.opacity(0.3), width: 1)
+                    .scrollContentBackground(.hidden)
+                    .background(Color(red: 0.945, green: 0.961, blue: 0.976))
+                    .cornerRadius(8)
             } else {
                 TextField(placeholder, text: $text)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 13))
+                    .textFieldStyle(.plain)
+                    .padding(7)
+                    .background(Color(red: 0.945, green: 0.961, blue: 0.976))
+                    .cornerRadius(8)
+                    .font(.custom("Arial", size: 13))
             }
         }
         .focused($focused)
@@ -470,7 +468,7 @@ private struct PanelSliderControl: View {
         VStack(alignment: .leading, spacing: 2) {
             if let label, !label.isEmpty {
                 HStack {
-                    Text(label).font(.system(size: 11, weight: .medium)).opacity(0.7)
+                    Text(label).font(.custom("Arial", size: 11)).fontWeight(.medium).opacity(0.7)
                     Spacer()
                     Text(String(format: "%g", value))
                         .font(.system(size: 11, design: .monospaced)).opacity(0.6)
@@ -518,12 +516,12 @@ private struct PanelToggleControl: View {
         Group {
             if isSwitch {
                 Toggle(isOn: $value) {
-                    Text(control.label ?? "").font(.system(size: 13))
+                    Text(control.label ?? "").font(.custom("Arial", size: 13))
                 }
                 .toggleStyle(.switch)
             } else {
                 Toggle(isOn: $value) {
-                    Text(control.label ?? "").font(.system(size: 13))
+                    Text(control.label ?? "").font(.custom("Arial", size: 13))
                 }
                 .toggleStyle(.checkbox)
             }
@@ -719,15 +717,8 @@ struct PanelCardView: View {
         return out
     }
 
-    private var bg: Color {
-        Color(cssHex: snapshot.theme?.background ?? "") ?? Color(red: 0.059, green: 0.090, blue: 0.165).opacity(0.96)
-    }
-    private var fg: Color {
-        Color(cssHex: snapshot.theme?.foreground ?? "") ?? Color(red: 0.973, green: 0.980, blue: 0.988)
-    }
-    private var borderColor: Color {
-        Color(cssHex: snapshot.theme?.border ?? "") ?? Color.gray.opacity(0.45)
-    }
+    private let bg = Color.white
+    private let fg = Color(red: 0.122, green: 0.161, blue: 0.216)
 
     private var panelWidth: CGFloat {
         switch snapshot.width ?? "" {
@@ -746,17 +737,17 @@ struct PanelCardView: View {
         VStack(alignment: .leading, spacing: 8) {
             if let title = snapshot.title, !title.isEmpty {
                 Text(title)
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.custom("Arial", size: 14)).fontWeight(.bold)
             }
             if let desc = snapshot.description, !desc.isEmpty {
                 Text(desc)
-                    .font(.system(size: 13))
+                    .font(.custom("Arial", size: 13))
                     .opacity(0.82)
                     .fixedSize(horizontal: false, vertical: true)
             }
             let values = collectValues()
             ForEach(snapshot.controls ?? [], id: \.id) { control in
-                PanelControlView(control: control, theme: snapshot.theme, onEvent: { controlId, eventName, value, _ in
+                PanelControlView(control: control, onEvent: { controlId, eventName, value, _ in
                     let valuesJSON = (try? String(data: JSONSerialization.data(withJSONObject: values), encoding: .utf8)) ?? "{}"
                     onEvent(snapshot.id, controlId, eventName, value, valuesJSON)
                 }, allValues: values)
@@ -766,12 +757,9 @@ struct PanelCardView: View {
         .frame(width: panelWidth, alignment: .leading)
         .background(bg)
         .foregroundColor(fg)
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(borderColor, lineWidth: 1)
-        )
         .cornerRadius(14)
-        .shadow(color: .black.opacity(0.32), radius: 14, y: 5)
+        .shadow(color: .black.opacity(0.12), radius: 14, y: 5)
+        .preferredColorScheme(.light)
     }
 }
 

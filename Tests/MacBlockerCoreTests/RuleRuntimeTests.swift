@@ -50,6 +50,14 @@ final class RuleRuntimeTests: XCTestCase {
         XCTAssertEqual(action?.requestId, "g:1")
     }
 
+    func testOldPanelColorsDecodeSafelyAndAreNotReencoded() throws {
+        let data = Data(##"{"id":"p","groupId":"g","theme":{"background":"#000000","accent":"#ff0000"},"controls":[]}"##.utf8)
+        let panel = try JSONDecoder().decode(PanelSnapshot.self, from: data)
+        XCTAssertEqual(panel.id, "p")
+        let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(panel)) as? [String: Any]
+        XCTAssertNil(encoded?["theme"])
+    }
+
     func testPanelsComeWithTheLoadAndChangesAfter() throws {
         let runtime = try RuleRuntime()
         let loaded = try runtime.load(groupID: "g", source: """
