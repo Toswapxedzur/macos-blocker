@@ -422,20 +422,6 @@ extension VaultClassifierViewModel {
         } catch { issue = error.localizedDescription }
     }
 
-    func confirmProviderProfileDeletion(profileID: String) {
-        guard localState?.workspaceCatalog.providerProfiles.contains(where: { $0.id == profileID }) == true else {
-            issue = WebBridgeInputError.invalidChoice("provider profile").localizedDescription
-            return
-        }
-        presentNativeConfirmation(
-            title: "Delete provider profile?",
-            message: "This removes the local API key or token and token-usage records. It cannot be undone.",
-            confirmTitle: "Delete profile"
-        ) { [weak self] in
-            self?.deleteProviderProfile(profileID: profileID)
-        }
-    }
-
     func apply(credential: ProviderCredentialRecord, to request: inout URLRequest, plan: ProviderRequestPlan) throws {
         func value(_ preferred: ProviderCredentialField) throws -> String {
             guard let value = credential.values[preferred] ?? credential.values[.apiKey] ?? credential.values[.bearerToken] else {

@@ -734,10 +734,27 @@
   function refreshGroups() {
     var old = scope.getElementById("groups");
     if (old) {
+      var focus = captureGroupFocus(old);
       var positions = captureGroupScrolls(old), next = groupsPanel();
       old.replaceWith(next);
       restoreGroupScrolls(next, positions);
+      restoreGroupFocus(next, focus);
     }
+  }
+
+  function captureGroupFocus(panel) {
+    var active = scope.activeElement;
+    if (!panel || !panel.contains(active) || !active.dataset.groupField) return null;
+    return { editingId: panel.dataset.editingId, field: active.dataset.groupField,
+      start: active.selectionStart, end: active.selectionEnd, direction: active.selectionDirection };
+  }
+
+  function restoreGroupFocus(panel, focus) {
+    if (!panel || !focus || panel.dataset.editingId !== focus.editingId) return;
+    var input = panel.querySelector('[data-group-field="' + focus.field + '"]');
+    if (!input) return;
+    input.focus({ preventScroll: true });
+    if (focus.start !== null) input.setSelectionRange(focus.start, focus.end, focus.direction);
   }
 
   function captureGroupScrolls(panel) {
@@ -766,6 +783,7 @@
     top.appendChild(groupIcon(editing, true));
     var name = el("input");
     name.type = "text";
+    name.dataset.groupField = "name";
     name.placeholder = "Group name";
     name.value = editing.name;
     name.addEventListener("input", function () { editing.name = name.value; });
@@ -800,6 +818,7 @@
 
     var search = el("input");
     search.type = "search";
+    search.dataset.groupField = "search";
     search.placeholder = "Add an app or website";
     search.value = groupSearch;
     third.appendChild(search);
@@ -1624,6 +1643,7 @@
 
   function render() {
     var page = scope.getElementById("page");
+    var groupFocus = captureGroupFocus(scope.getElementById("groups"));
     var groupScrolls = captureGroupScrolls(scope.getElementById("groups"));
     // Panels that scroll keep their place across updates.
     var scrolls = {};
@@ -1647,6 +1667,7 @@
       else scrollToNewest(node);
     });
     freshScroll = { usage: false, content: false };
+    restoreGroupFocus(scope.getElementById("groups"), groupFocus);
   }
 
   // The range's days, as Mac Vault answers them (at most a year).

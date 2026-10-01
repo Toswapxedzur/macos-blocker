@@ -170,6 +170,15 @@ public final class TimerOverlayPanelController {
 
 // MARK: - Panel Overlay (a custom rule's v.panel)
 
+private struct PanelPillButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundColor(.white)
+            .background(Capsule().fill(Color(red: 0.118, green: 0.227, blue: 0.541)))
+            .opacity(configuration.isPressed ? 0.8 : 1)
+    }
+}
+
 /// SwiftUI view for a single panel control.
 struct PanelControlView: View {
     let control: PanelControlSnapshot
@@ -202,7 +211,7 @@ struct PanelControlView: View {
                         .padding(.horizontal, 14)
                         .padding(.vertical, 6)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(PanelPillButtonStyle())
                 .tint(accent)
                 .disabled(control.disabled == true)
 
@@ -296,13 +305,14 @@ struct PanelControlView: View {
                         Text(label).font(.custom("Arial", size: 11)).fontWeight(.medium).opacity(0.7)
                     }
                     ForEach(control.options ?? [], id: \.value) { opt in
-                        HStack(spacing: 6) {
-                            Image(systemName: (control.value?.stringValue ?? "") == opt.value ? "largecircle.fill.circle" : "circle")
-                                .font(.custom("Arial", size: 14))
-                                .foregroundColor(accent)
-                                .onTapGesture { onEvent(control.id, "change", opt.value, "") }
-                            Text(opt.label).font(.custom("Arial", size: 13))
-                        }
+                        Button { onEvent(control.id, "change", opt.value, "") } label: {
+                            HStack(spacing: 6) {
+                                Circle().fill(Color(red: 0.886, green: 0.910, blue: 0.941))
+                                    .frame(width: 16, height: 16)
+                                    .overlay(Circle().fill((control.value?.stringValue ?? "") == opt.value ? accent : .clear).frame(width: 8, height: 8))
+                                Text(opt.label).font(.custom("Arial", size: 13))
+                            }
+                        }.buttonStyle(.plain)
                     }
                 }
                 .disabled(control.disabled == true)
@@ -496,7 +506,7 @@ private struct PanelSliderControl: View {
                     Text(label).font(.custom("Arial", size: 11)).fontWeight(.medium).opacity(0.7)
                     Spacer()
                     Text(String(format: "%g", value))
-                        .font(.system(size: 11, design: .monospaced)).opacity(0.6)
+                        .font(.custom("Arial", size: 11)).monospacedDigit().opacity(0.6)
                 }
             }
             Slider(value: $value, in: range, step: step, onEditingChanged: { editing = $0 })
@@ -538,19 +548,26 @@ private struct PanelToggleControl: View {
     }
 
     var body: some View {
-        Group {
-            if isSwitch {
-                Toggle(isOn: $value) {
-                    Text(control.label ?? "").font(.custom("Arial", size: 13))
+        Button { value.toggle() } label: {
+            HStack(spacing: 7) {
+                if isSwitch {
+                    Capsule().fill(value ? Color(red: 0.118, green: 0.227, blue: 0.541) : Color(red: 0.886, green: 0.910, blue: 0.941))
+                        .frame(width: 32, height: 18)
+                        .overlay(alignment: value ? .trailing : .leading) {
+                            Circle().fill(.white).frame(width: 14, height: 14).padding(2)
+                        }
+                } else {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(value ? Color(red: 0.118, green: 0.227, blue: 0.541) : Color(red: 0.886, green: 0.910, blue: 0.941))
+                        .frame(width: 18, height: 18)
+                        .overlay(Text(value ? "✓" : "").font(.custom("Arial", size: 13)).fontWeight(.bold).foregroundColor(.white))
                 }
-                .toggleStyle(.switch)
-            } else {
-                Toggle(isOn: $value) {
-                    Text(control.label ?? "").font(.custom("Arial", size: 13))
-                }
-                .toggleStyle(.checkbox)
+                Text(control.label ?? "").font(.custom("Arial", size: 13))
             }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .accessibilityValue(value ? "On" : "Off")
         .disabled(control.disabled == true)
         .onChange(of: value) { newValue in
             if suppressEmit { suppressEmit = false; return }
@@ -570,6 +587,7 @@ private struct PanelSelectControl: View {
     let snapshotValue: String
     let onEvent: (String, String, String, String) -> Void
 
+    @State private var expanded = false
     @State private var selection: String
     @State private var suppressEmit = false
 
@@ -583,12 +601,41 @@ private struct PanelSelectControl: View {
     }
 
     var body: some View {
-        Picker("", selection: $selection) {
-            ForEach(control.options ?? [], id: \.value) { opt in
-                Text(opt.label).tag(opt.value)
+        VStack(alignment: .leading, spacing: 4) {
+            Button { expanded.toggle() } label: {
+                HStack {
+                    Text((control.options ?? []).first(where: { $0.value == selection })?.label ?? "—")
+                    Spacer()
+                    Text("▾")
+                }
+                .font(.custom("Arial", size: 13))
+                .padding(.horizontal, 12).padding(.vertical, 7)
+                .foregroundColor(Color(red: 0.118, green: 0.227, blue: 0.541))
+                .background(Capsule().fill(Color(red: 0.933, green: 0.949, blue: 1)))
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            if expanded {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(control.options ?? [], id: \.value) { option in
+                            Button {
+                                selection = option.value
+                                expanded = false
+                            } label: {
+                                Text(option.label).font(.custom("Arial", size: 13))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(7)
+                                    .background(RoundedRectangle(cornerRadius: 6).fill(option.value == selection ? Color(red: 0.859, green: 0.918, blue: 0.996) : .clear))
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                }
+                .frame(height: min(180, CGFloat((control.options ?? []).count) * 31))
+                .padding(4)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color(red: 0.945, green: 0.961, blue: 0.976)))
             }
         }
-        .pickerStyle(.menu)
         .disabled(control.disabled == true)
         .onChange(of: selection) { newValue in
             if suppressEmit { suppressEmit = false; return }
@@ -670,12 +717,12 @@ private struct PanelPinControl: View {
         let display: String = index < chars.count ? (masked ? "\u{2022}" : String(chars[index])) : ""
         let isActive = focused && index == filledIndex
         return RoundedRectangle(cornerRadius: 6, style: .continuous)
-            .fill(Color.gray.opacity(0.22))
+            .fill(Color(red: 0.945, green: 0.961, blue: 0.976))
             .overlay(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(isActive ? Color.accentColor : Color.gray.opacity(0.4), lineWidth: 1)
+                    .fill(isActive ? Color(red: 0.859, green: 0.918, blue: 0.996) : .clear)
             )
-            .overlay(Text(display).font(.system(size: 18, weight: .semibold, design: .monospaced)))
+            .overlay(Text(display).font(.custom("Arial", size: 18)).fontWeight(.semibold).monospacedDigit())
             .frame(width: 32, height: 40)
     }
 
@@ -800,8 +847,14 @@ final class PanelOverlayModel: ObservableObject {
 }
 
 /// Stack of panels grouped by position.
+private struct PanelContentSizeKey: PreferenceKey {
+    static var defaultValue: CGSize = .zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) { value = nextValue() }
+}
+
 struct PanelOverlayView: View {
     @ObservedObject var model: PanelOverlayModel
+    var contentSizeChanged: () -> Void = {}
 
     private var stackAlignment: HorizontalAlignment {
         switch model.position {
@@ -821,6 +874,11 @@ struct PanelOverlayView: View {
                 }
             }
         }
+        .fixedSize(horizontal: false, vertical: true)
+        .background(GeometryReader { geometry in
+            Color.clear.preference(key: PanelContentSizeKey.self, value: geometry.size)
+        })
+        .onPreferenceChange(PanelContentSizeKey.self) { _ in contentSizeChanged() }
         .contentShape(Rectangle())
         .onTapGesture {
             NSApp.keyWindow?.makeFirstResponder(nil)
@@ -952,7 +1010,12 @@ public final class PanelOverlayPanelController {
         }
         let model = PanelOverlayModel(position: position)
         model.onEvent = eventHandler
-        let hosting = NSHostingView(rootView: PanelOverlayView(model: model))
+        let hosting = NSHostingView(rootView: PanelOverlayView(model: model, contentSizeChanged: { [weak self] in
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let panel = self.slots[position]?.panel else { return }
+                self.resizeAndPosition(panel, position: position)
+            }
+        }))
         let panel = KeyablePanel(
             contentRect: NSRect(x: 0, y: 0, width: 300, height: 40),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -990,7 +1053,7 @@ public final class PanelOverlayPanelController {
             panel.setContentSize(size)
             return
         }
-        let frame = screen.frame
+        let frame = screen.visibleFrame
         let origin: NSPoint
         switch position {
         case "top-left":
