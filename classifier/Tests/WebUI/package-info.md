@@ -1,5 +1,10 @@
 # Classifier Web UI regressions
 
+`tagging-controls.js` checks the directly visible per-group Pause/Resume button,
+the Classifier Settings enable switch, native autosave and independent pause
+state. Run through `autosave.mjs` with `UI_TEST_SCRIPT=classifier/Tests/WebUI/tagging-controls.js`
+and `UI_TEST_EXPRESSION='runTaggingControlTests()'` on mini1.
+
 `autosave.html` renders the production Classifier assets with synthetic local
 state and an in-memory native-action receiver. `autosave.mjs` serves that
 fixture and drives Chrome for Testing through CDP on mini1. It checks real

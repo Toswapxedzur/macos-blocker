@@ -78,17 +78,18 @@ extension LocalClassifierCoordinator {
                 onDeviceLLM,
                 onDeviceLLMEngineResolver,
                 state.settings.research,
-                groundedResearchQueue
+                groundedResearchQueue,
+                state.settings.classificationEnabled
             )
         }
         let (
-            catalog, defaultLLM, engineResolver, globalResearchSettings, researchQueue
+            catalog, defaultLLM, engineResolver, globalResearchSettings, researchQueue, classificationEnabled
         ) = snapshot
 
         guard let binding = catalog.bindings.first(where: { $0.id == platformID }), binding.collectionEnabled else {
             throw PlatformCollectionError.disabled(platformID)
         }
-        let types = Self.orderedTypes(for: platformID, in: catalog)
+        let types = classificationEnabled ? Self.orderedTypes(for: platformID, in: catalog).filter { !$0.isPaused } : []
         guard !types.isEmpty, !items.isEmpty else {
             return Dictionary(items.map { ($0.entryID, VideoTagsProjection(tags: [], predicted: false)) }, uniquingKeysWith: { first, _ in first })
         }
@@ -102,6 +103,7 @@ extension LocalClassifierCoordinator {
         )] = []
 
         for type in types {
+            guard enabledClassificationPlatformIDs().contains(platformID) else { break }
             guard let tree = catalog.trees.first(where: { $0.id == type.treeID }),
                   type.treeRevision == tree.revision else { continue }
             let settings = type.localModel
@@ -169,13 +171,18 @@ extension LocalClassifierCoordinator {
             }
         }
         let (saved, authorTasks) = try lock.withLock { () -> (WorkspaceCatalog, [ResearchTask]) in
-            for classification in classifications { state.workspaceCatalog.upsertVideoClassification(classification) }
+            let activeIDs = state.settings.classificationEnabled
+                ? Set(state.workspaceCatalog.classifierTypes.filter { !$0.isPaused }.map(\.id)) : []
+            for classification in classifications where activeIDs.contains(classification.classifierTypeID) {
+                state.workspaceCatalog.upsertVideoClassification(classification)
+            }
             // Author accumulation (§8): every model classification adds its derived
             // urgency to the creator's windowed accumulator; a creator that is
             // consistently hard to classify crosses the threshold → an author task.
             var authorTasks: [ResearchTask] = []
             let nowMilliseconds = WorkspaceCatalog.now()
             for candidate in researchCandidates where candidate.classification.source == .model {
+                guard activeIDs.contains(candidate.type.id) else { continue }
                 guard let meanUrgency = state.workspaceCatalog.recordCreatorResearchUrgency(
                     classifierTypeID: candidate.type.id,
                     creatorID: candidate.input.creatorID,

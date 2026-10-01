@@ -17,6 +17,16 @@ extension LocalClassifierCoordinator {
         return state.workspaceCatalog.classifierTypes.contains { $0.applicablePlatformIDs.contains(platformID) }
     }
 
+    /// The native Classifier owns activation; browser blocking schedules do not.
+    public func enabledClassificationPlatformIDs() -> [String] {
+        lock.withLock {
+            guard state.settings.classificationEnabled else { return [] }
+            let recording = Set(state.workspaceCatalog.bindings.filter(\.collectionEnabled).map(\.id))
+            return Set(state.workspaceCatalog.classifierTypes.filter { !$0.isPaused }
+                .flatMap(\.applicablePlatformIDs)).intersection(recording).sorted()
+        }
+    }
+
     /// Stores an authoritative human correction and updates the cached
     /// projection. A correction never schedules research: research is driven by
     /// the model's own uncertainty (derived urgency), and a human-corrected video

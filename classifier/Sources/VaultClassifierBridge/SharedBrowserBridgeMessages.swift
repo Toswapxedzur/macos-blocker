@@ -23,19 +23,25 @@ public struct NativeCollectionInfoRequest: Codable, Equatable, Sendable {
 
 public struct NativeCollectionInfoResponse: Codable, Equatable, Sendable {
     public var enabledPlatformIDs: [String]
+    public var classifierPlatformIDs: [String]
+    public var taggingPlatformIDs: [String]
     /// True when the native app runs in the development environment. Lets the
     /// extension auto-enable dev logging without a manual toggle.
     public var developmentMode: Bool
-    public init(enabledPlatformIDs: [String], developmentMode: Bool = false) {
+    public init(enabledPlatformIDs: [String], classifierPlatformIDs: [String] = [], taggingPlatformIDs: [String] = [], developmentMode: Bool = false) {
         self.enabledPlatformIDs = enabledPlatformIDs.sorted()
+        self.classifierPlatformIDs = classifierPlatformIDs.sorted()
+        self.taggingPlatformIDs = taggingPlatformIDs.sorted()
         self.developmentMode = developmentMode
     }
 
-    private enum CodingKeys: String, CodingKey { case enabledPlatformIDs, developmentMode }
+    private enum CodingKeys: String, CodingKey { case enabledPlatformIDs, classifierPlatformIDs, taggingPlatformIDs, developmentMode }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         enabledPlatformIDs = (try container.decodeIfPresent([String].self, forKey: .enabledPlatformIDs) ?? []).sorted()
+        classifierPlatformIDs = (try container.decodeIfPresent([String].self, forKey: .classifierPlatformIDs) ?? []).sorted()
+        taggingPlatformIDs = (try container.decodeIfPresent([String].self, forKey: .taggingPlatformIDs) ?? []).sorted()
         developmentMode = try container.decodeIfPresent(Bool.self, forKey: .developmentMode) ?? false
     }
 }

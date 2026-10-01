@@ -28,6 +28,8 @@ window.webkit={messageHandlers:{vaultClassifier:{postMessage(message){
   commands.push(structuredClone(message));
   const {action,data}=message, type=testState.assets.classifierTypes.find(t=>t.id===data.typeID);
   switch(action){
+    case 'setClassifierTypePaused':type.isPaused=data.paused;break;
+    case 'saveClassificationSettings':testState.settings.classificationEnabled=data.classificationEnabled;break;
     case 'confirmDeleteClassifierType':testState.assets.classifierTypes=testState.assets.classifierTypes.filter(t=>t.id!==data.typeID);break;
     case 'configureClassifierType':type.name=data.name.trim();break;
     case 'saveClassifierTypeLocalModel':type.localModel={speedQuality:data.speedQuality,strictness:Number(data.strictness),houseRules:data.houseRules||'',minimumTagsOverride:data.minimumTagsOverride===''||data.minimumTagsOverride==null?null:Number(data.minimumTagsOverride),maximumTagsOverride:data.maximumTagsOverride===''||data.maximumTagsOverride==null?null:Number(data.maximumTagsOverride)};break;

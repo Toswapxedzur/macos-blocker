@@ -98,6 +98,7 @@ extension VaultClassifierViewModel {
     }
 
     func broadcastResolvedVideoTags(platformID: String, entryID: String, projection: VideoTagsProjection) {
+        guard coordinator?.enabledClassificationPlatformIDs().contains(platformID) == true else { return }
         // The classifier only tags — it makes no block decision. The verdict is
         // the extension's job (its custom-rule engine reads these tags). So the
         // broadcast carries tags + confidence only; feed/page default to allow.
@@ -133,7 +134,11 @@ extension VaultClassifierViewModel {
                 return try sharedHubReply(NativeBridgeInfoResponse())
             case .collectionInfo:
                 _ = try JSONDecoder().decode(NativeCollectionInfoRequest.self, from: request.bodyData)
-                let response = NativeCollectionInfoResponse(enabledPlatformIDs: coordinator.enabledCollectionPlatformIDs(), developmentMode: VaultDevLog.shared.isEnabled)
+                let response = NativeCollectionInfoResponse(
+                    enabledPlatformIDs: coordinator.enabledCollectionPlatformIDs(),
+                    classifierPlatformIDs: Array(Set(coordinator.snapshot().workspaceCatalog.classifierTypes.flatMap(\.applicablePlatformIDs))),
+                    taggingPlatformIDs: coordinator.enabledClassificationPlatformIDs(),
+                    developmentMode: VaultDevLog.shared.isEnabled)
                 collectionDiagnostics?.record(event: "collection-info-served", outcome: response.enabledPlatformIDs.isEmpty ? "disabled" : "enabled")
                 return try sharedHubReply(response)
             case .diagnostic:
@@ -179,6 +184,10 @@ extension VaultClassifierViewModel {
                         platformID: videoTags.platformID, entryID: videoTags.entryID,
                         tags: [Self.creatorEchoTag(creatorID: videoTags.creatorID)], predicted: false, pending: false))
                 }
+                guard coordinator.enabledClassificationPlatformIDs().contains(videoTags.platformID) else {
+                    return try sharedHubReply(NativeVideoTagsResponse(
+                        platformID: videoTags.platformID, entryID: videoTags.entryID, tags: [], predicted: false, pending: false))
+                }
                 if let cached = coordinator.cachedVideoTags(platformID: videoTags.platformID, entryID: videoTags.entryID) {
                     devLog("video-tags", ["platform": videoTags.platformID, "entry": videoTags.entryID, "outcome": "cached", "tags": "\(cached.tags.count)"])
                     return try sharedHubReply(NativeVideoTagsResponse(
@@ -214,6 +223,11 @@ extension VaultClassifierViewModel {
                                 tags: [Self.creatorEchoTag(creatorID: item.creatorID)],
                                 predicted: false, pending: false)
                         }))
+                }
+                guard coordinator.enabledClassificationPlatformIDs().contains(batch.platformID) else {
+                    return try sharedHubReply(NativeVideoTagsBatchResponse(platformID: batch.platformID, items: batch.items.map {
+                        NativeVideoTagsBatchResponseItem(entryID: $0.entryID, tags: [], predicted: false, pending: false)
+                    }))
                 }
                 let platformHasTypes = coordinator.hasClassifierTypes(platformID: batch.platformID)
                 var responses: [NativeVideoTagsBatchResponseItem] = []
