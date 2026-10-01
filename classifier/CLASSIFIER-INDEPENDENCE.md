@@ -1,5 +1,11 @@
 # Vault Classifier — Independence & Simplification
 
+**Current dial ownership (owner 2026-10-01):** groups own concrete
+`localModel: LocalLLMSettings`; global dial/house-rule inheritance and its save
+action are retired. Full dial/download UI is inside each group's More. The old
+state reconciles effective values once, then encodes only group settings.
+The phase records below describe the earlier split.
+
 > **Status: ALL SEVEN PHASES BUILT (2026-09-18).** Owner ask:
 > "make the classifier more independent, clearer and simpler logic, more concise
 > and better" — all tiers, balanced. Each phase landed as its own verified

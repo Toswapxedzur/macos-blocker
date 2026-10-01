@@ -4,7 +4,7 @@ import VaultClassifierResearch
 import VaultClassifierBridge
 import VaultClassifierLLM
 
-// Global and per-type settings: package update mode, the two dials + house rules (+ engine reinstall), research on/off + provider and its enable-validation, per-type dial/house-rule/research overrides and the web-input parsers that feed them.
+// Package/research settings, independent group dials and house rules, and web-input validation.
 // Split out of VaultClassifierApp.swift (CLASSIFIER-INDEPENDENCE §7, Phase 5):
 // same type, same behaviour — pinned by ViewModelCharacterizationTests.
 @MainActor
@@ -21,32 +21,9 @@ extension VaultClassifierViewModel {
             guard let coordinator else { return }
             let settings = ClassifierSettings(
                 packageUpdateMode: packageUpdateMode,
-                localLLM: llmSettings,
                 research: localState?.settings.research ?? ResearchSettings()
             )
             try coordinator.updateSettings(settings)
-            refreshLocalState()
-            issue = nil
-        } catch {
-            issue = error.localizedDescription
-        }
-    }
-
-    /// Persists ordinary edits live. Only a changed model tier needs a fresh
-    /// engine; typing house rules must not repeatedly reload the model.
-    func saveLocalLLMSettings(_ updated: LocalLLMSettings) {
-        guard let coordinator else { return }
-        do {
-            let changedModelTier = llmSettings.speedQuality != updated.speedQuality
-            llmSettings = updated
-            let settings = ClassifierSettings(
-                packageUpdateMode: packageUpdateMode,
-                localLLM: updated,
-                research: localState?.settings.research ?? ResearchSettings()
-            )
-            try coordinator.updateSettings(settings)
-            coordinator.setClassificationOptions(houseRules: updated.houseRules)
-            if changedModelTier { installLocalLLMEngine(coordinator: coordinator) }
             refreshLocalState()
             issue = nil
         } catch {
@@ -62,7 +39,6 @@ extension VaultClassifierViewModel {
             let current = localState?.settings ?? .init()
             try coordinator.updateSettings(.init(
                 packageUpdateMode: current.packageUpdateMode,
-                localLLM: current.localLLM,
                 research: updated
             ))
             refreshLocalState()
@@ -112,9 +88,8 @@ extension VaultClassifierViewModel {
         }
     }
 
-    /// Sets a type's own dial positions and house rules (nil / empty = follow
-    /// the global settings).
-    func saveClassifierTypeLocalModel(typeID: String, overrides: LocalModelOverrides?) {
+    /// Persists a group's independent dial positions and house rules.
+    func saveClassifierTypeLocalModel(typeID: String, settings: LocalLLMSettings) {
         do {
             guard var catalog = localState?.workspaceCatalog,
                   let index = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }),
@@ -123,7 +98,7 @@ extension VaultClassifierViewModel {
                   }) else {
                 throw WebBridgeInputError.invalidChoice("classifier type local model")
             }
-            catalog.classifierTypes[index].localModelOverrides = overrides?.isEmpty == false ? overrides : nil
+            catalog.classifierTypes[index].localModel = settings
             catalog.classifierTypes[index].updatedAtMilliseconds = WorkspaceCatalog.now()
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
@@ -133,42 +108,24 @@ extension VaultClassifierViewModel {
         }
     }
 
-    /// The per-type local-model form: `speedQuality` ("" or a tier), `strictness`
-    /// ("" or 1–5) and `houseRules` (blank = none). Anything blank follows the
-    /// global setting; an unknown position is refused.
+    /// Both dial positions are required; blank house rules means no rules.
     static func parseClassifierTypeLocalModelWebInput(
         _ data: [String: Any]
     ) throws -> ClassifierTypeLocalModelWebInput {
         guard let typeID = data["typeID"] as? String, !typeID.isEmpty, typeID.count <= 256 else {
             throw WebBridgeInputError.missingValue("typeID")
         }
-        let speedQuality: SpeedQualityDial?
-        if let raw = (data["speedQuality"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
-            guard let resolved = SpeedQualityDial.resolve(raw) else { throw WebBridgeInputError.invalidChoice("speedQuality") }
-            speedQuality = resolved
-        } else {
-            speedQuality = nil
+        guard let speedQuality = SpeedQualityDial.resolve(data["speedQuality"] as? String) else {
+            throw WebBridgeInputError.invalidChoice("speedQuality")
         }
-        let strictness: StrictnessDial?
-        if let raw = optionalWebInteger(data["strictness"]) {
-            guard let resolved = StrictnessDial.resolve(raw) else { throw WebBridgeInputError.invalidChoice("strictness") }
-            strictness = resolved
-        } else if let raw = (data["strictness"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+        guard let strictness = StrictnessDial.resolve(optionalWebInteger(data["strictness"])) else {
             throw WebBridgeInputError.invalidChoice("strictness")
-        } else {
-            strictness = nil
         }
-        let houseRules: String?
-        if let raw = data["houseRules"] as? String {
-            guard raw.count <= LocalLLMSettings.maximumHouseRulesLength else {
-                throw WebBridgeInputError.exceedsLimit("houseRules", LocalLLMSettings.maximumHouseRulesLength)
-            }
-            houseRules = raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : raw
-        } else {
-            houseRules = nil
+        let houseRules = data["houseRules"] as? String ?? ""
+        guard houseRules.count <= LocalLLMSettings.maximumHouseRulesLength else {
+            throw WebBridgeInputError.exceedsLimit("houseRules", LocalLLMSettings.maximumHouseRulesLength)
         }
-        let overrides = LocalModelOverrides(houseRules: houseRules, speedQuality: speedQuality, strictness: strictness)
-        return .init(typeID: typeID, overrides: overrides.isEmpty ? nil : overrides)
+        return .init(typeID: typeID, settings: .init(speedQuality: speedQuality, strictness: strictness, houseRules: houseRules))
     }
 
     /// The per-type research form: `researchMode` is "inherit", "on" or "off".
@@ -188,8 +145,6 @@ extension VaultClassifierViewModel {
 
     func loadResourceSettings(from settings: ClassifierSettings) {
         packageUpdateMode = settings.packageUpdateMode
-        llmSettings = settings.localLLM
-        coordinator?.setClassificationOptions(houseRules: settings.localLLM.houseRules)
     }
 
     func positiveInteger(_ raw: String, label: String) throws -> Int {

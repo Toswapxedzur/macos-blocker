@@ -34,7 +34,6 @@ final class ViewModelCharacterizationTests: XCTestCase {
         let vm = try makeViewModel()
         XCTAssertNil(vm.issue, "headless construction must not surface an error")
         XCTAssertNotNil(vm.localState)
-        XCTAssertEqual(vm.llmEngineStatus, "disabled")
         XCTAssertEqual(vm.workspace, .browserBridge)
     }
 
@@ -52,20 +51,13 @@ final class ViewModelCharacterizationTests: XCTestCase {
         XCTAssertTrue(snapshot["issue"] is NSNull)
     }
 
-    func testWebSnapshotLocalLLMSettingsShapeIsPinned() throws {
+    func testSharedModelCatalogHasNoGlobalDials() throws {
         let vm = try makeViewModel()
         let settings = try XCTUnwrap(vm.webSnapshot()["settings"] as? [String: Any])
-        let llm = try XCTUnwrap(settings["localLLM"] as? [String: Any])
-        XCTAssertEqual(
-            Set(llm.keys),
-            ["speedQuality", "strictness", "houseRules", "modelFileName", "systemRAMGB",
-             "engineStatus", "modelLibrary"]
-        )
-        // Defaults: the Balanced tier, the Balanced position.
-        XCTAssertEqual(llm["speedQuality"] as? String, "balanced")
-        XCTAssertEqual(llm["strictness"] as? Int, 3)
-        XCTAssertEqual(llm["modelFileName"] as? String, "Qwen2.5-7B-Instruct-Q4_K_M.gguf")
-        XCTAssertEqual((llm["modelLibrary"] as? [[String: Any]])?.count, 3)
+        XCTAssertNil(settings["localLLM"])
+        let library = try XCTUnwrap(settings["localModels"] as? [String: Any])
+        XCTAssertEqual(Set(library.keys), ["systemRAMGB", "modelLibrary"])
+        XCTAssertEqual((library["modelLibrary"] as? [[String: Any]])?.count, 3)
     }
 
     // MARK: - Action routing
@@ -99,24 +91,22 @@ final class ViewModelCharacterizationTests: XCTestCase {
         XCTAssertNotNil(vm.issue)
     }
 
-    func testSaveLocalLLMSettingsRoundTripsThroughTheSnapshot() throws {
+    func testGroupDialsPersistIndependentlyAndGlobalSaveIsRetired() throws {
         let vm = try makeViewModel()
-        let ok = vm.performWebAction("saveLocalLLMSettings", data: [
-            "speedQuality": "fast", "strictness": "5", "houseRules": "prefer specific tags",
+        _ = vm.performWebAction("createClassifierType", data: ["name": "A", "platformIDs": ["youtube"]])
+        _ = vm.performWebAction("createClassifierType", data: ["name": "B", "platformIDs": ["reddit"]])
+        let groups = try XCTUnwrap(vm.localState?.workspaceCatalog.classifierTypes)
+        XCTAssertEqual(groups.count, 2)
+        _ = vm.performWebAction("saveClassifierTypeLocalModel", data: [
+            "typeID": groups[0].id, "speedQuality": "fast", "strictness": "5", "houseRules": "prefer specific tags"
         ])
-        XCTAssertTrue(ok)
         XCTAssertNil(vm.issue)
-        let llm = try XCTUnwrap((vm.webSnapshot()["settings"] as? [String: Any])?["localLLM"] as? [String: Any])
-        XCTAssertEqual(llm["speedQuality"] as? String, "fast")
-        XCTAssertEqual(llm["strictness"] as? Int, 5)
-        XCTAssertEqual(llm["houseRules"] as? String, "prefer specific tags")
-        // And it persisted through the coordinator, not just the published mirror.
-        XCTAssertEqual(vm.localState?.settings.localLLM.strictness, .broadest)
-        XCTAssertEqual(vm.localState?.settings.localLLM.speedQuality, .fast)
-        // Unknown positions are refused and surfaced.
-        XCTAssertTrue(vm.performWebAction("saveLocalLLMSettings", data: ["speedQuality": "turbo", "strictness": "3", "houseRules": ""]))
+        XCTAssertEqual(vm.localState?.workspaceCatalog.classifierTypes[0].localModel.speedQuality, .fast)
+        XCTAssertEqual(vm.localState?.workspaceCatalog.classifierTypes[1].localModel, .init())
+        let before = vm.localState
+        _ = vm.performWebAction("saveLocalLLMSettings", data: ["speedQuality": "best", "strictness": "1"])
         XCTAssertNotNil(vm.issue)
-        XCTAssertEqual(vm.localState?.settings.localLLM.speedQuality, .fast, "a refused save changes nothing")
+        XCTAssertEqual(vm.localState, before)
     }
 
     /// The complete web-action vocabulary. Each is probed with EMPTY data: a
@@ -131,11 +121,11 @@ final class ViewModelCharacterizationTests: XCTestCase {
             "confirmDeleteClassifierType", "createProviderProfile", "testProviderProfile", "updateProviderConnection",
             "probeProviderModelCatalog", "confirmDeleteProviderProfile", "rearrangeTree",
             "addTag", "moveTag", "renameTag", "updateTag", "connectTag", "disconnectTag", "deleteTag",
-            "savePackageSettings", "saveLocalLLMSettings", "downloadModel", "cancelModelDownload", "deleteModelFile",
+            "savePackageSettings", "downloadModel", "cancelModelDownload", "deleteModelFile",
             "deleteKnowledgeEntry", "addKnowledgeCreator", "editKnowledgeEntry", "retryFailedResearch", "saveResearchSettings", "saveClassifierTypeLocalModel", "saveClassifierTypeResearch", "setBackupOwnerCode", "unlockBackup",
             "saveBackup", "backupNow",
         ]
-        XCTAssertEqual(actions.count, 38)
+        XCTAssertEqual(actions.count, 37)
         let unsupported = WebBridgeInputError.invalidChoice("action").localizedDescription
         for action in actions {
             let vm = try makeViewModel()
@@ -169,9 +159,9 @@ final class ViewModelCharacterizationTests: XCTestCase {
 
     func testSaveLocalLLMSettingsRejectsMalformedInputWithoutMutation() throws {
         let vm = try makeViewModel()
-        let before = vm.localState?.settings.localLLM
+        let before = vm.localState?.workspaceCatalog
         XCTAssertTrue(vm.performWebAction("saveLocalLLMSettings", data: ["maximumTags": "3"]), "the error path re-sends the snapshot")
         XCTAssertNotNil(vm.issue)
-        XCTAssertEqual(vm.localState?.settings.localLLM, before)
+        XCTAssertEqual(vm.localState?.workspaceCatalog, before)
     }
 }

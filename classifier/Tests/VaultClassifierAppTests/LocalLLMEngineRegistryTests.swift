@@ -74,7 +74,7 @@ final class LocalLLMEngineRegistryTests: XCTestCase {
         XCTAssertEqual(cache.count, 2)
     }
 
-    func testPinnedDefaultCountsTowardOneModelCapacity() {
+    func testProtectedActiveModelCountsTowardOneModelCapacity() {
         final class Engine {}
         let defaultEngine = Engine()
         let selectedEngine = Engine()
@@ -92,23 +92,21 @@ final class LocalLLMEngineRegistryTests: XCTestCase {
         XCTAssertNil(cache.value(for: "selected.gguf"))
     }
 
-    func testMissingSelectedFileFallsBackToConfiguredGlobalModel() throws {
+    func testMissingSelectedFileDoesNotRunAnotherTier() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let globalFileName = LocalLLMSettings(speedQuality: .balanced).modelFileName
-        let global = directory.appendingPathComponent(globalFileName)
-        XCTAssertTrue(FileManager.default.createFile(atPath: global.path, contents: Data()))
+        let otherTierFileName = LocalLLMSettings(speedQuality: .balanced).modelFileName
+        let other = directory.appendingPathComponent(otherTierFileName)
+        XCTAssertTrue(FileManager.default.createFile(atPath: other.path, contents: Data()))
 
-        let resolved = try LocalLLMEngineRegistry.resolvedModelPath(
+        XCTAssertThrowsError(try LocalLLMEngineRegistry.resolvedModelPath(
             requestedFileName: "missing.gguf",
             configuration: .init(speedQuality: .balanced),
             modelsDirectory: directory,
             environment: [:],
-            availableModelFiles: [globalFileName]
-        )
-
-        XCTAssertEqual(resolved, global.path)
+            availableModelFiles: [otherTierFileName]
+        ))
     }
 }

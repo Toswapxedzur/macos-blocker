@@ -413,7 +413,6 @@ extension VaultClassifierViewModel {
                 }
                 try coordinator?.updateSettings(.init(
                     packageUpdateMode: currentSettings.packageUpdateMode,
-                    localLLM: currentSettings.localLLM,
                     research: research
                 ))
             }
