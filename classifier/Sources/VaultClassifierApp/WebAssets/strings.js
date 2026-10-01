@@ -205,6 +205,8 @@ window.VaultClassifierStrings = Object.freeze({
   "navigation.browserBridge": "Classifier Type",
   "navigation.browserBridgeMeta": "Decision brains",
   "navigation.more": "More",
+  "bridge.overrides.followGlobal": "Uses global settings",
+  "bridge.overrides.houseRules": "Custom house rules",
   "navigation.knowledge": "Knowledge",
   "navigation.knowledgeMeta": "Known creators & terms",
   "navigation.localProfile": "Local profile",

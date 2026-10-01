@@ -5,6 +5,7 @@ state and an in-memory native-action receiver. `autosave.mjs` serves that
 fixture and drives Chrome for Testing through CDP on mini1. It checks real
 input/change/focus/composition handlers, delayed snapshots, dialog Escape/Tab
 focus restoration, creation drafts and related selector widths;
+Knowledge access, separate Trash disclosure, group More state and override summaries;
 it never connects to the owner's Classifier state or any provider.
 
 `activity.html` exercises the production Activity renderer with synthetic state:
