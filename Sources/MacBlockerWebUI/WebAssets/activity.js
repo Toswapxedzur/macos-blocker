@@ -400,6 +400,18 @@
     return off;
   }
 
+  function infoField(anchor, key, label, text) {
+    anchor.dataset.infoKey = key;
+    anchor.dataset.infoLabel = label;
+    anchor.dataset.infoCopy = text;
+    return anchor;
+  }
+  function infoControl(control, key, label, text) {
+    var row = infoField(el("div", "vui-info-field"), key, label, text);
+    row.appendChild(control);
+    return row;
+  }
+
   function keepSelect(value, follow, onChange) {
     var sel = el("select");
     var choices = (follow ? [[-1, "Same as all (" + follow + ")"]] : []).concat(RETENTIONS);
@@ -423,6 +435,7 @@
     all.appendChild(el("span", "name", "All history"));
     var allKeep = el("label"); allKeep.appendChild(document.createTextNode("Keep"));
     allKeep.appendChild(keepSelect(global, null, function (days) { send({ kind: "setSettings", retentionDays: days }); }));
+    infoField(allKeep, "retention:all", "Keep all history", "How long recorded history is retained. Categories and platform feeds follow this value unless they have their own setting. Older records are deleted automatically.");
     all.appendChild(allKeep);
     box.appendChild(all);
     KINDS.forEach(function (c) {
@@ -431,12 +444,14 @@
       row.appendChild(el("span", "name", c.title));
       var rec = el("label"); var sw = el("input"); sw.type = "checkbox"; sw.checked = !!cat.enabled;
       sw.addEventListener("change", function () { send({ kind: "setSettings", category: c.key, enabled: sw.checked }); });
+      infoField(rec, "record:" + c.key, "Record " + c.title, "Record new " + c.title.toLowerCase() + " history. Turning recording off leaves saved history in place.");
       rec.appendChild(sw); rec.appendChild(document.createTextNode("Record")); row.appendChild(rec);
       var keep = el("label"); keep.appendChild(document.createTextNode("Keep"));
       var own = typeof cat.retentionDays === "number" ? cat.retentionDays : -1;
       keep.appendChild(keepSelect(own, globalName.toLowerCase(), function (days) {
         send({ kind: "setSettings", category: c.key, retentionDays: days });
       }));
+      infoField(keep, "keep:" + c.key, "Keep " + c.title, "How long this category’s history is retained. Choose Same as all to follow the shared retention setting; older records are deleted automatically.");
       row.appendChild(keep);
       // Every delete asks once more (VaultUI.confirmClick, as in every section).
       var del = deleteButton("Delete history", "history:" + c.key, function () {
@@ -464,11 +479,13 @@
       row.appendChild(name);
       var rec = el("label"); var sw = el("input"); sw.type = "checkbox"; sw.checked = !!p.record;
       sw.addEventListener("change", function () { send({ kind: "collection-record", platformID: p.id, record: sw.checked }); });
+      infoField(rec, "feed-record:" + p.id, "Record " + p.name, "Record content seen on this platform for the Classifier. Content is tagged only while its platform feed is recorded.");
       rec.appendChild(sw); rec.appendChild(document.createTextNode("Record")); row.appendChild(rec);
       var keep = el("label"); keep.appendChild(document.createTextNode("Keep"));
       keep.appendChild(keepSelect(typeof p.keepDays === "number" ? p.keepDays : -1, globalName.toLowerCase(), function (days) {
         send({ kind: "collection-keep", platformID: p.id, days: days });
       }));
+      infoField(keep, "feed-keep:" + p.id, "Keep " + p.name, "How long this platform’s feed entries are retained. Choose Same as all to follow the shared retention setting; older entries are deleted automatically.");
       row.appendChild(keep);
       var del = deleteButton("Delete collected data", "feed:" + p.id, function () {
         send({ kind: "collection-clear", platformID: p.id });
@@ -787,7 +804,7 @@
     name.placeholder = "Group name";
     name.value = editing.name;
     name.addEventListener("input", function () { editing.name = name.value; });
-    top.appendChild(name);
+    top.appendChild(infoControl(name, "activity-group-name", "Group name", "The name shown for this Activity group. The change is saved when you click Save."));
     first.appendChild(top);
     var mergeRow = el("label", "group-merge");
     var merge = el("input");
@@ -796,6 +813,7 @@
     merge.addEventListener("change", function () { editing.merge = merge.checked; });
     mergeRow.appendChild(merge);
     mergeRow.appendChild(document.createTextNode("Merge — show as one, in one colour, everywhere"));
+    infoField(mergeRow, "activity-group-merge", "Merge group", "Show the group’s members as one item with one shared color throughout Activity. A view group keeps each member separate. Saved when you click Save.");
     first.appendChild(mergeRow);
 
     var chips = el("div", "chips vui-list-box group-selected-members");
@@ -813,7 +831,7 @@
       }, "chip-remove"));
       chips.appendChild(chip);
     });
-    second.appendChild(el("div", "chart-subtitle", "Members"));
+    second.appendChild(infoField(el("div", "chart-subtitle", "Members"), "activity-group-members", "Members", "The apps and websites included in this Activity group. Add from the search results or remove with the cross, then click Save."));
     second.appendChild(chips);
 
     var search = el("input");
@@ -821,7 +839,7 @@
     search.dataset.groupField = "search";
     search.placeholder = "Add an app or website";
     search.value = groupSearch;
-    third.appendChild(search);
+    third.appendChild(infoControl(search, "activity-member-search", "Find members", "Search known apps and websites to add to this Activity group. Searching does not change its saved members."));
     var found = el("div", "group-members");
     function fill() {
       found.textContent = "";
@@ -1191,7 +1209,7 @@
     toolbar.appendChild(el("div", "chart-subtitle", "Timeline"));
     if (isUsage) {
       var control = el("label", "block-length-control");
-      control.appendChild(el("span", null, "Time interval"));
+      control.appendChild(infoField(el("span", null, "Time interval"), "activity-time-interval", "Time interval", "Group timeline usage into vertical time intervals to reduce thin segments. Exact shows the original intervals. This changes the chart, not recorded usage."));
       var select = el("select");
       select.setAttribute("aria-label", "Activity time interval");
       [[0, "Exact"], [5, "5 min"], [15, "15 min"], [30, "30 min"], [60, "1 hour"]].forEach(function (choice) {
@@ -1308,7 +1326,7 @@
     if (!choices.some(function (c) { return c[0] === usageFocus; })) choices.push([usageFocus, focusName(usageFocus)]);
     choices.forEach(function (c) { var o = el("option", null, c[1]); o.value = c[0]; o.selected = c[0] === usageFocus; select.appendChild(o); });
     select.addEventListener("change", function () { setUsageFocus(select.value); });
-    return select;
+    return infoControl(select, "activity-usage-filter", "Usage filter", "Show all usage, one app or website, or an Activity group. Filtering does not change recorded history.");
   }
 
   function setUsageFocus(id) {
@@ -1586,7 +1604,7 @@
     })("");
     choices.forEach(function (c) { var o = el("option", null, c[1]); o.value = c[0]; o.selected = c[0] === contentFocus; select.appendChild(o); });
     select.addEventListener("change", function () { setContentFocus(select.value); });
-    return select;
+    return infoControl(select, "activity-content-filter", "Content filter", "Show all viewed content or content with the selected tag. Filtering does not change recorded history.");
   }
 
   function setContentFocus(id) {
@@ -1730,6 +1748,7 @@
   }
   function rangeTabs(section) {
     var tabs = el("div", "vui-tabs range-tabs");
+    infoField(tabs, "activity-range:" + section, "Date range", "Choose a rolling date range or a custom starting day. Custom date shows history from that day until now.");
     var current = ranges[section];
     RANGES.forEach(function (r) {
       var b = textButton(r[1], function () { setRange(section, r[0]); }, "vui-tab");

@@ -1216,3 +1216,13 @@ textarea:focus {
 .knowledge-suggestions.vui-menu { visibility: hidden; max-width: none; max-height: 320px; padding: 4px; }
 .knowledge-suggestions.vui-menu .knowledge-suggestion { background: none; }
 .knowledge-suggestions.vui-menu .knowledge-suggestion:hover { background: var(--navy-100); }
+
+/* Title/provider fields keep their existing hidden label but expose field Info. */
+.classifier-name-row .field:has(> .vui-info-button),
+.provider-create .field:has(> .vui-info-button),
+.header-language:has(> .vui-info-button) { display: flex; flex-direction: row; align-items: center; gap: 2px; }
+.classifier-name-row .field:has(> .vui-info-button) { max-width: 548px; }
+.classifier-name-row .field > input, .provider-create .field > .vui-select { flex: 1; min-width: 0; }
+.header-language:has(> .vui-info-button) { width: 153px; }
+.header-language > .vui-select { flex: 1; min-width: 0; }
+.research-model-menu > .vui-info-field { flex-shrink: 0; }
