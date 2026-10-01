@@ -88,7 +88,7 @@ main { flex: 1; min-height: 0; overflow: auto; }
 .group-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--vui-muted); font-size: var(--vui-size-small); font-variant-numeric: tabular-nums; }
 /* The editor: name, merge and actions | members | add. */
 .group-form { flex: 1; min-height: 0; display: grid; grid-template-columns: 280px minmax(0, 1fr) minmax(0, 1.3fr); gap: 16px; }
-.group-col { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.group-col { min-width: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
 .group-top { display: flex; align-items: center; gap: 10px; }
 .group-merge { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -110,6 +110,14 @@ main { flex: 1; min-height: 0; overflow: auto; }
 .group-count { color: var(--vui-muted); font-size: var(--vui-size-small); }
 .group-note { display: flex; align-items: center; gap: 10px; color: var(--red-text); font-size: var(--vui-size-small); }
 .group-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
+@media (max-width: 900px) {
+  .groups.is-editing { height: 340px; }
+  .group-form { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: auto minmax(0, 1fr); gap: 12px 16px; }
+  .group-details { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; overflow: visible; }
+  .group-details .group-actions, .group-details .group-note { grid-column: 1 / -1; }
+  .group-top input { min-width: 0; width: 100%; }
+  .group-count { flex: none; }
+}
 /* The hover card (activity.js showHover): our own, never the system tooltip. */
 .hovercard { position: fixed; z-index: 30; max-width: 280px; padding: 10px 12px; border-radius: 12px; background: #ffffff; box-shadow: 0 12px 34px rgba(15, 23, 42, 0.18); pointer-events: none; display: flex; flex-direction: column; gap: 3px; }
 .hovercard[hidden] { display: none; }

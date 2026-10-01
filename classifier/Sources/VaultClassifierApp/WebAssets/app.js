@@ -57,6 +57,8 @@
   // A group can only be created through this dialog.
   let pendingCreateType = null;
   let utilityPanel = null;
+  let releaseDialogFocus = null;
+  let dialogFocusKind = null;
   // "More" / "Options" expands the user opened: the page re-renders on every update.
   const openExpands = new Set();
   // Which classifier type is open in the left-panel list (client-only UI state).
@@ -369,15 +371,11 @@
     return text ? `<div class="notice ${esc(tone)}">${esc(text)}</div>` : "";
   }
 
-  // Compact "3h 12m" / "45s" for research cooldowns and ages.
+  // Every elapsed or remaining duration uses HH:MM:SS.
   function formatDuration(totalSeconds) {
     const seconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
-    if (seconds < 60) return `${seconds}s`;
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes}m`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 48) return `${hours}h ${minutes % 60}m`;
-    return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+    return [Math.floor(seconds / 3600), Math.floor(seconds / 60) % 60, seconds % 60]
+      .map((part) => String(part).padStart(2, "0")).join(":");
   }
 
   // Research lane status: live queue counters + the durable cooldown picture,
@@ -572,6 +570,41 @@
         <section class="editor-panel" data-editor-panel data-workspace="${esc(state.workspace)}">${content}</section>
       </div>
     </div>`;
+  }
+
+  function initialShell() {
+    // Native state arrives asynchronously. Keep navigation available from the
+    // first paint rather than replacing the whole scene with a loading screen.
+    return `<div class="popup"><header class="vui-topbar"><nav class="vui-tabs" aria-label="Scene"><button type="button" class="vui-tab" data-scene="vault">Vault</button><button type="button" class="vui-tab is-active" data-scene="classifier">Classifier</button><button type="button" class="vui-tab" data-scene="activity">Activity</button></nav></header><div class="layout" aria-busy="true"></div></div>`;
+  }
+
+  function syncDialogFocus(previousControl) {
+    const kind = pendingCreateType ? "create" : utilityPanel;
+    releaseDialogFocus?.(false);
+    releaseDialogFocus = null;
+    if (!kind) {
+      if (dialogFocusKind) root.querySelector(dialogFocusKind === "create"
+        ? '[data-action="newType"]' : '[data-action="openUtilityPanel"]')?.focus({ preventScroll: true });
+      dialogFocusKind = null;
+      return;
+    }
+    dialogFocusKind = kind;
+    const card = root.querySelector(kind === "create" ? "[data-create-type-dialog]" : '.utility-popover[role="dialog"]');
+    if (!card) return;
+    const active = scope.activeElement;
+    const initial = card.contains(active) ? active : previousControl
+      ? Array.from(card.querySelectorAll("button, input, select, textarea")).find((control) =>
+        control.dataset.action === previousControl.action && control.dataset.field === previousControl.field
+        && control.hasAttribute("data-create-type-name") === previousControl.createName
+        && (!previousControl.platform || control.value === previousControl.platform)) : null;
+    releaseDialogFocus = window.VaultUI.focusDialog(card, {
+      initialFocus: initial || card.querySelector(kind === "create" ? "[data-create-type-name]" : '[data-action="closeUtilityPanel"]'),
+      returnFocus: () => root.querySelector(kind === "create" ? '[data-action="newType"]' : '[data-action="openUtilityPanel"]'),
+      onEscape: () => { pendingCreateType = null; utilityPanel = null; render(); }
+    });
+    if (previousControl?.start != null && initial?.setSelectionRange) {
+      initial.setSelectionRange(previousControl.start, previousControl.end);
+    }
   }
 
   function backupWorkspace() {
@@ -1093,13 +1126,13 @@
   // dials, house rules and research switch until given its own.
   function createTypeModal() {
     if (!pendingCreateType) return "";
-    return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelCreateType" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog create-type-dialog" role="dialog" aria-modal="true" data-create-type-dialog><h3>${tx("createType.title")}</h3><p class="section-copy">${tx("createType.copy")}</p><div class="field"><span class="field-label">${tx("createType.platformLabel")}</span>${platformChoices(pendingCreateType.platformIDs || [], null)}${pendingCreateType.issue ? notice(t("createType.platformRequired"), "red") : ""}</div><label class="field"><span class="field-label">${tx("createType.nameLabel")}</span><input type="text" data-create-type-name autocomplete="off" spellcheck="false" value="${esc(pendingCreateType.name != null ? pendingCreateType.name : t("createType.defaultName"))}"></label><div class="action-row"><button class="secondary" data-action="cancelCreateType">${tx("common.cancel")}</button><button class="primary" data-action="confirmCreateType">${tx("createType.create")}</button></div></div></div>`;
+    return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelCreateType" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog create-type-dialog" role="dialog" aria-modal="true" aria-label="${tx("createType.title")}" data-create-type-dialog><h3>${tx("createType.title")}</h3><p class="section-copy">${tx("createType.copy")}</p><div class="field"><span class="field-label">${tx("createType.platformLabel")}</span>${platformChoices(pendingCreateType.platformIDs || [], null)}${pendingCreateType.issue ? notice(t("createType.platformRequired"), "red") : ""}</div><label class="field"><span class="field-label">${tx("createType.nameLabel")}</span><input type="text" data-create-type-name autocomplete="off" spellcheck="false" value="${esc(pendingCreateType.name != null ? pendingCreateType.name : t("createType.defaultName"))}"></label><div class="action-row"><button class="secondary" data-action="cancelCreateType">${tx("common.cancel")}</button><button class="primary" data-action="confirmCreateType">${tx("createType.create")}</button></div></div></div>`;
   }
 
 
   function render() {
     if (!state) {
-      root.innerHTML = `<div class="popup"><div class="empty">${tx("app.loading")}</div></div>`;
+      root.innerHTML = initialShell();
       lastRenderedMarkup = null;
       return;
     }
@@ -1114,6 +1147,13 @@
     rememberTreeViewportPositions();
     rememberEditorViewportPosition();
     const focused = captureLiveEditFocus();
+    const active = scope.activeElement;
+    const dialogControl = active?.closest?.('[role="dialog"]') ? {
+      action: active.dataset.action, field: active.dataset.field,
+      createName: active.hasAttribute("data-create-type-name"),
+      platform: active.hasAttribute("data-platform-choice") ? active.value : null,
+      start: active.selectionStart, end: active.selectionEnd
+    } : null;
     replacingControls = true;
     root.innerHTML = markup;
     restoreLiveEdits(focused);
@@ -1121,6 +1161,7 @@
     lastRenderedMarkup = markup;
     bindTreeMapWheel();
     applyKnowledgeSearch();
+    syncDialogFocus(dialogControl);
     window.requestAnimationFrame(() => {
       applyNavigationPanelWidth();
       restoreEditorViewportPosition();
@@ -1326,7 +1367,8 @@
   });
 
   scope.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape" || !utilityPanel) return;
+    if (event.key !== "Escape" || (!utilityPanel && !pendingCreateType)) return;
+    pendingCreateType = null;
     utilityPanel = null;
     render();
   });
@@ -1365,6 +1407,12 @@
         if (hadIssue) render();
       }
       return;
+    }
+  });
+
+  scope.addEventListener("input", (event) => {
+    if (pendingCreateType && event.target.matches("[data-create-type-name]")) {
+      pendingCreateType.name = event.target.value;
     }
   });
 
