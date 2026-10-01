@@ -24,8 +24,8 @@ window.runResearchSetupTests=async()=>{
   const key=q('[data-provider-id="provider-1"] [data-field="credential"]');key.focus();key.value='synthetic-key';key.dispatchEvent(new InputEvent('input',{bubbles:true}));
   await poll(()=>testState.assets.providerProfiles[0].credential==='synthetic-key');
   expect(Math.abs(q('.utility-popover').scrollTop-scroll)<3 && focused('credential'),'key autosave preserves Settings scroll and focus');
-  close();change(choice,'on');await wait();expect(focused('llmModelIdentifier'),'key present but model missing focuses model');
-  change(research+' [data-field="llmModelIdentifier"]','test-grounded-model');await poll(()=>testState.settings.research.llmModelIdentifier==='test-grounded-model');
+  close();change(choice,'on');await wait();expect(scope.activeElement?.matches('[data-model-fetch]'),'key present but model missing focuses Fetch model list');
+  q('[data-model-fetch]').click();await poll(()=>q('[data-model-selector]'));q('[data-model-selector]').click();q('[data-model-pick="test-grounded-model"]').click();await poll(()=>testState.settings.research.llmModelIdentifier==='test-grounded-model');
   close();expect(onLabel()==='Enable grounded research…','configured provider replaces On with enable when consent is off');
   change(choice,'on');await wait();expect(focused('enabled') && groupSaves()===0,'enable opens global consent without saving group On');
   const consent=q(research+' [data-field="enabled"]');consent.checked=true;consent.dispatchEvent(new Event('change',{bubbles:true}));

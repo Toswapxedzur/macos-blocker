@@ -1222,3 +1222,15 @@ textarea:focus {
 .knowledge-research-connection { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 18px; border-radius: 16px; background: var(--cyan-50); }
 .knowledge-research-connection > div { display: grid; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
 @media (max-width: 600px) { .knowledge-research-connection { align-items: flex-start; flex-direction: column; } }
+
+/* Provider models are selected from a fetched, searchable and bounded list. */
+.research-model-field, .research-model-picker { min-width: 0; }
+.research-model-picker > summary { cursor: pointer; list-style: none; }
+.research-model-picker > summary::-webkit-details-marker { display: none; }
+.research-model-picker > summary:focus-visible { outline: 2px solid var(--cyan-700); outline-offset: 2px; }
+.research-model-menu { display: grid; gap: 8px; padding-top: 10px; }
+.research-model-list { display: grid; gap: 4px; max-height: min(32vh, 280px); }
+.research-model-option { width: 100%; text-align: left; justify-content: flex-start; padding: 10px 12px; background: var(--slate-50, #f1f5f9); color: var(--navy-700); overflow-wrap: anywhere; }
+.research-model-option[hidden] { display: none; }
+.research-model-option.is-selected { background: var(--cyan-50); color: var(--cyan-700); }
+.research-model-unavailable { color: var(--gold-text); }
