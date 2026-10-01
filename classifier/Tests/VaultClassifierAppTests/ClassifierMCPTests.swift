@@ -64,7 +64,12 @@ final class ClassifierMCPTests: XCTestCase {
             var keys = Self.keys(in: block)
             // Two actions parse their form through helpers in the Settings file.
             for helper in ["parseClassifierTypeLocalModelWebInput", "parseClassifierTypeResearchWebInput"] where block.contains(helper) {
-                keys.formUnion(Self.keys(in: Self.functionBody(named: helper, in: settings)))
+                let helperBody = Self.functionBody(named: helper, in: settings)
+                keys.formUnion(Self.keys(in: helperBody))
+                let countRegex = try NSRegularExpression(pattern: #"tagCount\("([a-zA-Z]+)""#)
+                for match in countRegex.matches(in: helperBody, range: NSRange(helperBody.startIndex..., in: helperBody)) {
+                    keys.insert(String(helperBody[Range(match.range(at: 1), in: helperBody)!]))
+                }
             }
             expected[name] = keys
         }

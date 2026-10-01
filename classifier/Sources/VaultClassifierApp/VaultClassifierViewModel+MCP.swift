@@ -56,7 +56,7 @@ public enum ClassifierWebActionCatalog {
         .init(name: "editKnowledgeEntry", keys: ["id", "meaning"], summary: "Edit a knowledge entry's one sentence."),
         .init(name: "retryFailedResearch", keys: [], summary: "Clear research cooldowns and re-queue failed subjects."),
         .init(name: "saveResearchSettings", keys: ["enabled", "llmProviderProfileID", "llmModelIdentifier"], summary: "Research on/off and the provider profile + model that answers."),
-        .init(name: "saveClassifierTypeLocalModel", keys: ["typeID", "speedQuality", "strictness", "houseRules"], summary: "A group's independent dial positions (speedQuality fast|balanced|best, strictness 1–5) and house rules (blank = no rules)."),
+        .init(name: "saveClassifierTypeLocalModel", keys: ["typeID", "speedQuality", "strictness", "houseRules", "minimumTagsOverride", "maximumTagsOverride"], summary: "A group's independent dial positions (speedQuality fast|balanced|best, strictness 1–5) and house rules (blank = no rules). Optional minimumTagsOverride (0–3) and maximumTagsOverride (1–3); blank/null follows that bound from strictness. Effective minimum must not exceed maximum."),
         .init(name: "saveClassifierTypeResearch", keys: ["typeID", "researchMode"], summary: "A group's research switch: inherit, on, off."),
         .init(name: "setBackupOwnerCode", keys: ["ownerCode"], summary: "Set the backup owner code."),
         .init(name: "unlockBackup", keys: ["ownerCode"], summary: "Unlock backup settings with the owner code."),

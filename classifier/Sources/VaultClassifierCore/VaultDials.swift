@@ -7,8 +7,8 @@ import Foundation
 //   Strict ↔ Broad   → how many tags a video may carry and how sure the model
 //                      must be before it keeps an extra one.
 //
-// Both exist globally; a classifier type may follow the global position or
-// hold its own. House rules and each type's tag tree stay as they were.
+// Each group owns these controls. Optional min/max tag counts override only
+// the corresponding bound; a blank bound follows its Strict↔Broad position.
 
 /// Which model runs. Each tier is one vetted GGUF in `LocalModelCatalog`.
 public enum SpeedQualityDial: String, Codable, Sendable, CaseIterable, Identifiable {

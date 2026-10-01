@@ -161,6 +161,8 @@ extension VaultClassifierViewModel {
                         "houseRules": classifierType.localModel.houseRules,
                         "speedQuality": classifierType.localModel.speedQuality.rawValue,
                         "strictness": classifierType.localModel.strictness.rawValue,
+                        "minimumTagsOverride": classifierType.localModel.minimumTagsOverride.map { $0 as Any } ?? NSNull(),
+                        "maximumTagsOverride": classifierType.localModel.maximumTagsOverride.map { $0 as Any } ?? NSNull(),
                     ] as [String: Any],
                     // nil = follow the global research switch.
                     "researchEnabled": classifierType.researchEnabled ?? NSNull(),

@@ -6,6 +6,17 @@ import XCTest
 /// and a newline — with no scaffold and no confidence digit. These pin what the
 /// grammar allows, what is fed without sampling, and how confidence is derived.
 final class NamesOnlyReplyTests: XCTestCase {
+    func testRequiredTagsBypassExtraTagThresholdUntilMinimumIsMet() throws {
+        XCTAssertTrue(VaultLocalLLMEngine.keepAdditionalTag(acceptedCount: 1, minimumTags: 2, jointOdds: 0.01, threshold: 0.97))
+        XCTAssertFalse(VaultLocalLLMEngine.keepAdditionalTag(acceptedCount: 2, minimumTags: 2, jointOdds: 0.01, threshold: 0.97))
+        XCTAssertFalse(VaultLocalLLMEngine.keepAdditionalTag(acceptedCount: 1, minimumTags: 0, jointOdds: 0.01, threshold: 0.97))
+        XCTAssertTrue(VaultLocalLLMEngine.keepAdditionalTag(acceptedCount: 2, minimumTags: 2, jointOdds: 0.98, threshold: 0.97))
+        let grammar = try XCTUnwrap(VaultLocalLLMEngine.namesWithConfidenceGrammar(
+            allowed: ["A", "B", "C"], maximumTags: 3, minimumTags: 2, format: .names))
+        XCTAssertTrue(grammar.contains("core ::= obj osep obj tail0"))
+        XCTAssertFalse(grammar.contains("none"))
+    }
+
     private let allowed = ["Music", "Gaming", "Gaming News", "Clash Royale"]
     private func next(_ text: String, cap: Int = 3, decline: Bool = true) -> (forced: String, finished: Bool) {
         VaultLocalLLMEngine.forcedContinuation(

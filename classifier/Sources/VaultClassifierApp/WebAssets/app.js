@@ -242,6 +242,8 @@
         speedQuality: type.localModel?.speedQuality || "balanced",
         strictness: String(type.localModel?.strictness ?? 3),
         houseRules: type.localModel?.houseRules || "",
+        minimumTagsOverride: type.localModel?.minimumTagsOverride == null ? "" : String(type.localModel.minimumTagsOverride),
+        maximumTagsOverride: type.localModel?.maximumTagsOverride == null ? "" : String(type.localModel.maximumTagsOverride),
       };
       case "saveClassifierTypeResearch": return type && {
         researchMode: type.researchEnabled === true ? "on" : type.researchEnabled === false ? "off" : "inherit",
@@ -279,10 +281,35 @@
     return Object.entries(edit.values).every(([field, value]) => normalized(field, value) === normalized(field, saved[field]));
   }
 
+  function validateTagBounds(form, values = collect(form.dataset.formId)) {
+    const minimumField = form.querySelector('[data-field="minimumTagsOverride"]');
+    const maximumField = form.querySelector('[data-field="maximumTagsOverride"]');
+    if (!minimumField || !maximumField) return true;
+    minimumField.setCustomValidity(""); maximumField.setCustomValidity("");
+    const strictness = Number(values.strictness || 3);
+    const defaultMinimum = strictness === 5 ? 1 : 0, defaultMaximum = strictness === 1 ? 1 : 3;
+    minimumField.placeholder = String(defaultMinimum); maximumField.placeholder = String(defaultMaximum);
+    const defaultsNote = form.querySelector('[data-tag-bounds-defaults]');
+    if (defaultsNote) defaultsNote.textContent = t("bridge.tagBounds.copy", { minimum: defaultMinimum, maximum: defaultMaximum });
+    const minimum = values.minimumTagsOverride === "" ? (strictness === 5 ? 1 : 0) : Number(values.minimumTagsOverride);
+    const maximum = values.maximumTagsOverride === "" ? (strictness === 1 ? 1 : 3) : Number(values.maximumTagsOverride);
+    const valid = minimumField.checkValidity() && maximumField.checkValidity()
+      && Number.isInteger(minimum) && Number.isInteger(maximum) && minimum <= maximum;
+    const error = form.querySelector('[data-tag-bounds-error]');
+    if (error) error.hidden = valid;
+    minimumField.setAttribute("aria-invalid", String(!valid));
+    maximumField.setAttribute("aria-invalid", String(!valid));
+    return valid;
+  }
+
   function flushLiveEdit(edit) {
     window.clearTimeout(edit.timer);
     edit.timer = null;
     if (edit.sent || composingEdit) return;
+    if (edit.action === "saveClassifierTypeLocalModel") {
+      const form = root.querySelector(`[data-form-id="${CSS.escape(edit.formID)}"]`);
+      if (form && !validateTagBounds(form, edit.values)) return;
+    }
     const saved = savedLiveEdit(edit);
     if (!saved || liveEditMatches(edit, saved)) { liveEdits.delete(edit.key); return; }
     edit.sent = true;
@@ -330,6 +357,7 @@
         control.focus({ preventScroll: true });
         if (focused.start != null) control.setSelectionRange(focused.start, focused.end, focused.direction);
       });
+      if (form.dataset.autosaveAction === "saveClassifierTypeLocalModel") validateTagBounds(form);
     });
   }
 
@@ -951,35 +979,31 @@
       const localModel = classifierType.localModel || { speedQuality: "balanced", strictness: 3, houseRules: "" };
       const localModelFormID = `classifier-local-model-form-${classifierType.id}`;
       const library = state.settings?.localModels || {};
-      const tierName = (tier) => t(`localModel.tier.${tier}.name`);
-      const positionName = (position) => `${position} · ${t(`localModel.strictness.${position}.name`)}`;
       const selectedEntry = tierEntry(library, localModel.speedQuality);
       const modelReady = selectedEntry?.state?.kind === "downloaded";
       const engineStatus = modelReady ? (selectedEntry.engineStatus || "downloaded") : "no-model";
       const engineTone = { loaded: "cyan", downloaded: "cyan", loading: "navy", failed: "red", "no-model": "pink" }[engineStatus] || "navy";
       const engineLabel = engineStatus === "downloaded" ? "modelLibrary.downloaded" : `localModel.status.${engineStatus}`;
-      const localModelSection = `<section class="classifier-type-section classifier-local-model" data-local-model-section><div class="section-header"><div><h3>${tx("bridge.localModel")} ${statusPill(tx(engineLabel), engineTone)}</h3><p class="section-copy">${tx("bridge.localModelCopy")}</p></div></div><div data-form-id="${esc(localModelFormID)}" data-autosave-action="saveClassifierTypeLocalModel" data-type-id="${esc(classifierType.id)}"><div class="field wide"><span class="field-label">${tx("localModel.speedQuality")}<span class="field-hint"> · ${tx("localModel.speedQualityHint")}</span></span>${speedQualityCards(library, localModel.speedQuality, classifierType.id)}<p class="model-library-source-note">${tx("localModel.tier.sourceNote")}</p></div><div class="field wide"><span class="field-label">${tx("localModel.strictness")}<span class="field-hint"> · ${tx("localModel.strictnessHint")}</span></span>${strictnessOptions(localModel.strictness, classifierType.id)}</div><p class="small-copy resident-model-note">${tx("bridge.localModelResidentNote")}</p>${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", localModel.houseRules, 'rows="4" maxlength="4000"')}</div></section>`;
+      const defaultMinimum = localModel.strictness === 5 ? 1 : 0;
+      const defaultMaximum = localModel.strictness === 1 ? 1 : 3;
+      const boundsSummary = localModel.minimumTagsOverride != null || localModel.maximumTagsOverride != null
+        ? t("bridge.tagBounds.custom", { minimum: localModel.minimumTagsOverride ?? defaultMinimum, maximum: localModel.maximumTagsOverride ?? defaultMaximum })
+        : t("bridge.tagBounds.default");
+      const expandKey = `type-more:${classifierType.id}`;
+      const localModelSection = `<section class="classifier-type-section classifier-local-model" data-local-model-section><div class="section-header"><div><h3>${tx("bridge.localModel")} ${statusPill(tx(engineLabel), engineTone)}</h3><p class="section-copy">${tx("bridge.localModelCopy")}</p></div></div><div class="field wide"><span class="field-label">${tx("localModel.speedQuality")}<span class="field-hint"> · ${tx("localModel.speedQualityHint")}</span></span>${speedQualityCards(library, localModel.speedQuality, classifierType.id)}<p class="model-library-source-note">${tx("localModel.tier.sourceNote")}</p></div><div class="field wide"><span class="field-label">${tx("localModel.strictness")}<span class="field-hint"> · ${tx("localModel.strictnessHint")}</span></span>${strictnessOptions(localModel.strictness, classifierType.id)}${localModel.minimumTagsOverride != null || localModel.maximumTagsOverride != null ? `<p class="small-copy">${tx("bridge.tagBounds.precedence")}</p>` : ""}</div><p class="small-copy resident-model-note">${tx("bridge.localModelResidentNote")}</p>${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", localModel.houseRules, 'rows="4" maxlength="4000"')}</section>`;
+      const tagBoundsSection = `<details class="vui-expand classifier-group-more" data-expand="${esc(expandKey)}"${openExpands.has(expandKey) ? " open" : ""}><summary><span>${tx("navigation.more")}</span><span class="small-copy classifier-override-summary">${esc(boundsSummary)}</span></summary><section class="classifier-type-section"><p class="section-copy" data-tag-bounds-defaults>${tx("bridge.tagBounds.copy", { minimum: defaultMinimum, maximum: defaultMaximum })}</p><div class="utility-settings-fields">${field("bridge.tagBounds.minimum", "bridge.tagBounds.minimumHint", "minimumTagsOverride", localModel.minimumTagsOverride ?? "", "number", `min="0" max="3" step="1" placeholder="${defaultMinimum}"`)}${field("bridge.tagBounds.maximum", "bridge.tagBounds.maximumHint", "maximumTagsOverride", localModel.maximumTagsOverride ?? "", "number", `min="1" max="3" step="1" placeholder="${defaultMaximum}"`)}</div><p class="notice red" data-tag-bounds-error role="status" hidden>${tx("bridge.tagBounds.error")}</p></section></details>`;
       const researchFormID = `classifier-research-form-${classifierType.id}`;
       const researchMode = classifierType.researchEnabled === true ? "on" : classifierType.researchEnabled === false ? "off" : "inherit";
       const researchOverrideSection = `<section class="classifier-type-section classifier-research-overrides"><div class="section-header"><div><h3>${tx("bridge.researchOverrides")}</h3><p class="section-copy">${tx("bridge.researchOverridesCopy")}</p></div></div><div data-form-id="${esc(researchFormID)}" data-autosave-action="saveClassifierTypeResearch" data-type-id="${esc(classifierType.id)}"><div class="utility-settings-fields">${valueSelectField("bridge.researchMode", "", "researchMode", researchMode, [["inherit", t("bridge.researchMode.inherit")], ["on", t(researchAvailability().ready ? "bridge.researchMode.on" : researchAvailability().actionKey)], ["off", t("bridge.researchMode.off")]], "data-group-research-choice")}${researchMode === "on" && !researchAvailability().ready ? `<button class="secondary" data-action="openResearchSetup">${tx(researchAvailability().actionKey)}</button>` : ""}</div><p class="small-copy research-master-note">${tx("bridge.researchMasterGate")}</p></div></section>`;
-      const overrideSummary = [];
-      overrideSummary.push(`${t("localModel.speedQuality")}: ${tierName(localModel.speedQuality)}`);
-      overrideSummary.push(`${t("localModel.strictness")}: ${positionName(localModel.strictness)}`);
-      if (localModel.houseRules?.trim()) overrideSummary.push(t("bridge.overrides.houseRules"));
-      if (researchMode !== "inherit") {
-        overrideSummary.push(`${t("bridge.researchOverrides")}: ${t(`bridge.researchMode.${researchMode}`)}`);
-        if (researchMode === "on" && !researchAvailability().ready) overrideSummary.push(t(researchAvailability().actionKey));
-      }
-      const expandKey = `type-more:${classifierType.id}`;
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}" data-autosave-action="configureClassifierType">
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name, "text", 'maxlength="128"')}</div>
         <section class="classifier-type-section classifier-applicable-platform-section"><span class="field-label">${tx("bridge.applicablePlatform")}</span>${platformChoices(chosen, classifierType.id)}<p class="small-copy">${tx("bridge.platformsFixed")}</p>${platformNotes.map((note) => `<p class="small-copy">${esc(note)}</p>`).join("")}</section>
         <p class="small-copy">${tx("bridge.autoSave")}</p>
-        <details class="vui-expand classifier-group-more" data-expand="${esc(expandKey)}"${openExpands.has(expandKey) ? " open" : ""}>
-          <summary><span>${tx("navigation.more")}</span><span class="small-copy classifier-override-summary">${esc(overrideSummary.join(" · "))}</span></summary>
+        <div data-form-id="${esc(localModelFormID)}" data-autosave-action="saveClassifierTypeLocalModel" data-type-id="${esc(classifierType.id)}">
           ${localModelSection}
-          ${researchOverrideSection}
-        </details>
+          ${tagBoundsSection}
+        </div>
+        ${researchOverrideSection}
         <div class="action-row classifier-type-delete"><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}">${deleteLabel(`type:${classifierType.id}`, tx("bridge.deleteType"))}</button></div>
       </section>`;
     };

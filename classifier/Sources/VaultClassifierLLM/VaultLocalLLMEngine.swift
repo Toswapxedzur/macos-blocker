@@ -461,7 +461,11 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
                     let nameOdds = probability(
                         of: token, among: items[slot].candidateFirstTokens, outputIndex: live[slot].outputIndex)
                     let isExtra = !live[slot].nameStartProbabilities.isEmpty
-                    if namesOnly, isExtra, live[slot].continueProbability * nameOdds < minimumExtraJoint(slot) {
+                    if namesOnly, isExtra, !Self.keepAdditionalTag(
+                        acceptedCount: live[slot].nameStartProbabilities.count,
+                        minimumTags: items[slot].request.minimumTags,
+                        jointOdds: live[slot].continueProbability * nameOdds,
+                        threshold: minimumExtraJoint(slot)) {
                         // Drop the dangling separator so the parser sees only kept names.
                         if live[slot].generated.hasSuffix(Self.structuredSeparator) {
                             live[slot].generated.removeLast(Self.structuredSeparator.count)
@@ -744,6 +748,12 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
     /// structured Decode 1 of RESEARCH-REDESIGN §5. Continues the same prompt
     /// runway (`{"tags":[{"name":"`); the inter-object separator is `},{"name":"`.
     /// Diagnostic-only (calibration eval); returns nil when no name is usable.
+    /// Required tags may be best guesses. Apply the dial's extra-tag threshold
+    /// only after the requested minimum has been met.
+    static func keepAdditionalTag(acceptedCount: Int, minimumTags: Int, jointOdds: Double, threshold: Double) -> Bool {
+        acceptedCount < minimumTags || jointOdds >= threshold
+    }
+
     static func namesWithConfidenceGrammar(allowed: [String], allowDecline: Bool = true, maximumTags: Int = 1, minimumTags: Int = 0, format: ClassificationReplyFormat = .current) -> String? {
         let literals = allowed
             .filter { !$0.isEmpty && !$0.contains("\n") && !$0.contains("\r") }

@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 import VaultClassifierCore
 import VaultClassifierResearch
 import VaultClassifierBridge
@@ -125,7 +126,23 @@ extension VaultClassifierViewModel {
         guard houseRules.count <= LocalLLMSettings.maximumHouseRulesLength else {
             throw WebBridgeInputError.exceedsLimit("houseRules", LocalLLMSettings.maximumHouseRulesLength)
         }
-        return .init(typeID: typeID, settings: .init(speedQuality: speedQuality, strictness: strictness, houseRules: houseRules))
+        func tagCount(_ key: String, range: ClosedRange<Int>) throws -> Int? {
+            guard let value = data[key], !(value is NSNull) else { return nil }
+            let raw: String
+            if let text = value as? String { raw = text.trimmingCharacters(in: .whitespacesAndNewlines) }
+            else if let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() { raw = number.stringValue }
+            else { throw WebBridgeInputError.invalidChoice(key) }
+            if raw.isEmpty { return nil }
+            guard let count = Int(raw), range.contains(count) else { throw WebBridgeInputError.invalidChoice(key) }
+            return count
+        }
+        let minimum = try tagCount("minimumTagsOverride", range: 0...LocalLLMSettings.maximumTagCountOverride)
+        let maximum = try tagCount("maximumTagsOverride", range: 1...LocalLLMSettings.maximumTagCountOverride)
+        guard (minimum ?? strictness.minimumTags) <= (maximum ?? strictness.maximumTags) else {
+            throw WebBridgeInputError.invalidChoice("minimum tags greater than maximum tags")
+        }
+        return .init(typeID: typeID, settings: .init(speedQuality: speedQuality, strictness: strictness,
+            houseRules: houseRules, minimumTagsOverride: minimum, maximumTagsOverride: maximum))
     }
 
     /// The per-type research form: `researchMode` is "inherit", "on" or "off".

@@ -40,6 +40,11 @@ extension LocalClassifierCoordinator {
         servingModelVersion: String
     ) -> Bool {
         if classification.source == .humanCorrected { return true }
+        if let bounds = classification.tagBounds {
+            guard bounds == type.localModel.tagBounds else { return false }
+        } else if type.localModel.minimumTagsOverride != nil || type.localModel.maximumTagsOverride != nil {
+            return false
+        }
         let expected = servingModelVersion == "stub/v1" ? servingModelVersion : "llamacpp/" + type.modelFileName
         return classification.modelVersion == expected
             || classification.modelVersion.hasPrefix(expected + "+")
@@ -129,7 +134,7 @@ extension LocalClassifierCoordinator {
             )
             // Every group owns its Strict↔Broad position.
             let strictness = settings.strictness
-            let bounds = strictness.tagBounds
+            let bounds = settings.tagBounds
             let pipeline = VideoClassificationPipeline(
                 llm: llm, maximumTags: bounds.maximum, minimumTags: bounds.minimum)
             let trimmedRules = settings.houseRules.trimmingCharacters(in: .whitespacesAndNewlines)
