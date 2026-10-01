@@ -20,13 +20,13 @@ public enum WorkspaceCatalogError: Error, Equatable, LocalizedError, Sendable {
         case .duplicateIdentifier(let value): return "Duplicate local asset identifier: \(value)."
         case .missingTree(let value): return "The platform binding references a missing tag tree: \(value)."
         case .missingDataset(let value): return "The platform binding references a missing classification dataset: \(value)."
-        case .missingClassifierType(let value): return "The platform binding references a missing classifier type: \(value)."
-        case .incompatibleActiveClassifierType(let value): return "The active classifier type is not compatible with the platform tree and dataset: \(value)."
+        case .missingClassifierType(let value): return "The platform binding references a missing Classifier group: \(value)."
+        case .incompatibleActiveClassifierType(let value): return "The active Classifier group is not compatible with the platform tree and dataset: \(value)."
         case .unsupportedCollectionPlatform(let value): return "The collection platform is not supported: \(value)."
         case .invalidCollectedEntry(let value): return "The collected platform entry is invalid: \(value)."
         case .invalidProviderProfile(let value): return "The API provider profile is invalid: \(value)."
-        case .invalidClassifierType(let value): return "The classifier type has incompatible local assets: \(value)."
-        case .duplicateApplicablePlatform(let value): return "That platform is already assigned to another classifier type: \(value). A platform can belong to only one type."
+        case .invalidClassifierType(let value): return "The Classifier group has incompatible local assets: \(value)."
+        case .duplicateApplicablePlatform(let value): return "That platform is already assigned to another Classifier group: \(value). A platform can belong to only one group."
         }
     }
 }

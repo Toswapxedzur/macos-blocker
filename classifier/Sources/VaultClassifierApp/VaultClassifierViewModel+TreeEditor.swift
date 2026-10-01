@@ -107,7 +107,7 @@ extension VaultClassifierViewModel {
             guard var catalog = localState?.workspaceCatalog,
                   let treeIndex = catalog.trees.firstIndex(where: { $0.id == treeID }),
                   let nodeIndex = catalog.trees[treeIndex].nodes.firstIndex(where: { $0.id == nodeID }) else {
-                throw WebBridgeInputError.invalidChoice("tag node")
+                throw WebBridgeInputError.invalidChoice("tag")
             }
             guard positionX.isFinite, positionY.isFinite, positionX >= 0, positionY >= 0 else {
                 throw WebBridgeInputError.invalidChoice("tag position")
@@ -139,7 +139,7 @@ extension VaultClassifierViewModel {
             guard var catalog = localState?.workspaceCatalog,
                   let treeIndex = catalog.trees.firstIndex(where: { $0.id == treeID }),
                   let nodeIndex = catalog.trees[treeIndex].nodes.firstIndex(where: { $0.id == nodeID }) else {
-                throw WebBridgeInputError.invalidChoice("tag node")
+                throw WebBridgeInputError.invalidChoice("tag")
             }
             let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleaned.isEmpty else { throw WebBridgeInputError.invalidChoice("tag name") }
@@ -161,7 +161,7 @@ extension VaultClassifierViewModel {
             guard var catalog = localState?.workspaceCatalog,
                   let treeIndex = catalog.trees.firstIndex(where: { $0.id == treeID }),
                   let nodeIndex = catalog.trees[treeIndex].nodes.firstIndex(where: { $0.id == nodeID }) else {
-                throw WebBridgeInputError.invalidChoice("tag node")
+                throw WebBridgeInputError.invalidChoice("tag")
             }
             let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleanedName.isEmpty else { throw WebBridgeInputError.invalidChoice("tag name") }
@@ -200,7 +200,7 @@ extension VaultClassifierViewModel {
             guard var catalog = localState?.workspaceCatalog,
                   let treeIndex = catalog.trees.firstIndex(where: { $0.id == treeID }),
                   let nodeIndex = catalog.trees[treeIndex].nodes.firstIndex(where: { $0.id == nodeID }) else {
-                throw WebBridgeInputError.invalidChoice("tag node")
+                throw WebBridgeInputError.invalidChoice("tag")
             }
             guard catalog.trees[treeIndex].nodes[nodeIndex].parentID != nil else { return }
             catalog.trees[treeIndex].nodes[nodeIndex].parentID = nil
@@ -219,7 +219,7 @@ extension VaultClassifierViewModel {
             guard var catalog = localState?.workspaceCatalog,
                   let treeIndex = catalog.trees.firstIndex(where: { $0.id == treeID }),
                   let nodeIndex = catalog.trees[treeIndex].nodes.firstIndex(where: { $0.id == nodeID }) else {
-                throw WebBridgeInputError.invalidChoice("tag node")
+                throw WebBridgeInputError.invalidChoice("tag")
             }
             let replacementParentID = catalog.trees[treeIndex].nodes[nodeIndex].parentID
             let reparentedNodeIDs = catalog.trees[treeIndex].nodes.compactMap { node in

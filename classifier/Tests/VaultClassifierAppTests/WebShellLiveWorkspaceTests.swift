@@ -60,7 +60,7 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         }
         XCTAssertTrue(script.contains("research.constantsNote"))
         XCTAssertTrue(strings.contains("\"research.constantsNote\""))
-        XCTAssertTrue(strings.contains("score 3, fading by half every 14 days"))
+        XCTAssertTrue(strings.contains("score reaches 3; the score halves every 14 days"))
     }
 
     func testShellSurfacesResearchLaneStatusAndRetryAction() throws {
@@ -109,7 +109,7 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         XCTAssertTrue(script.contains("editKnowledgeEntry"))
         XCTAssertTrue(script.contains("deleteKnowledgeEntry"))
         // Strings for the workspace.
-        XCTAssertTrue(strings.contains("Known creators"))
+        XCTAssertTrue(strings.contains("Content sources"))
         XCTAssertTrue(strings.contains("Known terms"))
     }
 
@@ -122,10 +122,10 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         // The API-keys workspace renders the local-only disclosure.
         XCTAssertTrue(script.contains("llm.localOnlyDisclosure"))
         XCTAssertTrue(script.contains("provider-local-only"))
-        // The copy explicitly states keys stay on this Mac and are never uploaded.
-        XCTAssertTrue(strings.contains("stored locally on this Mac"))
-        XCTAssertTrue(strings.contains("never upload your keys"))
-        XCTAssertTrue(strings.contains("never in the system keychain"))
+        // The copy distinguishes local storage from authentication requests sent to the provider.
+        XCTAssertTrue(strings.contains("stored in this app’s support folder on this Mac"))
+        XCTAssertTrue(strings.contains("Keys are sent to the configured provider to authenticate requests"))
+        XCTAssertTrue(strings.contains("not in the system Keychain"))
     }
 
     /// Research is provider-grounding only (Cut A): the shell must not offer a
@@ -156,8 +156,8 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         // Existing search-only profiles are flagged retired, not silently inert.
         XCTAssertTrue(script.contains("retiredSearchProvider"))
         XCTAssertTrue(strings.contains("\"llm.retiredSearchProvider\""))
-        // The data-flow disclosure describes the single grounding-capable provider.
-        XCTAssertTrue(strings.contains("single grounding-capable provider"))
+        // The data-flow disclosure describes the your selected provider, which searches the web.
+        XCTAssertTrue(strings.contains("your selected provider, which searches the web"))
         XCTAssertFalse(strings.contains("raw-search mode"))
     }
 
@@ -170,8 +170,8 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         XCTAssertTrue(script.contains("saveResearchSettings"))
         XCTAssertTrue(script.contains("research.consent"))
         XCTAssertTrue(script.contains("supportsGenerateText"))
-        XCTAssertTrue(strings.contains("Video titles, summaries, body text, and private creator IDs are never sent"))
-        XCTAssertTrue(strings.contains("a term you chose to add"))
+        XCTAssertTrue(strings.contains("These research requests do not include content titles, summaries, body text, or private source IDs"))
+        XCTAssertTrue(strings.contains("a term you added without a description"))
         XCTAssertFalse(strings.contains("second on-device constrained decode"), "the automatic term decode is gone")
         XCTAssertTrue(script.contains("addKnowledgeTerm"))
         XCTAssertFalse(strings.contains("Everything runs on this Mac; nothing leaves it"))
@@ -190,7 +190,7 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
             XCTAssertTrue(script.contains(mode)); XCTAssertTrue(strings.contains("\"\(mode)\""))
         }
         XCTAssertFalse(script.contains("classifierType.researchOverrides"), "the per-type research profile payload is gone")
-        XCTAssertTrue(strings.contains("global Research consent in Settings is the master gate"))
+        XCTAssertTrue(strings.contains("Research consent in Classifier settings applies to every group"))
     }
 
     func testSettingsModelLibraryExposesUserInitiatedDownloadControls() throws {
@@ -214,7 +214,7 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
             XCTAssertTrue(strings.contains("\"localModel.strictness.\(position).name\""))
             XCTAssertTrue(strings.contains("\"localModel.strictness.\(position).desc\""))
         }
-        XCTAssertTrue(strings.contains("Models download from Hugging Face only when you press Download."))
+        XCTAssertTrue(strings.contains("Model files download from Hugging Face when you choose Download."))
         XCTAssertFalse(strings.contains("LATENCY NOT MEASURED"))
     }
 

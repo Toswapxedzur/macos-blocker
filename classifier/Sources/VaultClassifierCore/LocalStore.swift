@@ -300,9 +300,9 @@ public enum CorrectionSubmissionError: Error, Equatable, LocalizedError, Sendabl
 
     public var errorDescription: String? {
         switch self {
-        case .invalidClassifierType: return "The classifier type cannot correct this platform."
-        case .missingCollectedEntry: return "The collected video is no longer available."
-        case .invalidTagSelection: return "The correction contains a tag that is not eligible for this classifier type."
+        case .invalidClassifierType: return "The Classifier group cannot correct this platform."
+        case .missingCollectedEntry: return "The collected content is no longer available."
+        case .invalidTagSelection: return "The correction contains a tag that is not eligible for this Classifier group."
         }
     }
 }

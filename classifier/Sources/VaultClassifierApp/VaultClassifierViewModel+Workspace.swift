@@ -79,7 +79,7 @@ extension VaultClassifierViewModel {
             datasetID = try catalog.ensurePlatformBinding(platformID).datasetID
         }
         guard let dataset = catalog.datasets.first(where: { $0.id == datasetID }) else {
-            throw WebBridgeInputError.invalidChoice("classifier type")
+            throw WebBridgeInputError.invalidChoice("Classifier group")
         }
         return (cleaned, dataset)
     }
@@ -93,7 +93,7 @@ extension VaultClassifierViewModel {
             guard !cleaned.isEmpty,
                   cleaned.count <= ClassifierTypeAsset.maximumNameLength,
                   var catalog = localState?.workspaceCatalog else {
-                throw WebBridgeInputError.invalidChoice("classifier type")
+                throw WebBridgeInputError.invalidChoice("Classifier group")
             }
             let (platforms, dataset) = try claimPlatforms(platformIDs, forType: nil, in: &catalog)
             // Each type owns a fresh, empty tree — its own taxonomy.
@@ -120,7 +120,7 @@ extension VaultClassifierViewModel {
     func reorderClassifierTypes(orderedIDs: [String]) {
         do {
             guard var catalog = localState?.workspaceCatalog else {
-                throw WebBridgeInputError.invalidChoice("classifier type order")
+                throw WebBridgeInputError.invalidChoice("Classifier group order")
             }
             var rank: [String: Int] = [:]
             for (index, id) in orderedIDs.enumerated() { rank[id] = index }
@@ -142,7 +142,7 @@ extension VaultClassifierViewModel {
                   cleanedName.count <= ClassifierTypeAsset.maximumNameLength,
                   var catalog = localState?.workspaceCatalog,
                   let typeIndex = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }) else {
-                throw WebBridgeInputError.invalidChoice("classifier type")
+                throw WebBridgeInputError.invalidChoice("Classifier group")
             }
             catalog.classifierTypes[typeIndex].name = cleanedName
             catalog.classifierTypes[typeIndex].updatedAtMilliseconds = WorkspaceCatalog.now()
@@ -156,7 +156,7 @@ extension VaultClassifierViewModel {
         do {
             guard var catalog = localState?.workspaceCatalog,
                   catalog.removeClassifierType(typeID) else {
-                throw WebBridgeInputError.invalidChoice("classifier type")
+                throw WebBridgeInputError.invalidChoice("Classifier group")
             }
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
