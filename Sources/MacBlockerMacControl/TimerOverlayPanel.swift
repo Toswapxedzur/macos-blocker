@@ -58,7 +58,7 @@ final class TimerOverlayModel: ObservableObject {
     @Published var rows: [TimerOverlayRow] = []
 }
 
-/// The HUD content uses the extension's fixed light appearance.
+/// Frequently visible HUD: dark translucent surface, matching the browser timer.
 struct TimerOverlayView: View {
     @ObservedObject var model: TimerOverlayModel
 
@@ -67,14 +67,14 @@ struct TimerOverlayView: View {
             ForEach(model.rows) { row in
                 Text("\(row.name): \(row.formattedRemaining)")
                     .font(.custom("Arial", size: 13)).monospacedDigit()
-                    .foregroundColor(Color(red: 0.122, green: 0.161, blue: 0.216))
+                    .foregroundColor(Color(red: 0.973, green: 0.980, blue: 0.988))
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.white)
+                .fill(Color(red: 0.059, green: 0.090, blue: 0.165).opacity(0.86))
         )
         .fixedSize()
     }
@@ -443,12 +443,14 @@ private struct PanelTextFieldControl: View {
                     .frame(height: CGFloat(rows) * 20)
                     .scrollContentBackground(.hidden)
                     .background(Color(red: 0.945, green: 0.961, blue: 0.976))
+                    .foregroundColor(Color(red: 0.122, green: 0.161, blue: 0.216))
                     .cornerRadius(8)
             } else {
                 TextField(placeholder, text: $text)
                     .textFieldStyle(.plain)
                     .padding(7)
                     .background(Color(red: 0.945, green: 0.961, blue: 0.976))
+                    .foregroundColor(Color(red: 0.122, green: 0.161, blue: 0.216))
                     .cornerRadius(8)
                     .font(.custom("Arial", size: 13))
             }
@@ -725,7 +727,8 @@ private struct PanelPinControl: View {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(isActive ? Color(red: 0.859, green: 0.918, blue: 0.996) : .clear)
             )
-            .overlay(Text(display).font(.custom("Arial", size: 18)).fontWeight(.semibold).monospacedDigit())
+            .overlay(Text(display).font(.custom("Arial", size: 18)).fontWeight(.semibold).monospacedDigit()
+                .foregroundColor(Color(red: 0.122, green: 0.161, blue: 0.216)))
             .frame(width: 32, height: 40)
     }
 
@@ -792,8 +795,8 @@ struct PanelCardView: View {
         return out
     }
 
-    private let bg = Color.white
-    private let fg = Color(red: 0.122, green: 0.161, blue: 0.216)
+    private let bg = Color(red: 0.059, green: 0.090, blue: 0.165).opacity(0.96)
+    private let fg = Color(red: 0.973, green: 0.980, blue: 0.988)
 
     private var panelWidth: CGFloat {
         switch snapshot.width ?? "" {
@@ -833,8 +836,8 @@ struct PanelCardView: View {
         .background(bg)
         .foregroundColor(fg)
         .cornerRadius(14)
-        .shadow(color: .black.opacity(0.12), radius: 14, y: 5)
-        .preferredColorScheme(.light)
+        .shadow(color: .black.opacity(0.32), radius: 14, y: 5)
+        .preferredColorScheme(.dark)
     }
 }
 
