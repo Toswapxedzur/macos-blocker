@@ -102,6 +102,9 @@ main { flex: 1; min-height: 0; overflow: auto; }
 /* The add column: the search stays, the suggestions scroll under it. */
 .group-add { overflow: hidden; }
 .group-members { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 4px; }
+.group-selected-members { flex: 1; align-content: flex-start; }
+.group-members > *, .scroll-list > *, .colour-map > * { flex-shrink: 0; }
+.group-members, .scroll-list, .colour-map { overscroll-behavior: contain; scrollbar-width: thin; }
 .member-row { display: flex; align-items: center; gap: 8px; width: auto; max-width: 100%; padding: 4px 8px 4px 4px; border-radius: 8px; background: none; color: #1f2937; font-size: 12px; font-weight: 400; text-align: left; }
 .member-row:hover { background: var(--navy-100); filter: none; }
 .member-row .icon { width: 24px; height: 24px; border-radius: 6px; font-size: 11px; }
