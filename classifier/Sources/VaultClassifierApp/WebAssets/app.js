@@ -61,6 +61,8 @@
   let researchSetupFocusPending = false;
   let researchModelQuery = "";
   let researchModelQueryProvider = null;
+  let releaseDialogFocus = null;
+  let dialogFocusKind = null;
   // "More" / "Options" expands the user opened: the page re-renders on every update.
   const openExpands = new Set();
   // Which classifier type is open in the left-panel list (client-only UI state).
@@ -383,15 +385,11 @@
     return text ? `<div class="notice ${esc(tone)}">${esc(text)}</div>` : "";
   }
 
-  // Compact "3h 12m" / "45s" for research cooldowns and ages.
+  // Every elapsed or remaining duration uses HH:MM:SS.
   function formatDuration(totalSeconds) {
     const seconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
-    if (seconds < 60) return `${seconds}s`;
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes}m`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 48) return `${hours}h ${minutes % 60}m`;
-    return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+    return [Math.floor(seconds / 3600), Math.floor(seconds / 60) % 60, seconds % 60]
+      .map((part) => String(part).padStart(2, "0")).join(":");
   }
 
   // Research lane status: live queue counters + the durable cooldown picture,
@@ -553,7 +551,7 @@
     const expandKey = `research-model:${providerID}`;
     const unavailable = fetched && current && !models.includes(current);
     const choices = models.map((model) => `<button type="button" class="research-model-option${model === current ? " is-selected" : ""}" data-model-pick="${esc(model)}" aria-pressed="${model === current}">${esc(model)}</button>`).join("");
-    const picker = fetched ? `<details class="research-model-picker" data-expand="${esc(expandKey)}"${openExpands.has(expandKey) ? " open" : ""}><summary class="vui-select-button" data-model-selector aria-label="${tx("research.model")}: ${current ? esc(current) : tx("research.chooseModel")}"><span class="vui-select-label">${current ? esc(current) : tx("research.chooseModel")}</span></summary><div class="research-model-menu"><input type="search" data-model-search value="${esc(researchModelQuery)}" aria-label="${tx("research.modelSearch")}" placeholder="${tx("research.modelSearch")}" autocomplete="off" spellcheck="false"><div class="research-model-list vui-list-box" data-list-key="${esc(expandKey)}" tabindex="0" aria-label="${tx("research.model")}">${choices}</div><p class="small-copy" data-model-no-matches hidden>${tx("research.noMatchingModels")}</p>${models.length ? "" : `<p class="small-copy">${tx("research.noModels")}</p>`}</div></details>` : current ? `<p class="small-copy">${tx("research.savedModel", { model: current })}</p>` : "";
+    const picker = fetched ? `<details class="research-model-picker" data-expand="${esc(expandKey)}"${openExpands.has(expandKey) ? " open" : ""}><summary class="vui-select-button" tabindex="0" data-model-selector aria-label="${tx("research.model")}: ${current ? esc(current) : tx("research.chooseModel")}"><span class="vui-select-label">${current ? esc(current) : tx("research.chooseModel")}</span></summary><div class="research-model-menu"><input type="search" data-model-search value="${esc(researchModelQuery)}" aria-label="${tx("research.modelSearch")}" placeholder="${tx("research.modelSearch")}" autocomplete="off" spellcheck="false"><div class="research-model-list vui-list-box" data-list-key="${esc(expandKey)}" tabindex="0" aria-label="${tx("research.model")}">${choices}</div><p class="small-copy" data-model-no-matches hidden>${tx("research.noMatchingModels")}</p>${models.length ? "" : `<p class="small-copy">${tx("research.noModels")}</p>`}</div></details>` : current ? `<p class="small-copy">${tx("research.savedModel", { model: current })}</p>` : "";
     return `<div class="field research-model-field"><span class="field-label">${tx("research.model")}</span><input type="hidden" data-field="llmModelIdentifier" value="${esc(current)}">${picker}${unavailable ? `<p class="small-copy research-model-unavailable">${tx("research.modelUnavailable")}</p>` : ""}<div class="action-row"><button type="button" class="secondary" data-action="probeProviderModelCatalog" data-profile-id="${esc(providerID)}" data-model-fetch${disabled(!canFetch || loading)}>${tx(loading ? "research.fetchingModels" : error ? "research.retryModels" : fetched ? "research.refreshModels" : "research.fetchModels")}</button></div>${!canFetch ? `<p class="small-copy">${tx(profile ? "research.modelKeyRequired" : "research.modelProviderRequired")}</p>` : ""}${loading ? `<p class="small-copy" role="status">${tx("research.fetchingModels")}</p>` : ""}${error ? `<div role="alert">${notice(error, "red")}</div>` : ""}</div>`;
   }
 
@@ -670,6 +668,41 @@
         <section class="editor-panel" data-editor-panel data-workspace="${esc(state.workspace)}">${content}</section>
       </div>
     </div>`;
+  }
+
+  function initialShell() {
+    // Native state arrives asynchronously. Keep navigation available from the
+    // first paint rather than replacing the whole scene with a loading screen.
+    return `<div class="popup"><header class="vui-topbar"><nav class="vui-tabs" aria-label="Scene"><button type="button" class="vui-tab" data-scene="vault">Vault</button><button type="button" class="vui-tab is-active" data-scene="classifier">Classifier</button><button type="button" class="vui-tab" data-scene="activity">Activity</button></nav></header><div class="layout" aria-busy="true"></div></div>`;
+  }
+
+  function syncDialogFocus(previousControl) {
+    const kind = pendingCreateType ? "create" : utilityPanel;
+    releaseDialogFocus?.(false);
+    releaseDialogFocus = null;
+    if (!kind) {
+      if (dialogFocusKind) root.querySelector(dialogFocusKind === "create"
+        ? '[data-action="newType"]' : '[data-action="openUtilityPanel"]')?.focus({ preventScroll: true });
+      dialogFocusKind = null;
+      return;
+    }
+    dialogFocusKind = kind;
+    const card = root.querySelector(kind === "create" ? "[data-create-type-dialog]" : '.utility-popover[role="dialog"]');
+    if (!card) return;
+    const active = scope.activeElement;
+    const initial = card.contains(active) ? active : previousControl
+      ? Array.from(card.querySelectorAll("button, input, select, textarea")).find((control) =>
+        control.dataset.action === previousControl.action && control.dataset.field === previousControl.field
+        && control.hasAttribute("data-create-type-name") === previousControl.createName
+        && (!previousControl.platform || control.value === previousControl.platform)) : null;
+    releaseDialogFocus = window.VaultUI.focusDialog(card, {
+      initialFocus: initial || card.querySelector(kind === "create" ? "[data-create-type-name]" : '[data-action="closeUtilityPanel"]'),
+      returnFocus: () => root.querySelector(kind === "create" ? '[data-action="newType"]' : '[data-action="openUtilityPanel"]'),
+      onEscape: dismissClassifierDialog
+    });
+    if (previousControl?.start != null && initial?.setSelectionRange) {
+      initial.setSelectionRange(previousControl.start, previousControl.end);
+    }
   }
 
   function backupWorkspace() {
@@ -853,7 +886,7 @@
       const responseDiagnostic = latestResponseDiagnostic
         ? `<p class="provider-response-shape"><span>${tx("llm.responseShape")}</span><strong>${esc(latestResponseDiagnostic.responseShape)}</strong></p>`
         : "";
-      return `<section class="provider-panel" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}" data-autosave-action="updateProviderConnection"><div class="provider-panel-head"><h3>${esc(profile.name)}</h3><div class="provider-panel-actions">${testButton}<button class="danger" data-action="confirmDeleteProviderProfile" data-profile-id="${esc(profile.id)}">${tx("llm.deleteProfile")}</button></div></div>${retiredSearchProvider ? `<div class="notice navy">${tx("llm.retiredSearchProvider")}</div>` : ""}<div class="provider-panel-body">${connectionFields ? `<div class="provider-connection-fields">${connectionFields}</div>` : ""}<div class="provider-request-summary">${usage}${responseDiagnostic}</div></div>${profile.testSucceeded ? notice(t("llm.testSucceeded"), "green") : ""}</section>`;
+      return `<section class="provider-panel" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}" data-autosave-action="updateProviderConnection"><div class="provider-panel-head"><h3>${esc(profile.name)}</h3><div class="provider-panel-actions">${testButton}<button class="danger" data-action="confirmDeleteProviderProfile" data-profile-id="${esc(profile.id)}">${deleteLabel(`provider:${profile.id}`, tx("llm.deleteProfile"))}</button></div></div>${retiredSearchProvider ? `<div class="notice navy">${tx("llm.retiredSearchProvider")}</div>` : ""}<div class="provider-panel-body">${connectionFields ? `<div class="provider-connection-fields">${connectionFields}</div>` : ""}<div class="provider-request-summary">${usage}${responseDiagnostic}</div></div>${profile.testSucceeded ? notice(t("llm.testSucceeded"), "green") : ""}</section>`;
     };
     return `<section class="utility-settings-section utility-api-keys"><h3 class="utility-settings-section-title">${tx("navigation.apiKeys")}</h3><p class="section-copy">${tx("llm.copy")}</p><div class="notice navy provider-local-only">${tx("llm.localOnlyDisclosure")}</div><section class="provider-create" data-form-id="new-provider-profile-form">${groupedValueSelectField("llm.providerType", "", "type", "", profileTypeGroups)}<button class="gold-action" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button><span class="small-copy">${tx("llm.createCopy")}</span></section><div class="provider-panels vui-list-box" data-list-key="providers" tabindex="0" aria-label="${tx("llm.keyLibrary")}">${profiles.length ? profiles.map(panel).join("") : `<div class="empty">${tx("llm.empty")}</div>`}</div></section>`;
   }
@@ -1019,6 +1052,7 @@
   }
 
   const DELETE_KEYS = {
+    confirmDeleteProviderProfile: (data) => `provider:${data.profileId}`,
     deleteModelFile: (data) => `model:${data.fileName}`,
     permanentlyDeleteTrashedEntry: (data) => `trash:${data.id}`,
     deleteTag: (data) => `tag:${data.nodeId}`,
@@ -1176,13 +1210,13 @@
   // dials, house rules and research switch until given its own.
   function createTypeModal() {
     if (!pendingCreateType) return "";
-    return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelCreateType" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog create-type-dialog" role="dialog" aria-modal="true" data-create-type-dialog><h3>${tx("createType.title")}</h3><p class="section-copy">${tx("createType.copy")}</p><div class="field"><span class="field-label">${tx("createType.platformLabel")}</span>${platformChoices(pendingCreateType.platformIDs || [], null)}${pendingCreateType.issue ? notice(t("createType.platformRequired"), "red") : ""}</div><label class="field"><span class="field-label">${tx("createType.nameLabel")}</span><input type="text" data-create-type-name autocomplete="off" spellcheck="false" value="${esc(pendingCreateType.name != null ? pendingCreateType.name : t("createType.defaultName"))}"></label><div class="action-row"><button class="secondary" data-action="cancelCreateType">${tx("common.cancel")}</button><button class="primary" data-action="confirmCreateType">${tx("createType.create")}</button></div></div></div>`;
+    return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelCreateType" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog create-type-dialog" role="dialog" aria-modal="true" aria-label="${tx("createType.title")}" data-create-type-dialog><h3>${tx("createType.title")}</h3><p class="section-copy">${tx("createType.copy")}</p><div class="field"><span class="field-label">${tx("createType.platformLabel")}</span>${platformChoices(pendingCreateType.platformIDs || [], null)}${pendingCreateType.issue ? notice(t("createType.platformRequired"), "red") : ""}</div><label class="field"><span class="field-label">${tx("createType.nameLabel")}</span><input type="text" data-create-type-name autocomplete="off" spellcheck="false" value="${esc(pendingCreateType.name != null ? pendingCreateType.name : t("createType.defaultName"))}"></label><div class="action-row"><button class="secondary" data-action="cancelCreateType">${tx("common.cancel")}</button><button class="primary" data-action="confirmCreateType">${tx("createType.create")}</button></div></div></div>`;
   }
 
 
   function render() {
     if (!state) {
-      root.innerHTML = `<div class="popup"><div class="empty">${tx("app.loading")}</div></div>`;
+      root.innerHTML = initialShell();
       lastRenderedMarkup = null;
       return;
     }
@@ -1202,6 +1236,13 @@
     const focused = captureLiveEditFocus();
     const modelSearch = scope.activeElement?.matches("[data-model-search]") ? scope.activeElement : null;
     const searchSelection = modelSearch ? { start: modelSearch.selectionStart, end: modelSearch.selectionEnd } : null;
+    const active = scope.activeElement;
+    const dialogControl = active?.closest?.('[role="dialog"]') ? {
+      action: active.dataset.action, field: active.dataset.field,
+      createName: active.hasAttribute("data-create-type-name"),
+      platform: active.hasAttribute("data-platform-choice") ? active.value : null,
+      start: active.selectionStart, end: active.selectionEnd
+    } : null;
     replacingControls = true;
     root.innerHTML = markup;
     restoreLiveEdits(focused);
@@ -1214,6 +1255,7 @@
       const search = root.querySelector("[data-model-search]");
       if (search) { search.focus({ preventScroll: true }); search.setSelectionRange(searchSelection.start, searchSelection.end); }
     }
+    syncDialogFocus(dialogControl);
     window.requestAnimationFrame(() => {
       applyNavigationPanelWidth();
       restoreEditorViewportPosition();
@@ -1431,20 +1473,25 @@
     send(action, data);
   });
 
-  scope.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape" || !utilityPanel) return;
+  function dismissClassifierDialog() {
     const picker = root.querySelector(".research-model-picker[open]");
     if (picker) {
       picker.open = false;
       openExpands.delete(picker.dataset.expand);
       picker.querySelector("summary")?.focus({ preventScroll: true });
-      event.preventDefault();
       return;
     }
+    pendingCreateType = null;
     utilityPanel = null;
     researchSetupRequested = false;
     researchSetupFocusPending = false;
     render();
+  }
+
+  scope.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || (!utilityPanel && !pendingCreateType)) return;
+    event.preventDefault();
+    dismissClassifierDialog();
   });
 
   scope.addEventListener("toggle", (event) => {
@@ -1486,6 +1533,12 @@
         if (hadIssue) render();
       }
       return;
+    }
+  });
+
+  scope.addEventListener("input", (event) => {
+    if (pendingCreateType && event.target.matches("[data-create-type-name]")) {
+      pendingCreateType.name = event.target.value;
     }
   });
 

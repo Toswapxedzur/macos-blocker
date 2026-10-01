@@ -335,7 +335,7 @@ h3 { font-size: 14px; }
   gap: 12px;
 }
 
-.utility-settings-fields .field:last-child { grid-column: 1 / -1; }
+.utility-settings-fields .field:last-child:nth-child(odd) { grid-column: 1 / -1; }
 
 /* Knowledge workspace (known creators & terms) */
 .knowledge-workspace { display: grid; gap: 16px; }

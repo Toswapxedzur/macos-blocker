@@ -16,6 +16,9 @@ public final class QuickAddPanel {
 
     private var panel: NSPanel?
     private var groupID = ""
+    private var groupName = ""
+    private var button: NSButton?
+    private var feedbackRevision = 0
     private let store = GroupStore()
 
     private init() {
@@ -47,11 +50,21 @@ public final class QuickAddPanel {
 
     /// Re-read the store and show or hide the panel accordingly.
     public func reload() {
-        if let target = Self.target(in: store.load()) {
+        let document = store.load()
+        if let target = Self.target(in: document) {
+            if groupID != target {
+                feedbackRevision += 1
+                button?.title = "+"
+            }
             groupID = target
+            groupName = document.publicGroup(id: target)?["name"] as? String ?? target
             show()
+            button?.toolTip = "Add the front app to \(groupName)"
+            button?.setAccessibilityLabel("Add the front app to \(groupName)")
         } else {
             groupID = ""
+            groupName = ""
+            feedbackRevision += 1
             panel?.orderOut(nil)
         }
     }
@@ -81,16 +94,17 @@ public final class QuickAddPanel {
 
         let button = NSButton(frame: NSRect(x: 0, y: 0, width: size, height: size))
         button.title = "+"
-        button.font = NSFont.boldSystemFont(ofSize: 12)
+        button.font = NSFont(name: "Arial-BoldMT", size: 14)
         button.isBordered = false
         button.wantsLayer = true
-        button.layer?.backgroundColor = NSColor(calibratedRed: 0.06, green: 0.09, blue: 0.16, alpha: 0.75).cgColor
+        button.layer?.backgroundColor = NSColor(calibratedRed: 0.933, green: 0.949, blue: 1, alpha: 1).cgColor
         button.layer?.cornerRadius = size / 2
-        button.contentTintColor = .white
-        button.toolTip = "Add the front app to the chosen group"
+        button.contentTintColor = NSColor(calibratedRed: 0.118, green: 0.227, blue: 0.541, alpha: 1)
+        button.toolTip = "Add the front app to \(groupName)"
         button.target = self
         button.action = #selector(addFrontmostApplication)
         panel.contentView = button
+        self.button = button
         return panel
     }
 
@@ -109,13 +123,30 @@ public final class QuickAddPanel {
               let app = NSWorkspace.shared.frontmostApplication,
               let bundleID = app.bundleIdentifier,
               GuardPolicy.canBlock(bundleID) else {
-            NSSound.beep() // Apple's apps, browsers and Vault are never blocked
+            showFeedback(success: false) // Apple's apps, browsers and Vault are never blocked
             return
         }
         do {
             try store.mutate { try $0.addApplication(id: groupID, bundleID: bundleID, name: app.localizedName) }
+            showFeedback(success: true)
         } catch {
-            NSSound.beep()
+            showFeedback(success: false)
+        }
+    }
+
+    private func showFeedback(success: Bool) {
+        feedbackRevision += 1
+        let revision = feedbackRevision
+        button?.title = success ? "✓" : "!"
+        let message = success ? "Added to \(groupName)" : "Could not add the front app to \(groupName)"
+        button?.toolTip = message
+        button?.setAccessibilityLabel(message)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            guard let self, self.feedbackRevision == revision else { return }
+            self.button?.title = "+"
+            let label = "Add the front app to \(self.groupName)"
+            self.button?.toolTip = label
+            self.button?.setAccessibilityLabel(label)
         }
     }
 }
