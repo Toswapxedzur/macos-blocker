@@ -32,7 +32,7 @@ extension VaultClassifierViewModel {
         do {
             guard var catalog = localState?.workspaceCatalog,
                   let index = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }) else {
-                throw WebBridgeInputError.invalidChoice("classifier type")
+                throw WebBridgeInputError.invalidChoice("Classifier group")
             }
             catalog.classifierTypes[index].isPaused = paused
             try coordinator?.updateWorkspaceCatalog(catalog)
@@ -103,7 +103,7 @@ extension VaultClassifierViewModel {
                   catalog.classifierTypes[index].applicablePlatformIDs.allSatisfy({
                       CollectionPlatformRegistry.definition(for: $0)?.supportsLocalModel == true
                   }) else {
-                throw WebBridgeInputError.invalidChoice("classifier type research")
+                throw WebBridgeInputError.invalidChoice("Classifier group research")
             }
             catalog.classifierTypes[index].researchEnabled = researchEnabled
             catalog.classifierTypes[index].updatedAtMilliseconds = WorkspaceCatalog.now()
@@ -123,7 +123,7 @@ extension VaultClassifierViewModel {
                   catalog.classifierTypes[index].applicablePlatformIDs.allSatisfy({
                       CollectionPlatformRegistry.definition(for: $0)?.supportsLocalModel == true
                   }) else {
-                throw WebBridgeInputError.invalidChoice("classifier type local model")
+                throw WebBridgeInputError.invalidChoice("Classifier group local model")
             }
             catalog.classifierTypes[index].localModel = settings
             catalog.classifierTypes[index].updatedAtMilliseconds = WorkspaceCatalog.now()
