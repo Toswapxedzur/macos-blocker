@@ -252,6 +252,7 @@
         llmProviderProfileID: state.settings?.research?.llmProviderProfileID || "",
         llmModelIdentifier: state.settings?.research?.llmModelIdentifier || "" };
       case "savePackageSettings": return state.settings;
+      case "saveClassificationSettings": return state.settings;
       case "saveBackup": return state.backup;
       case "editKnowledgeEntry": return [...(assets.knowledge?.creators || []),
         ...(assets.knowledge?.terms || [])].find((item) => item.id === edit.identity.id);
@@ -648,6 +649,7 @@
       const isGroundingCapable = (profile) => protocols[profile.type]?.supportsGenerateText === true && protocols[profile.type]?.supportsNativeWebSearch === true;
       // Research is provider-grounding only, so only grounding-capable providers are offered.
       const llmProviderOptions = [["", tx("research.chooseProvider")]].concat(generationProfiles.filter(isGroundingCapable).map((profile) => [profile.id, profile.name]));
+      const classificationSection = `<section class="utility-settings-section" data-form-id="classification-settings-form" data-autosave-action="saveClassificationSettings"><h3 class="utility-settings-section-title">${tx("classification.title")}</h3><div class="utility-toggles">${toggle("classification.enabled", "classificationEnabled", settings.classificationEnabled !== false)}</div><p class="section-copy">${tx("classification.copy")}</p></section>`;
       const researchSection = `<section class="utility-settings-section utility-research-section" data-form-id="utility-research-form" data-autosave-action="saveResearchSettings"><h3 class="utility-settings-section-title">${tx("research.title")} ${statusPill(tx(research.enabled ? "research.status.on" : "research.status.off"), research.enabled ? "cyan" : "muted")}</h3><p class="section-copy">${tx("research.copy")}</p><div class="notice navy research-data-flow">${tx("research.disclosure")}</div><div class="utility-toggles">${
         toggle("research.consent", "enabled", research.enabled === true)
       }</div><div class="utility-settings-fields">${
@@ -656,7 +658,7 @@
         researchModelPicker()
       }</div><p class="small-copy">${tx("research.constantsNote")}</p><p class="small-copy">${tx("research.usageToday", { used: research.tokensUsedToday ?? 0, limit: research.dailyTokenLimit ?? 10000 })}</p>${researchStatusBlock(research.status)}</section>`;
       const packageSection = `<section class="utility-settings-section utility-resource-section" data-form-id="utility-package-form" data-autosave-action="savePackageSettings"><h3 class="utility-settings-section-title">${tx("settings.packageUpdates")}</h3><div class="utility-settings-fields">${selectField("settings.packageUpdates", "settings.packageUpdatesCopy", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div></section>`;
-      content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${notice(state.issue, "red")}${apiKeySettings()}${researchSection}${packageSection}<section class="utility-settings-section"><h3 class="utility-settings-section-title">${tx("language.label")}</h3>${languageSelection()}</section></div></section>`;
+      content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${notice(state.issue, "red")}${classificationSection}${apiKeySettings()}${researchSection}${packageSection}<section class="utility-settings-section"><h3 class="utility-settings-section-title">${tx("language.label")}</h3>${languageSelection()}</section></div></section>`;
     }
     if (!content) return "";
     return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}"></button><div class="utility-popover" data-list-key="settings" role="dialog" aria-modal="true" aria-label="${esc(tx("utility.settings.title"))}">${content}</div></div>`;
@@ -998,6 +1000,7 @@
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}" data-autosave-action="configureClassifierType">
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name, "text", 'maxlength="128"')}</div>
         <section class="classifier-type-section classifier-applicable-platform-section"><span class="field-label">${tx("bridge.applicablePlatform")}</span>${platformChoices(chosen, classifierType.id)}<p class="small-copy">${tx("bridge.platformsFixed")}</p>${platformNotes.map((note) => `<p class="small-copy">${esc(note)}</p>`).join("")}</section>
+        <div class="action-row classifier-tagging-control"><button type="button" class="secondary" data-action="setClassifierTypePaused" data-type-id="${esc(classifierType.id)}" data-paused="${classifierType.isPaused !== true}">${tx(classifierType.isPaused === true ? "classification.resume" : "classification.pause")}</button>${statusPill(tx(classifierType.isPaused === true ? "classification.paused" : state.settings?.classificationEnabled === false ? "classification.disabled" : "classification.active"), classifierType.isPaused === true || state.settings?.classificationEnabled === false ? "muted" : "cyan")}</div>
         <p class="small-copy">${tx("bridge.autoSave")}</p>
         <div data-form-id="${esc(localModelFormID)}" data-autosave-action="saveClassifierTypeLocalModel" data-type-id="${esc(classifierType.id)}">
           ${localModelSection}
@@ -1387,6 +1390,10 @@
     flushLiveEdits();
     const action = button.dataset.action;
     if (DELETE_KEYS[action] && !confirmDelete(DELETE_KEYS[action](button.dataset))) return;
+    if (action === "setClassifierTypePaused") {
+      send(action, { typeID: button.dataset.typeId, paused: button.dataset.paused === "true" });
+      return;
+    }
     if (action === "workspace") {
       const nextWorkspace = button.dataset.workspace;
       if (!state || !workspaceNames.has(nextWorkspace) || state.workspace === nextWorkspace) return;

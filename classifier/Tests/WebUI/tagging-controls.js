@@ -1,0 +1,26 @@
+window.runTaggingControlTests = async () => {
+  const results = [], q = selector => scope.querySelector(selector);
+  const check = (ok, label) => { if (!ok) throw Error(label); results.push('PASS ' + label); };
+  const tick = () => new Promise(resolve => setTimeout(resolve, 60));
+  q('[data-action="selectType"][data-type-id="group-1"]').click();
+  let pause = q('[data-action="setClassifierTypePaused"]');
+  check(pause && !pause.closest('details') && pause.textContent === 'Pause tagging', 'group pause is visible outside More and new groups start active');
+  pause.click(); await tick();
+  check(commands.at(-1).action === 'setClassifierTypePaused' && commands.at(-1).data.paused === true, 'group pause uses the native action');
+  check(testState.assets.classifierTypes[0].isPaused === true && q('[data-action="setClassifierTypePaused"]').textContent === 'Resume tagging', 'native snapshot preserves paused state and offers Resume');
+  q('[data-action="setClassifierTypePaused"]').click(); await tick();
+  check(testState.assets.classifierTypes[0].isPaused === false, 'Resume reactivates the same group');
+  q('[data-action="openUtilityPanel"]').click();
+  let toggle = q('[data-form-id="classification-settings-form"] [data-field="classificationEnabled"]');
+  check(toggle?.checked === true, 'Classifier Settings contains the enabled global tagging switch');
+  toggle.click(); await tick();
+  check(commands.at(-1).action === 'saveClassificationSettings' && testState.settings.classificationEnabled === false, 'global tagging disable autosaves natively');
+  check(testState.assets.classifierTypes[0].isPaused === false, 'global disable preserves independent group pause state');
+  q('[data-action="closeUtilityPanel"]').click();
+  check(q('.classifier-tagging-control').textContent.includes('Disabled in Settings'), 'group explains the global disabled state');
+  q('[data-action="openUtilityPanel"]').click();
+  q('[data-form-id="classification-settings-form"] [data-field="classificationEnabled"]').click(); await tick();
+  check(testState.settings.classificationEnabled === true, 'global enable restores tagging');
+  check(uiErrors.length === 0, 'no browser errors');
+  return results;
+};

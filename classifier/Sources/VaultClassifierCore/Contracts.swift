@@ -407,17 +407,20 @@ public struct ClassifierSettings: Codable, Equatable, Sendable {
     /// transport must still make every manifest request and activation.
     public var packageUpdateMode: PackageUpdateMode
     public var research: ResearchSettings
+    public var classificationEnabled: Bool
 
     public init(
         packageUpdateMode: PackageUpdateMode = .automatic,
-        research: ResearchSettings = ResearchSettings()
+        research: ResearchSettings = ResearchSettings(),
+        classificationEnabled: Bool = true
     ) {
         self.packageUpdateMode = packageUpdateMode
         self.research = research
+        self.classificationEnabled = classificationEnabled
     }
 
     private enum CodingKeys: String, CodingKey {
-        case packageUpdateMode, research
+        case packageUpdateMode, research, classificationEnabled
     }
 
 
@@ -426,7 +429,8 @@ public struct ClassifierSettings: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             packageUpdateMode: try container.decodeIfPresent(PackageUpdateMode.self, forKey: .packageUpdateMode) ?? .automatic,
-            research: try container.decodeIfPresent(ResearchSettings.self, forKey: .research) ?? ResearchSettings()
+            research: try container.decodeIfPresent(ResearchSettings.self, forKey: .research) ?? ResearchSettings(),
+            classificationEnabled: (try? container.decodeIfPresent(Bool.self, forKey: .classificationEnabled)) ?? true
         )
     }
 }

@@ -75,6 +75,32 @@ private actor CountingEngineResolver: OnDeviceLLMEngineResolving {
 }
 
 final class VideoClassificationCoordinatorTests: XCTestCase {
+    func testNativePauseAndGlobalDisableNeverRunTheModel() async throws {
+        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recorder = CoordinatorRequestRecorder()
+        coordinator.setOnDeviceLLMEngineResolver(CountingEngineResolver(engine: CoordinatorRecordingLLM(recorder: recorder)))
+        XCTAssertEqual(coordinator.enabledClassificationPlatformIDs(), ["youtube"])
+        var catalog = coordinator.snapshot().workspaceCatalog
+        catalog.classifierTypes[0].isPaused = true
+        try coordinator.updateWorkspaceCatalog(catalog)
+        _ = try await coordinator.classifyVideo(platformID: "youtube", entryID: "paused", creatorID: "creator", title: "Games")
+        XCTAssertTrue(recorder.requests.isEmpty)
+        XCTAssertTrue(coordinator.enabledClassificationPlatformIDs().isEmpty)
+        XCTAssertTrue(coordinator.enabledCollectionPlatformIDs().contains("youtube"))
+        catalog.classifierTypes[0].isPaused = false
+        try coordinator.updateWorkspaceCatalog(catalog)
+        var settings = coordinator.snapshot().settings
+        settings.classificationEnabled = false
+        try coordinator.updateSettings(settings)
+        _ = try await coordinator.classifyVideo(platformID: "youtube", entryID: "disabled", creatorID: "creator", title: "Games")
+        XCTAssertTrue(recorder.requests.isEmpty)
+        settings.classificationEnabled = true
+        try coordinator.updateSettings(settings)
+        _ = try await coordinator.classifyVideo(platformID: "youtube", entryID: "active", creatorID: "creator", title: "Games")
+        XCTAssertEqual(recorder.requests.count, 1)
+    }
+
     func testGroupTagBoundsReachRequestsAndPersistWithClassification() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
         defer { try? FileManager.default.removeItem(at: root) }

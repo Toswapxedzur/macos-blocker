@@ -17,12 +17,37 @@ extension VaultClassifierViewModel {
         return Int(raw)
     }
 
+    func saveClassificationSettings(enabled: Bool) {
+        do {
+            guard let coordinator else { return }
+            var settings = coordinator.snapshot().settings
+            settings.classificationEnabled = enabled
+            try coordinator.updateSettings(settings)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
+    func setClassifierTypePaused(typeID: String, paused: Bool) {
+        do {
+            guard var catalog = localState?.workspaceCatalog,
+                  let index = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }) else {
+                throw WebBridgeInputError.invalidChoice("classifier type")
+            }
+            catalog.classifierTypes[index].isPaused = paused
+            try coordinator?.updateWorkspaceCatalog(catalog)
+            refreshLocalState()
+            issue = nil
+        } catch { issue = error.localizedDescription }
+    }
+
     func savePackageSettings() {
         do {
             guard let coordinator else { return }
             let settings = ClassifierSettings(
                 packageUpdateMode: packageUpdateMode,
-                research: localState?.settings.research ?? ResearchSettings()
+                research: localState?.settings.research ?? ResearchSettings(),
+                classificationEnabled: localState?.settings.classificationEnabled ?? true
             )
             try coordinator.updateSettings(settings)
             refreshLocalState()
@@ -40,7 +65,8 @@ extension VaultClassifierViewModel {
             let current = localState?.settings ?? .init()
             try coordinator.updateSettings(.init(
                 packageUpdateMode: current.packageUpdateMode,
-                research: updated
+                research: updated,
+                classificationEnabled: current.classificationEnabled
             ))
             refreshLocalState()
             issue = nil

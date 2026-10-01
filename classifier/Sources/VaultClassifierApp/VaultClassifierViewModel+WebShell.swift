@@ -23,6 +23,7 @@ extension VaultClassifierViewModel {
         let researchSettings = state?.settings.research ?? ResearchSettings()
         let availableModelFiles = VaultLocalLLMEngine.availableModelFiles()
         let settingsPayload: [String: Any] = [
+            "classificationEnabled": state?.settings.classificationEnabled ?? true,
             "packageUpdateMode": packageUpdateMode.rawValue,
             "localModels": [
                     "systemRAMGB": HardwareProfile.physicalRAMGB(),
@@ -157,6 +158,7 @@ extension VaultClassifierViewModel {
                     "datasetID": classifierType.datasetID,
                     "datasetRevision": classifierType.datasetRevision,
                     "applicablePlatformIDs": classifierType.applicablePlatformIDs,
+                    "isPaused": classifierType.isPaused,
                     "localModel": [
                         "houseRules": classifierType.localModel.houseRules,
                         "speedQuality": classifierType.localModel.speedQuality.rawValue,
@@ -403,6 +405,10 @@ extension VaultClassifierViewModel {
                 disconnectTag(treeID: try webString(data, key: "treeID", limit: 256), nodeID: try webString(data, key: "nodeID", limit: 256))
             case "deleteTag":
                 deleteTag(treeID: try webString(data, key: "treeID", limit: 256), nodeID: try webString(data, key: "nodeID", limit: 256))
+            case "saveClassificationSettings":
+                saveClassificationSettings(enabled: try webBool(data, key: "classificationEnabled"))
+            case "setClassifierTypePaused":
+                setClassifierTypePaused(typeID: try webString(data, key: "typeID", limit: 256), paused: try webBool(data, key: "paused"))
             case "savePackageSettings":
                 let rawMode = try webString(data, key: "packageUpdateMode", limit: 32)
                 guard let updateMode = PackageUpdateMode(rawValue: rawMode) else {

@@ -236,24 +236,7 @@ public enum ExtensionMCPTools {
                 guard let patch = args["patch"] as? [String: Any], !patch.isEmpty else { return .failure("Missing 'patch' object.") }
                 return relay(bridge, "settings-set-global", ["patch": patch], args)
             },
-            MCPTool(
-                name: "extension_set_classifier",
-                description: "Set the extension's classifier settings: collectionEnabled (whether pages are collected at all) and taggingMode ('whenFiltering' = tag only while a tag filter is active, 'always', 'paused').",
-                inputSchema: [
-                    "type": "object",
-                    "properties": [
-                        "collectionEnabled": ["type": "boolean"],
-                        "taggingMode": ["type": "string", "enum": ["whenFiltering", "always", "paused"]],
-                        "browser": browserProperty,
-                    ],
-                ]
-            ) { args in
-                var body: [String: Any] = [:]
-                if let enabled = args["collectionEnabled"] as? Bool { body["collectionEnabled"] = enabled }
-                if let mode = args["taggingMode"] as? String { body["taggingMode"] = mode }
-                guard !body.isEmpty else { return .failure("Nothing to set: pass collectionEnabled and/or taggingMode.") }
-                return relay(bridge, "settings-set-classifier", body, args)
-            },
+
         ]
     }
 
