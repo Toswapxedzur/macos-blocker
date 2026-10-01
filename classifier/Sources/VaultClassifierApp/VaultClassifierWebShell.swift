@@ -88,6 +88,7 @@ final class VaultClassifierWebShell {
         /// Whether the host currently shows this scene (Mac Vault shows one scene
         /// at a time).
         private var hostShowsPage = true
+        private var initialStateSent = false
         private var occlusionObserver: NSObjectProtocol?
         private lazy var stateDelivery = LatestWebStateDelivery(
             schedule: { action in
@@ -166,7 +167,16 @@ final class VaultClassifierWebShell {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 if self.model.performWebAction(action, data: data) {
-                    self.sendState()
+                    // Warm the newly loaded renderer even while its scene is
+                    // hidden. Later background updates retain normal batching.
+                    if action == "state", !self.initialStateSent,
+                       let script = VaultClassifierWebShell.stateUpdateJavaScript(payload: self.model.webSnapshot()),
+                       let webView = self.webView {
+                        self.initialStateSent = true
+                        webView.evaluateJavaScript(script) { _, _ in }
+                    } else {
+                        self.sendState()
+                    }
                 }
             }
         }
@@ -174,6 +184,7 @@ final class VaultClassifierWebShell {
         /// The page reloaded (its script asks for state again on start); a
         /// delivery in flight to the dead page never completes.
         func pageReloaded() {
+            initialStateSent = false
             stateDelivery.recoverAfterWebContentProcessTermination()
         }
 

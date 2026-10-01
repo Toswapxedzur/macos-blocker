@@ -1,0 +1,36 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Activity UI regression</title>
+<link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/vault-ui.css"><style>html,body,#host{height:100%;margin:0}#host{display:block}</style><div id="host"></div>
+<script>
+const scope=document.getElementById('host').attachShadow({mode:'open'});
+scope.innerHTML='<link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/vault-ui.css"><link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/activity.css"><div id="activity"></div>';
+window.VaultScenes={scope:()=>scope};window.uiErrors=[];window.commands=[];
+window.addEventListener('error',e=>uiErrors.push(e.message));
+window.webkit={messageHandlers:{activity:{postMessage:message=>commands.push(message)}}};
+const cat={enabled:true,retentionDays:null};const now=Date.now();
+window.testSnapshot={rangeStartMs:now-86400000,rangeEndMs:now,app:{totalSeconds:3600,bars:[{key:'com.example.App',label:'Long application name',seconds:3600,fraction:1,colorIndex:0}],timeline:[]},web:{totalSeconds:0,bars:[],timeline:[]},watched:[],watchedTimeline:[],settings:{appUsage:cat,webVisit:cat,contentWatched:cat,retentionDays:365},groups:[{id:'group-1',name:'Test group',merge:false,members:['app|com.example.App'],colorIndex:20}]};
+</script>
+<script src="/Sources/MacBlockerWebUI/WebAssets/vault-ui.js"></script>
+<script src="/Sources/MacBlockerWebUI/WebAssets/activity-time-bins.js"></script>
+<script src="/Sources/MacBlockerWebUI/WebAssets/activity.js"></script>
+<script>
+activityApply(testSnapshot,{}, {},{keepDays:365,platforms:[]},[]);
+activityKnownItems([{id:'app|com.example.App',label:'Long application name',kind:'App'},{id:'app|com.example.Other',label:'Another application with a long name',kind:'App'}],{});
+window.runActivityTests=async()=>{
+  const results=[],q=s=>scope.querySelector(s),expect=(ok,label)=>{if(!ok)throw Error(label);results.push('PASS '+label)};
+  q('.group-card button').click();
+  const details=q('.group-details').getBoundingClientRect(), cols=Array.from(q('.group-form').children).map(n=>n.getBoundingClientRect());
+  expect(details.width>cols[1].width*1.9 && Math.abs(cols[1].width-cols[2].width)<2,'Activity narrow form gives group details a full row and lists equal widths');
+  expect(cols.every(c=>c.left>=0 && c.right<=innerWidth),'Activity group columns fit 720px');
+  const input=q('.group-top input');input.value='Unfinished activity group';input.dispatchEvent(new Event('input',{bubbles:true}));
+  q('[data-confirm-key="group:group-1"]').click();
+  expect(!commands.some(c=>c.kind==='group-delete'),'first click only arms deletion');
+  activityApply(structuredClone(testSnapshot),{},{},{keepDays:365,platforms:[]},[]);
+  expect(q('.group-top input').value==='Unfinished activity group','Activity group draft survives snapshot');
+  expect(q('[data-confirm-key="group:group-1"]').textContent==='Click again to delete','Activity deletion remains armed after snapshot');
+  q('[data-confirm-key="group:group-1"]').click();
+  expect(commands.filter(c=>c.kind==='group-delete' && c.id==='group-1').length===1,'second click deletes the same group after snapshot');
+  activityApply(testSnapshot,{},{},{keepDays:365,platforms:[]},[]);q('.group-card button').click();
+  expect(uiErrors.length===0,'no Activity browser errors');
+  return results;
+};
+</script>

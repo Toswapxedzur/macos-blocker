@@ -239,17 +239,6 @@ public struct PanelControlSnapshot: Codable, Equatable, Sendable {
     public var autoSubmit: Bool?
 }
 
-/// Theme customization for a panel.
-public struct PanelTheme: Codable, Equatable, Sendable {
-    public var background: String?
-    public var foreground: String?
-    public var accent: String?
-    public var border: String?
-    public var muted: String?
-    public var fontSize: String?
-    public var titleSize: String?
-}
-
 /// A panel as a rule shows it.
 public struct PanelSnapshot: Codable, Equatable, Sendable {
     public var id: String
@@ -264,7 +253,6 @@ public struct PanelSnapshot: Codable, Equatable, Sendable {
     public var textSize: String?
     public var role: String?
     public var autoFocus: Bool?
-    public var theme: PanelTheme?
     public var controls: [PanelControlSnapshot]?
     public var visible: Bool?
     public var values: [String: AnyCodableValue]?

@@ -34,6 +34,35 @@
   var editing = null;        // { id, name, merge, members, message, conflicts }
   var knownItems = null;     // what a group can hold (Mac Vault's list)
   var groupSearch = "";
+  var armedDeletes = new Map();
+
+  // Confirmation belongs to the entity, so rebuilding the page does not
+  // discard a first click. Expiry updates whichever button is now on screen.
+  function deleteButton(label, key, action) {
+    var armed = armedDeletes.get(key);
+    var button = textButton(armed && armed.until > Date.now() ? CLICK_AGAIN : label, function () {
+      var current = armedDeletes.get(key);
+      if (current && current.until > Date.now()) {
+        clearTimeout(current.timer);
+        armedDeletes.delete(key);
+        action();
+        return;
+      }
+      if (current) clearTimeout(current.timer);
+      var next = { until: Date.now() + 4000 };
+      next.timer = setTimeout(function () {
+        if (armedDeletes.get(key) !== next) return;
+        armedDeletes.delete(key);
+        scope.querySelectorAll("[data-confirm-key]").forEach(function (node) {
+          if (node.dataset.confirmKey === key) node.textContent = label;
+        });
+      }, 4000);
+      armedDeletes.set(key, next);
+      button.textContent = CLICK_AGAIN;
+    }, "danger");
+    button.dataset.confirmKey = key;
+    return button;
+  }
   var icons = {};
   // Watched (owner 2026-09-29): videos, authors and tags; per watched key
   // { creator, creatorIcon, tags: [{ id, name, color }] } (Mac Vault records
@@ -410,9 +439,9 @@
       }));
       row.appendChild(keep);
       // Every delete asks once more (VaultUI.confirmClick, as in every section).
-      var del = textButton("Delete history", function () {
-        if (VaultUI.confirmClick(del, CLICK_AGAIN)) send({ kind: "delete", scope: "category", category: c.key });
-      }, "danger");
+      var del = deleteButton("Delete history", "history:" + c.key, function () {
+        send({ kind: "delete", scope: "category", category: c.key });
+      });
       row.appendChild(del);
       box.appendChild(row);
     });
@@ -441,9 +470,9 @@
         send({ kind: "collection-keep", platformID: p.id, days: days });
       }));
       row.appendChild(keep);
-      var del = textButton("Delete collected data", function () {
-        if (VaultUI.confirmClick(del, CLICK_AGAIN)) send({ kind: "collection-clear", platformID: p.id });
-      }, "danger");
+      var del = deleteButton("Delete collected data", "feed:" + p.id, function () {
+        send({ kind: "collection-clear", platformID: p.id });
+      });
       del.disabled = !p.entries;
       row.appendChild(del);
       group.appendChild(row);
@@ -655,7 +684,7 @@
   // fixed height; the groups side by side as cards (scrolling sideways), or
   // the editor in columns.
   function groupsPanel() {
-    var box = el("section", "panel groups");
+    var box = el("section", "panel groups" + (editing ? " is-editing" : ""));
     box.id = "groups";
     var head = el("div", "column-head");
     head.appendChild(el("h2", null, "Groups"));
@@ -708,7 +737,7 @@
 
   function groupForm() {
     var form = el("div", "group-form");
-    var first = el("div", "group-col"), second = el("div", "group-col"), third = el("div", "group-col group-add");
+    var first = el("div", "group-col group-details"), second = el("div", "group-col"), third = el("div", "group-col group-add");
     form.appendChild(first); form.appendChild(second); form.appendChild(third);
     var top = el("div", "group-top");
     top.appendChild(groupIcon(editing, true));
@@ -790,11 +819,10 @@
     actions.appendChild(textButton("Cancel", function () { editing = null; refreshGroups(); }, "secondary"));
     if (editing.id) {
       var id = editing.id;
-      var del = textButton("Delete group", function () {
-        if (!VaultUI.confirmClick(del, CLICK_AGAIN)) return;
+      var del = deleteButton("Delete group", "group:" + id, function () {
         editing = null;
         send({ kind: "group-delete", id: id });
-      }, "danger");
+      });
       actions.appendChild(del);
     }
     first.appendChild(actions);
