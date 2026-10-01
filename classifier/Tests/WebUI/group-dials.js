@@ -10,7 +10,6 @@ window.runGroupDialTests = async () => {
   testState.assets.classifierTypes.push({id:'group-2',name:'Other group',treeID:'tree-1',applicablePlatformIDs:['reddit'],localModel:{speedQuality:'fast',strictness:1,houseRules:''},researchEnabled:null,order:1});
   pushSnapshot(); await tick();
   q('[data-action="selectType"][data-type-id="group-1"]').click();
-  q('[data-expand="type-more:group-1"] summary').click(); await tick();
   const form = q('[data-form-id="classifier-local-model-form-group-1"]');
   const radios = [...form.querySelectorAll('[data-field="speedQuality"]')];
   expect(radios.length===3 && radios.filter(r=>r.checked).map(r=>r.value).join()==='balanced', 'group starts with its own selected tier');
@@ -30,7 +29,6 @@ window.runGroupDialTests = async () => {
   expect(q('[data-local-model-section] h3').textContent.includes('LOADING'), 'group status follows its selected model runtime without resetting its edits');
   await new Promise(resolve=>setTimeout(resolve,350));
   q('[data-action="selectType"][data-type-id="group-2"]').click();
-  q('[data-expand="type-more:group-2"] summary').click();await tick();
   expect(q('[data-form-id="classifier-local-model-form-group-2"] [data-field="speedQuality"]:checked').value==='fast' && q('[data-form-id="classifier-local-model-form-group-2"] [data-field="houseRules"]').value==='', 'another group keeps its own tier and empty rules');
   q('[data-action="openUtilityPanel"]').click();
   expect(!q('.utility-settings-modal .dial-card-grid') && !q('.utility-settings-modal [data-field="houseRules"]'), 'Settings has no global dial or house-rule UI');

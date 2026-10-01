@@ -180,7 +180,7 @@ public struct EntryEvidenceValidator: Sendable {
 /// so the group settings, the pipeline, and the store can never
 /// disagree about what "min/max" resolve to. Every site that used to
 /// re-derive these clamps now builds a `TagBounds` instead.
-public struct TagBounds: Equatable, Sendable {
+public struct TagBounds: Codable, Equatable, Sendable {
     public let minimum: Int
     public let maximum: Int
 
@@ -192,7 +192,7 @@ public struct TagBounds: Equatable, Sendable {
     }
 }
 
-/// The local model's settings: the two dials plus house rules. Everything else
+/// The local model's settings: group dials, house rules and optional tag bounds. Everything else
 /// the engine needs is a constant here (owner decision 2026-09-23: replace all
 /// parameters with Speed↔Quality and Strict↔Broad). State written before that
 /// day decodes to the nearest dial positions.
@@ -203,6 +203,10 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
     public var strictness: StrictnessDial
     /// Free-text tagging preferences appended to the cached static prefix.
     public var houseRules: String
+    /// nil follows the group's Strict↔Broad position.
+    public var minimumTagsOverride: Int?
+    public var maximumTagsOverride: Int?
+    public static let maximumTagCountOverride = 3
 
     // MARK: Runtime constants (were settings until 2026-09-23)
 
@@ -230,19 +234,33 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
     public init(
         speedQuality: SpeedQualityDial = .default,
         strictness: StrictnessDial = .default,
-        houseRules: String = ""
+        houseRules: String = "",
+        minimumTagsOverride: Int? = nil,
+        maximumTagsOverride: Int? = nil
     ) {
         self.speedQuality = speedQuality
         self.strictness = strictness
         self.houseRules = String(houseRules.prefix(Self.maximumHouseRulesLength))
+        self.minimumTagsOverride = minimumTagsOverride.flatMap { (0...Self.maximumTagCountOverride).contains($0) ? $0 : nil }
+        self.maximumTagsOverride = maximumTagsOverride.flatMap { (1...Self.maximumTagCountOverride).contains($0) ? $0 : nil }
+        // Invalid saved pairs safely return to the dial defaults. Live writes
+        // reject the pair rather than silently changing either field.
+        if (self.minimumTagsOverride ?? strictness.minimumTags) > (self.maximumTagsOverride ?? strictness.maximumTags) {
+            self.minimumTagsOverride = nil
+            self.maximumTagsOverride = nil
+        }
     }
 
     // MARK: Derived values the engine and pipeline read
 
     /// The GGUF file this group selects.
     public var modelFileName: String { speedQuality.ggufFileName }
-    public var maximumTags: Int { strictness.maximumTags }
-    public var minimumTags: Int { strictness.minimumTags }
+    public var tagBounds: TagBounds {
+        TagBounds(minimum: minimumTagsOverride ?? strictness.minimumTags,
+                  maximum: maximumTagsOverride ?? strictness.maximumTags)
+    }
+    public var maximumTags: Int { tagBounds.maximum }
+    public var minimumTags: Int { tagBounds.minimum }
     public var extraTagMinimumOdds: Double { strictness.extraTagMinimumOdds }
     public var contextTokens: Int { Self.contextTokens }
     public var batchTokens: Int { Self.batchTokens }
@@ -254,7 +272,7 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
     public var maxResidentModels: Int { Self.maxResidentModels }
 
     private enum CodingKeys: String, CodingKey {
-        case speedQuality, strictness, houseRules
+        case speedQuality, strictness, houseRules, minimumTagsOverride, maximumTagsOverride
         // Pre-dial keys, read only to find the nearest position.
         case modelFileName, maximumTags, minimumTags, extraTagMinimumOdds
     }
@@ -276,7 +294,9 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
         self.init(
             speedQuality: speedQuality,
             strictness: strictness,
-            houseRules: try container.decodeIfPresent(String.self, forKey: .houseRules) ?? ""
+            houseRules: try container.decodeIfPresent(String.self, forKey: .houseRules) ?? "",
+            minimumTagsOverride: try? container.decodeIfPresent(Int.self, forKey: .minimumTagsOverride),
+            maximumTagsOverride: try? container.decodeIfPresent(Int.self, forKey: .maximumTagsOverride)
         )
     }
 
@@ -285,6 +305,8 @@ public struct LocalLLMSettings: Codable, Equatable, Sendable {
         try container.encode(speedQuality, forKey: .speedQuality)
         try container.encode(strictness, forKey: .strictness)
         try container.encode(houseRules, forKey: .houseRules)
+        try container.encodeIfPresent(minimumTagsOverride, forKey: .minimumTagsOverride)
+        try container.encodeIfPresent(maximumTagsOverride, forKey: .maximumTagsOverride)
     }
 }
 

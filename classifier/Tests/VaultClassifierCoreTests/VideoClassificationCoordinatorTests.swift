@@ -75,6 +75,41 @@ private actor CountingEngineResolver: OnDeviceLLMEngineResolving {
 }
 
 final class VideoClassificationCoordinatorTests: XCTestCase {
+    func testGroupTagBoundsReachRequestsAndPersistWithClassification() async throws {
+        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recorder = CoordinatorRequestRecorder()
+        coordinator.setOnDeviceLLMEngineResolver(CountingEngineResolver(engine: CoordinatorRecordingLLM(recorder: recorder)))
+        var catalog = coordinator.snapshot().workspaceCatalog
+        let index = try XCTUnwrap(catalog.classifierTypes.firstIndex { $0.applicablePlatformIDs.contains("youtube") })
+        catalog.classifierTypes[index].localModel = .init(strictness: .strict, minimumTagsOverride: 2, maximumTagsOverride: 2)
+        try coordinator.updateWorkspaceCatalog(catalog)
+        _ = try await coordinator.classifyVideo(platformID: "youtube", entryID: "bounded", creatorID: "creator", title: "Title")
+        let request = try XCTUnwrap(recorder.requests.last)
+        XCTAssertEqual(request.minimumTags, 2)
+        XCTAssertEqual(request.maximumTags, 2)
+        XCTAssertEqual(request.extraTagMinimumOdds, StrictnessDial.strict.extraTagMinimumOdds)
+        let row = try XCTUnwrap(coordinator.snapshot().workspaceCatalog.videoClassifications.first { $0.entryID == "bounded" })
+        XCTAssertEqual(row.tagBounds, TagBounds(minimum: 2, maximum: 2))
+    }
+
+    func testChangingBoundsInvalidatesAutomaticCacheButKeepsHumanCorrections() {
+        var type = ClassifierTypeAsset(id: "type", name: "Group", treeID: "tree", treeRevision: 1,
+            datasetID: "dataset", datasetRevision: 1)
+        let serving = "llamacpp/" + type.modelFileName
+        var row = VideoClassification(classifierTypeID: type.id, platformID: "youtube", entryID: "entry",
+            creatorID: "creator", treeID: type.treeID, treeRevision: 1, tags: [], source: .model,
+            modelVersion: serving, tagBounds: type.localModel.tagBounds)
+        XCTAssertTrue(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: serving))
+        type.localModel.maximumTagsOverride = 2
+        XCTAssertFalse(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: serving))
+        row.tagBounds = type.localModel.tagBounds
+        XCTAssertTrue(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: serving))
+        type.localModel.maximumTagsOverride = nil
+        XCTAssertFalse(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: serving))
+        row.source = .humanCorrected
+        XCTAssertTrue(LocalClassifierCoordinator.isClassificationCurrent(row, forType: type, servingModelVersion: serving))
+    }
     func testEveryGroupRequestsItsOwnSelectedTierAndStrictness() async throws {
         let (coordinator, root) = try makeCoordinatorWithYouTubeType()
         defer { try? FileManager.default.removeItem(at: root) }

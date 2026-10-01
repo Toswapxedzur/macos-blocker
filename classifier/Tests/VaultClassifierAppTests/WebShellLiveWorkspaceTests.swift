@@ -28,7 +28,7 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
     }
 
     /// Each group contains independent dials and house rules.
-    func testShellPerTypeFormHoldsOnlyTheTwoDialsAndHouseRules() throws {
+    func testShellPerTypeFormHoldsDialsHouseRulesAndOptionalTagCounts() throws {
         let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
         XCTAssertTrue(script.contains("saveClassifierTypeLocalModel"))
@@ -40,7 +40,7 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         for field in ["localModel.speedQuality", "localModel.strictness", "\"houseRules\"", "speedQualityCards(", "strictnessOptions("] {
             XCTAssertTrue(section.contains(field), "per-type field missing: \(field)")
         }
-        for retired in ["saveLocalLLMSettings", "followGlobal", "allowDecline", "confidenceBand", "maximumTags", "minimumTags", "modelFileName", "thumbnailOcrEvidence", "toggleLocalModelAdvanced"] {
+        for retired in ["saveLocalLLMSettings", "followGlobal", "allowDecline", "confidenceBand", "modelFileName", "thumbnailOcrEvidence", "toggleLocalModelAdvanced"] {
             XCTAssertFalse(script.contains(retired), "retired control still in the shell: \(retired)")
         }
     }
