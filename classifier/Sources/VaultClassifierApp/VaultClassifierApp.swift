@@ -19,7 +19,6 @@ final class VaultClassifierViewModel: ObservableObject {
         var researchEnabled: Bool?
     }
     enum Workspace: String, CaseIterable, Identifiable, Hashable {
-        case llmAssist
         case browserBridge
         case knowledge
 

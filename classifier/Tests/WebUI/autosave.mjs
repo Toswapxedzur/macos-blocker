@@ -36,7 +36,7 @@ try{
     await new Promise(r=>setTimeout(r,50));
   }
   if(process.env.UI_TEST_SCRIPT) await evaluate(await fs.readFile(process.env.UI_TEST_SCRIPT,'utf8'));
-  for(const result of await evaluate(process.env.UI_TEST_SCRIPT ? 'runBoundedListTests()' : 'runAutosaveTests()'))console.log(result);
+  for(const result of await evaluate(process.env.UI_TEST_EXPRESSION || (process.env.UI_TEST_SCRIPT ? 'runBoundedListTests()' : 'runAutosaveTests()')))console.log(result);
   if(process.argv[2]){
     if(!process.env.UI_TEST_SCRIPT) await evaluate('document.getElementById("host").shadowRoot.querySelectorAll(".editor-panel").forEach(node => node.scrollTop = 0)');
     const shot=await call('Page.captureScreenshot',{format:'png'});

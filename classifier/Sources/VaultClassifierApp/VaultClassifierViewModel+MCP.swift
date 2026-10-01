@@ -25,7 +25,7 @@ public struct ClassifierWebActionDescriptor: Equatable, Sendable {
 public enum ClassifierWebActionCatalog {
     public static let actions: [ClassifierWebActionDescriptor] = [
         .init(name: "state", keys: [], summary: "Refresh local state from the store."),
-        .init(name: "workspace", keys: ["workspace"], summary: "Switch the page's workspace (llmAssist, browserBridge, knowledge)."),
+        .init(name: "workspace", keys: ["workspace"], summary: "Switch the page's workspace (browserBridge, knowledge). API keys and grounded research are in Settings."),
         .init(name: "clearCollectedData", keys: ["platformID"], summary: "Move a platform's collected entries to the trash (the platform and its group stay)."),
         .init(name: "restoreTrashedEntry", keys: ["id"], summary: "Restore a trashed entry."),
         .init(name: "permanentlyDeleteTrashedEntry", keys: ["id"], summary: "Purge a trashed entry."),

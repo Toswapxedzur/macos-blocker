@@ -15,3 +15,9 @@ An optional first argument saves a screenshot to that path.
 Use `UI_TEST_SCRIPT=classifier/Tests/WebUI/bounded-lists.js` with the same runner;
 `UI_WIDTH` and `UI_HEIGHT` choose the viewport. It verifies last-entry access,
 search, natural sizing of short lists, and snapshot/focus preservation.
+
+`research-setup.js` checks missing/deleted providers, credentials, models and
+consent; navigation without a group mutation; normal autosave after setup;
+Knowledge status; and provider creation in Settings. Run with
+`UI_TEST_SCRIPT=classifier/Tests/WebUI/research-setup.js`
+`UI_TEST_EXPRESSION='runResearchSetupTests()'` and the same runner.

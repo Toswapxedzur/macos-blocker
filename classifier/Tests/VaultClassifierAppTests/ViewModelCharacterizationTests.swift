@@ -87,11 +87,13 @@ final class ViewModelCharacterizationTests: XCTestCase {
         // "workspace" returns false: the shell switches optimistically and must
         // not be sent the multi-megabyte state again for navigation — except
         // into Knowledge, whose creator suggestions ride along only while open.
-        XCTAssertFalse(vm.performWebAction("workspace", data: ["workspace": "llmAssist"]))
-        XCTAssertEqual(vm.workspace, .llmAssist)
+        XCTAssertFalse(vm.performWebAction("workspace", data: ["workspace": "browserBridge"]))
+        XCTAssertEqual(vm.workspace, .browserBridge)
         XCTAssertTrue(vm.performWebAction("workspace", data: ["workspace": "knowledge"]))
         XCTAssertEqual(vm.workspace, .knowledge)
         XCTAssertEqual(vm.webSnapshot()["workspace"] as? String, "knowledge")
+        XCTAssertTrue(vm.performWebAction("workspace", data: ["workspace": "llmAssist"]), "retired API-key workspace is rejected safely")
+        XCTAssertEqual(vm.workspace, .knowledge)
         XCTAssertTrue(vm.performWebAction("workspace", data: ["workspace": "not-a-workspace"]), "the error path re-sends the snapshot")
         XCTAssertEqual(vm.workspace, .knowledge, "an invalid workspace is rejected, state unchanged")
         XCTAssertNotNil(vm.issue)

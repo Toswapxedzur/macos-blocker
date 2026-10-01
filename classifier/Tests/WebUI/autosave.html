@@ -34,8 +34,9 @@ window.webkit={messageHandlers:{vaultClassifier:{postMessage(message){
     case 'savePackageSettings':testState.settings.packageUpdateMode=data.packageUpdateMode;break;
     case 'updateTag':Object.assign(testState.assets.trees[0].nodes[0],data);break;
     case 'editKnowledgeEntry':testState.assets.knowledge.terms[0].meaning=data.meaning;break;
-    case 'updateProviderConnection':Object.assign(testState.assets.providerProfiles[0],data,{hasCredential:!!data.credential});break;
+    case 'updateProviderConnection':Object.assign(testState.assets.providerProfiles.find(p=>p.id===data.profileID),data,{hasCredential:!!data.credential});break;
     case 'saveBackup':Object.assign(testState.backup,data);break;
+    case 'createProviderProfile':testState.assets.providerProfiles.push({id:'provider-created',name:'New provider',type:data.type,credential:'',hasCredential:false,protocolConfiguration:{}});break;
     case 'workspace':testState.workspace=data.workspace;break;
     case 'state':break;
     default:return;
@@ -90,7 +91,7 @@ window.runAutosaveTests=async()=>{
   input('[data-id="term-1"] [data-field="meaning"]','Updated meaning');
   await poll(()=>testState.assets.knowledge.terms[0].meaning==='Updated meaning');
   expect(!q('[data-action="editKnowledgeEntry"]') && !!q('[data-action="addKnowledgeTerm"]'),'knowledge edits autosave and creation stays explicit');
-  q('[data-action="workspace"][data-workspace="llmAssist"]').click();
+  q('[data-action="openUtilityPanel"]').click();
   input('[data-provider-id="provider-1"] [data-field="customEndpoint"]','https://example.test/api');
   await poll(()=>testState.assets.providerProfiles[0].customEndpoint==='https://example.test/api');
   expect(!!q('[data-action="testProviderProfile"]'),'provider edits autosave and Probe stays explicit');
@@ -102,6 +103,7 @@ window.runAutosaveTests=async()=>{
   VaultClassifier.receive(stale);pushSnapshot();
   expect(q('[data-provider-id="provider-1"] [data-field="credential"]').value==='synthetic-new-key','older snapshot cannot acknowledge a different credential');
   await new Promise(r=>setTimeout(r,500));ackDelay=0;
+  q('[data-action="closeUtilityPanel"]').click();
   q('[data-action="selectType"]').click();
   q('[data-node-id="tag-1"]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));
   input('[data-tree-popover] [data-field="description"]','Tag explanation');
