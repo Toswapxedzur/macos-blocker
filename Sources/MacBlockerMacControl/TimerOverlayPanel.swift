@@ -615,26 +615,29 @@ private struct PanelSelectControl: View {
             }
             .buttonStyle(.plain)
             .accessibilityValue(expanded ? "Expanded" : "Collapsed")
-            if expanded {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 2) {
-                        ForEach(control.options ?? [], id: \.value) { option in
-                            Button {
-                                selection = option.value
-                                expanded = false
-                            } label: {
-                                Text(option.label).font(.custom("Arial", size: 13))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(7)
-                                    .background(RoundedRectangle(cornerRadius: 6).fill(option.value == selection ? Color(red: 0.859, green: 0.918, blue: 0.996) : .clear))
-                            }.buttonStyle(.plain)
-                        }
+        }
+        .popover(isPresented: $expanded, arrowEdge: .bottom) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(control.options ?? [], id: \.value) { option in
+                        Button {
+                            selection = option.value
+                            expanded = false
+                        } label: {
+                            Text(option.label).font(.custom("Arial", size: 13))
+                                .fontWeight(option.value == selection ? .semibold : .regular)
+                                .foregroundColor(Color(red: 0.118, green: 0.227, blue: 0.541))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(7)
+                                .contentShape(Rectangle())
+                        }.buttonStyle(.plain)
                     }
                 }
-                .frame(height: min(180, CGFloat((control.options ?? []).count) * 31))
-                .padding(4)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color(red: 0.945, green: 0.961, blue: 0.976)))
             }
+            .frame(width: 240, height: min(280, CGFloat((control.options ?? []).count) * 31))
+            .padding(4)
+            .background(Color.white)
+            .environment(\.colorScheme, .light)
         }
         .disabled(control.disabled == true)
         .onChange(of: selection) { newValue in
