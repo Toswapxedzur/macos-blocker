@@ -70,19 +70,27 @@ public actor LocalLLMEngineRegistry: OnDeviceLLMEngineResolving {
     private var cache = ResidentEngineCache<VaultLocalLLMEngine>()
     private var loads: [String: Task<VaultLocalLLMEngine, Error>] = [:]
 
-    public init() {}
+    private let onStateChange: @Sendable (String, String) -> Void
+
+    public init(onStateChange: @escaping @Sendable (String, String) -> Void = { _, _ in }) {
+        self.onStateChange = onStateChange
+    }
 
     /// Loads or reuses a selected model without changing any group settings.
     public func engine(
         forModel fileName: String?,
         configuration: LocalLLMSettings
     ) async throws -> VaultLocalLLMEngine {
-        let path = try Self.resolvedModelPath(
-            requestedFileName: fileName,
-            configuration: configuration
-        )
+        let path: String
+        do {
+            path = try Self.resolvedModelPath(requestedFileName: fileName, configuration: configuration)
+        } catch {
+            onStateChange(fileName ?? configuration.modelFileName, "no-model")
+            throw error
+        }
 
         if let cached = cache.value(for: path) {
+            onStateChange((path as NSString).lastPathComponent, "loaded")
             evictIfNeeded(capacity: configuration.maxResidentModels, protecting: path)
             return cached
         }
@@ -98,6 +106,7 @@ public actor LocalLLMEngineRegistry: OnDeviceLLMEngineResolving {
             )
         }
 
+        onStateChange((path as NSString).lastPathComponent, "loading")
         let load = Task.detached(priority: .userInitiated) {
             try VaultLocalLLMEngine(modelPath: path, configuration: configuration)
         }
@@ -115,6 +124,7 @@ public actor LocalLLMEngineRegistry: OnDeviceLLMEngineResolving {
             )
         } catch {
             loads.removeValue(forKey: path)
+            onStateChange((path as NSString).lastPathComponent, "failed")
             throw error
         }
     }
@@ -137,6 +147,7 @@ public actor LocalLLMEngineRegistry: OnDeviceLLMEngineResolving {
         capacity: Int
     ) -> VaultLocalLLMEngine {
         cache.insert(engine, at: path)
+        onStateChange((path as NSString).lastPathComponent, "loaded")
         VaultDevLog.shared.log("llm", "registry-load", [
             "model": (path as NSString).lastPathComponent,
             "resident": "\(cache.count)",
@@ -151,6 +162,7 @@ public actor LocalLLMEngineRegistry: OnDeviceLLMEngineResolving {
             capacity: requestedCapacity,
             protecting: protectedPaths
         ) {
+            onStateChange((eviction.path as NSString).lastPathComponent, "downloaded")
             VaultDevLog.shared.log("llm", "registry-evict", [
                 "model": (eviction.path as NSString).lastPathComponent,
                 "resident": "\(eviction.residentCount)",
