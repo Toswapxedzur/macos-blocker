@@ -3,6 +3,30 @@ import XCTest
 
 /// The two dials (2026-09-23) and what old state decodes to.
 final class LocalModelSettingsTests: XCTestCase {
+    func testOptionalTagBoundsFollowEachDialDefaultIndependently() throws {
+        for dial in StrictnessDial.allCases {
+            let defaults = LocalLLMSettings(strictness: dial)
+            XCTAssertEqual(defaults.tagBounds, dial.tagBounds)
+            let maximumOnly = LocalLLMSettings(strictness: dial, maximumTagsOverride: 2)
+            XCTAssertEqual(maximumOnly.minimumTags, dial.minimumTags)
+            XCTAssertEqual(maximumOnly.maximumTags, 2)
+            let minimumOnly = LocalLLMSettings(strictness: dial, minimumTagsOverride: 0)
+            XCTAssertEqual(minimumOnly.minimumTags, 0)
+            XCTAssertEqual(minimumOnly.maximumTags, dial.maximumTags)
+        }
+        let custom = LocalLLMSettings(strictness: .strict, minimumTagsOverride: 2, maximumTagsOverride: 2)
+        XCTAssertEqual(custom.tagBounds, TagBounds(minimum: 2, maximum: 2))
+        XCTAssertEqual(custom.extraTagMinimumOdds, StrictnessDial.strict.extraTagMinimumOdds)
+        XCTAssertEqual(try JSONDecoder().decode(LocalLLMSettings.self, from: JSONEncoder().encode(custom)), custom)
+        let blank = try JSONDecoder().decode(LocalLLMSettings.self, from: Data(#"{"strictness":5,"minimumTagsOverride":null,"maximumTagsOverride":null}"#.utf8))
+        XCTAssertEqual(blank.tagBounds, StrictnessDial.broadest.tagBounds)
+        for json in [#"{"strictness":3,"minimumTagsOverride":-1,"maximumTagsOverride":0}"#,
+                     #"{"strictness":3,"minimumTagsOverride":3,"maximumTagsOverride":1}"#,
+                     #"{"strictness":3,"minimumTagsOverride":"bad","maximumTagsOverride":99}"#] {
+            let guarded = try JSONDecoder().decode(LocalLLMSettings.self, from: Data(json.utf8))
+            XCTAssertEqual(guarded.tagBounds, StrictnessDial.balanced.tagBounds)
+        }
+    }
     // MARK: - Dials
 
     func testStrictnessPositionsMapToTagBoundsAndSureness() {
