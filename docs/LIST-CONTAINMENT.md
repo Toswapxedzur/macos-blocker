@@ -24,6 +24,7 @@ collapse behavior. Classifier list positions survive incoming snapshots.
 | Shared controls | Group/link choices and other dropdown choices | Existing bounded `vui-menu` |
 | Classifier | Types and trash navigation | Separate boxes, at most 32vh / 300px |
 | Classifier Knowledge | Terms and creators for each platform | Separate boxes, at most 52vh / 480px; headings/counts outside |
+| Classifier Settings research | Fetched provider models | Searchable picker, at most 32vh / 280px; Fetch/Refresh/Retry outside |
 | Classifier Settings API keys | Provider profiles | Shared box, at most 52vh / 480px; creation controls outside |
 | Classifier tag tree | Growing tag graph | Existing 520px canvas with internal pan/scroll |
 | Activity | User groups | Existing 206px area, cards scroll horizontally |

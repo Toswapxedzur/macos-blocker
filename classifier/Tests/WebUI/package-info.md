@@ -21,3 +21,10 @@ consent; navigation without a group mutation; normal autosave after setup;
 Knowledge status; and provider creation in Settings. Run with
 `UI_TEST_SCRIPT=classifier/Tests/WebUI/research-setup.js`
 `UI_TEST_EXPRESSION='runResearchSetupTests()'` and the same runner.
+
+`model-picker.js` covers explicit Fetch/Fetching/Refresh/Retry states, missing
+provider/key guidance, a bounded 256-model list, searching and snapshot/caret
+preservation, immediate autosave, provider-specific lists and unavailable saved
+choices. The fixture simulates model-list responses without provider traffic.
+Run with `UI_TEST_SCRIPT=classifier/Tests/WebUI/model-picker.js`
+`UI_TEST_EXPRESSION='runModelPickerTests()'` and the same runner.

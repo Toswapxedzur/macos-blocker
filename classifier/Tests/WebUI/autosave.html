@@ -21,6 +21,8 @@ window.testState = {
     providerRequestRecords:[],providerModelCatalogs:{},loadingProviderModelProfileIDs:[],providerModelCatalogErrors:{}}
 };
 window.commands=[];window.ackDelay=0;
+window.modelFetchDelay=100;window.modelFetchError=null;
+window.modelFetchResults={'provider-1':['test-model','test-grounded-model']};
 window.pushSnapshot=()=>{testState.presentationRevision++;VaultClassifier.receive(structuredClone(testState));};
 window.webkit={messageHandlers:{vaultClassifier:{postMessage(message){
   commands.push(structuredClone(message));
@@ -36,6 +38,19 @@ window.webkit={messageHandlers:{vaultClassifier:{postMessage(message){
     case 'editKnowledgeEntry':testState.assets.knowledge.terms[0].meaning=data.meaning;break;
     case 'updateProviderConnection':Object.assign(testState.assets.providerProfiles.find(p=>p.id===data.profileID),data,{hasCredential:!!data.credential});break;
     case 'saveBackup':Object.assign(testState.backup,data);break;
+    case 'probeProviderModelCatalog': {
+      const profileID=data.profileID;
+      testState.assets.loadingProviderModelProfileIDs.push(profileID);
+      delete testState.assets.providerModelCatalogErrors[profileID];
+      pushSnapshot();
+      setTimeout(()=>{
+        if(modelFetchError) testState.assets.providerModelCatalogErrors[profileID]=modelFetchError;
+        else testState.assets.providerModelCatalogs[profileID]=modelFetchResults[profileID]||[];
+        testState.assets.loadingProviderModelProfileIDs=testState.assets.loadingProviderModelProfileIDs.filter(id=>id!==profileID);
+        pushSnapshot();
+      },modelFetchDelay);
+      return;
+    }
     case 'createProviderProfile':testState.assets.providerProfiles.push({id:'provider-created',name:'New provider',type:data.type,credential:'',hasCredential:false,protocolConfiguration:{}});break;
     case 'workspace':testState.workspace=data.workspace;break;
     case 'state':break;
@@ -80,7 +95,8 @@ window.runAutosaveTests=async()=>{
   await poll(()=>testState.settings.localLLM.houseRules==='Global rules');
   expect(testState.settings.localLLM.strictness===5,'global dials and house rules autosave');
   change('[data-form-id="utility-research-form"] [data-field="llmProviderProfileID"]','provider-1');
-  input('[data-form-id="utility-research-form"] [data-field="llmModelIdentifier"]','test-model');
+  testState.assets.providerModelCatalogs['provider-1']=['test-model'];pushSnapshot();
+  await poll(()=>q('[data-model-selector]'));q('[data-model-selector]').click();q('[data-model-pick="test-model"]').click();
   await poll(()=>testState.settings.research.llmModelIdentifier==='test-model');
   expect(testState.settings.research.llmProviderProfileID==='provider-1','global research provider and model autosave');
   change('[data-form-id="utility-package-form"] [data-field="packageUpdateMode"]','manual');
