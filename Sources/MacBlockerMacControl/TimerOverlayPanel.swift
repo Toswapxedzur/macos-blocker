@@ -5,6 +5,31 @@ import MacBlockerCore
 import AppKit
 import SwiftUI
 
+/// Preserve the content's natural size for short lists, then scroll the
+/// document inside a screen-relative viewport rather than growing offscreen.
+@MainActor
+final class BoundedOverlayScrollView: NSScrollView {
+    init(document: NSView) {
+        super.init(frame: .zero)
+        documentView = document
+        drawsBackground = false
+        hasVerticalScroller = true
+        autohidesScrollers = true
+        borderType = .noBorder
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func fittedSize(maximumHeight: CGFloat) -> NSSize {
+        guard let document = documentView else { return .zero }
+        document.layoutSubtreeIfNeeded()
+        let natural = document.fittingSize
+        document.setFrameSize(natural)
+        return NSSize(width: natural.width + (natural.height > maximumHeight ? 14 : 0),
+                      height: min(natural.height, maximumHeight))
+    }
+}
+
 /// One line in the floating timer HUD — mirrors the Chrome extension's on-page
 /// overlay rows (`Name: MM:SS`).
 public struct TimerOverlayRow: Identifiable, Equatable, Sendable {
@@ -962,7 +987,7 @@ public final class PanelOverlayPanelController {
             .ignoresCycle
         ]
         hosting.translatesAutoresizingMaskIntoConstraints = true
-        panel.contentView = hosting
+        panel.contentView = BoundedOverlayScrollView(document: hosting)
         let slot = PositionSlot(model: model)
         slot.panel = panel
         slots[position] = slot
@@ -970,9 +995,9 @@ public final class PanelOverlayPanelController {
     }
 
     private func resizeAndPosition(_ panel: NSPanel, position: String) {
-        guard let hosting = panel.contentView else { return }
-        hosting.layoutSubtreeIfNeeded()
-        let size = hosting.fittingSize
+        guard let scroll = panel.contentView as? BoundedOverlayScrollView else { return }
+        let maximumHeight = min(640, (NSScreen.main?.visibleFrame.height ?? 800) * 0.65)
+        let size = scroll.fittedSize(maximumHeight: maximumHeight)
         guard let screen = NSScreen.main else {
             panel.setContentSize(size)
             return

@@ -657,6 +657,7 @@
   function groupsPanel() {
     var box = el("section", "panel groups");
     box.id = "groups";
+    box.dataset.editingId = editing ? editing.id : "";
     var head = el("div", "column-head");
     head.appendChild(el("h2", null, "Groups"));
     if (!editing) head.appendChild(textButton("New group", function () { openEditor(null); }, "head-button"));
@@ -703,7 +704,29 @@
   // Redraw only the Groups panel (the editor's own changes).
   function refreshGroups() {
     var old = scope.getElementById("groups");
-    if (old) old.replaceWith(groupsPanel());
+    if (old) {
+      var positions = captureGroupScrolls(old), next = groupsPanel();
+      old.replaceWith(next);
+      restoreGroupScrolls(next, positions);
+    }
+  }
+
+  function captureGroupScrolls(panel) {
+    if (!panel) return null;
+    var positions = { editingId: panel.dataset.editingId, lists: {} };
+    ["group-cards", "group-selected-members", "group-members"].forEach(function (name) {
+      var list = panel.querySelector("." + name);
+      if (list) positions.lists[name] = [list.scrollLeft, list.scrollTop];
+    });
+    return positions;
+  }
+
+  function restoreGroupScrolls(panel, positions) {
+    if (!panel || !positions || panel.dataset.editingId !== positions.editingId) return;
+    Object.keys(positions.lists).forEach(function (name) {
+      var list = panel.querySelector("." + name), position = positions.lists[name];
+      if (list) { list.scrollLeft = position[0]; list.scrollTop = position[1]; }
+    });
   }
 
   function groupForm() {
@@ -728,7 +751,9 @@
     mergeRow.appendChild(document.createTextNode("Merge — show as one, in one colour, everywhere"));
     first.appendChild(mergeRow);
 
-    var chips = el("div", "chips");
+    var chips = el("div", "chips vui-list-box group-selected-members");
+    chips.tabIndex = 0;
+    chips.setAttribute("aria-label", "Members");
     if (!editing.members.length) chips.appendChild(el("span", "vui-muted", "No members yet."));
     editing.members.forEach(function (id) {
       var chip = el("span", "chip");
@@ -1571,6 +1596,7 @@
 
   function render() {
     var page = scope.getElementById("page");
+    var groupScrolls = captureGroupScrolls(scope.getElementById("groups"));
     // Panels that scroll keep their place across updates.
     var scrolls = {};
     [].forEach.call(page.querySelectorAll(".scroll-list, .colour-map, .strip-scroll, .totals-scroll, .map-scroll"), function (node, i) { scrolls[i] = [node.scrollLeft, node.scrollTop]; });
@@ -1580,6 +1606,7 @@
     var s = snapshot.settings || {};
     var usage = usageSection(s); usage.id = "usage-section";
     page.appendChild(groupsPanel());
+    restoreGroupScrolls(scope.getElementById("groups"), groupScrolls);
     page.appendChild(usage);
     var content = contentSection(s); content.id = "content-section"; page.appendChild(content);
     // Recording: always last, one collapsed line (owner 2026-09-30).
