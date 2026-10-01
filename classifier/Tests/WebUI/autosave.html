@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="en"><meta charset="utf-8"><title>Classifier autosave regression</title>
-<link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/vault-ui.css">
+<link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/vault-ui.css"><link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/vault-info.css">
 <style>html,body,#host{height:100%;margin:0}#host{display:block}</style><div id="host"></div>
 <script>
 const scope = document.getElementById('host').attachShadow({mode:'open'});
-scope.innerHTML = '<link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/vault-ui.css"><link rel="stylesheet" href="/classifier/Sources/VaultClassifierApp/WebAssets/app.css"><div id="app"></div>';
+scope.innerHTML = '<link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/vault-ui.css"><link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/vault-info.css"><link rel="stylesheet" href="/classifier/Sources/VaultClassifierApp/WebAssets/app.css"><div id="app"></div>';
 window.VaultScenes = {scope:()=>scope};
 window.uiErrors=[];
 window.addEventListener('error',e=>uiErrors.push(e.message));
@@ -63,6 +63,7 @@ window.webkit={messageHandlers:{vaultClassifier:{postMessage(message){
 }}}};
 </script>
 <script src="/Sources/MacBlockerWebUI/WebAssets/vault-ui.js"></script>
+<script src="/Sources/MacBlockerWebUI/WebAssets/vault-info.js"></script>
 <script src="/classifier/Sources/VaultClassifierApp/WebAssets/strings.js"></script>
 <script src="/classifier/Sources/VaultClassifierApp/WebAssets/app.js"></script>
 <script>
