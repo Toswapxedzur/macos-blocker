@@ -349,13 +349,12 @@ public struct WebStoreDocument {
     // parental-pin.js, run by GroupActionsRuntime): nothing is re-decided here.
 
     /// A new, unlocked group as the editor's New group makes it in Mac Vault
-    /// (group-scopes.js createToolGroup): the user's default snooze length, a
+    /// (group-scopes.js createToolGroup): a 30-minute snooze duration, a
     /// free numbered name unless one is given, and only Apps lines. Returns its id.
     @discardableResult
     public mutating func createGroup(groupType: String = "site", patch: [String: Any] = [:]) throws -> String {
         let runtime = GroupActionsRuntime.shared
-        let defaultSnooze = (runtime.call("sanitizeGlobalSettings", [raw["globalSettings"] ?? NSNull()]) as? [String: Any])?["defaultSnoozeMinutes"] ?? NSNull()
-        let result = runtime.call("createToolGroup", [groups, groupType, patch, "desktop", ["snoozeMinutes": defaultSnooze]], module: "CBGroupScopes") as? [String: Any] ?? [:]
+        let result = runtime.call("createToolGroup", [groups, groupType, patch, "desktop"], module: "CBGroupScopes") as? [String: Any] ?? [:]
         if let problem = result["error"] as? String {
             if problem == "duplicate-name" { throw GroupStoreError.duplicateName((patch["name"] as? String) ?? "") }
             throw GroupStoreError.invalidInput(problem)
@@ -365,10 +364,9 @@ public struct WebStoreDocument {
         return id
     }
 
-    /// The editor's Settings (owner 2026-09-27: exactly those): the default
-    /// snooze length, the quit retry (minutes), the quick-add "+" and its target
+    /// The editor's Settings: the quit retry (minutes), the quick-add "+" and its target
     /// group. Sanitized as the editor's save is.
-    public static let settingsFields = ["defaultSnoozeMinutes", "quitRetryMinutes", "quickAddEnabled"]
+    public static let settingsFields = ["quitRetryMinutes", "quickAddEnabled"]
     public mutating func setSettings(_ patch: [String: Any]) throws {
         var settings = patch
         if let target = settings.removeValue(forKey: "quickAddGroupId") {

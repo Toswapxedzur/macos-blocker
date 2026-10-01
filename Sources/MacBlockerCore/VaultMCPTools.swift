@@ -52,7 +52,7 @@ public enum VaultMCPTools {
 
             MCPTool(
                 name: "set_settings",
-                description: "Change Mac Vault's settings — exactly the editor's Settings: defaultSnoozeMinutes (> 0), quitRetryMinutes (whole minutes 0–1440: how often a blocked or rule-closed app that stayed open is asked to quit again; 0 = never), quickAddEnabled (the floating \"+\"), quickAddGroupId (its target group, or \"\"). A value the editor refuses is refused. Returns the settings.",
+                description: "Change Mac Vault's settings — exactly the editor's Settings: quitRetryMinutes (whole minutes 0–1440: how often a blocked or rule-closed app that stayed open is asked to quit again; 0 = never), quickAddEnabled (the floating \"+\"), quickAddGroupId (its target group, or \"\"). A value the editor refuses is refused. Returns the settings.",
                 inputSchema: ["type": "object", "properties": ["patch": ["type": "object", "description": "The settings to change."]], "required": ["patch"]]
             ) { args in
                 guard let patch = args["patch"] as? [String: Any], !patch.isEmpty else { return .failure("Missing 'patch' object.") }
@@ -89,7 +89,7 @@ public enum VaultMCPTools {
 
             MCPTool(
                 name: "create_group",
-                description: "Create an unlocked group as the editor's New group does in Mac Vault: groupType site (an Apps group, the default) or custom (a rule group); the user's default snooze length; a free numbered name unless patch.name is given (names are unique, ignoring letter case); optional patch fields as set_group takes them. Returns the group.",
+                description: "Create an unlocked group as the editor's New group does in Mac Vault: groupType site (an Apps group, the default) or custom (a rule group); a 30-minute snooze duration; a free numbered name unless patch.name is given (names are unique, ignoring letter case); optional patch fields as set_group takes them. Returns the group.",
                 inputSchema: [
                     "type": "object",
                     "properties": [

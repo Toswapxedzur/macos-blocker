@@ -85,7 +85,14 @@ final class ParentalPinAndLockToolsTests: XCTestCase {
         XCTAssertFalse(WebStoreDocument.isLocked(doc.group(id: id) ?? [:]), "a created group is never frozen")
         var withDefault = WebStoreDocument(raw: ["globalSettings": ["defaultSnoozeMinutes": 7], "blockedGroups": []])
         let seven = try withDefault.createGroup(patch: ["name": "Seven"])
-        XCTAssertEqual(withDefault.group(id: seven)?["snoozeMinutes"] as? Double, 7, "the user's default snooze length")
+        XCTAssertEqual(withDefault.group(id: seven)?["snoozeMinutes"] as? Double, 30, "the retired stored default must not seed a new group")
+        try withDefault.setGroup(id: seven, patch: ["snoozeMinutes": 11])
+        XCTAssertThrowsError(try withDefault.setSettings(["defaultSnoozeMinutes": 7])) {
+            XCTAssertEqual($0 as? GroupStoreError, .invalidInput("not-an-editor-setting:defaultSnoozeMinutes"))
+        }
+        try withDefault.setSettings(["quickAddEnabled": true])
+        XCTAssertNil((withDefault.raw["globalSettings"] as? [String: Any])?["defaultSnoozeMinutes"])
+        XCTAssertEqual(withDefault.group(id: seven)?["snoozeMinutes"] as? Double, 11, "a group keeps its own duration")
 
         try doc.moveGroup(id: id, to: 0)
         XCTAssertEqual(doc.groupIDs.first, id)
@@ -244,6 +251,7 @@ final class ParentalPinAndLockToolsTests: XCTestCase {
         let tools = VaultMCPTools.groupTools(store: GroupStore(shared: shared), clock: { now })
         func call(_ name: String, _ args: [String: Any]) -> MCPToolResult { tools.first { $0.name == name }!.handler(args) }
         XCTAssertTrue(call("set_settings", ["patch": ["debugMode": true]]).isError, "only the editor's Settings")
+        XCTAssertTrue(call("set_settings", ["patch": ["defaultSnoozeMinutes": 7]]).isError, "the retired default is no longer a setting")
         XCTAssertFalse(call("set_settings", ["patch": ["quitRetryMinutes": 5, "quickAddGroupId": "a"]]).isError)
         let raw = GroupStore(shared: shared).load().raw
         XCTAssertEqual(((raw["globalSettings"] as? [String: Any])?["quitRetryMinutes"] as? NSNumber)?.intValue, 5)
