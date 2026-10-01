@@ -32,7 +32,7 @@ public enum ToolRefusals {
         case "pin-wrong": return "wrong PIN; the next try waits \(parts[1]) s."
         case "wait-until": return "the freeze's wait holds until \(parts[1])."
         case "confirm-wait": return "confirm again in \(parts[1]) s (the editor's confirmation waits 5 s)."
-        case "not-an-editor-setting": return "'\(parts[1])' is not one of the editor's settings (defaultSnoozeMinutes, quitRetryMinutes, quickAddEnabled, quickAddGroupId)."
+        case "not-an-editor-setting": return "'\(parts[1])' is not one of the editor's settings (quitRetryMinutes, quickAddEnabled, quickAddGroupId)."
         default: return code
         }
     }

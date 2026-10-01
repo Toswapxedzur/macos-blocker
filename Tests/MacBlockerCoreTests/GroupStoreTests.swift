@@ -33,7 +33,7 @@ final class GroupStoreTests: XCTestCase {
                     "sources": ["@someone"],
                 ],
             ],
-            "globalSettings": ["defaultSnoozeMinutes": 30],
+            "globalSettings": ["quitRetryMinutes": 5],
             "usageTimersMs": ["g1": 1000, "g2": 0],
             "usageResetAtMs": ["g1": 42],
             "ruleLog": [["message": "hi"]],
@@ -54,7 +54,7 @@ final class GroupStoreTests: XCTestCase {
         try document.setGroup(id: "g2", patch: ["enabled": true])
 
         // Unknown top-level keys untouched.
-        XCTAssertEqual(document.raw["globalSettings"] as? [String: Int], ["defaultSnoozeMinutes": 30])
+        XCTAssertEqual(document.raw["globalSettings"] as? [String: Int], ["quitRetryMinutes": 5])
         XCTAssertEqual(document.raw["usageTimersMs"] as? [String: Int], ["g1": 1000, "g2": 0])
         XCTAssertNotNil(document.raw["ruleLog"])
 
