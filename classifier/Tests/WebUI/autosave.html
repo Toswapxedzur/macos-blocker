@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Classifier autosave regression</title>
+<link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/vault-ui.css">
+<style>html,body,#host{height:100%;margin:0}#host{display:block}</style><div id="host"></div>
+<script>
+const scope = document.getElementById('host').attachShadow({mode:'open'});
+scope.innerHTML = '<link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/vault-ui.css"><link rel="stylesheet" href="/classifier/Sources/VaultClassifierApp/WebAssets/app.css"><div id="app"></div>';
+window.VaultScenes = {scope:()=>scope};
+window.uiErrors=[];
+window.addEventListener('error',e=>uiErrors.push(e.message));
+window.testState = {
+  presentationRevision:1,workspace:'browserBridge',issue:null,notices:{},trash:[],
+  settings:{packageUpdateMode:'automatic',localLLM:{speedQuality:'balanced',strictness:3,houseRules:'',engineStatus:'disabled',modelLibrary:[]},research:{enabled:false,llmProviderProfileID:'',llmModelIdentifier:'',status:{}}},
+  backup:{unlocked:true,hasOwnerCode:true,enabled:false,savedEnabled:false,directory:'/tmp/test-backups'},
+  assets:{classifierTypes:[{id:'group-1',name:'Test group',treeID:'tree-1',applicablePlatformIDs:['youtube'],localModelOverrides:null,researchEnabled:null,order:0}],
+    trees:[{id:'tree-1',name:'Test tags',nodes:[{id:'tag-1',name:'Science',description:'',parentID:null,positionX:24,positionY:24}]}],datasets:[],
+    collectionPlatforms:[{id:'youtube',name:'YouTube',supportsLocalModel:true}],bindings:[],
+    knowledge:{creators:[],terms:[{id:'term-1',subject:'Physics',meaning:'Original meaning',writtenByUser:true}],knownCreators:[]},
+    providerProfiles:[{id:'provider-1',name:'Test provider',type:'openAI',customEndpoint:'',testModelIdentifier:'',credential:'',hasCredential:false,protocolConfiguration:{}}],
+    providerProtocols:{openAI:{supportsGenerateText:true,supportsLLMConfiguration:true,supportsNativeWebSearch:true,credentialRequired:true,allowsEndpointOverride:true,configurationRequirements:[]}},
+    providerRequestRecords:[],providerModelCatalogs:{},loadingProviderModelProfileIDs:[],providerModelCatalogErrors:{}}
+};
+window.commands=[];window.ackDelay=0;
+window.pushSnapshot=()=>{testState.presentationRevision++;VaultClassifier.receive(structuredClone(testState));};
+window.webkit={messageHandlers:{vaultClassifier:{postMessage(message){
+  commands.push(structuredClone(message));
+  const {action,data}=message, type=testState.assets.classifierTypes[0];
+  switch(action){
+    case 'configureClassifierType':type.name=data.name.trim();break;
+    case 'saveClassifierTypeLocalModel':type.localModelOverrides={speedQuality:data.speedQuality||null,strictness:data.strictness?Number(data.strictness):null,houseRules:data.houseRules||null};break;
+    case 'saveClassifierTypeResearch':type.researchEnabled=data.researchMode==='inherit'?null:data.researchMode==='on';break;
+    case 'saveLocalLLMSettings':Object.assign(testState.settings.localLLM,data,{strictness:Number(data.strictness)});break;
+    case 'saveResearchSettings':Object.assign(testState.settings.research,data);break;
+    case 'savePackageSettings':testState.settings.packageUpdateMode=data.packageUpdateMode;break;
+    case 'updateTag':Object.assign(testState.assets.trees[0].nodes[0],data);break;
+    case 'editKnowledgeEntry':testState.assets.knowledge.terms[0].meaning=data.meaning;break;
+    case 'updateProviderConnection':Object.assign(testState.assets.providerProfiles[0],data,{hasCredential:!!data.credential});break;
+    case 'saveBackup':Object.assign(testState.backup,data);break;
+    case 'workspace':testState.workspace=data.workspace;break;
+    case 'state':break;
+    default:return;
+  }
+  const snapshot=structuredClone(testState);
+  setTimeout(()=>{snapshot.presentationRevision=++testState.presentationRevision;VaultClassifier.receive(snapshot)},ackDelay);
+}}}};
+</script>
+<script src="/Sources/MacBlockerWebUI/WebAssets/vault-ui.js"></script>
+<script src="/classifier/Sources/VaultClassifierApp/WebAssets/strings.js"></script>
+<script src="/classifier/Sources/VaultClassifierApp/WebAssets/app.js"></script>
+<script>
+window.runAutosaveTests=async()=>{
+  const results=[],q=s=>scope.querySelector(s);
+  const expect=(condition,label)=>{if(!condition)throw Error(label);results.push('PASS '+label)};
+  const poll=async(predicate)=>{const until=performance.now()+5000;while(!predicate()){if(performance.now()>until)throw Error('Timed out');await new Promise(r=>setTimeout(r,20))}};
+  const input=(selector,value)=>{const c=q(selector);if(!c)throw Error('Missing '+selector);c.focus();c.value=value;c.dispatchEvent(new InputEvent('input',{bubbles:true}));return c};
+  const change=(selector,value)=>{const c=q(selector);if(!c)throw Error('Missing '+selector);c.value=value;c.dispatchEvent(new Event('change',{bubbles:true}));return c};
+  const count=action=>commands.filter(c=>c.action===action).length;
+  const name='[data-form-id="classifier-type-group-1"] [data-field="name"]';
+  await poll(()=>q('[data-action="selectType"]'));q('[data-action="selectType"]').click();
+  expect(!q('[data-action="configureClassifierType"], [data-action="saveClassifierTypeLocalModel"], [data-action="saveClassifierTypeResearch"]'),'group has no Save buttons');
+  ackDelay=450;
+  input(name,'First name');await poll(()=>count('configureClassifierType')===1);
+  const text=input(name,'Latest name');text.setSelectionRange(3,7);
+  testState.settings.localLLM.engineStatus='loading';pushSnapshot();
+  expect(q(name).value==='Latest name' && scope.activeElement===q(name) && q(name).selectionStart===3 && q(name).selectionEnd===7,'snapshot preserves pending text, focus and caret');
+  await poll(()=>count('configureClassifierType')===2);
+  await poll(()=>scope.querySelector('.sidebar-name')?.textContent==='Latest name');
+  expect(q(name).value==='Latest name','older save response cannot overwrite newer text');
+  ackDelay=0;
+  const local='[data-form-id="classifier-local-model-form-group-1"] ';
+  input(local+'[data-field="houseRules"]','Keep my vocabulary');
+  change(local+'[data-field="strictness"]','4');
+  expect(commands.at(-1).action==='saveClassifierTypeLocalModel' && commands.at(-1).data.houseRules==='Keep my vocabulary','dial saves immediately with the current house-rule draft');
+  change('[data-form-id="classifier-research-form-group-1"] [data-field="researchMode"]','off');
+  expect(commands.at(-1).action==='saveClassifierTypeResearch','group research saves immediately');
+  q('[data-action="openUtilityPanel"]').click();
+  const radio=q('[data-form-id="utility-llm-form"] [data-field="strictness"][value="5"]');radio.checked=true;radio.dispatchEvent(new Event('change',{bubbles:true}));
+  input('[data-form-id="utility-llm-form"] [data-field="houseRules"]','Global rules');
+  await poll(()=>testState.settings.localLLM.houseRules==='Global rules');
+  expect(testState.settings.localLLM.strictness===5,'global dials and house rules autosave');
+  change('[data-form-id="utility-research-form"] [data-field="llmProviderProfileID"]','provider-1');
+  input('[data-form-id="utility-research-form"] [data-field="llmModelIdentifier"]','test-model');
+  await poll(()=>testState.settings.research.llmModelIdentifier==='test-model');
+  expect(testState.settings.research.llmProviderProfileID==='provider-1','global research provider and model autosave');
+  change('[data-form-id="utility-package-form"] [data-field="packageUpdateMode"]','manual');
+  expect(testState.settings.packageUpdateMode==='manual','package-update choice autosaves');
+  expect(!q('[data-action^="save"]'),'settings have no Save buttons');
+  q('[data-action="closeUtilityPanel"]').click();
+  q('[data-action="workspace"][data-workspace="knowledge"]').click();
+  input('[data-id="term-1"] [data-field="meaning"]','Updated meaning');
+  await poll(()=>testState.assets.knowledge.terms[0].meaning==='Updated meaning');
+  expect(!q('[data-action="editKnowledgeEntry"]') && !!q('[data-action="addKnowledgeTerm"]'),'knowledge edits autosave and creation stays explicit');
+  q('[data-action="workspace"][data-workspace="llmAssist"]').click();
+  input('[data-provider-id="provider-1"] [data-field="customEndpoint"]','https://example.test/api');
+  await poll(()=>testState.assets.providerProfiles[0].customEndpoint==='https://example.test/api');
+  expect(!!q('[data-action="testProviderProfile"]'),'provider edits autosave and Probe stays explicit');
+  testState.assets.providerProfiles[0].credential='synthetic-old-key';pushSnapshot();
+  ackDelay=450;
+  input('[data-provider-id="provider-1"] [data-field="credential"]','synthetic-new-key');
+  await poll(()=>commands.at(-1).data.credential==='synthetic-new-key');
+  const stale=structuredClone(testState);stale.assets.providerProfiles[0].credential='synthetic-old-key';
+  VaultClassifier.receive(stale);pushSnapshot();
+  expect(q('[data-provider-id="provider-1"] [data-field="credential"]').value==='synthetic-new-key','older snapshot cannot acknowledge a different credential');
+  await new Promise(r=>setTimeout(r,500));ackDelay=0;
+  q('[data-action="selectType"]').click();
+  q('[data-node-id="tag-1"]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));
+  input('[data-tree-popover] [data-field="description"]','Tag explanation');
+  q('[data-action="cancelTagPanel"]').click();
+  expect(testState.assets.trees[0].nodes[0].description==='Tag explanation','closing the tag editor flushes its text');
+  const ime=input(name,'Before composition');
+  ime.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));
+  ime.value='中文分组';ime.dispatchEvent(new InputEvent('input',{bubbles:true,isComposing:true}));
+  testState.settings.localLLM.engineStatus='disabled';pushSnapshot();
+  expect(q(name)===ime && q(name).value==='中文分组','snapshot does not replace an active composition');
+  ime.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true}));
+  await poll(()=>testState.assets.classifierTypes[0].name==='中文分组');
+  expect(uiErrors.length===0,'no browser errors');
+  return results;
+};
+</script>

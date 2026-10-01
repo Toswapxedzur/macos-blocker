@@ -32,11 +32,12 @@ extension VaultClassifierViewModel {
         }
     }
 
-    /// Persists the dials and house rules and rebuilds the engine so a new
-    /// Speed↔Quality tier loads immediately.
+    /// Persists ordinary edits live. Only a changed model tier needs a fresh
+    /// engine; typing house rules must not repeatedly reload the model.
     func saveLocalLLMSettings(_ updated: LocalLLMSettings) {
         guard let coordinator else { return }
         do {
+            let changedModelTier = llmSettings.speedQuality != updated.speedQuality
             llmSettings = updated
             let settings = ClassifierSettings(
                 packageUpdateMode: packageUpdateMode,
@@ -45,7 +46,7 @@ extension VaultClassifierViewModel {
             )
             try coordinator.updateSettings(settings)
             coordinator.setClassificationOptions(houseRules: updated.houseRules)
-            installLocalLLMEngine(coordinator: coordinator)
+            if changedModelTier { installLocalLLMEngine(coordinator: coordinator) }
             refreshLocalState()
             issue = nil
         } catch {
