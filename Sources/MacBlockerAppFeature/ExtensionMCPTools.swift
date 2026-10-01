@@ -226,7 +226,7 @@ public enum ExtensionMCPTools {
             },
             MCPTool(
                 name: "extension_set_global",
-                description: "Patch the extension's global settings — exactly the editor's Settings: defaultSnoozeMinutes (> 0), quickAddEnabled (bool), quitRetryMinutes (whole minutes 0–1440; used by a desktop app), quickAddGroupId (the quick-add \"+\" target group, or \"\"). Any other field, or a value the editor's field can't hold, is refused.",
+                description: "Patch the extension's global settings — exactly the editor's Settings: quickAddEnabled (bool), quitRetryMinutes (whole minutes 0–1440; used by a desktop app), quickAddGroupId (the quick-add \"+\" target group, or \"\"). Any other field, or a value the editor's field can't hold, is refused.",
                 inputSchema: [
                     "type": "object",
                     "properties": ["patch": ["type": "object", "description": "Global settings fields to change."], "browser": browserProperty],
