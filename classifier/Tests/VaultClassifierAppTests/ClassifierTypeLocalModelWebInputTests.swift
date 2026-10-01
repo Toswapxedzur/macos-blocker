@@ -4,6 +4,26 @@ import VaultClassifierCore
 
 @MainActor
 final class ClassifierTypeLocalModelWebInputTests: XCTestCase {
+    func testTagBoundInputsRejectInvalidPairsAndAllowIndependentBlankDefaults() throws {
+        let base: [String: Any] = ["typeID": "type", "speedQuality": "balanced", "strictness": "5"]
+        func parse(_ values: [String: Any]) throws -> LocalLLMSettings {
+            try VaultClassifierViewModel.parseClassifierTypeLocalModelWebInput(base.merging(values) { _, new in new }).settings
+        }
+        XCTAssertEqual(try parse(["minimumTagsOverride": "", "maximumTagsOverride": NSNull()]).tagBounds,
+                       TagBounds(minimum: 1, maximum: 3))
+        XCTAssertEqual(try parse(["minimumTagsOverride": "0", "maximumTagsOverride": "2"]).tagBounds,
+                       TagBounds(minimum: 0, maximum: 2))
+        XCTAssertEqual(try parse(["minimumTagsOverride": 2, "maximumTagsOverride": 3]).tagBounds,
+                       TagBounds(minimum: 2, maximum: 3))
+        for invalid: [String: Any] in [
+            ["minimumTagsOverride": "2", "maximumTagsOverride": "1"],
+            ["strictness": "1", "minimumTagsOverride": "2", "maximumTagsOverride": ""],
+            ["minimumTagsOverride": "-1"], ["maximumTagsOverride": "0"],
+            ["maximumTagsOverride": "4"], ["minimumTagsOverride": "1.5"],
+            ["maximumTagsOverride": 1.5], ["minimumTagsOverride": true],
+            ["maximumTagsOverride": "oops"]
+        ] { XCTAssertThrowsError(try parse(invalid), "invalid tag counts must not become defaults: \(invalid)") }
+    }
     func testModelLibraryPayloadMarksDownloadedCatalogFileAndProgress() throws {
         let downloadedEntry = LocalModelCatalog.entry(for: .fast)
         let downloadingEntry = LocalModelCatalog.entry(for: .balanced)

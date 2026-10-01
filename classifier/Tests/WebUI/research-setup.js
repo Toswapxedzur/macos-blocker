@@ -9,7 +9,6 @@ window.runResearchSetupTests=async()=>{
   const focused=(field)=>(scope.activeElement?.dataset.field || scope.activeElement?.closest('.field')?.querySelector('select')?.dataset.field)===field;
   const onLabel=()=>q(choice).querySelector('option[value="on"]').textContent;
   await poll(()=>q('[data-action="selectType"]'));q('[data-action="selectType"]').click();await wait();
-  q('.classifier-group-more > summary').click();await wait();
   expect(!q('[data-workspace="llmAssist"]'),'API keys removed from sidebar');
   expect(onLabel()==='Set up grounded research…','missing configuration replaces On with setup');
   q(choice).nextElementSibling.querySelector('.vui-select-button').click();

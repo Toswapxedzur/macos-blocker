@@ -157,7 +157,8 @@ public struct VideoClassificationPipeline: Sendable {
                 tags: tags[index],
                 knowledgeRefs: knowledgeUsed[index].map(\.id),
                 source: knowledgeUsed[index].isEmpty ? .model : .modelKnowledge,
-                modelVersion: "\(llm.modelVersion)+\(promptVersion)"
+                modelVersion: "\(llm.modelVersion)+\(promptVersion)",
+                tagBounds: TagBounds(minimum: minimumTags, maximum: maximumTags)
             )
         }
     }
