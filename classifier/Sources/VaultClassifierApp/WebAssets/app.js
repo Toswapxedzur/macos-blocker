@@ -51,11 +51,9 @@
   const treeViewportPositions = new Map();
   const editorViewportPositions = new Map();
   const pendingTagRenames = new Map();
-  // Non-null while the "create a group" dialog is open: { platformID, name? }.
+  // Non-null while the "create a group" dialog is open: { platformIDs, name? }.
   // A group can only be created through this dialog.
   let pendingCreateType = null;
-  // A type's ticked platforms not saved yet (typeID → ids).
-  const draftPlatforms = new Map();
   let utilityPanel = null;
   // "More" / "Options" expands the user opened: the page re-renders on every update.
   const openExpands = new Set();
@@ -609,8 +607,8 @@
   }
 
   // The classifiable platforms as a checklist (owner 2026-09-30: a type may take
-  // several; a platform belongs to at most one type, so one another type holds
-  // is shown disabled with that type's name).
+  // several; a platform belongs to at most one type. Creation is the only
+  // time this choice can change; existing types show their fixed selection.
   function platformChoices(selectedIDs, typeID) {
     const selected = new Set(selectedIDs);
     const owners = new Map();
@@ -621,7 +619,7 @@
     return `<div class="platform-choices">${platforms.map((platform) => {
       const owner = owners.get(platform.id);
       const taken = Boolean(owner && owner.id !== typeID);
-      return `<label class="toggle-row platform-choice"><input type="checkbox" value="${esc(platform.id)}" data-platform-choice${selected.has(platform.id) ? " checked" : ""}${taken ? " disabled" : ""}><span>${esc(platform.name)}</span>${taken ? `<span class="field-hint">${tx("bridge.platformTakenBy", { name: owner.name })}</span>` : ""}</label>`;
+      return `<label class="toggle-row platform-choice"><input type="checkbox" value="${esc(platform.id)}" data-platform-choice${selected.has(platform.id) ? " checked" : ""}${typeID || taken ? " disabled" : ""}><span>${esc(platform.name)}</span>${taken ? `<span class="field-hint">${tx("bridge.platformTakenBy", { name: owner.name })}</span>` : ""}</label>`;
     }).join("")}</div>`;
   }
 
@@ -636,7 +634,7 @@
     const platformDefinitions = new Map((assets.collectionPlatforms || []).map((platform) => [platform.id, platform]));
     const typeForm = (classifierType) => {
       const formID = `classifier-type-${classifierType.id}`;
-      const chosen = draftPlatforms.get(classifierType.id) || classifierType.applicablePlatformIDs || [];
+      const chosen = classifierType.applicablePlatformIDs || [];
       // Platform data (an API key some platforms use) and a recording that is
       // off, for the chosen platforms.
       const platformNotes = chosen.map((id) => platformDefinitions.get(id)).filter(Boolean).flatMap((platform) => {
@@ -666,7 +664,7 @@
       const researchOverrideSection = `<section class="classifier-type-section classifier-research-overrides"><div class="section-header"><div><h3>${tx("bridge.researchOverrides")}</h3><p class="section-copy">${tx("bridge.researchOverridesCopy")}</p></div></div><div data-form-id="${esc(researchFormID)}"><div class="utility-settings-fields">${valueSelectField("bridge.researchMode", "", "researchMode", researchMode, [["inherit", t("bridge.researchMode.inherit")], ["on", t("bridge.researchMode.on")], ["off", t("bridge.researchMode.off")]])}</div><p class="small-copy research-master-note">${tx("bridge.researchMasterGate")}</p><div class="action-row"><button type="button" class="primary" data-action="saveClassifierTypeResearch" data-form="${esc(researchFormID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div></div></section>`;
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}">
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}</div>
-        <section class="classifier-type-section classifier-applicable-platform-section"><span class="field-label">${tx("bridge.applicablePlatform")}</span>${platformChoices(chosen, classifierType.id)}${platformNotes.map((note) => `<p class="small-copy">${esc(note)}</p>`).join("")}</section>
+        <section class="classifier-type-section classifier-applicable-platform-section"><span class="field-label">${tx("bridge.applicablePlatform")}</span>${platformChoices(chosen, classifierType.id)}<p class="small-copy">${tx("bridge.platformsFixed")}</p>${platformNotes.map((note) => `<p class="small-copy">${esc(note)}</p>`).join("")}</section>
         <div class="action-row"><button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div>
         ${localModelOverrideSection}
         ${researchOverrideSection}
@@ -957,7 +955,7 @@
   // dials, house rules and research switch until given its own.
   function createTypeModal() {
     if (!pendingCreateType) return "";
-    return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelCreateType" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog create-type-dialog" role="dialog" aria-modal="true" data-create-type-dialog><h3>${tx("createType.title")}</h3><p class="section-copy">${tx("createType.copy")}</p><div class="field"><span class="field-label">${tx("createType.platformLabel")}</span>${platformChoices(pendingCreateType.platformIDs || [], null)}</div><label class="field"><span class="field-label">${tx("createType.nameLabel")}</span><input type="text" data-create-type-name autocomplete="off" spellcheck="false" value="${esc(pendingCreateType.name != null ? pendingCreateType.name : t("createType.defaultName"))}"></label><div class="action-row"><button class="secondary" data-action="cancelCreateType">${tx("common.cancel")}</button><button class="primary" data-action="confirmCreateType">${tx("createType.create")}</button></div></div></div>`;
+    return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="cancelCreateType" aria-label="${tx("common.cancel")}"></button><div class="deletion-dialog create-type-dialog" role="dialog" aria-modal="true" data-create-type-dialog><h3>${tx("createType.title")}</h3><p class="section-copy">${tx("createType.copy")}</p><div class="field"><span class="field-label">${tx("createType.platformLabel")}</span>${platformChoices(pendingCreateType.platformIDs || [], null)}${pendingCreateType.issue ? notice(t("createType.platformRequired"), "red") : ""}</div><label class="field"><span class="field-label">${tx("createType.nameLabel")}</span><input type="text" data-create-type-name autocomplete="off" spellcheck="false" value="${esc(pendingCreateType.name != null ? pendingCreateType.name : t("createType.defaultName"))}"></label><div class="action-row"><button class="secondary" data-action="cancelCreateType">${tx("common.cancel")}</button><button class="primary" data-action="confirmCreateType">${tx("createType.create")}</button></div></div></div>`;
   }
 
 
@@ -1070,6 +1068,12 @@
       const nameInput = root.querySelector("[data-create-type-name]");
       const name = ((nameInput?.value) || t("createType.defaultName")).trim() || t("createType.defaultName");
       const platformIDs = checkedPlatforms(root.querySelector("[data-create-type-dialog]"));
+      if (!platformIDs.length) {
+        pendingCreateType.name = name;
+        pendingCreateType.issue = true;
+        render();
+        return;
+      }
       pendingSelectNewType = new Set((state.assets?.classifierTypes || []).map((type) => type.id));
       pendingCreateType = null;
       render();
@@ -1094,10 +1098,6 @@
     if (button.dataset.entryId) data.entryID = button.dataset.entryId;
     if (button.dataset.fileName) data.fileName = button.dataset.fileName;
     if (action === "testProviderProfile") Object.assign(data, providerConnectionPayload(data, button.dataset.form));
-    if (action === "configureClassifierType") {
-      data.applicablePlatformIDs = checkedPlatforms(button.closest(".classifier-type-panel"));
-      draftPlatforms.delete(button.dataset.typeId);
-    }
     if (action === "cancelTagPanel") {
       flushTagNameInput(button.closest("[data-tree-popover]")?.querySelector("input[data-live-tag-name]"));
       activeTagPanel = null;
@@ -1230,17 +1230,16 @@
       send("updateProviderConnection", { profileID, ...providerConnectionPayload(values, formID) });
       return;
     }
-    // A platform ticked or unticked: kept until saved (or created), so the
-    // page's re-renders do not lose it.
+    // Preserve creation choices across page re-renders.
     const choice = event.target.closest("input[data-platform-choice]");
     if (choice) {
       const dialog = choice.closest("[data-create-type-dialog]");
       if (dialog && pendingCreateType) {
         pendingCreateType.platformIDs = checkedPlatforms(dialog);
         pendingCreateType.name = root.querySelector("[data-create-type-name]")?.value;
-      } else {
-        const panel = choice.closest(".classifier-type-panel");
-        if (panel) draftPlatforms.set(panel.dataset.typeId, checkedPlatforms(panel));
+        const hadIssue = pendingCreateType.issue;
+        pendingCreateType.issue = false;
+        if (hadIssue) render();
       }
       return;
     }
