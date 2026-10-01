@@ -1056,7 +1056,9 @@
       if (grouped) {
         (d.bins || []).forEach(function (bin) {
           var blockSeconds = usageBlockMinutes * 60;
-          var y = base - bin.to * plot, h = Math.max(0, (bin.to - bin.from) * plot - 0.7);
+          // Adjacent time slots meet exactly; a fixed gap would split even
+          // uninterrupted usage into separate-looking strips.
+          var y = base - bin.to * plot, h = (bin.to - bin.from) * plot;
           var info = function () {
             var shown = bin.items.slice(0, 7).map(function (item) { return [item.label, fmt(item.seconds)]; });
             if (bin.items.length > 7) shown.push(["More items", String(bin.items.length - 7) + " · choose Exact to inspect"]);
