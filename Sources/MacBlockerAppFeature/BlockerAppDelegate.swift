@@ -130,7 +130,7 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
     open func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard ConnectionHub.shared.activeClusterCount() > 0 else { return .terminateNow }
         let alert = NSAlert()
-        alert.messageText = "Quit and pause shared Vault links?"
+        alert.messageText = "Quit Mac Vault and disconnect linked groups?"
         alert.informativeText =
             "You have linked groups. Quitting disconnects Mac Vault, so linked browsers "
             + "will show this Mac as offline and shared changes won't sync until you reopen the app."

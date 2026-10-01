@@ -147,7 +147,7 @@ public enum GroundedResearchError: Error, Equatable, LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .invalidConfiguration: return "The research providers or sanitized subject are invalid."
-        case .emptyMeaning: return "The research provider returned no grounded meaning."
+        case .emptyMeaning: return "The research provider returned no usable description."
         }
     }
 }
