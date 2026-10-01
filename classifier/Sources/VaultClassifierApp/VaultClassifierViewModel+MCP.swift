@@ -25,11 +25,11 @@ public struct ClassifierWebActionDescriptor: Equatable, Sendable {
 public enum ClassifierWebActionCatalog {
     public static let actions: [ClassifierWebActionDescriptor] = [
         .init(name: "state", keys: [], summary: "Refresh local state from the store."),
-        .init(name: "workspace", keys: ["workspace"], summary: "Switch the page's workspace (browserBridge, knowledge). API keys and grounded research are in Settings."),
+        .init(name: "workspace", keys: ["workspace"], summary: "Switch the page's workspace (browserBridge, knowledge). API keys and web research are in Settings."),
         .init(name: "clearCollectedData", keys: ["platformID"], summary: "Permanently clear a platform's collected entries (the platform and its group stay)."),
         .init(name: "setCollectionEnabled", keys: ["platformID", "enabled"], summary: "Turn collection on/off for a platform."),
         .init(name: "setCollectionKeep", keys: ["platformID", "days"], summary: "Days to keep collected entries: for a platform (-1 = same as all), or without platformID for all platforms (0 = forever)."),
-        .init(name: "createClassifierType", keys: ["name", "platformIDs"], summary: "Create a classifier group for one or more classifiable platforms (platformIDs: youtube, reddit, twitter, bilibili; a platform belongs to at most one group) with its own empty tree; it starts with independent Balanced dials and empty house rules."),
+        .init(name: "createClassifierType", keys: ["name", "platformIDs"], summary: "Create a classifier group for one or more classifiable platforms (platformIDs: youtube, reddit, twitter, bilibili; a platform belongs to at most one group) with its own empty tree; it starts with independent Balanced model settings and empty tagging instructions."),
         .init(name: "reorderClassifierTypes", keys: ["orderedIDs"], summary: "Reorder groups (array of group ids)."),
         .init(name: "configureClassifierType", keys: ["typeID", "name"], summary: "Rename a group. Its platforms are fixed at creation."),
         .init(name: "confirmDeleteClassifierType", keys: ["typeID"], summary: "Delete a group."),
@@ -58,7 +58,7 @@ public enum ClassifierWebActionCatalog {
         .init(name: "editKnowledgeEntry", keys: ["id", "meaning"], summary: "Edit a knowledge entry's one sentence."),
         .init(name: "retryFailedResearch", keys: [], summary: "Clear research cooldowns and re-queue failed subjects."),
         .init(name: "saveResearchSettings", keys: ["enabled", "llmProviderProfileID", "llmModelIdentifier"], summary: "Research on/off and the provider profile + model that answers."),
-        .init(name: "saveClassifierTypeLocalModel", keys: ["typeID", "speedQuality", "strictness", "houseRules", "minimumTagsOverride", "maximumTagsOverride"], summary: "A group's independent dial positions (speedQuality fast|balanced|best, strictness 1–5) and house rules (blank = no rules). Optional minimumTagsOverride (0–3) and maximumTagsOverride (1–3); blank/null follows that bound from strictness. Effective minimum must not exceed maximum."),
+        .init(name: "saveClassifierTypeLocalModel", keys: ["typeID", "speedQuality", "strictness", "houseRules", "minimumTagsOverride", "maximumTagsOverride"], summary: "A group's independent dial positions (speedQuality fast|balanced|best, strictness 1–5) and tagging instructions (blank = no additional instructions). Optional minimumTagsOverride (0–3) and maximumTagsOverride (1–3); blank/null follows that bound from strictness. Effective minimum must not exceed maximum."),
         .init(name: "saveClassifierTypeResearch", keys: ["typeID", "researchMode"], summary: "A group's research switch: inherit, on, off."),
         .init(name: "setBackupOwnerCode", keys: ["ownerCode"], summary: "Set the backup owner code."),
         .init(name: "unlockBackup", keys: ["ownerCode"], summary: "Unlock backup settings with the owner code."),
