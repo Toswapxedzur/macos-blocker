@@ -50,7 +50,9 @@
   let armedDeleteTimer = null;
   const treeViewportPositions = new Map();
   const editorViewportPositions = new Map();
-  const pendingTagRenames = new Map();
+  const liveEdits = new Map();
+  let replacingControls = false;
+  let composingEdit = false;
   // Non-null while the "create a group" dialog is open: { platformIDs, name? }.
   // A group can only be created through this dialog.
   let pendingCreateType = null;
@@ -182,6 +184,158 @@
     return payload;
   }
 
+  // Persist through the same native actions as the explicit operations. A
+  // draft stays until a snapshot acknowledges its latest values, so an older
+  // response cannot replace text typed while a save was in flight.
+  function liveEditKey(form) {
+    return [form.dataset.formId, form.dataset.typeId, form.dataset.providerId,
+      form.dataset.treeId, form.dataset.nodeId, form.dataset.id].join("|");
+  }
+
+  function queueLiveEdit(control, immediate = false) {
+    if (replacingControls || !control.matches?.("[data-field]") || control.disabled) return false;
+    const form = control.closest("[data-autosave-action]");
+    if (!form) return false;
+    const key = liveEditKey(form);
+    const previous = liveEdits.get(key);
+    window.clearTimeout(previous?.timer);
+    const values = collect(form.dataset.formId);
+    if (form.dataset.autosaveAction === "configureClassifierType") {
+      Object.keys(values).forEach((field) => { if (field !== "name") delete values[field]; });
+    }
+    if (previous && JSON.stringify(previous.values) === JSON.stringify(values)) {
+      if (immediate) flushLiveEdit(previous);
+      else if (!previous.sent) previous.timer = window.setTimeout(() => flushLiveEdit(previous), 300);
+      return true;
+    }
+    const edit = { key, formID: form.dataset.formId, action: form.dataset.autosaveAction,
+      values, identity: {} };
+    for (const [attribute, field] of [["typeId", "typeID"], ["providerId", "profileID"],
+      ["treeId", "treeID"], ["nodeId", "nodeID"], ["id", "id"]]) {
+      if (form.dataset[attribute]) edit.identity[field] = form.dataset[attribute];
+    }
+    liveEdits.set(key, edit);
+    if (immediate) flushLiveEdit(edit);
+    else edit.timer = window.setTimeout(() => flushLiveEdit(edit), 300);
+    return true;
+  }
+
+  function savedLiveEdit(edit) {
+    const assets = state?.assets || {};
+    const type = (assets.classifierTypes || []).find((item) => item.id === edit.identity.typeID);
+    switch (edit.action) {
+      case "configureClassifierType": return type && { name: type.name };
+      case "saveClassifierTypeLocalModel": return type && {
+        speedQuality: type.localModelOverrides?.speedQuality || "",
+        strictness: String(type.localModelOverrides?.strictness ?? ""),
+        houseRules: type.localModelOverrides?.houseRules || "",
+      };
+      case "saveClassifierTypeResearch": return type && {
+        researchMode: type.researchEnabled === true ? "on" : type.researchEnabled === false ? "off" : "inherit",
+      };
+      case "saveLocalLLMSettings": return state.settings?.localLLM;
+      case "saveResearchSettings": return { ...state.settings?.research,
+        llmProviderProfileID: state.settings?.research?.llmProviderProfileID || "",
+        llmModelIdentifier: state.settings?.research?.llmModelIdentifier || "" };
+      case "savePackageSettings": return state.settings;
+      case "saveBackup": return state.backup;
+      case "editKnowledgeEntry": return [...(assets.knowledge?.creators || []),
+        ...(assets.knowledge?.terms || [])].find((item) => item.id === edit.identity.id);
+      case "updateTag": return (assets.trees || []).find((tree) => tree.id === edit.identity.treeID)
+        ?.nodes.find((node) => node.id === edit.identity.nodeID);
+      case "updateProviderConnection": {
+        const profile = (assets.providerProfiles || []).find((item) => item.id === edit.identity.profileID);
+        if (!profile) return null;
+        const values = { customEndpoint: profile.customEndpoint || "",
+          testModelIdentifier: profile.testModelIdentifier || "",
+          credential: profile.credential || "" };
+        Object.entries(profile.protocolConfiguration || {}).forEach(([field, value]) => { values[`protocol.${field}`] = value; });
+        return values;
+      }
+      default: return null;
+    }
+  }
+
+  function liveEditMatches(edit, saved) {
+    if (!saved) return false;
+    const normalized = (field, value) => {
+      if (typeof value === "boolean") return value;
+      const text = String(value ?? "");
+      return field === "name" || field === "customEndpoint" || field === "llmModelIdentifier"
+        || field === "testModelIdentifier" || (field === "houseRules" && !text.trim()) ? text.trim() : text;
+    };
+    return Object.entries(edit.values).every(([field, value]) => normalized(field, value) === normalized(field, saved[field]));
+  }
+
+  function flushLiveEdit(edit) {
+    window.clearTimeout(edit.timer);
+    edit.timer = null;
+    if (edit.sent || composingEdit) return;
+    const saved = savedLiveEdit(edit);
+    if (!saved || liveEditMatches(edit, saved)) { liveEdits.delete(edit.key); return; }
+    edit.sent = true;
+    const values = edit.action === "updateProviderConnection"
+      ? providerConnectionPayload(edit.values, edit.formID) : edit.values;
+    send(edit.action, { ...edit.identity, ...values });
+  }
+
+  function flushLiveEdits() {
+    liveEdits.forEach(flushLiveEdit);
+  }
+
+  function reconcileLiveEdits() {
+    liveEdits.forEach((edit, key) => {
+      const saved = savedLiveEdit(edit);
+      if (!saved || (edit.sent && !state.issue && liveEditMatches(edit, saved))) {
+        window.clearTimeout(edit.timer);
+        liveEdits.delete(key);
+      }
+    });
+  }
+
+  function captureLiveEditFocus() {
+    const control = scope.activeElement;
+    const form = control?.closest?.("[data-autosave-action]");
+    return form && control.matches("[data-field]") ? { key: liveEditKey(form),
+      field: control.dataset.field, value: control.value, start: control.selectionStart,
+      end: control.selectionEnd, direction: control.selectionDirection } : null;
+  }
+
+  function restoreLiveEdits(focused) {
+    root.querySelectorAll("[data-autosave-action]").forEach((form) => {
+      const key = liveEditKey(form), edit = liveEdits.get(key);
+      form.querySelectorAll("[data-field]").forEach((control) => {
+        if (control.closest("[data-autosave-action]") !== form) return;
+        const field = control.dataset.field;
+        if (edit && Object.hasOwn(edit.values, field)) {
+          if (control.type === "checkbox") control.checked = edit.values[field];
+          else if (control.type === "radio") control.checked = control.value === edit.values[field];
+          else control.value = edit.values[field];
+        }
+        if (focused?.key !== key || focused.field !== field) return;
+        if (control.type === "radio" && control.value !== focused.value) return;
+        if (control.type !== "radio" && control.type !== "checkbox") control.value = focused.value;
+        control.focus({ preventScroll: true });
+        if (focused.start != null) control.setSelectionRange(focused.start, focused.end, focused.direction);
+      });
+    });
+  }
+
+  scope.addEventListener("focusout", (event) => {
+    if (!replacingControls && !composingEdit) queueLiveEdit(event.target, true);
+  });
+  scope.addEventListener("compositionstart", (event) => {
+    if (event.target.closest?.("[data-autosave-action]")) {
+      flushLiveEdits();
+      composingEdit = true;
+    }
+  });
+  scope.addEventListener("compositionend", (event) => {
+    composingEdit = false;
+    queueLiveEdit(event.target);
+  });
+  window.addEventListener("pagehide", flushLiveEdits);
+
   function field(labelKey, hintKey, key, value, type = "text", extra = "") {
     return `<label class="field"><span class="field-label">${tx(labelKey)}${hintKey ? `<span class="field-hint"> · ${tx(hintKey)}</span>` : ""}</span><input type="${type}" data-field="${esc(key)}" value="${type === "password" ? "" : esc(value)}" ${extra}></label>`;
   }
@@ -207,8 +361,8 @@
     return `<label class="field"><span class="field-label">${tx(labelKey)}${hintKey ? `<span class="field-hint"> · ${tx(hintKey)}</span>` : ""}</span><select class="select-control" data-field="${esc(key)}" ${extra}><option value=""${selected(value, "")}>${tx("llm.chooseProviderType")}</option>${groups.map(([groupKey, options]) => `<optgroup label="${tx(groupKey)}">${options.map(([id, label]) => `<option value="${esc(id)}"${selected(value, id)}>${esc(label)}</option>`).join("")}</optgroup>`).join("")}</select></label>`;
   }
 
-  function toggle(labelKey, key, value) {
-    return `<label class="toggle-row"><input type="checkbox" data-field="${esc(key)}"${checked(value)}><span>${tx(labelKey)}</span></label>`;
+  function toggle(labelKey, key, value, extra = "") {
+    return `<label class="toggle-row"><input type="checkbox" data-field="${esc(key)}"${checked(value)} ${extra}><span>${tx(labelKey)}</span></label>`;
   }
 
   function notice(text, tone = "navy") {
@@ -323,26 +477,26 @@
       const profiles = assets.providerProfiles || [];
       const protocols = assets.providerProtocols || {};
       const statusToneByState = { loaded: "cyan", loading: "navy", disabled: "navy", "no-model": "pink", failed: "red" };
-      const llmSection = `<section class="utility-settings-section utility-llm-section" data-form-id="utility-llm-form"><h3 class="utility-settings-section-title">${tx("localModel.title")} ${statusPill(tx(`localModel.status.${llm.engineStatus || "loading"}`), statusToneByState[llm.engineStatus] || "navy")}</h3><p class="section-copy">${tx("localModel.copy")}</p><div class="field wide"><span class="field-label">${tx("localModel.speedQuality")}<span class="field-hint"> · ${tx("localModel.speedQualityHint")}</span></span>${
+      const llmSection = `<section class="utility-settings-section utility-llm-section" data-form-id="utility-llm-form" data-autosave-action="saveLocalLLMSettings"><h3 class="utility-settings-section-title">${tx("localModel.title")} ${statusPill(tx(`localModel.status.${llm.engineStatus || "loading"}`), statusToneByState[llm.engineStatus] || "navy")}</h3><p class="section-copy">${tx("localModel.copy")}</p><div class="field wide"><span class="field-label">${tx("localModel.speedQuality")}<span class="field-hint"> · ${tx("localModel.speedQualityHint")}</span></span>${
         speedQualityCards(llm, llm.speedQuality || "balanced")
       }<p class="model-library-source-note">${tx("localModel.tier.sourceNote")}</p></div><div class="field wide"><span class="field-label">${tx("localModel.strictness")}<span class="field-hint"> · ${tx("localModel.strictnessHint")}</span></span>${
         strictnessOptions(llm.strictness ?? 3)
       }</div>${
         textareaField("localModel.houseRules", "localModel.houseRulesHint", "houseRules", llm.houseRules || "", 'rows="4"')
-      }<div class="action-row"><button class="primary" data-action="saveLocalLLMSettings" data-form="utility-llm-form">${tx("localModel.save")}</button></div></section>`;
+      }</section>`;
       const generationProfiles = profiles.filter((profile) => protocols[profile.type]?.supportsGenerateText === true);
       const isGroundingCapable = (profile) => protocols[profile.type]?.supportsGenerateText === true && protocols[profile.type]?.supportsNativeWebSearch === true;
       // Research is provider-grounding only, so only grounding-capable providers are offered.
       const llmProviderOptions = [["", tx("research.chooseProvider")]].concat(generationProfiles.filter(isGroundingCapable).map((profile) => [profile.id, profile.name]));
-      const researchSection = `<section class="utility-settings-section utility-research-section" data-form-id="utility-research-form"><h3 class="utility-settings-section-title">${tx("research.title")} ${statusPill(tx(research.enabled ? "research.status.on" : "research.status.off"), research.enabled ? "cyan" : "muted")}</h3><p class="section-copy">${tx("research.copy")}</p><div class="notice navy research-data-flow">${tx("research.disclosure")}</div><div class="utility-toggles">${
+      const researchSection = `<section class="utility-settings-section utility-research-section" data-form-id="utility-research-form" data-autosave-action="saveResearchSettings"><h3 class="utility-settings-section-title">${tx("research.title")} ${statusPill(tx(research.enabled ? "research.status.on" : "research.status.off"), research.enabled ? "cyan" : "muted")}</h3><p class="section-copy">${tx("research.copy")}</p><div class="notice navy research-data-flow">${tx("research.disclosure")}</div><div class="utility-toggles">${
         toggle("research.consent", "enabled", research.enabled === true)
       }</div><div class="utility-settings-fields">${
         valueSelectField("research.llmProvider", "research.llmProviderHint", "llmProviderProfileID", research.llmProviderProfileID || "", llmProviderOptions)
       }${
         field("research.model", "research.modelHint", "llmModelIdentifier", research.llmModelIdentifier || "", "text", 'data-model-suggest maxlength="256" autocomplete="off" spellcheck="false"')
-      }<div class="knowledge-suggestions" data-model-suggestions></div></div><p class="small-copy">${tx("research.constantsNote")}</p><p class="small-copy">${tx("research.usageToday", { used: research.tokensUsedToday ?? 0, limit: research.dailyTokenLimit ?? 10000 })}</p>${researchStatusBlock(research.status)}<div class="action-row"><button class="primary" data-action="saveResearchSettings" data-form="utility-research-form">${tx("research.save")}</button></div></section>`;
-      const packageSection = `<section class="utility-settings-section utility-resource-section" data-form-id="utility-package-form"><h3 class="utility-settings-section-title">${tx("settings.packageUpdates")}</h3><div class="utility-settings-fields">${selectField("settings.packageUpdates", "settings.packageUpdatesCopy", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div><div class="action-row"><button class="primary" data-action="savePackageSettings" data-form="utility-package-form">${tx("common.save")}</button></div></section>`;
-      content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${llmSection}${researchSection}${packageSection}<section class="utility-settings-section"><h3 class="utility-settings-section-title">${tx("language.label")}</h3>${languageSelection()}</section></div></section>`;
+      }<div class="knowledge-suggestions" data-model-suggestions></div></div><p class="small-copy">${tx("research.constantsNote")}</p><p class="small-copy">${tx("research.usageToday", { used: research.tokensUsedToday ?? 0, limit: research.dailyTokenLimit ?? 10000 })}</p>${researchStatusBlock(research.status)}</section>`;
+      const packageSection = `<section class="utility-settings-section utility-resource-section" data-form-id="utility-package-form" data-autosave-action="savePackageSettings"><h3 class="utility-settings-section-title">${tx("settings.packageUpdates")}</h3><div class="utility-settings-fields">${selectField("settings.packageUpdates", "settings.packageUpdatesCopy", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div></section>`;
+      content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy">${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${notice(state.issue, "red")}${llmSection}${researchSection}${packageSection}<section class="utility-settings-section"><h3 class="utility-settings-section-title">${tx("language.label")}</h3>${languageSelection()}</section></div></section>`;
     }
     if (!content) return "";
     return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}"></button><div class="utility-popover" role="dialog" aria-modal="true" aria-label="${esc(tx("utility.settings.title"))}">${content}</div></div>`;
@@ -425,7 +579,7 @@
     const stateLabel = t(backup.savedEnabled ? "common.on" : "common.off");
     return `<div class="workspace">${header("backup.title", "backup.copy", stateLabel, backup.savedEnabled ? "navy" : "muted")}
       <section class="section-card navy" data-form-id="backup-owner-form"><div class="section-header"><div><h3>${tx("backup.ownerGate")}</h3><p class="section-copy">${tx("backup.ownerCopy")}</p></div></div>${backup.unlocked ? `<div class="notice navy">${tx("backup.unlocked")}</div>` : `<div class="action-row"><div class="field">${field("backup.ownerCode", backup.hasOwnerCode ? "backup.existingCode" : "backup.newCode", "ownerCode", "", "password")}</div><button class="primary" data-action="${backup.hasOwnerCode ? "unlockBackup" : "setBackupOwnerCode"}" data-form="backup-owner-form">${tx(backup.hasOwnerCode ? "backup.unlock" : "backup.setCode")}</button></div>`}</section>
-      <section class="section-card navy" data-form-id="backup-form"><div class="section-header"><div><h3>${tx("backup.folder")}</h3><p class="section-copy">${tx("backup.folderCopy")}</p></div></div><div class="form-stack">${field("backup.localFolder", "backup.pathHint", "directory", backup.directory)}${toggle("backup.auto", "enabled", backup.enabled)}<div class="action-row"><button class="primary" data-action="saveBackup" data-form="backup-form"${disabled(!backup.unlocked)}>${tx("backup.save")}</button><button class="secondary" data-action="backupNow"${disabled(!backup.unlocked || !backup.savedEnabled)}>${tx("backup.create")}</button></div></div></section>${notice(state.notices.backup, "navy")}${notice(state.issue, "red")}</div>`;
+      <section class="section-card navy" data-form-id="backup-form" data-autosave-action="saveBackup"><div class="section-header"><div><h3>${tx("backup.folder")}</h3><p class="section-copy">${tx("backup.folderCopy")}</p></div></div><div class="form-stack">${field("backup.localFolder", "backup.pathHint", "directory", backup.directory, "text", backup.unlocked ? "" : "disabled")}${toggle("backup.auto", "enabled", backup.enabled, backup.unlocked ? "" : "disabled")}<div class="action-row"><button class="secondary" data-action="backupNow"${disabled(!backup.unlocked || !backup.savedEnabled)}>${tx("backup.create")}</button></div></div></section>${notice(state.notices.backup, "navy")}${notice(state.issue, "red")}</div>`;
   }
 
   function integrationWorkspace() {
@@ -476,10 +630,10 @@
           "maxlength=\"1024\""
         );
         const actions = isEdit
-          ? `<button class="primary" data-action="saveTagName" data-form="tag-popover-form" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.saveNode")}</button><button class="secondary" data-action="beginConnection" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.connection")}</button><button class="secondary" data-action="disconnectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}"${disabled(!popoverNode.parentID)}>${tx("tree.disconnection")}</button><button class="danger" data-action="deleteTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${deleteLabel(`tag:${nodeID}`, tx("tree.deleteNode"))}</button>`
+          ? `<button class="secondary" data-action="beginConnection" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${tx("tree.connection")}</button><button class="secondary" data-action="disconnectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}"${disabled(!popoverNode.parentID)}>${tx("tree.disconnection")}</button><button class="danger" data-action="deleteTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}">${deleteLabel(`tag:${nodeID}`, tx("tree.deleteNode"))}</button>`
           : `<button class="primary" data-action="addTag" data-form="tag-popover-form" data-tree-id="${esc(tree.id)}">${tx("tree.createNode")}</button>`;
         // Placed beside its anchor, inside the visible part (placeTreePopovers).
-        return `<section class="tree-popover" data-anchor-x="${panelState.x}" data-anchor-y="${panelState.y}" data-anchor-w="${panelState.w || 0}" data-tree-popover data-form-id="tag-popover-form"><div class="tree-popover-head"><span class="eyebrow">${tx(isEdit ? "tree.editNode" : "tree.createNode")}</span><button class="tree-popover-close" data-action="cancelTagPanel" data-hint="${tx("tree.cancel")}" aria-label="${tx("tree.cancel")}">×</button></div><div class="tree-form">${nameField}${descriptionField}<div class="action-row">${actions}</div></div></section>`;
+        return `<section class="tree-popover" data-anchor-x="${panelState.x}" data-anchor-y="${panelState.y}" data-anchor-w="${panelState.w || 0}" data-tree-popover data-form-id="tag-popover-form"${isEdit ? ` data-autosave-action="updateTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}"` : ""}><div class="tree-popover-head"><span class="eyebrow">${tx(isEdit ? "tree.editNode" : "tree.createNode")}</span><button class="tree-popover-close" data-action="cancelTagPanel" data-hint="${tx("tree.cancel")}" aria-label="${tx("tree.cancel")}">×</button></div><div class="tree-form">${nameField}${descriptionField}<div class="action-row">${actions}</div></div></section>`;
       })() : "";
       const map = `<div class="tree-map" data-tree-map data-tree-id="${esc(tree.id)}">${connectionState ? `<div class="tree-connection-mode">${tx("tree.connectionHint")}</div>` : ""}<div class="tree-map-content" style="width:max(${contentWidth}px, 100%);height:${contentHeight}px"><svg class="tree-links" aria-hidden="true"></svg><div class="tree-node-layer">${nodes.map((node) => {
         const position = positions.get(node.id);
@@ -601,7 +755,7 @@
       const responseDiagnostic = latestResponseDiagnostic
         ? `<p class="provider-response-shape"><span>${tx("llm.responseShape")}</span><strong>${esc(latestResponseDiagnostic.responseShape)}</strong></p>`
         : "";
-      return `<section class="provider-panel" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}"><div class="provider-panel-head"><h3>${esc(profile.name)}</h3><div class="provider-panel-actions">${testButton}<button class="danger" data-action="confirmDeleteProviderProfile" data-profile-id="${esc(profile.id)}">${tx("llm.deleteProfile")}</button></div></div>${retiredSearchProvider ? `<div class="notice navy">${tx("llm.retiredSearchProvider")}</div>` : ""}<div class="provider-panel-body">${connectionFields ? `<div class="provider-connection-fields">${connectionFields}</div>` : ""}<div class="provider-request-summary">${usage}${responseDiagnostic}</div></div>${profile.testSucceeded ? notice(t("llm.testSucceeded"), "green") : ""}</section>`;
+      return `<section class="provider-panel" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}" data-autosave-action="updateProviderConnection"><div class="provider-panel-head"><h3>${esc(profile.name)}</h3><div class="provider-panel-actions">${testButton}<button class="danger" data-action="confirmDeleteProviderProfile" data-profile-id="${esc(profile.id)}">${tx("llm.deleteProfile")}</button></div></div>${retiredSearchProvider ? `<div class="notice navy">${tx("llm.retiredSearchProvider")}</div>` : ""}<div class="provider-panel-body">${connectionFields ? `<div class="provider-connection-fields">${connectionFields}</div>` : ""}<div class="provider-request-summary">${usage}${responseDiagnostic}</div></div>${profile.testSucceeded ? notice(t("llm.testSucceeded"), "green") : ""}</section>`;
     };
     return `<div class="workspace provider-workspace">${header("llm.title", "llm.copy", t("llm.keyLibrary"), "gold")}<div class="notice navy provider-local-only">${tx("llm.localOnlyDisclosure")}</div><section class="provider-create" data-form-id="new-provider-profile-form">${groupedValueSelectField("llm.providerType", "", "type", "", profileTypeGroups)}<button class="gold-action" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button><span class="small-copy">${tx("llm.createCopy")}</span></section><div class="provider-panels">${profiles.length ? profiles.map(panel).join("") : `<div class="empty">${tx("llm.empty")}</div>`}</div>${notice(state.issue, "red")}</div>`;
   }
@@ -658,14 +812,14 @@
       const positionName = (position) => `${position} · ${t(`localModel.strictness.${position}.name`)}`;
       const typeStrictnessOptions = [["", t("localModel.strictness.followGlobal", { name: positionName(globalLLM.strictness ?? 3) })]]
         .concat(STRICTNESS_POSITIONS.map((position) => [String(position), positionName(position)]));
-      const localModelOverrideSection = `<section class="classifier-type-section classifier-local-model-overrides" data-local-model-section><div class="section-header"><div><h3>${tx("bridge.localModelOverrides")}</h3><p class="section-copy">${tx("bridge.localModelOverridesCopy")}</p></div></div><div data-form-id="${esc(localModelFormID)}"><div class="utility-settings-fields">${valueSelectField("localModel.speedQuality", "localModel.speedQualityHint", "speedQuality", localOverrides?.speedQuality || "", typeSpeedOptions)}${valueSelectField("localModel.strictness", "localModel.strictnessHint", "strictness", localOverrides?.strictness != null ? String(localOverrides.strictness) : "", typeStrictnessOptions)}</div><p class="small-copy resident-model-note">${tx("bridge.localModelResidentNote")}</p>${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", localOverrides?.houseRules ?? "", 'rows="4"')}<div class="action-row"><button type="button" class="primary" data-action="saveClassifierTypeLocalModel" data-form="${esc(localModelFormID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div></div></section>`;
+      const localModelOverrideSection = `<section class="classifier-type-section classifier-local-model-overrides" data-local-model-section><div class="section-header"><div><h3>${tx("bridge.localModelOverrides")}</h3><p class="section-copy">${tx("bridge.localModelOverridesCopy")}</p></div></div><div data-form-id="${esc(localModelFormID)}" data-autosave-action="saveClassifierTypeLocalModel" data-type-id="${esc(classifierType.id)}"><div class="utility-settings-fields">${valueSelectField("localModel.speedQuality", "localModel.speedQualityHint", "speedQuality", localOverrides?.speedQuality || "", typeSpeedOptions)}${valueSelectField("localModel.strictness", "localModel.strictnessHint", "strictness", localOverrides?.strictness != null ? String(localOverrides.strictness) : "", typeStrictnessOptions)}</div><p class="small-copy resident-model-note">${tx("bridge.localModelResidentNote")}</p>${textareaField("bridge.localModelHouseRules", "bridge.localModelHouseRulesCopy", "houseRules", localOverrides?.houseRules ?? "", 'rows="4" maxlength="4000"')}</div></section>`;
       const researchFormID = `classifier-research-form-${classifierType.id}`;
       const researchMode = classifierType.researchEnabled === true ? "on" : classifierType.researchEnabled === false ? "off" : "inherit";
-      const researchOverrideSection = `<section class="classifier-type-section classifier-research-overrides"><div class="section-header"><div><h3>${tx("bridge.researchOverrides")}</h3><p class="section-copy">${tx("bridge.researchOverridesCopy")}</p></div></div><div data-form-id="${esc(researchFormID)}"><div class="utility-settings-fields">${valueSelectField("bridge.researchMode", "", "researchMode", researchMode, [["inherit", t("bridge.researchMode.inherit")], ["on", t("bridge.researchMode.on")], ["off", t("bridge.researchMode.off")]])}</div><p class="small-copy research-master-note">${tx("bridge.researchMasterGate")}</p><div class="action-row"><button type="button" class="primary" data-action="saveClassifierTypeResearch" data-form="${esc(researchFormID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div></div></section>`;
-      return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}">
-        <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name)}</div>
+      const researchOverrideSection = `<section class="classifier-type-section classifier-research-overrides"><div class="section-header"><div><h3>${tx("bridge.researchOverrides")}</h3><p class="section-copy">${tx("bridge.researchOverridesCopy")}</p></div></div><div data-form-id="${esc(researchFormID)}" data-autosave-action="saveClassifierTypeResearch" data-type-id="${esc(classifierType.id)}"><div class="utility-settings-fields">${valueSelectField("bridge.researchMode", "", "researchMode", researchMode, [["inherit", t("bridge.researchMode.inherit")], ["on", t("bridge.researchMode.on")], ["off", t("bridge.researchMode.off")]])}</div><p class="small-copy research-master-note">${tx("bridge.researchMasterGate")}</p></div></section>`;
+      return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}" data-autosave-action="configureClassifierType">
+        <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name, "text", 'maxlength="128"')}</div>
         <section class="classifier-type-section classifier-applicable-platform-section"><span class="field-label">${tx("bridge.applicablePlatform")}</span>${platformChoices(chosen, classifierType.id)}<p class="small-copy">${tx("bridge.platformsFixed")}</p>${platformNotes.map((note) => `<p class="small-copy">${esc(note)}</p>`).join("")}</section>
-        <div class="action-row"><button class="primary" data-action="configureClassifierType" data-form="${esc(formID)}" data-type-id="${esc(classifierType.id)}">${tx("common.save")}</button></div>
+        <p class="small-copy">${tx("bridge.autoSave")}</p>
         ${localModelOverrideSection}
         ${researchOverrideSection}
         <div class="action-row classifier-type-delete"><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}">${deleteLabel(`type:${classifierType.id}`, tx("bridge.deleteType"))}</button></div>
@@ -680,6 +834,7 @@
       const section = (labelKey, inner) => `<section class="type-section"><h3 class="type-section-title">${tx(labelKey)}</h3>${inner}</section>`;
       return `<div class="workspace classifier-type-workspace">
         <div class="type-detail-body">
+          ${notice(state.issue, "red")}
           <section class="type-section">${typeForm(selectedType)}</section>
           ${section("bridge.tabTree", tagTreeWorkspace(selectedType.treeID))}
         </div></div>`;
@@ -711,7 +866,7 @@
         : "";
       const idLine = kind === "creator" ? `<span class="knowledge-id" dir="auto">${esc(entry.subject)}</span>` : "";
       const search = `${name} ${entry.subject} ${entry.meaning || ""}`.toLowerCase();
-      return `<article class="knowledge-card" data-form-id="${esc(formID)}" data-knowledge-search="${esc(search)}"><div class="knowledge-card-head">${face}<span class="knowledge-name"><span class="knowledge-subject" dir="auto">${esc(name)}</span>${idLine}</span>${origin(entry)}</div><label class="field wide"><span class="field-label">${tx("knowledge.description")}</span><textarea data-field="meaning" rows="3" maxlength="2000">${esc(entry.meaning || "")}</textarea></label><div class="action-row"><button class="primary" data-action="editKnowledgeEntry" data-form="${esc(formID)}" data-id="${esc(entry.id)}">${tx("common.save")}</button><button class="danger" data-action="deleteKnowledgeEntry" data-id="${esc(entry.id)}">${deleteLabel(`knowledge:${entry.id}`, tx("knowledge.delete"))}</button></div></article>`;
+      return `<article class="knowledge-card" data-form-id="${esc(formID)}" data-knowledge-search="${esc(search)}" data-autosave-action="editKnowledgeEntry" data-id="${esc(entry.id)}"><div class="knowledge-card-head">${face}<span class="knowledge-name"><span class="knowledge-subject" dir="auto">${esc(name)}</span>${idLine}</span>${origin(entry)}</div><label class="field wide"><span class="field-label">${tx("knowledge.description")}</span><textarea data-field="meaning" rows="3" maxlength="2000">${esc(entry.meaning || "")}</textarea></label><div class="action-row"><button class="danger" data-action="deleteKnowledgeEntry" data-id="${esc(entry.id)}">${deleteLabel(`knowledge:${entry.id}`, tx("knowledge.delete"))}</button></div></article>`;
     };
 
     const group = (title, hint, items, kind) => `<section class="knowledge-group" data-knowledge-group><div class="section-header"><div><h3>${esc(title)} <span class="knowledge-count" data-knowledge-count>${items.length}</span></h3>${hint ? `<p class="section-copy">${esc(hint)}</p>` : ""}</div></div>${items.length ? `<div class="knowledge-list">${items.map((entry) => entryCard(entry, kind)).join("")}</div>` : `<div class="empty">${tx("knowledge.empty")}</div>`}</section>`;
@@ -838,24 +993,8 @@
     });
   }
 
-  function tagRenameKey(treeID, nodeID) {
-    return `${treeID}\u0000${nodeID}`;
-  }
-
-  function flushLiveTagRename(treeID, nodeID) {
-    const key = tagRenameKey(treeID, nodeID);
-    const name = pendingTagRenames.get(key);
-    pendingTagRenames.delete(key);
-    if (!name?.trim()) return;
-    send("renameTag", { treeID, nodeID, name });
-  }
-
   function flushTagNameInput(input) {
-    if (!input) return;
-    const { treeId: treeID, nodeId: nodeID } = input.dataset;
-    if (!treeID || !nodeID) return;
-    pendingTagRenames.set(tagRenameKey(treeID, nodeID), input.value);
-    flushLiveTagRename(treeID, nodeID);
+    if (input) queueLiveEdit(input, true);
   }
 
   function updateRenderedTagName(treeID, nodeID, name) {
@@ -882,6 +1021,7 @@
   });
 
   scope.addEventListener("input", (event) => {
+    if (!event.isComposing) queueLiveEdit(event.target);
     const knowledgeSearch = event.target.closest("input[data-knowledge-search-input]");
     if (knowledgeSearch) {
       knowledgeQuery = knowledgeSearch.value;
@@ -902,8 +1042,6 @@
     if (!input) return;
     const { treeId: treeID, nodeId: nodeID } = input.dataset;
     if (!treeID || !nodeID) return;
-    const key = tagRenameKey(treeID, nodeID);
-    pendingTagRenames.set(key, input.value);
     updateRenderedTagName(treeID, nodeID, input.value);
   });
 
@@ -965,6 +1103,7 @@
       lastRenderedMarkup = null;
       return;
     }
+    if (composingEdit) return;
     const markup = shell(workspace()) + createTypeModal();
     // Nothing changed on the page: keep the DOM (and its scroll) as it is.
     if (markup === lastRenderedMarkup && root.firstChild) return;
@@ -974,7 +1113,11 @@
   function renderFull(markup) {
     rememberTreeViewportPositions();
     rememberEditorViewportPosition();
+    const focused = captureLiveEditFocus();
+    replacingControls = true;
     root.innerHTML = markup;
+    restoreLiveEdits(focused);
+    replacingControls = false;
     lastRenderedMarkup = markup;
     bindTreeMapWheel();
     applyKnowledgeSearch();
@@ -1000,7 +1143,7 @@
     const modelPick = event.target.closest("button[data-model-pick]");
     if (modelPick) {
       const modelInput = root.querySelector("input[data-model-suggest]");
-      if (modelInput) modelInput.value = modelPick.dataset.modelPick;
+      if (modelInput) { modelInput.value = modelPick.dataset.modelPick; queueLiveEdit(modelInput, true); }
       modelPick.parentElement.innerHTML = "";
       return;
     }
@@ -1023,6 +1166,7 @@
       return;
     }
     if (button.disabled) return;
+    flushLiveEdits();
     const action = button.dataset.action;
     if (DELETE_KEYS[action] && !confirmDelete(DELETE_KEYS[action](button.dataset))) return;
     if (action === "workspace") {
@@ -1104,19 +1248,7 @@
       render();
       return;
     }
-    if (action === "saveTagName") {
-      if (!data.name?.trim()) return;
-      pendingTagRenames.delete(tagRenameKey(button.dataset.treeId, button.dataset.nodeId));
-      activeTagPanel = null;
-      render();
-      send("updateTag", {
-        treeID: button.dataset.treeId,
-        nodeID: button.dataset.nodeId,
-        name: data.name,
-        description: data.description || "",
-      });
-      return;
-    }
+
     if (action === "openUtilityPanel") {
       const nextPanel = data.utilityPanel === "settings" ? "settings" : null;
       utilityPanel = utilityPanel === nextPanel ? null : nextPanel;
@@ -1205,6 +1337,7 @@
   }, true);
 
   scope.addEventListener("change", (event) => {
+    if (queueLiveEdit(event.target, true)) return;
     const knowledgePlatform = event.target.closest("[data-knowledge-platform]");
     if (knowledgePlatform) {
       knowledgeAddPlatform = knowledgePlatform.value;
@@ -1218,16 +1351,6 @@
       selectedLanguage = languageControl.value;
       root.lang = selectedLanguage;
       try { window.localStorage.setItem("vaultClassifier.language", selectedLanguage); } catch (_) {}
-      return;
-    }
-    const providerConnectionControl = event.target.closest("[data-provider-connection]");
-    if (providerConnectionControl) {
-      const panel = providerConnectionControl.closest("[data-provider-panel]");
-      const formID = panel?.dataset.formId;
-      const profileID = panel?.dataset.providerId;
-      if (!formID || !profileID) return;
-      const values = collect(formID);
-      send("updateProviderConnection", { profileID, ...providerConnectionPayload(values, formID) });
       return;
     }
     // Preserve creation choices across page re-renders.
@@ -1628,6 +1751,7 @@
         if (created) { selectedTypeID = created.id; state.workspace = "browserBridge"; }
         pendingSelectNewType = null;
       }
+      reconcileLiveEdits();
       render();
     },
   };

@@ -97,6 +97,20 @@ final class ClassifierMCPTests: XCTestCase {
         XCTAssertTrue(JSONSerialization.isValidJSONObject(overview))
     }
 
+    func testRoutineGlobalEditsPersistWithoutRestartingTheEngine() throws {
+        let vm = try VaultClassifierViewModel(headlessVaultDirectory: directory)
+        let tier = vm.llmSettings.speedQuality.rawValue
+        let status = vm.llmEngineStatus
+        XCTAssertNil(vm.mcpPerform(action: "saveLocalLLMSettings", data: [
+            "speedQuality": tier, "strictness": "4", "houseRules": "Use my group vocabulary."
+        ]).issue)
+        XCTAssertEqual(vm.llmEngineStatus, status, "Ordinary autosave must not reload the GGUF engine")
+        LocalStateFile.flushAllPendingWrites()
+        let reopened = try VaultClassifierViewModel(headlessVaultDirectory: directory)
+        XCTAssertEqual(reopened.llmSettings.strictness.rawValue, 4)
+        XCTAssertEqual(reopened.llmSettings.houseRules, "Use my group vocabulary.")
+    }
+
     func testPerformRoutesThroughTheDispatcherWithItsValidation() throws {
         let vm = try VaultClassifierViewModel(headlessVaultDirectory: directory)
         let created = vm.mcpPerform(action: "createClassifierType", data: ["name": "X posts", "platformIDs": ["twitter"]])
