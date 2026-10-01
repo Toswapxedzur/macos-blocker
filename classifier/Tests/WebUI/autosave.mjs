@@ -42,6 +42,18 @@ try{
     const shot=await call('Page.captureScreenshot',{format:'png'});
     await fs.writeFile(process.argv[2],Buffer.from(shot.result.data,'base64'));
   }
+  await call('Emulation.setDeviceMetricsOverride',{width:720,height:1000,deviceScaleFactor:1,mobile:false});
+  await call('Page.navigate',{url:url.replace('autosave.html','activity.html')});
+  const activityUntil=Date.now()+10000;
+  while(!await evaluate('typeof runActivityTests === "function"')){
+    if(Date.now()>activityUntil)throw Error('Activity fixture did not load');
+    await new Promise(r=>setTimeout(r,50));
+  }
+  for(const result of await evaluate('runActivityTests()'))console.log(result);
+  if(process.argv[2]){
+    const shot=await call('Page.captureScreenshot',{format:'png'});
+    await fs.writeFile(process.argv[2].replace(/\.png$/, '-activity-720.png'),Buffer.from(shot.result.data,'base64'));
+  }
   console.log('RESULT PASS');
 }catch(error){console.error(error);process.exitCode=1}
 finally{
