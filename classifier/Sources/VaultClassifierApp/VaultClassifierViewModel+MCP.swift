@@ -26,9 +26,7 @@ public enum ClassifierWebActionCatalog {
     public static let actions: [ClassifierWebActionDescriptor] = [
         .init(name: "state", keys: [], summary: "Refresh local state from the store."),
         .init(name: "workspace", keys: ["workspace"], summary: "Switch the page's workspace (browserBridge, knowledge). API keys and grounded research are in Settings."),
-        .init(name: "clearCollectedData", keys: ["platformID"], summary: "Move a platform's collected entries to the trash (the platform and its group stay)."),
-        .init(name: "restoreTrashedEntry", keys: ["id"], summary: "Restore a trashed entry."),
-        .init(name: "permanentlyDeleteTrashedEntry", keys: ["id"], summary: "Purge a trashed entry."),
+        .init(name: "clearCollectedData", keys: ["platformID"], summary: "Permanently clear a platform's collected entries (the platform and its group stay)."),
         .init(name: "setCollectionEnabled", keys: ["platformID", "enabled"], summary: "Turn collection on/off for a platform."),
         .init(name: "setCollectionKeep", keys: ["platformID", "days"], summary: "Days to keep collected entries: for a platform (-1 = same as all), or without platformID for all platforms (0 = forever)."),
         .init(name: "createClassifierType", keys: ["name", "platformIDs"], summary: "Create a classifier group for one or more classifiable platforms (platformIDs: youtube, reddit, twitter, bilibili; a platform belongs to at most one group) with its own empty tree; it follows the global dials until given its own."),
@@ -89,7 +87,7 @@ extension VaultClassifierViewModel {
     /// Top-level snapshot keys a process may ask for by name; `assets.<key>`
     /// selects one asset collection (trees, datasets, knowledge, classifierTypes,
     /// providerProfiles, providerProtocols, collectionPlatforms, bindings, …).
-    static let mcpSnapshotSections = ["settings", "assets", "backup", "notices", "trash", "workspace", "issue"]
+    static let mcpSnapshotSections = ["settings", "assets", "backup", "notices", "workspace", "issue"]
 
     /// The page's snapshot, whole (`all`), one section, or — with no section — a
     /// compact overview a model can read without the multi-megabyte collected

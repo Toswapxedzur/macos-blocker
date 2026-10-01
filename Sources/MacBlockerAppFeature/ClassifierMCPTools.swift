@@ -41,7 +41,7 @@ public enum ClassifierMCPTools {
         [
             MCPTool(
                 name: "classifier_state",
-                description: "The Vault Classifier page's state as JSON — the same data the page renders. No section = a compact overview (settings, groups, platforms, counts). section = 'all' for everything, or one of settings, assets, backup, notices, trash, workspace, issue, or 'assets.<key>' (trees, datasets, knowledge, classifierTypes, providerProfiles, providerProtocols, collectionPlatforms, bindings).",
+                description: "The Vault Classifier page's state as JSON — the same data the page renders. No section = a compact overview (settings, groups, platforms, counts). section = 'all' for everything, or one of settings, assets, backup, notices, workspace, issue, or 'assets.<key>' (trees, datasets, knowledge, classifierTypes, providerProfiles, providerProtocols, collectionPlatforms, bindings).",
                 inputSchema: [
                     "type": "object",
                     "properties": ["section": ["type": "string", "description": "Which part to return; omit for the overview."]],

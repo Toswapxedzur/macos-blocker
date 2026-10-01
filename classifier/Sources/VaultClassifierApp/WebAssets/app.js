@@ -67,8 +67,6 @@
   const openExpands = new Set();
   // Which classifier type is open in the left-panel list (client-only UI state).
   let selectedTypeID = null;
-  // Which trash entry's recover/delete panel is expanded in the left panel.
-  let selectedTrashID = null;
   // Set to the pre-create set of type ids when "New type" is clicked, so the
   // next snapshot can open the freshly created type.
   let pendingSelectNewType = null;
@@ -668,32 +666,17 @@
     </div>`;
   }
 
-  // A trashed entity in the left panel; clicking it expands a compact
-  // recover / permanently-delete panel in place.
-  function trashRow(entry) {
-    const active = selectedTrashID === entry.id;
-    return `<div class="sidebar-trash-item${active ? " active" : ""}">
-      <button class="sidebar-row sidebar-trash-row${active ? " active" : ""}" type="button" data-action="selectTrash" data-id="${esc(entry.id)}"><span class="sidebar-symbol" aria-hidden="true">🗑</span><span class="sidebar-copy"><span class="sidebar-name" dir="auto">${esc(entry.name)}</span><span class="sidebar-meta">${tx("trash.deleted")}</span></span></button>
-      ${active ? `<div class="sidebar-trash-actions"><button class="secondary" data-action="restoreTrashedEntry" data-id="${esc(entry.id)}">${tx("trash.restore")}</button><button class="danger" data-action="permanentlyDeleteTrashedEntry" data-id="${esc(entry.id)}">${deleteLabel(`trash:${entry.id}`, tx("trash.permanentlyDelete"))}</button></div>` : ""}
-    </div>`;
-  }
-
-  // Groups and Knowledge are directly reachable; Trash has its own disclosure.
+  // Groups and Knowledge are directly reachable.
   function sidebarContent() {
     const types = orderedClassifierTypes();
     const typeRows = types.length
       ? types.map((type) => classifierTypeRow(type)).join("")
       : `<div class="empty compact-empty">${tx("navigation.noTypes")}</div>`;
-    const trash = Array.isArray(state?.trash) ? state.trash : [];
-    const trashSection = trash.length
-      ? `<details class="vui-expand sidebar-trash-expand" data-expand="trash"${openExpands.has("trash") ? " open" : ""}><summary>${tx("trash.title")}</summary><div class="sidebar-trash vui-list-box" data-list-key="trash" tabindex="0" aria-label="${tx("trash.title")}">${trash.map(trashRow).join("")}</div></details>`
-      : "";
     return `
       <div class="sidebar-group-title">${tx("navigation.classifierTypes")}</div>
       <div class="classifier-type-nav vui-list-box" data-classifier-type-nav data-list-key="types" tabindex="0" aria-label="${tx("navigation.classifierTypes")}">${typeRows}</div>
       <button class="sidebar-add" type="button" data-action="newType"><span aria-hidden="true">＋</span> ${tx("navigation.newType")}</button>
-      ${navButton("knowledge", "✦", "navigation.knowledge", "navigation.knowledgeMeta")}
-      ${trashSection}`;
+      ${navButton("knowledge", "✦", "navigation.knowledge", "navigation.knowledgeMeta")}`;
   }
 
   function shell(content) {
@@ -763,7 +746,7 @@
   }
 
   // A classifier type's own tag tree (the tree belongs to its type: made and
-  // trashed with it). The canvas is as tall as its tags (at most 520 px) and
+  // deleted with it). The canvas is as tall as its tags (at most 520 px) and
   // shows no scroll bars (owner 2026-09-30): drag empty space or use the
   // trackpad to pan a tree wider than the panel.
   function tagTreeWorkspace(treeID) {
@@ -1134,7 +1117,6 @@
   const DELETE_KEYS = {
     confirmDeleteProviderProfile: (data) => `provider:${data.profileId}`,
     deleteModelFile: (data) => `model:${data.fileName}`,
-    permanentlyDeleteTrashedEntry: (data) => `trash:${data.id}`,
     deleteTag: (data) => `tag:${data.nodeId}`,
     confirmDeleteClassifierType: (data) => `type:${data.typeId}`,
     deleteKnowledgeEntry: (data) => `knowledge:${data.id}`
@@ -1273,19 +1255,6 @@
     editor.scrollTop = position.y;
   }
 
-  // A deleted entity leaves a small in-place tombstone (name + restore /
-  // permanently-delete). It auto-purges 24h after deletion (native, on launch).
-  function trashTombstone(entry) {
-    return `<div class="trash-tombstone"><span class="trash-tombstone-name" dir="auto">${esc(entry.name)}</span><span class="trash-tombstone-meta">${tx("trash.deleted")}</span><span class="trash-tombstone-actions"><button class="secondary" data-action="restoreTrashedEntry" data-id="${esc(entry.id)}">${tx("trash.restore")}</button><button class="danger" data-action="permanentlyDeleteTrashedEntry" data-id="${esc(entry.id)}">${deleteLabel(`trash:${entry.id}`, tx("trash.permanentlyDelete"))}</button></span></div>`;
-  }
-
-  function trashOfKind(kind) {
-    return (Array.isArray(state?.trash) ? state.trash : [])
-      .filter((entry) => entry.kind === kind)
-      .map(trashTombstone)
-      .join("");
-  }
-
   // Create-a-group dialog: platform and name. The new group follows the global
   // dials, house rules and research switch until given its own.
   function createTypeModal() {
@@ -1421,12 +1390,6 @@
       if (!id) return;
       selectedTypeID = id;
       if (state.workspace !== "browserBridge") { state.workspace = "browserBridge"; send("workspace", { workspace: "browserBridge" }); }
-      render();
-      return;
-    }
-    if (action === "selectTrash") {
-      const id = button.dataset.id;
-      selectedTrashID = selectedTrashID === id ? null : id;
       render();
       return;
     }
@@ -2041,8 +2004,6 @@
       // Drop a stale left-panel selection if that type no longer exists.
       const typeIDs = new Set((state.assets?.classifierTypes || []).map((type) => type.id));
       if (selectedTypeID && !typeIDs.has(selectedTypeID)) selectedTypeID = null;
-      // Close the trash panel if that entry was restored or purged.
-      if (selectedTrashID && !(Array.isArray(state.trash) ? state.trash : []).some((entry) => entry.id === selectedTrashID)) selectedTrashID = null;
       // Open a just-created type: the one id absent before "New type" was clicked.
       if (pendingSelectNewType) {
         const created = (state.assets?.classifierTypes || []).find((type) => !pendingSelectNewType.has(type.id));

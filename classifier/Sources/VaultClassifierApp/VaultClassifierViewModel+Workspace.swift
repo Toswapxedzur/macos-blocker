@@ -4,30 +4,17 @@ import VaultClassifierCore
 import VaultClassifierBridge
 import VaultClassifierLLM
 
-// Collection platforms, classifier types (create/reorder/configure/activate/delete), the trash, collection diagnostics and the native confirmation sheet they share.
+// Collection platforms, classifier types (create/reorder/configure/activate/delete), collection diagnostics and the native confirmation sheet they share.
 // Split out of VaultClassifierApp.swift (CLASSIFIER-INDEPENDENCE §7, Phase 5):
 // same type, same behaviour — pinned by ViewModelCharacterizationTests.
 @MainActor
 extension VaultClassifierViewModel {
-    /// Copies a valid retired Keychain credential into the provider's ordinary
-    /// workspace field, then deletes the old Keychain item. Existing plain
-    /// workspace values take precedence.
-    /// Opportunistic trash purge: on launch, drop entries whose 24h lifetime
-    /// has elapsed. There is no background timer.
-    func purgeExpiredTrashOnLaunch() {
-        guard var catalog = localState?.workspaceCatalog, !catalog.trash.isEmpty else { return }
-        guard catalog.purgeExpiredTrash() > 0 else { return }
-        try? coordinator?.updateWorkspaceCatalog(catalog)
-        localState = coordinator?.snapshot()
-    }
-
-    /// A type's Options: "Delete collected data" — the platform's collected
-    /// entries go to the trash (restorable for a day); the platform and its
-    /// type stay.
+    /// Permanently clears the platform's collected entries; its binding and
+    /// classifier group stay.
     func clearCollectedData(platformID: String) {
         do {
             guard var catalog = localState?.workspaceCatalog,
-                  catalog.trashCollectedEntries(platformID) != nil else {
+                  catalog.clearCollectedEntries(platformID) else {
                 throw WebBridgeInputError.invalidChoice("collection platform")
             }
             try coordinator?.updateWorkspaceCatalog(catalog)
@@ -168,32 +155,8 @@ extension VaultClassifierViewModel {
     func deleteClassifierType(typeID: String) {
         do {
             guard var catalog = localState?.workspaceCatalog,
-                  catalog.trashClassifierType(typeID) != nil else {
+                  catalog.removeClassifierType(typeID) else {
                 throw WebBridgeInputError.invalidChoice("classifier type")
-            }
-            try coordinator?.updateWorkspaceCatalog(catalog)
-            refreshLocalState()
-            issue = nil
-        } catch { issue = error.localizedDescription }
-    }
-
-    func restoreTrashedEntry(entryID: String) {
-        do {
-            guard var catalog = localState?.workspaceCatalog,
-                  catalog.restoreTrashedEntry(entryID) else {
-                throw WebBridgeInputError.invalidChoice("trash entry")
-            }
-            try coordinator?.updateWorkspaceCatalog(catalog)
-            refreshLocalState()
-            issue = nil
-        } catch { issue = error.localizedDescription }
-    }
-
-    func permanentlyDeleteTrashedEntry(entryID: String) {
-        do {
-            guard var catalog = localState?.workspaceCatalog,
-                  catalog.permanentlyDeleteTrashedEntry(entryID) else {
-                throw WebBridgeInputError.invalidChoice("trash entry")
             }
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()

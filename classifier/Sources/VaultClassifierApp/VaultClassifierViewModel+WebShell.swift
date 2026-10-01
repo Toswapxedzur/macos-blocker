@@ -262,14 +262,6 @@ extension VaultClassifierViewModel {
             "settings": settingsPayload,
             "backup": backupPayload,
             "assets": assets,
-            "trash": catalog.trash.map { entry in
-                [
-                    "id": entry.id,
-                    "kind": entry.kind.rawValue,
-                    "name": entry.name,
-                    "deletedAtMilliseconds": entry.deletedAtMilliseconds,
-                ] as [String: Any]
-            },
         ]
     }
 
@@ -336,10 +328,6 @@ extension VaultClassifierViewModel {
                 return value == .knowledge
             case "clearCollectedData":
                 clearCollectedData(platformID: try webString(data, key: "platformID", limit: 64))
-            case "restoreTrashedEntry":
-                restoreTrashedEntry(entryID: try webString(data, key: "id", limit: 64))
-            case "permanentlyDeleteTrashedEntry":
-                permanentlyDeleteTrashedEntry(entryID: try webString(data, key: "id", limit: 64))
             case "setCollectionKeep":
                 guard let days = (data["days"] as? NSNumber)?.intValue else { throw WebBridgeInputError.missingValue("days") }
                 setCollectionKeep(platformID: try webOptionalString(data, key: "platformID", limit: 64), days: days)
