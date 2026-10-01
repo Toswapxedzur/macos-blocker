@@ -18,6 +18,14 @@ window.runDropdownLayoutTests = async () => {
   check(box.left >= 7 && box.right <= innerWidth - 7 && box.top >= 7 && box.bottom <= innerHeight - 7,
     'floating model menu fits the viewport');
   check(scope.activeElement.matches('[data-model-search]'), 'opening model menu focuses search');
+  const searchInfo = q('[data-info-key="research.modelSearch"] .vui-info-button');
+  const commandCount = commands.length;
+  searchInfo.click(); await wait();
+  check(q('.research-model-menu .vui-info-popover') && q('.research-model-picker').open && commands.length === commandCount,
+    'Model-search Info preserves the menu and sends no provider request');
+  searchInfo.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true,composed:true})); await wait();
+  check(!q('.vui-info-popover') && q('.research-model-picker').open && q('.utility-popover'),
+    'Escape closes Info before the model menu and Settings');
   const search = q('[data-model-search]'); search.value = ''; search.dispatchEvent(new InputEvent('input', { bubbles: true }));
   search.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
   check(scope.activeElement.matches('[data-model-pick]'), 'model results support arrow-key navigation');
