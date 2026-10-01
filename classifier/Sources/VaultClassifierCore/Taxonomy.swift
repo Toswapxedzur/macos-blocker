@@ -47,7 +47,7 @@ public enum TaxonomyError: Error, Equatable, LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .duplicateID(let id): return "Taxonomy contains duplicate id \(id)."
-        case .missingParent(let nodeID, let parentID): return "Node \(nodeID) refers to missing parent \(parentID)."
+        case .missingParent(let nodeID, let parentID): return "Tag \(nodeID) refers to missing parent \(parentID)."
         case .cycle(let id): return "Taxonomy has a parent cycle at \(id)."
         }
     }
