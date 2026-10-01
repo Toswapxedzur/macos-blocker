@@ -1,0 +1,28 @@
+window.runBoundedListTests=async()=>{
+  const results=[],wait=()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+  const expect=(c,label)=>{if(!c)throw Error(label);results.push('PASS '+label)};
+  const host=document.createElement('div');host.style.cssText='display:block;height:100%';document.body.appendChild(host);
+  document.getElementById('host').style.display='none';
+  const activity=host.attachShadow({mode:'open'});
+  activity.innerHTML='<link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/vault-ui.css"><link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/activity.css"><div id="activity"></div>';
+  VaultScenes.scope=name=>name==='activity'?activity:scope;
+  webkit.messageHandlers.activity={postMessage(){}};
+  const load=src=>new Promise((resolve,reject)=>{const script=document.createElement('script');script.src=src;script.onload=resolve;script.onerror=reject;document.body.appendChild(script)});
+  await load('/Sources/MacBlockerWebUI/WebAssets/activity-time-bins.js');await load('/Sources/MacBlockerWebUI/WebAssets/activity.js');
+  const start=Date.now()-86400000;
+  const facts=Object.fromEntries(Array.from({length:200},(_,i)=>['video-'+i,{title:'Video '+i,creator:'Author '+i,tags:[{id:'tag-'+i,name:'Tag '+i}]}]));
+  const snapshot={rangeStartMs:start,rangeEndMs:start+86400000,settings:{appUsage:{enabled:true},webVisit:{enabled:true},contentWatched:{enabled:true}},groups:Array.from({length:200},(_,i)=>({id:'activity-'+i,name:'Activity group '+i,colorIndex:i,merge:false,members:Array.from({length:120},(_,n)=>'app|app-'+n)})),app:{totalSeconds:3000,bars:Array.from({length:300},(_,i)=>({key:'app-'+i,label:'App '+i,colorIndex:i,seconds:10})),timeline:[]},web:{totalSeconds:0,bars:[],timeline:[]},watchedTimeline:Array.from({length:200},(_,i)=>({key:'video-'+i,startedAtMs:start+i*1000,seconds:1,startFraction:i/86400,widthFraction:1/86400}))};
+  activityApply(snapshot,{},facts);await wait();
+  const bounded=(node,label)=>{expect(node.scrollHeight>node.clientHeight && getComputedStyle(node).overflowY==='auto',label+' scrolls inside a box');const height=node.clientHeight;node.scrollTop=node.scrollHeight;expect(node.scrollTop>0 && node.clientHeight===height,label+' last row remains accessible');};
+  bounded(activity.querySelector('#usage-section .colour-map'),'usage items');
+  bounded(activity.querySelector('#content-section .colour-map'),'content tags');
+  activity.querySelectorAll('.scroll-list').forEach((node,i)=>bounded(node,i===0?'authors':'watched content'));
+  const cards=activity.querySelector('.group-cards');expect(cards.children.length===200 && cards.scrollWidth>cards.clientWidth,'all activity groups stay in the horizontal box');
+  activity.querySelector('.group-card .secondary').click();activityKnownItems(Array.from({length:300},(_,i)=>({id:'app|app-'+i,label:'App '+i})),{});await wait();
+  const members=activity.querySelector('.group-selected-members');bounded(members,'selected members');expect(members.children.length===120,'all selected members remain available');
+  bounded(activity.querySelector('.group-members'),'member suggestions');
+  const subtitle=members.previousElementSibling;expect(subtitle.getBoundingClientRect().bottom<=members.getBoundingClientRect().top+2,'member heading stays outside the scrolling list');
+  const position=members.scrollTop;activityApply(snapshot,{},facts);await wait();
+  expect(activity.querySelector('.group-selected-members').scrollTop===position,'Activity snapshot preserves member list scroll');
+  expect(uiErrors.length===0,'no Activity renderer exceptions');return results;
+};
