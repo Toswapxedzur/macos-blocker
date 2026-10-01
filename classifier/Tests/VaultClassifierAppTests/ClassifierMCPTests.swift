@@ -117,6 +117,9 @@ final class ClassifierMCPTests: XCTestCase {
             try XCTUnwrap((vm.mcpSnapshot(section: "assets.classifierTypes")?["assets.classifierTypes"]) as? [[String: Any]])
         }
         let before = try types().count
+        XCTAssertEqual(vm.mcpPerform(action: "createClassifierType", data: ["name": "Empty", "platformIDs": []]).issue,
+                       "Select at least one platform.")
+        XCTAssertEqual(try types().count, before)
         XCTAssertNil(vm.mcpPerform(action: "createClassifierType", data: ["name": "Videos", "platformIDs": ["reddit", "bilibili"]]).issue)
         let videos = try XCTUnwrap(try types().first { ($0["name"] as? String) == "Videos" })
         XCTAssertEqual(videos["applicablePlatformIDs"] as? [String], ["reddit", "bilibili"])
@@ -128,7 +131,14 @@ final class ClassifierMCPTests: XCTestCase {
         XCTAssertEqual(try types().count, before + 1)
 
         let id = try XCTUnwrap(videos["id"] as? String)
-        XCTAssertNil(vm.mcpPerform(action: "configureClassifierType", data: ["typeID": id, "name": "Videos", "applicablePlatformIDs": ["bilibili"]]).issue)
-        XCTAssertEqual(try types().first { ($0["id"] as? String) == id }?["applicablePlatformIDs"] as? [String], ["bilibili"])
+        let changedPlatforms = vm.mcpPerform(action: "configureClassifierType", data: ["typeID": id, "name": "Changed", "applicablePlatformIDs": ["bilibili"]])
+        XCTAssertEqual(changedPlatforms.issue, "Platforms cannot be changed after the group is created.")
+        XCTAssertEqual(try types().first { ($0["id"] as? String) == id }?["name"] as? String, "Videos")
+        XCTAssertEqual(try types().first { ($0["id"] as? String) == id }?["applicablePlatformIDs"] as? [String], ["reddit", "bilibili"])
+
+        XCTAssertNil(vm.mcpPerform(action: "configureClassifierType", data: ["typeID": id, "name": "Videos and posts"]).issue)
+        let renamed = try XCTUnwrap(try types().first { ($0["id"] as? String) == id })
+        XCTAssertEqual(renamed["name"] as? String, "Videos and posts")
+        XCTAssertEqual(renamed["applicablePlatformIDs"] as? [String], ["reddit", "bilibili"])
     }
 }
