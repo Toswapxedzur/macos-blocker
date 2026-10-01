@@ -210,3 +210,5 @@ rect.is-hot, path.is-hot, circle.is-hot { opacity: 0.72; }
 .picker-day.is-chosen { background: var(--navy-700); color: #ffffff; }
 .picker-day:disabled { color: #cbd5e1; background: none; }
 .picker-note { color: var(--vui-muted); font-size: var(--vui-size-small); text-align: center; }
+
+.group-top > .vui-info-field { flex: 1; min-width: 0; }

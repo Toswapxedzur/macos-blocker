@@ -22,6 +22,16 @@ window.runActivityTests=async()=>{
   const details=q('.group-details').getBoundingClientRect(), cols=Array.from(q('.group-form').children).map(n=>n.getBoundingClientRect());
   expect(details.width>cols[1].width*1.9 && Math.abs(cols[1].width-cols[2].width)<2,'Activity narrow form gives group details a full row and lists equal widths');
   expect(cols.every(c=>c.left>=0 && c.right<=innerWidth),'Activity group columns fit 720px');
+  await new Promise(r=>setTimeout(r,100));
+  const beforeInfoCommands = commands.length;
+  for (const field of scope.querySelectorAll('#groups input,select')) {
+    const anchor = field.closest('[data-info-copy],.vui-info-field,label');
+    const info = anchor?.querySelector('.vui-info-button');
+    expect(info && info.getBoundingClientRect().width===14, 'Activity field has compact Info');
+  }
+  q('[data-info-key="activity-group-merge"] .vui-info-button').click();
+  expect(commands.length===beforeInfoCommands && !q('.group-merge input').checked, 'Activity Info leaves its draft and native commands unchanged');
+  VaultInfo.close();
   const input=q('.group-top input');input.value='Unfinished activity group';input.dispatchEvent(new Event('input',{bubbles:true}));
   q('[data-confirm-key="group:group-1"]').click();
   expect(!commands.some(c=>c.kind==='group-delete'),'first click only arms deletion');

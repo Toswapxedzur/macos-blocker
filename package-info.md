@@ -22,3 +22,5 @@
 - **English preparation (2026-10-01):** English terminology and current in-app manual: Web research, Classifier groups, tags, PINs, Content sources, Timeline, Time interval, and Colors. English source only; other locales are deferred to the release batch.
 
 - **Info explanations (2026-10-01):** English-only Info buttons use the shared browser component in Vault, Classifier, and Activity. Errors, consent controls, request status, download state and setup actions stay visible. Help popovers float without reserving layout space; Classifier snapshots retain open explanations.
+
+- **Field Info (2026-10-02):** 14px blue-gray icons retain a 24px invisible hit area. English field explanations are explicit; built-in settings, names, switches, searches and picker fields use the shared component. Other locales retain inline help.

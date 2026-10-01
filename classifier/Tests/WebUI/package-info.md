@@ -59,3 +59,5 @@ mini1 with `UI_TEST_SCRIPT=classifier/Tests/WebUI/tag-bounds.js` and
 `UI_TEST_EXPRESSION='runTagBoundsTests()'` through `autosave.mjs`.
 
 `info-popovers.js` verifies English helper confinement, no panel reflow, snapshot persistence, live status/consent visibility and unchanged non-English layout. Run with `UI_TEST_SCRIPT=classifier/Tests/WebUI/info-popovers.js` and `UI_TEST_EXPRESSION="runInfoPopoverTests()"`.
+
+- Info checks cover hidden title labels, settings/Knowledge/create fields, shared size/color, and dismissal inside model/tag chooser menus without provider requests or edits.
