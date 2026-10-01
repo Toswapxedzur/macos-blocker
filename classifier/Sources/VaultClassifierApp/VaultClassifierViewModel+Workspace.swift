@@ -80,6 +80,7 @@ extension VaultClassifierViewModel {
         in catalog: inout WorkspaceCatalog
     ) throws -> (ids: [String], dataset: ClassificationDataset) {
         let cleaned = ClassifierTypeAsset.cleanedPlatformIDs(ids)
+        guard !cleaned.isEmpty else { throw WebBridgeInputError.noPlatformsSelected }
         var datasetID = catalog.datasets.first?.id
         for platformID in cleaned {
             guard CollectionPlatformRegistry.definition(for: platformID)?.supportsLocalModel == true else {
@@ -147,11 +148,7 @@ extension VaultClassifierViewModel {
         } catch { issue = error.localizedDescription }
     }
 
-    func configureClassifierType(
-        typeID: String,
-        name: String,
-        applicablePlatformIDs: [String]
-    ) {
+    func configureClassifierType(typeID: String, name: String) {
         do {
             let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleanedName.isEmpty,
@@ -160,28 +157,8 @@ extension VaultClassifierViewModel {
                   let typeIndex = catalog.classifierTypes.firstIndex(where: { $0.id == typeID }) else {
                 throw WebBridgeInputError.invalidChoice("classifier type")
             }
-            let existingClassifierType = catalog.classifierTypes[typeIndex]
-            // A platform belongs to at most one classifier type; claimPlatforms
-            // refuses outright — updateWorkspaceCatalog reconciles before it
-            // validates, which would otherwise silently unbind one of the two.
-            let (platforms, dataset) = try claimPlatforms(applicablePlatformIDs, forType: typeID, in: &catalog)
-            // A type owns its own tree; the bindings only supply the shared
-            // dataset and the platforms.
-            guard let tree = catalog.trees.first(where: { $0.id == existingClassifierType.treeID }) else {
-                throw WebBridgeInputError.invalidChoice("classifier type")
-            }
-            catalog.classifierTypes[typeIndex] = .init(
-                id: catalog.classifierTypes[typeIndex].id,
-                name: cleanedName,
-                treeID: tree.id,
-                treeRevision: tree.revision,
-                datasetID: dataset.id,
-                datasetRevision: dataset.revision,
-                applicablePlatformIDs: platforms,
-                localModelOverrides: existingClassifierType.localModelOverrides,
-                researchEnabled: existingClassifierType.researchEnabled,
-                order: catalog.classifierTypes[typeIndex].order
-            )
+            catalog.classifierTypes[typeIndex].name = cleanedName
+            catalog.classifierTypes[typeIndex].updatedAtMilliseconds = WorkspaceCatalog.now()
             try coordinator?.updateWorkspaceCatalog(catalog)
             refreshLocalState()
             issue = nil

@@ -446,9 +446,10 @@ h3 { font-size: 14px; }
   color: #0e7490;
 }
 .resident-model-note { margin: 8px 0 12px; color: var(--muted); }
-/* A type's platforms: a checklist (one taken by another type is disabled). */
+/* A type's platforms: editable at creation, then a read-only checklist. */
 .platform-choices { display: grid; gap: 8px; margin-top: 2px; }
 .platform-choice:has(input:disabled) { color: var(--muted); }
+.classifier-applicable-platform-section .platform-choice:has(input:checked) { color: var(--ink); }
 .classifier-applicable-platform-section .small-copy { margin: 6px 0 0; }
 .compact-empty { padding: 13px; }
 

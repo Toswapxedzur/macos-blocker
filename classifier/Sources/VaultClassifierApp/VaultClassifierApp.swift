@@ -288,12 +288,16 @@ enum WebBridgeInputError: Error, LocalizedError {
     case missingValue(String)
     case exceedsLimit(String, Int)
     case invalidChoice(String)
+    case fixedPlatforms
+    case noPlatformsSelected
 
     var errorDescription: String? {
         switch self {
         case .missingValue(let field): return "The web UI did not supply a valid \(field) value."
         case .exceedsLimit(let field, let limit): return "\(field) must contain at most \(limit) characters."
         case .invalidChoice(let field): return "The web UI supplied an unsupported \(field)."
+        case .fixedPlatforms: return "Platforms cannot be changed after the group is created."
+        case .noPlatformsSelected: return "Select at least one platform."
         }
     }
 }
