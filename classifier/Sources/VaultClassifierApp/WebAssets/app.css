@@ -185,20 +185,6 @@ h3 { font-size: 14px; }
 }
 .classifier-type-panel::before { background: rgba(30, 58, 138, 0.28); }
 
-.trash-tombstone {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 8px;
-  padding: 10px 12px;
-  border: 1px dashed rgba(148, 163, 184, .55);
-  border-radius: 10px;
-  background: rgba(148, 163, 184, .07);
-}
-.trash-tombstone-name { min-width: 0; color: var(--ink); font-size: 12px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.trash-tombstone-meta { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .05em; white-space: nowrap; }
-.trash-tombstone-actions { margin-left: auto; display: flex; flex: 0 0 auto; gap: 6px; }
-
 .deletion-dialog {
   position: relative;
   z-index: 1;
@@ -352,7 +338,7 @@ h3 { font-size: 14px; }
   text-align: center;
 }
 .knowledge-list { display: grid; gap: 10px; align-content: start; }
-.classifier-type-nav, .sidebar-trash { --vui-list-height: min(32vh, 300px); }
+.classifier-type-nav { --vui-list-height: min(32vh, 300px); }
 .knowledge-card {
   display: grid;
   gap: 8px;
@@ -581,15 +567,6 @@ h3 { font-size: 14px; }
 /* A gap, not a line (owner 2026-09-30: no borders). */
 .sidebar-divider { height: 0; margin: 6px 0; }
 .compact-empty { padding: 10px 9px; color: var(--muted); font-size: 11px; }
-
-/* Trashed entities in the left panel + their in-place recover/delete panel */
-.sidebar-trash { display: flex; flex-direction: column; gap: 6px; }
-.sidebar-trash-item { display: flex; flex-direction: column; gap: 6px; }
-.sidebar-trash-row { opacity: 0.82; }
-.sidebar-trash-row.active { opacity: 1; }
-.sidebar-trash-row .sidebar-symbol { font-size: 12px; }
-.sidebar-trash-actions { display: flex; gap: 6px; padding: 0 2px 4px; }
-.sidebar-trash-actions button { flex: 0 0 auto; }
 
 /* Selected classifier type: header + Config / Tag tree stacked in one
    continuous scroll. */
@@ -1034,11 +1011,6 @@ textarea:focus {
   border: none;
 }
 
-.trash-tombstone {
-  border: none;
-  background: #f1f5f9;
-}
-
 
 .utility-resource-section,
 .utility-research-section {
@@ -1101,14 +1073,6 @@ textarea:focus {
 
 .classifier-type-panel > .action-row {
   padding: 4px 14px 12px 18px;
-}
-
-.sidebar-trash-expand {
-  margin-top: 6px;
-}
-
-.sidebar-trash-expand > summary {
-  padding: 6px 4px;
 }
 
 .classifier-group-more {

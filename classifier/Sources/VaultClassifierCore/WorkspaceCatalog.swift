@@ -1,6 +1,6 @@
 import Foundation
 
-// The aggregate root of all authored + collected workspace state, its validation, histograms and trash.
+// The aggregate root of all authored + collected workspace state, its validation and histograms.
 // (Split out of the former WorkspaceAssets.swift; CLASSIFIER-INDEPENDENCE §7.)
 
 public enum WorkspaceCatalogError: Error, Equatable, LocalizedError, Sendable {
@@ -31,72 +31,6 @@ public enum WorkspaceCatalogError: Error, Equatable, LocalizedError, Sendable {
     }
 }
 
-public enum TrashedEntryKind: String, Codable, Sendable, CaseIterable {
-    case classifierType
-    case collectionPlatform
-    case tagTree
-}
-
-/// A self-contained snapshot of a deleted entity and every dependent record it
-/// owned, so a restore re-inserts the whole thing. Only the fields relevant to
-/// `kind` are populated. Entries are opportunistically purged 24h after
-/// deletion (there is no background timer).
-public struct TrashedEntry: Codable, Equatable, Sendable, Identifiable {
-    public var id: String
-    public var kind: TrashedEntryKind
-    public var name: String
-    public var deletedAtMilliseconds: Int64
-    public var classifierType: ClassifierTypeAsset?
-    public var binding: PlatformBinding?
-    public var tree: TagTreeAsset?
-    public var datasetID: String?
-    public var collectedEntries: [CollectedPlatformEntry]
-
-    public init(
-        id: String = UUID().uuidString,
-        kind: TrashedEntryKind,
-        name: String,
-        deletedAtMilliseconds: Int64 = WorkspaceCatalog.now(),
-        classifierType: ClassifierTypeAsset? = nil,
-        binding: PlatformBinding? = nil,
-        tree: TagTreeAsset? = nil,
-        datasetID: String? = nil,
-        collectedEntries: [CollectedPlatformEntry] = []
-    ) {
-        self.id = id
-        self.kind = kind
-        self.name = name
-        self.deletedAtMilliseconds = deletedAtMilliseconds
-        self.classifierType = classifierType
-        self.binding = binding
-        self.tree = tree
-        self.datasetID = datasetID
-        self.collectedEntries = collectedEntries
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case id, kind, name, deletedAtMilliseconds, classifierType, binding, tree
-        case datasetID, collectedEntries
-    }
-
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(String.self, forKey: .id)
-        kind = try container.decode(TrashedEntryKind.self, forKey: .kind)
-        name = try container.decode(String.self, forKey: .name)
-        deletedAtMilliseconds = try container.decode(Int64.self, forKey: .deletedAtMilliseconds)
-        classifierType = try container.decodeIfPresent(ClassifierTypeAsset.self, forKey: .classifierType)
-        binding = try container.decodeIfPresent(PlatformBinding.self, forKey: .binding)
-        tree = try container.decodeIfPresent(TagTreeAsset.self, forKey: .tree)
-        datasetID = try container.decodeIfPresent(String.self, forKey: .datasetID)
-        collectedEntries = try container.decodeIfPresent([CollectedPlatformEntry].self, forKey: .collectedEntries) ?? []
-    }
-
-    /// Default 24-hour trash lifetime, expressed in milliseconds.
-    public static let defaultTTLMilliseconds: Int64 = 24 * 60 * 60 * 1_000
-}
-
 public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     public var trees: [TagTreeAsset]
     public var datasets: [ClassificationDataset]
@@ -111,7 +45,6 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     /// the local WebView; browser-bridge messages and request diagnostics do
     /// not include them.
     public var providerProfiles: [APIKeyProviderProfile]
-    public var trash: [TrashedEntry]
     // Local-LLM rework stores (additive; see LocalLLMModel.swift). Primary per-video
     // labels, the grounded-research knowledge map, user corrections, and the derived
     // creator priors. Empty until the new pipeline populates them.
@@ -135,7 +68,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     /// 365 (owner 2026-09-30; it follows Activity's "Keep all history").
     public var collectionKeepDays: Int = 365
 
-    public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], bindings: [PlatformBinding] = [], classifierTypes: [ClassifierTypeAsset] = [], tokenUsage: [TokenUsageRecord] = [], providerRequestRecords: [ProviderRequestRecord] = [], providerProfiles: [APIKeyProviderProfile] = [], trash: [TrashedEntry] = [], videoClassifications: [VideoClassification] = [], knowledgeEntries: [KnowledgeEntry] = [], creatorKnowledge: [KnowledgeEntry] = [], researchAttempts: [ResearchAttemptRecord] = [], correctionExamples: [CorrectionExample] = [], creatorHistograms: [CreatorTagHistogram] = [], creatorResearchAccumulators: [CreatorResearchAccumulator] = []) {
+    public init(trees: [TagTreeAsset] = [], datasets: [ClassificationDataset] = [], bindings: [PlatformBinding] = [], classifierTypes: [ClassifierTypeAsset] = [], tokenUsage: [TokenUsageRecord] = [], providerRequestRecords: [ProviderRequestRecord] = [], providerProfiles: [APIKeyProviderProfile] = [], videoClassifications: [VideoClassification] = [], knowledgeEntries: [KnowledgeEntry] = [], creatorKnowledge: [KnowledgeEntry] = [], researchAttempts: [ResearchAttemptRecord] = [], correctionExamples: [CorrectionExample] = [], creatorHistograms: [CreatorTagHistogram] = [], creatorResearchAccumulators: [CreatorResearchAccumulator] = []) {
         self.trees = trees
         self.datasets = datasets
         self.bindings = bindings
@@ -143,7 +76,6 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         self.tokenUsage = tokenUsage
         self.providerRequestRecords = providerRequestRecords
         self.providerProfiles = providerProfiles
-        self.trash = trash
         self.videoClassifications = videoClassifications
         self.knowledgeEntries = knowledgeEntries
         self.creatorKnowledge = creatorKnowledge
@@ -319,7 +251,7 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case trees, datasets, bindings, classifierTypes, tokenUsage, providerRequestRecords, providerProfiles, trash,
+        case trees, datasets, bindings, classifierTypes, tokenUsage, providerRequestRecords, providerProfiles,
              videoClassifications, knowledgeEntries, creatorKnowledge, researchAttempts, correctionExamples, creatorHistograms,
              creatorResearchAccumulators, collectionKeepDays
     }
@@ -334,7 +266,6 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         tokenUsage = try container.decodeIfPresent([TokenUsageRecord].self, forKey: .tokenUsage) ?? []
         providerRequestRecords = try container.decodeIfPresent([ProviderRequestRecord].self, forKey: .providerRequestRecords) ?? []
         providerProfiles = try container.decodeIfPresent([APIKeyProviderProfile].self, forKey: .providerProfiles) ?? []
-        trash = try container.decodeIfPresent([TrashedEntry].self, forKey: .trash) ?? []
         videoClassifications = try container.decodeIfPresent([VideoClassification].self, forKey: .videoClassifications) ?? []
         // Migration: older states stored terms and creators together in
         // `knowledgeEntries`. Keep terms there and move any creator entries into
@@ -408,105 +339,28 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         return true
     }
 
-    // MARK: - Trash (soft delete)
-
-    /// Moves a classifier type into trash.
+    /// Permanently removes a classifier group and releases its platform claims.
+    /// Shared collection bindings and their data stay available.
     @discardableResult
-    public mutating func trashClassifierType(_ typeID: String) -> TrashedEntry? {
-        guard let index = classifierTypes.firstIndex(where: { $0.id == typeID }) else { return nil }
-        let type = classifierTypes.remove(at: index)
+    public mutating func removeClassifierType(_ typeID: String) -> Bool {
+        guard let index = classifierTypes.firstIndex(where: { $0.id == typeID }) else { return false }
+        classifierTypes.remove(at: index)
         for bindingIndex in bindings.indices where bindings[bindingIndex].activeClassifierTypeID == typeID {
             bindings[bindingIndex].activeClassifierTypeID = nil
         }
-        let entry = TrashedEntry(
-            kind: .classifierType,
-            name: type.name,
-            classifierType: type,
-            datasetID: type.datasetID
-        )
-        trash.append(entry)
         reconcileClassifierTypes()
-        return entry
+        return true
     }
 
-    /// Moves a collection platform and its collected entries into a trash snapshot,
-    /// reusing the vetted `removePlatformBinding` cascade for removal.
+    /// Permanently clears a platform's collected entries, retaining its binding
+    /// and the classifier group that uses it.
     @discardableResult
-    public mutating func trashCollectionPlatform(_ platformID: String) -> TrashedEntry? {
-        guard let binding = bindings.first(where: { $0.id == platformID }) else { return nil }
-        let capturedEntries = datasets.flatMap { $0.collectedEntries.filter { $0.platformID == platformID } }
-        guard removePlatformBinding(platformID) else { return nil }
-        let entry = TrashedEntry(
-            kind: .collectionPlatform,
-            name: binding.name,
-            binding: binding,
-            datasetID: binding.datasetID,
-            collectedEntries: capturedEntries
-        )
-        trash.append(entry)
-        return entry
-    }
-
-    /// Moves a platform's collected entries into a trash snapshot; the platform
-    /// binding (and the type using it) stays. Restoring puts the entries back.
-    @discardableResult
-    public mutating func trashCollectedEntries(_ platformID: String) -> TrashedEntry? {
-        guard let binding = bindings.first(where: { $0.id == platformID }) else { return nil }
-        let captured = datasets.flatMap { $0.collectedEntries.filter { $0.platformID == platformID } }
+    public mutating func clearCollectedEntries(_ platformID: String) -> Bool {
+        guard bindings.contains(where: { $0.id == platformID }) else { return false }
         for index in datasets.indices {
             datasets[index].collectedEntries.removeAll { $0.platformID == platformID }
         }
-        let entry = TrashedEntry(
-            kind: .collectionPlatform,
-            name: binding.name,
-            binding: binding,
-            datasetID: binding.datasetID,
-            collectedEntries: captured
-        )
-        trash.append(entry)
-        return entry
-    }
-
-    /// Re-inserts a trashed entry and every dependent configuration it captured.
-    @discardableResult
-    public mutating func restoreTrashedEntry(_ id: String) -> Bool {
-        guard let index = trash.firstIndex(where: { $0.id == id }) else { return false }
-        let entry = trash.remove(at: index)
-        switch entry.kind {
-        case .classifierType:
-            guard let type = entry.classifierType, !classifierTypes.contains(where: { $0.id == type.id }) else { break }
-            classifierTypes.append(type)
-        case .collectionPlatform:
-            guard let binding = entry.binding else { break }
-            if !bindings.contains(where: { $0.id == binding.id }) { bindings.append(binding) }
-            if let datasetID = entry.datasetID, let dIndex = datasets.firstIndex(where: { $0.id == datasetID }) {
-                datasets[dIndex].collectedEntries.append(contentsOf: entry.collectedEntries)
-            }
-        case .tagTree:
-            guard let tree = entry.tree, !trees.contains(where: { $0.id == tree.id }) else { break }
-            trees.append(tree)
-        }
-        reconcileClassifierTypes()
         return true
-    }
-
-    @discardableResult
-    public mutating func permanentlyDeleteTrashedEntry(_ id: String) -> Bool {
-        guard let index = trash.firstIndex(where: { $0.id == id }) else { return false }
-        trash.remove(at: index)
-        return true
-    }
-
-    /// Opportunistic purge: removes trash entries whose lifetime has elapsed.
-    /// Called on catalog load and trash interactions rather than on a timer.
-    @discardableResult
-    public mutating func purgeExpiredTrash(
-        nowMilliseconds: Int64 = WorkspaceCatalog.now(),
-        ttlMilliseconds: Int64 = TrashedEntry.defaultTTLMilliseconds
-    ) -> Int {
-        let before = trash.count
-        trash.removeAll { nowMilliseconds - $0.deletedAtMilliseconds >= ttlMilliseconds }
-        return before - trash.count
     }
 
     /// Keep classifier types aligned with their current tree and data revisions.
@@ -520,10 +374,8 @@ public struct WorkspaceCatalog: Codable, Equatable, Sendable {
         for index in datasets.indices {
             datasets[index].collectedEntries.removeAll { !supported($0.platformID) }
         }
-        // A tree belongs to its type (made with it, trashed with it); once
-        // nothing refers to it — its type purged from the trash — it goes.
-        let usedTrees = Set(classifierTypes.map(\.treeID) + bindings.map(\.treeID)
-            + trash.compactMap { $0.classifierType?.treeID })
+        // Drop trees as soon as their last group or binding is removed.
+        let usedTrees = Set(classifierTypes.map(\.treeID) + bindings.map(\.treeID))
         trees.removeAll { !usedTrees.contains($0.id) }
         for index in trees.indices {
             TagColorAssignment.reconcileColors(in: &trees[index])

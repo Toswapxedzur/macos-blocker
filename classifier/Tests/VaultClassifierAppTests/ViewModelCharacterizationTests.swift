@@ -45,7 +45,7 @@ final class ViewModelCharacterizationTests: XCTestCase {
         // here during the split means a workspace silently lost its data.
         XCTAssertEqual(
             Set(snapshot.keys),
-            ["workspace", "issue", "notices", "settings", "backup", "assets", "trash"]
+            ["workspace", "issue", "notices", "settings", "backup", "assets"]
         )
         XCTAssertTrue(JSONSerialization.isValidJSONObject(snapshot), "snapshot must be JSON-serialisable for the bridge")
         XCTAssertEqual(snapshot["workspace"] as? String, "browserBridge")
@@ -123,11 +123,11 @@ final class ViewModelCharacterizationTests: XCTestCase {
     /// routed action either succeeds or fails on a missing/invalid field, but
     /// never with the `default:` "unsupported action" error. A case dropped
     /// while moving methods between files shows up here as exactly that error.
-    /// (All 40 are safe headless with empty data — the backup ones throw on the
+    /// (All 38 are safe headless with empty data — the backup ones throw on the
     /// missing owner code / directory or on "locked" before touching the Keychain.)
     func testEveryKnownWebActionIsRouted() throws {
         let actions = [
-            "state", "workspace", "clearCollectedData", "restoreTrashedEntry", "permanentlyDeleteTrashedEntry", "setCollectionEnabled", "setCollectionKeep", "createClassifierType", "reorderClassifierTypes", "configureClassifierType",
+            "state", "workspace", "clearCollectedData", "setCollectionEnabled", "setCollectionKeep", "createClassifierType", "reorderClassifierTypes", "configureClassifierType",
             "confirmDeleteClassifierType", "createProviderProfile", "testProviderProfile", "updateProviderConnection",
             "probeProviderModelCatalog", "confirmDeleteProviderProfile", "rearrangeTree",
             "addTag", "moveTag", "renameTag", "updateTag", "connectTag", "disconnectTag", "deleteTag",
@@ -135,7 +135,7 @@ final class ViewModelCharacterizationTests: XCTestCase {
             "deleteKnowledgeEntry", "addKnowledgeCreator", "editKnowledgeEntry", "retryFailedResearch", "saveResearchSettings", "saveClassifierTypeLocalModel", "saveClassifierTypeResearch", "setBackupOwnerCode", "unlockBackup",
             "saveBackup", "backupNow",
         ]
-        XCTAssertEqual(actions.count, 40)
+        XCTAssertEqual(actions.count, 38)
         let unsupported = WebBridgeInputError.invalidChoice("action").localizedDescription
         for action in actions {
             let vm = try makeViewModel()
@@ -145,6 +145,26 @@ final class ViewModelCharacterizationTests: XCTestCase {
         let vm = try makeViewModel()
         _ = vm.performWebAction("nope", data: [:])
         XCTAssertEqual(vm.issue, unsupported, "the sentinel must still be what default: produces")
+    }
+
+    func testConfirmedGroupDeletionPersistsAndRetiredRecoveryActionsAreRejected() throws {
+        let vm = try makeViewModel()
+        XCTAssertTrue(vm.performWebAction("createClassifierType", data: ["name": "Delete me", "platformIDs": ["youtube"]]))
+        XCTAssertNil(vm.issue)
+        let group = try XCTUnwrap(vm.localState?.workspaceCatalog.classifierTypes.first)
+        XCTAssertTrue(vm.performWebAction("confirmDeleteClassifierType", data: ["typeID": group.id]))
+        XCTAssertNil(vm.issue)
+        XCTAssertTrue(vm.localState?.workspaceCatalog.classifierTypes.isEmpty == true)
+        XCTAssertFalse(vm.localState?.workspaceCatalog.trees.contains { $0.id == group.treeID } == true)
+        LocalStateFile.flushAllPendingWrites()
+        let reloaded = try makeViewModel()
+        XCTAssertTrue(reloaded.localState?.workspaceCatalog.classifierTypes.isEmpty == true)
+        XCTAssertNil(reloaded.webSnapshot()["trash"])
+        for action in ["restoreTrashedEntry", "permanentlyDeleteTrashedEntry"] {
+            XCTAssertFalse(ClassifierWebActionCatalog.actions.contains { $0.name == action })
+            XCTAssertTrue(reloaded.performWebAction(action, data: ["id": "old"]))
+            XCTAssertEqual(reloaded.issue, WebBridgeInputError.invalidChoice("action").localizedDescription)
+        }
     }
 
     func testSaveLocalLLMSettingsRejectsMalformedInputWithoutMutation() throws {
