@@ -30,7 +30,7 @@ window.webkit={messageHandlers:{vaultClassifier:{postMessage(message){
   switch(action){
     case 'confirmDeleteClassifierType':testState.assets.classifierTypes=testState.assets.classifierTypes.filter(t=>t.id!==data.typeID);break;
     case 'configureClassifierType':type.name=data.name.trim();break;
-    case 'saveClassifierTypeLocalModel':type.localModel={speedQuality:data.speedQuality,strictness:Number(data.strictness),houseRules:data.houseRules||''};break;
+    case 'saveClassifierTypeLocalModel':type.localModel={speedQuality:data.speedQuality,strictness:Number(data.strictness),houseRules:data.houseRules||'',minimumTagsOverride:data.minimumTagsOverride===''||data.minimumTagsOverride==null?null:Number(data.minimumTagsOverride),maximumTagsOverride:data.maximumTagsOverride===''||data.maximumTagsOverride==null?null:Number(data.maximumTagsOverride)};break;
     case 'saveClassifierTypeResearch':type.researchEnabled=data.researchMode==='inherit'?null:data.researchMode==='on';break;
     case 'saveResearchSettings':Object.assign(testState.settings.research,data);break;
     case 'savePackageSettings':testState.settings.packageUpdateMode=data.packageUpdateMode;break;
@@ -76,7 +76,7 @@ window.runAutosaveTests=async()=>{
   const more='[data-expand="type-more:group-1"]';
   const knowledge=q('[data-workspace="knowledge"]');
   expect(knowledge.getClientRects().length && !knowledge.closest('details') && !q('.sidebar-more'),'Knowledge is directly visible without a sidebar More');
-  expect(!q(more).open && q(more+' summary').textContent.includes('Balanced') && !q('[data-field="houseRules"]').checkVisibility(),'independent group dials start collapsed with a visible status');
+  expect(!q(more).open && q(more+' summary').textContent.includes('follow Strict') && q('[data-field="houseRules"]').checkVisibility() && q('[data-group-research-choice]').checkVisibility() && !q('[data-field="houseRules"]').closest('details'),'core group settings are visible and only advanced tag counts start collapsed');
   q(more+' summary').click();await poll(()=>q(more).open);await new Promise(r=>setTimeout(r,0));
   expect(!q('[data-action="configureClassifierType"], [data-action="saveClassifierTypeLocalModel"], [data-action="saveClassifierTypeResearch"]'),'group has no Save buttons');
   ackDelay=450;
@@ -106,9 +106,8 @@ window.runAutosaveTests=async()=>{
 
   change('[data-form-id="classifier-research-form-group-1"] [data-field="researchMode"]','off');
   expect(commands.at(-1).action==='saveClassifierTypeResearch','group research saves immediately');
-  await poll(()=>q(more+' summary').textContent.includes('Custom house rules') && q(more+' summary').textContent.includes('Grounded research: Off'));
   q(more+' summary').click();await new Promise(r=>setTimeout(r,0));pushSnapshot();
-  expect(!q(more).open && q(more+' summary').textContent.includes('Strict') && q(more+' summary').getClientRects().length,'collapsed More retains the active override summary across snapshots');
+  expect(!q(more).open && q(more+' summary').textContent.includes('follow Strict') && q(more+' summary').getClientRects().length,'advanced More stays collapsed across snapshots while core settings remain visible');
   q(more+' summary').click();await new Promise(r=>setTimeout(r,0));
   q('[data-action="openUtilityPanel"]').click();
   expect(!q('[data-form-id="utility-llm-form"]') && !q('.utility-settings-modal [data-field="strictness"]'), 'Settings contains no global dial controls');

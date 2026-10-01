@@ -46,3 +46,9 @@ Downloads/Delete/RAM controls, confined tier-card geometry, snapshot preservatio
 and removal of global settings UI. Run at wide and narrow widths with
 `UI_TEST_SCRIPT=classifier/Tests/WebUI/group-dials.js`
 `UI_TEST_EXPRESSION='runGroupDialTests()'` and the same runner.
+
+`tag-bounds.js` checks directly visible core settings, optional per-group min/max
+fields under More, independent blank defaults, preservation across dial changes,
+invalid/fractional input, snapshot drafts/focus and collapsed summaries. Run on
+mini1 with `UI_TEST_SCRIPT=classifier/Tests/WebUI/tag-bounds.js` and
+`UI_TEST_EXPRESSION='runTagBoundsTests()'` through `autosave.mjs`.
