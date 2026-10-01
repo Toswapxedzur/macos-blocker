@@ -631,8 +631,7 @@
     </div>`;
   }
 
-  // Left-panel body: the reorderable classifier-type list is primary; collection
-  // sits below, and any trashed entities follow.
+  // Groups and Knowledge are directly reachable; Trash has its own disclosure.
   function sidebarContent() {
     const types = orderedClassifierTypes();
     const typeRows = types.length
@@ -640,17 +639,14 @@
       : `<div class="empty compact-empty">${tx("navigation.noTypes")}</div>`;
     const trash = Array.isArray(state?.trash) ? state.trash : [];
     const trashSection = trash.length
-      ? `<div class="sidebar-divider" role="separator"></div><div class="sidebar-group-title">${tx("trash.title")}</div><div class="sidebar-trash vui-list-box" data-list-key="trash" tabindex="0" aria-label="${tx("trash.title")}">${trash.map(trashRow).join("")}</div>`
+      ? `<details class="vui-expand sidebar-trash-expand" data-expand="trash"${openExpands.has("trash") ? " open" : ""}><summary>${tx("trash.title")}</summary><div class="sidebar-trash vui-list-box" data-list-key="trash" tabindex="0" aria-label="${tx("trash.title")}">${trash.map(trashRow).join("")}</div></details>`
       : "";
     return `
       <div class="sidebar-group-title">${tx("navigation.classifierTypes")}</div>
       <div class="classifier-type-nav vui-list-box" data-classifier-type-nav data-list-key="types" tabindex="0" aria-label="${tx("navigation.classifierTypes")}">${typeRows}</div>
       <button class="sidebar-add" type="button" data-action="newType"><span aria-hidden="true">＋</span> ${tx("navigation.newType")}</button>
-      <details class="vui-expand sidebar-more" data-expand="sidebar"${openExpands.has("sidebar") || ["knowledge", "trash"].includes(state.workspace) ? " open" : ""}>
-        <summary>${tx("navigation.more")}</summary>
-        ${navButton("knowledge", "✦", "navigation.knowledge", "navigation.knowledgeMeta")}
-        ${trashSection}
-      </details>`;
+      ${navButton("knowledge", "✦", "navigation.knowledge", "navigation.knowledgeMeta")}
+      ${trashSection}`;
   }
 
   function shell(content) {
@@ -947,12 +943,24 @@
       const researchFormID = `classifier-research-form-${classifierType.id}`;
       const researchMode = classifierType.researchEnabled === true ? "on" : classifierType.researchEnabled === false ? "off" : "inherit";
       const researchOverrideSection = `<section class="classifier-type-section classifier-research-overrides"><div class="section-header"><div><h3>${tx("bridge.researchOverrides")}</h3><p class="section-copy">${tx("bridge.researchOverridesCopy")}</p></div></div><div data-form-id="${esc(researchFormID)}" data-autosave-action="saveClassifierTypeResearch" data-type-id="${esc(classifierType.id)}"><div class="utility-settings-fields">${valueSelectField("bridge.researchMode", "", "researchMode", researchMode, [["inherit", t("bridge.researchMode.inherit")], ["on", t(researchAvailability().ready ? "bridge.researchMode.on" : researchAvailability().actionKey)], ["off", t("bridge.researchMode.off")]], "data-group-research-choice")}${researchMode === "on" && !researchAvailability().ready ? `<button class="secondary" data-action="openResearchSetup">${tx(researchAvailability().actionKey)}</button>` : ""}</div><p class="small-copy research-master-note">${tx("bridge.researchMasterGate")}</p></div></section>`;
+      const overrideSummary = [];
+      if (localOverrides?.speedQuality) overrideSummary.push(`${t("localModel.speedQuality")}: ${tierName(localOverrides.speedQuality)}`);
+      if (localOverrides?.strictness != null) overrideSummary.push(`${t("localModel.strictness")}: ${positionName(localOverrides.strictness)}`);
+      if (localOverrides?.houseRules?.trim()) overrideSummary.push(t("bridge.overrides.houseRules"));
+      if (researchMode !== "inherit") {
+        overrideSummary.push(`${t("bridge.researchOverrides")}: ${t(`bridge.researchMode.${researchMode}`)}`);
+        if (researchMode === "on" && !researchAvailability().ready) overrideSummary.push(t(researchAvailability().actionKey));
+      }
+      const expandKey = `type-more:${classifierType.id}`;
       return `<section class="classifier-type-panel" data-form-id="${esc(formID)}" data-type-id="${esc(classifierType.id)}" data-autosave-action="configureClassifierType">
         <div class="classifier-name-row">${field("bridge.typeName", "", "name", classifierType.name, "text", 'maxlength="128"')}</div>
         <section class="classifier-type-section classifier-applicable-platform-section"><span class="field-label">${tx("bridge.applicablePlatform")}</span>${platformChoices(chosen, classifierType.id)}<p class="small-copy">${tx("bridge.platformsFixed")}</p>${platformNotes.map((note) => `<p class="small-copy">${esc(note)}</p>`).join("")}</section>
         <p class="small-copy">${tx("bridge.autoSave")}</p>
-        ${localModelOverrideSection}
-        ${researchOverrideSection}
+        <details class="vui-expand classifier-group-more" data-expand="${esc(expandKey)}"${openExpands.has(expandKey) ? " open" : ""}>
+          <summary><span>${tx("navigation.more")}</span><span class="small-copy classifier-override-summary">${esc(overrideSummary.length ? overrideSummary.join(" · ") : t("bridge.overrides.followGlobal"))}</span></summary>
+          ${localModelOverrideSection}
+          ${researchOverrideSection}
+        </details>
         <div class="action-row classifier-type-delete"><button class="danger" data-action="confirmDeleteClassifierType" data-type-id="${esc(classifierType.id)}">${deleteLabel(`type:${classifierType.id}`, tx("bridge.deleteType"))}</button></div>
       </section>`;
     };

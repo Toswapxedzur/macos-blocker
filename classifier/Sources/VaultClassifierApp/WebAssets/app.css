@@ -1107,16 +1107,33 @@ textarea:focus {
   padding: 4px 14px 12px 18px;
 }
 
-.sidebar-more {
+.sidebar-trash-expand {
   margin-top: 6px;
 }
 
-.sidebar-more > summary {
+.sidebar-trash-expand > summary {
   padding: 6px 4px;
 }
 
-.sidebar-more > .sidebar-row {
-  margin-top: 10px;
+.classifier-group-more {
+  padding: 14px 14px 14px 18px;
+}
+
+.classifier-group-more > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+}
+
+.classifier-override-summary {
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+.classifier-group-more > .classifier-type-section {
+  padding-left: 0;
+  padding-right: 0;
 }
 
 /* ── A type's tag tree (owner 2026-09-30: one look, no scroll bars) ──
