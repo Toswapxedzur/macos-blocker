@@ -880,9 +880,9 @@ struct PanelOverlayView: View {
         })
         .onPreferenceChange(PanelContentSizeKey.self) { _ in contentSizeChanged() }
         .contentShape(Rectangle())
-        .onTapGesture {
+        .simultaneousGesture(TapGesture().onEnded {
             NSApp.keyWindow?.makeFirstResponder(nil)
-        }
+        })
     }
 }
 
