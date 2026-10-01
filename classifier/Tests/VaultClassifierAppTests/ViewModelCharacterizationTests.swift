@@ -30,6 +30,29 @@ final class ViewModelCharacterizationTests: XCTestCase {
 
     // MARK: - Snapshot shape
 
+    func testClassifierOwnsPersistedGroupPauseAndGlobalActivation() throws {
+        let vm = try makeViewModel()
+        XCTAssertEqual(vm.localState?.settings.classificationEnabled, true)
+        _ = vm.performWebAction("createClassifierType", data: ["name": "A", "platformIDs": ["youtube"]])
+        let group = try XCTUnwrap(vm.localState?.workspaceCatalog.classifierTypes.first)
+        XCTAssertFalse(group.isPaused)
+        XCTAssertEqual(vm.coordinator?.enabledClassificationPlatformIDs(), ["youtube"])
+        _ = vm.performWebAction("setClassifierTypePaused", data: ["typeID": group.id, "paused": true])
+        XCTAssertNil(vm.issue)
+        _ = vm.performWebAction("saveClassificationSettings", data: ["classificationEnabled": false])
+        XCTAssertNil(vm.issue)
+        _ = vm.performWebAction("savePackageSettings", data: ["packageUpdateMode": "manual"])
+        _ = vm.performWebAction("saveResearchSettings", data: ["enabled": false])
+        let reloaded = try makeViewModel()
+        XCTAssertEqual(reloaded.localState?.settings.classificationEnabled, false)
+        XCTAssertEqual(reloaded.localState?.workspaceCatalog.classifierTypes.first?.isPaused, true)
+        _ = reloaded.performWebAction("setClassifierTypePaused", data: ["typeID": group.id, "paused": false])
+        XCTAssertTrue(reloaded.coordinator?.enabledClassificationPlatformIDs().isEmpty == true)
+        _ = reloaded.performWebAction("saveClassificationSettings", data: ["classificationEnabled": true])
+        XCTAssertEqual(reloaded.coordinator?.enabledClassificationPlatformIDs(), ["youtube"])
+        XCTAssertEqual(reloaded.localState?.settings.packageUpdateMode, .manual)
+    }
+
     func testHeadlessViewModelStartsCleanOnTheStubEngine() throws {
         let vm = try makeViewModel()
         XCTAssertNil(vm.issue, "headless construction must not surface an error")

@@ -47,6 +47,8 @@ public enum ClassifierWebActionCatalog {
         .init(name: "disconnectTag", keys: ["treeID", "nodeID"], summary: "Detach a tag from its parent."),
         .init(name: "deleteTag", keys: ["treeID", "nodeID"], summary: "Delete a tag."),
         .init(name: "savePackageSettings", keys: ["packageUpdateMode"], summary: "Set the taxonomy package update mode (automatic, downloadThenAsk, manual)."),
+        .init(name: "saveClassificationSettings", keys: ["classificationEnabled"], summary: "Enable or disable automatic tagging globally in the Classifier."),
+        .init(name: "setClassifierTypePaused", keys: ["typeID", "paused"], summary: "Pause or resume automatic tagging for a classifier group."),
         .init(name: "downloadModel", keys: ["id"], summary: "Download a catalog model (id from settings.localModels.modelLibrary)."),
         .init(name: "cancelModelDownload", keys: ["id"], summary: "Cancel a model download."),
         .init(name: "deleteModelFile", keys: ["fileName"], summary: "Delete a downloaded model file."),

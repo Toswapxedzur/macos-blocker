@@ -780,7 +780,7 @@ final class ConnectionHub: ObservableObject {
     private func routeClassifierBroadcast(from key: ObjectIdentifier, program: String, object: [String: Any]) {
         guard program == "classifier",
               let operation = object["operation"] as? String,
-              ["video-tags-updated"].contains(operation),
+              SharedBrowserBridgeOperation.relayableBroadcastOperations.contains(operation),
               let body = object["body"] as? [String: Any],
               JSONSerialization.isValidJSONObject(body),
               let bodyData = try? JSONSerialization.data(withJSONObject: body),

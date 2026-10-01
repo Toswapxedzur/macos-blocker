@@ -31,7 +31,7 @@ final class ExtensionMCPToolsTests: XCTestCase {
         let (server, _) = makeServer { _, _ in .success([:]) }
         let res = try XCTUnwrap(server.handle(["jsonrpc": "2.0", "id": 1, "method": "tools/list"]))
         let names = try XCTUnwrap((res["result"] as? [String: Any])?["tools"] as? [[String: Any]]).compactMap { $0["name"] as? String }
-        XCTAssertEqual(Set(names), ["extension_state", "extension_create_group", "extension_set_group", "extension_delete_group", "extension_set_classifier", "extension_set_global",
+        XCTAssertEqual(Set(names), ["extension_state", "extension_create_group", "extension_set_group", "extension_delete_group", "extension_set_global",
                                       "extension_lock_group", "extension_unlock_group", "extension_move_group",
                                       "extension_snooze_group", "extension_end_snooze", "extension_set_lock_gates", "extension_delete_all", "extension_run_custom_rule"])
     }
@@ -87,12 +87,11 @@ final class ExtensionMCPToolsTests: XCTestCase {
         XCTAssertEqual((relayed().first?.body["patch"] as? [String: Any])?["debugMode"] as? Bool, true)
     }
 
-    func testSetClassifierRequiresSomethingToSet() throws {
-        let (server, relayed) = makeServer { _, body in .success(["classifierSettings": body]) }
-        XCTAssertTrue(try call(server, "extension_set_classifier", [:]).isError)
-        let out = try call(server, "extension_set_classifier", ["taggingMode": "always"])
-        XCTAssertFalse(out.isError)
-        XCTAssertEqual(relayed().first?.body["taggingMode"] as? String, "always")
+    func testRetiredExtensionClassifierToolIsRejected() throws {
+        let (server, relayed) = makeServer { _, body in .success(body) }
+        let response = try XCTUnwrap(server.handle(["jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": ["name": "extension_set_classifier", "arguments": ["taggingMode": "always"]]]))
+        XCTAssertNotNil(response["error"])
+        XCTAssertTrue(relayed().isEmpty)
     }
 
     func testNoReplyTimesOutInsteadOfHanging() throws {

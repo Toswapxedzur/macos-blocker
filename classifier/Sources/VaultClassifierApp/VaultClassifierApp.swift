@@ -223,8 +223,22 @@ final class VaultClassifierViewModel: ObservableObject {
     }()
 
     func refreshLocalState() {
+        let previous = localState
         localState = coordinator?.snapshot()
         reconcileProviderModelCatalogs()
+        let activation: (LocalClassifierState?) -> [String] = { state in
+            (state?.workspaceCatalog.classifierTypes ?? []).map {
+                "\($0.id):\($0.isPaused):\($0.applicablePlatformIDs.joined(separator: ","))"
+            }.sorted()
+        }
+        let recording: (LocalClassifierState?) -> [String] = { state in
+            (state?.workspaceCatalog.bindings ?? []).filter(\.collectionEnabled).map(\.id).sorted()
+        }
+        if previous?.settings.classificationEnabled != localState?.settings.classificationEnabled
+            || activation(previous) != activation(localState)
+            || recording(previous) != recording(localState) {
+            sharedHubClient?.broadcast(operation: SharedBrowserBridgeOperation.classifierStateUpdatedBroadcast, body: [:] as [String: String])
+        }
     }
 
     struct ProviderResponseParseFailure: LocalizedError {

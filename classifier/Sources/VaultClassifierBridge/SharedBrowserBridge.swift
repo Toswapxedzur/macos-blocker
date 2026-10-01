@@ -35,10 +35,11 @@ public extension SharedBrowserBridgeOperation {
     /// drift (adding a case here is enough; there is no second list to update).
     static let relayableRequestOperations: Set<String> = Set(allCases.map(\.rawValue))
 
-    /// The single classifier→browser broadcast the hub forwards (a completed
-    /// classification). Broadcast-only, so it is not a request case above.
+    /// Classifier→browser broadcasts carry resolved tags or activation changes.
+    /// Broadcast-only, so they are not request cases above.
     static let videoTagsUpdatedBroadcast = "video-tags-updated"
-    static let relayableBroadcastOperations: Set<String> = [videoTagsUpdatedBroadcast]
+    static let classifierStateUpdatedBroadcast = "classifier-state-updated"
+    static let relayableBroadcastOperations: Set<String> = [videoTagsUpdatedBroadcast, classifierStateUpdatedBroadcast]
 }
 
 public enum SharedBrowserBridgeProtocol {
