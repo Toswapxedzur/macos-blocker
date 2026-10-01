@@ -821,6 +821,18 @@
   var DAY_MS = 86400000;
 
   var ranges = { usage: "today", content: "today" };   // today | 7d | 30d | since:<ms>
+  var USAGE_BLOCK_KEY = "adamancia.activity.usage-block-minutes";
+  function savedBlockMinutes() {
+    try {
+      var stored = window.localStorage.getItem(USAGE_BLOCK_KEY);
+      if (stored !== null) {
+        var minutes = Number(stored);
+        if (minutes === 0 || window.ActivityTimeBins.choices.indexOf(minutes) >= 0) return minutes;
+      }
+    } catch (_) {}
+    return 30;
+  }
+  var usageBlockMinutes = savedBlockMinutes(); // 0 = exact sessions
   var usageFocus = "all";       // all | app|<key> | web|<key> | group|<id>
   var contentFocus = "all";     // all | tag|<id>
   var usageHistory = null;      // { map, days } for usageFocus over the range
@@ -962,10 +974,14 @@
   // the day's 24 h, or Other pages). Scrolls sideways when there are many days.
   // The two day graphs share one layout so their days line up (owner
   // 2026-09-30: the ordered graph above, the unordered totals below).
-  function dayLayout(days) {
-    // Up to a week fills the width; longer ranges scroll at 40 px a day.
-    var barGap = days <= 7 ? Math.floor((820 - 44) / Math.max(1, days)) : 40;
-    return { days: days, barGap: barGap, width: days <= 7 ? 820 : 44 + days * barGap, left: 40, barWidth: Math.min(30, barGap * 0.6) };
+  function dayLayout(days, availableWidth) {
+    // Use actual pixels in both axes. Scaling an 820 px SVG to fill a wide
+    // window enlarged its height, labels and bars along with its width.
+    var left = 44;
+    var barGap = Math.max(days <= 7 ? 72 : 40,
+      (Math.max(820, availableWidth) - left) / Math.max(1, days));
+    return { days: days, barGap: barGap, width: left + days * barGap,
+      left: left, barWidth: Math.min(days <= 7 ? 54 : 32, barGap * 0.6) };
   }
   function dayLabelText(start, days) {
     var date = new Date(start);
@@ -981,7 +997,7 @@
     var topSeconds = fixedDayScale ? 86400 : Math.max(3600, Math.max.apply(null, totals.concat([0])));
     var step = topSeconds > 12 * 3600 ? 6 * 3600 : topSeconds > 6 * 3600 ? 2 * 3600 : 3600;
     // Few days fill the width; many scroll sideways at a fixed spacing.
-    var chart = svg("svg", { viewBox: "0 0 " + width + " " + height, width: width > 820 ? width : "100%", class: "days" });
+    var chart = svg("svg", { viewBox: "0 0 " + width + " " + height, width: width, height: height, class: "days" });
     for (var t = 0; t <= topSeconds + 1; t += step) {
       var y = base - (t / topSeconds) * plot;
       chart.appendChild(svg("line", { x1: left, x2: width, y1: y, y2: y, stroke: "#eef1f6", "stroke-width": 1 }));
@@ -1022,11 +1038,11 @@
   // Ordered: each day on a 24-hour scale, 00:00 at the bottom — every block
   // at its time, the gaps empty. `narrow` blocks (sites inside a browser)
   // leave the browser's colour showing beside them.
-  function dayOrderChart(perDay, layout) {
+  function dayOrderChart(perDay, layout, grouped, isUsage) {
     var days = perDay.length;
-    var width = layout.width, height = 210, left = layout.left, top = 8, bottom = 24, barGap = layout.barGap;
+    var width = layout.width, height = isUsage ? 320 : 210, left = layout.left, top = 8, bottom = 24, barGap = layout.barGap;
     var plot = height - top - bottom, base = height - bottom, barWidth = layout.barWidth;
-    var chart = svg("svg", { viewBox: "0 0 " + width + " " + height, width: width > 820 ? width : "100%", class: "days" });
+    var chart = svg("svg", { viewBox: "0 0 " + width + " " + height, width: width, height: height, class: "days" });
     [0, 6, 12, 18, 24].forEach(function (h) {
       var y = base - (h / 24) * plot;
       chart.appendChild(svg("line", { x1: left, x2: width, y1: y, y2: y, stroke: "#eef1f6", "stroke-width": 1 }));
@@ -1037,11 +1053,41 @@
     perDay.forEach(function (d, i) {
       var x = left + i * barGap + (barGap - barWidth) / 2;
       chart.appendChild(svg("rect", { x: x, y: top, width: barWidth, height: plot, rx: 4, fill: "#f1f4f8" }));
-      d.blocks.forEach(function (b) {
-        var rect = svg("rect", { x: x, y: base - b.to * plot, width: barWidth * (b.narrow ? 0.85 : 1), height: Math.max(0.6, (b.to - b.from) * plot), fill: b.color });
-        hoverable(rect, b.info);
-        chart.appendChild(rect);
-      });
+      if (grouped) {
+        (d.bins || []).forEach(function (bin) {
+          var blockSeconds = usageBlockMinutes * 60;
+          var y = base - bin.to * plot, h = Math.max(0, (bin.to - bin.from) * plot - 0.7);
+          var info = function () {
+            var shown = bin.items.slice(0, 7).map(function (item) { return [item.label, fmt(item.seconds)]; });
+            if (bin.items.length > 7) shown.push(["More items", String(bin.items.length - 7) + " · choose Exact to inspect"]);
+            return { title: hourMinute(bin.from) + " – " + hourMinute(bin.to),
+              lines: [dayName(d.start), fmt(bin.usedSeconds) + " used · " + fmt(bin.idleSeconds) + " empty"], list: shown };
+          };
+          var background = svg("rect", { x: x, y: y, width: barWidth, height: h, fill: "#e5eaf1" });
+          hoverable(background, info);
+          chart.appendChild(background);
+          // Keep the two largest identities; the remaining time is one
+          // neutral aggregate so a busy block never becomes hairlines again.
+          var prominent = bin.items.slice(0, 2), others = bin.items.slice(2);
+          var pieces = prominent.map(function (item) { return { seconds: item.seconds, color: item.color }; });
+          if (others.length) pieces.push({ seconds: others.reduce(function (sum, item) { return sum + item.seconds; }, 0), color: "#aeb9c8" });
+          var cursor = x;
+          pieces.forEach(function (piece) {
+            var w = barWidth * piece.seconds / blockSeconds;
+            if (w <= 0) return;
+            var rect = svg("rect", { x: cursor, y: y, width: w, height: h, fill: piece.color });
+            hoverable(rect, info);
+            chart.appendChild(rect);
+            cursor += w;
+          });
+        });
+      } else {
+        d.blocks.forEach(function (b) {
+          var rect = svg("rect", { x: x, y: base - b.to * plot, width: barWidth * (b.narrow ? 0.85 : 1), height: Math.max(0.6, (b.to - b.from) * plot), fill: b.color });
+          hoverable(rect, b.info);
+          chart.appendChild(rect);
+        });
+      }
       var dl = svg("text", { x: x + barWidth / 2, y: height - 8, "text-anchor": "middle", class: "axis-label" });
       dl.textContent = dayLabelText(d.start, days);
       chart.appendChild(dl);
@@ -1050,16 +1096,73 @@
   }
 
   // "Day by day": the ordered graph over the totals, scrolling together.
-  function dayCharts(ordered, totals, rest, fixedDayScale) {
-    var layout = dayLayout(totals.length);
+  var activeDayCharts = [];
+  var chartResizePending = false;
+  window.addEventListener("resize", function () {
+    if (chartResizePending) return;
+    chartResizePending = true;
+    window.requestAnimationFrame(function () {
+      chartResizePending = false;
+      activeDayCharts = activeDayCharts.filter(function (entry) { return entry.node.isConnected; });
+      activeDayCharts.forEach(function (entry) { entry.draw(); });
+    });
+  });
+  function dayCharts(ordered, totals, rest, fixedDayScale, isUsage) {
     var box = el("div", "chart");
     box.appendChild(el("div", "chart-title", "Day by day"));
     var scroller = el("div", "totals-scroll");
-    scroller.appendChild(el("div", "chart-subtitle", "In order"));
-    scroller.appendChild(dayOrderChart(ordered, layout));
+    var toolbar = el("div", "day-chart-toolbar");
+    toolbar.appendChild(el("div", "chart-subtitle", "In order"));
+    if (isUsage) {
+      var control = el("label", "block-length-control");
+      control.appendChild(el("span", null, "Block length"));
+      var select = el("select");
+      select.setAttribute("aria-label", "Activity block length");
+      [[0, "Exact"], [5, "5 min"], [15, "15 min"], [30, "30 min"], [60, "1 hour"]].forEach(function (choice) {
+        var option = el("option", null, choice[1]);
+        option.value = String(choice[0]);
+        option.selected = choice[0] === usageBlockMinutes;
+        select.appendChild(option);
+      });
+      select.addEventListener("change", function () {
+        usageBlockMinutes = Number(select.value);
+        try { window.localStorage.setItem(USAGE_BLOCK_KEY, String(usageBlockMinutes)); } catch (_) {}
+        var target = scope.getElementById("usage-totals");
+        if (!target) return;
+        var old = target.querySelector(".totals-scroll"), oldLeft = old ? old.scrollLeft : 0;
+        target.textContent = "";
+        target.appendChild(usageTotals());
+        window.requestAnimationFrame(function () {
+          var next = target.querySelector(".totals-scroll");
+          if (next) next.scrollLeft = oldLeft;
+        });
+      });
+      control.appendChild(select);
+      toolbar.appendChild(control);
+    }
+    scroller.appendChild(toolbar);
+    var orderedSlot = el("div");
+    scroller.appendChild(orderedSlot);
     scroller.appendChild(el("div", "chart-subtitle", "Totals"));
-    scroller.appendChild(dayTotalsChart(totals, rest, fixedDayScale, layout));
+    var totalsSlot = el("div");
+    scroller.appendChild(totalsSlot);
     box.appendChild(scroller);
+    var drawnWidth = 0;
+    function draw() {
+      var layout = dayLayout(totals.length, scroller.clientWidth || 820);
+      if (layout.width === drawnWidth && orderedSlot.firstChild) return;
+      drawnWidth = layout.width;
+      orderedSlot.textContent = "";
+      orderedSlot.appendChild(dayOrderChart(ordered, layout, isUsage && usageBlockMinutes > 0, isUsage));
+      totalsSlot.textContent = "";
+      totalsSlot.appendChild(dayTotalsChart(totals, rest, fixedDayScale, layout));
+    }
+    draw();
+    activeDayCharts.push({ node: box, draw: draw });
+    window.requestAnimationFrame(function () {
+      activeDayCharts = activeDayCharts.filter(function (entry) { return entry.node.isConnected; });
+      if (box.isConnected) draw();
+    });
     return box;
   }
 
@@ -1087,22 +1190,28 @@
       var used = items.reduce(function (sum, e) { return sum + e.seconds; }, 0);
       var elapsed = Math.min(86400, Math.max(0, (now - day.dayStartMs) / 1000));
       totals.push({ start: day.dayStartMs, items: items, rest: Math.max(0, elapsed - used) });
-      var blocks = [];
+      var blocks = [], binApps = [], binSites = [];
       day.app.forEach(function (seg) {
         if (set && !set.has("app|" + seg.key)) return;
-        blocks.push({ from: seg.startFraction, to: seg.startFraction + seg.widthFraction, color: colorOf(colorIndexFor("app", seg.key, seg.colorIndex)),
+        var color = colorOf(colorIndexFor("app", seg.key, seg.colorIndex));
+        binApps.push({ key: seg.key, label: seg.label || seg.key, from: seg.startFraction, to: seg.startFraction + seg.widthFraction, color: color });
+        blocks.push({ from: seg.startFraction, to: seg.startFraction + seg.widthFraction, color: color,
           info: function () { return { title: seg.label || seg.key, key: seg.key, lines: [(BROWSERS[seg.key] ? "App · browser" : "App") + " · " + dayName(day.dayStartMs),
             hourMinute(seg.startFraction) + " – " + hourMinute(seg.startFraction + seg.widthFraction) + " · " + fmt(seg.widthFraction * 86400)] }; } });
       });
       attribution.pieces.forEach(function (piece) {
         if (set && !set.has("web|" + piece.site.key) && !set.has("app|" + piece.browser.key)) return;
-        blocks.push({ from: piece.from, to: piece.to, narrow: true, color: colorOf(colorIndexFor("web", piece.site.key, piece.site.colorIndex)),
+        var color = colorOf(colorIndexFor("web", piece.site.key, piece.site.colorIndex));
+        binSites.push({ key: piece.site.key, label: piece.site.label || piece.site.key, browserKey: piece.browser.key,
+          from: piece.from, to: piece.to, color: color });
+        blocks.push({ from: piece.from, to: piece.to, narrow: true, color: color,
           info: function () { return { title: piece.site.label || piece.site.key, key: piece.site.key, lines: ["Website · in " + (piece.browser.label || piece.browser.key) + " · " + dayName(day.dayStartMs),
             hourMinute(piece.from) + " – " + hourMinute(piece.to) + " · " + fmt((piece.to - piece.from) * 86400)] }; } });
       });
-      ordered.push({ start: day.dayStartMs, blocks: blocks });
+      ordered.push({ start: day.dayStartMs, blocks: blocks,
+        bins: usageBlockMinutes ? window.ActivityTimeBins.aggregate(binApps, binSites, usageBlockMinutes) : [] });
     });
-    return dayCharts(ordered, totals, { name: "Empty", color: EMPTY_COLOR }, true);
+    return dayCharts(ordered, totals, { name: "Empty", color: EMPTY_COLOR }, true, true);
   }
 
   // A day's segments as bars (seconds per key).

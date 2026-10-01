@@ -165,6 +165,11 @@ rect.is-hot, path.is-hot, circle.is-hot { opacity: 0.72; }
 .colour-time { color: var(--vui-muted); font-variant-numeric: tabular-nums; }
 .colour-row.is-empty { cursor: default; }
 .totals-scroll { overflow-x: auto; }
+.day-chart-toolbar { position: sticky; left: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 100%; width: max-content; background: #ffffff; }
+.day-chart-toolbar .chart-subtitle { margin: 6px 0 2px; }
+.block-length-control { display: flex; align-items: center; gap: 8px; color: var(--vui-muted); font-size: var(--vui-size-small); font-weight: 700; white-space: nowrap; }
+.block-length-control .vui-select { width: 108px; }
+.block-length-control .vui-select-button { padding: 5px 9px; }
 .author-row, .raw-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 5px 4px; }
 .author-row .icon, .raw-row .icon { width: 28px; height: 28px; border-radius: 7px; font-size: 12px; }
 .author-row .icon img, .raw-row .icon img { width: 28px; height: 28px; }

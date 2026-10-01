@@ -139,7 +139,15 @@ Activity/
   the ordered form of its time (a strip over the whole range, one fixed width
   per day, scrolling sideways), a colour map (every item's colour and time),
   a pie (the unordered form), a 365-day map of the focus (not tied to the
-  range; clicking a day tracks since it) and day-by-day totals. **Empty** is
+  range; clicking a day tracks since it) and day-by-day totals. The ordered
+  day chart groups Usage into configurable 5, 15, 30, or 60-minute blocks
+  (30 minutes initially; saved in this Mac's WebView local storage). Each block
+  shows time shares for its two largest apps/sites and a neutral remainder;
+  hover lists up to seven underlying items and their time. **Exact** restores the
+  original session display. A site's time replaces its browser's corresponding
+  time in a block, so a browser and a visited site are not counted twice.
+  The Totals graph and the Content ordered graph retain their own data.
+  **Empty** is
   every hour not used — all 24 h of a day — so each Usage day bar reaches
   24 h; Content's empty is **Other pages** (a platform's pages that are no one
   piece of content). Content adds **Authors** (total, the bar split per day,
