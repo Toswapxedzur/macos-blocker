@@ -17,9 +17,9 @@ window.runBoundedListTests=async()=>{
   bounded(activity.querySelector('#usage-section .colour-map'),'usage items');
   bounded(activity.querySelector('#content-section .colour-map'),'content tags');
   activity.querySelectorAll('.scroll-list').forEach((node,i)=>bounded(node,i===0?'authors':'watched content'));
-  const cards=activity.querySelector('.group-cards');expect(cards.children.length===200 && cards.scrollWidth>cards.clientWidth,'all activity groups stay in the horizontal box');
+  const cards=activity.querySelector('.group-cards');expect(cards.querySelectorAll('.group-card').length===40 && snapshot.groups.length===200 && cards.scrollWidth>cards.clientWidth,'all activity groups stay in the horizontal box');
   activity.querySelector('.group-card .secondary').click();activityKnownItems(Array.from({length:300},(_,i)=>({id:'app|app-'+i,label:'App '+i})),{});await wait();
-  const members=activity.querySelector('.group-selected-members');bounded(members,'selected members');expect(members.children.length===120,'all selected members remain available');
+  const members=activity.querySelector('.group-selected-members');bounded(members,'selected members');expect(members.querySelectorAll('.chip').length===40 && snapshot.groups[0].members.length===120,'all selected members remain available');
   bounded(activity.querySelector('.group-members'),'member suggestions');
   const subtitle=members.previousElementSibling;expect(subtitle.getBoundingClientRect().bottom<=members.getBoundingClientRect().top+2,'member heading stays outside the scrolling list');
   const position=members.scrollTop;activityApply(snapshot,{},facts);await wait();
