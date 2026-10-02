@@ -8,15 +8,16 @@ import VaultActivityCore
 @MainActor
 final class VaultClassifierWorkerActivity {
     private let store: ActivityStore
-    private unowned let model: VaultClassifierViewModel
+    private let model: VaultClassifierViewModel
     private let emit: ([String: Any]) -> Void
     private var ranges = ["usage": "today", "content": "today"]
     private var appIcons: [String: String] = [:]
     private var factsAsked: [String: Date] = [:]
     private var loaded = false
+    private var refreshRevision: UInt64 = 0
     private let accumulator = ActivityUsageAccumulator(maxStepSeconds: 60)
     private var nativeMonotonic = 0.0
-    private static let historyDays = 365
+    nonisolated private static let historyDays = 365
 
     init(directory: URL, model: VaultClassifierViewModel, emit: @escaping ([String: Any]) -> Void) {
         self.store = ActivityStore(directory: directory)
@@ -25,13 +26,17 @@ final class VaultClassifierWorkerActivity {
     }
 
     func refresh() {
-        guard loaded, let value = try? snapshot() else { return }
-        emit(["event": "activity", "value": value])
+        guard loaded else { return }
+        refreshRevision &+= 1
+        let revision = refreshRevision
+        Task { @MainActor [weak self] in
+            guard let self, let value = try? await self.snapshot(), self.refreshRevision == revision else { return }
+            self.emit(["event": "activity", "value": value])
+        }
     }
 
-    func handle(_ body: [String: Any]) throws -> [String: Any] {
+    func handle(_ body: [String: Any]) async throws -> [String: Any] {
         let kind = body["kind"] as? String ?? "ready"
-        if appIcons.count > 500 { appIcons = Dictionary(uniqueKeysWithValues: appIcons.sorted { $0.key < $1.key }.prefix(500).map { ($0.key, $0.value) }) }
         switch kind {
         case "ready", "snapshot":
             loaded = true
@@ -92,7 +97,7 @@ final class VaultClassifierWorkerActivity {
             let settings = store.loadSettings()
             let records = body["records"] as? [[String: Any]] ?? []
             var accepted = 0
-            for item in records.prefix(500) {
+            for item in records {
                 guard let key = item["key"] as? String, !key.isEmpty, key.count <= 32_768,
                       let label = item["label"] as? String, label.count <= 1_024,
                       let seconds = (item["seconds"] as? NSNumber)?.doubleValue, seconds.isFinite, seconds > 0,
@@ -102,7 +107,6 @@ final class VaultClassifierWorkerActivity {
             }
             if let icons = body["icons"] as? [String: String] {
                 for (key, icon) in icons where icon.hasPrefix("data:image/") && icon.utf8.count <= 24_000 { appIcons[key] = icon }
-                if appIcons.count > 500 { appIcons = Dictionary(uniqueKeysWithValues: appIcons.sorted { $0.key < $1.key }.prefix(500).map { ($0.key, $0.value) }) }
             }
             refresh()
             return ["kind": "recorded", "accepted": accepted]
@@ -110,7 +114,7 @@ final class VaultClassifierWorkerActivity {
             if body["scope"] as? String == "all" { store.deleteAllRecords() }
             else if body["scope"] as? String == "category", let raw = body["category"] as? String, let category = ActivityCategory(rawValue: raw) { store.delete(category: category) }
         case "history":
-            return try history(body)
+            return try await history(body)
         case "group-save":
             let raw = body["group"] as? [String: Any] ?? [:]
             let group = ActivityGroup(id: raw["id"] as? String ?? "", name: raw["name"] as? String ?? "", merge: raw["merge"] as? Bool ?? false, members: raw["members"] as? [String] ?? [])
@@ -121,20 +125,22 @@ final class VaultClassifierWorkerActivity {
                 answer["ok"] = false; answer["message"] = refusal.message
                 if case .inAnotherMergeGroup(let owners) = refusal { answer["conflicts"] = owners }
             }
-            return ["kind": "group-save", "answer": answer, "snapshot": try snapshot()]
+            return ["kind": "group-save", "answer": answer, "snapshot": try await snapshot()]
         case "group-delete":
             if let id = body["id"] as? String { _ = store.deleteGroup(id: id) }
         case "known-items":
-            let items = store.knownItems(days: Self.historyDays)
-            var icons = store.webIcons()
-            for item in items where item.id.hasPrefix("app|") { if let icon = appIcons[String(item.id.dropFirst(4))] { icons[String(item.id.dropFirst(4))] = icon } }
-            return ["kind": "known-items", "items": try encode(items), "icons": icons]
+            let store = self.store
+            let (items, data, web) = try await Task.detached(priority: .userInitiated) {
+                let items = store.knownItems(days: Self.historyDays)
+                return (items, try Self.encoded(items), store.webIcons())
+            }.value
+            return ["kind": "known-items", "items": try JSONSerialization.jsonObject(with: data), "icons": await icons(for: items.map(\.id), web: web)]
         case "prune":
             store.prune()
         default:
             throw ActivityWorkerError.invalidOperation
         }
-        return try snapshot()
+        return try await snapshot()
     }
 
     private func applySettings(_ body: [String: Any]) {
@@ -153,27 +159,24 @@ final class VaultClassifierWorkerActivity {
         }
     }
 
-    private func snapshot() throws -> [String: Any] {
+    private func snapshot() async throws -> [String: Any] {
         let usageRange = ranges["usage"] ?? "today", contentRange = ranges["content"] ?? "today"
-        let (start, end) = Self.dates(for: usageRange)
-        let snapshot = store.dashboardSnapshot(from: start, to: end)
-        let content: ActivityDashboardSnapshot
-        if contentRange == usageRange { content = snapshot }
-        else { let dates = Self.dates(for: contentRange); content = store.dashboardSnapshot(from: dates.0, to: dates.1) }
-        var icons = store.webIcons()
-        for bar in snapshot.app.bars { if let icon = appIcons[bar.key] { icons[bar.key] = icon } }
-        for group in snapshot.groups {
-            for id in group.members where id.hasPrefix("app|") {
-                let key = String(id.dropFirst(4)); if let icon = appIcons[key] { icons[key] = icon }
-            }
-        }
+        let usageDates = Self.dates(for: usageRange), contentDates = Self.dates(for: contentRange)
+        let store = self.store
+        let (snapshot, content, data, contentData, web) = try await Task.detached(priority: .userInitiated) {
+            let snapshot = store.dashboardSnapshot(from: usageDates.0, to: usageDates.1)
+            let content = contentRange == usageRange ? snapshot : store.dashboardSnapshot(from: contentDates.0, to: contentDates.1)
+            return (snapshot, content, try Self.encoded(snapshot), contentRange == usageRange ? nil : try Self.encoded(content), store.webIcons())
+        }.value
+        let ids = snapshot.app.bars.map { "app|" + $0.key } + snapshot.web.bars.map { "web|" + $0.key } + snapshot.groups.flatMap(\.members)
+        let icons = await icons(for: ids, web: web)
         let watchedKeys = content.watched.map(\.key)
+        var saved = store.watchedFacts(for: watchedKeys)
+        let now = Date()
         let missing = watchedKeys.filter { key in
-            let saved = store.watchedFacts(for: [key])[key]
-            return (saved?.author?.icon == nil || saved?.tags == nil) && Date().timeIntervalSince(factsAsked[key] ?? .distantPast) > 600
+            return (saved[key]?.author?.icon == nil || saved[key]?.tags == nil) && now.timeIntervalSince(factsAsked[key] ?? .distantPast) > 600
         }
-        if !missing.isEmpty { missing.forEach { factsAsked[$0] = Date() }; recordWatchedFacts(keys: missing) }
-        let saved = store.watchedFacts(for: watchedKeys)
+        if !missing.isEmpty { missing.forEach { factsAsked[$0] = now }; recordWatchedFacts(keys: missing); saved = store.watchedFacts(for: watchedKeys) }
         var facts: [String: Any] = [:]
         for key in watchedKeys {
             guard let fact = saved[key] else { continue }
@@ -183,8 +186,18 @@ final class VaultClassifierWorkerActivity {
         }
         let days = store.loadSettings().retentionDays
         if model.localState?.workspaceCatalog.collectionKeepDays != days { model.setCollectionKeep(platformID: nil, days: days) }
-        return ["kind": "snapshot", "snapshot": try encode(snapshot), "icons": icons, "facts": facts,
-                "collection": collectionState(), "tags": tagTree(), "contentSnapshot": contentRange == usageRange ? NSNull() : try encode(content)]
+        return ["kind": "snapshot", "snapshot": try JSONSerialization.jsonObject(with: data), "icons": icons, "facts": facts,
+                "collection": collectionState(), "tags": tagTree(), "contentSnapshot": try contentData.map { try JSONSerialization.jsonObject(with: $0) } ?? NSNull()]
+    }
+
+    private func icons(for ids: [String], web: [String: String]) async -> [String: String] {
+        var icons: [String: String] = [:]
+        for (index, id) in Set(ids).enumerated() {
+            if index % 32 == 0 { await Task.yield() }
+            let key = String(id.dropFirst(4))
+            if let icon = id.hasPrefix("app|") ? appIcons[key] : web[key] { icons[key] = icon }
+        }
+        return icons
     }
 
     private func recordWatchedFacts(keys: [String]) {
@@ -223,11 +236,13 @@ final class VaultClassifierWorkerActivity {
         return nodes
     }
 
-    private func history(_ body: [String: Any]) throws -> [String: Any] {
+    private func history(_ body: [String: Any]) async throws -> [String: Any] {
         let pickID = body["pick"] as? String ?? "all"
+        let store = self.store
         if body["section"] as? String == "content" {
             let tags = pickID.hasPrefix("tag|") ? Set(pickID.dropFirst(4).split(separator: ",").map(String.init)) : nil
-            return ["kind": "history", "request": ["section": "content", "pick": pickID], "value": try encode(store.contentHistory(tagIDs: tags, days: Self.historyDays))]
+            let data = try await Task.detached(priority: .userInitiated) { try Self.encoded(store.contentHistory(tagIDs: tags, days: Self.historyDays)) }.value
+            return ["kind": "history", "request": ["section": "content", "pick": pickID], "value": try JSONSerialization.jsonObject(with: data)]
         }
         let pick: ActivityStore.DetailPick
         if pickID.hasPrefix("app|") { pick = .item(.appUsage, String(pickID.dropFirst(4))) }
@@ -235,12 +250,13 @@ final class VaultClassifierWorkerActivity {
         else if pickID.hasPrefix("group|") { pick = .group(String(pickID.dropFirst(6))) }
         else { pick = .all }
         let days = min(Self.historyDays, max(1, body["barDays"] as? Int ?? 1))
-        return ["kind": "history", "request": ["section": "usage", "pick": pickID, "barDays": days] as [String: Any], "value": try encode(store.detail(pick: pick, mapDays: Self.historyDays, barDays: days))]
+        let data = try await Task.detached(priority: .userInitiated) { try Self.encoded(store.detail(pick: pick, mapDays: Self.historyDays, barDays: days)) }.value
+        return ["kind": "history", "request": ["section": "usage", "pick": pickID, "barDays": days] as [String: Any], "value": try JSONSerialization.jsonObject(with: data)]
     }
 
-    private func encode<T: Encodable>(_ value: T) throws -> Any {
+    nonisolated private static func encoded<T: Encodable>(_ value: T) throws -> Data {
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
-        return try JSONSerialization.jsonObject(with: encoder.encode(value))
+        return try encoder.encode(value)
     }
 
     private static func dates(for range: String) -> (Date, Date) {

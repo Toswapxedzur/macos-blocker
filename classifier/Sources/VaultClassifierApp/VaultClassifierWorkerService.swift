@@ -34,7 +34,7 @@ public final class VaultClassifierWorkerService {
 
     public func publishState() { emit(["event": "state", "value": remapResources(model.webSnapshot())]) }
 
-    public func handle(operation: String, data: [String: Any]) throws -> Any {
+    public func handle(operation: String, data: [String: Any]) async throws -> Any {
         switch operation {
         case "snapshot":
             return remapResources(model.webSnapshot())
@@ -91,11 +91,11 @@ public final class VaultClassifierWorkerService {
             }
             throw WorkerInputError.missingResource
         case "activity":
-            return try activity?.handle(data) ?? [:]
+            return try await activity?.handle(data) ?? [:]
         case "hostEvent":
             // Host events cannot bypass the page/MCP action validation.
             if data["kind"] as? String == "flush" {
-                _ = try activity?.handle(["kind": "native-flush"])
+                _ = try await activity?.handle(["kind": "native-flush"])
                 LocalStateFile.flushAllPendingWrites()
             }
             return ["ok": true]
