@@ -1,6 +1,6 @@
 # Worker process fixtures
 
-- `interactive_pipe.py` — mini1 integration check against the actual worker
+- `interactive_pipe.py` — mini1 Windows integration check against the production worker
   executable. Sends small JSON frames and awaits each response before closing
   stdin, checks UTF-8 and verifies graceful EOF. Uses only Python's standard
   library and an isolated temporary support directory.
