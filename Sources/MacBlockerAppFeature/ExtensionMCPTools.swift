@@ -35,7 +35,7 @@ public enum ExtensionMCPTools {
     static let waitSeconds = 35.0
 
     public static func tools(bridge: Bridge = .liveHub) -> [MCPTool] {
-        let browserProperty: [String: Any] = ["type": "string", "description": "Which connected browser, by program name (chrome, edge); needed only when more than one browser is connected."]
+        let browserProperty: [String: Any] = ["type": "string", "description": "Which connected browser, by program name (chrome, edge, safari); needed only when more than one browser is connected."]
         return [
             MCPTool(
                 name: "extension_state",

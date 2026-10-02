@@ -288,8 +288,9 @@ final class ConnectionHub: ObservableObject {
         /// identically; `sharedSnoozeTs` is the originating start time.
         var sharedSnooze: [String: Any] = [:]
         var sharedSnoozeTs: Double = 0
-        /// The link's total snoozed time: the hub counts each shared snooze once,
-        /// when it has finished (members show this figure). `snoozeCountedStartMs`
+        /// The link's total snoozed time: time snoozes count once when finished;
+        /// budget snoozes count as shared usage consumes the extra allowance.
+        /// `snoozeCountedStartMs`
         /// is the start of the last snooze counted (entries run one at a time).
         var sharedSnoozeTotalMs: Double = 0
         var snoozeCountedStartMs: Double = 0
@@ -464,6 +465,7 @@ final class ConnectionHub: ObservableObject {
     @discardableResult
     private static func countSnoozeLocked(_ cluster: ClusterState, nowMs: Double, replacing: Bool = false) -> Bool {
         let entry = cluster.sharedSnooze
+        guard (entry["kind"] as? String) != "budget" else { return false }
         guard let start = (entry["startsAtMs"] as? NSNumber)?.doubleValue,
               let until = (entry["untilMs"] as? NSNumber)?.doubleValue,
               start != cluster.snoozeCountedStartMs,
@@ -471,6 +473,11 @@ final class ConnectionHub: ObservableObject {
         cluster.sharedSnoozeTotalMs += max(0, min(until, nowMs) - start).rounded()
         cluster.snoozeCountedStartMs = start
         return true
+    }
+
+    private static func countBudgetSnoozeLocked(_ cluster: ClusterState, beforeMs: Double, addedMs: Double, nowMs: Double) {
+        let given = (GroupActionsRuntime.shared.call("snoozeGivenMs", [cluster.sharedScalars, cluster.sharedSnooze, beforeMs, addedMs, nowMs]) as? NSNumber)?.doubleValue ?? 0
+        if given.isFinite && given > 0 { cluster.sharedSnoozeTotalMs += given }
     }
 
     static func sharedPeriodStartMs(anchorMs: Double, scalars: [String: Any], nowMs: Double) -> Double {
@@ -1332,12 +1339,16 @@ final class ConnectionHub: ObservableObject {
         if cluster.sharedUsageResetAtMs == 0, let anchor = contribution["usageResetAtMs"] as? Double, anchor > 0 {
             cluster.sharedUsageResetAtMs = anchor.rounded(.down)
         }
-        rollBudgetLocked(cluster, nowMs: Date().timeIntervalSince1970 * 1000)
+        let nowMs = Date().timeIntervalSince1970 * 1000
+        rollBudgetLocked(cluster, nowMs: nowMs)
         // Time a browser counted while the hub was away arrives tagged with
         // its period: added only when that period is still the current one.
         let deltaPeriod = (contribution["usageDeltaAnchorMs"] as? NSNumber)?.doubleValue
         if let delta = contribution["usageDeltaMs"] as? Double, delta != 0,
            deltaPeriod == nil || deltaPeriod!.rounded(.down) == cluster.sharedUsageResetAtMs.rounded(.down) {
+            if (cluster.sharedScalars["rollingLimit"] as? Bool) != true {
+                Self.countBudgetSnoozeLocked(cluster, beforeMs: cluster.sharedUsageMs, addedMs: delta, nowMs: nowMs)
+            }
             cluster.sharedUsageMs = max(0, cluster.sharedUsageMs + delta)
             cluster.usageSeeded = true
         } else if !cluster.usageSeeded,
@@ -1347,12 +1358,23 @@ final class ConnectionHub: ObservableObject {
             // counter so a group that already had usage keeps it when it links.
             cluster.sharedUsageMs = seed
         }
+        let rollingPolicy = BlockGroup(
+            id: "", groupType: .site, name: "", enabled: true, mode: .afterMinutes,
+            allowedMinutes: 0,
+            resetIntervalHours: (cluster.sharedScalars["resetIntervalHours"] as? NSNumber)?.doubleValue ?? 24,
+            resetAtMidnight: (cluster.sharedScalars["resetAtMidnight"] as? Bool) == true
+        )
+        let rollingBefore = UsageBudget.usedMs(UsageBudget.pruneBuckets(cluster.sharedBuckets, group: rollingPolicy, nowMs: nowMs))
         applyBucketContributionLocked(cluster, contribution)
+        if (cluster.sharedScalars["rollingLimit"] as? Bool) == true,
+           let deltas = UsageBudget.parseBuckets(contribution["usageBuckets"]), !deltas.isEmpty {
+            let rollingAfter = UsageBudget.usedMs(UsageBudget.pruneBuckets(cluster.sharedBuckets, group: rollingPolicy, nowMs: nowMs))
+            Self.countBudgetSnoozeLocked(cluster, beforeMs: rollingBefore, addedMs: max(0, rollingAfter - rollingBefore), nowMs: nowMs)
+        }
 
         // Active snooze: newest start wins. A member only carries `snoozeTs` when
         // it actually has an active/cooling snooze entry, so usage-only pings and
         // members without a snooze never clobber a snooze started elsewhere.
-        let nowMs = Date().timeIntervalSince1970 * 1000
         if let snoozeTs = contribution["snoozeTs"] as? Double, snoozeTs > 0 {
             if snoozeTs > cluster.sharedSnoozeTs {
                 // A new snooze replaces a finished one: count that one first.

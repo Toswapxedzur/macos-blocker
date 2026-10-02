@@ -44,7 +44,7 @@ public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
     public init(
         id: String,
         name: String,
-        browser: String = "Chrome and Edge",
+        browser: String = CollectionPlatformRegistry.browserDescription,
         sourceKind: CollectionSourceKind = .creator,
         collectorAvailable: Bool = false,
         supportsLocalModel: Bool = true
@@ -59,6 +59,13 @@ public struct CollectionPlatformDefinition: Equatable, Sendable, Identifiable {
 }
 
 public enum CollectionPlatformRegistry {
+    public static var browserDescription: String {
+        #if os(Windows)
+        return "Chrome and Edge"
+        #else
+        return "Chrome, Edge and Safari"
+        #endif
+    }
     public static let definitions: [CollectionPlatformDefinition] = [
         .init(id: "youtube", name: "YouTube", collectorAvailable: true),
         // Only YouTube, Bilibili, Reddit and X classify (owner 2026-09-30).
@@ -92,7 +99,7 @@ public struct PlatformBinding: Codable, Equatable, Sendable, Identifiable {
     /// platforms (`WorkspaceCatalog.collectionKeepDays`), 0 = forever.
     public var collectionKeepDays: Int
 
-    public init(id: String, name: String, browser: String = "Chrome and Edge", treeID: String, datasetID: String, activeClassifierTypeID: String? = nil, collectionEnabled: Bool = true, collectionKeepDays: Int = -1) {
+    public init(id: String, name: String, browser: String = CollectionPlatformRegistry.browserDescription, treeID: String, datasetID: String, activeClassifierTypeID: String? = nil, collectionEnabled: Bool = true, collectionKeepDays: Int = -1) {
         self.id = id
         self.name = name
         self.browser = browser
@@ -112,7 +119,7 @@ public struct PlatformBinding: Codable, Equatable, Sendable, Identifiable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
-        browser = try container.decodeIfPresent(String.self, forKey: .browser) ?? "Chrome and Edge"
+        browser = try container.decodeIfPresent(String.self, forKey: .browser) ?? CollectionPlatformRegistry.browserDescription
         treeID = try container.decode(String.self, forKey: .treeID)
         datasetID = try container.decode(String.self, forKey: .datasetID)
         activeClassifierTypeID = try container.decodeIfPresent(String.self, forKey: .activeClassifierTypeID)

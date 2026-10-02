@@ -110,6 +110,44 @@ final class ClusterLockAndSnoozeTests: XCTestCase {
         XCTAssertEqual((snooze?["untilMs"] as? NSNumber)?.doubleValue, now, "the newer END replaces the local active snooze")
     }
 
+    func testLinkedBudgetSnoozeCountsConsumptionWithoutElapsedTimeOrEcho() throws {
+        let hub = linkedHub()
+        let now = Date().timeIntervalSince1970 * 1000
+        hub.applySync(program: "macapp", groupId: "m1", contribution: [
+            "scalars": ["mode": "after-minutes", "allowedMinutes": 1, "resetIntervalHours": 24.0],
+            "usageResetAtMs": now, "usageMs": 59_000.0,
+            "snooze": ["kind": "budget", "extraMs": 60_000.0, "startsAtMs": now - 1_000, "untilMs": now + 100_000, "changedAtMs": now], "snoozeTs": now
+        ], ts: 1)
+        hub.applySync(program: "chrome", groupId: "c1", contribution: ["usageDeltaMs": 3_000.0], ts: 0)
+        hub.applySync(program: "macapp", groupId: "m1", contribution: ["usageDeltaMs": 4_000.0], ts: 0)
+        func total() -> Double {
+            let doc = hub.overlayShared(onto: ["blockedGroups": [["id": "m1"]]])
+            return ((doc["groupSnoozeTotalsMs"] as? [String: Any])?["m1"] as? NSNumber)?.doubleValue ?? -1
+        }
+        XCTAssertEqual(total(), 6_000, "only the part above the ordinary allowance counts, across members")
+        hub.applySync(program: "chrome", groupId: "c1", contribution: ["usageMs": 66_000.0, "snoozeTotalMs": 6_000.0], ts: 0)
+        hub.applySync(program: "chrome", groupId: "c1", contribution: ["usageDeltaMs": 5_000.0, "usageDeltaAnchorMs": now - 1], ts: 0)
+        XCTAssertEqual(total(), 6_000, "adopted totals and stale-period deltas do not add the consumption again")
+        hub.rollSharedBudgets(nowMs: now + 200_000)
+        XCTAssertEqual(total(), 6_000, "finishing a budget snooze adds no elapsed wall-clock time")
+    }
+
+    func testLinkedRollingBudgetSnoozeIgnoresExpiredMinutesAndAbsoluteSeeds() {
+        let hub = linkedHub()
+        let now = Date().timeIntervalSince1970 * 1000
+        let minute = UsageBudget.bucketStartMs(now)
+        hub.applySync(program: "macapp", groupId: "m1", contribution: [
+            "scalars": ["mode": "after-minutes", "allowedMinutes": 1, "rollingLimit": true, "resetIntervalHours": 1.0],
+            "usageBucketsSeed": UsageBudget.bucketJSON([minute: 59_000, minute - 7_200_000: 500_000]),
+            "snooze": ["kind": "budget", "extraMs": 60_000.0, "startsAtMs": now - 1_000, "untilMs": now + 100_000, "changedAtMs": now], "snoozeTs": now
+        ], ts: 1)
+        hub.applySync(program: "chrome", groupId: "c1", contribution: ["usageBuckets": UsageBudget.bucketJSON([minute: 3_000, minute - 7_200_000: 9_000])], ts: 0)
+        hub.applySync(program: "macapp", groupId: "m1", contribution: ["usageBuckets": UsageBudget.bucketJSON([minute: 4_000])], ts: 0)
+        hub.applySync(program: "chrome", groupId: "c1", contribution: ["usageBucketsSeed": UsageBudget.bucketJSON([minute: 66_000])], ts: 0)
+        let doc = hub.overlayShared(onto: ["blockedGroups": [["id": "m1"]]])
+        XCTAssertEqual(((doc["groupSnoozeTotalsMs"] as? [String: Any])?["m1"] as? NSNumber)?.doubleValue, 6_000)
+    }
+
     func testTheMacGroupListComesFromItsStoreEveryTick() {
         // A group created or renamed with the window closed (by the "+" or a
         // tool) can be linked; a rename keeps a link (names are shared).
