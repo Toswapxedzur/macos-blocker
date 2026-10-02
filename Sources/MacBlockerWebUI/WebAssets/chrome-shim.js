@@ -21,7 +21,7 @@
  * before the editor reads storage.
  */
 (function () {
-  window.__CB_DESKTOP_PROGRAM_ID = "macapp";
+  window.__CB_DESKTOP_PROGRAM_ID = window.__CB_DESKTOP_PROGRAM_ID || "macapp";
   if (window.chrome && window.chrome.__cbShim) {
     return;
   }
@@ -401,7 +401,7 @@
   }
 
   var runtime = {
-    id: "mac-vault",
+    id: window.__CB_DESKTOP_PROGRAM_ID === "windowsapp" ? "windows-vault" : "mac-vault",
     lastError: null,
     getURL: function (path) {
       try {
@@ -411,7 +411,7 @@
       }
     },
     getManifest: function () {
-      return { version: "1.2.0", name: "macosBlocker" };
+      return window.__CB_DESKTOP_MANIFEST || { version: "1.2.0", name: "macosBlocker" };
     },
     sendMessage: function (message, callback) {
       var result = handleSendMessage(message);
