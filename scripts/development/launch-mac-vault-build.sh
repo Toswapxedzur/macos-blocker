@@ -33,9 +33,29 @@ VAULT_SIGNING_IDENTITY="$signing_identity" "$script_dir/classifier/scripts/insta
 swift build --product MacBlockerPanel
 binary_dir="$(swift build --show-bin-path)"
 binary="$binary_dir/MacBlockerPanel"
-codesign --force --sign "$signing_identity" \
-  --identifier "com.adamancia.vault.mac.development" \
-  --timestamp=none \
-  "$binary"
+app_profile="${MAC_VAULT_APP_PROVISIONING_PROFILE:-}"
+if [[ -n "$app_profile" ]]; then
+  app="$binary_dir/Mac Vault Development.app"
+  entitlements="$binary_dir/MacVaultDevelopment.entitlements"
+  python3 "$script_dir/scripts/signing/vault-app-group.py" prepare \
+    --environment development --profile "$app_profile" --app "$app" \
+    --binary "$binary" --entitlements "$entitlements" >/dev/null
+  # Sign nested resource bundles first without the app's restricted group
+  # entitlements; apply those only to the containing app's final signature.
+  codesign --force --deep --sign "$signing_identity" --timestamp=none "$app"
+  codesign --force --sign "$signing_identity" \
+    --identifier "com.adamancia.vault.mac.development" --timestamp=none \
+    --entitlements "$entitlements" "$app"
+  codesign --verify --deep --strict "$app"
+  python3 "$script_dir/scripts/signing/vault-app-group.py" verify \
+    --environment development --profile "$app_profile" --app "$app"
+  binary="$app/Contents/MacOS/MacBlockerPanel"
+else
+  codesign --force --sign "$signing_identity" \
+    --identifier "com.adamancia.vault.mac.development" \
+    --timestamp=none \
+    "$binary"
+  echo "Safari pairing unavailable: no development Mac App Group provisioning profile was selected." >&2
+fi
 export ADAMANCIA_VAULT_ENVIRONMENT=development
 exec "$binary"
