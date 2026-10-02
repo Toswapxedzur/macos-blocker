@@ -383,7 +383,7 @@ public struct BlockerWebView: NSViewRepresentable {
                 // The editor's tag suggestions, from Mac Vault's own classifier.
                 let platform = (body["message"] as? [String: Any])?["platform"] as? String ?? ""
                 let names = tagNames?(platform) ?? []
-                nativeReply(body, ["ok": true, "names": Array(names.prefix(200))])
+                nativeReply(body, ["ok": true, "names": names])
             case "reset-group-runtime":
                 if let payload = body["message"] as? [String: Any], let groupID = payload["groupId"] as? String {
                     store.resetRuntime(groupID: groupID)

@@ -6,7 +6,7 @@ window.runListSearchTests = async () => {
   testState.assets.trees[0].nodes=Array.from({length:8},(_,i)=>({id:'node-'+i,name:'Topic '+i,description:'Definition '+i,parentID:i?'node-0':null,positionX:i*180+24,positionY:i*80+24}));
   pushSnapshot();await wait();q('[data-action="openUtilityPanel"]').click();await wait();
   const search=q('[data-vui-search-input="classifier-providers"]');type(search,'PROVIDER 7');search.setSelectionRange(1,3);
-  check(q('.provider-panels').children.length===8 && q('.provider-panels .provider-panel:not(.vui-search-hidden)').dataset.providerId==='provider-7','provider search filters by name without deleting cards');
+  check(testState.assets.providerProfiles.length===8 && q('.provider-panels .provider-panel').parentNode.children.length===1 && q('.provider-panels .provider-panel:not(.vui-search-hidden)').dataset.providerId==='provider-7','provider search renders the matching card without deleting stored profiles');
   testState.issue='Snapshot while searching';pushSnapshot();await wait();
   const restored=q('[data-vui-search-input="classifier-providers"]');
   check(restored.value==='PROVIDER 7' && scope.activeElement===restored && restored.selectionStart===1,'provider search query and caret survive snapshots');

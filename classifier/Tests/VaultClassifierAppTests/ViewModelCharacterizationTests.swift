@@ -28,6 +28,26 @@ final class ViewModelCharacterizationTests: XCTestCase {
         try VaultClassifierViewModel(headlessVaultDirectory: directory)
     }
 
+    func testNativeKnowledgePagesSearchTheEntireCatalogWithoutSendingItInSnapshots() async throws {
+        let vm = try makeViewModel()
+        vm.localState?.workspaceCatalog.knowledgeEntries = (0..<10000).map { KnowledgeEntry(kind: .term, subject: "Term \($0)", meaning: "Description \($0)", updatedAtMilliseconds: Int64($0)) }
+        let assets = try XCTUnwrap(vm.webSnapshot(includeCollections: false)["assets"] as? [String: Any])
+        let knowledge = try XCTUnwrap(assets["knowledge"] as? [String: Any])
+        XCTAssertTrue((knowledge["terms"] as? [[String: Any]])?.isEmpty == true)
+        XCTAssertEqual((knowledge["counts"] as? [String: Int])?["term"], 10000)
+        let request: [String: Any] = ["requestID": "test", "kind": "term", "platformID": "", "query": "Term 9999", "offset": 0, "limit": 12]
+        let answer = await vm.knowledgePage(request)
+        let script = try XCTUnwrap(answer)
+        let encoded = try XCTUnwrap(script.components(separatedBy: "atob('").last?.components(separatedBy: "')").first)
+        let packet = try XCTUnwrap(try JSONSerialization.jsonObject(with: XCTUnwrap(Data(base64Encoded: encoded))) as? [String: Any])
+        let rows = try XCTUnwrap(packet["items"] as? [[String: Any]])
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows.first?["subject"] as? String, "Term 9999")
+        XCTAssertEqual(packet["total"] as? Int, 1)
+        var invalid = request; invalid["limit"] = 100000
+        let refused = await vm.knowledgePage(invalid); XCTAssertNil(refused)
+    }
+
     // MARK: - Snapshot shape
 
     func testClassifierOwnsPersistedGroupPauseAndGlobalActivation() throws {

@@ -40,6 +40,9 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
     private weak var webView: WKWebView?
     /// Each section's range: "today", "7d", "30d" or "since:<ms>".
     private var ranges = ["usage": "today", "content": "today"]
+    private var snapshotRevision: UInt64 = 0
+    private var historyRevisions: [String: UInt64] = [:]
+    private var knownItemsRevision: UInt64 = 0
     private var loaded = false
     /// bundle id → app-icon data URI (or "" when the app can't be resolved).
     private var appIconCache: [String: String] = [:]
@@ -201,66 +204,74 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
     }
 
     private func pushSnapshot() {
-        guard loaded, let store, let webView else { return }
+        guard loaded, let store else { return }
+        snapshotRevision &+= 1
+        let revision = snapshotRevision
         let usageRange = ranges["usage"] ?? "today", contentRange = ranges["content"] ?? "today"
-        let (start, end) = Self.dates(for: usageRange)
-        let snapshot = store.dashboardSnapshot(from: start, to: end)
-        let content: ActivityDashboardSnapshot
-        if contentRange == usageRange {
-            content = snapshot
-        } else {
-            let (contentStart, contentEnd) = Self.dates(for: contentRange)
-            content = store.dashboardSnapshot(from: contentStart, to: contentEnd)
+        let usageDates = Self.dates(for: usageRange), contentDates = Self.dates(for: contentRange)
+        Task { @MainActor [weak self] in
+            // The store is lock-protected and Sendable. Range reads, aggregation,
+            // sorting and large encodings run outside AppKit's event thread.
+            let result = await Task.detached(priority: .userInitiated) {
+                let snapshot = store.dashboardSnapshot(from: usageDates.0, to: usageDates.1)
+                let content = contentRange == usageRange ? snapshot : store.dashboardSnapshot(from: contentDates.0, to: contentDates.1)
+                let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+                guard let data = try? encoder.encode(snapshot), let json = String(data: data, encoding: .utf8) else { return nil as (ActivityDashboardSnapshot, ActivityDashboardSnapshot, String, String)? }
+                let contentJSON: String
+                if contentRange == usageRange { contentJSON = "null" }
+                else {
+                    guard let data = try? encoder.encode(content), let text = String(data: data, encoding: .utf8) else { return nil }
+                    contentJSON = text
+                }
+                return (snapshot, content, json, contentJSON)
+            }.value
+            guard let self, self.loaded, self.snapshotRevision == revision, let webView = self.webView, let result else { return }
+            let (snapshot, content, json, contentJSON) = result
+            let icons = await self.resolveIcons(snapshot: snapshot, store: store)
+            guard self.snapshotRevision == revision else { return }
+            let facts = self.watchedFacts(keys: content.watched.map(\.key), store: store)
+            let platforms = self.collectionState(allKeepDays: store.loadSettings().retentionDays)
+            let tags = self.collection?.tagTree() ?? []
+            guard let iconsData = try? JSONSerialization.data(withJSONObject: icons),
+                  let iconsJSON = String(data: iconsData, encoding: .utf8),
+                  let factsData = try? JSONSerialization.data(withJSONObject: facts),
+                  let factsJSON = String(data: factsData, encoding: .utf8),
+                  let platformsData = try? JSONSerialization.data(withJSONObject: platforms),
+                  let platformsJSON = String(data: platformsData, encoding: .utf8),
+                  let tagsJSON = Self.json(tags) else { return }
+            webView.evaluateJavaScript("window.activityApply(\(json), \(iconsJSON), \(factsJSON), \(platformsJSON), \(tagsJSON), \(contentJSON));", completionHandler: nil)
         }
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        guard let data = try? encoder.encode(snapshot), let json = String(data: data, encoding: .utf8) else { return }
-        let contentJSON: String
-        if contentRange == usageRange {
-            contentJSON = "null"
-        } else {
-            guard let contentData = try? encoder.encode(content), let text = String(data: contentData, encoding: .utf8) else { return }
-            contentJSON = text
-        }
-        let icons = resolveIcons(snapshot: snapshot, store: store)
-        let facts = watchedFacts(keys: content.watched.map(\.key), store: store)
-        let platforms = collectionState(allKeepDays: store.loadSettings().retentionDays)
-        let tags = collection?.tagTree() ?? []
-        guard let iconsData = try? JSONSerialization.data(withJSONObject: icons),
-              let iconsJSON = String(data: iconsData, encoding: .utf8),
-              let factsData = try? JSONSerialization.data(withJSONObject: facts),
-              let factsJSON = String(data: factsData, encoding: .utf8),
-              let platformsData = try? JSONSerialization.data(withJSONObject: platforms),
-              let platformsJSON = String(data: platformsData, encoding: .utf8),
-              let tagsJSON = Self.json(tags) else { return }
-        webView.evaluateJavaScript("window.activityApply(\(json), \(iconsJSON), \(factsJSON), \(platformsJSON), \(tagsJSON), \(contentJSON));", completionHandler: nil)
     }
 
     /// The Details panel's data for the pick ("all", "app|<bundle id>",
     /// "web|<domain>" or "group|<id>") and the last `barDays` days. Echoes the
     /// request so the page ignores a stale answer.
     private func pushHistory(_ body: [String: Any]) {
-        guard loaded, let store, let webView else { return }
+        guard loaded, let store else { return }
         let pickID = (body["pick"] as? String) ?? "all"
-        // Content: its year map, all of it or by tag ("tag|<id>,<id>…").
-        if (body["section"] as? String) == "content" {
-            let tagIDs = pickID.hasPrefix("tag|") ? Set(pickID.dropFirst(4).split(separator: ",").map(String.init)) : nil
-            let map = store.contentHistory(tagIDs: tagIDs, days: Self.historyDays)
-            guard let data = try? JSONEncoder().encode(map), let json = String(data: data, encoding: .utf8),
-                  let requestJSON = Self.json(["section": "content", "pick": pickID]) else { return }
-            webView.evaluateJavaScript("window.activityHistory && window.activityHistory(\(requestJSON), \(json));", completionHandler: nil)
-            return
-        }
-        // Usage: the year map and every day of the range (up to the year).
+        let section = (body["section"] as? String) == "content" ? "content" : "usage"
         let barDays = max(1, min((body["barDays"] as? Int) ?? 1, Self.historyDays))
-        let detail = store.detail(pick: Self.pick(pickID), mapDays: Self.historyDays, barDays: barDays)
-        guard let data = try? JSONEncoder().encode(detail),
-              let json = String(data: data, encoding: .utf8),
-              let requestJSON = Self.json(["section": "usage", "pick": pickID, "barDays": barDays]) else { return }
-        webView.evaluateJavaScript("window.activityHistory && window.activityHistory(\(requestJSON), \(json));", completionHandler: nil)
+        let revision = (historyRevisions[section] ?? 0) &+ 1
+        historyRevisions[section] = revision
+        let request = section == "content" ? ["section": section, "pick": pickID] as [String: Any] : ["section": section, "pick": pickID, "barDays": barDays]
+        guard let requestJSON = Self.json(request) else { return }
+        Task { @MainActor [weak self] in
+            let json = await Task.detached(priority: .userInitiated) { () -> String? in
+                let data: Data?
+                if section == "content" {
+                    let tags = pickID.hasPrefix("tag|") ? Set(pickID.dropFirst(4).split(separator: ",").map(String.init)) : nil
+                    data = try? JSONEncoder().encode(store.contentHistory(tagIDs: tags, days: Self.historyDays))
+                } else {
+                    data = try? JSONEncoder().encode(store.detail(pick: Self.pick(pickID), mapDays: Self.historyDays, barDays: barDays))
+                }
+                return data.flatMap { String(data: $0, encoding: .utf8) }
+            }.value
+            guard let self, self.loaded, self.historyRevisions[section] == revision, let json else { return }
+            self.webView?.evaluateJavaScript("window.activityHistory && window.activityHistory(\(requestJSON), \(json));", completionHandler: nil)
+        }
     }
 
-    private static func pick(_ id: String) -> ActivityStore.DetailPick {
+    nonisolated private static func pick(_ id: String) -> ActivityStore.DetailPick {
         if id.hasPrefix("app|") { return .item(.appUsage, String(id.dropFirst(4))) }
         if id.hasPrefix("web|") { return .item(.webVisit, String(id.dropFirst(4))) }
         if id.hasPrefix("group|") { return .group(String(id.dropFirst(6))) }
@@ -302,15 +313,23 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
     /// The apps and websites a group can hold (seen in the day map's span),
     /// with their icons (the editor shows them).
     private func pushKnownItems() {
-        guard loaded, let store, let webView else { return }
-        let items = store.knownItems(days: Self.historyDays)
-        let web = store.webIcons()
-        var icons: [String: String] = [:]
-        for item in items { if let uri = iconDataURI(id: item.id, web: web) { icons[String(item.id.dropFirst(4))] = uri } }
-        guard let data = try? JSONEncoder().encode(items), let json = String(data: data, encoding: .utf8),
-              let iconsData = try? JSONSerialization.data(withJSONObject: icons),
-              let iconsJSON = String(data: iconsData, encoding: .utf8) else { return }
-        webView.evaluateJavaScript("window.activityKnownItems && window.activityKnownItems(\(json), \(iconsJSON));", completionHandler: nil)
+        guard loaded, let store else { return }
+        knownItemsRevision &+= 1
+        let revision = knownItemsRevision
+        Task { @MainActor [weak self] in
+            let items = await Task.detached(priority: .userInitiated) { store.knownItems(days: Self.historyDays) }.value
+            guard let self, self.loaded, revision == self.knownItemsRevision, let webView = self.webView else { return }
+            let web = store.webIcons()
+            var icons: [String: String] = [:]
+            for (index, item) in items.enumerated() {
+                if let uri = self.iconDataURI(id: item.id, web: web) { icons[String(item.id.dropFirst(4))] = uri }
+                if index % 32 == 0 { await Task.yield(); guard revision == self.knownItemsRevision else { return } }
+            }
+            guard let data = try? JSONEncoder().encode(items), let json = String(data: data, encoding: .utf8),
+                  let iconsData = try? JSONSerialization.data(withJSONObject: icons),
+                  let iconsJSON = String(data: iconsData, encoding: .utf8) else { return }
+            webView.evaluateJavaScript("window.activityKnownItems && window.activityKnownItems(\(json), \(iconsJSON));", completionHandler: nil)
+        }
     }
 
     /// Something outside the page changed Activity (an AI tool edited a group):
@@ -320,18 +339,19 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
     }
 
     /// The day map's span.
-    static let historyDays = 365
+    nonisolated static var historyDays: Int { 365 }
 
     /// Local icons keyed by bar key (bundle id / domain): app icons resolved
     /// from the bundle id via NSWorkspace, website favicons from the store's
     /// local cache (data URIs the extension supplied). No network. Every group
     /// member gets one too (a group's icon is made of its members' icons).
-    private func resolveIcons(snapshot: ActivityDashboardSnapshot, store: ActivityStore) -> [String: String] {
+    private func resolveIcons(snapshot: ActivityDashboardSnapshot, store: ActivityStore) async -> [String: String] {
         let web = store.webIcons()
         var ids = snapshot.app.bars.map { "app|" + $0.key } + snapshot.web.bars.map { "web|" + $0.key }
         for group in snapshot.groups { ids += group.members }
         var icons: [String: String] = [:]
-        for id in ids {
+        for (index, id) in Set(ids).enumerated() {
+            if index % 32 == 0 { await Task.yield() }
             let key = String(id.dropFirst(4))
             if icons[key] == nil, let uri = iconDataURI(id: id, web: web) { icons[key] = uri }
         }

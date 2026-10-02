@@ -344,18 +344,15 @@ public struct NativeVideoTag: Codable, Equatable, Sendable {
         )
     }
 
-    public static func accepted(_ tags: [NativeVideoTag]) -> [NativeVideoTag] {
-        Array(
-            tags
-                .filter {
-                    TagColorAssignment.isValidThemePair(
-                        lightHex: $0.lightColorHex,
-                        darkHex: $0.darkColorHex
-                    )
-                }
-                .prefix(16)
-        )
+    /// Catalog validation has no per-content tag-count limit.
+    public static func catalogAccepted(_ tags: [NativeVideoTag]) -> [NativeVideoTag] {
+        tags.filter { TagColorAssignment.isValidThemePair(lightHex: $0.lightColorHex, darkHex: $0.darkColorHex) }
     }
+
+    public static func accepted(_ tags: [NativeVideoTag]) -> [NativeVideoTag] {
+        Array(catalogAccepted(tags).prefix(16))
+    }
+
 }
 
 // MARK: - In-page tag correction (classifier-taxonomy + submit-correction)
@@ -363,11 +360,23 @@ public struct NativeVideoTag: Codable, Equatable, Sendable {
 /// The predictable tag choices the in-page pill UI offers for one platform.
 public struct NativeClassifierTaxonomyRequest: Codable, Equatable, Sendable {
     public var platformID: String
-    public init(platformID: String) { self.platformID = platformID }
+    public var offset: Int
+    public var limit: Int
+    public var query: String
+    public init(platformID: String, offset: Int = 0, limit: Int = 128, query: String = "") {
+        self.platformID = platformID; self.offset = offset; self.limit = limit; self.query = query
+    }
+    private enum CodingKeys: String, CodingKey { case platformID, offset, limit, query }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(platformID: try c.decode(String.self, forKey: .platformID),
+                  offset: try c.decodeIfPresent(Int.self, forKey: .offset) ?? 0,
+                  limit: try c.decodeIfPresent(Int.self, forKey: .limit) ?? 128,
+                  query: try c.decodeIfPresent(String.self, forKey: .query) ?? "")
+    }
     public func validate() throws {
-        guard NativeVideoTagsRequest.isValidPlatformID(platformID) else {
-            throw NativeVideoTagsError.invalidPlatform
-        }
+        guard NativeVideoTagsRequest.isValidPlatformID(platformID) else { throw NativeVideoTagsError.invalidPlatform }
+        guard offset >= 0, (1...256).contains(limit), query.count <= 200 else { throw NativeBridgePayloadError.invalidPayload }
     }
 }
 
@@ -385,9 +394,25 @@ public struct NativeClassifierTypeTaxonomy: Codable, Equatable, Sendable {
 public struct NativeClassifierTaxonomyResponse: Codable, Equatable, Sendable {
     public var platformID: String
     public var types: [NativeClassifierTypeTaxonomy]
-    public init(platformID: String, types: [NativeClassifierTypeTaxonomy]) {
-        self.platformID = platformID
-        self.types = types
+    public var nextOffset: Int?
+    public var total: Int
+    public init(platformID: String, types: [NativeClassifierTypeTaxonomy], nextOffset: Int? = nil, total: Int? = nil) {
+        self.platformID = platformID; self.types = types; self.nextOffset = nextOffset
+        self.total = total ?? types.reduce(0) { $0 + $1.tags.count }
+    }
+    public static func page(_ types: [NativeClassifierTypeTaxonomy], request: NativeClassifierTaxonomyRequest) -> Self {
+        let query = request.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        var position = 0, page: [NativeClassifierTypeTaxonomy] = []
+        for type in types {
+            var tags: [NativeVideoTag] = []
+            for tag in type.tags where query.isEmpty || tag.name.localizedCaseInsensitiveContains(query) {
+                if position >= request.offset && position - request.offset < request.limit { tags.append(tag) }
+                position += 1
+            }
+            if !tags.isEmpty { page.append(.init(typeID: type.typeID, name: type.name, tags: tags)) }
+        }
+        let next = request.offset < position && position - request.offset > request.limit ? request.offset + request.limit : nil
+        return Self(platformID: request.platformID, types: page, nextOffset: next, total: position)
     }
 }
 
