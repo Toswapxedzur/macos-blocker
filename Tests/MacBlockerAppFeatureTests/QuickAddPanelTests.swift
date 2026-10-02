@@ -20,7 +20,7 @@ final class QuickAddPanelTests: XCTestCase {
 
     func testNeedsAChosenExistingNormalGroup() {
         XCTAssertEqual(QuickAddPanel.target(in: store(enabled: true, groupID: "g1", groups: groups)), "g1")
-        XCTAssertNil(QuickAddPanel.target(in: store(enabled: true, groupID: nil, groups: groups)), "no badge chosen yet")
+        XCTAssertNil(QuickAddPanel.target(in: store(enabled: true, groupID: nil, groups: groups)), "no group selected yet")
         XCTAssertNil(QuickAddPanel.target(in: store(enabled: true, groupID: "gone", groups: groups)), "the chosen group was deleted")
         XCTAssertNil(QuickAddPanel.target(in: store(enabled: true, groupID: "c1", groups: groups)), "custom rules have no entries")
     }

@@ -34,6 +34,19 @@ final class BlockerWebStoreRoutingTests: XCTestCase {
         XCTAssertTrue(json.contains("\"g1\""))
     }
 
+    func testChosenGroupSurvivesNativeStoreReopen() throws {
+        let (webStore, shared, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        webStore.save(rawStore: ["blockedGroups": [["id": "first", "name": "First"], ["id": "second", "name": "Second"]],
+                                 "globalSettings": ["quickAddEnabled": true], "usageTimersMs": ["first": 500]])
+        webStore.merge(changes: ["quickAddGroupId": "second"])
+        let reopened = BlockerWebStore(shared: shared)
+        let json = try XCTUnwrap(reopened.loadRawJSON())
+        let raw = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        XCTAssertEqual(raw["quickAddGroupId"] as? String, "second")
+        XCTAssertEqual((raw["usageTimersMs"] as? [String: Int])?["first"], 500)
+    }
+
     /// Found live on mini1 2026-09-26: the usage writer read the file THROUGH
     /// the shared overlay and wrote it back, baking another device's incomplete
     /// copy into this Mac's group (its Apps entry was lost).
