@@ -29,6 +29,10 @@ public struct LocalBackupConfiguration: Codable, Equatable, Sendable {
         guard !trimmed.isEmpty else { throw LocalBackupError.missingDirectory }
         let url = URL(fileURLWithPath: trimmed).standardizedFileURL
         guard url.isFileURL, url.path != "/" else { throw LocalBackupError.invalidDirectory }
+        #if os(Windows)
+        let localPath = url.path.replacingOccurrences(of: "\\", with: "/")
+        guard localPath.range(of: "^/?[A-Za-z]:/*$", options: .regularExpression) == nil else { throw LocalBackupError.invalidDirectory }
+        #endif
         return url
     }
 }

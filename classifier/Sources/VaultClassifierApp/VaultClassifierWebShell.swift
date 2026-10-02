@@ -64,7 +64,7 @@ final class VaultClassifierWebShell {
 
     /// The page's files (served by the host under "classifier/").
     static var webAssetsDirectory: URL? {
-        Bundle.module.resourceURL?.appendingPathComponent("WebAssets", isDirectory: true)
+        VaultClassifierBundledAssets.directory
     }
 
     static func bundledWebAssetURL(named name: String, extension fileExtension: String) -> URL? {

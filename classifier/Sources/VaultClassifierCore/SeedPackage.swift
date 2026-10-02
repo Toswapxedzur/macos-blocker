@@ -64,8 +64,8 @@ public enum SeedPackageError: Error, LocalizedError, Sendable {
 
 public enum SeedPackageLoader {
     public static func bundled() throws -> VerifiedSeedPackage {
-        guard let packageURL = Bundle.module.url(forResource: "seed-package", withExtension: "json", subdirectory: "Resources"),
-              let checksumURL = Bundle.module.url(forResource: "seed-package", withExtension: "sha256", subdirectory: "Resources") else {
+        guard let packageURL = VaultBundledResources.directory(target: "VaultClassifierCore", subdirectory: "Resources")?.appendingPathComponent("seed-package.json"),
+              let checksumURL = VaultBundledResources.directory(target: "VaultClassifierCore", subdirectory: "Resources")?.appendingPathComponent("seed-package.sha256") else {
             throw SeedPackageError.missingResource("seed-package")
         }
         let data = try Data(contentsOf: packageURL)
