@@ -50,7 +50,9 @@ async function runInfoPopoverTests() {
   const back = q('[data-language-selection]'); back.value = 'en'; back.dispatchEvent(new Event('change', {bubbles:true})); await delay();
   check(q('.vui-info-button'), 'English Info returns after a language change');
   q('[data-action="closeUtilityPanel"]').click(); await delay();
-  testState.workspace = 'knowledge'; pushSnapshot(); await delay(); assertFields();
+  testState.workspace = 'knowledge';
+  testState.assets.knowledge.terms = Array.from({length:6}, (_, i) => ({id:'info-term-'+i, subject:'Term '+i, meaning:'Meaning', writtenByUser:true}));
+  pushSnapshot(); await delay(); assertFields();
   const descriptionInfo = q('[data-form-id="knowledge-term-term-1"] .vui-info-button') ||
     [...scope.querySelectorAll('.knowledge-card .vui-info-button')][0];
   check(descriptionInfo, 'Saved knowledge descriptions have Info');
@@ -64,8 +66,9 @@ async function runInfoPopoverTests() {
   q('[data-utility-panel="settings"]').click(); await delay();
   check(uiErrors.length === 0, 'Info causes no renderer errors');
   q('[data-action="closeUtilityPanel"]').click();
-  testState.workspace = 'knowledge'; pushSnapshot(); await delay();
-  q('[data-info-key="knowledge.search"] .vui-info-button').click(); await delay();
+  testState.workspace = 'knowledge';
+  pushSnapshot(); await delay();
+  q('[data-info-key="list-search:knowledge:term"] .vui-info-button').click(); await delay();
   check(document.querySelector('.vui-info-popover')?.textContent === 'Find saved knowledge by name, identifier, or description.', 'Knowledge search explanation is concise');
   return results;
 }

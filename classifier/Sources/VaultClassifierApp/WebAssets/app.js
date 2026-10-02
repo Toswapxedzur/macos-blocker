@@ -1074,7 +1074,6 @@
   // creators are listed per platform, each with its name and picture. What
   // you write is marked "By you", lookups "Looked up". No source links.
   const KNOWLEDGE_PLATFORMS = [["youtube", "YouTube"], ["bilibili", "Bilibili"], ["reddit", "Reddit"], ["twitter", "X"]];
-  let knowledgeQuery = "";
   let knowledgeAddPlatform = "youtube";
   let knowledgeCreatorDraft = "";
   let knowledgeSuggestionsOpen = false;
@@ -1095,11 +1094,15 @@
         ? (entry.icon ? `<img class="knowledge-face" src="${esc(entry.icon)}" alt="" aria-hidden="true" loading="lazy">` : `<span class="knowledge-face knowledge-face-empty" aria-hidden="true">${esc((name || "?").trim().charAt(0).toUpperCase())}</span>`)
         : "";
       const idLine = kind === "creator" ? `<span class="knowledge-id" dir="auto">${esc(entry.subject)}</span>` : "";
-      const search = `${name} ${entry.subject} ${entry.meaning || ""}`.toLowerCase();
-      return `<article class="knowledge-card" data-form-id="${esc(formID)}" data-knowledge-search="${esc(search)}" data-autosave-action="editKnowledgeEntry" data-id="${esc(entry.id)}"><div class="knowledge-card-head">${face}<span class="knowledge-name"><span class="knowledge-subject" dir="auto">${esc(name)}</span>${idLine}</span>${origin(entry)}</div><label class="field wide"><span class="field-label" ${infoAttrs("knowledge.description")}>${tx("knowledge.description")}</span><textarea data-field="meaning" rows="3" maxlength="2000">${esc(entry.meaning || "")}</textarea></label><div class="action-row"><button class="danger" data-action="deleteKnowledgeEntry" data-id="${esc(entry.id)}">${deleteLabel(`knowledge:${entry.id}`, tx("knowledge.delete"))}</button></div></article>`;
+      const searchName = `${name} ${entry.subject}`;
+      const search = `${searchName} ${entry.meaning || ""}`;
+      return `<article class="knowledge-card" data-form-id="${esc(formID)}" data-knowledge-search-name="${esc(searchName)}" data-vui-search-text="${esc(search)}" data-autosave-action="editKnowledgeEntry" data-id="${esc(entry.id)}"><div class="knowledge-card-head">${face}<span class="knowledge-name"><span class="knowledge-subject" dir="auto">${esc(name)}</span>${idLine}</span>${origin(entry)}</div><label class="field wide"><span class="field-label" ${infoAttrs("knowledge.description")}>${tx("knowledge.description")}</span><textarea data-field="meaning" rows="3" maxlength="2000">${esc(entry.meaning || "")}</textarea></label><div class="action-row"><button class="danger" data-action="deleteKnowledgeEntry" data-id="${esc(entry.id)}">${deleteLabel(`knowledge:${entry.id}`, tx("knowledge.delete"))}</button></div></article>`;
     };
 
-    const group = (title, hint, items, kind) => `<section class="knowledge-group" data-knowledge-group><div class="section-header"><div><h3>${esc(title)} <span class="knowledge-count" data-knowledge-count>${items.length}</span></h3>${hint ? `<p class="section-copy" data-info>${esc(hint)}</p>` : ""}</div></div>${items.length ? `<div class="knowledge-list vui-list-box" data-list-key="knowledge:${kind}:${esc(title)}" tabindex="0" aria-label="${esc(title)}">${items.map((entry) => entryCard(entry, kind)).join("")}</div>` : `<div class="empty">${tx("knowledge.empty")}</div>`}</section>`;
+    const group = (title, hint, items, kind, platformID = "") => {
+      const key = `knowledge:${kind}${platformID ? `:${platformID}` : ""}`;
+      return `<section class="knowledge-group" data-knowledge-group><div class="section-header"><div><h3>${esc(title)} <span class="knowledge-count" data-knowledge-count>${items.length}</span></h3>${hint ? `<p class="section-copy" data-info>${esc(hint)}</p>` : ""}</div></div>${items.length ? `<div class="knowledge-list vui-list-box" data-list-key="${key}" data-vui-search="${key}" data-vui-search-items=".knowledge-card" data-vui-search-label="${tx("knowledge.search")} · ${esc(title)}" data-vui-search-copy="${esc(fieldInfo["knowledge.search"])}" tabindex="0" aria-label="${esc(title)}">${items.map((entry) => entryCard(entry, kind)).join("")}</div>` : `<div class="empty">${tx("knowledge.empty")}</div>`}</section>`;
+    };
 
     // Terms are only ever added here, by the user: name the term, and either
     // write what it means or leave that blank to have it looked up.
@@ -1109,28 +1112,24 @@
     // one already seen (suggested as you type).
     const addCreator = `<section class="knowledge-group" data-form-id="knowledge-add-creator"><div class="section-header"><div><h3>${tx("knowledge.addCreator")}</h3><p class="section-copy" data-info>${tx("knowledge.addCreatorHint")}</p></div></div><div class="form-stack">${valueSelectField("knowledge.platform", "", "platformID", knowledgeAddPlatform, KNOWLEDGE_PLATFORMS, "data-knowledge-platform")}<label class="field"><span class="field-label">${tx("knowledge.creator")}<span class="field-hint" data-info> · ${tx("knowledge.creatorHint")}</span></span><input type="text" data-field="creator" data-knowledge-creator value="${esc(knowledgeCreatorDraft)}" maxlength="512" autocomplete="off" spellcheck="false"></label><div class="knowledge-suggestions vui-menu" data-knowledge-suggestions></div><label class="field wide"><span class="field-label" ${infoAttrs("knowledge.description")}>${tx("knowledge.description")}</span><textarea data-field="meaning" rows="2" maxlength="2000" placeholder="${tx("knowledge.creatorMeaningPlaceholder")}"></textarea></label><div class="action-row"><button class="primary" data-action="addKnowledgeCreator" data-form="knowledge-add-creator">${tx("knowledge.addCreatorButton")}</button></div></div></section>`;
 
-    const searchBox = `<label class="field knowledge-search"><span class="field-label" ${infoAttrs("knowledge.search")}>${tx("knowledge.search")}</span><input type="search" data-knowledge-search-input value="${esc(knowledgeQuery)}" autocomplete="off" spellcheck="false"></label>`;
     const creatorGroups = KNOWLEDGE_PLATFORMS.map(([platformID, label]) =>
-      group(t("knowledge.creatorsOn", { platform: label }), "", creators.filter((entry) => entry.platformID === platformID), "creator")).join("");
+      group(t("knowledge.creatorsOn", { platform: label }), "", creators.filter((entry) => entry.platformID === platformID), "creator", platformID)).join("");
 
-    return `<div class="workspace knowledge-workspace">${header("knowledge.title", "knowledge.copy", tx("knowledge.badge"), "gold")}<div class="notice navy" data-info="knowledge.disclosure">${tx("knowledge.disclosure")}</div>${connection}${notice(state.notices?.knowledge, "navy")}${notice(state.issue, "red")}${addTerm}${addCreator}${searchBox}${group(t("knowledge.terms"), t("knowledge.termsHint"), terms, "term")}<p class="small-copy" data-info="knowledge.creatorsHint">${tx("knowledge.creatorsHint")}</p>${creatorGroups}</div>`;
+    return `<div class="workspace knowledge-workspace">${header("knowledge.title", "knowledge.copy", tx("knowledge.badge"), "gold")}<div class="notice navy" data-info="knowledge.disclosure">${tx("knowledge.disclosure")}</div>${connection}${notice(state.notices?.knowledge, "navy")}${notice(state.issue, "red")}${addTerm}${addCreator}${group(t("knowledge.terms"), t("knowledge.termsHint"), terms, "term")}<p class="small-copy" data-info="knowledge.creatorsHint">${tx("knowledge.creatorsHint")}</p>${creatorGroups}</div>`;
   }
 
-  // Show only the cards matching the search (no re-render: nothing is lost
-  // while typing) and keep each group's count honest.
-  function applyKnowledgeSearch() {
-    const query = knowledgeQuery.trim().toLowerCase();
-    root.querySelectorAll("[data-knowledge-group]").forEach((groupElement) => {
-      let shown = 0;
-      groupElement.querySelectorAll("[data-knowledge-search]").forEach((card) => {
-        const match = !query || card.dataset.knowledgeSearch.includes(query);
-        card.hidden = !match;
-        if (match) shown += 1;
-      });
-      const count = groupElement.querySelector("[data-knowledge-count]");
-      if (count && groupElement.querySelector("[data-knowledge-search]")) count.textContent = String(shown);
-    });
+  // Each platform and Terms share the standard per-list search. Keep names,
+  // identifiers and the currently edited description searchable without a render.
+  function updateKnowledgeSearchText(card) {
+    card.dataset.vuiSearchText = `${card.dataset.knowledgeSearchName} ${card.querySelector('[data-field="meaning"]').value}`;
   }
+
+  scope.addEventListener("vui-search-filtered", (event) => {
+    if (!event.target.matches(".knowledge-list")) return;
+    const count = event.target.closest("[data-knowledge-group]").querySelector("[data-knowledge-count]");
+    const { query, shown, total } = event.detail;
+    count.textContent = query ? `${shown} / ${total}` : String(total);
+  }, true);
 
   // "Add a creator" suggestions: creators already collected on the chosen
   // platform whose name contains what is typed.
@@ -1256,10 +1255,10 @@
 
   scope.addEventListener("input", (event) => {
     if (!event.isComposing) queueLiveEdit(event.target);
-    const knowledgeSearch = event.target.closest("input[data-knowledge-search-input]");
-    if (knowledgeSearch) {
-      knowledgeQuery = knowledgeSearch.value;
-      applyKnowledgeSearch();
+    const knowledgeCard = event.target.closest(".knowledge-card");
+    if (knowledgeCard && event.target.matches('[data-field="meaning"]')) {
+      updateKnowledgeSearchText(knowledgeCard);
+      window.VaultUI.refreshList(knowledgeCard.parentElement);
       return;
     }
     const creatorInput = event.target.closest("input[data-knowledge-creator]");
@@ -1357,7 +1356,7 @@
     replacingControls = false;
     lastRenderedMarkup = markup;
     bindTreeMapWheel();
-    applyKnowledgeSearch();
+    root.querySelectorAll(".knowledge-card").forEach(updateKnowledgeSearchText);
     if (knowledgeSuggestionsOpen) {
       const creator = root.querySelector("[data-knowledge-creator]");
       if (creator) showKnowledgeSuggestions(creator);
