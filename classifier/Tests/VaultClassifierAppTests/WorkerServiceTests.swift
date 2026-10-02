@@ -15,6 +15,26 @@ final class WorkerServiceTests: XCTestCase {
     }
     private func worker() throws -> VaultClassifierWorkerService { try .init(testingDirectory: directory, emit: { _ in }) }
     private func object(_ value: Any) throws -> [String: Any] { try XCTUnwrap(value as? [String: Any]) }
+
+    func testOversizedWorkerResponseIsRefusedWithItsRequestIDAndNoPartialState() throws {
+        let frame = VaultClassifierWorkerWire.encoded(["id": "large", "ok": true,
+            "value": ["large": String(repeating: "x", count: VaultClassifierWorkerWire.maximumFrameBytes)]])
+        let refusal = try object(JSONSerialization.jsonObject(with: frame))
+        XCTAssertEqual(refusal["id"] as? String, "large")
+        XCTAssertEqual(refusal["ok"] as? Bool, false)
+        XCTAssertEqual(refusal["error"] as? String, "worker-response-too-large")
+        XCTAssertNil(refusal["value"])
+        XCTAssertLessThan(frame.count, 512)
+    }
+
+    func testInvalidWorkerEventProducesABoundedExplicitError() throws {
+        let frame = VaultClassifierWorkerWire.encoded(["event": "activity", "value": Double.nan])
+        let refusal = try object(JSONSerialization.jsonObject(with: frame))
+        XCTAssertEqual(refusal["event"] as? String, "error")
+        XCTAssertEqual(refusal["sourceEvent"] as? String, "activity")
+        XCTAssertEqual(refusal["error"] as? String, "worker-response-invalid")
+        XCTAssertNil(refusal["value"])
+    }
     private func activity(_ service: VaultClassifierWorkerService, _ body: [String: Any]) async throws -> [String: Any] {
         try object(await service.handle(operation: "activity", data: body))
     }
@@ -38,6 +58,9 @@ final class WorkerServiceTests: XCTestCase {
         XCTAssertEqual(knowledge["paged"] as? Bool, true)
         XCTAssertEqual((knowledge["terms"] as? [[String: Any]])?.count, 0)
         XCTAssertEqual((knowledge["counts"] as? [String: Int])?["term"], 130)
+        let full = try object(await service.handle(operation: "mcp", data: ["kind": "state", "section": "all"]))
+        let fullKnowledge = try object(try object(full["assets"] as Any)["knowledge"] as Any)
+        XCTAssertEqual((fullKnowledge["terms"] as? [[String: Any]])?.count, 130)
         var request: [String: Any] = ["requestID": "page", "kind": "term", "platformID": "", "query": "", "offset": 128, "limit": 64]
         let answer = try object(await service.handle(operation: "action", data: ["action": "knowledgePage", "data": request]))
         let page = try object(answer["list"] as Any)
