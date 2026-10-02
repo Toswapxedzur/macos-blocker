@@ -1,5 +1,4 @@
 import Foundation
-import CoreFoundation
 import VaultClassifierCore
 import VaultClassifierResearch
 import VaultClassifierBridge
@@ -156,7 +155,7 @@ extension VaultClassifierViewModel {
             guard let value = data[key], !(value is NSNull) else { return nil }
             let raw: String
             if let text = value as? String { raw = text.trimmingCharacters(in: .whitespacesAndNewlines) }
-            else if let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() { raw = number.stringValue }
+            else if let number = value as? NSNumber, !Self.isJSONBoolean(number) { raw = number.stringValue }
             else { throw WebBridgeInputError.invalidChoice(key) }
             if raw.isEmpty { return nil }
             guard let count = Int(raw), range.contains(count) else { throw WebBridgeInputError.invalidChoice(key) }
@@ -169,6 +168,15 @@ extension VaultClassifierViewModel {
         }
         return .init(typeID: typeID, settings: .init(speedQuality: speedQuality, strictness: strictness,
             houseRules: houseRules, minimumTagsOverride: minimum, maximumTagsOverride: maximum))
+    }
+
+    /// Foundation preserves JSON's boolean/number distinction on every host.
+    /// A cast to Bool also accepts numeric 0/1 on Apple platforms, so it cannot
+    /// validate a tag-count field; Windows does not expose CoreFoundation.
+    nonisolated private static func isJSONBoolean(_ value: NSNumber) -> Bool {
+        guard let data = try? JSONSerialization.data(withJSONObject: [value]),
+              let json = String(data: data, encoding: .utf8) else { return false }
+        return json == "[true]" || json == "[false]"
     }
 
     /// The per-type research form: `researchMode` is "inherit", "on" or "off".
