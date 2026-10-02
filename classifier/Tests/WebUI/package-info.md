@@ -73,4 +73,4 @@ mini1 with `UI_TEST_SCRIPT=classifier/Tests/WebUI/tag-bounds.js` and
 
 `list-search.js` verifies provider filters, open dropdown rebinding during snapshots, query/caret preservation, and tag-tree Find/highlight/jump without mutations. Run on mini1 with `UI_TEST_SCRIPT=classifier/Tests/WebUI/list-search.js UI_TEST_EXPRESSION='runListSearchTests()'` through `autosave.mjs`.
 
-`list-performance.js` checks 10,000-source/term lazy rendering, complete searches, and draft/caret preservation through the existing autosave runner. Use `UI_TEST_EXPRESSION=runListPerformanceTests()`.
+`list-performance.js` checks 10,000-source/term/graph/option bounded rendering, complete searches, and draft/caret preservation through the existing autosave runner. Use `UI_TEST_EXPRESSION=runListPerformanceTests()`.

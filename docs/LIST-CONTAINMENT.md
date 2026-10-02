@@ -41,8 +41,7 @@ Fixed menus (days, recording switches, platforms, model tiers, strictness and
 languages) and capped creator suggestions (six, in an anchored floating menu) cannot
 accumulate arbitrary entries. Manual text and input fields are not growing
 collections. The floating timer HUD is a separate noninteractive surface;
-its mouse-input policy needs an owner decision before adding interactive
-scrolling.
+it remains fully click-through (owner confirmed 2026-10-02).
 
 ## Verification
 
@@ -88,3 +87,40 @@ Mini1 regressions: browser `tests/popup-search.js` and
 `tests/browser-panel-search.py`; Mac `classifier/Tests/WebUI/list-search.js`
 and `Tests/WebUI/activity-search.js`, through the existing fixture runner at
 wide/narrow widths. Native selects remain in their bounded floating popover.
+
+
+## Growing-list performance (2026-10-02)
+
+Containment now bounds mounted work as well as visible size. Variable-height
+editor cards/chips and Activity rows use pages of 40; Knowledge and provider
+profiles use 12; app/member pickers use 60. Searches cover the full backing
+collection, yield between chunks, and retain query/page/draft/focus state.
+Deletion clamps and refetches the last native page; query failures offer Retry.
+No stored entries are truncated. Controls and headings stay outside list boxes.
+
+Long shared selects retain the complete model but mount only the chosen native
+option and 40 menu results. Knowledge pages/search execute off MainActor, and
+UI snapshots omit complete Knowledge collections and provider request records;
+MCP retains its complete data contract. Activity range/history aggregation runs
+off MainActor, while native icon resolution yields in bounded chunks.
+
+Large tag graphs mount viewport nodes/edges. Dense day timelines and strips
+use canvas with indexed viewport queries and original per-record hover data.
+Native panel stacks use ScrollView/LazyVStack; browser panels defer offscreen
+paint and construct in chunks. Timers avoid rebuilding unchanged rows; native
+large timer formatting runs off MainActor. Both timer surfaces stay click-through.
+
+Feed parsing/filtering scans changed card roots, handles all matching cards,
+and yields after 32 cards. Full scans remain necessary on navigation or policy
+changes. Taxonomy transport pages through all tags; the 16-tag limit applies
+only to tags attached to one content item.
+
+These changes bound DOM and synchronous rendering work; initial data transfer,
+filtering, sorting and aggregate calculations still grow with stored data.
+They do not promise constant total time or zero memory growth.
+
+Mini1 regressions: `classifier/Tests/WebUI/list-performance.js`,
+`Tests/WebUI/activity-performance.js`, existing containment/search/autosave
+fixtures, native suites, and the sibling Chromium performance/feed suites.
+Synthetic 10,000-entry fixtures check final-entry access, bounded DOM,
+draft/caret/page preservation and exact chart hover identities.
