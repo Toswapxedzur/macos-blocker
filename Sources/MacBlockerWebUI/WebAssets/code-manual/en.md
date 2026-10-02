@@ -4,7 +4,7 @@
 
 ## Rule contract
 
-Source: one function expression `(on, v) => { ... }`. Only synchronous JavaScript and the API below are supported; no timers, network, native system APIs or browser-page access. Time-based rules use `ev.now` and events. Safari rules use the browser code manual, even when Mac Vault hosts their engine.
+Source: one function expression `(on, v) => { ... }`. Only synchronous JavaScript and the API below are supported; no timers, network, native system APIs or browser-page access. Time-based rules use `ev.now` and events. Safari rules use the browser code manual and run in Safari Vault's own containing app.
 
 - Editing saves a draft; **Run** activates it and enables the group. Frozen groups cannot Run. Empty source unloads the rule.
 - Successful Run replaces handlers/panels and clears this group's app-block set, preserving `v.state`. Compilation/registration failure keeps the previous rule; a timeout can stop it. Restart registers the last activated source again; closure variables and app-block sets reset.

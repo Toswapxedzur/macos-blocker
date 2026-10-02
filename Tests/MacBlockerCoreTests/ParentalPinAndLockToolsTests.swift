@@ -29,7 +29,7 @@ final class ParentalPinAndLockToolsTests: XCTestCase {
     func testTheBundledRulesAreTheEditorsFiles() throws {
         // sync-webui.sh copies them; a stale copy would run other rules.
         let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        for name in ["group-actions.js", "parental-pin.js", "group-scopes.js", "platform-profiles.js", "rule-core.js", "event-sandbox.js"] {
+        for name in ["group-actions.js", "parental-pin.js", "group-scopes.js", "platform-profiles.js", "rule-core.js"] {
             let canonical = repo.deletingLastPathComponent().appendingPathComponent("customBlocker/\(name)")
             guard FileManager.default.fileExists(atPath: canonical.path) else { continue }
             let bundled = repo.appendingPathComponent("Sources/MacBlockerCore/Resources/\(name)")
