@@ -50,7 +50,10 @@ final class WorkerServiceTests: XCTestCase {
         let web: [String: Any] = ["id": "visit", "category": "web-visit", "key": "example.test", "label": "example.test", "seconds": 15, "startedAtMs": date]
         XCTAssertEqual(try activity(service, ["kind": "browser-record", "body": ["records": [web]]])["accepted"] as? Int, 0)
         _ = try activity(service, ["kind": "setSettings", "category": "web-visit", "enabled": true])
-        XCTAssertEqual(try activity(service, ["kind": "browser-record", "body": ["records": [web]]])["accepted"] as? Int, 1)
+        let icon = "data:image/png;base64,fixture"
+        XCTAssertEqual(try activity(service, ["kind": "browser-record", "body": ["records": [web], "icons": ["example.test": icon]]])["accepted"] as? Int, 1)
+        let iconPayload = try object(try activity(service, ["kind": "snapshot"])["icons"] as Any)
+        XCTAssertEqual(iconPayload["example.test"] as? String, icon)
         XCTAssertEqual(try activity(service, ["kind": "browser-record", "body": ["records": [web]]])["accepted"] as? Int, 0)
         _ = try activity(service, ["kind": "setSettings", "category": "app-usage", "enabled": true])
         var forged = web; forged["id"] = "forged"; forged["category"] = "app-usage"
