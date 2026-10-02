@@ -33,3 +33,5 @@
 - List search: shared controls sync from the sibling extension source; Classifier provider/tag-tree and Activity list metadata select the searchable collections. Coverage and owner cutoff are in `docs/LIST-CONTAINMENT.md`.
 
 - **Portable Activity core (2026-10-02):** canonical Activity models/store/wire/dashboard/groups/accumulator live in `classifier/Sources/VaultActivityCore/` and are re-exported by MacBlockerCore. Mac support-directory selection stays in `Sources/MacBlockerCore/MacActivityStore.swift`; the Windows worker uses its isolated Windows data root.
+
+- **Native manual fallback (2026-10-02):** translated native references containing the retired helper/shield API are removed. The shared viewer falls back to the current English user/code manuals until the separate translation batch regenerates current native references. UI language catalogs stay canonical and synchronized.

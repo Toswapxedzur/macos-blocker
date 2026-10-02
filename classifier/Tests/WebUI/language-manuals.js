@@ -30,5 +30,12 @@ async function runLanguageManualTests() {
   let copied;Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{copied=text;}}});
   document.getElementById('copyCodeDocsButton').click();await delay();
   check(copied?.startsWith('# Mac Vault code manual') && copied.includes('v.block(appId'), 'Mac Copy code docs uses the native app API');
+  await setLanguage('zh');
+  document.querySelector('[data-scene="activity"]').click();await delay();
+  activity.querySelector('#activityManualButton').click();await delay();
+  const fallback=document.getElementById('manualContent');
+  check([...fallback.querySelectorAll('h2')].some(node=>node.textContent==='Classifier'), 'Missing native translation falls back to the current English guide');
+  check(!fallback.textContent.includes('focusEvent') && !fallback.textContent.includes('setShieldMessage'), 'Fallback manual never teaches the retired native rule API');
+  document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await delay();
   return results;
 }
