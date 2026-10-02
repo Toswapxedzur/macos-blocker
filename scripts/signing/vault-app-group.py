@@ -101,7 +101,7 @@ def verify(args):
         raise ValueError('Mac Vault signing identity and provisioning profile belong to different developer teams.')
     with tempfile.TemporaryDirectory(prefix='vault-signing-certificate-') as temporary:
         prefix = pathlib.Path(temporary) / 'certificate'
-        subprocess.run(['codesign', '-d', '--extract-certificates', str(prefix), str(args.app)], capture_output=True, check=True)
+        subprocess.run(['codesign', '-d', '--extract-certificates=' + str(prefix), str(args.app)], capture_output=True, check=True)
         if prefix.with_name(prefix.name + '0').read_bytes() not in profile['DeveloperCertificates']:
             raise ValueError('The Mac Vault profile does not authorize the actual signing certificate.')
     result = subprocess.run(['codesign', '-d', '--entitlements', ':-', str(args.app)], capture_output=True, check=True)
