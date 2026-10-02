@@ -171,6 +171,10 @@ final class VaultClassifierWebShell {
                     return
                 }
                 if self.model.performWebAction(action, data: data) {
+                    if action == "editKnowledgeEntry", let id = data["id"] as? String,
+                       let script = self.model.knowledgeEditAcknowledgement(id: id) {
+                        self.webView?.evaluateJavaScript(script, completionHandler: nil)
+                    }
                     // Warm the newly loaded renderer even while its scene is
                     // hidden. Later background updates retain normal batching.
                     if action == "state", !self.initialStateSent,
