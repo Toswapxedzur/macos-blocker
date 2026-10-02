@@ -244,6 +244,9 @@ public struct PanelControlSnapshot: Codable, Equatable, Sendable {
 public struct PanelSnapshot: Codable, Equatable, Sendable {
     public var id: String
     public var groupId: String?
+    /// A rule owns its panel IDs. The native renderer combines the owner and
+    /// local ID so another group's same-named panel retains independent input.
+    public var presentationIdentity: [String] { [groupId ?? "", id] }
     public var title: String?
     public var description: String?
     public var position: String?
