@@ -921,7 +921,7 @@ struct PanelOverlayView: View {
         let snapshots = model.panels
         ScrollView(.vertical) {
             LazyVStack(alignment: stackAlignment, spacing: 8) {
-                ForEach(snapshots, id: \.id) { snapshot in
+                ForEach(snapshots, id: \.presentationIdentity) { snapshot in
                     PanelCardView(snapshot: snapshot) { panelId, controlId, eventName, value, extra in
                         let groupId = snapshot.groupId ?? ""
                         model.onEvent?(groupId, panelId, controlId, eventName, value, extra)
@@ -1017,7 +1017,8 @@ public final class PanelOverlayPanelController {
         // identical layout (avoids needless re-renders / input churn).
         var byPosition: [String: [PanelSnapshot]] = [:]
         for groupID in panelsByGroup.keys.sorted() {
-            for panel in panelsByGroup[groupID] ?? [] {
+            for var panel in panelsByGroup[groupID] ?? [] {
+                panel.groupId = groupID
                 let pos = panel.position ?? "bottom-right"
                 byPosition[pos, default: []].append(panel)
             }
