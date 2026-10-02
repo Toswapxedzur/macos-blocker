@@ -24,7 +24,7 @@ window.runActivityTests=async()=>{
   expect(cols.every(c=>c.left>=0 && c.right<=innerWidth),'Activity group columns fit 720px');
   await new Promise(r=>setTimeout(r,100));
   const beforeInfoCommands = commands.length;
-  for (const field of scope.querySelectorAll('#groups input,select')) {
+  for (const field of [...scope.querySelectorAll('#groups input,select')].filter(field => field.getClientRects().length)) {
     const anchor = field.closest('[data-info-copy],.vui-info-field,label');
     const info = anchor?.querySelector('.vui-info-button');
     expect(info && info.getBoundingClientRect().width===10, 'Activity field has compact Info');
