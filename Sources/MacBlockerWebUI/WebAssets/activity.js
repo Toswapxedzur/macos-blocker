@@ -34,6 +34,7 @@
   // Groups (owner 2026-09-29): member id -> its merge group, for this render.
   var mergeOf = {};
   var editing = null;        // { id, name, merge, members, message, conflicts }
+  var knownItemByID = new Map();
   var knownItems = null;     // what a group can hold (Mac Vault's list)
   var groupSearch = "";
   var armedDeletes = new Map();
@@ -107,6 +108,11 @@
     node.dataset.vuiSearchLabel = label;
     node.dataset.vuiSearchItems = items;
     return node;
+  }
+
+  function paged(list, items, text, render, pageSize) {
+    return window.VaultUI.renderList(list, { scope: scope, key: list.dataset.vuiSearch,
+      items: items, text: text, render: render, pageSize: pageSize || 40 });
   }
 
   function textButton(label, onClick, cls) { var b = el("button", cls || null, label); b.type = "button"; b.addEventListener("click", onClick); return b; }
@@ -648,7 +654,7 @@
     body.appendChild(chart);
     var legend = el("div", "pie-legend");
     searchable(legend, searchKey, "Search chart items", ".legend-item");
-    slices.forEach(function (slice) {
+    paged(legend, slices, function (slice) { return slice.label; }, function (slice) {
       var item = el("div", "legend-item");
       item.dataset.vuiSearchText = slice.label;
       hoverable(item, sliceInfo(slice));
@@ -657,7 +663,7 @@
       item.appendChild(dot);
       item.appendChild(el("span", "legend-label", slice.label));
       item.appendChild(el("span", "legend-note", Math.round((slice.seconds / total) * 100) + "%"));
-      legend.appendChild(item);
+      return item;
     });
     body.appendChild(legend);
     wrap.appendChild(body);
@@ -671,7 +677,7 @@
   function memberLabel(id) {
     var entry = usageItemsRaw.filter(function (x) { return entryID(x) === id; })[0];
     if (entry) return entry.item.label || entry.item.key;
-    var known = (knownItems || []).filter(function (item) { return item.id === id; })[0];
+    var known = knownItemByID.get(id);
     if (known) return known.label;
     return id.indexOf("app|") === 0 ? id.slice(4).split(".").pop() : id.slice(4);
   }
@@ -681,7 +687,7 @@
   }
 
   window.activityKnownItems = function (list, iconMap) {
-    knownItems = list || [];
+    knownItems = list || []; knownItemByID = new Map(knownItems.map(item => [item.id, item]));
     knownIcons = iconMap || {};
     if (editing) refreshGroups();
   };
@@ -720,10 +726,14 @@
     if (!editing) head.appendChild(textButton("New group", function () { openEditor(null); }, "head-button"));
     box.appendChild(head);
     if (editing) { box.appendChild(groupForm()); return box; }
+    var usageSeconds = new Map();
+    usageItemsRaw.forEach(function (entry) {
+      var id = entryID(entry);
+      usageSeconds.set(id, (usageSeconds.get(id) || 0) + entry.seconds);
+    });
     var list = groupsList().map(function (g) {
-      var seconds = usageItemsRaw.reduce(function (sum, entry) {
-        return g.members.indexOf(entryID(entry)) >= 0 ? sum + entry.seconds : sum;
-      }, 0);
+      var seconds = 0;
+      new Set(g.members).forEach(function (id) { seconds += usageSeconds.get(id) || 0; });
       return { g: g, seconds: seconds };
     }).sort(function (x, y) { return y.seconds - x.seconds; });   // merge or not, by time (owner 2026-09-30)
     if (!list.length) {
@@ -733,7 +743,7 @@
     var cards = el("div", "group-cards");
     searchable(cards, "activity-groups", "Search groups", ".group-card");
     var top = Math.max.apply(null, list.map(function (x) { return x.seconds; }).concat([1]));
-    list.forEach(function (x) {
+    paged(cards, list, function (x) { return x.g.name; }, function (x) {
       var g = x.g;
       var card = el("div", usageFocus === "group|" + g.id ? "group-card is-focus" : "group-card");
       card.dataset.vuiSearchText = g.name;
@@ -754,7 +764,7 @@
       var edit = textButton("Edit", function (event) { event.stopPropagation(); openEditor(g); }, "secondary");
       foot.appendChild(edit);
       card.appendChild(foot);
-      cards.appendChild(card);
+      return card;
     });
     box.appendChild(cards);
     return box;
@@ -768,9 +778,9 @@
       var focus = captureGroupFocus(old);
       var positions = captureGroupScrolls(old), next = groupsPanel();
       old.replaceWith(next);
-      restoreGroupScrolls(next, positions);
       restoreGroupFocus(next, focus);
       window.VaultUI.restoreSearch(scope, searchFocus);
+      restoreGroupScrolls(next, positions);
     }
   }
 
@@ -801,6 +811,9 @@
 
   function restoreGroupScrolls(panel, positions) {
     if (!panel || !positions || panel.dataset.editingId !== positions.editingId) return;
+    // Info enhancement removes inline help from the flex columns. Complete it
+    // before setting scroll positions so the final viewport does not clamp them.
+    window.VaultInfo.refresh(scope);
     Object.keys(positions.lists).forEach(function (name) {
       var list = panel.querySelector("." + name), position = positions.lists[name];
       if (list) { list.scrollLeft = position[0]; list.scrollTop = position[1]; }
@@ -836,7 +849,7 @@
     chips.tabIndex = 0;
     chips.setAttribute("aria-label", "Members");
     if (!editing.members.length) chips.appendChild(el("span", "vui-muted", "No members yet."));
-    editing.members.forEach(function (id) {
+    paged(chips, editing.members, function (id) { return memberLabel(id) + " " + id; }, function (id) {
       var chip = el("span", "chip");
       chip.dataset.vuiSearchText = memberLabel(id) + " " + id;
       chip.appendChild(icon(id.slice(4), memberLabel(id)));
@@ -846,7 +859,7 @@
         editing.members = editing.members.filter(function (m) { return m !== id; });
         refreshGroups();
       }, "chip-remove"));
-      chips.appendChild(chip);
+      return chip;
     });
     second.appendChild(infoField(el("div", "chart-subtitle", "Members"), "activity-group-members", "Members", "The apps and websites included in this Activity group. Add from the search results or remove with the cross, then click Save."));
     second.appendChild(chips);
@@ -862,11 +875,12 @@
       found.textContent = "";
       if (!knownItems) { found.appendChild(el("p", "empty", "Loading…")); return; }
       var q = groupSearch.trim().toLowerCase();
+      var selected = new Set(editing.members);
       var matches = knownItems.filter(function (item) {
-        return editing.members.indexOf(item.id) < 0 && (!q || (item.label + " " + item.id).toLowerCase().indexOf(q) >= 0);
-      }).slice(0, 60);
+        return !selected.has(item.id) && (!q || (item.label + " " + item.id).toLowerCase().indexOf(q) >= 0);
+      });
       if (!matches.length) found.appendChild(el("p", "empty", q ? "Nothing matches." : "Everything is in."));
-      matches.forEach(function (item) {
+      window.VaultUI.renderList(found, { scope: scope, key: "activity-member-results", searchable: false, items: matches, text: item => item.label + " " + item.id, pageSize: 60, render: function (item) {
         var line = el("button", "member-row");
         line.type = "button";
         line.appendChild(icon(item.id.slice(4), item.label));
@@ -879,8 +893,8 @@
           var again = scope.querySelector("#groups input[type=search]");
           if (again) again.focus();
         });
-        found.appendChild(line);
-      });
+        return line;
+      } });
     }
     search.addEventListener("input", function () { groupSearch = search.value; fill(); });
     fill();
@@ -1030,8 +1044,34 @@
     return { node: scroller, track: track, span: span, multiDay: days > 1 };
   }
 
+  function stripCanvas(frame, entries, height) {
+    const chart = svg("svg", { height }); chart.style.cssText = "position:absolute;left:0;top:0;height:100%;width:100%";
+    const layer = svg("g"); chart.appendChild(layer); frame.track.appendChild(chart);
+    const ordered = entries.map((entry, order) => ({ ...entry, order })).sort((a,b) => a.from - b.from), prefix = [];
+    ordered.forEach((entry, index) => prefix.push(Math.max(entry.to, prefix[index - 1] || 0)));
+    let previous = "";
+    const lower = (value, getter) => { let lo = 0, hi = ordered.length; while (lo < hi) { const mid = (lo + hi) >> 1; if (getter(mid) < value) lo = mid + 1; else hi = mid; } return lo; };
+    frame.node.__updateStripWindow = () => {
+      const width = frame.track.clientWidth || parseFloat(frame.track.style.width) || window.innerWidth;
+      const left = Math.max(0, frame.node.scrollLeft - 200), visibleWidth = (frame.node.clientWidth || window.innerWidth) + 400;
+      const key = width + ":" + Math.floor(left / 100);
+      if (key === previous) return; previous = key;
+      const first = lower(left / width, index => prefix[index]), last = lower((left + visibleWidth) / width, index => ordered[index].from);
+      layer.replaceChildren(); layer.__dayRects = ordered.slice(first, last).sort((a,b) => a.order - b.order).map(entry => ({attrs:{x:entry.from * width,y:0,width:Math.max(2,(entry.to-entry.from)*width),height:entry.height || height,fill:entry.color},info:entry.info}));
+      chart.setAttribute("width", width); chart.setAttribute("viewBox", "0 0 " + width + " " + height);
+      paintDayRects(layer, chart, left, visibleWidth);
+    };
+    let scheduled = false;
+    frame.node.addEventListener("scroll", () => { if (scheduled) return; scheduled = true; requestAnimationFrame(() => { scheduled = false; frame.node.__updateStripWindow(); }); }, {passive:true});
+    frame.node.__updateStripWindow(); requestAnimationFrame(frame.node.__updateStripWindow);
+    return frame.node;
+  }
   function usageStrip(data) {
     var f = stripFrame(44, snapshot);
+    if (data.segments.length + data.pieces.length > 128) return stripCanvas(f, [
+      ...data.segments.map(s => ({from:s.startFraction,to:s.startFraction+s.widthFraction,color:colorOf(colorIndexFor("app",s.key,s.colorIndex)),info:()=>segmentInfo(s,BROWSERS[s.key] ? "App · browser" : "App",s.startedAtMs,s.startedAtMs+s.seconds*1000,f.multiDay)})),
+      ...data.pieces.map(piece => ({from:piece.from,to:piece.to,height:44*.85,color:colorOf(colorIndexFor("web",piece.site.key,piece.site.colorIndex)),info:()=>segmentInfo(piece.site,"Website",snapshot.rangeStartMs+piece.from*f.span,snapshot.rangeStartMs+piece.to*f.span,f.multiDay,piece.browser)}))
+    ],44);
     data.segments.forEach(function (s) {
       var seg = paint(el("div", "seg"), colorIndexFor("app", s.key, s.colorIndex));
       place(seg, s.startFraction, s.startFraction + s.widthFraction);
@@ -1052,8 +1092,8 @@
   // and Empty. Clicking one focuses it.
   function colourMap(entries, empty, onPick, emptyLabel) {
     var box = el("div", "colour-map");
-    searchable(box, emptyLabel === "Empty" ? "activity-usage-items" : "activity-content-tags", emptyLabel === "Empty" ? "Search apps and websites" : "Search tags", ".colour-row");
-    entries.forEach(function (entry) {
+    searchable(box, emptyLabel === "No recorded usage" ? "activity-usage-items" : "activity-content-tags", emptyLabel === "No recorded usage" ? "Search apps and websites" : "Search tags", ".colour-row");
+    paged(box, entries, function (entry) { return (entry.item.label || "") + " " + (entry.item.key || ""); }, function (entry) {
       var line = el("button", "colour-row");
       line.dataset.vuiSearchText = (entry.item.label || "") + " " + (entry.item.key || "");
       line.type = "button";
@@ -1066,7 +1106,7 @@
       line.appendChild(el("span", "colour-time", entry.nameOnly ? "" : fmt(entry.seconds)));
       hoverable(line, entryInfo(entry, [fmt(entry.seconds)]));
       if (onPick) line.addEventListener("click", function () { onPick(entry); });
-      box.appendChild(line);
+      return line;
     });
     if (empty) {
       var row = el("div", "colour-row is-empty");
@@ -1097,6 +1137,61 @@
     return days > 14 ? String(date.getDate()) : dayName(start).replace(/^\w+ /, days > 7 ? "" : "$&");
   }
 
+  function appendDayRect(layer, attrs, info) { layer.__dayRects.push({ attrs, info }); }
+  function paintDayRects(layer, chart, left, width) {
+    const rects = layer.__dayRects;
+    if (rects.length <= 128) {
+      for (const entry of rects) { const rect = svg("rect", entry.attrs); if (entry.info) hoverable(rect, entry.info); layer.appendChild(rect); }
+      return;
+    }
+    // Dense exact charts retain every original rectangle and hover identity,
+    // painted into one viewport-sized canvas rather than one DOM node per entry.
+    const height = Number(chart.getAttribute("height")), foreign = svg("foreignObject", { x: left, y: 0, width, height });
+    const canvas = document.createElement("canvas"), ratio = Math.min(2, window.devicePixelRatio || 1);
+    canvas.width = Math.ceil(width * ratio); canvas.height = Math.ceil(height * ratio);
+    canvas.style.width = width + "px"; canvas.style.height = height + "px";
+    foreign.appendChild(canvas); layer.appendChild(foreign);
+    const context = canvas.getContext("2d"), cells = new Map(); context.scale(ratio, ratio);
+    rects.forEach((entry, index) => {
+      const a = entry.attrs; context.fillStyle = a.fill; context.fillRect(a.x - left, a.y, a.width, a.height);
+      if (!entry.info) return;
+      for (let x = Math.max(0, Math.floor((a.x - left) / 16)); x <= Math.min(Math.ceil(width / 16), Math.floor((a.x + a.width - left) / 16)); x++) for (let y = Math.max(0, Math.floor(a.y / 8)); y <= Math.min(Math.ceil(height / 8), Math.floor((a.y + a.height) / 8)); y++) {
+        const key = x + ":" + y; if (!cells.has(key)) cells.set(key, []); cells.get(key).push(index);
+      }
+    });
+    let lastHit = -1;
+    canvas.addEventListener("mousemove", event => {
+      const box = canvas.getBoundingClientRect(), x = event.clientX - box.left, y = event.clientY - box.top;
+      const indices = cells.get(Math.floor(x / 16) + ":" + Math.floor(y / 8)) || [];
+      let hit = -1;
+      for (let i = indices.length - 1; i >= 0; i--) {
+        const a = rects[indices[i]].attrs;
+        if (x + left >= a.x && x + left <= a.x + a.width && y >= a.y && y <= a.y + a.height) { hit = indices[i]; break; }
+      }
+      if (hit !== lastHit) { hideHover(); lastHit = hit; }
+      if (hit < 0) hoverInfo.delete(canvas); else hoverInfo.set(canvas, rects[hit].info);
+    });
+  }
+  function virtualDays(chart, perDay, layout, draw) {
+    const layer = svg("g"); chart.appendChild(layer);
+    let previous = "";
+    chart.__updateDayWindow = () => {
+      const viewport = chart.closest(".totals-scroll");
+      const left = viewport?.scrollLeft || 0, width = viewport?.clientWidth || window.innerWidth;
+      const first = Math.max(0, Math.floor((left - layout.left) / layout.barGap) - 2);
+      const last = Math.min(perDay.length, Math.ceil((left + width - layout.left) / layout.barGap) + 2);
+      const key = first + ":" + last;
+      if (viewport && !viewport.__dayWindowBound) {
+        viewport.__dayWindowBound = true;
+        let scheduled = false;
+        viewport.addEventListener("scroll", () => { if (scheduled) return; scheduled = true; requestAnimationFrame(() => { scheduled = false; viewport.querySelectorAll("svg").forEach(chart => chart.__updateDayWindow?.()); }); }, { passive: true });
+      }
+      if (previous === key) return; previous = key; layer.replaceChildren(); layer.__dayRects = [];
+      for (let index = first; index < last; index++) draw(layer, perDay[index], index);
+      paintDayRects(layer, chart, Math.max(0, left - layout.barGap * 2), width + layout.barGap * 4);
+    };
+    chart.__updateDayWindow();
+  }
   // Unordered: each day's items stacked, largest first, `rest` on top.
   function dayTotalsChart(perDay, rest, fixedDayScale, layout) {
     var days = perDay.length;
@@ -1115,27 +1210,27 @@
       chart.appendChild(label);
     }
     var barWidth = layout.barWidth;
-    perDay.forEach(function (d, i) {
+    virtualDays(chart, perDay, layout, function (chart, d, i) {
       var x = left + i * barGap + (barGap - barWidth) / 2, yy = base;
       var dayTotal = totals[i];
       d.items.forEach(function (entry) {
         var h = entry.seconds / topSeconds * plot;
         yy -= h;
         var color = entry.item.color || colorOf(entry.item.colorIndex);
-        var rect = svg("rect", { x: x, y: yy, width: barWidth, height: Math.max(0.6, h), fill: color });
-        hoverable(rect, function () {
+        var rect = { x: x, y: yy, width: barWidth, height: Math.max(0.6, h), fill: color };
+        appendDayRect(chart, rect, function () {
           var info = entryInfo(entry, [dayName(d.start), fmt(entry.seconds) + " · " + share(entry.seconds, dayTotal, "the day")]);
           info.color = color;
           return info;
         });
-        chart.appendChild(rect);
+
       });
       if (d.rest > 0) {
         var h = d.rest / topSeconds * plot;
         yy -= h;
-        var restRect = svg("rect", { x: x, y: yy, width: barWidth, height: h, fill: rest.color });
-        hoverable(restRect, function () { return { title: rest.name, color: rest.color, lines: [dayName(d.start), fmt(d.rest)] }; });
-        chart.appendChild(restRect);
+        var restRect = { x: x, y: yy, width: barWidth, height: h, fill: rest.color };
+        appendDayRect(chart, restRect, function () { return { title: rest.name, color: rest.color, lines: [dayName(d.start), fmt(d.rest)] }; });
+
       }
       var dl = svg("text", { x: x + barWidth / 2, y: height - 8, "text-anchor": "middle", class: "axis-label" });
       dl.textContent = dayLabelText(d.start, days);
@@ -1159,7 +1254,7 @@
       label.textContent = h + ":00";
       chart.appendChild(label);
     });
-    perDay.forEach(function (d, i) {
+    virtualDays(chart, perDay, layout, function (chart, d, i) {
       var x = left + i * barGap + (barGap - barWidth) / 2;
       chart.appendChild(svg("rect", { x: x, y: top, width: barWidth, height: plot, rx: 4, fill: "#f1f4f8" }));
       if (grouped) {
@@ -1174,9 +1269,9 @@
             return { title: hourMinute(bin.from) + " – " + hourMinute(bin.to),
               lines: [dayName(d.start), fmt(bin.usedSeconds) + " used · " + fmt(bin.idleSeconds) + " not recorded"], list: shown };
           };
-          var background = svg("rect", { x: x, y: y, width: barWidth, height: h, fill: "#e5eaf1" });
-          hoverable(background, info);
-          chart.appendChild(background);
+          var background = { x: x, y: y, width: barWidth, height: h, fill: "#e5eaf1" };
+          appendDayRect(chart, background, info);
+
           // Keep the two largest identities; the remaining time is one
           // neutral aggregate so a busy block never becomes hairlines again.
           var prominent = bin.items.slice(0, 2), others = bin.items.slice(2);
@@ -1189,16 +1284,16 @@
             var pieceHeight = h * piece.seconds / blockSeconds;
             if (pieceHeight <= 0) return;
             cursor -= pieceHeight;
-            var rect = svg("rect", { x: x, y: cursor, width: barWidth, height: pieceHeight, fill: piece.color });
-            hoverable(rect, info);
-            chart.appendChild(rect);
+            var rect = { x: x, y: cursor, width: barWidth, height: pieceHeight, fill: piece.color };
+            appendDayRect(chart, rect, info);
+
           });
         });
       } else {
         d.blocks.forEach(function (b) {
-          var rect = svg("rect", { x: x, y: base - b.to * plot, width: barWidth * (b.narrow ? 0.85 : 1), height: Math.max(0.6, (b.to - b.from) * plot), fill: b.color });
-          hoverable(rect, b.info);
-          chart.appendChild(rect);
+          var rect = { x: x, y: base - b.to * plot, width: barWidth * (b.narrow ? 0.85 : 1), height: Math.max(0.6, (b.to - b.from) * plot), fill: b.color };
+          appendDayRect(chart, rect, b.info);
+
         });
       }
       var dl = svg("text", { x: x + barWidth / 2, y: height - 8, "text-anchor": "middle", class: "axis-label" });
@@ -1218,6 +1313,7 @@
       chartResizePending = false;
       activeDayCharts = activeDayCharts.filter(function (entry) { return entry.node.isConnected; });
       activeDayCharts.forEach(function (entry) { entry.draw(); });
+      scope.querySelectorAll(".strip-scroll").forEach(node => node.__updateStripWindow?.());
     });
   });
   function dayCharts(ordered, totals, rest, fixedDayScale, isUsage) {
@@ -1343,7 +1439,7 @@
     groupsList().forEach(function (g) { choices.push(["group|" + g.id, g.name + " · " + (g.merge ? "Merge group" : "View group")]); });
     usageItemsRaw.forEach(function (entry) { choices.push([entryID(entry), (entry.item.label || entry.item.key) + " · " + entry.kind]); });
     if (!choices.some(function (c) { return c[0] === usageFocus; })) choices.push([usageFocus, focusName(usageFocus)]);
-    choices.forEach(function (c) { var o = el("option", null, c[1]); o.value = c[0]; o.selected = c[0] === usageFocus; select.appendChild(o); });
+    window.VaultUI.setSelectOptions(select, choices, usageFocus);
     select.addEventListener("change", function () { setUsageFocus(select.value); });
     return infoControl(select, "activity-usage-filter", "Usage filter", "Show all usage, one app or website, or an Activity group. Filtering does not change recorded history.");
   }
@@ -1407,18 +1503,21 @@
 
   // ── Content ──
 
+  var indexedTags = null, tagIndex = {}, tagChildren = new Map();
   function tagByID() {
-    var map = {};
-    tagNodes.forEach(function (n) { map[n.id] = n; });
-    return map;
-  }
-  // A tag and every tag under it.
-  function tagFamily(id) {
-    var out = new Set([id]), grew = true;
-    while (grew) {
-      grew = false;
-      tagNodes.forEach(function (n) { if (n.parentID && out.has(n.parentID) && !out.has(n.id)) { out.add(n.id); grew = true; } });
+    if (indexedTags !== tagNodes) {
+      indexedTags = tagNodes; tagIndex = {}; tagChildren = new Map();
+      for (const node of tagNodes) {
+        tagIndex[node.id] = node;
+        if (node.parentID) { if (!tagChildren.has(node.parentID)) tagChildren.set(node.parentID, []); tagChildren.get(node.parentID).push(node.id); }
+      }
     }
+    return tagIndex;
+  }
+  function tagFamily(id) {
+    tagByID();
+    const out = new Set(), pending = [id];
+    while (pending.length) { const next = pending.pop(); if (out.has(next)) continue; out.add(next); pending.push(...(tagChildren.get(next) || [])); }
     return out;
   }
   function contentFocusSet() { return contentFocus === "all" ? null : tagFamily(contentFocus.slice(4)); }
@@ -1468,6 +1567,10 @@
   function contentStrip(data) {
     var f = stripFrame(30, contentSnap);
     var fraction = function (ms) { return (ms - contentSnap.rangeStartMs) / f.span; };
+    if (data.other.length + data.pieces.length > 128) return stripCanvas(f, [
+      ...data.other.map(o => ({from:fraction(o.startMs),to:fraction(o.endMs),color:OTHER_PAGES.color,info:()=>({title:"Other pages",color:OTHER_PAGES.color,lines:[o.site.label||o.site.key,timeSpan(o.startMs,o.endMs,f.multiDay)+" · "+fmt((o.endMs-o.startMs)/1000)]})})),
+      ...data.pieces.map(p => ({from:fraction(p.startMs),to:fraction(p.endMs),color:p.tags[0].color||"#94a3b8",info:()=>{const fact=watchedFacts[p.seg.key]||{};return {title:p.seg.label||p.seg.key,key:p.seg.key,lines:[(PLATFORM_NAMES[String(p.seg.key).split(":")[0]]||"")+(fact.creator?" · "+fact.creator:""),p.tags.map(t=>t.name).join(", "),timeSpan(p.startMs,p.endMs,f.multiDay)+" · "+fmt((p.endMs-p.startMs)/1000)]};}}))
+    ],30);
     data.other.forEach(function (o) {
       var seg = el("div", "seg");
       seg.style.background = OTHER_PAGES.color;
@@ -1551,7 +1654,7 @@
     var top = Math.max(1, authors.length ? authors[0].seconds : 1);
     var list = el("div", "scroll-list");
     searchable(list, "activity-authors", "Search content sources", ".author-row");
-    authors.forEach(function (a) {
+    paged(list, authors, function (a) { return a.name + " " + a.key; }, function (a) {
       var line = el("div", "author-row");
       line.dataset.vuiSearchText = a.name + " " + a.key;
       line.appendChild(icon(a.key, a.name));
@@ -1573,7 +1676,7 @@
       body.appendChild(bar);
       line.appendChild(body);
       line.appendChild(el("div", "row-time", fmt(a.seconds)));
-      list.appendChild(line);
+      return line;
     });
     if (!authors.length) list.appendChild(el("p", "empty", "Nothing in this range."));
     box.appendChild(list);
@@ -1586,7 +1689,10 @@
     box.appendChild(el("div", "chart-title", "Content viewed"));
     var list = el("div", "scroll-list");
     searchable(list, "activity-watched", "Search viewed content", ".raw-row");
-    data.pieces.slice().sort(function (a, b) { return b.startMs - a.startMs; }).forEach(function (p) {
+    paged(list, data.pieces.slice().sort(function (a, b) { return b.startMs - a.startMs; }), function (p) {
+      var fact = watchedFacts[p.seg.key] || {};
+      return (p.seg.label || "") + " " + p.seg.key + " " + (fact.creator || "") + " " + p.tags.map(tag => tag.name).join(" ");
+    }, function (p) {
       var fact = watchedFacts[p.seg.key] || {};
       var line = el("div", "raw-row");
       line.dataset.vuiSearchText = (p.seg.label || "") + " " + p.seg.key + " " + (fact.creator || "") + " " + p.tags.map(function (tag) { return tag.name; }).join(" ");
@@ -1605,7 +1711,7 @@
       body.appendChild(meta);
       line.appendChild(body);
       line.appendChild(el("div", "row-time", fmt((p.endMs - p.startMs) / 1000)));
-      list.appendChild(line);
+      return line;
     });
     if (!data.pieces.length) list.appendChild(el("p", "empty", "Nothing in this range."));
     box.appendChild(list);
@@ -1615,17 +1721,21 @@
   function contentFocusSelect() {
     var select = el("select");
     var choices = [["all", "All content"]];
-    var depthOf = function (n) { var d = 0, seen = {}, cur = n, byID = tagByID(); while (cur && cur.parentID && byID[cur.parentID] && !seen[cur.id]) { seen[cur.id] = 1; cur = byID[cur.parentID]; d += 1; } return d; };
-    // Tree order: each tag followed by the tags under it.
-    var children = {};
-    tagNodes.forEach(function (n) { (children[n.parentID || ""] = children[n.parentID || ""] || []).push(n); });
-    (function walk(parent) {
-      (children[parent] || []).forEach(function (n) {
-        choices.push(["tag|" + n.id, new Array(depthOf(n) + 1).join("   ") + n.name]);
-        walk(n.id);
-      });
-    })("");
-    choices.forEach(function (c) { var o = el("option", null, c[1]); o.value = c[0]; o.selected = c[0] === contentFocus; select.appendChild(o); });
+    // Iterative preorder avoids quadratic depth walks and deep-tree stack overflows.
+    var byID = tagByID(), children = {}, seen = new Set();
+    tagNodes.forEach(function (n) { var parent = byID[n.parentID] ? n.parentID : ""; (children[parent] = children[parent] || []).push(n); });
+    function walk(nodes) {
+      var stack = nodes.slice().reverse().map(function (node) { return [node, 0]; });
+      while (stack.length) {
+        var pair = stack.pop(), n = pair[0], depth = pair[1];
+        if (seen.has(n.id)) continue; seen.add(n.id);
+        choices.push(["tag|" + n.id, "   ".repeat(Math.min(20, depth)) + (depth > 20 ? "… " : "") + n.name]);
+        (children[n.id] || []).slice().reverse().forEach(function (child) { stack.push([child, depth + 1]); });
+      }
+    }
+    walk(children[""] || []);
+    walk(tagNodes.filter(function (node) { return !seen.has(node.id); })); // safe orphan/cycle guard
+    window.VaultUI.setSelectOptions(select, choices, contentFocus);
     select.addEventListener("change", function () { setContentFocus(select.value); });
     return infoControl(select, "activity-content-filter", "Content filter", "Show all viewed content or content with the selected tag. Filtering does not change recorded history.");
   }
@@ -1696,7 +1806,6 @@
     var s = snapshot.settings || {};
     var usage = usageSection(s); usage.id = "usage-section";
     page.appendChild(groupsPanel());
-    restoreGroupScrolls(scope.getElementById("groups"), groupScrolls);
     page.appendChild(usage);
     var content = contentSection(s); content.id = "content-section"; page.appendChild(content);
     // Recording: always last, one collapsed line (owner 2026-09-30).
@@ -1711,6 +1820,8 @@
     freshScroll = { usage: false, content: false };
     restoreGroupFocus(scope.getElementById("groups"), groupFocus);
     window.VaultUI.restoreSearch(scope, searchFocus);
+    restoreGroupScrolls(scope.getElementById("groups"), groupScrolls);
+    requestAnimationFrame(() => scope.querySelectorAll("svg").forEach(chart => chart.__updateDayWindow?.()));
   }
 
   // The range's days, as Mac Vault answers them (at most a year).
@@ -1720,6 +1831,8 @@
   var freshScroll = { usage: true, content: true };
   function scrollToNewest(node) {
     if (node.matches(".strip-scroll, .totals-scroll, .map-scroll")) node.scrollLeft = node.scrollWidth;
+    node.__updateStripWindow?.();
+    node.querySelectorAll("svg").forEach(chart => chart.__updateDayWindow?.());
   }
 
   // A focus change redraws only its own section (the other keeps its place).

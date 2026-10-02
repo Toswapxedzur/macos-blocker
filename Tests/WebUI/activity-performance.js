@@ -1,0 +1,22 @@
+window.runActivityPerformanceTests = async () => {
+  const results=[], q=selector=>scope.querySelector(selector), wait=()=>new Promise(resolve=>setTimeout(resolve,150));
+  const check=(ok,label)=>{if(!ok)throw Error(label);results.push('PASS '+label);};
+  const count=10000,start=testSnapshot.rangeStartMs, span=testSnapshot.rangeEndMs-start;
+  testSnapshot.groups=[];testSnapshot.app.bars=Array.from({length:count},(_,i)=>({key:'app-'+i,label:'App '+i,seconds:1,fraction:1/count,colorIndex:i}));testSnapshot.app.timeline=[];
+  const tags=Array.from({length:count},(_,i)=>({id:'tag-'+i,name:'Topic '+i}));
+  const facts=Object.fromEntries(tags.map((tag,i)=>['youtube:'+i,{creator:'Creator '+i,tags:[{...tag,color:'#203d8c'}]}]));
+  testSnapshot.watchedTimeline=Array.from({length:count},(_,i)=>({key:'youtube:'+i,label:'Content '+i,startedAtMs:start+i*span/count,startFraction:i/count,widthFraction:1/count,seconds:span/count/1000,colorIndex:i}));
+  activityApply(testSnapshot,{},facts,{keepDays:365,platforms:[]},tags);await wait();
+  check(q('[data-vui-search="activity-watched"]').querySelectorAll('.raw-row').length===40,'10,000 viewed entries mount only 40 rows');
+  check(q('[data-vui-search="activity-authors"]').querySelectorAll('.author-row').length===40,'10,000 sources mount only 40 Activity rows');
+  check(q('[data-vui-search="activity-usage-items"]').querySelectorAll('.colour-row:not(.is-empty)').length===40,'10,000 usage identities mount only 40 color rows');
+  check(scope.querySelectorAll('canvas').length>=2 && scope.querySelectorAll('.seg').length===0,'dense exact timeline and strip use canvases with no per-entry DOM');
+  check(scope.querySelectorAll('*').length<2500,'Activity DOM stays bounded with 10,000 identities and records');
+  const search=q('[data-vui-search-input="activity-watched"]');search.value='Content 9999';search.dispatchEvent(new InputEvent('input',{bubbles:true}));await wait();
+  check(q('[data-vui-search="activity-watched"] .raw-row')?.textContent.includes('Content 9999'),'viewed-content search reaches the final original record');
+  const canvas=q('#content-section .strip-scroll canvas'), box=canvas.getBoundingClientRect();
+  canvas.dispatchEvent(new MouseEvent('mousemove',{bubbles:true,composed:true,clientX:box.left+5,clientY:box.top+5}));
+  check(!!q('#hovercard') && !q('#hovercard').hidden && q('.hover-title').textContent.startsWith('Content '),'dense canvas hover retains the original content identity');
+  check(testSnapshot.watchedTimeline.length===count && uiErrors.length===0,'large Activity rendering preserves records and raises no errors');
+  return results;
+};

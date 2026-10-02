@@ -51,6 +51,7 @@
   const treeViewportPositions = new Map();
   const editorViewportPositions = new Map();
   const liveEdits = new Map();
+  const knowledgeRows = new Map();
   let replacingControls = false;
   let composingEdit = false;
   // Non-null while the "create a group" dialog is open: { platformIDs, name? }.
@@ -254,7 +255,8 @@
       case "savePackageSettings": return state.settings;
       case "saveClassificationSettings": return state.settings;
       case "saveBackup": return state.backup;
-      case "editKnowledgeEntry": return [...(assets.knowledge?.creators || []),
+      case "editKnowledgeEntry": if (assets.knowledge?.paged) return knowledgeRows.get(edit.identity.id) || {};
+        return [...(assets.knowledge?.creators || []),
         ...(assets.knowledge?.terms || [])].find((item) => item.id === edit.identity.id);
       case "updateTag": return (assets.trees || []).find((tree) => tree.id === edit.identity.treeID)
         ?.nodes.find((node) => node.id === edit.identity.nodeID);
@@ -326,6 +328,7 @@
   function reconcileLiveEdits() {
     liveEdits.forEach((edit, key) => {
       const saved = savedLiveEdit(edit);
+      if (edit.action === "editKnowledgeEntry" && state.assets?.knowledge?.paged) return;
       if (!saved || (edit.sent && !state.issue && liveEditMatches(edit, saved))) {
         window.clearTimeout(edit.timer);
         liveEdits.delete(key);
@@ -430,8 +433,14 @@
     return `<label class="field"><span class="field-label" ${infoAttrs(labelKey, hintKey)}>${tx(labelKey)}${hintKey ? `<span class="field-hint" data-info> · ${tx(hintKey)}</span>` : ""}</span><select class="select-control" data-field="${esc(key)}">${options.map(([id, labelKey]) => `<option value="${esc(id)}"${selected(value, id)}>${tx(labelKey)}</option>`).join("")}</select></label>`;
   }
 
+  let deferredChoices = new Map();
+  function mountChoices() {
+    root.querySelectorAll("[data-choice-key]").forEach(select => { const choice = deferredChoices.get(select.dataset.choiceKey); if (choice) window.VaultUI.setSelectOptions(select, choice.options, choice.value); });
+  }
   function valueSelectField(labelKey, hintKey, key, value, options, extra = "") {
-    return `<label class="field"><span class="field-label" ${infoAttrs(labelKey, hintKey)}>${tx(labelKey)}${hintKey ? `<span class="field-hint" data-info> · ${tx(hintKey)}</span>` : ""}</span><select class="select-control" data-field="${esc(key)}" ${extra}>${options.map(([id, label]) => `<option value="${esc(id)}"${selected(value, id)}>${esc(label)}</option>`).join("")}</select></label>`;
+    let choiceKey = "", visible = options;
+    if (options.length > 200) { choiceKey = "choice-" + deferredChoices.size; deferredChoices.set(choiceKey, {options, value}); visible = options.filter(([id]) => String(id) === String(value)); if (!visible.length) visible = options.slice(0,1); }
+    return `<label class="field"><span class="field-label" ${infoAttrs(labelKey, hintKey)}>${tx(labelKey)}${hintKey ? `<span class="field-hint" data-info> · ${tx(hintKey)}</span>` : ""}</span><select class="select-control" data-field="${esc(key)}" ${choiceKey ? `data-choice-key="${choiceKey}"` : ""} ${extra}>${visible.map(([id, label]) => `<option value="${esc(id)}"${selected(value, id)}>${esc(label)}</option>`).join("")}</select></label>`;
   }
 
   function multiValueSelectField(labelKey, hintKey, key, values, options, extra = "") {
@@ -811,6 +820,63 @@
   // deleted with it). The canvas is as tall as its tags (at most 520 px) and
   // shows no scroll bars (owner 2026-09-30): drag empty space or use the
   // trackpad to pan a tree wider than the panel.
+  const graphModels = new Map();
+  function mountLargeGraphs() {
+    for (const map of root.querySelectorAll("[data-tree-map]")) {
+      const model = graphModels.get(map.dataset.treeId);
+      if (!model || model.nodes.length <= 200) continue;
+      window.VaultUI.bindFind(map, { items: model.nodes, id: node => node.id,
+        text: node => node.name + " " + (node.description || ""),
+        matches(ids) { model.matches = ids; paintLargeGraph(map); },
+        locate(node) {
+          const point = model.positions.get(node.id);
+          map.scrollLeft = Math.max(0, point.x - (map.clientWidth - 126) / 2);
+          map.scrollTop = Math.max(0, point.y - (map.clientHeight - 22) / 2);
+          paintLargeGraph(map);
+        } });
+      if (!map.__graphScrollBound) {
+        map.__graphScrollBound = true;
+        let scheduled = false;
+        map.addEventListener("scroll", () => {
+          if (scheduled) return; scheduled = true;
+          requestAnimationFrame(() => { scheduled = false; paintLargeGraph(map); });
+        }, { passive: true });
+      }
+      paintLargeGraph(map);
+    }
+  }
+  function paintLargeGraph(map) {
+    if (tagDrag?.treeID === map.dataset.treeId) return;
+    const model = graphModels.get(map.dataset.treeId), layer = map.querySelector(".tree-node-layer");
+    if (!model || !layer) return;
+    const left = Math.max(0, map.scrollLeft - 180), top = Math.max(0, map.scrollTop - 100);
+    const right = map.scrollLeft + (map.clientWidth || 900) + 180, bottom = map.scrollTop + (map.clientHeight || 350) + 100;
+    const visible = new Set();
+    for (let x = Math.floor(left / 256); x <= Math.floor(right / 256); x++) for (let y = Math.floor(top / 256); y <= Math.floor(bottom / 256); y++) {
+      for (const node of model.cells.get(x + ":" + y) || []) {
+        const point = model.positions.get(node.id);
+        if (point.x + 126 >= left && point.x <= right && point.y + 22 >= top && point.y <= bottom) visible.add(node.id);
+      }
+    }
+    const active = scope.activeElement?.closest?.(".tree-map-node");
+    if (active?.dataset.treeId === map.dataset.treeId) visible.add(active.dataset.nodeId);
+    const existing = new Map([...layer.children].map(row => [row.dataset.nodeId, row]));
+    for (const [id, row] of existing) if (!visible.has(id)) row.remove();
+    for (const id of visible) {
+      let row = existing.get(id);
+      const markup = model.markup(model.nodeByID.get(id));
+      if (!row || row.__graphMarkup !== markup) {
+        const template = document.createElement("template"); template.innerHTML = markup;
+        const next = template.content.firstElementChild; next.__graphMarkup = markup;
+        const focused = row === scope.activeElement;
+        if (row) row.replaceWith(next); else layer.append(next);
+        row = next; if (focused) row.focus({ preventScroll: true });
+      }
+      row.classList.toggle("vui-search-match", model.matches.has(id));
+    }
+    drawTreeConnections();
+  }
+
   function tagTreeWorkspace(treeID) {
     const coordinate = (value, fallback) => {
       const number = Number(value);
@@ -824,8 +890,8 @@
         y: coordinate(node.positionY, 24 + Math.floor(index / 4) * 48),
       }]));
       const panelState = activeTagPanel?.treeID === tree.id ? activeTagPanel : null;
-      const contentWidth = Math.max(0, ...[...positions.values()].map((position) => position.x + 126)) + 28;
-      const contentHeight = Math.max(240, Math.max(0, ...[...positions.values()].map((position) => position.y + 22)) + 28,
+      const contentWidth = [...positions.values()].reduce((max, position) => Math.max(max, position.x + 126), 0) + 28;
+      const contentHeight = Math.max(240, [...positions.values()].reduce((max, position) => Math.max(max, position.y + 22), 0) + 28,
         panelState ? 380 : 0);  // room for the popover, placed in view below
       const selectedNodeID = selectedTagNode?.treeID === tree.id ? selectedTagNode.nodeID : "";
       const popoverNode = panelState?.nodeID ? nodeByID.get(panelState.nodeID) : null;
@@ -854,11 +920,31 @@
         // Placed beside its anchor, inside the visible part (placeTreePopovers).
         return `<section class="tree-popover" data-anchor-x="${panelState.x}" data-anchor-y="${panelState.y}" data-anchor-w="${panelState.w || 0}" data-tree-popover data-form-id="tag-popover-form"${isEdit ? ` data-autosave-action="updateTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(nodeID)}"` : ""}><div class="tree-popover-head"><span class="eyebrow">${tx(isEdit ? "tree.editNode" : "tree.createNode")}</span><button class="tree-popover-close" data-action="cancelTagPanel" data-hint="${tx("tree.cancel")}" aria-label="${tx("tree.cancel")}">×</button></div><div class="tree-form">${nameField}${descriptionField}<div class="action-row">${actions}</div></div></section>`;
       })() : "";
-      const map = `<div class="tree-map" data-vui-search="tree:${esc(tree.id)}" data-vui-search-label="Find tag" data-vui-search-mode="find" data-vui-search-items=".tree-map-node" data-tree-map data-tree-id="${esc(tree.id)}">${connectionState ? `<div class="tree-connection-mode">${tx("tree.connectionHint")}</div>` : ""}<div class="tree-map-content" style="width:max(${contentWidth}px, 100%);height:${contentHeight}px"><svg class="tree-links" aria-hidden="true"></svg><div class="tree-node-layer">${nodes.map((node) => {
+      const nodeMarkup = node => {
         const position = positions.get(node.id);
         const colorStyle = tagColorStyle(node);
         return `<button class="tree-map-node${panelState?.nodeID === node.id || selectedNodeID === node.id ? " active" : ""}${connectionState?.nodeID === node.id ? " connection-source" : ""}${node.retired ? " retired" : ""}" style="left:${position.x}px;top:${position.y}px;${colorStyle}" data-vui-search-text="${esc(node.name + " " + (node.description || ""))}" data-action="selectTag" data-tree-id="${esc(tree.id)}" data-node-id="${esc(node.id)}" data-parent-id="${esc(node.parentID || "")}" data-position-x="${position.x}" data-position-y="${position.y}" data-hint="${tx("tree.contextHint")}"><span aria-hidden="true"></span><strong>${esc(node.name)}</strong></button>`;
-      }).join("")}</div>${nodes.length ? "" : `<div class="tree-map-empty">${tx("tree.empty")}</div>`}${popover}</div></div>`;
+      };
+      const cells = new Map();
+      if (nodes.length > 200) for (const node of nodes) {
+        const point = positions.get(node.id), key = Math.floor(point.x / 256) + ":" + Math.floor(point.y / 256);
+        if (!cells.has(key)) cells.set(key, []); cells.get(key).push(node);
+      }
+      const edges = [], edgeCells = new Map();
+      if (nodes.length > 200) for (const node of nodes) {
+        const start = positions.get(node.parentID), end = positions.get(node.id);
+        if (!start || node.parentID === node.id) continue;
+        const sx = start.x + 63, sy = start.y + 22, ex = end.x + 63, ey = end.y, bend = Math.round((sy + ey) / 2);
+        const index = edges.length; edges.push(`M ${sx} ${sy} V ${bend} H ${ex} V ${ey}`);
+        // Index the three segments, including links whose endpoints are both off screen.
+        for (const [x1,y1,x2,y2] of [[sx,sy,sx,bend],[sx,bend,ex,bend],[ex,bend,ex,ey]]) {
+          for (let x = Math.floor(Math.min(x1,x2)/256); x <= Math.floor(Math.max(x1,x2)/256); x++) for (let y = Math.floor(Math.min(y1,y2)/256); y <= Math.floor(Math.max(y1,y2)/256); y++) {
+            const key = x + ":" + y; if (!edgeCells.has(key)) edgeCells.set(key, new Set()); edgeCells.get(key).add(index);
+          }
+        }
+      }
+      graphModels.set(tree.id, { nodes, nodeByID, positions, cells, edges, edgeCells, markup: nodeMarkup, matches: graphModels.get(tree.id)?.matches || new Set() });
+      const map = `<div class="tree-map" data-vui-search="tree:${esc(tree.id)}" data-vui-search-label="Find tag" data-vui-search-mode="find" data-vui-search-items=".tree-map-node" data-tree-map data-tree-id="${esc(tree.id)}">${connectionState ? `<div class="tree-connection-mode">${tx("tree.connectionHint")}</div>` : ""}<div class="tree-map-content" style="width:max(${contentWidth}px, 100%);height:${contentHeight}px"><svg class="tree-links" aria-hidden="true"></svg><div class="tree-node-layer">${nodes.length > 200 ? "" : nodes.map(nodeMarkup).join("")}</div>${nodes.length ? "" : `<div class="tree-map-empty">${tx("tree.empty")}</div>`}${popover}</div></div>`;
       const treeActions = `<div class="tree-canvas-actions"><button class="secondary" data-action="rearrangeTree" data-tree-id="${esc(tree.id)}">${tx("tree.rearrange")}</button></div>`;
       return `<section class="tree-panel">${map}<div class="tree-canvas-hint"><span>${tx("tree.canvasHint")}</span>${treeActions}</div></section>`;
     };
@@ -928,10 +1014,49 @@
     return keys[fieldName] || "llm.protocol.protocolFamily";
   }
 
+  const listRequests = new Map();
+  let listRequestNumber = 0;
+  function queryKnowledge(kind, platformID, request) {
+    const requestID = "knowledge-" + (++listRequestNumber);
+    return new Promise(resolve => {
+      const timer = setTimeout(() => { listRequests.delete(requestID); resolve(null); }, 15000);
+      listRequests.set(requestID, packet => { clearTimeout(timer); resolve(packet); });
+      const drafts = Object.fromEntries([...liveEdits.values()].filter(edit => edit.action === "editKnowledgeEntry").slice(-256).map(edit => [edit.identity.id, edit.values.meaning]));
+      send("knowledgePage", { ...request, query: String(request.query || "").slice(0, 200), requestID, kind, platformID, drafts });
+    });
+  }
+  let pendingLists = [];
+  function listPlaceholder(key, items, render, text, pageSize = 12) {
+    const nativeKnowledge = key.startsWith("knowledge:") && state.assets?.knowledge?.paged;
+    const parts = key.split(":");
+    pendingLists.push({ key, items, render, text, pageSize,
+      ...(nativeKnowledge ? { total: state.assets.knowledge.counts?.[parts.slice(1).join(":")] || 0,
+        queryPage: request => queryKnowledge(parts[1], parts[2] || "", request) } : {}) });
+    return "";
+  }
+  function mountLists() {
+    for (const options of pendingLists) {
+      const list = [...root.querySelectorAll("[data-vui-search]")].find(list => list.dataset.vuiSearch === options.key);
+      if (!list) continue;
+      let focused = null;
+      window.VaultUI.renderList(list, { ...options, scope, beforePaint() { focused = captureLiveEditFocus(); }, afterPaint() {
+        restoreLiveEdits(focused);
+        root.querySelectorAll(".knowledge-card").forEach(updateKnowledgeSearchText);
+        window.VaultUI.enhance(list);
+      } });
+    }
+  }
+
   function apiKeySettings() {
     const profiles = state.assets.providerProfiles || [];
     const requestRecords = state.assets.providerRequestRecords || [];
     const protocols = state.assets.providerProtocols || {};
+    const recordsByProfile = new Map();
+    for (const record of requestRecords) {
+      let records = recordsByProfile.get(record.profileID);
+      if (!records) { records = []; recordsByProfile.set(record.profileID, records); }
+      records.push(record);
+    }
     const profileTypeGroups = [
       ["llm.providerGroup.models", ["openAI", "deepSeek", "gemini", "anthropic", "mistral", "cohere", "groq", "openRouter", "ollama"].map((type) => [type, t(providerTypeLabelKey(type))])],
       ["llm.providerGroup.platform", ["youtubeData", "twitch", "reddit", "xPlatform", "instagramGraph", "facebookGraph"].map((type) => [type, t(providerTypeLabelKey(type))])],
@@ -944,11 +1069,12 @@
       const supportsPlatformData = Boolean(protocol.supportsPlatformData);
       // Serper / You.com fed the removed raw-search mode: kept readable, never testable or used.
       const retiredSearchProvider = Boolean(protocol.retiredSearchProvider);
-      const profileRecords = requestRecords.filter((record) => record.profileID === profile.id);
-      const latestResponseDiagnostic = profileRecords
+      const profileRecords = (recordsByProfile.get(profile.id) || []);
+      const summary = state.assets.providerRequestSummaries?.[profile.id];
+      const latestResponseDiagnostic = summary ? (summary.responseShape ? { responseShape: summary.responseShape } : null) : profileRecords
         .filter((record) => typeof record.responseShape === "string" && record.responseShape.length > 0)
         .sort((left, right) => Number(right.createdAtMilliseconds) - Number(left.createdAtMilliseconds))[0];
-      const tokenTotal = profileRecords.reduce(
+      const tokenTotal = summary ? summary.tokenTotal : profileRecords.reduce(
         (total, record) => total + (Number(record.tokenCount) || 0),
         0
       );
@@ -969,14 +1095,14 @@
       const testAvailable = (supportsLLM || supportsPlatformData) && !retiredSearchProvider;
       const testButton = testAvailable ? `<button class="gold-action" data-action="testProviderProfile" data-form="${esc(formID)}" data-profile-id="${esc(profile.id)}"${disabled(profile.testing)}>${tx(profile.testing ? "llm.testing" : "llm.test")}</button>` : "";
       const usage = supportsPlatformData || retiredSearchProvider
-        ? `<p class="provider-token-usage"><span>${tx("llm.apiCalls")}</span><strong>${profileRecords.filter((record) => ["readPublicContent", "searchWeb", "search-creator-web"].includes(record.operation) && Number.isInteger(record.statusCode)).length}</strong></p>`
+        ? `<p class="provider-token-usage"><span>${tx("llm.apiCalls")}</span><strong>${summary ? summary.calls : profileRecords.filter((record) => ["readPublicContent", "searchWeb", "search-creator-web"].includes(record.operation) && Number.isInteger(record.statusCode)).length}</strong></p>`
         : `<p class="provider-token-usage"><span>${tx("llm.tokenUsage")}</span><strong>${tx("llm.tokenTotal", { total: tokenTotal })}</strong></p>`;
       const responseDiagnostic = latestResponseDiagnostic
         ? `<p class="provider-response-shape"><span>${tx("llm.responseShape")}</span><strong>${esc(latestResponseDiagnostic.responseShape)}</strong></p>`
         : "";
       return `<section class="provider-panel" data-vui-search-text="${esc(profile.name + " " + t(providerTypeLabelKey(profile.type)))}" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}" data-autosave-action="updateProviderConnection"><div class="provider-panel-head"><h3>${esc(profile.name)}</h3><div class="provider-panel-actions">${testButton}<button class="danger" data-action="confirmDeleteProviderProfile" data-profile-id="${esc(profile.id)}">${deleteLabel(`provider:${profile.id}`, tx("llm.deleteProfile"))}</button></div></div>${retiredSearchProvider ? `<div class="notice navy">${tx("llm.retiredSearchProvider")}</div>` : ""}<div class="provider-panel-body">${connectionFields ? `<div class="provider-connection-fields">${connectionFields}</div>` : ""}</div><footer class="provider-request-summary">${usage}${responseDiagnostic}</footer>${profile.testSucceeded ? notice(t("llm.testSucceeded"), "green") : ""}</section>`;
     };
-    return `<section class="utility-settings-section utility-api-keys"><h3 class="utility-settings-section-title">${tx("navigation.apiKeys")}</h3><p class="section-copy" data-info>${tx("llm.copy")}</p><div class="notice navy provider-local-only" data-info>${tx("llm.localOnlyDisclosure")}</div><section class="provider-create" data-form-id="new-provider-profile-form">${groupedValueSelectField("llm.providerType", "", "type", "", profileTypeGroups)}<button class="gold-action" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button><span class="small-copy" data-info="llm.createCopy">${tx("llm.createCopy")}</span></section><div class="provider-panels vui-list-box" data-vui-search="classifier-providers" data-vui-search-label="Search provider profiles" data-vui-search-items=".provider-panel" data-list-key="providers" tabindex="0" aria-label="${tx("llm.keyLibrary")}">${profiles.length ? profiles.map(panel).join("") : `<div class="empty">${tx("llm.empty")}</div>`}</div></section>`;
+    return `<section class="utility-settings-section utility-api-keys"><h3 class="utility-settings-section-title">${tx("navigation.apiKeys")}</h3><p class="section-copy" data-info>${tx("llm.copy")}</p><div class="notice navy provider-local-only" data-info>${tx("llm.localOnlyDisclosure")}</div><section class="provider-create" data-form-id="new-provider-profile-form">${groupedValueSelectField("llm.providerType", "", "type", "", profileTypeGroups)}<button class="gold-action" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button><span class="small-copy" data-info="llm.createCopy">${tx("llm.createCopy")}</span></section><div class="provider-panels vui-list-box" data-vui-search="classifier-providers" data-vui-search-label="Search provider profiles" data-vui-search-items=".provider-panel" data-list-key="providers" tabindex="0" aria-label="${tx("llm.keyLibrary")}">${profiles.length ? listPlaceholder("classifier-providers", profiles, panel, profile => profile.name + " " + t(providerTypeLabelKey(profile.type))) : `<div class="empty">${tx("llm.empty")}</div>`}</div></section>`;
   }
 
   // The classifiable platforms as a checklist (owner 2026-09-30: a type may take
@@ -1103,7 +1229,8 @@
 
     const group = (title, hint, items, kind, platformID = "") => {
       const key = `knowledge:${kind}${platformID ? `:${platformID}` : ""}`;
-      return `<section class="knowledge-group" data-knowledge-group><div class="section-header"><div><h3>${esc(title)} <span class="knowledge-count" data-knowledge-count>${items.length}</span></h3>${hint ? `<p class="section-copy" data-info>${esc(hint)}</p>` : ""}</div></div>${items.length ? `<div class="knowledge-list vui-list-box" data-list-key="${key}" data-vui-search="${key}" data-vui-search-items=".knowledge-card" data-vui-search-label="${tx("knowledge.search")} · ${esc(title)}" data-vui-search-copy="${esc(fieldInfo["knowledge.search"])}" tabindex="0" aria-label="${esc(title)}">${items.map((entry) => entryCard(entry, kind)).join("")}</div>` : `<div class="empty">${tx("knowledge.empty")}</div>`}</section>`;
+      const total = knowledge.paged ? (knowledge.counts?.[`${kind}${platformID ? ":" + platformID : ""}`] || 0) : items.length;
+      return `<section class="knowledge-group" data-knowledge-group><div class="section-header"><div><h3>${esc(title)} <span class="knowledge-count" data-knowledge-count>${total}</span></h3>${hint ? `<p class="section-copy" data-info>${esc(hint)}</p>` : ""}</div></div>${total ? `<div class="knowledge-list vui-list-box" data-list-key="${key}" data-vui-search="${key}" data-vui-search-items=".knowledge-card" data-vui-search-label="${tx("knowledge.search")} · ${esc(title)}" data-vui-search-copy="${esc(fieldInfo["knowledge.search"])}" tabindex="0" aria-label="${esc(title)}">${listPlaceholder(key, items, entry => entryCard(entry, kind), entry => `${entry.name || ""} ${entry.subject} ${[...liveEdits.values()].find(edit => edit.action === "editKnowledgeEntry" && edit.identity.id === entry.id)?.values?.meaning || entry.meaning || ""}`)}</div>` : `<div class="empty">${tx("knowledge.empty")}</div>`}</section>`;
     };
 
     // Terms are only ever added here, by the user: name the term, and either
@@ -1135,17 +1262,24 @@
 
   // "Add a creator" suggestions: creators already collected on the chosen
   // platform whose name contains what is typed.
-  function showKnowledgeSuggestions(input) {
+  let suggestionRevision = 0;
+  async function showKnowledgeSuggestions(input) {
     const box = root.querySelector("[data-knowledge-suggestions]");
     if (!box) return;
+    const revision = ++suggestionRevision;
     const query = input.value.trim().toLowerCase();
     knowledgeCreatorDraft = input.value;
     const known = (state.assets?.knowledge?.knownCreators || []).filter((creator) => creator.platformID === knowledgeAddPlatform);
     const rank = (name) => (name.startsWith(query) ? 0 : name.split(/\s+/).some((word) => word.startsWith(query)) ? 1 : 2);
-    const matches = query.length < 2 ? [] : known
+    let matches = query.length < 2 ? [] : known
       .filter((creator) => creator.name.toLowerCase().includes(query))
       .sort((a, b) => rank(a.name.toLowerCase()) - rank(b.name.toLowerCase()))
       .slice(0, 6);
+    if (state.assets?.knowledge?.paged && query.length >= 2) {
+      const result = await queryKnowledge("suggestion", knowledgeAddPlatform, { query, offset: 0, limit: 6 });
+      if (revision !== suggestionRevision || !box.isConnected) return;
+      matches = result?.items || [];
+    }
     box.innerHTML = matches.map((creator) => `<button type="button" class="vui-menu-item knowledge-suggestion" data-knowledge-pick="${esc(creator.name)}"><span dir="auto">${esc(creator.name)}</span><span class="knowledge-id">${esc(creator.id)}</span></button>`).join("");
     knowledgeSuggestionsOpen = matches.length > 0;
     if (!knowledgeSuggestionsOpen) window.VaultUI.hideMenuLayer(box);
@@ -1153,6 +1287,7 @@
   }
 
   function closeKnowledgeSuggestions(restoreFocus = false) {
+    suggestionRevision++;
     const box = root.querySelector("[data-knowledge-suggestions]");
     if (restoreFocus) root.querySelector("[data-knowledge-creator]")?.focus({ preventScroll: true });
     if (box) { window.VaultUI.hideMenuLayer(box); box.replaceChildren(); }
@@ -1218,9 +1353,22 @@
       links.setAttribute("width", width);
       links.setAttribute("height", height);
 
+      const model = graphModels.get(map.dataset.treeId);
+      if (model?.nodes.length > 200 && tagDrag?.treeID !== map.dataset.treeId) {
+        const visibleEdges = new Set();
+        for (let x = Math.floor(map.scrollLeft / 256); x <= Math.floor((map.scrollLeft + map.clientWidth) / 256); x++) for (let y = Math.floor(map.scrollTop / 256); y <= Math.floor((map.scrollTop + map.clientHeight) / 256); y++) for (const edge of model.edgeCells.get(x + ":" + y) || []) visibleEdges.add(edge);
+        links.innerHTML = `<path d="${[...visibleEdges].map(index => model.edges[index]).join(" ")}"/>`;
+        return;
+      }
       const nodesByID = new Map([...content.querySelectorAll(".tree-map-node")].map((node) => [node.dataset.nodeId, node]));
       links.innerHTML = [...nodesByID.values()].map((node) => {
         const parent = node.dataset.parentId ? nodesByID.get(node.dataset.parentId) : null;
+        const model = graphModels.get(map.dataset.treeId);
+        if (!parent && model?.nodes.length > 200 && model.positions.has(node.dataset.parentId)) {
+          const start = model.positions.get(node.dataset.parentId), end = model.positions.get(node.dataset.nodeId);
+          const bend = Math.round((start.y + 22 + end.y) / 2);
+          return `<path d="M ${start.x + 63} ${start.y + 22} V ${bend} H ${end.x + 63} V ${end.y}"/>`;
+        }
         if (!parent || parent === node) return "";
         const parentRect = parent.getBoundingClientRect();
         const nodeRect = node.getBoundingClientRect();
@@ -1328,9 +1476,10 @@
       return;
     }
     if (composingEdit) return;
+    pendingLists = []; deferredChoices = new Map();
     const markup = shell(workspace()) + createTypeModal();
     // Nothing changed on the page: keep the DOM (and its scroll) as it is.
-    if (markup === lastRenderedMarkup && root.firstChild) return;
+    if (markup === lastRenderedMarkup && root.firstChild) { const searchFocus = window.VaultUI.captureSearch(scope); mountChoices(); mountLists(); mountLargeGraphs(); window.VaultUI.restoreSearch(scope, searchFocus); return; }
     renderFull(markup);
   }
 
@@ -1355,10 +1504,12 @@
     } : null;
     replacingControls = true;
     root.innerHTML = markup;
+    mountChoices(); mountLists();
     restoreLiveEdits(focused);
     replacingControls = false;
     lastRenderedMarkup = markup;
     bindTreeMapWheel();
+    mountLargeGraphs();
     root.querySelectorAll(".knowledge-card").forEach(updateKnowledgeSearchText);
     if (knowledgeSuggestionsOpen) {
       const creator = root.querySelector("[data-knowledge-creator]");
@@ -1384,6 +1535,7 @@
         const position = listViewportPositions.get(list.dataset.listKey);
         if (position) { list.scrollLeft = position.x; list.scrollTop = position.y; }
       });
+      for (const map of root.querySelectorAll("[data-tree-map]")) if ((graphModels.get(map.dataset.treeId)?.nodes.length || 0) > 200) paintLargeGraph(map);
       drawTreeConnections();
       placeTreePopovers();
       placeResearchSetup();
@@ -1977,6 +2129,15 @@
       children.push(candidate);
       childrenByParentID.set(parentID, children);
     });
+    const model = graphModels.get(map.dataset.treeId);
+    if (model?.nodes.length > 200) {
+      childrenByParentID.clear();
+      for (const candidate of model.nodes) {
+        if (!candidate.parentID) continue;
+        if (!childrenByParentID.has(candidate.parentID)) childrenByParentID.set(candidate.parentID, []);
+        childrenByParentID.get(candidate.parentID).push({ dataset: { nodeId: candidate.id } });
+      }
+    }
     const branchNodes = [];
     const pendingIDs = [node.dataset.nodeId];
     const visitedIDs = new Set();
@@ -1985,11 +2146,12 @@
       if (!currentID || visitedIDs.has(currentID)) continue;
       visitedIDs.add(currentID);
       const currentNode = nodesByID.get(currentID);
-      if (!currentNode) continue;
+      const position = model?.positions.get(currentID);
+      if (!currentNode && !position) continue;
       branchNodes.push({
         node: currentNode,
-        startX: Number(currentNode.dataset.positionX) || 0,
-        startY: Number(currentNode.dataset.positionY) || 0,
+        startX: currentNode ? Number(currentNode.dataset.positionX) || 0 : position.x,
+        startY: currentNode ? Number(currentNode.dataset.positionY) || 0 : position.y,
       });
       (childrenByParentID.get(currentID) || []).forEach((child) => pendingIDs.push(child.dataset.nodeId));
     }
@@ -2016,15 +2178,16 @@
     tagDrag.moved = true;
     activeTagPanel = null;
     root.querySelector("[data-tree-popover]")?.remove();
-    const minStartX = Math.min(...tagDrag.nodes.map((entry) => entry.startX));
-    const minStartY = Math.min(...tagDrag.nodes.map((entry) => entry.startY));
-    const maxStartX = Math.max(...tagDrag.nodes.map((entry) => entry.startX));
-    const maxStartY = Math.max(...tagDrag.nodes.map((entry) => entry.startY));
+    const minStartX = tagDrag.nodes.reduce((value, entry) => Math.min(value, entry.startX), Infinity);
+    const minStartY = tagDrag.nodes.reduce((value, entry) => Math.min(value, entry.startY), Infinity);
+    const maxStartX = tagDrag.nodes.reduce((value, entry) => Math.max(value, entry.startX), -Infinity);
+    const maxStartY = tagDrag.nodes.reduce((value, entry) => Math.max(value, entry.startY), -Infinity);
     const deltaX = Math.max(-minStartX, Math.min(20_000 - maxStartX, rawDeltaX));
     const deltaY = Math.max(-minStartY, Math.min(20_000 - maxStartY, rawDeltaY));
     tagDrag.nodes.forEach((entry) => {
       const positionX = entry.startX + deltaX;
       const positionY = entry.startY + deltaY;
+      if (!entry.node) return;
       entry.node.dataset.positionX = String(positionX);
       entry.node.dataset.positionY = String(positionY);
       entry.node.style.left = `${positionX}px`;
@@ -2058,6 +2221,24 @@
   scope.addEventListener("mouseup", finishTagDrag);
 
   window.VaultClassifier = {
+    receiveKnowledgeRow(row) {
+      if (!row?.id) return;
+      for (const [key, edit] of liveEdits) if (edit.action === "editKnowledgeEntry" && edit.identity.id === row.id && edit.sent && liveEditMatches(edit, row)) { clearTimeout(edit.timer); liveEdits.delete(key); }
+    },
+    receiveList(packet) {
+      const resolve = listRequests.get(packet.requestID);
+      if (resolve) {
+        listRequests.delete(packet.requestID);
+        for (const row of packet.items || []) {
+          knowledgeRows.set(row.id, row);
+          for (const [key, edit] of liveEdits) {
+            if (edit.action === "editKnowledgeEntry" && edit.identity.id === row.id && edit.sent && !state.issue && liveEditMatches(edit, row)) { clearTimeout(edit.timer); liveEdits.delete(key); }
+          }
+        }
+        while (knowledgeRows.size > 256) knowledgeRows.delete(knowledgeRows.keys().next().value);
+        resolve(packet);
+      }
+    },
     receive(payload) {
       const revision = Number(payload?.presentationRevision);
       if (Number.isSafeInteger(revision) && revision > 0) {
