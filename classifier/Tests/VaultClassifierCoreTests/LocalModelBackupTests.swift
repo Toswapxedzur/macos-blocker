@@ -48,16 +48,23 @@ final class LocalModelBackupTests: XCTestCase {
         XCTAssertFalse(payloadText.contains("\"trainingCorpus\""))
         XCTAssertFalse(payloadText.contains("\"personalModel\""))
 
+        #if !os(Windows)
         let attributes = try FileManager.default.attributesOfItem(atPath: root.path)
         let permissions = try XCTUnwrap((attributes[.posixPermissions] as? NSNumber)?.intValue)
         XCTAssertEqual(permissions & 0o777, 0o700)
+        #endif
     }
 
     func testBackupConfigurationRejectsRootAndAcceptsAnOwnedPath() throws {
         XCTAssertThrowsError(try LocalBackupConfiguration(isEnabled: true, directoryPath: "/").directoryURL())
+        #if os(Windows)
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("vault-classifier-backups").path
+        XCTAssertEqual(try LocalBackupConfiguration(isEnabled: true, directoryPath: path).directoryURL().path, path)
+        #else
         XCTAssertEqual(
             try LocalBackupConfiguration(isEnabled: true, directoryPath: "/tmp/vault-classifier-backups").directoryURL().path,
             "/tmp/vault-classifier-backups"
         )
+        #endif
     }
 }

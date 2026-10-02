@@ -10,7 +10,7 @@ public enum VaultRuntimeEnvironment: String, Codable, Sendable {
     public static let variableName = "ADAMANCIA_VAULT_ENVIRONMENT"
 
     public static var current: VaultRuntimeEnvironment {
-        resolve(ProcessInfo.processInfo.environment[variableName])
+        resolve(ProcessInfo.processInfo.environment[variableName] ?? ProcessInfo.processInfo.environment["VAULT_ENVIRONMENT"])
     }
 
     public static func resolve(_ value: String?) -> VaultRuntimeEnvironment {
@@ -68,6 +68,23 @@ public enum VaultRuntimeEnvironment: String, Codable, Sendable {
     /// so it is a stable place for on-device state that must be shared between
     /// them without a keychain item. Everything here stays on this Mac.
     public func classifierSupportDirectoryURL(fileManager: FileManager = .default) throws -> URL {
+        #if os(Windows)
+        let environment = ProcessInfo.processInfo.environment
+        let directory: URL
+        if let override = environment["VAULT_DATA_ROOT"], !override.isEmpty {
+            directory = URL(fileURLWithPath: override, isDirectory: true)
+        } else {
+            guard let local = environment["LOCALAPPDATA"], !local.isEmpty else {
+                throw CocoaError(.fileNoSuchFile)
+            }
+            directory = URL(fileURLWithPath: local, isDirectory: true)
+                .appendingPathComponent("AdamanciaVault", isDirectory: true)
+                .appendingPathComponent(self == .development ? "Development" : "Production", isDirectory: true)
+                .appendingPathComponent("Classifier", isDirectory: true)
+        }
+        try VaultPrivateFile.createDirectory(at: directory, fileManager: fileManager)
+        return directory
+        #else
         let appSupport = try fileManager.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
@@ -86,5 +103,6 @@ public enum VaultRuntimeEnvironment: String, Codable, Sendable {
             )
         }
         return directory
+        #endif
     }
 }

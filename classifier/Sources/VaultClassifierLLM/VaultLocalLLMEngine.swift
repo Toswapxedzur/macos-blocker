@@ -79,8 +79,12 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
 
     /// `<App>.app/Contents/Frameworks` when running from a bundle, else nil.
     private static func bundledBackendDirectory() -> String? {
+        #if os(Windows)
+        let frameworks = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
+        #else
         let frameworks = Bundle.main.bundleURL
             .appendingPathComponent("Contents/Frameworks", isDirectory: true)
+        #endif
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: frameworks.path, isDirectory: &isDirectory),
               isDirectory.boolValue else { return nil }
@@ -866,8 +870,7 @@ public actor VaultLocalLLMEngine: OnDeviceBatchLLM {
 
     /// The directory scanned for user-provided model files.
     public nonisolated static func modelsDirectory() -> URL? {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appendingPathComponent(VaultRuntimeEnvironment.current.classifierSupportDirectoryName, isDirectory: true)
+        (try? VaultRuntimeEnvironment.current.classifierSupportDirectoryURL())?
             .appendingPathComponent("models", isDirectory: true)
     }
 

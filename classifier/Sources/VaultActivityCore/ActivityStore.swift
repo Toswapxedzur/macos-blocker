@@ -1,4 +1,5 @@
 import Foundation
+import VaultClassifierCore
 
 /// The native store of record for the Activity log (see ACTIVITY-LOG.md §4).
 /// One file per (category, local day) so per-category retention and deletes are
@@ -30,21 +31,6 @@ public final class ActivityStore: @unchecked Sendable {
         self.rootDirectory = directory
         self.now = now
         self.calendar = calendar
-    }
-
-    /// The store under this environment's application-support tree
-    /// (`~/Library/Application Support/macosBlocker[-Development]/Activity`).
-    public static func standard(
-        environment: VaultRuntimeEnvironment = .current,
-        fileManager: FileManager = .default
-    ) -> ActivityStore {
-        let support = (try? fileManager.url(
-            for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
-        )) ?? fileManager.temporaryDirectory
-        let directory = support
-            .appendingPathComponent(environment.sharedStoreDirectoryName, isDirectory: true)
-            .appendingPathComponent("Activity", isDirectory: true)
-        return ActivityStore(directory: directory)
     }
 
     // MARK: - Settings
@@ -492,13 +478,9 @@ public final class ActivityStore: @unchecked Sendable {
     private func write(_ data: Data, to url: URL) {
         guard !data.isEmpty else { return }
         do {
-            try fileManager.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
-            )
+            try VaultPrivateFile.createDirectory(at: url.deletingLastPathComponent(), fileManager: fileManager)
             try data.write(to: url, options: .atomic)
-            try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            try? VaultPrivateFile.restrict(url, fileManager: fileManager)
         } catch {
             // Best-effort background persistence; a lost record is preferable to a crash.
         }

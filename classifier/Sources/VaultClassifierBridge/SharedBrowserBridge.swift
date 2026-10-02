@@ -76,7 +76,7 @@ public enum SharedBrowserBridgeProtocol {
     }
 
     public static func isAcceptedHubProgram(_ value: String) -> Bool {
-        value == "macapp" || value == "classifier"
+        value == "macapp" || value == "windowsapp" || value == "classifier"
     }
 
     public static func safeError(_ value: String?) -> String {

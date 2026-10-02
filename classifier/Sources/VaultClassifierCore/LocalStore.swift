@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 
 /// Durable state for the collection, per-video LLM, settings, and
@@ -187,11 +191,7 @@ public final class LocalStateFile: @unchecked Sendable {
     private static func writeToDisk(_ state: LocalClassifierState, url: URL) {
         do {
             let manager = FileManager.default
-            try manager.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
-            )
+            try VaultPrivateFile.createDirectory(at: url.deletingLastPathComponent(), fileManager: manager)
             // The collected entries go to their day files; the state file holds the rest.
             let days = collectedDays(of: state)
             var slim = state
@@ -209,9 +209,9 @@ public final class LocalStateFile: @unchecked Sendable {
                 written[relative] = signature
                 guard previous[relative] != signature else { continue }
                 let file = directory.appendingPathComponent(relative)
-                try manager.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+                try VaultPrivateFile.createDirectory(at: file.deletingLastPathComponent(), fileManager: manager)
                 try compact.encode(entries).write(to: file, options: .atomic)
-                try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+                try VaultPrivateFile.restrict(file, fileManager: manager)
             }
             for relative in previous.keys where written[relative] == nil {
                 try? manager.removeItem(at: directory.appendingPathComponent(relative))
@@ -220,7 +220,7 @@ public final class LocalStateFile: @unchecked Sendable {
             writtenDays[url.path] = written
             lock.unlock()
             try encoder.encode(slim).write(to: url, options: .atomic)
-            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            try VaultPrivateFile.restrict(url, fileManager: manager)
         } catch {
             // Best-effort background persistence; the session state remains authoritative.
         }

@@ -5,7 +5,7 @@ import VaultClassifierCore
 
 final class WebShellLiveWorkspaceTests: XCTestCase {
     func testBundledShellContainsOnlyLiveWorkspacesAndActions() throws {
-        let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
+        let appURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "app", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
 
         for liveWorkspace in ["browserBridge", "knowledge"] {
@@ -29,7 +29,7 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
 
     /// Each group contains independent dials and house rules.
     func testShellPerTypeFormHoldsDialsHouseRulesAndOptionalTagCounts() throws {
-        let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
+        let appURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "app", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
         XCTAssertTrue(script.contains("saveClassifierTypeLocalModel"))
         XCTAssertTrue(script.contains("classifier-local-model-form-"))
@@ -48,9 +48,9 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
     /// Research is on/off + provider; every budget, cooldown, trigger and knowledge
     /// field is a constant and must be gone from both forms.
     func testShellResearchFormIsOnOffPlusProvider() throws {
-        let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
+        let appURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "app", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
-        let stringsURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "strings", extension: "js"))
+        let stringsURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "strings", extension: "js"))
         let strings = try String(contentsOf: stringsURL, encoding: .utf8)
         for retired in [
             "requestsPerMinute", "dailyTokenLimit\"", "cooldownHours", "creatorScoreThreshold", "creatorScoreHalfLifeDays",
@@ -64,9 +64,9 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
     }
 
     func testShellSurfacesResearchLaneStatusAndRetryAction() throws {
-        let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
+        let appURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "app", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
-        let stringsURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "strings", extension: "js"))
+        let stringsURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "strings", extension: "js"))
         let strings = try String(contentsOf: stringsURL, encoding: .utf8)
         // Research failures must be visible (queue/cooldown/last failure) and
         // recoverable (retry-now) from the settings panel; every key rendered
@@ -87,8 +87,8 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
     }
 
     func testKnowledgeWorkspaceExposesCreatorAndTermManagement() throws {
-        let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
-        let stringsURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "strings", extension: "js"))
+        let appURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "app", extension: "js"))
+        let stringsURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "strings", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
         let strings = try String(contentsOf: stringsURL, encoding: .utf8)
 
@@ -114,8 +114,8 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
     }
 
     func testProviderWorkspaceDisclosesLocalOnlyCredentialStorage() throws {
-        let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
-        let stringsURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "strings", extension: "js"))
+        let appURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "app", extension: "js"))
+        let stringsURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "strings", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
         let strings = try String(contentsOf: stringsURL, encoding: .utf8)
 
@@ -123,7 +123,7 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         XCTAssertTrue(script.contains("llm.localOnlyDisclosure"))
         XCTAssertTrue(script.contains("provider-local-only"))
         // The copy distinguishes local storage from authentication requests sent to the provider.
-        XCTAssertTrue(strings.contains("stored in this app’s support folder on this Mac"))
+        XCTAssertTrue(strings.contains("stored in this app’s support folder on this device"))
         XCTAssertTrue(strings.contains("Keys are sent to the configured provider to authenticate requests"))
         XCTAssertTrue(strings.contains("not in the system Keychain"))
     }
@@ -132,8 +132,8 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
     /// search mode, a web-search provider, or the raw-search tuning fields, must
     /// offer only grounding-capable providers, and must retire Serper/You.com.
     func testShellIsProviderGroundingOnlyGloballyAndPerType() throws {
-        let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
-        let stringsURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "strings", extension: "js"))
+        let appURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "app", extension: "js"))
+        let stringsURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "strings", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
         let strings = try String(contentsOf: stringsURL, encoding: .utf8)
 
@@ -162,8 +162,8 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
     }
 
     func testShellDisclosesOptInResearchDataFlow() throws {
-        let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
-        let stringsURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "strings", extension: "js"))
+        let appURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "app", extension: "js"))
+        let stringsURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "strings", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
         let strings = try String(contentsOf: stringsURL, encoding: .utf8)
 
@@ -174,12 +174,12 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
         XCTAssertTrue(strings.contains("a term you added without a description"))
         XCTAssertFalse(strings.contains("second on-device constrained decode"), "the automatic term decode is gone")
         XCTAssertTrue(script.contains("addKnowledgeTerm"))
-        XCTAssertFalse(strings.contains("Everything runs on this Mac; nothing leaves it"))
+        XCTAssertFalse(strings.contains("Everything runs on this device; nothing leaves it"))
     }
 
     func testShellContainsPerTypeResearchOverridesAndGlobalMasterGateCopy() throws {
-        let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
-        let stringsURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "strings", extension: "js"))
+        let appURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "app", extension: "js"))
+        let stringsURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "strings", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
         let strings = try String(contentsOf: stringsURL, encoding: .utf8)
 
@@ -194,8 +194,8 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
     }
 
     func testSettingsModelLibraryExposesUserInitiatedDownloadControls() throws {
-        let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
-        let stringsURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "strings", extension: "js"))
+        let appURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "app", extension: "js"))
+        let stringsURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "strings", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
         let strings = try String(contentsOf: stringsURL, encoding: .utf8)
 
@@ -219,7 +219,7 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
     }
 
     func testCreateGroupFlowAsksOnlyForPlatformAndName() throws {
-        let appURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "app", extension: "js"))
+        let appURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "app", extension: "js"))
         let script = try String(contentsOf: appURL, encoding: .utf8)
         // Creating a group opens the dialog; there is no direct-create path.
         XCTAssertTrue(script.contains("createTypeModal"))
@@ -235,7 +235,7 @@ final class WebShellLiveWorkspaceTests: XCTestCase {
             XCTAssertFalse(script.lowercased().contains(retired.lowercased()), "preset remnant in the shell: \(retired)")
         }
 
-        let stringsURL = try XCTUnwrap(VaultClassifierWebShell.bundledWebAssetURL(named: "strings", extension: "js"))
+        let stringsURL = try XCTUnwrap(VaultClassifierBundledAssets.url(named: "strings", extension: "js"))
         let strings = try String(contentsOf: stringsURL, encoding: .utf8)
         for key in ["createType.title", "createType.platformLabel", "createType.nameLabel", "createType.create"] {
             XCTAssertTrue(strings.contains(key), "missing create string: \(key)")

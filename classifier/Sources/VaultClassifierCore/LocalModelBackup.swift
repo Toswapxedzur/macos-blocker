@@ -1,6 +1,14 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
+#if canImport(Security)
 import Security
+#else
+public typealias OSStatus = Int32
+#endif
 
 /// The local-only backup policy. The app UI gates changing this setting behind
 /// an owner code kept in Keychain; the state file contains only a user-chosen
@@ -95,7 +103,7 @@ public enum LocalBackupError: Error, Equatable, LocalizedError, Sendable {
         case .unsafeDirectory: return "The backup folder cannot be a symbolic link."
         case .backupDisabled: return "Enable local backup mode before creating a snapshot."
         case .invalidOwnerCode: return "Use an owner code with at least eight characters."
-        case .keychain: return "The local backup owner code could not be stored in Keychain."
+        case .keychain: return "The local backup owner code could not be stored securely on this device."
         }
     }
 }
@@ -121,14 +129,14 @@ public struct LocalModelBackup: Sendable {
                 throw LocalBackupError.unsafeDirectory
             }
         } else {
-            try fileManager.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try VaultPrivateFile.createDirectory(at: root, fileManager: fileManager)
         }
-        try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+        try VaultPrivateFile.restrict(root, directory: true, fileManager: fileManager)
 
         let milliseconds = Int64((date.timeIntervalSince1970 * 1_000).rounded(.towardZero))
         let staging = root.appendingPathComponent(".staging-\(UUID().uuidString)", isDirectory: true)
         let destination = root.appendingPathComponent("model-\(milliseconds)-\(UUID().uuidString.prefix(8))", isDirectory: true)
-        try fileManager.createDirectory(at: staging, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try VaultPrivateFile.createDirectory(at: staging, fileManager: fileManager)
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -143,7 +151,7 @@ public struct LocalModelBackup: Sendable {
             )
             try encoder.encode(manifest).write(to: staging.appendingPathComponent("manifest.json"), options: .atomic)
             for file in ["model-state.json", "seed-package.json", "manifest.json"] {
-                try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: staging.appendingPathComponent(file).path)
+                try VaultPrivateFile.restrict(staging.appendingPathComponent(file), fileManager: fileManager)
             }
             try fileManager.moveItem(at: staging, to: destination)
         } catch {
@@ -181,6 +189,12 @@ public enum LocalBackupOwnerCodeStore {
     public static func setOwnerCode(_ code: String) throws {
         guard code.count >= 8 else { throw LocalBackupError.invalidOwnerCode }
         let verifier = Data(SHA256.hash(data: Data(code.utf8)))
+        #if os(Windows)
+        let directory = try VaultRuntimeEnvironment.current.classifierSupportDirectoryURL()
+        let url = directory.appendingPathComponent("backup-owner-verifier.dpapi")
+        try VaultPrivateFile.protectedData(verifier).write(to: url, options: .atomic)
+        try VaultPrivateFile.restrict(url)
+        #else
         let identity: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service(environment: .current),
@@ -192,11 +206,14 @@ public enum LocalBackupOwnerCodeStore {
         insert[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         let status = SecItemAdd(insert as CFDictionary, nil)
         guard status == errSecSuccess else { throw LocalBackupError.keychain(status) }
+        #endif
     }
 
     public static func verifyOwnerCode(_ code: String) -> Bool {
         guard let expected = loadVerifier(environment: .current) else { return false }
-        return Data(SHA256.hash(data: Data(code.utf8))).elementsEqual(expected)
+        let actual = Data(SHA256.hash(data: Data(code.utf8)))
+        guard actual.count == expected.count else { return false }
+        return zip(actual, expected).reduce(UInt8(0)) { $0 | ($1.0 ^ $1.1) } == 0
     }
 
 
@@ -204,6 +221,7 @@ public enum LocalBackupOwnerCodeStore {
         environment.keychainService(productionService)
     }
 
+    #if canImport(Security)
     private static func identity(environment: VaultRuntimeEnvironment) -> [CFString: Any] {
         [
             kSecClass: kSecClassGenericPassword,
@@ -212,7 +230,16 @@ public enum LocalBackupOwnerCodeStore {
         ]
     }
 
+    #endif
+
     private static func loadVerifier(environment: VaultRuntimeEnvironment) -> Data? {
+        #if os(Windows)
+        guard let directory = try? environment.classifierSupportDirectoryURL(),
+              let encrypted = try? Data(contentsOf: directory.appendingPathComponent("backup-owner-verifier.dpapi")),
+              let verifier = try? VaultPrivateFile.protectedData(encrypted, decrypt: true),
+              verifier.count == 32 else { return nil }
+        return verifier
+        #else
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service(environment: environment),
@@ -223,5 +250,6 @@ public enum LocalBackupOwnerCodeStore {
         var result: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else { return nil }
         return result as? Data
+        #endif
     }
 }

@@ -31,3 +31,5 @@
 
 - `classifier/Tests/WebUI/language-manuals.js` checks the integrated shared viewer from Classifier and Activity, Mac code-doc copying, and shadow-root focus restoration. Use the existing `autosave.mjs` harness with `UI_TEST_PAGE` and `UI_READY_EXPRESSION`.
 - List search: shared controls sync from the sibling extension source; Classifier provider/tag-tree and Activity list metadata select the searchable collections. Coverage and owner cutoff are in `docs/LIST-CONTAINMENT.md`.
+
+- **Portable Activity core (2026-10-02):** canonical Activity models/store/wire/dashboard/groups/accumulator live in `classifier/Sources/VaultActivityCore/` and are re-exported by MacBlockerCore. Mac support-directory selection stays in `Sources/MacBlockerCore/MacActivityStore.swift`; the Windows worker uses its isolated Windows data root.

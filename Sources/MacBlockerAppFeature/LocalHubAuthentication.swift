@@ -1,5 +1,6 @@
 #if os(macOS)
 import CryptoKit
+import Darwin
 import Foundation
 import MacBlockerCore
 import Security
@@ -14,7 +15,7 @@ import VaultClassifierBridge
 /// launch. The file has no such per-binary ACL, so the app launches headlessly.
 enum LocalHubAuthentication {
     static let protocolVersion = 4
-    static let browserPrograms: Set<String> = ["chrome", "edge"]
+    static let browserPrograms: Set<String> = ["chrome", "edge", "safari"]
     static let desktopPrograms: Set<String> = ["classifier", "macapp"]
 
     private static let secretLength = 32
@@ -40,7 +41,30 @@ enum LocalHubAuthentication {
     /// runtime environment (development / production) from the same variable
     /// this app reads, so both stay separated identically.
     static func sharedSecret() throws -> Data {
-        try VaultClassifierBridge.LocalHubAuthentication.sharedSecret()
+        let secret = try VaultClassifierBridge.LocalHubAuthentication.sharedSecret()
+        let environment = VaultRuntimeEnvironment.current
+        if let container = AppGroup.containerURL(identifier: environment.appGroupIdentifier) {
+            try publishSafariSecret(secret, container: container)
+        }
+        return secret
+    }
+
+    /// Safari's separately packaged native extension can access the common
+    /// entitled container, while browser JavaScript only receives HMAC proofs.
+    /// Write a private temporary file first and rename it: no partially written
+    /// key or permissively created key can be observed by another process.
+    static func publishSafariSecret(_ secret: Data, container: URL) throws {
+        guard secret.count == secretLength else { throw LocalHubAuthenticationError.invalidInput }
+        let destination = container.appendingPathComponent("safari-local-hub-secret-v4")
+        let temporary = container.appendingPathComponent(".safari-secret-\(UUID().uuidString)")
+        guard FileManager.default.createFile(atPath: temporary.path, contents: secret,
+                attributes: [.posixPermissions: 0o600]) else {
+            throw LocalHubAuthenticationError.fileSystem
+        }
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        guard Darwin.rename(temporary.path, destination.path) == 0 else {
+            throw LocalHubAuthenticationError.fileSystem
+        }
     }
 
     /// A stable bearer token for the local MCP server, derived from the shared
@@ -93,5 +117,6 @@ enum LocalHubAuthentication {
 enum LocalHubAuthenticationError: Error {
     case randomness
     case invalidInput
+    case fileSystem
 }
 #endif

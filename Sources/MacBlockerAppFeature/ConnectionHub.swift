@@ -358,6 +358,12 @@ final class ConnectionHub: ObservableObject {
     /// still held — a quitting copy — the listen is simply tried again.
     private func startLocalHub() {
         guard wantsToListen, listener == nil else { return }
+        // Publish the same native-only credential for the separate Safari
+        // extension before a browser can receive its authentication challenge.
+        guard (try? LocalHubAuthentication.sharedSecret()) != nil else {
+            retryListenLater()
+            return
+        }
         let parameters = NWParameters.tcp
         parameters.defaultProtocolStack.applicationProtocols.insert(NWProtocolWebSocket.Options(), at: 0)
         guard let port = NWEndpoint.Port(rawValue: VaultRuntimeEnvironment.current.hubPort),
@@ -582,7 +588,7 @@ final class ConnectionHub: ObservableObject {
             // Native Messaging host hands the browser and the classifier client
             // uses — so this hub (the sole host) accepts them. (Both modules
             // declare LocalHubAuthentication; qualify the shared-secret source.)
-            let secret = try? VaultClassifierBridge.LocalHubAuthentication.sharedSecret()
+            let secret = try? LocalHubAuthentication.sharedSecret()
             if let reason = Self.helloRejectionReason(obj, challenge: challenge, secret: secret) {
                 rejectAndClose(conn, reason: reason)
                 return

@@ -1,6 +1,12 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
+#if canImport(Security)
 import Security
+#endif
 import VaultClassifierCore
 
 /// Authentication for the fixed local Vault hub. Browser code never receives
@@ -8,8 +14,8 @@ import VaultClassifierCore
 /// challenge for each new WebSocket connection.
 public enum LocalHubAuthentication {
     public static let protocolVersion = 4
-    public static let browserPrograms: Set<String> = ["chrome", "edge"]
-    public static let desktopPrograms: Set<String> = ["classifier", "macapp"]
+    public static let browserPrograms: Set<String> = ["chrome", "edge", "safari"]
+    public static let desktopPrograms: Set<String> = ["classifier", "macapp", "windowsapp"]
 
     private static let secretLength = 32
     private static let challengeLength = 43
@@ -23,11 +29,15 @@ public enum LocalHubAuthentication {
     }
 
     public static func makeChallenge() throws -> String {
+        #if os(Windows)
+        return base64URL(try VaultPrivateFile.randomData(count: 32))
+        #else
         var bytes = [UInt8](repeating: 0, count: 32)
         guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
             throw LocalHubAuthenticationError.randomness
         }
         return base64URL(Data(bytes))
+        #endif
     }
 
     public static func makeProof(
@@ -83,11 +93,15 @@ public enum LocalHubAuthentication {
         if let existing = loadSecret(environment: environment), existing.count == secretLength { return existing }
 
         if loadSecret(environment: environment) != nil { deleteSecret(environment: environment) }
+        #if os(Windows)
+        let secret = try VaultPrivateFile.randomData(count: secretLength)
+        #else
         var bytes = [UInt8](repeating: 0, count: secretLength)
         guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
             throw LocalHubAuthenticationError.randomness
         }
         let secret = Data(bytes)
+        #endif
         do {
             try storeSecret(secret, environment: environment)
             return secret
@@ -132,7 +146,7 @@ public enum LocalHubAuthentication {
         } catch {
             throw LocalHubAuthenticationError.fileSystem
         }
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        try VaultPrivateFile.restrict(url)
     }
 
     private static func loadSecret(environment: VaultRuntimeEnvironment) -> Data? {

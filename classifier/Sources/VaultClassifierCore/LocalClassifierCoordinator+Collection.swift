@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 
 // Collection and corrections: platform entry intake, collection metadata, enabled platform set, human corrections and the entries they affect.

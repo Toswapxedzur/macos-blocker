@@ -1,7 +1,41 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import VaultClassifierCore
 import VaultClassifierBridge
 
+#if os(Windows)
+/// The owning Windows process already authenticates hub peers. Use its private
+/// stdio pipe rather than opening a second socket or inventing another secret.
+@MainActor
+final class SharedHubClient {
+    enum State: String { case off, connecting, connected, disconnected, error }
+    struct Request {
+        let sourcePeerID: String
+        let requestID: String
+        let operation: SharedBrowserBridgeOperation
+        let bodyData: Data
+    }
+    struct Reply {
+        var body: Any?
+        var error: String?
+        static func success(_ body: Any) -> Reply { .init(body: body, error: nil) }
+        static func failure(_ error: String) -> Reply { .init(body: nil, error: error) }
+    }
+    static var onHostBroadcast: ((String, Any) -> Void)?
+    var onRequest: ((Request) -> Reply)?
+    var onStateChange: (() -> Void)?
+    private(set) var state: State = .off
+    private(set) var error = ""
+    func connect() { state = .connected; onStateChange?() }
+    func broadcast(operation: String, body: Any) {
+        guard state == .connected, SharedBrowserBridgeProtocol.isValidBody(body),
+              SharedBrowserBridgeOperation.relayableBroadcastOperations.contains(operation) else { return }
+        Self.onHostBroadcast?(operation, body)
+    }
+}
+#else
 /// The classifier joins the fixed local Vault hub and becomes its lightweight
 /// classifier host when Mac Vault is not open.
 @MainActor
@@ -237,3 +271,5 @@ final class SharedHubClient {
 private enum SharedHubClientError: Error {
     case invalidFrame
 }
+
+#endif
