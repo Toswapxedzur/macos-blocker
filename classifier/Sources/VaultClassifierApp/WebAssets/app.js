@@ -380,8 +380,8 @@
 
   // English field explanations are explicit; translations remain a release-time batch.
   const fieldInfo = Object.freeze({
-    "bridge.typeName": "The name shown for this Classifier group. Renaming it does not change its platforms or tags.",
-    "createType.nameLabel": "The name of the new Classifier group. You can rename it later.",
+    "bridge.typeName": "The name shown for this Classifier group.",
+    "createType.nameLabel": "The name of the new Classifier group.",
     "createType.platformLabel": "Choose the platforms this group will classify. A platform can belong to only one Classifier group.",
     "bridge.applicablePlatform": "The platforms assigned when this Classifier group was created. Platform assignments are fixed for that group.",
     "bridge.researchMode": "Allow research for this group, turn it off, or follow the app-wide switch. Research also requires global consent and a configured provider.",
@@ -399,13 +399,13 @@
     "llm.protocol.searchEngineID": "The search engine identifier required by this saved provider configuration.",
     "llm.protocol.protocolFamily": "The API format this endpoint accepts. Choose the format supported by the provider.",
     "research.model": "The model used for web research. Fetch the selected provider’s model list, then choose a model.",
-    "research.modelSearch": "Filter the fetched model list by model identifier. Searching does not contact the provider.",
+    "research.modelSearch": "Find a model by its identifier in the fetched list.",
     "classification.enabled": "Allow the Classifier to tag content. Individual Classifier groups can still be paused.",
     "research.consent": "Allow web research to send public source identifiers and requested terms to the selected provider. Turning this off disables research.",
     "backup.auto": "Create a local backup after configuration changes, using the configured backup folder.",
     "knowledge.platform": "The platform that owns this content source. This determines how its name or link is interpreted.",
     "knowledge.description": "Describe what this term or content source means so the Classifier can use that knowledge. Saved descriptions are editable.",
-    "knowledge.search": "Filter saved knowledge by its name, identifier, or description. Searching does not change entries.",
+    "knowledge.search": "Find saved knowledge by name, identifier, or description.",
     "language.label": "Choose the app’s interface language. Stored groups, tags, and knowledge remain unchanged.",
     "tree.nodeName": "The name of this tag in the taxonomy and on tagged content.",
     "tree.tagName": "The name of the tag to add to this Classifier group’s taxonomy."

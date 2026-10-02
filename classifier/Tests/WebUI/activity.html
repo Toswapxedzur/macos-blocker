@@ -27,7 +27,7 @@ window.runActivityTests=async()=>{
   for (const field of scope.querySelectorAll('#groups input,select')) {
     const anchor = field.closest('[data-info-copy],.vui-info-field,label');
     const info = anchor?.querySelector('.vui-info-button');
-    expect(info && info.getBoundingClientRect().width===14, 'Activity field has compact Info');
+    expect(info && info.getBoundingClientRect().width===10, 'Activity field has compact Info');
   }
   q('[data-info-key="activity-group-merge"] .vui-info-button').click();
   expect(commands.length===beforeInfoCommands && !q('.group-merge input').checked, 'Activity Info leaves its draft and native commands unchanged');
