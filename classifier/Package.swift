@@ -15,33 +15,58 @@ let brewPrefix: String = {
     return "/opt/homebrew"
 }()
 
-// llama.h includes "ggml.h", which lives in the separate Homebrew ggml keg;
-// llama.pc only carries llama.cpp's own include dir, so every target that
-// (transitively) imports Cllama needs the shared Homebrew include root too.
-let cllamaIncludeFlags: [SwiftSetting] = [.unsafeFlags(["-Xcc", "-I\(brewPrefix)/include"])]
-// libggml* live in the ggml keg; llama.pc's -L only covers llama.cpp's own keg.
-let cllamaLinkFlags: [LinkerSetting] = [.unsafeFlags(["-L\(brewPrefix)/lib"])]
+// The Windows package links a pinned llama.cpp build installed by the worker
+// bundler; macOS continues to use the existing Homebrew integration.
+#if os(Windows)
+let nativePrefix = ProcessInfo.processInfo.environment["VAULT_LLAMA_PREFIX"] ?? "C:/vault-porting-classifier/llama-runtime"
+let portableDependencies: [Package.Dependency] = [.package(url: "https://github.com/apple/swift-crypto.git", exact: "4.3.1")]
+let cryptoDependencies: [Target.Dependency] = [.product(name: "Crypto", package: "swift-crypto"), "CVaultWindows"]
+let appExcludes = ["VaultClassifierWebShell.swift", "VaultClassifierPage.swift"]
+let coreTestExcludes = ["NativeMessagingHostRegistrationTests.swift"]
+let nativeHostProducts: [Product] = []
+let nativeHostTargets: [Target] = []
+let windowsTargets: [Target] = [.target(name: "CVaultWindows", linkerSettings: [
+    .linkedLibrary("crypt32"), .linkedLibrary("bcrypt"), .linkedLibrary("advapi32"),
+    .linkedLibrary("ole32"), .linkedLibrary("windowscodecs"), .linkedLibrary("shlwapi"),
+])]
+#else
+let nativePrefix = brewPrefix
+let portableDependencies: [Package.Dependency] = []
+let cryptoDependencies: [Target.Dependency] = []
+let appExcludes: [String] = []
+let coreTestExcludes: [String] = []
+let nativeHostProducts: [Product] = [.executable(name: "VaultLocalHubNativeHost", targets: ["VaultLocalHubNativeHost"])]
+let nativeHostTargets: [Target] = [.executableTarget(name: "VaultLocalHubNativeHost", dependencies: ["VaultClassifierCore", "VaultClassifierBridge"])]
+let windowsTargets: [Target] = []
+#endif
+let cllamaIncludeFlags: [SwiftSetting] = [.unsafeFlags(["-Xcc", "-I\(nativePrefix)/include"])]
+let cllamaLinkFlags: [LinkerSetting] = [.unsafeFlags(["-L\(nativePrefix)/lib"])]
 
-let package = Package(
-    name: "VaultClassifier",
-    platforms: [.macOS(.v13)],
-    products: [
+let bridgeDependencies: [Target.Dependency] = [.target(name: "VaultClassifierCore")] + cryptoDependencies
+let appDependencies: [Target.Dependency] = [.target(name: "VaultClassifierCore"), .target(name: "VaultClassifierBridge"), .target(name: "VaultClassifierResearch"), .target(name: "VaultClassifierLLM"), .target(name: "VaultActivityCore")] + cryptoDependencies
+let coreTestDependencies: [Target.Dependency] = [.target(name: "VaultClassifierCore"), .target(name: "VaultClassifierBridge"), .target(name: "VaultClassifierResearch")] + cryptoDependencies
+
+let classifierProducts: [Product] = nativeHostProducts + [
         .library(name: "VaultClassifierCore", targets: ["VaultClassifierCore"]),
+        .library(name: "VaultActivityCore", targets: ["VaultActivityCore"]),
+        .executable(name: "VaultClassifierWorker", targets: ["VaultClassifierWorker"]),
         // The classifier UI + tagging service as a library: Mac Vault hosts it as
         // an in-app page (owner decision 2026-09-19 — the classifier is a
         // component of Mac Vault, not a separate product).
         .library(name: "VaultClassifierApp", targets: ["VaultClassifierApp"]),
         .library(name: "VaultClassifierBridge", targets: ["VaultClassifierBridge"]),
         // Standalone development window around the same library (headless rigs).
-        .executable(name: "VaultLocalHubNativeHost", targets: ["VaultLocalHubNativeHost"]),
         .executable(name: "VaultLLMEngineSmoke", targets: ["VaultLLMEngineSmoke"]),
         .executable(name: "VaultGroundingSmoke", targets: ["VaultGroundingSmoke"]),
         .executable(name: "VaultFullLoopSmoke", targets: ["VaultFullLoopSmoke"]),
         .executable(name: "VaultClassifierEval", targets: ["VaultClassifierEval"]),
-    ],
-    targets: [
+    ]
+
+let classifierTargets: [Target] = windowsTargets + nativeHostTargets + [
+        .target(name: "VaultActivityCore", dependencies: ["VaultClassifierCore"]),
         .target(
             name: "VaultClassifierCore",
+            dependencies: cryptoDependencies,
             resources: [.copy("Resources")]
         ),
         // Suite-integration boundary: the browser-bridge operation vocabulary +
@@ -51,7 +76,7 @@ let package = Package(
         // Depends on Core; nothing in Core depends back on it.
         .target(
             name: "VaultClassifierBridge",
-            dependencies: ["VaultClassifierCore"]
+            dependencies: bridgeDependencies
         ),
         // Cloud grounded-research EXECUTION (provider request plans, HTTP seam,
         // generation/test/catalog protocols, the research executor). Optional
@@ -82,13 +107,15 @@ let package = Package(
         ),
         .target(
             name: "VaultClassifierApp",
-            dependencies: ["VaultClassifierCore", "VaultClassifierBridge", "VaultClassifierResearch", "VaultClassifierLLM"],
+            dependencies: appDependencies,
+            exclude: appExcludes,
             resources: [.copy("WebAssets")],
             swiftSettings: cllamaIncludeFlags
         ),
         .executableTarget(
-            name: "VaultLocalHubNativeHost",
-            dependencies: ["VaultClassifierCore", "VaultClassifierBridge"]
+            name: "VaultClassifierWorker",
+            dependencies: ["VaultClassifierApp", "VaultClassifierCore"],
+            swiftSettings: cllamaIncludeFlags
         ),
         // Live smoke test for provider-native search grounding (one real call).
         .executableTarget(
@@ -115,7 +142,8 @@ let package = Package(
         ),
         .testTarget(
             name: "VaultClassifierCoreTests",
-            dependencies: ["VaultClassifierCore", "VaultClassifierBridge", "VaultClassifierResearch"]
+            dependencies: coreTestDependencies,
+            exclude: coreTestExcludes
         ),
         .testTarget(
             name: "VaultClassifierAppTests",
@@ -123,4 +151,11 @@ let package = Package(
             swiftSettings: cllamaIncludeFlags
         ),
     ]
+
+let package = Package(
+    name: "VaultClassifier",
+    platforms: [.macOS(.v13)],
+    products: classifierProducts,
+    dependencies: portableDependencies,
+    targets: classifierTargets
 )

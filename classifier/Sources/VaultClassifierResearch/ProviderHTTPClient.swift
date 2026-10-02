@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import VaultClassifierCore
 
 /// The narrow HTTP seam used by background research. Request construction and

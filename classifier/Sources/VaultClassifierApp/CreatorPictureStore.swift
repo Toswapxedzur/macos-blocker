@@ -1,5 +1,10 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
+import VaultClassifierCore
 
 /// The pictures of creators in Knowledge, kept as long as their knowledge
 /// (owner 2026-09-30) — the source-icon cache keeps only its newest 512. One
@@ -13,7 +18,7 @@ final class CreatorPictureStore {
         guard let directory else { return nil }
         self.directory = directory
         do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try VaultPrivateFile.createDirectory(at: directory, fileManager: FileManager.default)
         } catch {
             return nil
         }
