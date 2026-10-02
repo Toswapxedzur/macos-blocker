@@ -1,5 +1,14 @@
 # Classifier Web UI regressions
 
+`language-manuals.js` checks the integrated Vault, Classifier and Activity
+manual entry points, separate native code guide, clipboard output and focus
+restoration after a Classifier snapshot replaces the opener. Run on mini1 with
+`UI_TEST_PAGE=/Sources/MacBlockerWebUI/WebAssets/popup.html`,
+`UI_READY_EXPRESSION='!!window.VaultClassifier && !!window.activityApply && !!window.VaultManual'`,
+`UI_TEST_SCRIPT=classifier/Tests/WebUI/language-manuals.js` and
+`UI_TEST_EXPRESSION='runLanguageManualTests()'` through `autosave.mjs`.
+The page/readiness overrides let the same runner exercise the integrated shell.
+
 `tagging-controls.js` checks the directly visible per-group Pause/Resume button,
 the Classifier Settings enable switch, native autosave and independent pause
 state. Run through `autosave.mjs` with `UI_TEST_SCRIPT=classifier/Tests/WebUI/tagging-controls.js`
