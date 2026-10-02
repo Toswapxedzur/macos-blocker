@@ -11,6 +11,11 @@ window.runDropdownLayoutTests = async () => {
   q('[data-model-selector]').focus(); q('[data-model-selector]').click(); await wait();
   check(Math.abs(note.getBoundingClientRect().top - before.y) < 1 && modal.scrollHeight === before.height,
     'model menu leaves downstream positions and Settings height unchanged');
+  const receivesClick = node => { const rect = node.getBoundingClientRect(); const hit = scope.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2); return node.contains(hit); };
+  check(receivesClick(q('[data-model-search]')), 'model menu receives clicks above its Settings panel');
+  modal.style.transform = 'translateZ(0)'; await wait();
+  check(receivesClick(q('[data-model-search]')), 'model menu escapes a transformed clipped dialog');
+  modal.style.removeProperty('transform');
   let menu = q('.research-model-menu'), anchor = q('[data-model-selector]');
   const box = menu.getBoundingClientRect(), field = anchor.getBoundingClientRect();
   check(getComputedStyle(menu).position === 'fixed' && Math.abs(box.width - field.width) < 2,
@@ -48,6 +53,7 @@ window.runDropdownLayoutTests = async () => {
   check(q('[data-knowledge-suggestions]').children.length === 6 && Math.abs(description.getBoundingClientRect().top - descriptionY) < 1,
     'creator suggestions float without moving the description');
   const suggestions = q('[data-knowledge-suggestions]'), suggestionsBox = suggestions.getBoundingClientRect();
+  check(receivesClick(suggestions.firstElementChild), 'creator suggestions receive clicks outside their clipped card');
   check(getComputedStyle(suggestions).position === 'fixed' && suggestionsBox.left >= 7 && suggestionsBox.right <= innerWidth - 7 && suggestionsBox.bottom <= innerHeight - 7,
     'creator suggestion menu stays within the viewport');
   testState.issue = 'Synthetic snapshot'; pushSnapshot(); await wait();

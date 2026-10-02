@@ -633,6 +633,7 @@
   function closeResearchModelMenu(restoreFocus = false) {
     const picker = root.querySelector(".research-model-picker[open]");
     if (!picker) return false;
+    window.VaultUI.hideMenuLayer(picker.querySelector(".research-model-menu"));
     picker.open = false;
     openExpands.delete(picker.dataset.expand);
     if (restoreFocus) picker.querySelector("summary")?.focus({ preventScroll: true });
@@ -648,6 +649,7 @@
   }
 
   function placeClassifierMenu(anchor, menu) {
+    window.VaultUI.showMenuLayer(menu);
     const box = anchor.getBoundingClientRect();
     const margin = 8, gap = 4;
     const width = Math.min(Math.max(160, box.width), window.innerWidth - margin * 2);
@@ -1146,13 +1148,14 @@
       .slice(0, 6);
     box.innerHTML = matches.map((creator) => `<button type="button" class="vui-menu-item knowledge-suggestion" data-knowledge-pick="${esc(creator.name)}"><span dir="auto">${esc(creator.name)}</span><span class="knowledge-id">${esc(creator.id)}</span></button>`).join("");
     knowledgeSuggestionsOpen = matches.length > 0;
+    if (!knowledgeSuggestionsOpen) window.VaultUI.hideMenuLayer(box);
     if (knowledgeSuggestionsOpen) { window.VaultUI.close(); placeKnowledgeSuggestions(); }
   }
 
   function closeKnowledgeSuggestions(restoreFocus = false) {
     const box = root.querySelector("[data-knowledge-suggestions]");
     if (restoreFocus) root.querySelector("[data-knowledge-creator]")?.focus({ preventScroll: true });
-    if (box) box.replaceChildren();
+    if (box) { window.VaultUI.hideMenuLayer(box); box.replaceChildren(); }
     knowledgeSuggestionsOpen = false;
   }
 
@@ -1635,6 +1638,7 @@
     if (!event.target.isConnected) return;
     const key = event.target.matches?.("details[data-expand]") ? event.target.dataset.expand : null;
     if (key) event.target.open ? openExpands.add(key) : openExpands.delete(key);
+    if (event.target.matches?.(".research-model-picker") && !event.target.open) window.VaultUI.hideMenuLayer(event.target.querySelector(".research-model-menu"));
     if (event.target.matches?.(".research-model-picker") && event.target.open) {
       window.VaultUI.close();
       placeResearchModelMenu();
