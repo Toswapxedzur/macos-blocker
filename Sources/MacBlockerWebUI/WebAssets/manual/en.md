@@ -84,7 +84,7 @@ Correct a content item's tags in the browser extension's tag chooser. Add a tag 
 
 Knowledge stores short descriptions on this Mac for the local tagging model. **Content sources** include creators, accounts, channels, and communities. Source descriptions accompany their content. **Known terms** apply when a term appears in a title.
 
-Add a source or term and its description, or leave the description empty to request research when enabled. Creator suggestions help find a source the Classifier has collected. Search filters saved entries by name, identifier, or description. Editing a description affects future tagging; deleting source knowledge does not prevent later research from recreating it.
+Add a source or term and its description, or leave the description empty to request research when enabled. Creator suggestions help find a source the Classifier has collected. Lists with six or more entries have search directly above them: Terms and each platform’s Content sources have separate searches for name, identifier, or description. Editing a description affects future tagging; deleting source knowledge does not prevent later research from recreating it.
 
 ### Configure a research provider
 
