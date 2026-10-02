@@ -5,7 +5,7 @@ import MacBlockerMacControl
 
 /// The tiny floating "+" at the bottom right of the screen (owner 2026-09-25):
 /// one click appends the frontmost application to the group the user chose
-/// by its "+" badge in the editor. Off by default; the editor's Settings
+/// by selecting its card in the editor. Off by default; the editor's Settings
 /// switch (`globalSettings.quickAddEnabled`) and the chosen group
 /// (`quickAddGroupId`) live in the shared web store, so the browser's "+" and
 /// this one follow the same choice. The panel never activates, so the app
