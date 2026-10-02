@@ -5,10 +5,7 @@ import VaultClassifierCore
 private final class WorkerOutput: @unchecked Sendable {
     private let lock = NSLock()
     func send(_ object: [String: Any]) {
-        guard JSONSerialization.isValidJSONObject(object),
-              var bytes = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
-              bytes.count <= 16 * 1024 * 1024 else { return }
-        bytes.append(0x0a)
+        let bytes = VaultClassifierWorkerWire.encoded(object)
         lock.lock()
         defer { lock.unlock() }
         try? FileHandle.standardOutput.write(contentsOf: bytes)
