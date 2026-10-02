@@ -227,7 +227,8 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
             }.value
             guard let self, self.loaded, self.snapshotRevision == revision, let webView = self.webView, let result else { return }
             let (snapshot, content, json, contentJSON) = result
-            let icons = self.resolveIcons(snapshot: snapshot, store: store)
+            let icons = await self.resolveIcons(snapshot: snapshot, store: store)
+            guard self.snapshotRevision == revision else { return }
             let facts = self.watchedFacts(keys: content.watched.map(\.key), store: store)
             let platforms = self.collectionState(allKeepDays: store.loadSettings().retentionDays)
             let tags = self.collection?.tagTree() ?? []
@@ -344,12 +345,13 @@ public final class ActivityPage: NSObject, WKScriptMessageHandler {
     /// from the bundle id via NSWorkspace, website favicons from the store's
     /// local cache (data URIs the extension supplied). No network. Every group
     /// member gets one too (a group's icon is made of its members' icons).
-    private func resolveIcons(snapshot: ActivityDashboardSnapshot, store: ActivityStore) -> [String: String] {
+    private func resolveIcons(snapshot: ActivityDashboardSnapshot, store: ActivityStore) async -> [String: String] {
         let web = store.webIcons()
         var ids = snapshot.app.bars.map { "app|" + $0.key } + snapshot.web.bars.map { "web|" + $0.key }
         for group in snapshot.groups { ids += group.members }
         var icons: [String: String] = [:]
-        for id in ids {
+        for (index, id) in Set(ids).enumerated() {
+            if index % 32 == 0 { await Task.yield() }
             let key = String(id.dropFirst(4))
             if icons[key] == nil, let uri = iconDataURI(id: id, web: web) { icons[key] = uri }
         }

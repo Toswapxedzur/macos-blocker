@@ -56,6 +56,7 @@ public struct TimerOverlayRow: Identifiable, Equatable, Sendable {
 @MainActor
 final class TimerOverlayModel: ObservableObject {
     @Published var rows: [TimerOverlayRow] = []
+    @Published var text: String = ""
 }
 
 /// Frequently visible HUD: dark translucent surface, matching the browser timer.
@@ -63,13 +64,10 @@ struct TimerOverlayView: View {
     @ObservedObject var model: TimerOverlayModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(model.rows) { row in
-                Text("\(row.name): \(row.formattedRemaining)")
-                    .font(.custom("Arial", size: 13)).monospacedDigit()
-                    .foregroundColor(Color(red: 0.973, green: 0.980, blue: 0.988))
-            }
-        }
+        Text(model.text)
+            .font(.custom("Arial", size: 13)).monospacedDigit()
+            .lineSpacing(2)
+            .foregroundColor(Color(red: 0.973, green: 0.980, blue: 0.988))
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(
@@ -88,6 +86,7 @@ struct TimerOverlayView: View {
 @MainActor
 public final class TimerOverlayPanelController {
     private let model = TimerOverlayModel()
+    private var presentationRevision: UInt64 = 0
     private var panel: NSPanel?
     private let screenInset: CGFloat = 16
 
@@ -99,22 +98,37 @@ public final class TimerOverlayPanelController {
             hide()
             return
         }
-        if model.rows != rows {
-            model.rows = rows
-        }
-        let panel = ensurePanel()
-        resizeAndPosition(panel)
-        if !panel.isVisible {
-            panel.orderFrontRegardless()
+        guard model.rows != rows || panel?.isVisible != true else { return }
+        model.rows = rows
+        presentationRevision &+= 1
+        let revision = presentationRevision
+        if rows.count <= 40 {
+            present(text: rows.map { "\($0.name): \($0.formattedRemaining)" }.joined(separator: "\n"))
+        } else {
+            Task { @MainActor [weak self] in
+                let text = await Task.detached(priority: .userInitiated) {
+                    rows.map { "\($0.name): \($0.formattedRemaining)" }.joined(separator: "\n")
+                }.value
+                guard let self, self.presentationRevision == revision else { return }
+                self.present(text: text)
+            }
         }
     }
 
+    private func present(text: String) {
+        model.text = text
+        let panel = ensurePanel()
+        resizeAndPosition(panel)
+        if !panel.isVisible { panel.orderFrontRegardless() }
+    }
+
     public func hide() {
+        presentationRevision &+= 1
         panel?.orderOut(nil)
     }
 
     public func teardown() {
-        panel?.orderOut(nil)
+        hide()
         panel = nil
     }
 
