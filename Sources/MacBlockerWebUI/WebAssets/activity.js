@@ -726,10 +726,14 @@
     if (!editing) head.appendChild(textButton("New group", function () { openEditor(null); }, "head-button"));
     box.appendChild(head);
     if (editing) { box.appendChild(groupForm()); return box; }
+    var usageSeconds = new Map();
+    usageItemsRaw.forEach(function (entry) {
+      var id = entryID(entry);
+      usageSeconds.set(id, (usageSeconds.get(id) || 0) + entry.seconds);
+    });
     var list = groupsList().map(function (g) {
-      var seconds = usageItemsRaw.reduce(function (sum, entry) {
-        return g.members.indexOf(entryID(entry)) >= 0 ? sum + entry.seconds : sum;
-      }, 0);
+      var seconds = 0;
+      new Set(g.members).forEach(function (id) { seconds += usageSeconds.get(id) || 0; });
       return { g: g, seconds: seconds };
     }).sort(function (x, y) { return y.seconds - x.seconds; });   // merge or not, by time (owner 2026-09-30)
     if (!list.length) {
@@ -774,9 +778,9 @@
       var focus = captureGroupFocus(old);
       var positions = captureGroupScrolls(old), next = groupsPanel();
       old.replaceWith(next);
-      restoreGroupScrolls(next, positions);
       restoreGroupFocus(next, focus);
       window.VaultUI.restoreSearch(scope, searchFocus);
+      restoreGroupScrolls(next, positions);
     }
   }
 
@@ -807,6 +811,9 @@
 
   function restoreGroupScrolls(panel, positions) {
     if (!panel || !positions || panel.dataset.editingId !== positions.editingId) return;
+    // Info enhancement removes inline help from the flex columns. Complete it
+    // before setting scroll positions so the final viewport does not clamp them.
+    window.VaultInfo.refresh(scope);
     Object.keys(positions.lists).forEach(function (name) {
       var list = panel.querySelector("." + name), position = positions.lists[name];
       if (list) { list.scrollLeft = position[0]; list.scrollTop = position[1]; }
@@ -1799,7 +1806,6 @@
     var s = snapshot.settings || {};
     var usage = usageSection(s); usage.id = "usage-section";
     page.appendChild(groupsPanel());
-    restoreGroupScrolls(scope.getElementById("groups"), groupScrolls);
     page.appendChild(usage);
     var content = contentSection(s); content.id = "content-section"; page.appendChild(content);
     // Recording: always last, one collapsed line (owner 2026-09-30).
@@ -1814,6 +1820,7 @@
     freshScroll = { usage: false, content: false };
     restoreGroupFocus(scope.getElementById("groups"), groupFocus);
     window.VaultUI.restoreSearch(scope, searchFocus);
+    restoreGroupScrolls(scope.getElementById("groups"), groupScrolls);
     requestAnimationFrame(() => scope.querySelectorAll("svg").forEach(chart => chart.__updateDayWindow?.()));
   }
 

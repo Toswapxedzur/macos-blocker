@@ -27,7 +27,7 @@ extension VaultClassifierViewModel {
               let offset = data["offset"] as? Int, offset >= 0,
               let limit = data["limit"] as? Int, (1...64).contains(limit) else { return nil }
         let drafts = data["drafts"] as? [String: String] ?? [:]
-        guard drafts.count <= 256, drafts.allSatisfy({ $0.key.count <= 256 && $0.value.count <= 2000 }) else { return nil }
+        guard drafts.count <= 256, drafts.allSatisfy({ $0.key.count <= 512 && $0.value.count <= KnowledgeEntry.maximumMeaningLength }) else { return nil }
         let catalog = (localState ?? coordinator?.snapshot())?.workspaceCatalog ?? .starter()
         if kind == "suggestion" {
             let rows = await Task.detached(priority: .userInitiated) {

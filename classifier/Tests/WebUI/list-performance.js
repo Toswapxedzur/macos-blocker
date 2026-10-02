@@ -35,6 +35,12 @@ window.runListPerformanceTests = async () => {
   const choice=document.querySelector('.vui-menu-item'); check(choice?.textContent==='Option 9999','paged dropdown searches the complete 10,000-option model'); choice.click();
   check(select.value==='value-9999' && select.options.length===1,'choosing the final option updates the native form value');
   select.value='value-2'; check(select.value==='value-2','programmatic selection materializes an unmounted option');
+  const nativeList=document.createElement('div');scope.appendChild(nativeList);let nativeItems=Array.from({length:95},(_,i)=>({id:i})), failQuery=false;
+  const nativeOptions=()=>({scope,key:'test-native-page',items:[],total:nativeItems.length,text:item=>String(item.id),render:item=>{const row=document.createElement('span');row.textContent=String(item.id);return row;},queryPage:async request=>failQuery?null:{items:nativeItems.slice(request.offset,request.offset+request.limit),total:nativeItems.length}});
+  VaultUI.renderList(nativeList,nativeOptions());await wait();nativeList.nextElementSibling.querySelectorAll('button')[1].click();await wait();nativeList.nextElementSibling.querySelectorAll('button')[1].click();await wait();
+  nativeItems=nativeItems.slice(0,50);VaultUI.renderList(nativeList,nativeOptions());await wait();
+  check(nativeList.children.length===10 && nativeList.firstChild.textContent==='40','native page removal refetches the clamped final page');
+  failQuery=true;VaultUI.renderList(nativeList,nativeOptions());await wait();const retry=nativeList.nextElementSibling.querySelectorAll('button')[2];check(!retry.hidden,'a native query failure exposes Retry');failQuery=false;retry.click();await wait();check(retry.hidden && nativeList.children.length===10,'native paging recovers without losing the selected page');
   check(uiErrors.length===0, 'large lists produce no renderer errors');
   return result;
 };
