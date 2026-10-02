@@ -111,7 +111,9 @@ import json,os,pathlib,shutil,sys
 args=sys.argv[1:]
 with open(os.environ['FIXTURE_CODESIGN_LOG'],'a') as log: log.write(json.dumps(args)+'\\n')
 if '-dv' in args: print('TeamIdentifier='+os.environ.get('FIXTURE_SIGNED_TEAM','EXAMPLETEAM'),file=sys.stderr)
-elif '--extract-certificates' in args: pathlib.Path(args[args.index('--extract-certificates')+1]+'0').write_bytes(b'fixture authorized certificate')
+elif any(arg.startswith('--extract-certificates') for arg in args):
+    assert len(args)==3 and args[0]=='-d' and args[1].startswith('--extract-certificates='), 'codesign requires its optional certificate prefix joined with ='
+    pathlib.Path(args[1].split('=',1)[1]+'0').write_bytes(b'fixture authorized certificate')
 elif '-d' in args: sys.stdout.buffer.write(pathlib.Path(os.environ['FIXTURE_ENTITLEMENTS']).read_bytes())
 elif '--entitlements' in args: shutil.copyfile(args[args.index('--entitlements')+1],os.environ['FIXTURE_ENTITLEMENTS'])
 ''')
