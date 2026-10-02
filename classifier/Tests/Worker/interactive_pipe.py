@@ -11,12 +11,14 @@ import time
 
 
 def verify(executable):
+    if sys.platform != "win32":
+        raise RuntimeError("Run this process fixture on mini1's Windows guest; Mac does not expose a support-directory override.")
     with tempfile.TemporaryDirectory(prefix="vault-interactive-worker-") as directory:
-        environment = dict(os.environ, VAULT_DATA_ROOT=directory,
+        environment = dict(os.environ, VAULT_DATA_ROOT=str(Path(directory) / "Classifier"),
                            VAULT_ENVIRONMENT="development",
                            ADAMANCIA_VAULT_ENVIRONMENT="development")
         with open(Path(directory) / "stderr.log", "wb") as errors:
-            process = subprocess.Popen([executable, "--testing-directory", directory],
+            process = subprocess.Popen([executable],
                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                        stderr=errors, env=environment)
             messages = queue.Queue()
