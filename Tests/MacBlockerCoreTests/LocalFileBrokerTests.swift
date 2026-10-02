@@ -43,6 +43,7 @@ final class LocalFileBrokerTests: XCTestCase {
         let exists = broker.handle(action: "exists", path: "config/missing.json", text: nil, requestID: "exists")
         XCTAssertEqual(exists["ok"], "true")
         XCTAssertEqual(exists["exists"], "false")
+        XCTAssertEqual(broker.handle(action: "read", path: "config/missing.json", text: nil, requestID: "missing-read")["error"], "not-found")
 
         let list = broker.handle(action: "list", path: "", text: nil, requestID: "list")
         XCTAssertEqual(list["ok"], "true")
@@ -73,6 +74,35 @@ final class LocalFileBrokerTests: XCTestCase {
             requestID: "large"
         )
         XCTAssertEqual(oversized["error"], "file-too-large")
+    }
+
+    func testFileAndDirectoryLinksCannotEscapeTheSelectedFolder() throws {
+        let fixture = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let base = fixture.appendingPathComponent("allowed", isDirectory: true)
+        let outside = fixture.appendingPathComponent("allowed-other", isDirectory: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        let victim = outside.appendingPathComponent("victim.txt")
+        try Data("outside".utf8).write(to: victim)
+        let broker = LocalFileBroker(baseURL: base)
+        try FileManager.default.createSymbolicLink(at: base.appendingPathComponent("link.txt"), withDestinationURL: victim)
+        try FileManager.default.createSymbolicLink(at: base.appendingPathComponent("linked-folder"), withDestinationURL: outside)
+        let absentOutside = fixture.appendingPathComponent("absent", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: base.appendingPathComponent("dangling-folder"), withDestinationURL: absentOutside)
+        for action in ["read", "exists", "write", "append"] {
+            for path in ["link.txt", "linked-folder/victim.txt", "dangling-folder/new.txt"] {
+                let reply = broker.handle(action: action, path: path, text: "overwrite", requestID: action)
+                XCTAssertEqual(reply["error"], "invalid-path", "\(action) \(path)")
+            }
+        }
+        XCTAssertEqual(broker.handle(action: "list", path: "linked-folder", text: nil, requestID: "linked-list")["error"], "invalid-path")
+        XCTAssertEqual(try String(contentsOf: victim, encoding: .utf8), "outside")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: absentOutside.path))
+        let listing = broker.handle(action: "list", path: "", text: nil, requestID: "list")
+        let entries = try XCTUnwrap(listing["entriesJSON"]?.data(using: .utf8))
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: entries) as? [[String: String]], [])
+        XCTAssertEqual(broker.handle(action: "write", path: "ordinary/nested.txt", text: "inside", requestID: "normal")["ok"], "true")
+        XCTAssertEqual(try String(contentsOf: base.appendingPathComponent("ordinary/nested.txt"), encoding: .utf8), "inside")
     }
 
     private func makeTemporaryDirectory() throws -> URL {
