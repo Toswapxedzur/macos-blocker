@@ -79,7 +79,7 @@ window.runAutosaveTests=async()=>{
   const more='[data-expand="type-more:group-1"]';
   const knowledge=q('[data-workspace="knowledge"]');
   expect(knowledge.getClientRects().length && !knowledge.closest('details') && !q('.sidebar-more'),'Knowledge is directly visible without a sidebar More');
-  expect(!q(more).open && q(more+' summary').textContent.includes('follow Strict') && q('[data-field="houseRules"]').checkVisibility() && q('[data-group-research-choice]').checkVisibility() && !q('[data-field="houseRules"]').closest('details'),'core group settings are visible and only advanced tag counts start collapsed');
+  expect(!q(more).open && q(more+' summary').textContent.includes('follow Strict') && q('[data-field="houseRules"]').checkVisibility() && q('[data-group-research-choice]').nextElementSibling.checkVisibility() && !q('[data-field="houseRules"]').closest('details'),'core group settings are visible and only advanced tag counts start collapsed');
   q(more+' summary').click();await poll(()=>q(more).open);await new Promise(r=>setTimeout(r,0));
   expect(!q('[data-action="configureClassifierType"], [data-action="saveClassifierTypeLocalModel"], [data-action="saveClassifierTypeResearch"]'),'group has no Save buttons');
   ackDelay=450;

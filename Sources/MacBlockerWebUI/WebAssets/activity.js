@@ -100,6 +100,13 @@
     return "hsl(" + ((n * 137.508 + 20) % 360).toFixed(1) + ", " + (n % 3 === 1 ? 45 : 58) + "%, " + (n % 2 ? 62 : 50) + "%)";
   }
   function paint(node, i) { node.style.background = colorOf(i); return node; }
+  function searchable(node, key, label, items) {
+    node.dataset.vuiSearch = key;
+    node.dataset.vuiSearchLabel = label;
+    node.dataset.vuiSearchItems = items;
+    return node;
+  }
+
   function textButton(label, onClick, cls) { var b = el("button", cls || null, label); b.type = "button"; b.addEventListener("click", onClick); return b; }
 
   function iconURI(key) { return icons[key] || knownIcons[key] || null; }
@@ -585,7 +592,7 @@
   }
 
   // Share of the chosen range (Today / 7 / 30 days): the Usage rows.
-  function pie(items, title) {
+  function pie(items, title, searchKey) {
     var wrap = el("div", "chart");
     wrap.appendChild(el("div", "chart-title", title || "Share"));
     var total = items.reduce(function (sum, entry) { return sum + entry.seconds; }, 0);
@@ -638,8 +645,10 @@
     var body = el("div", "pie-body");
     body.appendChild(chart);
     var legend = el("div", "pie-legend");
+    searchable(legend, searchKey, "Search chart items", ".legend-item");
     slices.forEach(function (slice) {
       var item = el("div", "legend-item");
+      item.dataset.vuiSearchText = slice.label;
       hoverable(item, sliceInfo(slice));
       var dot = el("span", "dot");
       dot.style.background = slice.color;
@@ -720,10 +729,12 @@
       return box;
     }
     var cards = el("div", "group-cards");
+    searchable(cards, "activity-groups", "Search groups", ".group-card");
     var top = Math.max.apply(null, list.map(function (x) { return x.seconds; }).concat([1]));
     list.forEach(function (x) {
       var g = x.g;
       var card = el("div", usageFocus === "group|" + g.id ? "group-card is-focus" : "group-card");
+      card.dataset.vuiSearchText = g.name;
       card.addEventListener("click", function () { pick("group|" + g.id); });
       var name = el("div", "group-card-top");
       name.appendChild(groupIcon(g));
@@ -751,11 +762,13 @@
   function refreshGroups() {
     var old = scope.getElementById("groups");
     if (old) {
+      var searchFocus = window.VaultUI.captureSearch(scope);
       var focus = captureGroupFocus(old);
       var positions = captureGroupScrolls(old), next = groupsPanel();
       old.replaceWith(next);
       restoreGroupScrolls(next, positions);
       restoreGroupFocus(next, focus);
+      window.VaultUI.restoreSearch(scope, searchFocus);
     }
   }
 
@@ -817,11 +830,13 @@
     first.appendChild(mergeRow);
 
     var chips = el("div", "chips vui-list-box group-selected-members");
+    searchable(chips, "activity-members:" + (editing.id || "new"), "Search selected members", ".chip");
     chips.tabIndex = 0;
     chips.setAttribute("aria-label", "Members");
     if (!editing.members.length) chips.appendChild(el("span", "vui-muted", "No members yet."));
     editing.members.forEach(function (id) {
       var chip = el("span", "chip");
+      chip.dataset.vuiSearchText = memberLabel(id) + " " + id;
       chip.appendChild(icon(id.slice(4), memberLabel(id)));
       chip.appendChild(el("span", "chip-label", memberLabel(id)));
       chip.appendChild(el("span", "row-kind", id.indexOf("web|") === 0 ? "Website" : "App"));
@@ -1035,8 +1050,10 @@
   // and Empty. Clicking one focuses it.
   function colourMap(entries, empty, onPick, emptyLabel) {
     var box = el("div", "colour-map");
+    searchable(box, emptyLabel === "Empty" ? "activity-usage-items" : "activity-content-tags", emptyLabel === "Empty" ? "Search apps and websites" : "Search tags", ".colour-row");
     entries.forEach(function (entry) {
       var line = el("button", "colour-row");
+      line.dataset.vuiSearchText = (entry.item.label || "") + " " + (entry.item.key || "");
       line.type = "button";
       var swatch = el("span", "swatch");
       swatch.style.background = entry.item.color || colorOf(entry.item.colorIndex);
@@ -1364,7 +1381,7 @@
     }, "Empty"));
     grid.appendChild(mapPanel);
     var pieCell = el("div", "act-cell");
-    pieCell.appendChild(pie(data.items.filter(function (e) { return !e.nameOnly; }), "Share"));
+    pieCell.appendChild(pie(data.items.filter(function (e) { return !e.nameOnly; }), "Share", "activity-usage-share"));
     grid.appendChild(pieCell);
     var year = el("div", "act-cell");
     year.id = "usage-year";
@@ -1531,8 +1548,10 @@
     var authors = Object.keys(by).map(function (k) { return by[k]; }).sort(function (a, b) { return b.seconds - a.seconds; });
     var top = Math.max(1, authors.length ? authors[0].seconds : 1);
     var list = el("div", "scroll-list");
+    searchable(list, "activity-authors", "Search content sources", ".author-row");
     authors.forEach(function (a) {
       var line = el("div", "author-row");
+      line.dataset.vuiSearchText = a.name + " " + a.key;
       line.appendChild(icon(a.key, a.name));
       var body = el("div", "row-body");
       var name = el("div", "row-name");
@@ -1564,9 +1583,11 @@
     var box = el("div", "act-cell act-list");
     box.appendChild(el("div", "chart-title", "Content viewed"));
     var list = el("div", "scroll-list");
+    searchable(list, "activity-watched", "Search viewed content", ".raw-row");
     data.pieces.slice().sort(function (a, b) { return b.startMs - a.startMs; }).forEach(function (p) {
       var fact = watchedFacts[p.seg.key] || {};
       var line = el("div", "raw-row");
+      line.dataset.vuiSearchText = (p.seg.label || "") + " " + p.seg.key + " " + (fact.creator || "") + " " + p.tags.map(function (tag) { return tag.name; }).join(" ");
       line.appendChild(icon(p.seg.key, p.seg.label));
       var body = el("div", "row-body");
       body.appendChild(el("div", "raw-title", p.seg.label || p.seg.key));
@@ -1640,7 +1661,7 @@
     }, "Other pages"));
     grid.appendChild(mapCell);
     var pieCell = el("div", "act-cell");
-    pieCell.appendChild(pie(data.tags, "Share"));
+    pieCell.appendChild(pie(data.tags, "Share", "activity-content-share"));
     grid.appendChild(pieCell);
     var year = el("div", "act-cell");
     year.id = "content-year";
@@ -1661,6 +1682,7 @@
 
   function render() {
     var page = scope.getElementById("page");
+    var searchFocus = window.VaultUI.captureSearch(scope);
     var groupFocus = captureGroupFocus(scope.getElementById("groups"));
     var groupScrolls = captureGroupScrolls(scope.getElementById("groups"));
     // Panels that scroll keep their place across updates.
@@ -1686,6 +1708,7 @@
     });
     freshScroll = { usage: false, content: false };
     restoreGroupFocus(scope.getElementById("groups"), groupFocus);
+    window.VaultUI.restoreSearch(scope, searchFocus);
   }
 
   // The range's days, as Mac Vault answers them (at most a year).
@@ -1704,7 +1727,9 @@
     var s = snapshot.settings || {};
     var fresh = name === "usage" ? usageSection(s) : contentSection(s);
     fresh.id = name + "-section";
+    var searchFocus = window.VaultUI.captureSearch(scope);
     old.replaceWith(fresh);
+    window.VaultUI.restoreSearch(scope, searchFocus);
     [].forEach.call(fresh.querySelectorAll(".strip-scroll, .totals-scroll, .map-scroll"), scrollToNewest);
   }
 
