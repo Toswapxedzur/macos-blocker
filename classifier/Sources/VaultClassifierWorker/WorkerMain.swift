@@ -17,16 +17,7 @@ private enum VaultClassifierWorkerMain {
     @MainActor static func main() async {
         let output = WorkerOutput()
         do {
-            // Explicit hermetic mode for mini1 integration tests. Normal hosts
-            // do not pass it and always start the production research/LLM stack.
-            let arguments = CommandLine.arguments
-            let testingDirectory: URL?
-            if let index = arguments.firstIndex(of: "--testing-directory"), arguments.indices.contains(index + 1) {
-                testingDirectory = URL(fileURLWithPath: arguments[index + 1], isDirectory: true)
-            } else {
-                testingDirectory = nil
-            }
-            let service = try VaultClassifierWorkerService(testingDirectory: testingDirectory, emit: output.send)
+            let service = try VaultClassifierWorkerService(emit: output.send)
             output.send(["event": "ready", "protocol": 1])
             service.publishState()
             for await bytes in inputLines() {
