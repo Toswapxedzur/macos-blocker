@@ -50,7 +50,7 @@ Run with `UI_TEST_SCRIPT=classifier/Tests/WebUI/model-picker.js`
 `UI_TEST_EXPRESSION='runModelPickerTests()'` and the same runner.
 
 `dropdown-layout.js` extends those checks with floating-menu geometry,
-viewport containment, keyboard navigation, outside dismissal, full-width
+viewport containment, hit testing above Settings and clipped ancestors, keyboard navigation, outside dismissal, full-width
 API fields with a usage footer, and creator suggestion/caret preservation.
 Run with `UI_TEST_SCRIPT=classifier/Tests/WebUI/dropdown-layout.js`
 `UI_TEST_EXPRESSION='runDropdownLayoutTests()'`, at wide and narrow widths.
