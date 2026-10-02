@@ -1,4 +1,6 @@
+#if canImport(AppKit)
 import AppKit
+#endif
 import Foundation
 import VaultClassifierCore
 import VaultClassifierBridge
@@ -412,6 +414,11 @@ extension VaultClassifierViewModel {
 
     /// A downloaded source icon, shrunk to 64×64 pixels, as JPEG data.
     func sourceIconJPEG(remoteURL: String) -> Data? {
+        #if os(Windows)
+        guard let cache = sourceIconCache, let url = cache.cachedURL(for: remoteURL),
+              let response = cache.response(for: url) else { return nil }
+        return VaultPrivateFile.iconJPEG(response.data)
+        #else
         guard let cache = sourceIconCache, let url = cache.cachedURL(for: remoteURL),
               let image = cache.response(for: url).flatMap({ NSImage(data: $0.data) }),
               let rep = NSBitmapImageRep(
@@ -426,6 +433,7 @@ extension VaultClassifierViewModel {
         image.draw(in: NSRect(x: 0, y: 0, width: 64, height: 64), from: .zero, operation: .sourceOver, fraction: 1)
         NSGraphicsContext.restoreGraphicsState()
         return rep.representation(using: .jpeg, properties: [.compressionFactor: 0.85])
+        #endif
     }
 
     func taxonomy(platformID: String) -> [NativeClassifierTypeTaxonomy] {

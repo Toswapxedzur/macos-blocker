@@ -1,5 +1,13 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
+#if canImport(Darwin)
 import Darwin
+#elseif os(Windows)
+import CVaultWindows
+#endif
 import Foundation
 
 /// Stable, numeric release metadata for a model package. This is deliberately
@@ -631,17 +639,13 @@ public final class LocalPackageLifecycle {
     }
 
     private func createPrivateDirectory(at url: URL) throws {
-        try fileManager.createDirectory(
-            at: url,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+        try VaultPrivateFile.createDirectory(at: url, fileManager: fileManager)
+        try VaultPrivateFile.restrict(url, directory: true, fileManager: fileManager)
     }
 
     private func writePrivate(_ data: Data, to url: URL) throws {
         try data.write(to: url, options: .atomic)
-        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        try VaultPrivateFile.restrict(url, fileManager: fileManager)
     }
 
     private func loadState() throws -> LocalPackageLifecycleState {
@@ -684,6 +688,14 @@ public final class LocalPackageLifecycle {
             ([state.active, state.staged].compactMap { $0 } + state.rollbackPackages)
                 .compactMap(\.storageName)
         )
+        #if os(Windows)
+        guard let entries = try? fileManager.contentsOfDirectory(at: packagesDirectoryURL, includingPropertiesForKeys: nil) else { return }
+        for entry in entries where isPackageStorageName(entry.lastPathComponent) && !retained.contains(entry.lastPathComponent) {
+            packagesDirectoryURL.path.withCString { parent in
+                entry.lastPathComponent.withCString { name in vault_windows_prune_package(parent, name) }
+            }
+        }
+        #else
         let packagesDescriptor = packagesDirectoryURL.path.withCString {
             open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
         }
@@ -694,8 +706,10 @@ public final class LocalPackageLifecycle {
         for name in names where isPackageStorageName(name) && !retained.contains(name) {
             removePackageDirectoryIfSafe(named: name, from: packagesDescriptor)
         }
+        #endif
     }
 
+    #if canImport(Darwin)
     private func removePackageDirectoryIfSafe(named name: String, from parentDescriptor: Int32) {
         guard let expectedDirectory = fileStatus(named: name, relativeTo: parentDescriptor),
               isDirectory(expectedDirectory) else {
@@ -731,12 +745,15 @@ public final class LocalPackageLifecycle {
         _ = unlinkat(parentDescriptor, name, AT_REMOVEDIR)
     }
 
+    #endif
+
     private static let storedPackageFileNames: Set<String> = ["seed-package.json", "signed-manifest.json"]
 
     private func isPackageStorageName(_ name: String) -> Bool {
         name.range(of: "^release-[1-9][0-9]*-[0-9a-f]{64}$", options: .regularExpression) != nil
     }
 
+    #if canImport(Darwin)
     private func directoryEntryNames(from descriptor: Int32) -> [String]? {
         let duplicated = dup(descriptor)
         guard duplicated >= 0, let directory = fdopendir(duplicated) else {
@@ -776,4 +793,5 @@ public final class LocalPackageLifecycle {
     private func sameFile(_ lhs: stat, _ rhs: stat) -> Bool {
         lhs.st_dev == rhs.st_dev && lhs.st_ino == rhs.st_ino
     }
+    #endif
 }

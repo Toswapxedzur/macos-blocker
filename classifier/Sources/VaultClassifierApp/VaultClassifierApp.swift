@@ -1,5 +1,9 @@
+#if canImport(AppKit)
 import AppKit
+#endif
+#if canImport(Combine)
 import Combine
+#endif
 import VaultClassifierCore
 import VaultClassifierResearch
 import VaultClassifierBridge

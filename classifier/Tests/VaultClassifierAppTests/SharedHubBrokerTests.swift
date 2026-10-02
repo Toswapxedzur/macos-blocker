@@ -25,13 +25,14 @@ final class SharedHubBrokerTests: XCTestCase {
             "ws://127.0.0.1:18787"
         )
         XCTAssertTrue(SharedBrowserBridgeProtocol.isAcceptedHubProgram("macapp"))
+        XCTAssertTrue(SharedBrowserBridgeProtocol.isAcceptedHubProgram("windowsapp"))
         XCTAssertTrue(SharedBrowserBridgeProtocol.isAcceptedHubProgram("classifier"))
         XCTAssertFalse(SharedBrowserBridgeProtocol.isAcceptedHubProgram("vault-broker"))
     }
 
     func testWebStateDeliveryUsesUTF8ForCollectedMetadata() throws {
         let title = "It’s Official: Marco Rubio is Running Venezuela"
-        let script = try XCTUnwrap(VaultClassifierWebShell.stateUpdateJavaScript(payload: ["title": title]))
+        let script = try XCTUnwrap(VaultClassifierPresentation.stateUpdateJavaScript(payload: ["title": title]))
         XCTAssertTrue(script.contains("new TextDecoder()"))
 
         let restored = try decodedStatePayload(from: script)
@@ -39,7 +40,7 @@ final class SharedHubBrokerTests: XCTestCase {
     }
 
     func testWebBridgeKeepsActionPayloadsBounded() {
-        XCTAssertEqual(VaultClassifierWebShell.maximumWebActionDataFields, 24)
+        XCTAssertEqual(VaultClassifierPresentation.maximumWebActionDataFields, 24)
     }
 
     func testWebStateDeliveryPreservesCollectedMetadataAcrossScripts() throws {
@@ -62,14 +63,14 @@ final class SharedHubBrokerTests: XCTestCase {
             "ქართული: გამარჯობა მსოფლიო",
             "🎬🌍",
         ]
-        let script = try XCTUnwrap(VaultClassifierWebShell.stateUpdateJavaScript(payload: ["metadata": metadata]))
+        let script = try XCTUnwrap(VaultClassifierPresentation.stateUpdateJavaScript(payload: ["metadata": metadata]))
         let restored = try decodedStatePayload(from: script)
         XCTAssertEqual(restored["metadata"] as? [String], metadata)
     }
 
     func testWebStateScriptCarriesMonotonicPresentationRevision() throws {
         let script = try XCTUnwrap(
-            VaultClassifierWebShell.stateUpdateJavaScript(
+            VaultClassifierPresentation.stateUpdateJavaScript(
                 payload: ["workspace": "classificationData"],
                 presentationRevision: 42
             )

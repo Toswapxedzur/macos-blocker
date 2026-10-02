@@ -1,6 +1,16 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+import VaultClassifierCore
+#if canImport(WebKit)
 import WebKit
+#endif
 
 /// A bounded on-device cache for already-verified source icons. The collection
 /// record retains the public URL; this cache holds only a fetched image
@@ -28,11 +38,7 @@ final class SourceIconCache {
                     try FileManager.default.moveItem(at: retiredDirectory, to: directory)
                 }
             }
-            try FileManager.default.createDirectory(
-                at: directory,
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
-            )
+            try VaultPrivateFile.createDirectory(at: directory, fileManager: FileManager.default)
             pruneIfNeeded()
         } catch {
             return nil
@@ -100,6 +106,9 @@ final class SourceIconCache {
         var request = URLRequest(url: url)
         request.timeoutInterval = 10
         request.setValue("image/avif,image/webp,image/apng,image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        #if os(Windows)
+        return try await BoundedSourceIconDownload.load(request, maximumBytes: maximumBytes, allowedContentTypes: allowedContentTypes)
+        #else
         let (bytes, response) = try await URLSession.shared.bytes(for: request)
         guard let http = response as? HTTPURLResponse,
               (200..<300).contains(http.statusCode),
@@ -115,6 +124,7 @@ final class SourceIconCache {
         }
         guard !data.isEmpty else { throw URLError(.zeroByteResource) }
         return (data, rawContentType.lowercased())
+        #endif
     }
 
     private func pruneIfNeeded() {
@@ -138,6 +148,7 @@ final class SourceIconCache {
     }
 }
 
+#if canImport(WebKit)
 final class SourceIconSchemeHandler: NSObject, WKURLSchemeHandler {
     private let cache: SourceIconCache?
     private let pictures: CreatorPictureStore?
@@ -165,3 +176,5 @@ final class SourceIconSchemeHandler: NSObject, WKURLSchemeHandler {
 
     func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
 }
+
+#endif

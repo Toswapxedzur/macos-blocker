@@ -34,12 +34,13 @@ let package = Package(
     ],
     dependencies: [
         // The Vault Classifier component (on-device tagging + its page). It lives
-        // in this repository under classifier/ and is macOS-only.
+        // in this repository under classifier/; its portable service also powers Windows.
         .package(path: "classifier")
     ],
     targets: [
         .target(
             name: "MacBlockerCore",
+            dependencies: [.product(name: "VaultActivityCore", package: "classifier")],
             resources: [
                 // Whole folder: rule-core.js (the rule contract) with
                 // custom-rule-runtime.js (the Mac app's rule engine on it) and

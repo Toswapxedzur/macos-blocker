@@ -33,6 +33,32 @@ final class ConnectionHubProtocolTests: XCTestCase {
         ))
     }
 
+    func testSafariAuthenticatesWithItsOwnProgramProof() throws {
+        let hello = try authenticatedHello(program: "safari")
+        XCTAssertNil(ConnectionHub.helloRejectionReason(hello, challenge: challenge, secret: secret))
+        var impersonation = hello
+        impersonation["program"] = "chrome"
+        XCTAssertEqual(ConnectionHub.helloRejectionReason(impersonation, challenge: challenge, secret: secret), "authentication-failed")
+        XCTAssertTrue(ConnectionHub.isDuplicateBrowser("safari", connectedPrograms: ["safari"]))
+    }
+
+    func testSafariCredentialPublicationIsPrivateAndReplacesSymlinkInsteadOfFollowingIt() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let unrelated = directory.appendingPathComponent("unrelated")
+        try Data("unchanged".utf8).write(to: unrelated)
+        let destination = directory.appendingPathComponent("safari-local-hub-secret-v4")
+        try FileManager.default.createSymbolicLink(at: destination, withDestinationURL: unrelated)
+        try LocalHubAuthentication.publishSafariSecret(secret, container: directory)
+        XCTAssertEqual(try Data(contentsOf: destination), secret)
+        XCTAssertEqual(try Data(contentsOf: unrelated), Data("unchanged".utf8))
+        let permissions = try FileManager.default.attributesOfItem(atPath: destination.path)[.posixPermissions] as? NSNumber
+        XCTAssertEqual(permissions?.intValue, 0o600)
+        XCTAssertThrowsError(try LocalHubAuthentication.publishSafariSecret(Data(repeating: 0, count: 31), container: directory))
+        XCTAssertEqual(try Data(contentsOf: destination), secret)
+    }
+
     func testOldProtocolIsRejected() {
         var hello = try! authenticatedHello(program: "chrome")
         hello["v"] = 1

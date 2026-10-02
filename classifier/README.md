@@ -1,12 +1,12 @@
 # Vault Classifier
 
-Vault Classifier is a local-first macOS Swift package that tags collected public
+Vault Classifier is a local-first portable Swift package that tags collected public
 content (video titles, YouTube-first) on-device with a local language model. It
 is a pure tagging service: it returns tags with a 1–5 confidence and makes no
 blocking decision — the Vault browser extension owns all content-block policy.
-It includes a native macOS development shell, a bounded local WebView
-presentation layer, local classification state, and optional explicitly invoked
-provider features.
+Mac Vault embeds its Classifier scene; Windows Vault hosts the same service
+in a bundled headless Swift worker behind a private JSON-lines pipe. Both use
+the same local state, model engine, research execution and bounded scene actions.
 
 The source is the current contract. Documentation explains the intentional
 boundaries and points to the subsystems that enforce them; when it disagrees
@@ -35,6 +35,23 @@ description.
 - Local backups and signed-package lifecycle foundations. They are explicit,
   local operations.
 
+## Windows worker
+
+`VaultClassifierWorker` accepts UTF-8 JSON lines with `{id, operation, data}`
+through stdin and returns `{id, ok, value}` or `{id, ok, error}` on stdout.
+State, Activity and browser-tag broadcasts are events on the same bounded pipe.
+Operations cover `snapshot`, `action`, `mcp`, `hub`, `activity`, `tagNames`,
+`resource` and `hostEvent`. The .NET host owns browser authentication, focused
+app sampling, normal-quit enforcement, the WebView2 resource route and MCP HTTP.
+The worker never exposes another listening port. `VAULT_DATA_ROOT` is the
+host-selected Classifier support directory; `VAULT_ENVIRONMENT` follows the
+existing production/development split. All builds and tests run on mini1.
+
+`windowsBlocker/scripts/classifier-worker/` contains the reproducible native
+build, dependency bundle and protocol smoke test. `--testing-directory` is a
+hermetic test mode, with the existing stub engine and no hub/provider requests.
+Normal launches omit it and install the full production research/LLM stack.
+
 ## Package layout
 
 Dependencies point one way, and the compiler enforces it: `Core` imports none
@@ -42,6 +59,9 @@ of the others.
 
 | Target | Holds |
 | --- | --- |
+| `VaultActivityCore` | Canonical Activity store, dashboard geometry, groups, wire validation and native sample accumulator. |
+| `VaultClassifierWorker` | Private JSON-lines host of the production Classifier and Activity services. |
+| `CVaultWindows` | Windows ACL/DPAPI/randomness/image and safe file-cleanup boundary. |
 | `VaultClassifierCore` | The tagging pipeline, prompt, contracts, persisted state and the store. No networking. |
 | `VaultClassifierBridge` | Local-hub authentication and the browser-bridge operation vocabulary + messages. |
 | `VaultClassifierResearch` | Cloud grounded-research execution: provider request plans, the HTTP seam, the research executor. |
