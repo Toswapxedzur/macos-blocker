@@ -109,6 +109,11 @@
     return node;
   }
 
+  function paged(list, items, text, render, pageSize) {
+    return window.VaultUI.renderList(list, { scope: scope, key: list.dataset.vuiSearch,
+      items: items, text: text, render: render, pageSize: pageSize || 40 });
+  }
+
   function textButton(label, onClick, cls) { var b = el("button", cls || null, label); b.type = "button"; b.addEventListener("click", onClick); return b; }
 
   function iconURI(key) { return icons[key] || knownIcons[key] || null; }
@@ -648,7 +653,7 @@
     body.appendChild(chart);
     var legend = el("div", "pie-legend");
     searchable(legend, searchKey, "Search chart items", ".legend-item");
-    slices.forEach(function (slice) {
+    paged(legend, slices, function (slice) { return slice.label; }, function (slice) {
       var item = el("div", "legend-item");
       item.dataset.vuiSearchText = slice.label;
       hoverable(item, sliceInfo(slice));
@@ -657,7 +662,7 @@
       item.appendChild(dot);
       item.appendChild(el("span", "legend-label", slice.label));
       item.appendChild(el("span", "legend-note", Math.round((slice.seconds / total) * 100) + "%"));
-      legend.appendChild(item);
+      return item;
     });
     body.appendChild(legend);
     wrap.appendChild(body);
@@ -733,7 +738,7 @@
     var cards = el("div", "group-cards");
     searchable(cards, "activity-groups", "Search groups", ".group-card");
     var top = Math.max.apply(null, list.map(function (x) { return x.seconds; }).concat([1]));
-    list.forEach(function (x) {
+    paged(cards, list, function (x) { return x.g.name; }, function (x) {
       var g = x.g;
       var card = el("div", usageFocus === "group|" + g.id ? "group-card is-focus" : "group-card");
       card.dataset.vuiSearchText = g.name;
@@ -754,7 +759,7 @@
       var edit = textButton("Edit", function (event) { event.stopPropagation(); openEditor(g); }, "secondary");
       foot.appendChild(edit);
       card.appendChild(foot);
-      cards.appendChild(card);
+      return card;
     });
     box.appendChild(cards);
     return box;
@@ -836,7 +841,7 @@
     chips.tabIndex = 0;
     chips.setAttribute("aria-label", "Members");
     if (!editing.members.length) chips.appendChild(el("span", "vui-muted", "No members yet."));
-    editing.members.forEach(function (id) {
+    paged(chips, editing.members, function (id) { return memberLabel(id) + " " + id; }, function (id) {
       var chip = el("span", "chip");
       chip.dataset.vuiSearchText = memberLabel(id) + " " + id;
       chip.appendChild(icon(id.slice(4), memberLabel(id)));
@@ -846,7 +851,7 @@
         editing.members = editing.members.filter(function (m) { return m !== id; });
         refreshGroups();
       }, "chip-remove"));
-      chips.appendChild(chip);
+      return chip;
     });
     second.appendChild(infoField(el("div", "chart-subtitle", "Members"), "activity-group-members", "Members", "The apps and websites included in this Activity group. Add from the search results or remove with the cross, then click Save."));
     second.appendChild(chips);
@@ -862,11 +867,12 @@
       found.textContent = "";
       if (!knownItems) { found.appendChild(el("p", "empty", "Loading…")); return; }
       var q = groupSearch.trim().toLowerCase();
+      var selected = new Set(editing.members);
       var matches = knownItems.filter(function (item) {
-        return editing.members.indexOf(item.id) < 0 && (!q || (item.label + " " + item.id).toLowerCase().indexOf(q) >= 0);
-      }).slice(0, 60);
+        return !selected.has(item.id) && (!q || (item.label + " " + item.id).toLowerCase().indexOf(q) >= 0);
+      });
       if (!matches.length) found.appendChild(el("p", "empty", q ? "Nothing matches." : "Everything is in."));
-      matches.forEach(function (item) {
+      window.VaultUI.renderList(found, { scope: scope, key: "activity-member-results", searchable: false, items: matches, text: item => item.label + " " + item.id, pageSize: 60, render: function (item) {
         var line = el("button", "member-row");
         line.type = "button";
         line.appendChild(icon(item.id.slice(4), item.label));
@@ -879,8 +885,8 @@
           var again = scope.querySelector("#groups input[type=search]");
           if (again) again.focus();
         });
-        found.appendChild(line);
-      });
+        return line;
+      } });
     }
     search.addEventListener("input", function () { groupSearch = search.value; fill(); });
     fill();
@@ -1052,8 +1058,8 @@
   // and Empty. Clicking one focuses it.
   function colourMap(entries, empty, onPick, emptyLabel) {
     var box = el("div", "colour-map");
-    searchable(box, emptyLabel === "Empty" ? "activity-usage-items" : "activity-content-tags", emptyLabel === "Empty" ? "Search apps and websites" : "Search tags", ".colour-row");
-    entries.forEach(function (entry) {
+    searchable(box, emptyLabel === "Unrecorded" ? "activity-usage-items" : "activity-content-tags", emptyLabel === "Unrecorded" ? "Search apps and websites" : "Search tags", ".colour-row");
+    paged(box, entries, function (entry) { return (entry.item.label || "") + " " + (entry.item.key || ""); }, function (entry) {
       var line = el("button", "colour-row");
       line.dataset.vuiSearchText = (entry.item.label || "") + " " + (entry.item.key || "");
       line.type = "button";
@@ -1066,7 +1072,7 @@
       line.appendChild(el("span", "colour-time", entry.nameOnly ? "" : fmt(entry.seconds)));
       hoverable(line, entryInfo(entry, [fmt(entry.seconds)]));
       if (onPick) line.addEventListener("click", function () { onPick(entry); });
-      box.appendChild(line);
+      return line;
     });
     if (empty) {
       var row = el("div", "colour-row is-empty");
@@ -1551,7 +1557,7 @@
     var top = Math.max(1, authors.length ? authors[0].seconds : 1);
     var list = el("div", "scroll-list");
     searchable(list, "activity-authors", "Search content sources", ".author-row");
-    authors.forEach(function (a) {
+    paged(list, authors, function (a) { return a.name + " " + a.key; }, function (a) {
       var line = el("div", "author-row");
       line.dataset.vuiSearchText = a.name + " " + a.key;
       line.appendChild(icon(a.key, a.name));
@@ -1573,7 +1579,7 @@
       body.appendChild(bar);
       line.appendChild(body);
       line.appendChild(el("div", "row-time", fmt(a.seconds)));
-      list.appendChild(line);
+      return line;
     });
     if (!authors.length) list.appendChild(el("p", "empty", "Nothing in this range."));
     box.appendChild(list);
@@ -1586,7 +1592,10 @@
     box.appendChild(el("div", "chart-title", "Content viewed"));
     var list = el("div", "scroll-list");
     searchable(list, "activity-watched", "Search viewed content", ".raw-row");
-    data.pieces.slice().sort(function (a, b) { return b.startMs - a.startMs; }).forEach(function (p) {
+    paged(list, data.pieces.slice().sort(function (a, b) { return b.startMs - a.startMs; }), function (p) {
+      var fact = watchedFacts[p.seg.key] || {};
+      return (p.seg.label || "") + " " + p.seg.key + " " + (fact.creator || "") + " " + p.tags.map(tag => tag.name).join(" ");
+    }, function (p) {
       var fact = watchedFacts[p.seg.key] || {};
       var line = el("div", "raw-row");
       line.dataset.vuiSearchText = (p.seg.label || "") + " " + p.seg.key + " " + (fact.creator || "") + " " + p.tags.map(function (tag) { return tag.name; }).join(" ");
@@ -1605,7 +1614,7 @@
       body.appendChild(meta);
       line.appendChild(body);
       line.appendChild(el("div", "row-time", fmt((p.endMs - p.startMs) / 1000)));
-      list.appendChild(line);
+      return line;
     });
     if (!data.pieces.length) list.appendChild(el("p", "empty", "Nothing in this range."));
     box.appendChild(list);

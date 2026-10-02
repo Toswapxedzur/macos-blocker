@@ -12,7 +12,73 @@ extension VaultClassifierViewModel {
     /// The WKWebView receives only the bounded local state necessary to render
     /// this development shell. Browser evidence, API keys, pairing material,
     /// stable identifiers stay in native storage.
-    func webSnapshot() -> [String: Any] {
+    func knowledgePage(_ data: [String: Any]) async -> String? {
+        guard let requestID = data["requestID"] as? String, requestID.count <= 80,
+              let kind = data["kind"] as? String, ["creator", "term", "suggestion"].contains(kind),
+              let platformID = data["platformID"] as? String, platformID.count <= 32,
+              let query = data["query"] as? String, query.count <= 200,
+              let offset = data["offset"] as? Int, offset >= 0,
+              let limit = data["limit"] as? Int, (1...64).contains(limit) else { return nil }
+        let drafts = data["drafts"] as? [String: String] ?? [:]
+        guard drafts.count <= 256, drafts.allSatisfy({ $0.key.count <= 256 && $0.value.count <= 2000 }) else { return nil }
+        let catalog = (localState ?? coordinator?.snapshot())?.workspaceCatalog ?? .starter()
+        if kind == "suggestion" {
+            let rows = await Task.detached(priority: .userInitiated) {
+                var seen = Set<String>()
+                return catalog.datasets.flatMap(\.collectedEntries).filter {
+                    $0.platformID == platformID && !$0.creatorName.isEmpty && $0.creatorName != $0.creatorID
+                    && seen.insert($0.creatorID).inserted && $0.creatorName.localizedCaseInsensitiveContains(query)
+                }.sorted { left, right in
+                    let a = left.creatorName.lowercased().hasPrefix(query.lowercased()), b = right.creatorName.lowercased().hasPrefix(query.lowercased())
+                    return a != b ? a : left.creatorName < right.creatorName
+                }.dropFirst(offset).prefix(limit).map { ["id": $0.creatorID, "name": $0.creatorName, "platformID": platformID] }
+            }.value
+            guard let packet = try? JSONSerialization.data(withJSONObject: ["requestID": requestID, "items": Array(rows), "total": rows.count]) else { return nil }
+            return "window.VaultClassifier && window.VaultClassifier.receiveList(JSON.parse(new TextDecoder().decode(Uint8Array.from(atob('\(packet.base64EncodedString())'), c => c.charCodeAt(0)))));"
+        }
+        let result = await Task.detached(priority: .userInitiated) {
+            var faces: [String: (String?, String?)] = [:]
+            if kind == "creator" {
+                for aliases in [false, true] {
+                    for entry in catalog.datasets.flatMap(\.collectedEntries) {
+                        let name = entry.creatorName.isEmpty || entry.creatorName == entry.creatorID ? nil : entry.creatorName
+                        let icon = entry.sourceIconURL.flatMap { SourceIconURLPolicy.isAccepted(platformID: entry.platformID, value: $0) ? $0 : nil }
+                        for id in aliases ? entry.sourceAliases : [entry.creatorID] {
+                            if aliases && faces[id] != nil { continue }
+                            let face = faces[id]; faces[id] = (face?.0 ?? name, face?.1 ?? icon)
+                        }
+                    }
+                }
+            }
+            let entries = kind == "creator" ? catalog.creatorKnowledge : catalog.knowledgeEntries
+            let matches = entries.filter { entry in
+                let name = faces[entry.subject]?.0 ?? CreatorReference.fallbackName(of: entry.subject)
+                return (kind != "creator" || CreatorReference.platformID(of: entry.subject) == platformID)
+                    && (query.isEmpty || (name + " " + entry.subject + " " + (drafts[entry.id] ?? entry.meaning)).localizedCaseInsensitiveContains(query))
+            }.sorted { $0.updatedAtMilliseconds == $1.updatedAtMilliseconds ? $0.id < $1.id : $0.updatedAtMilliseconds > $1.updatedAtMilliseconds }
+            let rows = matches.dropFirst(offset).prefix(limit).map { entry in (entry, faces[entry.subject]?.0, faces[entry.subject]?.1) }
+            return (Array(rows), matches.count)
+        }.value
+        let items: [[String: Any]] = result.0.map { entry, name, remote in
+            var row: [String: Any] = ["id": entry.id, "subject": entry.subject, "meaning": entry.meaning,
+                "writtenByUser": entry.writtenByUser, "updatedAtMilliseconds": entry.updatedAtMilliseconds]
+            if kind == "creator" {
+                row["platformID"] = platformID; row["name"] = name ?? CreatorReference.fallbackName(of: entry.subject)
+                if let pictures = creatorPictures {
+                    if pictures.url(for: entry.subject) == nil, let remote {
+                        if let jpeg = sourceIconJPEG(remoteURL: remote) { pictures.save(jpeg, for: entry.subject) }
+                        else { cacheSourceIcon(remoteURL: remote) }
+                    }
+                    row["icon"] = pictures.url(for: entry.subject) ?? NSNull()
+                }
+            }
+            return row
+        }
+        guard let packet = try? JSONSerialization.data(withJSONObject: ["requestID": requestID, "items": items, "total": result.1]) else { return nil }
+        return "window.VaultClassifier && window.VaultClassifier.receiveList(JSON.parse(new TextDecoder().decode(Uint8Array.from(atob('\(packet.base64EncodedString())'), c => c.charCodeAt(0)))));"
+    }
+
+    func webSnapshot(includeCollections: Bool = true) -> [String: Any] {
         let state = localState ?? coordinator?.snapshot()
         let backup = state?.backupConfiguration
         let notices: [String: Any] = [
@@ -80,7 +146,7 @@ extension VaultClassifierViewModel {
         // An exact id wins over an alias; a "name" that is only the id is none.
         // `icon` is the picture's web address, as collected.
         var creatorFaces: [String: (name: String?, icon: String?)] = [:]
-        let collected = catalog.datasets.flatMap(\.collectedEntries)
+        let collected = includeCollections ? catalog.datasets.flatMap(\.collectedEntries) : []
         for aliasPass in [false, true] {
             for entry in collected {
                 let name = entry.creatorName.isEmpty || entry.creatorName == entry.creatorID ? nil : entry.creatorName
@@ -133,12 +199,17 @@ extension VaultClassifierViewModel {
                 }
         }
         var knowledge: [String: Any] = [
-            "creators": knowledgePayload(catalog.creatorKnowledge),
-            "terms": knowledgePayload(catalog.knowledgeEntries),
+            "creators": includeCollections ? knowledgePayload(catalog.creatorKnowledge) : [],
+            "terms": includeCollections ? knowledgePayload(catalog.knowledgeEntries) : [],
+            "paged": !includeCollections,
+            "counts": catalog.creatorKnowledge.reduce(into: ["term": catalog.knowledgeEntries.count]) { counts, entry in
+                let key = "creator:" + CreatorReference.platformID(of: entry.subject)
+                counts[key, default: 0] += 1
+            },
         ]
         // "Add a creator" suggests creators the classifier has collected (only
         // while the Knowledge page is open: the list is long).
-        if workspace == .knowledge {
+        if includeCollections && workspace == .knowledge {
             var seen = Set<String>()
             knowledge["knownCreators"] = catalog.datasets.flatMap(\.collectedEntries).compactMap { entry -> [String: String]? in
                 guard !entry.creatorName.isEmpty, entry.creatorName != entry.creatorID,
@@ -186,7 +257,7 @@ extension VaultClassifierViewModel {
                     "testSucceeded": successfulProviderTestProfileIDs.contains(profile.id),
                 ] as [String: Any]
             }
-        assets["providerRequestRecords"] = catalog.providerRequestRecords.map { record in
+        assets["providerRequestRecords"] = includeCollections ? catalog.providerRequestRecords.map { record in
                 [
                     "id": record.id,
                     "profileID": record.profileID,
@@ -203,7 +274,20 @@ extension VaultClassifierViewModel {
                     "outcome": record.outcome,
                     "createdAtMilliseconds": record.createdAtMilliseconds,
                 ] as [String: Any]
+            } : []
+        var summaries: [String: [String: Any]] = [:]
+        for record in catalog.providerRequestRecords {
+            var summary = summaries[record.profileID] ?? ["tokenTotal": 0, "calls": 0, "latestTime": Int64(0)]
+            summary["tokenTotal"] = (summary["tokenTotal"] as? Int ?? 0) + (record.tokenCount ?? 0)
+            if ["readPublicContent", "searchWeb", "search-creator-web"].contains(record.operation), record.statusCode != nil {
+                summary["calls"] = (summary["calls"] as? Int ?? 0) + 1
             }
+            if let shape = record.responseShape, !shape.isEmpty, record.createdAtMilliseconds >= (summary["latestTime"] as? Int64 ?? 0) {
+                summary["latestTime"] = record.createdAtMilliseconds; summary["responseShape"] = shape
+            }
+            summaries[record.profileID] = summary
+        }
+        assets["providerRequestSummaries"] = summaries
         assets["providerProtocols"] = Dictionary(uniqueKeysWithValues: APIKeyProviderType.allCases
                 .map { type -> (String, [String: Any]) in
                     let descriptor = ProviderProtocolRegistry.descriptor(for: type)
