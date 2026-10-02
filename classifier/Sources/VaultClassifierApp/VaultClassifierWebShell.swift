@@ -101,7 +101,7 @@ final class VaultClassifierWebShell {
                 guard let self else { return nil }
                 let tStart = DispatchTime.now()
                 // The web view calls this on the main thread.
-                let payload = MainActor.assumeIsolated { self.model.webSnapshot() }
+                let payload = MainActor.assumeIsolated { self.model.webSnapshot(includeCollections: false) }
                 let tBuilt = DispatchTime.now()
                 let script = VaultClassifierWebShell.stateUpdateJavaScript(
                     payload: payload,
@@ -166,11 +166,15 @@ final class VaultClassifierWebShell {
             }
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                if action == "knowledgePage" {
+                    if let script = await self.model.knowledgePage(data) { self.webView?.evaluateJavaScript(script, completionHandler: nil) }
+                    return
+                }
                 if self.model.performWebAction(action, data: data) {
                     // Warm the newly loaded renderer even while its scene is
                     // hidden. Later background updates retain normal batching.
                     if action == "state", !self.initialStateSent,
-                       let script = VaultClassifierWebShell.stateUpdateJavaScript(payload: self.model.webSnapshot()),
+                       let script = VaultClassifierWebShell.stateUpdateJavaScript(payload: self.model.webSnapshot(includeCollections: false)),
                        let webView = self.webView {
                         self.initialStateSent = true
                         webView.evaluateJavaScript(script) { _, _ in }

@@ -254,7 +254,7 @@ extension VaultClassifierViewModel {
             case .classifierTaxonomy:
                 let taxonomyRequest = try JSONDecoder().decode(NativeClassifierTaxonomyRequest.self, from: request.bodyData)
                 try taxonomyRequest.validate()
-                return try sharedHubReply(NativeClassifierTaxonomyResponse(platformID: taxonomyRequest.platformID, types: taxonomy(platformID: taxonomyRequest.platformID)))
+                return try sharedHubReply(NativeClassifierTaxonomyResponse.page(taxonomy(platformID: taxonomyRequest.platformID), request: taxonomyRequest))
             case .submitCorrection:
                 let correction = try JSONDecoder().decode(NativeSubmitCorrectionRequest.self, from: request.bodyData)
                 try correction.validate()
@@ -442,7 +442,7 @@ extension VaultClassifierViewModel {
                 let tagNodes = taxonomy.predictableLeafIDs
                     .compactMap { taxonomy.nodes[$0] }
                     .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-                let tags = NativeVideoTag.accepted(Self.nativeVideoTags(from: tagNodes))
+                let tags = NativeVideoTag.catalogAccepted(Self.nativeVideoTags(from: tagNodes))
                 guard !tags.isEmpty else { return nil }
                 return NativeClassifierTypeTaxonomy(typeID: type.id, name: type.name, tags: tags)
             }

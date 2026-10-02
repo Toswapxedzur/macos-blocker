@@ -51,6 +51,7 @@
   const treeViewportPositions = new Map();
   const editorViewportPositions = new Map();
   const liveEdits = new Map();
+  const knowledgeRows = new Map();
   let replacingControls = false;
   let composingEdit = false;
   // Non-null while the "create a group" dialog is open: { platformIDs, name? }.
@@ -254,7 +255,8 @@
       case "savePackageSettings": return state.settings;
       case "saveClassificationSettings": return state.settings;
       case "saveBackup": return state.backup;
-      case "editKnowledgeEntry": return [...(assets.knowledge?.creators || []),
+      case "editKnowledgeEntry": if (assets.knowledge?.paged) return knowledgeRows.get(edit.identity.id) || {};
+        return [...(assets.knowledge?.creators || []),
         ...(assets.knowledge?.terms || [])].find((item) => item.id === edit.identity.id);
       case "updateTag": return (assets.trees || []).find((tree) => tree.id === edit.identity.treeID)
         ?.nodes.find((node) => node.id === edit.identity.nodeID);
@@ -326,6 +328,7 @@
   function reconcileLiveEdits() {
     liveEdits.forEach((edit, key) => {
       const saved = savedLiveEdit(edit);
+      if (edit.action === "editKnowledgeEntry" && state.assets?.knowledge?.paged) return;
       if (!saved || (edit.sent && !state.issue && liveEditMatches(edit, saved))) {
         window.clearTimeout(edit.timer);
         liveEdits.delete(key);
@@ -928,10 +931,49 @@
     return keys[fieldName] || "llm.protocol.protocolFamily";
   }
 
+  const listRequests = new Map();
+  let listRequestNumber = 0;
+  function queryKnowledge(kind, platformID, request) {
+    const requestID = "knowledge-" + (++listRequestNumber);
+    return new Promise(resolve => {
+      const timer = setTimeout(() => { listRequests.delete(requestID); resolve(null); }, 15000);
+      listRequests.set(requestID, packet => { clearTimeout(timer); resolve(packet); });
+      const drafts = Object.fromEntries([...liveEdits.values()].filter(edit => edit.action === "editKnowledgeEntry").slice(-256).map(edit => [edit.identity.id, edit.values.meaning]));
+      send("knowledgePage", { ...request, requestID, kind, platformID, drafts });
+    });
+  }
+  let pendingLists = [];
+  function listPlaceholder(key, items, render, text, pageSize = 12) {
+    const nativeKnowledge = key.startsWith("knowledge:") && state.assets?.knowledge?.paged;
+    const parts = key.split(":");
+    pendingLists.push({ key, items, render, text, pageSize,
+      ...(nativeKnowledge ? { total: state.assets.knowledge.counts?.[parts.slice(1).join(":")] || 0,
+        queryPage: request => queryKnowledge(parts[1], parts[2] || "", request) } : {}) });
+    return "";
+  }
+  function mountLists() {
+    for (const options of pendingLists) {
+      const list = [...root.querySelectorAll("[data-vui-search]")].find(list => list.dataset.vuiSearch === options.key);
+      if (!list) continue;
+      let focused = null;
+      window.VaultUI.renderList(list, { ...options, scope, beforePaint() { focused = captureLiveEditFocus(); }, afterPaint() {
+        restoreLiveEdits(focused);
+        root.querySelectorAll(".knowledge-card").forEach(updateKnowledgeSearchText);
+        window.VaultUI.enhance(list);
+      } });
+    }
+  }
+
   function apiKeySettings() {
     const profiles = state.assets.providerProfiles || [];
     const requestRecords = state.assets.providerRequestRecords || [];
     const protocols = state.assets.providerProtocols || {};
+    const recordsByProfile = new Map();
+    for (const record of requestRecords) {
+      let records = recordsByProfile.get(record.profileID);
+      if (!records) { records = []; recordsByProfile.set(record.profileID, records); }
+      records.push(record);
+    }
     const profileTypeGroups = [
       ["llm.providerGroup.models", ["openAI", "deepSeek", "gemini", "anthropic", "mistral", "cohere", "groq", "openRouter", "ollama"].map((type) => [type, t(providerTypeLabelKey(type))])],
       ["llm.providerGroup.platform", ["youtubeData", "twitch", "reddit", "xPlatform", "instagramGraph", "facebookGraph"].map((type) => [type, t(providerTypeLabelKey(type))])],
@@ -944,11 +986,12 @@
       const supportsPlatformData = Boolean(protocol.supportsPlatformData);
       // Serper / You.com fed the removed raw-search mode: kept readable, never testable or used.
       const retiredSearchProvider = Boolean(protocol.retiredSearchProvider);
-      const profileRecords = requestRecords.filter((record) => record.profileID === profile.id);
-      const latestResponseDiagnostic = profileRecords
+      const profileRecords = (recordsByProfile.get(profile.id) || []);
+      const summary = state.assets.providerRequestSummaries?.[profile.id];
+      const latestResponseDiagnostic = summary ? (summary.responseShape ? { responseShape: summary.responseShape } : null) : profileRecords
         .filter((record) => typeof record.responseShape === "string" && record.responseShape.length > 0)
         .sort((left, right) => Number(right.createdAtMilliseconds) - Number(left.createdAtMilliseconds))[0];
-      const tokenTotal = profileRecords.reduce(
+      const tokenTotal = summary ? summary.tokenTotal : profileRecords.reduce(
         (total, record) => total + (Number(record.tokenCount) || 0),
         0
       );
@@ -969,14 +1012,14 @@
       const testAvailable = (supportsLLM || supportsPlatformData) && !retiredSearchProvider;
       const testButton = testAvailable ? `<button class="gold-action" data-action="testProviderProfile" data-form="${esc(formID)}" data-profile-id="${esc(profile.id)}"${disabled(profile.testing)}>${tx(profile.testing ? "llm.testing" : "llm.test")}</button>` : "";
       const usage = supportsPlatformData || retiredSearchProvider
-        ? `<p class="provider-token-usage"><span>${tx("llm.apiCalls")}</span><strong>${profileRecords.filter((record) => ["readPublicContent", "searchWeb", "search-creator-web"].includes(record.operation) && Number.isInteger(record.statusCode)).length}</strong></p>`
+        ? `<p class="provider-token-usage"><span>${tx("llm.apiCalls")}</span><strong>${summary ? summary.calls : profileRecords.filter((record) => ["readPublicContent", "searchWeb", "search-creator-web"].includes(record.operation) && Number.isInteger(record.statusCode)).length}</strong></p>`
         : `<p class="provider-token-usage"><span>${tx("llm.tokenUsage")}</span><strong>${tx("llm.tokenTotal", { total: tokenTotal })}</strong></p>`;
       const responseDiagnostic = latestResponseDiagnostic
         ? `<p class="provider-response-shape"><span>${tx("llm.responseShape")}</span><strong>${esc(latestResponseDiagnostic.responseShape)}</strong></p>`
         : "";
       return `<section class="provider-panel" data-vui-search-text="${esc(profile.name + " " + t(providerTypeLabelKey(profile.type)))}" data-provider-panel data-provider-id="${esc(profile.id)}" data-form-id="${esc(formID)}" data-autosave-action="updateProviderConnection"><div class="provider-panel-head"><h3>${esc(profile.name)}</h3><div class="provider-panel-actions">${testButton}<button class="danger" data-action="confirmDeleteProviderProfile" data-profile-id="${esc(profile.id)}">${deleteLabel(`provider:${profile.id}`, tx("llm.deleteProfile"))}</button></div></div>${retiredSearchProvider ? `<div class="notice navy">${tx("llm.retiredSearchProvider")}</div>` : ""}<div class="provider-panel-body">${connectionFields ? `<div class="provider-connection-fields">${connectionFields}</div>` : ""}</div><footer class="provider-request-summary">${usage}${responseDiagnostic}</footer>${profile.testSucceeded ? notice(t("llm.testSucceeded"), "green") : ""}</section>`;
     };
-    return `<section class="utility-settings-section utility-api-keys"><h3 class="utility-settings-section-title">${tx("navigation.apiKeys")}</h3><p class="section-copy" data-info>${tx("llm.copy")}</p><div class="notice navy provider-local-only" data-info>${tx("llm.localOnlyDisclosure")}</div><section class="provider-create" data-form-id="new-provider-profile-form">${groupedValueSelectField("llm.providerType", "", "type", "", profileTypeGroups)}<button class="gold-action" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button><span class="small-copy" data-info="llm.createCopy">${tx("llm.createCopy")}</span></section><div class="provider-panels vui-list-box" data-vui-search="classifier-providers" data-vui-search-label="Search provider profiles" data-vui-search-items=".provider-panel" data-list-key="providers" tabindex="0" aria-label="${tx("llm.keyLibrary")}">${profiles.length ? profiles.map(panel).join("") : `<div class="empty">${tx("llm.empty")}</div>`}</div></section>`;
+    return `<section class="utility-settings-section utility-api-keys"><h3 class="utility-settings-section-title">${tx("navigation.apiKeys")}</h3><p class="section-copy" data-info>${tx("llm.copy")}</p><div class="notice navy provider-local-only" data-info>${tx("llm.localOnlyDisclosure")}</div><section class="provider-create" data-form-id="new-provider-profile-form">${groupedValueSelectField("llm.providerType", "", "type", "", profileTypeGroups)}<button class="gold-action" data-action="createProviderProfile" data-form="new-provider-profile-form">${tx("llm.createKey")}</button><span class="small-copy" data-info="llm.createCopy">${tx("llm.createCopy")}</span></section><div class="provider-panels vui-list-box" data-vui-search="classifier-providers" data-vui-search-label="Search provider profiles" data-vui-search-items=".provider-panel" data-list-key="providers" tabindex="0" aria-label="${tx("llm.keyLibrary")}">${profiles.length ? listPlaceholder("classifier-providers", profiles, panel, profile => profile.name + " " + t(providerTypeLabelKey(profile.type))) : `<div class="empty">${tx("llm.empty")}</div>`}</div></section>`;
   }
 
   // The classifiable platforms as a checklist (owner 2026-09-30: a type may take
@@ -1103,7 +1146,8 @@
 
     const group = (title, hint, items, kind, platformID = "") => {
       const key = `knowledge:${kind}${platformID ? `:${platformID}` : ""}`;
-      return `<section class="knowledge-group" data-knowledge-group><div class="section-header"><div><h3>${esc(title)} <span class="knowledge-count" data-knowledge-count>${items.length}</span></h3>${hint ? `<p class="section-copy" data-info>${esc(hint)}</p>` : ""}</div></div>${items.length ? `<div class="knowledge-list vui-list-box" data-list-key="${key}" data-vui-search="${key}" data-vui-search-items=".knowledge-card" data-vui-search-label="${tx("knowledge.search")} · ${esc(title)}" data-vui-search-copy="${esc(fieldInfo["knowledge.search"])}" tabindex="0" aria-label="${esc(title)}">${items.map((entry) => entryCard(entry, kind)).join("")}</div>` : `<div class="empty">${tx("knowledge.empty")}</div>`}</section>`;
+      const total = knowledge.paged ? (knowledge.counts?.[`${kind}${platformID ? ":" + platformID : ""}`] || 0) : items.length;
+      return `<section class="knowledge-group" data-knowledge-group><div class="section-header"><div><h3>${esc(title)} <span class="knowledge-count" data-knowledge-count>${total}</span></h3>${hint ? `<p class="section-copy" data-info>${esc(hint)}</p>` : ""}</div></div>${total ? `<div class="knowledge-list vui-list-box" data-list-key="${key}" data-vui-search="${key}" data-vui-search-items=".knowledge-card" data-vui-search-label="${tx("knowledge.search")} · ${esc(title)}" data-vui-search-copy="${esc(fieldInfo["knowledge.search"])}" tabindex="0" aria-label="${esc(title)}">${listPlaceholder(key, items, entry => entryCard(entry, kind), entry => `${entry.name || ""} ${entry.subject} ${[...liveEdits.values()].find(edit => edit.action === "editKnowledgeEntry" && edit.identity.id === entry.id)?.values?.meaning || entry.meaning || ""}`)}</div>` : `<div class="empty">${tx("knowledge.empty")}</div>`}</section>`;
     };
 
     // Terms are only ever added here, by the user: name the term, and either
@@ -1135,17 +1179,24 @@
 
   // "Add a creator" suggestions: creators already collected on the chosen
   // platform whose name contains what is typed.
-  function showKnowledgeSuggestions(input) {
+  let suggestionRevision = 0;
+  async function showKnowledgeSuggestions(input) {
     const box = root.querySelector("[data-knowledge-suggestions]");
     if (!box) return;
+    const revision = ++suggestionRevision;
     const query = input.value.trim().toLowerCase();
     knowledgeCreatorDraft = input.value;
     const known = (state.assets?.knowledge?.knownCreators || []).filter((creator) => creator.platformID === knowledgeAddPlatform);
     const rank = (name) => (name.startsWith(query) ? 0 : name.split(/\s+/).some((word) => word.startsWith(query)) ? 1 : 2);
-    const matches = query.length < 2 ? [] : known
+    let matches = query.length < 2 ? [] : known
       .filter((creator) => creator.name.toLowerCase().includes(query))
       .sort((a, b) => rank(a.name.toLowerCase()) - rank(b.name.toLowerCase()))
       .slice(0, 6);
+    if (state.assets?.knowledge?.paged && query.length >= 2) {
+      const result = await queryKnowledge("suggestion", knowledgeAddPlatform, { query, offset: 0, limit: 6 });
+      if (revision !== suggestionRevision || !box.isConnected) return;
+      matches = result?.items || [];
+    }
     box.innerHTML = matches.map((creator) => `<button type="button" class="vui-menu-item knowledge-suggestion" data-knowledge-pick="${esc(creator.name)}"><span dir="auto">${esc(creator.name)}</span><span class="knowledge-id">${esc(creator.id)}</span></button>`).join("");
     knowledgeSuggestionsOpen = matches.length > 0;
     if (!knowledgeSuggestionsOpen) window.VaultUI.hideMenuLayer(box);
@@ -1153,6 +1204,7 @@
   }
 
   function closeKnowledgeSuggestions(restoreFocus = false) {
+    suggestionRevision++;
     const box = root.querySelector("[data-knowledge-suggestions]");
     if (restoreFocus) root.querySelector("[data-knowledge-creator]")?.focus({ preventScroll: true });
     if (box) { window.VaultUI.hideMenuLayer(box); box.replaceChildren(); }
@@ -1328,9 +1380,10 @@
       return;
     }
     if (composingEdit) return;
+    pendingLists = [];
     const markup = shell(workspace()) + createTypeModal();
     // Nothing changed on the page: keep the DOM (and its scroll) as it is.
-    if (markup === lastRenderedMarkup && root.firstChild) return;
+    if (markup === lastRenderedMarkup && root.firstChild) { mountLists(); return; }
     renderFull(markup);
   }
 
@@ -1355,6 +1408,7 @@
     } : null;
     replacingControls = true;
     root.innerHTML = markup;
+    mountLists();
     restoreLiveEdits(focused);
     replacingControls = false;
     lastRenderedMarkup = markup;
@@ -2058,6 +2112,20 @@
   scope.addEventListener("mouseup", finishTagDrag);
 
   window.VaultClassifier = {
+    receiveList(packet) {
+      const resolve = listRequests.get(packet.requestID);
+      if (resolve) {
+        listRequests.delete(packet.requestID);
+        for (const row of packet.items || []) {
+          knowledgeRows.set(row.id, row);
+          for (const [key, edit] of liveEdits) {
+            if (edit.action === "editKnowledgeEntry" && edit.identity.id === row.id && edit.sent && !state.issue && liveEditMatches(edit, row)) { clearTimeout(edit.timer); liveEdits.delete(key); }
+          }
+        }
+        while (knowledgeRows.size > 256) knowledgeRows.delete(knowledgeRows.keys().next().value);
+        resolve(packet);
+      }
+    },
     receive(payload) {
       const revision = Number(payload?.presentationRevision);
       if (Number.isSafeInteger(revision) && revision > 0) {

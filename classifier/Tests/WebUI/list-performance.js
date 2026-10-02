@@ -1,0 +1,24 @@
+window.runListPerformanceTests = async () => {
+  const result = [], q = selector => scope.querySelector(selector);
+  const wait = () => new Promise(resolve => setTimeout(resolve, 150));
+  const check = (ok, label) => { if (!ok) throw Error(label); result.push('PASS '+label); };
+  testState.workspace = 'knowledge';
+  testState.assets.knowledge.creators = Array.from({length:10000}, (_,i)=>({id:'creator-'+i,subject:'youtube:handle:@creator'+i,name:'Creator '+i,platformID:'youtube',meaning:'Description '+i,writtenByUser:true}));
+  testState.assets.knowledge.terms = Array.from({length:10000}, (_,i)=>({id:'term-'+i,subject:'Term '+i,meaning:'Definition '+i,writtenByUser:true}));
+  pushSnapshot(); await wait();
+  check(q('[data-list-key="knowledge:creator:youtube"]').querySelectorAll('.knowledge-card').length===12, '10,000 sources mount only 12 editable cards');
+  check(q('[data-list-key="knowledge:term"]').querySelectorAll('.knowledge-card').length===12, '10,000 terms mount only 12 editable cards');
+  const search = q('[data-vui-search-input="knowledge:creator:youtube"]');
+  search.value = 'Creator 9999'; search.dispatchEvent(new InputEvent('input',{bubbles:true})); await wait();
+  check(q('[data-list-key="knowledge:creator:youtube"] .knowledge-card')?.dataset.id==='creator-9999', 'full source search reaches the last entry');
+  search.focus(); search.setSelectionRange(1,4); pushSnapshot(); await wait();
+  const restored = q('[data-vui-search-input="knowledge:creator:youtube"]');
+  check(restored.value==='Creator 9999' && scope.activeElement===restored && restored.selectionStart===1, 'paged source search preserves query and caret across snapshots');
+  const input = q('[data-list-key="knowledge:creator:youtube"] textarea');
+  input.focus(); input.value='Pending edited description'; input.dispatchEvent(new InputEvent('input',{bubbles:true})); input.setSelectionRange(3,8);
+  pushSnapshot(); await wait();
+  const edited=q('[data-list-key="knowledge:creator:youtube"] textarea');
+  check(edited.value==='Pending edited description' && scope.activeElement===edited && edited.selectionStart===3, 'editable row drafts and caret survive lazy snapshot updates');
+  check(uiErrors.length===0, 'large lists produce no renderer errors');
+  return result;
+};
