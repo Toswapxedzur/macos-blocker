@@ -1,0 +1,31 @@
+window.runActivitySearchTests=async()=>{
+  const results=[],wait=()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+  const check=(c,label)=>{if(!c)throw Error(label);results.push('PASS '+label)};
+  const host=document.createElement('div');host.style.cssText='display:block;height:100%';document.body.appendChild(host);document.getElementById('host').style.display='none';
+  const activity=host.attachShadow({mode:'open'});
+  activity.innerHTML='<link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/vault-ui.css"><link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/vault-info.css"><link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/activity.css"><div id="activity"></div>';
+  VaultScenes.scope=name=>name==='activity'?activity:scope;webkit.messageHandlers.activity={postMessage:m=>commands.push(m)};
+  const load=src=>new Promise((resolve,reject)=>{const script=document.createElement('script');script.src=src;script.onload=resolve;script.onerror=reject;document.body.appendChild(script)});
+  await load('/Sources/MacBlockerWebUI/WebAssets/activity-time-bins.js');await load('/Sources/MacBlockerWebUI/WebAssets/activity.js');
+  const start=Date.now()-86400000;
+  const tags=Array.from({length:12},(_,i)=>({id:'tag-'+i,name:'Tag '+i}));
+  const facts=Object.fromEntries(tags.map((tag,i)=>['video-'+i,{title:'Video '+i,creator:'Author '+i,tags:[tag]}]));
+  const snapshot={rangeStartMs:start,rangeEndMs:start+86400000,settings:{appUsage:{enabled:true},webVisit:{enabled:true},contentWatched:{enabled:true}},groups:tags.map((tag,i)=>({id:'activity-'+i,name:'Activity group '+i,colorIndex:i,merge:false,members:tags.map((tag,n)=>'app|app-'+n)})),app:{totalSeconds:120,bars:tags.map((tag,i)=>({key:'app-'+i,label:'App '+i,colorIndex:i,seconds:10})),timeline:[]},web:{totalSeconds:0,bars:[],timeline:[]},watchedTimeline:tags.map((tag,i)=>({key:'video-'+i,label:'Video '+i,startedAtMs:start+i*1000,seconds:1,startFraction:i/86400,widthFraction:1/86400}))};
+  const apply=()=>activityApply(structuredClone(snapshot),{},facts,{},tags);
+  apply();await wait();
+  const query=key=>activity.querySelector('[data-vui-search-input="'+key+'"]');
+  const type=(key,value)=>{const input=query(key);check(!!input,key+' has search');input.focus();input.value=value;input.dispatchEvent(new InputEvent('input',{bubbles:true}));return input;};
+  const pairs=[['activity-groups','group 11','.group-card'],['activity-usage-items','app-11','.colour-row'],['activity-content-tags','tag 11','.colour-row'],['activity-authors','author 11','.author-row'],['activity-watched','author 11','.raw-row']];
+  const before=commands.length;
+  for(const [key,text,selector] of pairs){type(key,text.toUpperCase());const list=activity.querySelector('[data-vui-search="'+key+'"]');check([...list.querySelectorAll(selector)].filter(n=>!n.classList.contains('vui-search-hidden')).length===1,key+' filters by label or identifier');}
+  check(commands.length===before,'Activity list searches do not alter recording, grouping or chart filters');
+  const input=type('activity-watched','Author 11');input.setSelectionRange(1,4);apply();await wait();
+  check(query('activity-watched').value==='Author 11' && activity.activeElement===query('activity-watched') && query('activity-watched').selectionStart===1,'Activity snapshot retains query, focus and caret');
+  activity.querySelector('.group-card:not(.vui-search-hidden) .secondary').click();await wait();
+  const memberInput=type('activity-members:activity-11','app-11');
+  check(activity.querySelectorAll('.group-selected-members .chip:not(.vui-search-hidden)').length===1,'selected members search matches identifiers');
+  memberInput.setSelectionRange(1,3);activityKnownItems(tags.map((tag,i)=>({id:'app|app-'+i,label:'App '+i})),{});await wait();
+  check(query('activity-members:activity-11').value==='app-11' && activity.activeElement===query('activity-members:activity-11'),'member inventory refresh preserves selected-member search');
+  check(snapshot.groups[11].members.length===12 && uiErrors.length===0,'Activity searches preserve members and produce no errors');
+  return results;
+};

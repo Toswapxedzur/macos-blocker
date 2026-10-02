@@ -1226,3 +1226,5 @@ textarea:focus {
 .header-language:has(> .vui-info-button) { width: 153px; }
 .header-language > .vui-select { flex: 1; min-width: 0; }
 .research-model-menu > .vui-info-field { flex-shrink: 0; }
+
+.tree-map-node.vui-search-match { box-shadow: 0 0 0 3px #0e7490; }
