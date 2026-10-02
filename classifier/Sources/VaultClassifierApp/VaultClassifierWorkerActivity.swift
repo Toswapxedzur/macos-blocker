@@ -63,7 +63,7 @@ final class VaultClassifierWorkerActivity {
             let records = ActivityWire.records(from: payload)
             var accepted = 0
             for record in records where store.record(record, settings: settings) { accepted += 1 }
-            if let icons = payload["webIcons"] as? [String: String] { store.mergeWebIcons(icons) }
+            if let icons = payload["icons"] as? [String: String] { store.mergeWebIcons(icons) }
             recordWatchedFacts(keys: records.filter { $0.category == .contentWatched }.map(\.key))
             refresh()
             return ["kind": "recorded", "accepted": accepted]
