@@ -592,6 +592,14 @@ private struct PanelSelectControl: View {
     @State private var expanded = false
     @State private var selection: String
     @State private var suppressEmit = false
+    @State private var query = ""
+
+    private var filteredOptions: [PanelControlOption] {
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return (control.options ?? []).filter {
+            text.isEmpty || $0.label.lowercased().contains(text)
+        }
+    }
 
     init(control: PanelControlSnapshot,
          snapshotValue: String,
@@ -619,24 +627,45 @@ private struct PanelSelectControl: View {
             .accessibilityValue(expanded ? "Expanded" : "Collapsed")
         }
         .popover(isPresented: $expanded, arrowEdge: .bottom) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(control.options ?? [], id: \.value) { option in
-                        Button {
-                            selection = option.value
-                            expanded = false
-                        } label: {
-                            Text(option.label).font(.custom("Arial", size: 13))
-                                .fontWeight(option.value == selection ? .semibold : .regular)
-                                .foregroundColor(Color(red: 0.118, green: 0.227, blue: 0.541))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(7)
-                                .contentShape(Rectangle())
-                        }.buttonStyle(.plain)
+            VStack(alignment: .leading, spacing: 4) {
+                if (control.options ?? []).count > 5 || !query.isEmpty {
+                    HStack {
+                        TextField("Search options", text: $query)
+                            .textFieldStyle(.plain)
+                            .font(.custom("Arial", size: 13))
+                            .padding(7)
+                            .background(Color(red: 0.945, green: 0.961, blue: 0.976))
+                            .cornerRadius(8)
+                        if !query.isEmpty {
+                            Button { query = "" } label: { Text("×") }
+                                .buttonStyle(.plain).accessibilityLabel("Clear search")
+                        }
                     }
                 }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 2) {
+                        if filteredOptions.isEmpty {
+                            Text("No matches").font(.custom("Arial", size: 13))
+                                .foregroundColor(.secondary).padding(7)
+                        }
+                        ForEach(filteredOptions, id: \.value) { option in
+                            Button {
+                                selection = option.value
+                                expanded = false
+                            } label: {
+                                Text(option.label).font(.custom("Arial", size: 13))
+                                    .fontWeight(option.value == selection ? .semibold : .regular)
+                                    .foregroundColor(Color(red: 0.118, green: 0.227, blue: 0.541))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(7)
+                                    .contentShape(Rectangle())
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                }
+                .frame(height: min(280, CGFloat(max(1, filteredOptions.count)) * 31))
             }
-            .frame(width: 240, height: min(280, CGFloat((control.options ?? []).count) * 31))
+            .frame(width: 240)
             .padding(4)
             .background(Color.white)
             .environment(\.colorScheme, .light)

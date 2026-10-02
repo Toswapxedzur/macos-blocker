@@ -58,3 +58,31 @@ scroll documents and the production SwiftUI panel stack.
 - Classifier: `classifier/Tests/WebUI/bounded-lists.js` through `autosave.mjs`.
 - Activity: `Tests/WebUI/activity-lists.js` through the same fixture runner.
 - Native overlays: `Tests/MacBlockerMacControlTests/BoundedOverlayTests.swift`.
+
+## List search (owner 2026-10-02)
+
+Lists and option menus with six or more entries show a compact local search.
+One to five entries need no extra search; an active query stays visible when
+a collection shrinks. Existing Knowledge/model/app/tag/member pickers retain
+their established searches. Fixed model tiers, strictness, platforms, weekdays
+and short mode choices stay simple; Classifier group navigation is capped at
+four groups.
+
+Search covers Vault group navigation, targets/sites/apps/creator/Discord lists
+and group logs; Classifier provider profiles and shared selectors; Activity
+groups, selected members, usage items, tags, pie legends, sources and viewed
+content; languages and long shared/custom-rule dropdowns in browser and Mac.
+Tag-tree Find highlights and pans to matching names/descriptions, preserving
+all branches. Tag-rule Find locates lines in the backing text without rewriting
+their syntax. Clear and no-match states are explicit.
+
+Matching ignores case and allows partial text. Filters change only display,
+never stored data, selections, order, recording, totals or chart filters.
+Queries are transient per-list state and survive snapshots with focus/caret;
+open dropdowns rebind to replacement controls before a choice is made. Clear
+group search before reordering the full navigation list.
+
+Mini1 regressions: browser `tests/popup-search.js` and
+`tests/browser-panel-search.py`; Mac `classifier/Tests/WebUI/list-search.js`
+and `Tests/WebUI/activity-search.js`, through the existing fixture runner at
+wide/narrow widths. Native selects remain in their bounded floating popover.
