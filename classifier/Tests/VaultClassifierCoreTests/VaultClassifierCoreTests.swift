@@ -4,6 +4,26 @@ import XCTest
 import VaultClassifierBridge
 
 final class VaultClassifierCoreTests: XCTestCase {
+    func testTaxonomyPagesKeepAllLeavesAndItemTagsStayBounded() throws {
+        let tags = (0..<513).map { NativeVideoTag(id: "tag-\($0)", name: "Topic \($0)", lightColorHex: "#DBE5F3", darkColorHex: "#253E62") }
+        let accepted = NativeVideoTag.catalogAccepted(tags)
+        XCTAssertEqual(accepted.count, 513)
+        XCTAssertEqual(NativeVideoTag.accepted(tags).count, 16)
+        let types = [NativeClassifierTypeTaxonomy(typeID: "type", name: "Topics", tags: accepted)]
+        var offset = 0, received: [NativeVideoTag] = []
+        repeat {
+            let page = NativeClassifierTaxonomyResponse.page(types, request: .init(platformID: "youtube", offset: offset))
+            XCTAssertLessThanOrEqual(page.types.flatMap(\.tags).count, 128)
+            XCTAssertEqual(page.total, 513)
+            received += page.types.flatMap(\.tags)
+            guard let next = page.nextOffset else { break }; offset = next
+        } while true
+        XCTAssertEqual(received, tags)
+        let searched = NativeClassifierTaxonomyResponse.page(types, request: .init(platformID: "youtube", query: "Topic 512"))
+        XCTAssertEqual(searched.types.flatMap(\.tags).map(\.id), ["tag-512"])
+        XCTAssertThrowsError(try NativeClassifierTaxonomyRequest(platformID: "youtube", limit: 10000).validate())
+    }
+
     func testBundledSeedLoadsAndTagTreeBuildsInferenceTaxonomy() throws {
         let seed = try SeedPackageLoader.bundled()
         XCTAssertFalse(seed.package.taxonomy.isEmpty)
