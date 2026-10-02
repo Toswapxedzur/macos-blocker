@@ -12,9 +12,9 @@ async function runLanguageManualTests() {
     check(modal.getClientRects().length && !modal.classList.contains('hidden'),scene+' opens the shared manual');
     check([...body.querySelectorAll('h2')].some(node=>node.textContent===heading),scene+' manual contains its task guide');
     check(!body.querySelector('pre') && !body.textContent.includes('v.log'),scene+' user manual contains no code tutorial');
-    body.querySelector('a[href="code-manual/en.md"]').click();await delay();
+    body.querySelector('a[href="../code-manual/en.md"]').click();await delay();
     check(body.textContent.includes('Mac Vault code manual') && body.textContent.includes('v.block(appId') && !body.textContent.includes('v.item(tabId'),scene+' opens the Mac-specific code API');
-    body.querySelector('a[href="manual/en.md"]').click();await delay();
+    body.querySelector('a[href="../manual/en.md"]').click();await delay();
     document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await delay();
     check(modal.classList.contains('hidden') && scope.activeElement===opener,scene+' returns focus to its manual button');
   }
