@@ -63,8 +63,10 @@ scroll documents and the production SwiftUI panel stack.
 
 Lists and option menus with six or more entries show a compact local search.
 One to five entries need no extra search; an active query stays visible when
-a collection shrinks. Existing Knowledge/model/app/tag/member pickers retain
-their established searches. Fixed model tiers, strictness, platforms, weekdays
+a collection shrinks. Knowledge has a separate search directly above Terms
+and each platform’s Content sources list, matching names, identifiers and
+descriptions. Model/app/tag/member pickers retain their established searches.
+Fixed model tiers, strictness, platforms, weekdays
 and short mode choices stay simple; Classifier group navigation is capped at
 four groups.
 
