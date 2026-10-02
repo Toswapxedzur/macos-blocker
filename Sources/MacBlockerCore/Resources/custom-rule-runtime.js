@@ -17,8 +17,12 @@
 var MacBlockerRuntime = (function () {
   "use strict";
 
+  // Capture the host platform before evaluating user code. Windows identities
+  // can be long executable paths; truncating one could target another app.
+  const appIDLimit = globalThis.CBNativeRulePlatform === "windows" ? 32767 : 255;
+
   function app(id) {
-    return typeof id === "string" && id ? id.slice(0, 255) : null;
+    return typeof id === "string" && id && id.length <= appIDLimit ? id : null;
   }
 
   function macActions(act) {
