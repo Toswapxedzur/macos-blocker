@@ -21,6 +21,18 @@ static std::wstring wide(const char *value) {
     return std::wstring(result.data());
 }
 
+// Foundation can expose a drive URL as /C:/...; normalize only filesystem
+// arguments, retain UTF-8 names, and opt into long-path Win32 APIs locally.
+static std::wstring filesystemPath(const char *value) {
+    auto path = wide(value);
+    if (path.size() >= 4 && path[0] == L'/' && path[2] == L':' && path[3] == L'/') path.erase(0, 1);
+    std::replace(path.begin(), path.end(), L'/', L'\\');
+    if (path.compare(0, 4, L"\\\\?\\") == 0) return path;
+    if (path.size() >= 3 && path[1] == L':' && path[2] == L'\\') return L"\\\\?\\" + path;
+    if (path.compare(0, 2, L"\\\\") == 0) return L"\\\\?\\UNC\\" + path.substr(2);
+    return path;
+}
+
 uint32_t vault_windows_random(uint8_t *output, size_t length) {
     if (!output || length > ULONG_MAX) return ERROR_INVALID_PARAMETER;
     return BCryptGenRandom(nullptr, output, static_cast<ULONG>(length), BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0 ? 0 : ERROR_GEN_FAILURE;
@@ -42,7 +54,7 @@ uint32_t vault_windows_protect(const uint8_t *input, size_t length, uint8_t **ou
 void vault_windows_free(void *memory) { LocalFree(memory); }
 
 uint32_t vault_windows_restrict_path(const char *path) {
-    auto name = wide(path);
+    auto name = filesystemPath(path);
     if (name.empty()) return ERROR_INVALID_NAME;
     HANDLE token = nullptr;
     if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return GetLastError();
@@ -60,7 +72,15 @@ uint32_t vault_windows_restrict_path(const char *path) {
     BOOL present = FALSE, defaulted = FALSE;
     PACL acl = nullptr;
     GetSecurityDescriptorDacl(descriptor, &present, &acl, &defaulted);
-    DWORD result = SetNamedSecurityInfoW(name.data(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, nullptr, nullptr, acl, nullptr);
+    HANDLE file = CreateFileW(name.c_str(), WRITE_DAC | READ_CONTROL | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    DWORD result = file == INVALID_HANDLE_VALUE ? GetLastError() : ERROR_SUCCESS;
+    if (file != INVALID_HANDLE_VALUE) {
+        BY_HANDLE_FILE_INFORMATION information{};
+        if (!GetFileInformationByHandle(file, &information)) result = GetLastError();
+        else if (information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) result = ERROR_CANT_ACCESS_FILE;
+        else result = SetSecurityInfo(file, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, nullptr, nullptr, acl, nullptr);
+        CloseHandle(file);
+    }
     LocalFree(descriptor);
     return result;
 }
@@ -143,13 +163,17 @@ uint32_t vault_windows_image_jpeg(const uint8_t *input, size_t length, uint8_t *
 // Hold all handles without delete sharing. Reparse points, extra entries,
 // hard-linked files and concurrent replacements are left untouched.
 void vault_windows_prune_package(const char *parentPath, const char *name) {
-    auto parent = wide(parentPath), component = wide(name);
+    auto parent = filesystemPath(parentPath), component = wide(name);
     if (parent.empty() || component.empty() || component.find_first_of(L"/\\:") != std::wstring::npos) return;
+    HANDLE root = CreateFileW(parent.c_str(), FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (root == INVALID_HANDLE_VALUE) return;
+    BY_HANDLE_FILE_INFORMATION rootInformation{};
+    if (!GetFileInformationByHandle(root, &rootInformation) || !(rootInformation.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || (rootInformation.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) { CloseHandle(root); return; }
     auto path = parent + L"\\" + component;
     HANDLE directory = CreateFileW(path.c_str(), FILE_LIST_DIRECTORY | DELETE | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
-    if (directory == INVALID_HANDLE_VALUE) return;
+    if (directory == INVALID_HANDLE_VALUE) { CloseHandle(root); return; }
     BY_HANDLE_FILE_INFORMATION metadata{};
-    if (!GetFileInformationByHandle(directory, &metadata) || !(metadata.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || (metadata.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) { CloseHandle(directory); return; }
+    if (!GetFileInformationByHandle(directory, &metadata) || !(metadata.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || (metadata.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) { CloseHandle(directory); CloseHandle(root); return; }
     WIN32_FIND_DATAW entry{};
     HANDLE listing = FindFirstFileW((path + L"\\*").c_str(), &entry);
     std::vector<std::wstring> names;
@@ -158,7 +182,7 @@ void vault_windows_prune_package(const char *parentPath, const char *name) {
         FindClose(listing);
     }
     std::sort(names.begin(), names.end());
-    if (names != std::vector<std::wstring>{L"seed-package.json", L"signed-manifest.json"}) { CloseHandle(directory); return; }
+    if (names != std::vector<std::wstring>{L"seed-package.json", L"signed-manifest.json"}) { CloseHandle(directory); CloseHandle(root); return; }
     std::vector<HANDLE> children;
     bool safe = true;
     for (auto &child : names) {
@@ -175,4 +199,5 @@ void vault_windows_prune_package(const char *parentPath, const char *name) {
     for (auto file : children) CloseHandle(file);
     if (safe) SetFileInformationByHandle(directory, FileDispositionInfo, &disposition, sizeof(disposition));
     CloseHandle(directory);
+    CloseHandle(root);
 }

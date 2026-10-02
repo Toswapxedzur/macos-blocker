@@ -27,7 +27,7 @@ let nativeHostProducts: [Product] = []
 let nativeHostTargets: [Target] = []
 let windowsTargets: [Target] = [.target(name: "CVaultWindows", linkerSettings: [
     .linkedLibrary("crypt32"), .linkedLibrary("bcrypt"), .linkedLibrary("advapi32"),
-    .linkedLibrary("ole32"), .linkedLibrary("windowscodecs"), .linkedLibrary("shlwapi"),
+    .linkedLibrary("ole32"), .linkedLibrary("windowscodecs"), .linkedLibrary("shlwapi"), .linkedLibrary("uuid"),
 ])]
 #else
 let nativePrefix = brewPrefix
