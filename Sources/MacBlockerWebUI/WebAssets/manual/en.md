@@ -53,7 +53,7 @@ If a linked member is offline, editing can be unavailable. Open Mac Vault and th
 
 Click the small **i** beside a field to see its explanation. Click outside it or press Escape to close it. Lists stay inside scrollable boxes; scroll the box to reach more entries. Search filters the visible list without deleting entries.
 
-Custom rules have their own [Code manual](code-manual/en.md). It explains the editor, activation, logs, file access, and the supported API.
+Custom rules have their own [Code manual](../code-manual/en.md). It explains the editor, activation, logs, file access, and the supported API.
 
 ## Native apps
 
