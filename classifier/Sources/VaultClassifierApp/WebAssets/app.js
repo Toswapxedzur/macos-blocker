@@ -743,7 +743,7 @@
     return `<div class="popup">
       <header class="vui-topbar">
         <nav class="vui-tabs" aria-label="Scene"><button type="button" class="vui-tab" data-scene="vault">Vault</button><button type="button" class="vui-tab is-active" data-scene="classifier">Classifier</button><button type="button" class="vui-tab" data-scene="activity">Activity</button></nav>
-        <div class="vui-topbar-links"><span class="settings-popover-anchor"><button type="button" class="secondary" data-action="openUtilityPanel" data-utility-panel="settings" aria-haspopup="dialog" aria-expanded="${utilityPanel ? "true" : "false"}">${tx("utility.settings.button")}</button>${utilityPanelContent()}</span></div>
+        <div class="vui-topbar-links"><button type="button" class="secondary" data-action="openManual">User manual</button><span class="settings-popover-anchor"><button type="button" class="secondary" data-action="openUtilityPanel" data-utility-panel="settings" aria-haspopup="dialog" aria-expanded="${utilityPanel ? "true" : "false"}">${tx("utility.settings.button")}</button>${utilityPanelContent()}</span></div>
       </header>
       <div class="layout">
         <aside class="navigation-panel" aria-label="${tx("navigation.aria")}">
@@ -1510,6 +1510,7 @@
     }
 
     if (action === "openResearchSetup") { openResearchSetup(); return; }
+    if (action === "openManual") { window.VaultManual?.open("user", "Classifier"); return; }
     if (action === "openUtilityPanel") {
       closeKnowledgeSuggestions();
       researchSetupRequested = false;
