@@ -33,18 +33,19 @@ final class BoundedOverlayTests: XCTestCase {
         }
     }
 
-    func testProductionPanelStackKeepsEveryPanelInScrollableDocument() async throws {
+    func testProductionLazyPanelStackKeepsEveryPanelInBoundedViewport() async throws {
         let panels = try (0..<30).map { index in
             try JSONDecoder().decode(PanelSnapshot.self, from: Data("{\"id\":\"panel-\(index)\",\"title\":\"Panel \(index)\",\"controls\":[{\"id\":\"text\",\"type\":\"text\",\"text\":\"Row text\"}]}".utf8))
         }
         await MainActor.run {
             let model = PanelOverlayModel()
             model.panels = panels
+            model.viewportHeight = 480
             let hosting = NSHostingView(rootView: PanelOverlayView(model: model))
             let scroll = BoundedOverlayScrollView(document: hosting)
             let size = scroll.fittedSize(maximumHeight: 480)
             XCTAssertEqual(size.height, 480)
-            XCTAssertGreaterThan(hosting.frame.height, 1000)
+            XCTAssertLessThanOrEqual(hosting.frame.height, 480)
             XCTAssertEqual(model.panels.count, 30)
         }
     }

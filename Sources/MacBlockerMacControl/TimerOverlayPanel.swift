@@ -827,18 +827,7 @@ struct PanelCardView: View {
     private let bg = Color(red: 0.059, green: 0.090, blue: 0.165).opacity(0.96)
     private let fg = Color(red: 0.973, green: 0.980, blue: 0.988)
 
-    private var panelWidth: CGFloat {
-        switch snapshot.width ?? "" {
-        case "small": return 220
-        case "medium": return 280
-        case "large": return 360
-        default:
-            if let w = snapshot.width, let n = Double(w.replacingOccurrences(of: "px", with: "")) {
-                return CGFloat(max(180, min(520, n)))
-            }
-            return 300
-        }
-    }
+    private var panelWidth: CGFloat { panelSnapshotWidth(snapshot) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -870,9 +859,23 @@ struct PanelCardView: View {
     }
 }
 
+private func panelSnapshotWidth(_ snapshot: PanelSnapshot) -> CGFloat {
+    switch snapshot.width ?? "" {
+    case "small": return 220
+    case "medium": return 280
+    case "large": return 360
+    default:
+        if let width = snapshot.width, let number = Double(width.replacingOccurrences(of: "px", with: "")) {
+            return CGFloat(max(180, min(520, number)))
+        }
+        return 300
+    }
+}
+
 @MainActor
 final class PanelOverlayModel: ObservableObject {
     @Published var panels: [PanelSnapshot] = []
+    @Published var viewportHeight: CGFloat = 640
     let position: String
     var onEvent: ((String, String, String, String, String, String) -> Void)?
 
@@ -890,6 +893,7 @@ private struct PanelContentSizeKey: PreferenceKey {
 struct PanelOverlayView: View {
     @ObservedObject var model: PanelOverlayModel
     var contentSizeChanged: () -> Void = {}
+    @State private var contentHeight: CGFloat = 640
 
     private var stackAlignment: HorizontalAlignment {
         switch model.position {
@@ -901,19 +905,27 @@ struct PanelOverlayView: View {
 
     var body: some View {
         let snapshots = model.panels
-        VStack(alignment: stackAlignment, spacing: 8) {
-            ForEach(snapshots, id: \.id) { snapshot in
-                PanelCardView(snapshot: snapshot) { panelId, controlId, eventName, value, extra in
-                    let groupId = snapshot.groupId ?? ""
-                    model.onEvent?(groupId, panelId, controlId, eventName, value, extra)
+        ScrollView(.vertical) {
+            LazyVStack(alignment: stackAlignment, spacing: 8) {
+                ForEach(snapshots, id: \.id) { snapshot in
+                    PanelCardView(snapshot: snapshot) { panelId, controlId, eventName, value, extra in
+                        let groupId = snapshot.groupId ?? ""
+                        model.onEvent?(groupId, panelId, controlId, eventName, value, extra)
+                    }
                 }
             }
+            .background(GeometryReader { geometry in
+                Color.clear.preference(key: PanelContentSizeKey.self, value: geometry.size)
+            })
         }
-        .fixedSize(horizontal: false, vertical: true)
-        .background(GeometryReader { geometry in
-            Color.clear.preference(key: PanelContentSizeKey.self, value: geometry.size)
-        })
-        .onPreferenceChange(PanelContentSizeKey.self) { _ in contentSizeChanged() }
+        .frame(width: snapshots.map(panelSnapshotWidth).max() ?? 300,
+               height: max(1, min(contentHeight, model.viewportHeight)))
+        .onPreferenceChange(PanelContentSizeKey.self) { size in
+            if size.height > 0 && abs(contentHeight - size.height) > 0.5 {
+                contentHeight = size.height
+                contentSizeChanged()
+            }
+        }
         .contentShape(Rectangle())
         .simultaneousGesture(TapGesture().onEnded {
             NSApp.keyWindow?.makeFirstResponder(nil)
@@ -1083,6 +1095,7 @@ public final class PanelOverlayPanelController {
     private func resizeAndPosition(_ panel: NSPanel, position: String) {
         guard let scroll = panel.contentView as? BoundedOverlayScrollView else { return }
         let maximumHeight = min(640, (NSScreen.main?.visibleFrame.height ?? 800) * 0.65)
+        if let model = slots[position]?.model, model.viewportHeight != maximumHeight { model.viewportHeight = maximumHeight }
         let size = scroll.fittedSize(maximumHeight: maximumHeight)
         guard let screen = NSScreen.main else {
             panel.setContentSize(size)
