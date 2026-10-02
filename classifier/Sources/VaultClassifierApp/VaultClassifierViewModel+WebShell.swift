@@ -12,6 +12,13 @@ extension VaultClassifierViewModel {
     /// The WKWebView receives only the bounded local state necessary to render
     /// this development shell. Browser evidence, API keys, pairing material,
     /// stable identifiers stay in native storage.
+    func knowledgeEditAcknowledgement(id: String) -> String? {
+        guard issue == nil, let catalog = (localState ?? coordinator?.snapshot())?.workspaceCatalog,
+              let entry = catalog.creatorKnowledge.first(where: { $0.id == id }) ?? catalog.knowledgeEntries.first(where: { $0.id == id }),
+              let packet = try? JSONSerialization.data(withJSONObject: ["id": entry.id, "meaning": entry.meaning]) else { return nil }
+        return "window.VaultClassifier && window.VaultClassifier.receiveKnowledgeRow(JSON.parse(new TextDecoder().decode(Uint8Array.from(atob('\(packet.base64EncodedString())'), c => c.charCodeAt(0)))));"
+    }
+
     func knowledgePage(_ data: [String: Any]) async -> String? {
         guard let requestID = data["requestID"] as? String, requestID.count <= 80,
               let kind = data["kind"] as? String, ["creator", "term", "suggestion"].contains(kind),
