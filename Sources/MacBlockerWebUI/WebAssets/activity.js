@@ -839,7 +839,7 @@
     search.dataset.groupField = "search";
     search.placeholder = "Add an app or website";
     search.value = groupSearch;
-    third.appendChild(infoControl(search, "activity-member-search", "Find members", "Search known apps and websites to add to this Activity group. Searching does not change its saved members."));
+    third.appendChild(infoControl(search, "activity-member-search", "Find members", "Find an app or website to add to this Activity group."));
     var found = el("div", "group-members");
     function fill() {
       found.textContent = "";

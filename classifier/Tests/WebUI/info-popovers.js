@@ -7,7 +7,7 @@ async function runInfoPopoverTests() {
     for (const label of scope.querySelectorAll('label.field,.research-model-field,.header-language,.toggle-row:not(.platform-choice)')) {
       if (!label.getBoundingClientRect().width || !label.querySelector('input,select')) continue;
       const button = label.querySelector('.vui-info-button');
-      check(button && button.getBoundingClientRect().width === 14, 'Field Info is visible: ' + (label.querySelector('[data-field]')?.dataset.field || 'language'));
+      check(button && button.getBoundingClientRect().width === 10, 'Field Info is visible: ' + (label.querySelector('[data-field]')?.dataset.field || 'language'));
       check(getComputedStyle(button).color === 'rgb(148, 163, 184)', 'Field Info keeps the shared blue-gray color');
     }
   };
@@ -16,6 +16,8 @@ async function runInfoPopoverTests() {
   const writesBefore = commands.length;
   groupNameInfo.click(); await delay();
   check(commands.length === writesBefore, 'Name Info does not send an edit or action');
+  const card = document.querySelector('.vui-info-popover'), cardStyle = getComputedStyle(card);
+  check(cardStyle.fontSize === '12px' && cardStyle.padding === '8px 10px' && card.getBoundingClientRect().width <= 260, 'Description uses compact typography, padding and width');
   VaultInfo.close();
   const resident = q('.resident-model-note');
   const buttonFor = text => [...scope.querySelectorAll('.vui-info-button')].find(button => button.infoEntry.texts.some(copy => copy.includes(text)));
@@ -61,6 +63,9 @@ async function runInfoPopoverTests() {
   q('[data-action="cancelCreateType"]').click(); await delay();
   q('[data-utility-panel="settings"]').click(); await delay();
   check(uiErrors.length === 0, 'Info causes no renderer errors');
-  buttonFor('Optional web lookups').click(); await delay();
+  q('[data-action="closeUtilityPanel"]').click();
+  testState.workspace = 'knowledge'; pushSnapshot(); await delay();
+  q('[data-info-key="knowledge.search"] .vui-info-button').click(); await delay();
+  check(document.querySelector('.vui-info-popover')?.textContent === 'Find saved knowledge by name, identifier, or description.', 'Knowledge search explanation is concise');
   return results;
 }
