@@ -15,9 +15,11 @@
     '<button type="button" class="vui-tab" data-scene="classifier">Classifier</button>',
     '<button type="button" class="vui-tab is-active" data-scene="activity">Activity</button>',
     "</nav>",
+    '<div class="vui-topbar-links"><button type="button" class="secondary" id="activityManualButton">User manual</button></div>',
     "</header>",
     '<main><div class="page" id="page"><p class="empty">Loading…</p></div></main>'
   ].join("");
+  scope.getElementById("activityManualButton").addEventListener("click", function () { window.VaultManual.open("user", "Activity"); });
   var RETENTIONS = [[7, "7 days"], [30, "30 days"], [90, "90 days"], [180, "180 days"], [365, "365 days"], [0, "Forever"]];
   // What is recorded (each kind has its own switch under Recording).
   var KINDS = [
@@ -469,13 +471,13 @@
   // platforms that classify need it; each keeps "Keep all history" unless set.
   function feedsGroup(globalName) {
     var group = el("div", "feeds");
-    group.appendChild(el("div", "feeds-title", "Platform feeds (for the classifier)"));
-    group.appendChild(el("p", "feeds-hint", "Everything the classifier sees on a platform's pages, opened or not, so it can tag it. A platform that classifies is tagged only while its feed is recorded."));
+    group.appendChild(el("div", "feeds-title", "Platform feeds"));
+    group.appendChild(el("p", "feeds-hint", "Record content shown on platform pages, whether opened or not. Local tagging is supported on the indicated platforms and requires feed recording to be on."));
     (platformFeeds.platforms || []).forEach(function (p) {
       var row = el("div", "settings-row");
       var name = el("span", "name");
       name.appendChild(el("span", null, p.name));
-      name.appendChild(el("span", "feeds-meta", (p.classifies ? "Classifies" : "Not classified") + " · " + p.entries + (p.entries === 1 ? " entry" : " entries")));
+      name.appendChild(el("span", "feeds-meta", (p.classifies ? "Tagging supported" : "Tagging not supported") + " · " + p.entries + (p.entries === 1 ? " entry" : " entries")));
       row.appendChild(name);
       var rec = el("label"); var sw = el("input"); sw.type = "checkbox"; sw.checked = !!p.record;
       sw.addEventListener("change", function () { send({ kind: "collection-record", platformID: p.id, record: sw.checked }); });
@@ -812,7 +814,7 @@
     merge.checked = editing.merge;
     merge.addEventListener("change", function () { editing.merge = merge.checked; });
     mergeRow.appendChild(merge);
-    mergeRow.appendChild(document.createTextNode("Merge — show as one, in one colour, everywhere"));
+    mergeRow.appendChild(document.createTextNode("Merge — show as one, in one color, everywhere"));
     infoField(mergeRow, "activity-group-merge", "Merge group", "Show the group’s members as one item with one shared color throughout Activity. A view group keeps each member separate. Saved when you click Save.");
     first.appendChild(mergeRow);
 
@@ -1153,7 +1155,7 @@
             var shown = bin.items.slice(0, 7).map(function (item) { return [item.label, fmt(item.seconds)]; });
             if (bin.items.length > 7) shown.push(["More items", String(bin.items.length - 7) + " · choose Exact to inspect"]);
             return { title: hourMinute(bin.from) + " – " + hourMinute(bin.to),
-              lines: [dayName(d.start), fmt(bin.usedSeconds) + " used · " + fmt(bin.idleSeconds) + " empty"], list: shown };
+              lines: [dayName(d.start), fmt(bin.usedSeconds) + " used · " + fmt(bin.idleSeconds) + " not recorded"], list: shown };
           };
           var background = svg("rect", { x: x, y: y, width: barWidth, height: h, fill: "#e5eaf1" });
           hoverable(background, info);
@@ -1305,7 +1307,7 @@
       ordered.push({ start: day.dayStartMs, blocks: blocks,
         bins: usageBlockMinutes ? window.ActivityTimeBins.aggregate(binApps, binSites, usageBlockMinutes) : [] });
     });
-    return dayCharts(ordered, totals, { name: "Empty", color: EMPTY_COLOR }, true, true);
+    return dayCharts(ordered, totals, { name: "No recorded usage", color: EMPTY_COLOR }, true, true);
   }
 
   // A day's segments as bars (seconds per key).
@@ -1352,7 +1354,7 @@
     var data = usageData();
     var summary = el("span", "section-summary");
     summary.appendChild(el("strong", null, fmt(data.used)));
-    summary.appendChild(document.createTextNode(" used · " + fmt(data.empty) + " empty"));
+    summary.appendChild(document.createTextNode(" used · " + fmt(data.empty) + " not recorded"));
     head.appendChild(summary);
     section.appendChild(head);
     section.appendChild(usageStrip(data));
@@ -1361,7 +1363,7 @@
     mapPanel.appendChild(el("div", "chart-title", "Colors"));
     mapPanel.appendChild(colourMap(data.items, { seconds: data.empty, color: EMPTY_COLOR }, function (entry) {
       setUsageFocus(entryID(entry));
-    }, "Empty"));
+    }, "No recorded usage"));
     grid.appendChild(mapPanel);
     var pieCell = el("div", "act-cell");
     pieCell.appendChild(pie(data.items.filter(function (e) { return !e.nameOnly; }), "Share"));

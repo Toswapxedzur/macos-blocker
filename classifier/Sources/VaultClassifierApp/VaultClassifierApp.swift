@@ -266,12 +266,14 @@ final class VaultClassifierViewModel: ObservableObject {
 
 enum AppInputError: Error, LocalizedError {
     case invalidNumber(String)
+    case invalidNonnegativeNumber(String)
     case invalidDecimal(String)
     case backupLocked
 
     var errorDescription: String? {
         switch self {
         case .invalidNumber(let label): return "\(label) must be a positive whole number."
+        case .invalidNonnegativeNumber(let label): return "\(label) must be a whole number of 0 or more."
         case .invalidDecimal(let label): return "\(label) must be a positive number."
         case .backupLocked: return "Enter the local backup owner code before changing backup mode."
         }
@@ -285,11 +287,35 @@ enum WebBridgeInputError: Error, LocalizedError {
     case fixedPlatforms
     case noPlatformsSelected
 
+    private static func label(for field: String) -> String {
+        let labels = [
+            "name": "the name", "houseRules": "tagging instructions",
+            "speedQuality": "Speed ↔ Quality", "strictness": "Strict ↔ Broad",
+            "researchMode": "research for this group", "minimumTags": "minimum tags",
+            "maximumTags": "maximum tags", "minimumTagsOverride": "minimum tags",
+            "maximumTagsOverride": "maximum tags",
+            "minimum tags greater than maximum tags": "tag counts (minimum must not exceed maximum)",
+            "typeID": "the Classifier group",
+            "treeID": "the tag tree", "nodeID": "the tag", "parentID": "the parent tag",
+            "profileID": "the provider", "platformID": "the platform", "platformIDs": "platforms",
+            "llmProfileID": "the research provider", "llmModelIdentifier": "the research model",
+            "research providers and model": "the research provider and model",
+            "grounding-capable provider": "a research provider with built-in web search",
+            "modelIdentifier": "the model", "testModelIdentifier": "the test model",
+            "credential": "provider credentials", "customEndpoint": "the endpoint",
+            "meaning": "the description", "subject": "the subject", "creator": "the content source",
+            "collection platform": "the platform", "collection keep": "history retention",
+            "directory": "the folder", "ownerCode": "the backup owner code",
+            "canvas coordinate": "the tag position", "action": "this action",
+        ]
+        return labels[field] ?? "this setting"
+    }
+
     var errorDescription: String? {
         switch self {
-        case .missingValue(let field): return "The web UI did not supply a valid \(field) value."
-        case .exceedsLimit(let field, let limit): return "\(field) must contain at most \(limit) characters."
-        case .invalidChoice(let field): return "The web UI supplied an unsupported \(field)."
+        case .missingValue(let field): return "Check \(Self.label(for: field)) and try again."
+        case .exceedsLimit(let field, let limit): return "Use at most \(limit) characters for \(Self.label(for: field))."
+        case .invalidChoice(let field): return "Choose a supported value for \(Self.label(for: field))."
         case .fixedPlatforms: return "Platforms cannot be changed after the group is created."
         case .noPlatformsSelected: return "Select at least one platform."
         }

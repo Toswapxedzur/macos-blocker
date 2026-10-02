@@ -50,11 +50,11 @@ public enum ActivityGroupRefusal: Error, Equatable, Sendable {
 
     public var message: String {
         switch self {
-        case .noName: return "a group needs a name"
+        case .noName: return "Enter a group name."
         case .badMember(let id): return "\"\(id)\" is not an app or a website"
         case .inAnotherMergeGroup(let owners):
             return owners.keys.sorted().map { "\($0) is already in the merge group \"\(owners[$0] ?? "")\"" }.joined(separator: "; ")
-        case .unknownGroup: return "no such group"
+        case .unknownGroup: return "This group no longer exists."
         }
     }
 }

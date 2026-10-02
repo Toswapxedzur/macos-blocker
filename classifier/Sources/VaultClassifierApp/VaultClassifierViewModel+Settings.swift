@@ -205,7 +205,7 @@ extension VaultClassifierViewModel {
 
     func nonnegativeInteger(_ raw: String, label: String) throws -> Int {
         let digits = raw.replacingOccurrences(of: ",", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let value = Int(digits), value >= 0 else { throw AppInputError.invalidNumber(label) }
+        guard let value = Int(digits), value >= 0 else { throw AppInputError.invalidNonnegativeNumber(label) }
         return value
     }
 }
