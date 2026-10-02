@@ -47,6 +47,47 @@ private actor DownloadProgressRecorder {
     }
 }
 
+/// A real loopback HTTP response exercises FoundationNetworking's download
+/// delegate on Windows, where URLSession deliberately does not accept file URLs.
+private final class ModelDownloadHTTPFixture {
+    let process = Process()
+    let url: URL
+
+    init(directory: URL, fileName: String) throws {
+        let environment = ProcessInfo.processInfo.environment
+        let interpreter: URL
+        if let explicit = environment["VAULT_TEST_PYTHON"], !explicit.isEmpty {
+            interpreter = URL(fileURLWithPath: explicit)
+        } else {
+            #if os(Windows)
+            let programs = URL(fileURLWithPath: environment["LOCALAPPDATA"] ?? "")
+                .appendingPathComponent("Programs/Python", isDirectory: true)
+            let installs = try FileManager.default.contentsOfDirectory(at: programs, includingPropertiesForKeys: nil)
+            interpreter = try XCTUnwrap(installs.sorted { $0.path < $1.path }
+                .map { $0.appendingPathComponent("python.exe") }
+                .first { FileManager.default.fileExists(atPath: $0.path) }, "Python is required for the loopback download fixture")
+            #else
+            interpreter = URL(fileURLWithPath: "/usr/bin/python3")
+            #endif
+        }
+        let script = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Worker/download_fixture.py")
+        let output = Pipe()
+        process.executableURL = interpreter
+        process.arguments = [script.path, directory.path]
+        process.standardOutput = output
+        try process.run()
+        let port = try XCTUnwrap(String(data: output.fileHandleForReading.availableData, encoding: .utf8)
+            .flatMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) })
+        url = try XCTUnwrap(URL(string: "http://127.0.0.1:\(port)/\(fileName)"))
+    }
+
+    deinit {
+        if process.isRunning { process.terminate() }
+        process.waitUntilExit()
+    }
+}
+
 final class ModelDownloadManagerTests: XCTestCase {
     /// The real transport hands back the finished file (a regression: the async
     /// URLSession convenience never called its delegate, so every in-app model
@@ -58,9 +99,11 @@ final class ModelDownloadManagerTests: XCTestCase {
         let source = root.appendingPathComponent("model.gguf")
         let bytes = Data((0..<3_000_000).map { UInt8($0 % 251) })
         try bytes.write(to: source)
+        let fixture = try ModelDownloadHTTPFixture(directory: root, fileName: "model.gguf")
+        defer { withExtendedLifetime(fixture) {} }
 
         let recorder = DownloadProgressRecorder()
-        let downloaded = try await URLSessionModelDownloadTransport().download(from: source) { update in
+        let downloaded = try await URLSessionModelDownloadTransport().download(from: fixture.url) { update in
             Task { await recorder.append(update) }
         }
         defer { try? FileManager.default.removeItem(at: downloaded) }
@@ -68,12 +111,18 @@ final class ModelDownloadManagerTests: XCTestCase {
         XCTAssertNotEqual(downloaded, source)
     }
 
-    func testTheURLSessionTransportFailsForAMissingFile() async {
-        let missing = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).gguf")
+    func testTheURLSessionTransportFailsForAMissingFile() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = try ModelDownloadHTTPFixture(directory: root, fileName: "missing.gguf")
+        defer { withExtendedLifetime(fixture) {} }
         do {
-            _ = try await URLSessionModelDownloadTransport().download(from: missing) { _ in }
+            _ = try await URLSessionModelDownloadTransport().download(from: fixture.url) { _ in }
             XCTFail("a missing source can't download")
-        } catch {}
+        } catch let error as ModelDownloadManagerError {
+            XCTAssertEqual(error, .invalidHTTPStatus(404))
+        }
     }
 
     func testInjectedTransportReportsProgressAndAtomicallyPublishesGGUF() async throws {
