@@ -41,13 +41,13 @@ private enum VaultClassifierWorkerMain {
                           let operation = object["operation"] as? String, operation.count <= 128,
                           let data = object["data"] as? [String: Any] else { throw WorkerFrameError.invalidFrame }
                     requestID = id
-                    let value = try service.handle(operation: operation, data: data)
+                    let value = try await service.handle(operation: operation, data: data)
                     output.send(["id": id, "ok": true, "value": value])
                 } catch {
                     output.send(["id": requestID, "ok": false, "error": String(error.localizedDescription.prefix(512))])
                 }
             }
-            _ = try service.handle(operation: "hostEvent", data: ["kind": "flush"])
+            _ = try await service.handle(operation: "hostEvent", data: ["kind": "flush"])
             LocalStateFile.flushAllPendingWrites()
         } catch {
             output.send(["event": "fatal", "error": String(error.localizedDescription.prefix(512))])
