@@ -13,13 +13,24 @@ extension VaultClassifierViewModel {
     /// this development shell. Browser evidence, API keys, pairing material,
     /// stable identifiers stay in native storage.
     func knowledgeEditAcknowledgement(id: String) -> String? {
-        guard issue == nil, let catalog = (localState ?? coordinator?.snapshot())?.workspaceCatalog,
-              let entry = catalog.creatorKnowledge.first(where: { $0.id == id }) ?? catalog.knowledgeEntries.first(where: { $0.id == id }),
-              let packet = try? JSONSerialization.data(withJSONObject: ["id": entry.id, "meaning": entry.meaning]) else { return nil }
+        guard let payload = knowledgeEditAcknowledgementPayload(id: id),
+              let packet = try? JSONSerialization.data(withJSONObject: payload) else { return nil }
         return "window.VaultClassifier && window.VaultClassifier.receiveKnowledgeRow(JSON.parse(new TextDecoder().decode(Uint8Array.from(atob('\(packet.base64EncodedString())'), c => c.charCodeAt(0)))));"
     }
 
+    func knowledgeEditAcknowledgementPayload(id: String) -> [String: Any]? {
+        guard issue == nil, let catalog = (localState ?? coordinator?.snapshot())?.workspaceCatalog,
+              let entry = catalog.creatorKnowledge.first(where: { $0.id == id }) ?? catalog.knowledgeEntries.first(where: { $0.id == id }) else { return nil }
+        return ["id": entry.id, "meaning": entry.meaning]
+    }
+
     func knowledgePage(_ data: [String: Any]) async -> String? {
+        guard let payload = await knowledgePagePayload(data),
+              let packet = try? JSONSerialization.data(withJSONObject: payload) else { return nil }
+        return "window.VaultClassifier && window.VaultClassifier.receiveList(JSON.parse(new TextDecoder().decode(Uint8Array.from(atob('\(packet.base64EncodedString())'), c => c.charCodeAt(0)))));"
+    }
+
+    func knowledgePagePayload(_ data: [String: Any]) async -> [String: Any]? {
         guard let requestID = data["requestID"] as? String, requestID.count <= 80,
               let kind = data["kind"] as? String, ["creator", "term", "suggestion"].contains(kind),
               let platformID = data["platformID"] as? String, platformID.count <= 32,
@@ -40,8 +51,7 @@ extension VaultClassifierViewModel {
                     return a != b ? a : left.creatorName < right.creatorName
                 }.dropFirst(offset).prefix(limit).map { ["id": $0.creatorID, "name": $0.creatorName, "platformID": platformID] }
             }.value
-            guard let packet = try? JSONSerialization.data(withJSONObject: ["requestID": requestID, "items": Array(rows), "total": rows.count]) else { return nil }
-            return "window.VaultClassifier && window.VaultClassifier.receiveList(JSON.parse(new TextDecoder().decode(Uint8Array.from(atob('\(packet.base64EncodedString())'), c => c.charCodeAt(0)))));"
+            return ["requestID": requestID, "items": Array(rows), "total": rows.count]
         }
         let result = await Task.detached(priority: .userInitiated) {
             var faces: [String: (String?, String?)] = [:]
@@ -81,8 +91,7 @@ extension VaultClassifierViewModel {
             }
             return row
         }
-        guard let packet = try? JSONSerialization.data(withJSONObject: ["requestID": requestID, "items": items, "total": result.1]) else { return nil }
-        return "window.VaultClassifier && window.VaultClassifier.receiveList(JSON.parse(new TextDecoder().decode(Uint8Array.from(atob('\(packet.base64EncodedString())'), c => c.charCodeAt(0)))));"
+        return ["requestID": requestID, "items": items, "total": result.1]
     }
 
     func webSnapshot(includeCollections: Bool = true) -> [String: Any] {
