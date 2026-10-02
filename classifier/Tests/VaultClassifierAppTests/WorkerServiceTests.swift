@@ -18,6 +18,54 @@ final class WorkerServiceTests: XCTestCase {
     private func activity(_ service: VaultClassifierWorkerService, _ body: [String: Any]) async throws -> [String: Any] {
         try object(await service.handle(operation: "activity", data: body))
     }
+    private func seedKnowledge(count: Int) throws {
+        try VaultPrivateFile.createDirectory(at: directory)
+        let coordinator = try LocalClassifierCoordinator(verifiedPackage: SeedPackageLoader.bundled(),
+            stateFile: LocalStateFile(url: directory.appendingPathComponent("state.json")))
+        var catalog = coordinator.snapshot().workspaceCatalog
+        catalog.knowledgeEntries = (0..<count).map {
+            KnowledgeEntry(kind: .term, subject: "Term \($0)", meaning: "Meaning \($0)", updatedAtMilliseconds: Int64($0))
+        }
+        try coordinator.updateWorkspaceCatalog(catalog)
+        LocalStateFile.flushAllPendingWrites()
+    }
+
+    func testWorkerKnowledgePagesSearchAndPageFullCatalogWithBoundedSnapshots() async throws {
+        try seedKnowledge(count: 130)
+        let service = try worker()
+        let snapshot = try object(await service.handle(operation: "snapshot", data: [:]))
+        let knowledge = try object(try object(snapshot["assets"] as Any)["knowledge"] as Any)
+        XCTAssertEqual(knowledge["paged"] as? Bool, true)
+        XCTAssertEqual((knowledge["terms"] as? [[String: Any]])?.count, 0)
+        XCTAssertEqual((knowledge["counts"] as? [String: Int])?["term"], 130)
+        var request: [String: Any] = ["requestID": "page", "kind": "term", "platformID": "", "query": "", "offset": 128, "limit": 64]
+        let answer = try object(await service.handle(operation: "action", data: ["action": "knowledgePage", "data": request]))
+        let page = try object(answer["list"] as Any)
+        XCTAssertEqual(page["requestID"] as? String, "page")
+        XCTAssertEqual(page["total"] as? Int, 130)
+        XCTAssertEqual((page["items"] as? [[String: Any]])?.count, 2)
+        request["offset"] = 0; request["query"] = "Term 129"
+        let search = try object(try object(await service.handle(operation: "action", data: ["action": "knowledgePage", "data": request]))["list"] as Any)
+        XCTAssertEqual(search["total"] as? Int, 1)
+        XCTAssertEqual((search["items"] as? [[String: Any]])?.first?["subject"] as? String, "Term 129")
+        request["limit"] = 100_000
+        await assertRefuses(service, operation: "action", data: ["action": "knowledgePage", "data": request])
+    }
+
+    func testWorkerKnowledgeEditAcknowledgesUTF8AndPagesSavedMeaning() async throws {
+        try seedKnowledge(count: 1)
+        let service = try worker()
+        let request: [String: Any] = ["requestID": "page", "kind": "term", "platformID": "", "query": "", "offset": 0, "limit": 64]
+        let page = try object(try object(await service.handle(operation: "action", data: ["action": "knowledgePage", "data": request]))["list"] as Any)
+        let id = try XCTUnwrap((page["items"] as? [[String: Any]])?.first?["id"] as? String)
+        let meaning = "保存的中文知识。"
+        let edited = try object(await service.handle(operation: "action", data: ["action": "editKnowledgeEntry", "data": ["id": id, "meaning": meaning]]))
+        let acknowledgement = try object(edited["knowledgeRow"] as Any)
+        XCTAssertEqual(acknowledgement["id"] as? String, id)
+        XCTAssertEqual(acknowledgement["meaning"] as? String, meaning)
+        let saved = try object(try object(await service.handle(operation: "action", data: ["action": "knowledgePage", "data": request]))["list"] as Any)
+        XCTAssertEqual((saved["items"] as? [[String: Any]])?.first?["meaning"] as? String, meaning)
+    }
 
     private func assertRefuses(_ service: VaultClassifierWorkerService, operation: String, data: [String: Any], file: StaticString = #filePath, line: UInt = #line) async {
         do { _ = try await service.handle(operation: operation, data: data); XCTFail("Expected refusal", file: file, line: line) }

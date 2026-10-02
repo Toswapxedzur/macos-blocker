@@ -32,23 +32,32 @@ public final class VaultClassifierWorkerService {
         model.onWebStateChange = { [weak self] in self?.publishState(); self?.activity?.refresh() }
     }
 
-    public func publishState() { emit(["event": "state", "value": remapResources(model.webSnapshot())]) }
+    public func publishState() { emit(["event": "state", "value": remapResources(model.webSnapshot(includeCollections: false))]) }
 
     public func handle(operation: String, data: [String: Any]) async throws -> Any {
         switch operation {
         case "snapshot":
-            return remapResources(model.webSnapshot())
+            return remapResources(model.webSnapshot(includeCollections: false))
         case "action":
-            guard let action = data["action"] as? String, action.count <= 128,
-                  let descriptor = ClassifierWebActionCatalog.descriptor(named: action) else {
+            guard let action = data["action"] as? String, action.count <= 128 else {
                 throw WorkerInputError.invalidAction
             }
-            _ = descriptor
-            guard (data["data"] as? [String: Any] ?? [:]).count <= VaultClassifierPresentation.maximumWebActionDataFields else { throw WorkerInputError.invalidAction }
-            let rerender = model.performWebAction(action, data: data["data"] as? [String: Any] ?? [:])
-            let snapshot = remapResources(model.webSnapshot())
+            let payload = data["data"] as? [String: Any] ?? [:]
+            guard payload.count <= VaultClassifierPresentation.maximumWebActionDataFields else { throw WorkerInputError.invalidAction }
+            if action == "knowledgePage" {
+                guard let packet = await model.knowledgePagePayload(payload) else { throw WorkerInputError.invalidAction }
+                return ["list": remapResources(packet)]
+            }
+            guard ClassifierWebActionCatalog.descriptor(named: action) != nil else { throw WorkerInputError.invalidAction }
+            let rerender = model.performWebAction(action, data: payload)
+            let snapshot = remapResources(model.webSnapshot(includeCollections: false))
             if rerender { emit(["event": "state", "value": snapshot]) }
-            return ["rerender": rerender, "issue": model.issue ?? NSNull(), "snapshot": snapshot] as [String: Any]
+            var answer: [String: Any] = ["rerender": rerender, "issue": model.issue ?? NSNull(), "snapshot": snapshot]
+            if action == "editKnowledgeEntry", let id = payload["id"] as? String,
+               let acknowledgement = model.knowledgeEditAcknowledgementPayload(id: id) {
+                answer["knowledgeRow"] = acknowledgement
+            }
+            return answer
         case "hub":
             guard let sourcePeerID = data["sourcePeerID"] as? String,
                   let requestID = data["requestID"] as? String,
