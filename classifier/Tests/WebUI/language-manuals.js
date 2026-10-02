@@ -3,11 +3,17 @@ async function runLanguageManualTests() {
   const check=(ok,label)=>{if(!ok)throw Error(label);results.push(label);};
   const delay=()=>new Promise(resolve=>setTimeout(resolve,150));
   await setLanguage('en');
-  window.VaultClassifier.receive({presentationRevision:1,workspace:'browserBridge',settings:{research:{enabled:false},localModels:{modelLibrary:[]}},assets:{classifierTypes:[],trees:[],datasets:[],bindings:[],providerProfiles:[],collectionPlatforms:[],knowledge:{creators:[],terms:[]}},notices:{}});
+  const classifierState = {presentationRevision:1,workspace:'browserBridge',settings:{research:{enabled:false},localModels:{modelLibrary:[]}},assets:{classifierTypes:[],trees:[],datasets:[],bindings:[],providerProfiles:[],collectionPlatforms:[],knowledge:{creators:[],terms:[]}},notices:{}};
+  window.VaultClassifier.receive(classifierState);
   const classifier=VaultScenes.scope('classifier'), activity=VaultScenes.scope('activity');
   for(const [scene,scope,selector,heading] of [['classifier',classifier,'[data-action="openManual"]','Classifier'],['activity',activity,'#activityManualButton','Activity']]) {
     document.querySelector(`[data-scene="${scene}"]`).click(); await delay();
-    const opener=scope.querySelector(selector); opener.focus();opener.click(); await delay();
+    let opener=scope.querySelector(selector); opener.focus();opener.click(); await delay();
+    if (scene === 'classifier') {
+      window.VaultClassifier.receive({...classifierState, workspace:"knowledge", presentationRevision:2}); await delay();
+      check(!opener.isConnected, 'Classifier snapshot replaces the original opener');
+      opener=scope.querySelector(selector);
+    }
     const modal=document.getElementById('manualModal'),body=document.getElementById('manualContent');
     check(modal.getClientRects().length && !modal.classList.contains('hidden'),scene+' opens the shared manual');
     check([...body.querySelectorAll('h2')].some(node=>node.textContent===heading),scene+' manual contains its task guide');
