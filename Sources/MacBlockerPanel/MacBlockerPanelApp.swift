@@ -12,6 +12,10 @@ import AppKit
 /// keep-running-after-last-window-close) from `BlockerAppDelegate`.
 final class PanelAppDelegate: BlockerAppDelegate {
     override func applicationDidFinishLaunching(_ notification: Notification) {
+        if let url = Bundle.module.url(forResource: "mac-vault-master", withExtension: "png", subdirectory: "Resources"),
+           let image = NSImage(contentsOf: url) {
+            NSApp.applicationIconImage = image
+        }
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         super.applicationDidFinishLaunching(notification)
