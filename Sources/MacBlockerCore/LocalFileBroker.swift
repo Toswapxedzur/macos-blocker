@@ -66,14 +66,15 @@ public struct LocalFileBroker {
                 let directoryURL = try resolve(directoryPath)
                 let contents = try FileManager.default.contentsOfDirectory(
                     at: directoryURL,
-                    includingPropertiesForKeys: [.isDirectoryKey],
+                    includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
                     options: [.skipsHiddenFiles]
                 )
                 var entries: [[String: String]] = []
                 for item in contents {
                     let name = item.lastPathComponent
                     guard !name.isEmpty, !name.hasPrefix(".") else { continue }
-                    let values = try item.resourceValues(forKeys: [.isDirectoryKey])
+                    let values = try item.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+                    guard values.isSymbolicLink != true else { continue }
                     let entryPath = directoryPath.isEmpty ? name : directoryPath + "/" + name
                     if values.isDirectory == true {
                         entries.append(["name": name, "path": entryPath, "kind": "directory"])
@@ -109,7 +110,7 @@ public struct LocalFileBroker {
         } catch let error as LocalFileError {
             response["eventName"] = "error"
             response["error"] = error.rawValue
-        } catch let error as NSError where error.domain == NSCocoaErrorDomain && error.code == NSFileNoSuchFileError {
+        } catch let error as NSError where error.domain == NSCocoaErrorDomain && [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(error.code) {
             response["eventName"] = "error"
             response["error"] = "not-found"
         } catch {
@@ -171,14 +172,26 @@ public struct LocalFileBroker {
     }
 
     private func resolve(_ normalizedPath: String) throws -> URL {
-        var resolved = baseURL
+        let canonicalBase = baseURL.resolvingSymlinksInPath().standardizedFileURL
+        var resolved = canonicalBase
         if !normalizedPath.isEmpty {
             for component in normalizedPath.split(separator: "/") {
                 resolved.appendPathComponent(String(component), isDirectory: false)
+                do {
+                    // Inspect the link itself, including dangling links. A
+                    // rule cannot acquire access outside the selected folder
+                    // through a file or parent-directory symlink.
+                    let attributes = try FileManager.default.attributesOfItem(atPath: resolved.path)
+                    guard attributes[.type] as? FileAttributeType != .typeSymbolicLink else {
+                        throw LocalFileError.invalidPath
+                    }
+                } catch let error as NSError where error.domain == NSCocoaErrorDomain && [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(error.code) {
+                    // Ordinary absent components are allowed for nested writes.
+                }
             }
         }
-        resolved = resolved.standardizedFileURL
-        let basePath = baseURL.path
+        resolved = resolved.standardizedFileURL.resolvingSymlinksInPath()
+        let basePath = canonicalBase.path
         guard resolved.path == basePath || resolved.path.hasPrefix(basePath + "/") else {
             throw LocalFileError.invalidPath
         }
