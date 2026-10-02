@@ -32,9 +32,27 @@ if ! security find-identity -v -p codesigning | grep -F "$SIGNING_IDENTITY" >/de
 fi
 
 echo "[sign_app] signing $APP_PATH"
-codesign --force --deep --timestamp --options runtime --sign "$SIGNING_IDENTITY" "$APP_PATH"
+APP_PROFILE="${MAC_VAULT_APP_PROVISIONING_PROFILE:-}"
+SIGN_FLAGS=(--force --deep --timestamp --options runtime --sign "$SIGNING_IDENTITY")
+if [[ -n "$APP_PROFILE" ]]; then
+  ENTITLEMENTS="$BUILD_DIR/MacVaultProduction.entitlements"
+  python3 "$ROOT/scripts/signing/vault-app-group.py" prepare \
+    --environment production --profile "$APP_PROFILE" --app "$APP_PATH" \
+    --entitlements "$ENTITLEMENTS" >/dev/null
+  # Preserve existing leaf signing, then sign only the outer app with its
+  # restricted group. The native host and dylibs must not inherit this profile.
+  codesign "${SIGN_FLAGS[@]}" "$APP_PATH"
+  SIGN_FLAGS=(--force --timestamp --options runtime --sign "$SIGNING_IDENTITY" --entitlements "$ENTITLEMENTS")
+else
+  echo "[sign_app] Safari pairing unavailable: no production Mac App Group provisioning profile was selected." >&2
+fi
+codesign "${SIGN_FLAGS[@]}" "$APP_PATH"
 
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+if [[ -n "$APP_PROFILE" ]]; then
+  python3 "$ROOT/scripts/signing/vault-app-group.py" verify \
+    --environment production --profile "$APP_PROFILE" --app "$APP_PATH"
+fi
 codesign -dv "$APP_PATH" 2>&1 | sed 's/^/[sign_app] /'
 
 echo "[sign_app] signed $APP_PATH"

@@ -38,3 +38,23 @@ delivery.
 Regression checks (mini1 only):
 `python3 scripts/development/test-vault-delivery.py` and
 `bash -n run-mac-vault.sh scripts/development/launch-mac-vault-build.sh`.
+
+Safari pairing additionally requires a current Apple profile selected with
+`MAC_VAULT_APP_PROVISIONING_PROFILE`. It must authorize
+`com.adamancia.vault.mac.development` and
+`group.com.adamancia.vault.development` under the same developer team used to
+sign Safari Vault. With that explicit profile, the supported launcher wraps
+the built executable in `.build/.../Mac Vault Development.app`, embeds the
+profile, and signs the outer app with its shared group entitlement. It still
+executes `MacBlockerPanel` inside the verified checkout, preserving the delivery
+controller's process and provenance checks. Mac Vault remains unsandboxed for
+its application controls.
+
+Without a selected profile, the launcher retains its ordinary signed
+development binary and reports Safari pairing unavailable. It does not invent
+an App Group location or publish a secret outside the authorized container.
+Production signing accepts a production profile through the same environment
+variable; see [App Group signing](../signing/README.md). On mini1, metadata and
+launcher fixtures are testable without credentials. Apple-authorized App Group
+execution and live Safari acceptance require valid installed signing material
+and remain separate verification steps.
