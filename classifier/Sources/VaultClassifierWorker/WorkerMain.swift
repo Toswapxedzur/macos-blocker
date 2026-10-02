@@ -59,7 +59,12 @@ private enum VaultClassifierWorkerMain {
             DispatchQueue.global(qos: .userInitiated).async {
                 var pending = Data()
                 do {
-                    while let bytes = try FileHandle.standardInput.read(upToCount: 64 * 1024), !bytes.isEmpty {
+                    // Foundation's read(upToCount:) waits for the entire byte
+                    // count on Windows pipes. availableData returns the next
+                    // available chunk so small requests work before stdin EOF.
+                    while true {
+                        let bytes = FileHandle.standardInput.availableData
+                        guard !bytes.isEmpty else { break }
                         pending.append(bytes)
                         guard pending.count <= 16 * 1024 * 1024 else { throw WorkerFrameError.frameTooLarge }
                         while let end = pending.firstIndex(of: 0x0a) {
