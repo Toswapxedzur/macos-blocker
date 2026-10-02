@@ -7,14 +7,17 @@ const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..'
 const types={'.html':'text/html','.js':'text/javascript','.css':'text/css'};
 const server=http.createServer(async(req,res)=>{
   try{
-    const file=path.resolve(repo,'.'+new URL(req.url,'http://localhost').pathname);
+    let requestPath=new URL(req.url,'http://localhost').pathname;
+    const classifierAsset=requestPath.match(/^\/Sources\/MacBlockerWebUI\/WebAssets\/classifier\/(app\.js|app\.css|strings\.js)$/);
+    if(classifierAsset)requestPath='/classifier/Sources/VaultClassifierApp/WebAssets/'+classifierAsset[1];
+    const file=path.resolve(repo,'.'+requestPath);
     if(!file.startsWith(repo+path.sep))throw Error('Outside fixture root');
     res.setHeader('Content-Type',types[path.extname(file)]||'text/plain');
     res.end(await fs.readFile(file));
   }catch{res.writeHead(404);res.end();}
 });
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
-const url=`http://127.0.0.1:${server.address().port}/classifier/Tests/WebUI/autosave.html`;
+const url=`http://127.0.0.1:${server.address().port}${process.env.UI_TEST_PAGE || '/classifier/Tests/WebUI/autosave.html'}`;
 let target,ws;
 try{
   target=await (await fetch('http://127.0.0.1:9222/json/new?'+encodeURIComponent(url),{method:'PUT'})).json();
@@ -31,7 +34,7 @@ try{
   await call('Page.enable');
   await call('Emulation.setDeviceMetricsOverride',{width:Number(process.env.UI_WIDTH)||1280,height:Number(process.env.UI_HEIGHT)||1000,deviceScaleFactor:1,mobile:false});
   const until=Date.now()+10000;
-  while(!await evaluate('typeof runAutosaveTests === "function"')){
+  while(!await evaluate(process.env.UI_READY_EXPRESSION || 'typeof runAutosaveTests === "function"')){
     if(Date.now()>until)throw Error('Fixture did not load');
     await new Promise(r=>setTimeout(r,50));
   }
@@ -43,7 +46,7 @@ try{
     await fs.writeFile(process.argv[2],Buffer.from(shot.result.data,'base64'));
   }
   await call('Emulation.setDeviceMetricsOverride',{width:720,height:1000,deviceScaleFactor:1,mobile:false});
-  await call('Page.navigate',{url:url.replace('autosave.html','activity.html')});
+  await call('Page.navigate',{url:`http://127.0.0.1:${server.address().port}/classifier/Tests/WebUI/activity.html`});
   const activityUntil=Date.now()+10000;
   while(!await evaluate('typeof runActivityTests === "function"')){
     if(Date.now()>activityUntil)throw Error('Activity fixture did not load');
