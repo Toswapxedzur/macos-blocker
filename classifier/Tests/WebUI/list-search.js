@@ -13,12 +13,12 @@ window.runListSearchTests = async () => {
   restored.closest('.vui-search').querySelector('.vui-search-clear').click();await wait();
   const providerType=q('[data-form-id="new-provider-profile-form"] [data-field="type"]');
   providerType.nextElementSibling.querySelector('button').click();await wait();
-  const menu=document.querySelector('.vui-menu'), optionSearch=menu.querySelector('input');
+  const menu=q('.vui-menu'), optionSearch=menu.querySelector('input');
   type(optionSearch,'Reddit');optionSearch.setSelectionRange(1,3);
   check(menu.querySelectorAll('.vui-menu-item').length===1 && providerType.value==='', 'provider-type search leaves the draft selection unchanged');
   testState.issue='Snapshot with dropdown open';pushSnapshot();await wait();
-  check(document.querySelector('.vui-menu input')===optionSearch && optionSearch.value==='Reddit' && document.activeElement===optionSearch,'open dropdown rebinds to the replacement select and preserves its query and focus');
-  document.querySelector('.vui-menu-item').click();await wait();
+  check(q('.vui-menu input')===optionSearch && optionSearch.value==='Reddit' && scope.activeElement===optionSearch,'open dropdown rebinds to the replacement select and preserves its query and focus');
+  q('.vui-menu-item').click();await wait();
   check(q('[data-form-id="new-provider-profile-form"] [data-field="type"]').value==='reddit','choice updates the replacement control, not its detached predecessor');
   q('[data-action="closeUtilityPanel"]').click();await wait();q('[data-action="selectType"]').click();await wait();
   const find=q('[data-vui-search-input="tree:tree-1"]');type(find,'definition 7');await wait();
