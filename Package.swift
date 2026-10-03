@@ -51,7 +51,7 @@ let package = Package(
         ),
         .target(
             name: "MacBlockerMacControl",
-            dependencies: ["MacBlockerCore"],
+            dependencies: ["MacBlockerCore", "MacBlockerWebUI"],
             linkerSettings: [
                 .linkedFramework("Security", .when(platforms: [.macOS]))
             ]

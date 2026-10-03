@@ -1228,3 +1228,13 @@ textarea:focus {
 .research-model-menu > .vui-info-field { flex-shrink: 0; }
 
 .tree-map-node.vui-search-match { box-shadow: 0 0 0 3px #0e7490; }
+
+/* Provider tokens, identifiers and paths remain literal in every language. */
+input[type="url"], input[type="email"], input[type="password"],
+input[data-field="credential"], input[data-field="customEndpoint"],
+input[data-field="testModelIdentifier"], input[data-field="directory"],
+input[data-field="creator"], input[data-model-search] {
+  direction: ltr;
+  unicode-bidi: isolate;
+  text-align: start;
+}
