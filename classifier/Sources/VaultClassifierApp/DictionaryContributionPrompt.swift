@@ -6,7 +6,7 @@ enum DictionaryContributionPrompt {
     static func makeAlert(translate: (String, String) -> String = { _, fallback in fallback }) -> NSAlert {
         let alert = NSAlert()
         alert.messageText = translate("native.dictionary.title", "Help improve the creator dictionary")
-        alert.informativeText = translate("native.dictionary.macBody", "Vault can occasionally send public creator IDs and their displayed subscriber/follower counts to customblocker.com. No titles, term names, browsing history or personal definitions are sent. Contributions are capped at 50 per day and retained for 7 days. You can disable this anytime in Classifier → Knowledge.")
+        alert.informativeText = translate("native.dictionary.macBody", "Vault can occasionally send public creator IDs and their displayed subscriber/follower counts to customblocker.com. No titles, term names, browsing history or personal definitions are sent. Contributions are capped at 50 per day and retained for 7 days. You can disable this anytime in Classifier → Settings.")
         let checkbox = NSButton(checkboxWithTitle: translate("native.dictionary.share", "Share creator IDs and subscriber counts"), target: nil, action: nil)
         checkbox.state = .on; alert.accessoryView = checkbox
         alert.addButton(withTitle: translate("native.dictionary.saveChoice", "Save choice"))

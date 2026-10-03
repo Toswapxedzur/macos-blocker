@@ -60,6 +60,7 @@
   let utilityPanel = null;
   let researchSetupRequested = false;
   let researchSetupFocusPending = false;
+  let dictionarySetupFocusPending = false;
   let researchModelQuery = "";
   let researchModelQueryProvider = null;
   let releaseDialogFocus = null;
@@ -596,10 +597,30 @@
 
   function openResearchSetup() {
     utilityPanel = "settings";
+    dictionarySetupFocusPending = false;
     researchSetupRequested = true;
     researchSetupFocusPending = true;
     render();
     window.requestAnimationFrame(placeResearchSetup);
+  }
+
+  function openDictionarySetup() {
+    utilityPanel = "settings";
+    researchSetupRequested = false;
+    researchSetupFocusPending = false;
+    dictionarySetupFocusPending = true;
+    render();
+    window.requestAnimationFrame(placeDictionarySetup);
+  }
+
+  function placeDictionarySetup() {
+    if (!dictionarySetupFocusPending || utilityPanel !== "settings") return;
+    const target = root.querySelector(".utility-dictionary-section h3");
+    if (!target) return;
+    dictionarySetupFocusPending = false;
+    target.tabIndex = -1;
+    target.focus({ preventScroll: true });
+    target.scrollIntoView({ block: "center" });
   }
 
   function placeResearchSetup() {
@@ -737,7 +758,7 @@
         researchModelPicker()
       }</div><p class="small-copy" data-info="research.constantsNote" data-info-target=".utility-research-section h3">${tx("research.constantsNote")}</p><p class="small-copy">${tx("research.usageToday", { used: research.tokensUsedToday ?? 0, limit: research.dailyTokenLimit ?? 10000 })}</p>${researchStatusBlock(research.status)}</section>`;
       const packageSection = `<section class="utility-settings-section utility-resource-section" data-form-id="utility-package-form" data-autosave-action="savePackageSettings"><h3 class="utility-settings-section-title">${tx("settings.packageUpdates")}</h3><div class="utility-settings-fields">${selectField("settings.packageUpdates", "settings.packageUpdatesCopy", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div></section>`;
-      content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy" data-info>${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${notice(state.issue, "red")}${classificationSection}${apiKeySettings()}${researchSection}${packageSection}<section class="utility-settings-section"><h3 class="utility-settings-section-title">${tx("language.label")}</h3>${languageSelection()}</section></div></section>`;
+      content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy" data-info>${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${notice(state.issue, "red")}${classificationSection}${apiKeySettings()}${researchSection}${dictionaryControls()}${packageSection}<section class="utility-settings-section"><h3 class="utility-settings-section-title">${tx("language.label")}</h3>${languageSelection()}</section></div></section>`;
     }
     if (!content) return "";
     return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}"></button><div class="utility-popover" data-list-key="settings" role="dialog" aria-modal="true" aria-label="${esc(tx("utility.settings.title"))}">${content}</div></div>`;
@@ -1242,17 +1263,17 @@
       const row = packs.find(item => item.kind === kind) || {};
       return `<div class="dictionary-pack"><div><strong>${label}</strong><p class="small-copy">${tx("dictionary.entries", { count: row.entryCount || 0, version: row.installedVersion || t("dictionary.notDownloaded"), update: row.updateAvailable ? t("dictionary.updateAvailable") : "" })}</p></div><button class="secondary" data-action="downloadDictionary" data-kind="${kind}" ${d.busy ? "disabled" : ""}>${tx(kind === "creator" && d.creatorMode !== "full" ? "dictionary.updateCache" : "dictionary.download")}</button></div>`;
     };
-    return `<section class="knowledge-group dictionary-controls"><div class="section-header"><div><h3>${tx("dictionary.title")}</h3><p class="section-copy">${tx("dictionary.priority")}</p></div><button class="secondary" data-action="checkDictionaryUpdates" ${d.busy ? "disabled" : ""}>${tx(d.busy ? "dictionary.working" : "dictionary.checkUpdates")}</button></div>
+    return `<section class="utility-settings-section utility-dictionary-section dictionary-controls"><div class="section-header"><div><h3 class="utility-settings-section-title">${tx("dictionary.title")}</h3><p class="section-copy">${tx("dictionary.priority")}</p></div><button class="secondary" data-action="checkDictionaryUpdates" ${d.busy ? "disabled" : ""}>${tx(d.busy ? "dictionary.working" : "dictionary.checkUpdates")}</button></div>
       ${pack("term", tx("dictionary.terms"))}${pack("creator", tx("dictionary.creators"))}
       <div data-form-id="dictionary-settings" data-autosave-action="saveDictionarySettings" class="form-stack">
         <label class="field"><span class="field-label">${tx("dictionary.creatorMode")}</span><select data-field="creatorMode"><option value="cache" ${selected(d.creatorMode || "cache", "cache")}>${tx("dictionary.cacheMode")}</option><option value="full" ${selected(d.creatorMode, "full")}>${tx("dictionary.fullMode")}</option></select></label>
         <label class="field"><span class="field-label">${tx("dictionary.cacheMaximum")}</span><input type="number" data-field="creatorCacheSize" min="1" max="100000" step="1" value="${d.creatorCacheSize || 10000}" ${d.creatorMode === "full" ? "readonly" : ""}></label>
-        <label class="field wide"><span><input type="checkbox" data-field="contributionEnabled" ${d.contributionEnabled !== false ? "checked" : ""}> ${tx("dictionary.helpImprove")}</span><span class="small-copy">${tx("dictionary.sharingExplanation")}</span></label>
+        <label class="field wide dictionary-contribution"><span class="toggle-row"><input type="checkbox" data-field="contributionEnabled" ${d.contributionEnabled !== false ? "checked" : ""}> ${tx("dictionary.helpImprove")}</span><span class="small-copy">${tx("dictionary.sharingExplanation")}</span></label>
         <input type="checkbox" data-field="choiceMade" checked hidden>
       </div>
       <p class="small-copy">${tx("dictionary.cacheSummary", { count: d.cachedCreators || 0, guidance: d.creatorMode === "full" && !d.fullCreatorReady ? t("dictionary.fullDownloadRequired") : "" })}</p>
       ${notice(d.notice, "navy")}
-      <details class="dictionary-personal"><summary>${tx("dictionary.importExport")}</summary><div data-form-id="dictionary-import" class="form-stack"><label class="field wide"><span class="field-label">${tx("dictionary.personalJSON")}</span><textarea data-field="json" data-personal-import rows="5" maxlength="8388608" placeholder='{"schemaVersion":1,"entries":[{"kind":"term","subject":"Example","meaning":"Description"}]}'>${esc(personalDictionaryImportDraft)}</textarea></label><label class="field">${tx("dictionary.openJSON")}<input type="file" accept=".json,application/json" data-personal-file></label><div class="action-row"><button class="secondary" data-action="importPersonalDictionary" data-form="dictionary-import">${tx("dictionary.import")}</button><button class="secondary" data-action="exportPersonalDictionary">${tx("dictionary.export")}</button></div></div>${d.personalJSON ? `<textarea class="dictionary-export" data-personal-export readonly rows="6" aria-label="${tx("dictionary.exported")}">${esc(d.personalJSON)}</textarea><button class="secondary" data-action="copyPersonalDictionary">${tx("dictionary.copy")}</button>` : ""}</details></section>`;
+      <details class="dictionary-personal" data-expand="dictionary-personal"${openExpands.has("dictionary-personal") ? " open" : ""}><summary>${tx("dictionary.importExport")}</summary><div data-form-id="dictionary-import" class="form-stack"><label class="field wide"><span class="field-label">${tx("dictionary.personalJSON")}</span><textarea data-field="json" data-personal-import rows="5" maxlength="8388608" placeholder='{"schemaVersion":1,"entries":[{"kind":"term","subject":"Example","meaning":"Description"}]}'>${esc(personalDictionaryImportDraft)}</textarea></label><label class="field">${tx("dictionary.openJSON")}<input type="file" accept=".json,application/json" data-personal-file></label><div class="action-row"><button class="secondary" data-action="importPersonalDictionary" data-form="dictionary-import">${tx("dictionary.import")}</button><button class="secondary" data-action="exportPersonalDictionary">${tx("dictionary.export")}</button></div></div>${d.personalJSON ? `<textarea class="dictionary-export" data-personal-export readonly rows="6" aria-label="${tx("dictionary.exported")}">${esc(d.personalJSON)}</textarea><button class="secondary" data-action="copyPersonalDictionary">${tx("dictionary.copy")}</button>` : ""}</details></section>`;
   }
   scope.addEventListener("change", async event => {
     if (!event.target.matches("[data-personal-file]")) return;
@@ -1269,6 +1290,22 @@
     const d = state.settings?.dictionaries;
     if (!d || d.contributionChoiceMade || d.nativePrompt) return "";
     return `<div class="utility-popover-layer" role="presentation"><div class="deletion-dialog" role="dialog" aria-modal="true" aria-label="${tx("dictionary.contributionTitle")}"><h3>${tx("dictionary.helpImprove")}</h3><p>${tx("dictionary.webContributionBody")}</p><label><input type="checkbox" data-contribution-first checked> ${tx("dictionary.share")}</label><p class="small-copy">${tx("dictionary.retention")}</p><div class="action-row"><button class="primary" data-action="saveDictionaryFirstChoice">${tx("dictionary.saveChoice")}</button><button class="secondary" data-action="declineDictionaryContribution">${tx("dictionary.decline")}</button></div></div></div>`;
+  }
+
+  function dictionaryConnection() {
+    const d = state.settings?.dictionaries || {};
+    const packs = d.packs || [];
+    const term = packs.find(item => item.kind === "term") || {};
+    const creator = packs.find(item => item.kind === "creator") || {};
+    const version = pack => pack.installedVersion || t("dictionary.notDownloaded");
+    const creatorSummary = d.creatorMode === "full"
+      ? t("dictionary.fullSummary", {count: creator.entryCount || 0})
+      : t("dictionary.lookupSummary", {count: d.cachedCreators || 0});
+    const updating = packs.some(pack => pack.updateAvailable);
+    const creatorReady = creator.installedVersion && (d.creatorMode !== "full" || d.fullCreatorReady);
+    const complete = term.installedVersion && creatorReady;
+    const status = t(d.busy ? "dictionary.working" : updating ? "dictionary.updateStatus" : complete ? "dictionary.installed" : "dictionary.notDownloaded");
+    return `<section class="knowledge-dictionary-connection"><div><h3>${tx("dictionary.connectionTitle")}</h3><p class="small-copy">${tx("dictionary.termSummary", {count: term.entryCount || 0, version: version(term)})}</p><p class="small-copy">${tx("dictionary.creatorSummary", {summary: creatorSummary, version: creatorReady ? version(creator) : t("dictionary.notDownloaded")})}</p>${statusPill(esc(status), d.busy || updating || !complete ? "gold" : "cyan")}</div><button class="secondary" data-action="openDictionarySetup">${tx("dictionary.configure")}</button></section>`;
   }
 
   function knowledgeWorkspace() {
@@ -1309,7 +1346,7 @@
     const creatorGroups = KNOWLEDGE_PLATFORMS.map(([platformID, label]) =>
       group(t("knowledge.creatorsOn", { platform: label }), "", creators.filter((entry) => entry.platformID === platformID), "creator", platformID)).join("");
 
-    return `<div class="workspace knowledge-workspace">${header("knowledge.title", "knowledge.copy", tx("knowledge.badge"), "gold")}<div class="notice navy" data-info="knowledge.disclosure">${tx("knowledge.disclosure")}</div>${dictionaryControls()}${connection}${notice(state.notices?.knowledge, "navy")}${notice(state.issue, "red")}${addTerm}${addCreator}${group(t("knowledge.terms"), t("knowledge.termsHint"), terms, "term")}<p class="small-copy" data-info="knowledge.creatorsHint">${tx("knowledge.creatorsHint")}</p>${creatorGroups}</div>`;
+    return `<div class="workspace knowledge-workspace">${header("knowledge.title", "knowledge.copy", tx("knowledge.badge"), "gold")}<div class="notice navy" data-info="knowledge.disclosure">${tx("knowledge.disclosure")}</div>${dictionaryConnection()}${connection}${notice(state.notices?.knowledge, "navy")}${notice(state.issue, "red")}${addTerm}${addCreator}${group(t("knowledge.terms"), t("knowledge.termsHint"), terms, "term")}<p class="small-copy" data-info="knowledge.creatorsHint">${tx("knowledge.creatorsHint")}</p>${creatorGroups}</div>`;
   }
 
   // Each platform and Terms share the standard per-list search. Keep names,
@@ -1604,6 +1641,7 @@
       drawTreeConnections();
       placeTreePopovers();
       placeResearchSetup();
+      placeDictionarySetup();
       placeResearchModelMenu();
       placeKnowledgeSuggestions();
     });
@@ -1739,12 +1777,14 @@
       return;
     }
 
+    if (action === "openDictionarySetup") { openDictionarySetup(); return; }
     if (action === "openResearchSetup") { openResearchSetup(); return; }
     if (action === "openManual") { window.VaultManual?.open("user", "Classifier"); return; }
     if (action === "openUtilityPanel") {
       closeKnowledgeSuggestions();
       researchSetupRequested = false;
       researchSetupFocusPending = false;
+      dictionarySetupFocusPending = false;
       const nextPanel = data.utilityPanel === "settings" ? "settings" : null;
       utilityPanel = utilityPanel === nextPanel ? null : nextPanel;
       render();
@@ -1754,6 +1794,7 @@
       utilityPanel = null;
       researchSetupRequested = false;
       researchSetupFocusPending = false;
+      dictionarySetupFocusPending = false;
       render();
       return;
     }
@@ -1832,6 +1873,7 @@
     utilityPanel = null;
     researchSetupRequested = false;
     researchSetupFocusPending = false;
+    dictionarySetupFocusPending = false;
     render();
   }
 

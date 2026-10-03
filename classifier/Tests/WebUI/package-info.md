@@ -76,3 +76,5 @@ mini1 with `UI_TEST_SCRIPT=classifier/Tests/WebUI/tag-bounds.js` and
 `list-performance.js` checks 10,000-source/term/graph/option bounded rendering, complete searches, and draft/caret preservation through the existing autosave runner. Use `UI_TEST_EXPRESSION=runListPerformanceTests()`.
 
 `native-notice-language.mjs` runs on mini1 with Node and verifies presentation-only translation of native errors, composed field labels, literal IDs, exact-template priority and verbatim unknown provider diagnostics.
+
+`official-dictionaries.js` verifies the compact Knowledge dictionary panel, Settings navigation/focus/scroll, cache/full-mode autosave, native sharing action, explicit download, and import/export drafts across snapshots. Run on mini1 with `UI_TEST_SCRIPT=classifier/Tests/WebUI/official-dictionaries.js UI_TEST_EXPRESSION='runDictionaryTests()'` through `autosave.mjs`, at wide and narrow widths.

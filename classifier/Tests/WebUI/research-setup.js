@@ -10,9 +10,9 @@ window.runResearchSetupTests=async()=>{
   const onLabel=()=>q(choice).querySelector('option[value="on"]').textContent;
   await poll(()=>q('[data-action="selectType"]'));q('[data-action="selectType"]').click();await wait();
   expect(!q('[data-workspace="llmAssist"]'),'API keys removed from sidebar');
-  expect(onLabel()==='Set up grounded research…','missing configuration replaces On with setup');
+  expect(onLabel()==='Set up web research…','missing configuration replaces On with setup');
   q(choice).nextElementSibling.querySelector('.vui-select-button').click();
-  [...document.querySelectorAll('.vui-menu-item')].find(item=>item.textContent==='Set up grounded research…').click();await wait();
+  [...document.querySelectorAll('.vui-menu-item')].find(item=>item.textContent==='Set up web research…').click();await wait();
   expect(groupSaves()===0 && q(choice).value==='inherit','setup preserves group choice without autosaving On');
   expect(focused('llmProviderProfileID'),'setup focuses the provider selector');
   expect(q('.utility-api-keys').nextElementSibling.matches('.utility-research-section'),'API keys are immediately above grounded research in Settings');
@@ -26,7 +26,7 @@ window.runResearchSetupTests=async()=>{
   expect(Math.abs(q('.utility-popover').scrollTop-scroll)<3 && focused('credential'),'key autosave preserves Settings scroll and focus');
   close();change(choice,'on');await wait();expect(scope.activeElement?.matches('[data-model-fetch]'),'key present but model missing focuses Fetch model list');
   q('[data-model-fetch]').click();await poll(()=>q('[data-model-selector]'));q('[data-model-selector]').click();q('[data-model-pick="test-grounded-model"]').click();await poll(()=>testState.settings.research.llmModelIdentifier==='test-grounded-model');
-  close();expect(onLabel()==='Enable grounded research…','configured provider replaces On with enable when consent is off');
+  close();expect(onLabel()==='Enable web research…','configured provider replaces On with enable when consent is off');
   change(choice,'on');await wait();expect(focused('enabled') && groupSaves()===0,'enable opens global consent without saving group On');
   const consent=q(research+' [data-field="enabled"]');consent.checked=true;consent.dispatchEvent(new Event('change',{bubbles:true}));
   await poll(()=>testState.settings.research.enabled);close();expect(onLabel()==='On','acknowledged configuration and consent restore On');
@@ -38,7 +38,7 @@ window.runResearchSetupTests=async()=>{
   q('[data-action="workspace"][data-workspace="knowledge"]').click();await wait();
   expect(q('.knowledge-research-connection').textContent.includes('Test provider') && q('.knowledge-research-connection').textContent.includes('test-grounded-model'),'Knowledge identifies its provider and model');
   testState.settings.research.enabled=false;pushSnapshot();await wait();
-  expect(q('[data-action="openResearchSetup"]').textContent==='Enable grounded research…','Knowledge reports disabled consent');
+  expect(q('[data-action="openResearchSetup"]').textContent==='Enable web research…','Knowledge reports disabled consent');
   q('[data-action="openResearchSetup"]').click();await wait();expect(focused('enabled'),'Knowledge link opens the same Settings consent');close();
   testState.assets.providerProfiles=[];pushSnapshot();await wait();
   q('[data-action="openResearchSetup"]').click();await wait();expect(focused('type'),'deleted provider opens API key creation safely');
@@ -48,7 +48,7 @@ window.runResearchSetupTests=async()=>{
   expect(q('.editor-panel').dataset.workspace==='browserBridge' && !q('.provider-workspace'),'retired workspace snapshot safely returns to groups');
   q('[data-action="selectType"]').click();
   testState.settings.research.llmProviderProfileID='provider-created';testState.assets.providerProfiles[0].credential='   ';pushSnapshot();await wait();
-  expect(onLabel()==='Set up grounded research…','whitespace credential is treated as missing');
+  expect(onLabel()==='Set up web research…','whitespace credential is treated as missing');
   q('[data-action="workspace"][data-workspace="knowledge"]').click();q('[data-action="openResearchSetup"]').click();await wait();
   expect(uiErrors.length===0,'no renderer exceptions');
   expect(q('.utility-popover').scrollWidth<=q('.utility-popover').clientWidth+1,'setup fits viewport width');
