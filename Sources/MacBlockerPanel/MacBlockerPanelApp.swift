@@ -1,5 +1,6 @@
 import SwiftUI
 import MacBlockerAppFeature
+import MacBlockerWebUI
 
 #if os(macOS)
 import AppKit
@@ -43,7 +44,7 @@ struct MacBlockerPanelApp: App {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Mac Vault")
                     .font(.title2.bold())
-                Text("Mac Vault runs the shared editor and enforces your groups on this Mac.")
+                Text(VaultNativeLanguage.text("native.macSettings", fallback: "Mac Vault runs the shared editor and enforces your groups on this Mac."))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: 420, alignment: .leading)
             }

@@ -1,6 +1,7 @@
 #if os(macOS)
 import AppKit
 import MacBlockerCore
+import MacBlockerWebUI
 import MacBlockerMacControl
 
 /// The tiny floating "+" at the bottom right of the screen (owner 2026-09-25):
@@ -59,8 +60,8 @@ public final class QuickAddPanel {
             groupID = target
             groupName = document.publicGroup(id: target)?["name"] as? String ?? target
             show()
-            button?.toolTip = "Add the front app to \(groupName)"
-            button?.setAccessibilityLabel("Add the front app to \(groupName)")
+            button?.toolTip = VaultNativeLanguage.text("native.quickAdd", fallback: "Add the front app to {group}", values: ["group": groupName])
+            button?.setAccessibilityLabel(VaultNativeLanguage.text("native.quickAdd", fallback: "Add the front app to {group}", values: ["group": groupName]))
         } else {
             groupID = ""
             groupName = ""
@@ -100,7 +101,7 @@ public final class QuickAddPanel {
         button.layer?.backgroundColor = NSColor(calibratedRed: 0.933, green: 0.949, blue: 1, alpha: 1).cgColor
         button.layer?.cornerRadius = size / 2
         button.contentTintColor = NSColor(calibratedRed: 0.118, green: 0.227, blue: 0.541, alpha: 1)
-        button.toolTip = "Add the front app to \(groupName)"
+        button.toolTip = VaultNativeLanguage.text("native.quickAdd", fallback: "Add the front app to {group}", values: ["group": groupName])
         button.target = self
         button.action = #selector(addFrontmostApplication)
         panel.contentView = button
@@ -138,13 +139,13 @@ public final class QuickAddPanel {
         feedbackRevision += 1
         let revision = feedbackRevision
         button?.title = success ? "✓" : "!"
-        let message = success ? "Added to \(groupName)" : "Could not add the front app to \(groupName)"
+        let message = success ? VaultNativeLanguage.text("native.quickAdded", fallback: "Added to {group}", values: ["group": groupName]) : VaultNativeLanguage.text("native.quickFailed", fallback: "Could not add the front app to {group}", values: ["group": groupName])
         button?.toolTip = message
         button?.setAccessibilityLabel(message)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             guard let self, self.feedbackRevision == revision else { return }
             self.button?.title = "+"
-            let label = "Add the front app to \(self.groupName)"
+            let label = VaultNativeLanguage.text("native.quickAdd", fallback: "Add the front app to {group}", values: ["group": self.groupName])
             self.button?.toolTip = label
             self.button?.setAccessibilityLabel(label)
         }
