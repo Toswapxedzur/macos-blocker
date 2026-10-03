@@ -791,6 +791,8 @@ private struct PanelPinControl: View {
                 .frame(width: CGFloat(length) * 38, height: 40)
                 .opacity(0.02)
         }
+        // PIN digits keep their literal order inside a right-to-left card.
+        .environment(\.layoutDirection, .leftToRight)
         .contentShape(Rectangle())
         .onTapGesture { focused = true }
         .disabled(control.disabled == true)
