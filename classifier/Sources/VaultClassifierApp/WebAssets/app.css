@@ -1228,3 +1228,8 @@ textarea:focus {
 .research-model-menu > .vui-info-field { flex-shrink: 0; }
 
 .tree-map-node.vui-search-match { box-shadow: 0 0 0 3px #0e7490; }
+
+.dictionary-pack { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-block:16px; }
+.dictionary-personal { margin-top:16px; }
+.dictionary-personal summary { cursor:pointer; font-weight:600; margin-bottom:12px; }
+.dictionary-export { width:100%; box-sizing:border-box; margin-block:12px; font-family:monospace; }

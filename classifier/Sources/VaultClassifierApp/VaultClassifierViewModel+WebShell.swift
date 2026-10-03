@@ -106,6 +106,7 @@ extension VaultClassifierViewModel {
         let availableModelFiles = VaultLocalLLMEngine.availableModelFiles()
         let settingsPayload: [String: Any] = [
             "classificationEnabled": state?.settings.classificationEnabled ?? true,
+            "dictionaries": dictionaryPayload(state?.settings.dictionaries ?? .init()),
             "packageUpdateMode": packageUpdateMode.rawValue,
             "localModels": [
                     "systemRAMGB": HardwareProfile.physicalRAMGB(),
@@ -522,6 +523,22 @@ extension VaultClassifierViewModel {
                 cancelModelDownload(id: try webString(data, key: "id", limit: 128))
             case "deleteModelFile":
                 deleteModelFile(fileName: try webString(data, key: "fileName", limit: 255))
+            case "saveDictionarySettings":
+                guard let cacheSize = (data["creatorCacheSize"] as? Int) ?? (data["creatorCacheSize"] as? String).flatMap(Int.init) else { throw DictionaryError.invalidPack }
+                try saveDictionarySettings(mode: try webString(data, key: "creatorMode", limit: 16), cacheSize: cacheSize,
+                    contributionEnabled: try webBool(data, key: "contributionEnabled"), choiceMade: try webBool(data, key: "choiceMade"))
+            case "completeDictionaryOnboarding":
+                completeDictionaryOnboarding(enabled: try webBool(data, key: "enabled"))
+            case "checkDictionaryUpdates":
+                checkDictionaryUpdates()
+            case "downloadDictionary":
+                try downloadDictionary(kind: try webString(data, key: "kind", limit: 16))
+            case "importPersonalDictionary":
+                let json = try webString(data, key: "json", limit: 8*1024*1024)
+                try coordinator?.importPersonalDictionary(Data(json.utf8))
+                refreshLocalState(); dictionaryNotice = "Personal definitions imported."; personalDictionaryJSON = nil
+            case "exportPersonalDictionary":
+                personalDictionaryJSON = try coordinator?.exportPersonalDictionary()
             case "deleteKnowledgeEntry":
                 deleteKnowledgeEntry(id: try webString(data, key: "id", limit: 512))
             case "addKnowledgeTerm":

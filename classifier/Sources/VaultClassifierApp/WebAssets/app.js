@@ -238,6 +238,7 @@
     const assets = state?.assets || {};
     const type = (assets.classifierTypes || []).find((item) => item.id === edit.identity.typeID);
     switch (edit.action) {
+      case "saveDictionarySettings": return { creatorMode: state.settings?.dictionaries?.creatorMode || "cache", creatorCacheSize: String(state.settings?.dictionaries?.creatorCacheSize || 10000), contributionEnabled: state.settings?.dictionaries?.contributionEnabled !== false, choiceMade: true };
       case "configureClassifierType": return type && { name: type.name };
       case "saveClassifierTypeLocalModel": return type && {
         speedQuality: type.localModel?.speedQuality || "balanced",
@@ -1206,6 +1207,38 @@
   let knowledgeCreatorDraft = "";
   let knowledgeSuggestionsOpen = false;
 
+  function dictionaryControls() {
+    const d = state.settings?.dictionaries || {};
+    const packs = d.packs || [];
+    const pack = (kind, label) => {
+      const row = packs.find(item => item.kind === kind) || {};
+      return `<div class="dictionary-pack"><div><strong>${label}</strong><p class="small-copy">${row.entryCount || 0} entries · ${esc(row.installedVersion || "Not downloaded")}${row.updateAvailable ? " · Update available" : ""}</p></div><button class="secondary" data-action="downloadDictionary" data-kind="${kind}" ${d.busy ? "disabled" : ""}>${kind === "creator" && d.creatorMode !== "full" ? "Update cache version" : "Download / Update"}</button></div>`;
+    };
+    return `<section class="knowledge-group dictionary-controls"><div class="section-header"><div><h3>Official dictionaries</h3><p class="section-copy">Your own descriptions and AI-researched descriptions always take priority.</p></div><button class="secondary" data-action="checkDictionaryUpdates" ${d.busy ? "disabled" : ""}>${d.busy ? "Working…" : "Check for updates"}</button></div>
+      ${pack("term", "Terms")}${pack("creator", "Creators")}
+      <div data-form-id="dictionary-settings" data-autosave-action="saveDictionarySettings" class="form-stack">
+        <label class="field"><span class="field-label">Creator dictionary</span><select data-field="creatorMode"><option value="cache" ${selected(d.creatorMode || "cache", "cache")}>Cache + online lookup</option><option value="full" ${selected(d.creatorMode, "full")}>Full download · offline lookup</option></select></label>
+        <label class="field"><span class="field-label">Maximum cached creators</span><input type="number" data-field="creatorCacheSize" min="1" max="100000" step="1" value="${d.creatorCacheSize || 10000}" ${d.creatorMode === "full" ? "readonly" : ""}></label>
+        <label class="field wide"><span><input type="checkbox" data-field="contributionEnabled" ${d.contributionEnabled !== false ? "checked" : ""}> Help improve the creator dictionary</span><span class="small-copy">Occasionally send missing public creator IDs and available subscriber/follower counts. No term names, titles, history or personal descriptions. Maximum 50 submissions/day; server retention 7 days. Turn this off anytime.</span></label>
+        <input type="checkbox" data-field="choiceMade" checked hidden>
+      </div>
+      <p class="small-copy">${d.cachedCreators || 0} creators cached. Full packs stay indexed on disk; only matching descriptions enter tagging. ${d.creatorMode === "full" && !d.fullCreatorReady ? "Download Creators to enable full offline lookup." : ""}</p>
+      ${notice(d.notice, "navy")}
+      <details class="dictionary-personal"><summary>Import / export your dictionary</summary><div data-form-id="dictionary-import" class="form-stack"><label class="field wide"><span class="field-label">Personal dictionary JSON</span><textarea data-field="json" data-personal-import rows="5" maxlength="8388608" placeholder='{"schemaVersion":1,"entries":[{"kind":"term","subject":"Example","meaning":"Description"}]}'></textarea></label><label class="field">Open JSON file<input type="file" accept=".json,application/json" data-personal-file></label><div class="action-row"><button class="secondary" data-action="importPersonalDictionary" data-form="dictionary-import">Import</button><button class="secondary" data-action="exportPersonalDictionary">Export JSON</button></div></div>${d.personalJSON ? `<textarea class="dictionary-export" data-personal-export readonly rows="6" aria-label="Exported personal dictionary">${esc(d.personalJSON)}</textarea><button class="secondary" data-action="copyPersonalDictionary">Copy JSON</button>` : ""}</details></section>`;
+  }
+  scope.addEventListener("change", async event => {
+    if (!event.target.matches("[data-personal-file]")) return;
+    const file = event.target.files?.[0];
+    if (!file || file.size > 8 * 1024 * 1024) return;
+    const input = root.querySelector("[data-personal-import]");
+    if (input) input.value = await file.text();
+  });
+  function dictionaryOnboarding() {
+    const d = state.settings?.dictionaries;
+    if (!d || d.contributionChoiceMade || d.nativePrompt) return "";
+    return `<div class="utility-popover-layer" role="presentation"><div class="deletion-dialog" role="dialog" aria-modal="true" aria-label="Creator dictionary contribution"><h3>Help improve the creator dictionary</h3><p>Vault can occasionally send public creator IDs and their available subscriber/follower counts to our server. No titles, term names, browsing history or personal definitions are sent. You can disable this anytime in Knowledge.</p><label><input type="checkbox" data-contribution-first checked> Share creator IDs and subscriber counts</label><p class="small-copy">Maximum 50/day; retained for 7 days. See the Privacy Policy for details.</p><div class="action-row"><button class="primary" data-action="saveDictionaryFirstChoice">Save choice</button><button class="secondary" data-action="declineDictionaryContribution">Don't share</button></div></div></div>`;
+  }
+
   function knowledgeWorkspace() {
     const availability = researchAvailability();
     const research = state.settings?.research || {};
@@ -1244,7 +1277,7 @@
     const creatorGroups = KNOWLEDGE_PLATFORMS.map(([platformID, label]) =>
       group(t("knowledge.creatorsOn", { platform: label }), "", creators.filter((entry) => entry.platformID === platformID), "creator", platformID)).join("");
 
-    return `<div class="workspace knowledge-workspace">${header("knowledge.title", "knowledge.copy", tx("knowledge.badge"), "gold")}<div class="notice navy" data-info="knowledge.disclosure">${tx("knowledge.disclosure")}</div>${connection}${notice(state.notices?.knowledge, "navy")}${notice(state.issue, "red")}${addTerm}${addCreator}${group(t("knowledge.terms"), t("knowledge.termsHint"), terms, "term")}<p class="small-copy" data-info="knowledge.creatorsHint">${tx("knowledge.creatorsHint")}</p>${creatorGroups}</div>`;
+    return `<div class="workspace knowledge-workspace">${header("knowledge.title", "knowledge.copy", tx("knowledge.badge"), "gold")}<div class="notice navy" data-info="knowledge.disclosure">${tx("knowledge.disclosure")}</div>${dictionaryControls()}${connection}${notice(state.notices?.knowledge, "navy")}${notice(state.issue, "red")}${addTerm}${addCreator}${group(t("knowledge.terms"), t("knowledge.termsHint"), terms, "term")}<p class="small-copy" data-info="knowledge.creatorsHint">${tx("knowledge.creatorsHint")}</p>${creatorGroups}</div>`;
   }
 
   // Each platform and Terms share the standard per-list search. Keep names,
@@ -1477,7 +1510,7 @@
     }
     if (composingEdit) return;
     pendingLists = []; deferredChoices = new Map();
-    const markup = shell(workspace()) + createTypeModal();
+    const markup = shell(workspace()) + createTypeModal() + dictionaryOnboarding();
     // Nothing changed on the page: keep the DOM (and its scroll) as it is.
     if (markup === lastRenderedMarkup && root.firstChild) { const searchFocus = window.VaultUI.captureSearch(scope); mountChoices(); mountLists(); mountLargeGraphs(); window.VaultUI.restoreSearch(scope, searchFocus); return; }
     renderFull(markup);
@@ -1585,6 +1618,14 @@
     if (button.disabled) return;
     flushLiveEdits();
     const action = button.dataset.action;
+    if (action === "saveDictionaryFirstChoice" || action === "declineDictionaryContribution") {
+      send("completeDictionaryOnboarding", { enabled: action === "saveDictionaryFirstChoice" && root.querySelector("[data-contribution-first]")?.checked === true });
+      return;
+    }
+    if (action === "copyPersonalDictionary") {
+      const text = root.querySelector("[data-personal-export]");
+      text?.focus(); text?.select(); document.execCommand("copy"); return;
+    }
     if (DELETE_KEYS[action] && !confirmDelete(DELETE_KEYS[action](button.dataset))) return;
     if (action === "setClassifierTypePaused") {
       send(action, { typeID: button.dataset.typeId, paused: button.dataset.paused === "true" });
@@ -1657,6 +1698,7 @@
     if (button.dataset.typeId) data.typeID = button.dataset.typeId;
     if (button.dataset.entryId) data.entryID = button.dataset.entryId;
     if (button.dataset.fileName) data.fileName = button.dataset.fileName;
+    if (button.dataset.kind) data.kind = button.dataset.kind;
     if (action === "testProviderProfile") Object.assign(data, providerConnectionPayload(data, button.dataset.form));
     if (action === "cancelTagPanel") {
       flushTagNameInput(button.closest("[data-tree-popover]")?.querySelector("input[data-live-tag-name]"));

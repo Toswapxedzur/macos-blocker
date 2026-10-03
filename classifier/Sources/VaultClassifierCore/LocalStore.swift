@@ -317,6 +317,7 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
     var onDeviceLLM: any OnDeviceLLM = StubOnDeviceLLM()
     var onDeviceLLMEngineResolver: (any OnDeviceLLMEngineResolving)?
     var groundedResearchQueue: GroundedResearchQueue?
+    var dictionaryProvider: (any DictionaryEvidenceProviding)?
     /// When the collection Keep was last applied (see `collect`).
     var lastCollectionPrune: Int64 = 0
     var onVideoReclassifiedCallback: (@Sendable (String, String, VideoTagsProjection) -> Void)?
@@ -399,6 +400,10 @@ public final class LocalClassifierCoordinator: @unchecked Sendable {
         self.activeVerifiedPackage = verifiedPackage
         self.state = loaded
 
+    }
+
+    public func setDictionaryProvider(_ provider: any DictionaryEvidenceProviding) {
+        lock.withLock { dictionaryProvider = provider }
     }
 
     public func setOnDeviceLLM(_ llm: any OnDeviceLLM) {
