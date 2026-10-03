@@ -1,6 +1,6 @@
 # Adamancia Vault Privacy Policy
 
-Last updated: July 7, 2026
+Last updated: October 3, 2026
 
 Adamancia Vault is a focus and blocking app. This policy describes the macOS app release.
 
@@ -19,6 +19,14 @@ The app may store the following local data on your Mac:
 - App Group container data when an App Store build or extension build uses an App Group.
 
 Known local paths are documented in `RELEASE.md` and in the uninstaller script.
+
+## Official dictionaries and creator contributions
+
+Vault checks for official term and creator dictionary updates at startup. You choose when to download updates. Creator lookup defaults to a 10,000-entry cache with adjustable capacity; a cache miss sends the public, platform-scoped creator ID to our server. Full-download creator lookup is local. Dictionary downloads and lookups do not require your own AI API key. User-written and user AI-generated definitions remain local and take priority over official definitions. Optional web/AI research uses its separate provider settings.
+
+Help improve the creator dictionary is ON by default. On first launch, a screen explains the feature and lets you disable it before any contribution is sent. You can turn it off at any time in Classifier → Knowledge. When enabled, the app samples missing public creator IDs and their displayed public subscriber/follower counts (which may be rounded); missing counts are sent as unknown. It sends no term names, titles, browsing history, personal definitions, API keys or persistent user/device identifiers. Submissions are deduplicated locally, sampled one in four IDs per day, and capped at 50 per day. Turning it off cancels pending contribution requests and stops future submissions; it does not recall requests already received.
+
+The server retains candidate creator IDs, public counts and last-seen timestamps for seven days after the latest submission. An in-memory, temporary address hash limits abuse and expires hourly; the contribution database stores no IP addresses. Hosting and network providers necessarily process requests. These candidate submissions help prioritize the project-maintained public dictionary; they are distinct from routine cache-miss lookup. Official descriptions are maintained separately and may remain published in future versions.
 
 ## Network Use
 

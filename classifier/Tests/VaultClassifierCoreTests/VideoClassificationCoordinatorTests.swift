@@ -693,3 +693,19 @@ final class VideoClassificationCoordinatorTests: XCTestCase {
         XCTAssertFalse(current(row(.model, "llamacpp/Qwen2.5-7B-Instruct-Q4_K_M.gguf+p"), type, "stub/v1"))
     }
 }
+
+extension VideoClassificationCoordinatorTests {
+    func testPersonalImportRefusesCapacityOverflowWithoutDroppingOldDefinitions() throws {
+        let (coordinator, root) = try makeCoordinatorWithYouTubeType()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var catalog = coordinator.snapshot().workspaceCatalog
+        catalog.knowledgeEntries = (0..<WorkspaceCatalog.maximumKnowledgeEntries).map { .init(kind:.term,subject:"Fixture Term \($0)",meaning:"Existing personal knowledge",writtenByUser:true) }
+        try coordinator.updateWorkspaceCatalog(catalog)
+        let data = Data(#"{"schemaVersion":1,"entries":[{"kind":"term","subject":"New Fixture Term","meaning":"New personal knowledge"}]}"#.utf8)
+        XCTAssertThrowsError(try coordinator.importPersonalDictionary(data))
+        let after = coordinator.snapshot().workspaceCatalog.knowledgeEntries
+        XCTAssertEqual(after.count, WorkspaceCatalog.maximumKnowledgeEntries)
+        XCTAssertTrue(after.contains { $0.subject == "Fixture Term 0" })
+        XCTAssertFalse(after.contains { $0.subject == "New Fixture Term" })
+    }
+}

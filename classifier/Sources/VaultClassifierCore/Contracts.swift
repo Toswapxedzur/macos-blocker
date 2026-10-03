@@ -408,19 +408,22 @@ public struct ClassifierSettings: Codable, Equatable, Sendable {
     public var packageUpdateMode: PackageUpdateMode
     public var research: ResearchSettings
     public var classificationEnabled: Bool
+    public var dictionaries: DictionarySettings
 
     public init(
         packageUpdateMode: PackageUpdateMode = .automatic,
         research: ResearchSettings = ResearchSettings(),
-        classificationEnabled: Bool = true
+        classificationEnabled: Bool = true,
+        dictionaries: DictionarySettings = .init()
     ) {
         self.packageUpdateMode = packageUpdateMode
         self.research = research
         self.classificationEnabled = classificationEnabled
+        self.dictionaries = dictionaries
     }
 
     private enum CodingKeys: String, CodingKey {
-        case packageUpdateMode, research, classificationEnabled
+        case packageUpdateMode, research, classificationEnabled, dictionaries
     }
 
 
@@ -430,7 +433,8 @@ public struct ClassifierSettings: Codable, Equatable, Sendable {
         self.init(
             packageUpdateMode: try container.decodeIfPresent(PackageUpdateMode.self, forKey: .packageUpdateMode) ?? .automatic,
             research: try container.decodeIfPresent(ResearchSettings.self, forKey: .research) ?? ResearchSettings(),
-            classificationEnabled: (try? container.decodeIfPresent(Bool.self, forKey: .classificationEnabled)) ?? true
+            classificationEnabled: (try? container.decodeIfPresent(Bool.self, forKey: .classificationEnabled)) ?? true,
+            dictionaries: (try? container.decodeIfPresent(DictionarySettings.self, forKey: .dictionaries)) ?? .init()
         )
     }
 }
