@@ -33,7 +33,7 @@ public final class DictionaryDiskStore: @unchecked Sendable {
         self.root = root; self.config = settings; self.config.reconcile()
         try VaultPrivateFile.createDirectory(at: root)
         for kind in KnowledgeEntryKind.allCases {
-            if let data = try? Data(contentsOf: pointer(kind)), let manifest = try? JSONDecoder().decode(DictionaryManifest.self, from: data),
+            if let data = Self.boundedRead(pointer(kind), max: 128*1024), let manifest = try? JSONDecoder().decode(DictionaryManifest.self, from: data),
                (try? manifest.validate()) != nil, manifest.kind == kind { active[kind] = manifest }
         }
         if let data = Self.boundedRead(root.appendingPathComponent("creator-cache.json"), max: 256*1024*1024),
@@ -52,7 +52,7 @@ public final class DictionaryDiskStore: @unchecked Sendable {
     private func directory(_ manifest: DictionaryManifest) -> URL { root.appendingPathComponent("packs/\(manifest.kind.rawValue)-\(manifest.version)", isDirectory: true) }
     public func settings() -> DictionarySettings { lock.withLock { config } }
     public func configure(_ settings: DictionarySettings) throws {
-        try lock.withLock { config = settings; config.reconcile(); trim(); try saveCache() }
+        lock.withLock { config = settings; config.reconcile(); trim(); try? saveCache() }
     }
     public func manifest(_ kind: KnowledgeEntryKind) -> DictionaryManifest? { lock.withLock { active[kind] } }
     public var cachedCreatorCount: Int { lock.withLock { cache.count } }
@@ -106,6 +106,14 @@ public final class DictionaryDiskStore: @unchecked Sendable {
             let manifestData = try JSONEncoder().encode(manifest)
             if manager.fileExists(atPath: target.path) {
                 guard let existing = try? JSONDecoder().decode(DictionaryManifest.self, from: Data(contentsOf: target.appendingPathComponent("manifest.json"))), existing == manifest else { throw DictionaryError.invalidPack }
+                // Redownloading an immutable version also repairs corrupt local
+                // files. Verified staged bytes replace only damaged shards.
+                for f in manifest.files {
+                    let destination = target.appendingPathComponent(f.name)
+                    if let data = Self.boundedRead(destination, max: f.byteCount), data.count == f.byteCount, DictionaryKeys.digest(data) == f.sha256 { continue }
+                    try Data(contentsOf: stagedDirectory.appendingPathComponent(f.name)).write(to: destination, options: .atomic)
+                    try VaultPrivateFile.restrict(destination)
+                }
             } else {
                 try manifestData.write(to: stagedDirectory.appendingPathComponent("manifest.json"), options: .atomic)
                 try manager.moveItem(at: stagedDirectory, to: target)

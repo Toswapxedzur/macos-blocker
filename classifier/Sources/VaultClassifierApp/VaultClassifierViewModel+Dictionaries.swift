@@ -21,8 +21,12 @@ extension VaultClassifierViewModel {
         settings.dictionaries.contributionEnabled = contributionEnabled
         if choiceMade { settings.dictionaries.contributionChoiceMade = true }
         // Immediate synchronous gate: disabling does not wait behind a network operation.
+        if !contributionEnabled { try dictionaryService?.disk.configure(settings.dictionaries) }
+        try coordinator.updateSettings(settings)
+        // Enabling follows the successful durable settings write; disabling
+        // closes the upload gate immediately, even if persistence fails.
         try dictionaryService?.disk.configure(settings.dictionaries)
-        try coordinator.updateSettings(settings); refreshLocalState()
+        refreshLocalState()
         if let service = dictionaryService {
             let dictionaries = settings.dictionaries
             Task { [weak self] in

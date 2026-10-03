@@ -53,13 +53,14 @@ public struct OfficialDictionaryEntry: Codable, Equatable, Sendable {
 }
 
 public enum DictionaryError: Error, LocalizedError {
-    case invalidPack, unavailable, invalidPersonalPack, tooLarge
+    case invalidPack, unavailable, invalidPersonalPack, tooLarge, personalCapacityExceeded
     public var errorDescription: String? {
         switch self {
         case .invalidPack: return "The dictionary format or checksum is invalid."
         case .unavailable: return "The dictionary server is unavailable. Your local knowledge remains usable."
         case .invalidPersonalPack: return "Use a schemaVersion 1 personal dictionary with valid entries."
         case .tooLarge: return "This dictionary file exceeds the supported size."
+        case .personalCapacityExceeded: return "Import would exceed 20,000 personal entries per kind. Your existing definitions were kept."
         }
     }
 }
@@ -113,7 +114,14 @@ public struct DictionaryEvidence: Sendable {
                 result.knowledgeEntries.removeAll { $0.id == personal.id }; result.knowledgeEntries.append(alias)
             } else { result.knowledgeEntries.append(entry) }
         }
-        if let creator, catalog.creatorKnowledgeEntry(for: creatorID) == nil { result.creatorKnowledge.append(creator) }
+        if let creator, catalog.creatorKnowledgeEntry(for: creatorID) == nil {
+            // Resolve official aliases onto the collected creator ID. A personal
+            // definition of the canonical creator also wins for its aliases.
+            var resolved = catalog.creatorKnowledge.first(where: { $0.id == creator.id }) ?? creator
+            resolved.id = KnowledgeEntry.key(kind: .creator, subject: creatorID)
+            resolved.subject = creatorID
+            result.creatorKnowledge.append(resolved)
+        }
         return result
     }
     public static func fingerprint(title: String, creatorID: String, catalog: WorkspaceCatalog, settings: ResearchSettings, limit: Int? = nil, ttlDays: Int? = nil) -> String {
