@@ -86,6 +86,18 @@ Knowledge memorizza brevi descrizioni su questo Mac per il modello di tagging lo
 
 Aggiungi una fonte o un termine con la relativa descrizione, oppure lasciala vuota per richiedere una ricerca quando attiva. I suggerimenti per i creator aiutano a trovare una fonte già raccolta da Classifier. Gli elenchi con almeno sei voci hanno una ricerca subito sopra: Terms e le Content sources di ciascuna piattaforma hanno ricerche separate per nome, identificatore o descrizione. Modificare una descrizione influisce sui tag futuri; eliminare la conoscenza di una fonte non impedisce alla ricerca di ricrearla.
 
+### Dizionari ufficiali e personali
+
+Apri **Impostazioni → Classificatore → Dizionari ufficiali** per configurare i dizionari ufficiali. **Conoscenze** mostra le versioni installate e un collegamento rapido a questi controlli. Vault verifica gli aggiornamenti all’avvio; usa **Controlla gli aggiornamenti** e i pulsanti di download per installarli. Non serve una tua chiave API IA.
+
+- **Termini** viene scaricato per la ricerca locale.
+- **Cache + ricerca online** conserva fino a 10.000 voci di creator per impostazione predefinita; puoi cambiare il limite. Se un creator non è nella cache, il suo ID pubblico associato alla piattaforma viene inviato al servizio dei dizionari.
+- **Download completo · ricerca offline** cerca i creator localmente dopo il download. Scegli questa modalità e scarica il dizionario.
+
+Le tue descrizioni personali, incluse quelle del provider di ricerca, hanno la precedenza su quelle ufficiali. In **Importa / esporta il tuo dizionario** puoi esportare le voci personali o importare un file JSON; le voci ufficiali non sono incluse nell’esportazione personale.
+
+**Aiuta a migliorare il dizionario dei creator** è attivo per impostazione predefinita e viene spiegato prima del primo contributo. Disattivalo qui per interrompere quelli futuri e annullare le richieste in sospeso. Se attivo, Vault invia solo un campione di ID pubblici di creator mancanti e i conteggi pubblici disponibili di follower/iscritti; non invia titoli, cronologia di navigazione o descrizioni personali. Consulta l’informativa per limiti e conservazione. La ricerca sul Web ha consenso e impostazioni del provider separati.
+
 ### Configura un provider di ricerca
 
 1. Apri **Impostazioni Classifier → API keys & providers**.

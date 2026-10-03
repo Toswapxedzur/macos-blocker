@@ -86,6 +86,18 @@ Knowledge bewaart korte beschrijvingen op deze Mac voor het lokale taggingmodel.
 
 Voeg een bron of term met beschrijving toe, of laat de beschrijving leeg om onderzoek aan te vragen wanneer dit is ingeschakeld. Creator-suggesties helpen een bron vinden die Classifier al heeft verzameld. Lijsten met zes of meer items hebben direct erboven een zoekveld: Terms en Content sources van elk platform hebben aparte zoekvelden voor naam, identificatie of beschrijving. Een beschrijving aanpassen werkt door in toekomstige tagging; bronkennis verwijderen verhindert niet dat onderzoek die later opnieuw aanmaakt.
 
+### Officiële en persoonlijke woordenboeken
+
+Open **Instellingen → Classificatie → Officiële woordenboeken** om officiële woordenboeken in te stellen. **Kennis** toont geïnstalleerde versies en een snelkoppeling naar deze instellingen. Vault controleert bij het opstarten op updates; gebruik **Controleren op updates** en de downloadknoppen om ze te installeren. Een eigen AI-API-sleutel is niet nodig.
+
+- **Termen** worden gedownload voor lokaal opzoeken.
+- **Cache + online zoeken** bewaart standaard maximaal 10.000 creator-items; je kunt de limiet wijzigen. Als een creator niet in de cache staat, wordt diens openbare, platformgebonden ID naar de woordenboekservice gestuurd.
+- **Volledige download · offline zoeken** zoekt creators na het downloaden lokaal op. Kies deze modus en download het woordenboek.
+
+Je persoonlijke beschrijvingen, ook die van je onderzoeksprovider, gaan vóór officiële beschrijvingen. Via **Je woordenboek importeren / exporteren** kun je persoonlijke items exporteren of een JSON-bestand importeren; officiële items zijn geen onderdeel van de persoonlijke export.
+
+**Help het woordenboek voor makers te verbeteren** staat standaard aan en wordt vóór de eerste bijdrage uitgelegd. Schakel dit hier uit om toekomstige bijdragen te stoppen en openstaande verzoeken te annuleren. Als dit aanstaat, verstuurt Vault alleen een steekproef van ontbrekende openbare creator-ID’s en beschikbare openbare aantallen volgers/abonnees; geen titels, browsegeschiedenis of persoonlijke beschrijvingen. Lees de toelichting voor limieten en bewaartermijn. Webonderzoek heeft aparte toestemming en providerinstellingen.
+
 ### Een onderzoeksprovider instellen
 
 1. Open **Classifier-instellingen → API keys & providers**.

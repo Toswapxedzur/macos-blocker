@@ -1,6 +1,6 @@
 # Adamancia Vault Terms
 
-Last updated: October 3, 2026
+Last updated: October 4, 2026
 
 These terms apply to the macOS app release of Adamancia Vault.
 
@@ -34,4 +34,4 @@ Terms may change as the app evolves. Keep permanent copies of released versions 
 
 ## Dictionaries
 
-Official dictionary descriptions are classification aids and may be incomplete, stale or incorrect. You may download updates, use a bounded creator cache or a full download, and override official descriptions with personal definitions. The optional creator contribution feature is on by default, explained at first launch, and revocable in Knowledge at any time. It submits only sampled public creator IDs and public subscriber/follower counts under the limits and retention described in the privacy policy.
+Official dictionary descriptions are classification aids and may be incomplete, stale or incorrect. You may download updates, use a bounded creator cache or a full download, and override official descriptions with personal definitions. The optional creator contribution feature is on by default, explained at first launch, and revocable in Settings → Classifier at any time. It submits only sampled public creator IDs and public subscriber/follower counts under the limits and retention described in the privacy policy.

@@ -86,6 +86,18 @@ Conocimiento almacena descripciones breves en este Mac para el modelo local de e
 
 Añada una fuente o término y su descripción, o deje la descripción vacía para solicitar investigación cuando esté activada. Las sugerencias de creadores ayudan a encontrar una fuente que el Clasificador haya recopilado. Las listas con seis o más entradas tienen una búsqueda justo encima: Términos y las Fuentes de contenido de cada plataforma tienen búsquedas separadas por nombre, identificador o descripción. Editar una descripción afecta a futuros etiquetados; eliminar el conocimiento de una fuente no impide que una investigación posterior lo vuelva a crear.
 
+### Diccionarios oficiales y personales
+
+Abre **Ajustes → Clasificador → Diccionarios oficiales** para configurar los diccionarios oficiales. **Conocimiento** muestra las versiones instaladas y un acceso directo a estos controles. Vault busca actualizaciones al iniciarse; usa **Buscar actualizaciones** y los botones de descarga para instalarlas. No necesitas tu propia clave API de IA.
+
+- **Términos** se descarga para búsquedas locales.
+- **Caché + búsqueda en línea** guarda hasta 10.000 entradas de creadores de forma predeterminada; puedes cambiar el límite. Si falta un creador en la caché, se envía su identificador público asociado a la plataforma al servicio de diccionarios.
+- **Descarga completa · búsqueda sin conexión** busca creadores localmente después de descargarlo. Selecciona este modo y descarga el diccionario.
+
+Tus descripciones personales, incluidas las de tu proveedor de investigación, tienen prioridad sobre las oficiales. En **Importar o exportar tu diccionario**, exporta tus entradas personales o importa un archivo JSON; las entradas oficiales no se incluyen en la exportación personal.
+
+**Ayuda a mejorar el diccionario de creadores** está activado de forma predeterminada y se explica antes de la primera contribución. Desactívalo aquí para detener contribuciones futuras y cancelar solicitudes pendientes. Si está activado, Vault solo envía una muestra de identificadores públicos de creadores que faltan y las cifras públicas disponibles de seguidores/suscriptores; no envía títulos, historial de navegación ni descripciones personales. Consulta la divulgación para conocer los límites y la conservación. La investigación web tiene consentimiento y ajustes de proveedor independientes.
+
 ### Configurar un proveedor de investigación
 
 1. Abra **Ajustes → Claves de API y proveedores**.

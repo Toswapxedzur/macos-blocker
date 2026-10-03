@@ -86,6 +86,18 @@ Knowledge przechowuje krótkie opisy na tym Mac dla lokalnego modelu tagowania. 
 
 Dodaj źródło lub termin z opisem albo pozostaw opis pusty, aby zażądać badań po ich włączeniu. Sugestie twórców pomagają znaleźć źródło zebrane przez Classifier. Listy zawierające co najmniej sześć pozycji mają wyszukiwanie bezpośrednio nad nimi: Terms i Content sources każdej platformy mają osobne wyszukiwanie po nazwie, identyfikatorze lub opisie. Zmiana opisu wpływa na przyszłe tagowanie; usunięcie wiedzy o źródle nie uniemożliwia późniejszego odtworzenia jej przez badania.
 
+### Oficjalne i osobiste słowniki
+
+Otwórz **Ustawienia → Klasyfikator → Oficjalne słowniki**, aby skonfigurować oficjalne słowniki. **Wiedza** pokazuje zainstalowane wersje i skrót do tych ustawień. Vault sprawdza aktualizacje przy uruchamianiu; użyj **Sprawdź aktualizacje** i przycisków pobierania, aby je zainstalować. Nie potrzebujesz własnego klucza API AI.
+
+- **Terminy** są pobierane do wyszukiwania lokalnego.
+- **Pamięć podręczna + wyszukiwanie online** domyślnie przechowuje do 10 000 wpisów twórców; limit można zmienić. Gdy twórcy nie ma w pamięci podręcznej, jego publiczny identyfikator powiązany z platformą jest wysyłany do usługi słowników.
+- **Pełne pobranie · wyszukiwanie offline** wyszukuje twórców lokalnie po pobraniu. Wybierz ten tryb i pobierz słownik.
+
+Twoje osobiste opisy, również utworzone przez dostawcę badań, mają pierwszeństwo przed oficjalnymi. W sekcji **Importuj / eksportuj swój słownik** możesz wyeksportować własne wpisy lub zaimportować plik JSON; oficjalne wpisy nie trafiają do osobistego eksportu.
+
+**Pomóż ulepszyć słownik twórców** jest domyślnie włączone i wyjaśniane przed pierwszym przekazaniem danych. Wyłącz je tutaj, aby zatrzymać przyszłe przekazywanie i anulować oczekujące żądania. Gdy jest włączone, Vault wysyła tylko próbkę brakujących publicznych identyfikatorów twórców i dostępne publiczne liczby obserwujących/subskrybentów; nie wysyła tytułów, historii przeglądania ani osobistych opisów. Informacje o limitach i przechowywaniu znajdziesz w ujawnieniu. Badania w sieci mają osobną zgodę i ustawienia dostawcy.
+
 ### Konfigurowanie dostawcy badań
 
 1. Otwórz **Ustawienia Classifier → API keys & providers**.

@@ -86,6 +86,18 @@ Knowledge stores short descriptions on this Mac for the local tagging model. **C
 
 Add a source or term and its description, or leave the description empty to request research when enabled. Creator suggestions help find a source the Classifier has collected. Lists with six or more entries have search directly above them: Terms and each platform’s Content sources have separate searches for name, identifier, or description. Editing a description affects future tagging; deleting source knowledge does not prevent later research from recreating it.
 
+### Official and personal dictionaries
+
+Open **Settings → Classifier → Dictionaries** to configure official dictionaries. Knowledge shows their installed versions and a shortcut to these controls. Vault checks for updates at startup; use **Check for updates** and the download buttons to install them. Dictionary downloads do not require your own AI API key.
+
+- **Terms** are downloaded for local lookup.
+- **Creator cache** keeps up to 10,000 entries by default; you can change the limit. A cache miss sends the public, platform-scoped creator ID to the dictionary service.
+- **Full creator download** looks up creators locally once downloaded. Download it after choosing this mode.
+
+Your personal descriptions, including descriptions made with your research provider, take priority over official ones. Under **Personal dictionary import/export**, export your personal entries or import a JSON file; official entries are not personal exports.
+
+**Help improve the creator dictionary** is on by default and explained before the first contribution. Turn it off on this Settings page to stop future contributions and cancel pending requests. When enabled, Vault sends only sampled missing public creator IDs and public follower/subscriber counts, not titles, browsing history or personal descriptions. Read the disclosure for submission limits and retention. Web research has separate consent and provider settings.
+
 ### Configure a research provider
 
 1. Open **Settings → API keys & providers**.
