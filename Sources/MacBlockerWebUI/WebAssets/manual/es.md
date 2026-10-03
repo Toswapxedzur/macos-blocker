@@ -37,9 +37,9 @@ Configure la opción de posponer en cada grupo de bloqueo. **Pausar bloqueo** su
 
 **Retraso de activación** retrasa la pausa mientras continúa el bloqueo. **Tiempo de espera** es la espera tras finalizar la pausa antes de otra solicitud. **Confirmaciones requeridas** establece el número de pasos de confirmación. Posponer está disponible en un grupo congelado solo si se permitió antes de congelarlo.
 
-### Congelación y PIN
+### Bloqueo de edición y PIN
 
-**Congelar** impide los cambios habituales. Descongelar requiere diez confirmaciones separadas por cinco segundos, además de la espera configurada y el PIN de seis dígitos, si existen. **Espera antes de descongelar** acepta 0–72 horas; 0 no añade espera.
+**Bloquear edición** impide los cambios habituales. Desbloquear la edición requiere diez confirmaciones separadas por cinco segundos, además de la espera configurada y el PIN de seis dígitos, si existen. **Espera antes de desbloquear la edición** acepta 0–72 horas; 0 no añade espera.
 
 Mientras el grupo está congelado, se puede ampliar la espera y añadir un PIN si no existe ninguno. Estas condiciones no se pueden debilitar hasta descongelar el grupo. La eliminación también respeta la espera restante y el PIN.
 
@@ -126,4 +126,4 @@ Elija el idioma de la interfaz en Ajustes. Las explicaciones de los campos está
 
 Los cambios habituales de Vault y del Clasificador se guardan automáticamente. La edición de grupos de actividad usa **Guardar**. Añadir, eliminar, descargar un modelo, probar una conexión y obtener una lista de modelos siguen siendo acciones explícitas.
 
-Si faltan etiquetas, compruebe la conexión del navegador, el interruptor global de etiquetado, la pausa del grupo, el registro de la plataforma y la descarga del modelo. Si no se ejecuta la investigación, compruebe el consentimiento, la opción del grupo, las credenciales del proveedor, el modelo de investigación y el estado de investigación. Si no se puede editar un grupo vinculado, reconecte sus programas o descongélelo según lo indicado.
+Si faltan etiquetas, compruebe la conexión del navegador, el interruptor global de etiquetado, la pausa del grupo, el registro de la plataforma y la descarga del modelo. Si no se ejecuta la investigación, compruebe el consentimiento, la opción del grupo, las credenciales del proveedor, el modelo de investigación y el estado de investigación. Si no se puede editar un grupo vinculado, reconecte sus programas o desbloquee su edición según lo indicado.
