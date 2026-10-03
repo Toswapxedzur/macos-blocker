@@ -61,7 +61,18 @@ final class OfficialDictionaryServiceTests: XCTestCase {
         let last = await http.requests(); XCTAssertEqual(last.count, all.count)
     }
     func testRealLoopbackHTTPDownload() async throws {
-        let process = Process(); process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        let process = Process()
+        let environment = ProcessInfo.processInfo.environment
+        if let explicit = environment["VAULT_TEST_PYTHON"], !explicit.isEmpty { process.executableURL = URL(fileURLWithPath: explicit) }
+        else {
+            #if os(Windows)
+            let programs = URL(fileURLWithPath: environment["LOCALAPPDATA"] ?? "").appendingPathComponent("Programs/Python")
+            let installs = try FileManager.default.contentsOfDirectory(at: programs, includingPropertiesForKeys: nil)
+            process.executableURL = try XCTUnwrap(installs.sorted { $0.path < $1.path }.map { $0.appendingPathComponent("python.exe") }.first { FileManager.default.fileExists(atPath:$0.path) })
+            #else
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+            #endif
+        }
         let output = Pipe(); process.standardOutput = output; process.standardError = FileHandle.nullDevice
         process.arguments = ["-u","-c", """
         from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -119,5 +130,28 @@ extension OfficialDictionaryServiceTests {
         let http = UnavailableDictionaryFixture(), service = OfficialDictionaryService(disk: try disk(), http: http)
         for id in ["one","two","three"] { _ = await service.evidence(title: "Local classification remains possible", creatorID: "twitter:account:"+id, subscriberCount: nil) }
         let count = await http.total(); XCTAssertEqual(count, 1)
+    }
+}
+
+extension OfficialDictionaryServiceTests {
+    func testPublishedBackendPacksDownloadMatchAliasesAndRemainOffline() async throws {
+        guard let base = ProcessInfo.processInfo.environment["VAULT_DICTIONARY_FIXTURE_URL"], let url = URL(string: base) else { throw XCTSkip("Requires the isolated mini1 backend publication fixture.") }
+        var settings = DictionarySettings(); settings.creatorMode = .full; settings.contributionEnabled = false
+        let store = try disk(settings), service = OfficialDictionaryService(disk: store, http: DictionaryHTTPClient(baseURL: url))
+        _ = try await service.checkUpdates(); _ = try await service.update(.term); _ = try await service.update(.creator)
+        let first = await service.evidence(title: "测试模组 episode", creatorID: "youtube:handle:@fixture", subscriberCount: nil)
+        XCTAssertEqual(first.terms.first?.meaning, "A fictional mod for integration tests")
+        XCTAssertEqual(first.creator?.meaning, "A fictional creator for integration tests")
+        let overlay = first.overlay(on: WorkspaceCatalog(), title: "测试模组 episode", creatorID: "youtube:handle:@fixture")
+        XCTAssertEqual(overlay.creatorKnowledgeEntry(for: "youtube:handle:@fixture")?.meaning, "A fictional creator for integration tests")
+        settings.creatorMode = .cache; try await service.configure(settings)
+        let cached = await service.evidence(title: "", creatorID: "youtube:handle:@fixture", subscriberCount: nil)
+        XCTAssertNotNil(cached.creator)
+        settings.creatorMode = .full
+        let reopened = try DictionaryDiskStore(root: store.root, settings: settings), offline = UnavailableDictionaryFixture()
+        let local = OfficialDictionaryService(disk: reopened, http: offline)
+        let again = await local.evidence(title: "Fixture Mod episode", creatorID: "youtube:channel:UCfixture", subscriberCount: nil)
+        XCTAssertEqual(again.terms.first?.id, "term:fixture mod"); XCTAssertNotNil(again.creator)
+        let calls = await offline.total(); XCTAssertEqual(calls, 0)
     }
 }

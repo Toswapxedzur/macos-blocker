@@ -1205,6 +1205,7 @@
   const KNOWLEDGE_PLATFORMS = [["youtube", "YouTube"], ["bilibili", "Bilibili"], ["reddit", "Reddit"], ["twitter", "X"]];
   let knowledgeAddPlatform = "youtube";
   let knowledgeCreatorDraft = "";
+  let personalDictionaryImportDraft = "";
   let knowledgeSuggestionsOpen = false;
 
   function dictionaryControls() {
@@ -1224,14 +1225,18 @@
       </div>
       <p class="small-copy">${d.cachedCreators || 0} creators cached. Full packs stay indexed on disk; only matching descriptions enter tagging. ${d.creatorMode === "full" && !d.fullCreatorReady ? "Download Creators to enable full offline lookup." : ""}</p>
       ${notice(d.notice, "navy")}
-      <details class="dictionary-personal"><summary>Import / export your dictionary</summary><div data-form-id="dictionary-import" class="form-stack"><label class="field wide"><span class="field-label">Personal dictionary JSON</span><textarea data-field="json" data-personal-import rows="5" maxlength="8388608" placeholder='{"schemaVersion":1,"entries":[{"kind":"term","subject":"Example","meaning":"Description"}]}'></textarea></label><label class="field">Open JSON file<input type="file" accept=".json,application/json" data-personal-file></label><div class="action-row"><button class="secondary" data-action="importPersonalDictionary" data-form="dictionary-import">Import</button><button class="secondary" data-action="exportPersonalDictionary">Export JSON</button></div></div>${d.personalJSON ? `<textarea class="dictionary-export" data-personal-export readonly rows="6" aria-label="Exported personal dictionary">${esc(d.personalJSON)}</textarea><button class="secondary" data-action="copyPersonalDictionary">Copy JSON</button>` : ""}</details></section>`;
+      <details class="dictionary-personal"><summary>Import / export your dictionary</summary><div data-form-id="dictionary-import" class="form-stack"><label class="field wide"><span class="field-label">Personal dictionary JSON</span><textarea data-field="json" data-personal-import rows="5" maxlength="8388608" placeholder='{"schemaVersion":1,"entries":[{"kind":"term","subject":"Example","meaning":"Description"}]}'>${esc(personalDictionaryImportDraft)}</textarea></label><label class="field">Open JSON file<input type="file" accept=".json,application/json" data-personal-file></label><div class="action-row"><button class="secondary" data-action="importPersonalDictionary" data-form="dictionary-import">Import</button><button class="secondary" data-action="exportPersonalDictionary">Export JSON</button></div></div>${d.personalJSON ? `<textarea class="dictionary-export" data-personal-export readonly rows="6" aria-label="Exported personal dictionary">${esc(d.personalJSON)}</textarea><button class="secondary" data-action="copyPersonalDictionary">Copy JSON</button>` : ""}</details></section>`;
   }
   scope.addEventListener("change", async event => {
     if (!event.target.matches("[data-personal-file]")) return;
     const file = event.target.files?.[0];
     if (!file || file.size > 8 * 1024 * 1024) return;
+    personalDictionaryImportDraft = await file.text();
     const input = root.querySelector("[data-personal-import]");
-    if (input) input.value = await file.text();
+    if (input) input.value = personalDictionaryImportDraft;
+  });
+  scope.addEventListener("input", event => {
+    if (event.target.matches("[data-personal-import]")) personalDictionaryImportDraft = event.target.value;
   });
   function dictionaryOnboarding() {
     const d = state.settings?.dictionaries;

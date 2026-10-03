@@ -23,7 +23,8 @@ final class OfficialDictionaryTests: XCTestCase {
         }
         var files: [DictionaryManifest.File] = []
         for (shard, value) in shards {
-            let data = try JSONEncoder().encode(value), name = shard + ".json"
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+            let data = try encoder.encode(value), name = shard + ".json"
             try data.write(to: stage.appendingPathComponent(name))
             files.append(.init(name: name, byteCount: data.count, sha256: DictionaryKeys.digest(data)))
         }
@@ -55,6 +56,8 @@ final class OfficialDictionaryTests: XCTestCase {
             let overlay = evidence.overlay(on: catalog, title: "测试模组", creatorID: "youtube:channel:UCfixture")
             XCTAssertEqual(overlay.knowledgeEntries.first?.meaning, "Personal")
             XCTAssertEqual(overlay.creatorKnowledge.first?.meaning, "Personal creator")
+            let aliasOverlay = evidence.overlay(on: catalog, title: "", creatorID: "youtube:handle:@fixture")
+            XCTAssertEqual(aliasOverlay.creatorKnowledgeEntry(for: "youtube:handle:@fixture")?.meaning, "Personal creator")
             let before = DictionaryEvidence.fingerprint(title: "测试模组", creatorID: "", catalog: overlay, settings: .init())
             var changed = overlay; changed.knowledgeEntries.append(.init(kind: .term, subject: "Other Mod", meaning: "Unrelated"))
             XCTAssertEqual(before, DictionaryEvidence.fingerprint(title: "测试模组", creatorID: "", catalog: changed, settings: .init()))
@@ -70,6 +73,18 @@ final class OfficialDictionaryTests: XCTestCase {
         XCTAssertThrowsError(try store.install(new, stagedDirectory: ns))
         XCTAssertEqual(store.manifest(.term)?.version, "old")
         XCTAssertEqual(store.localEvidence(title: "Fixture Mod", creatorID: "").terms.first?.meaning, "Old")
+
+    }
+    func testSameVersionRedownloadRepairsCorruptedShard() throws {
+        let r = try root(), store = try DictionaryDiskStore(root: r, settings: .init())
+        let record = entry(.term, "Fixture Mod", "Original")
+        let (m, stage) = try pack([record], kind: .term, version: "v1", root: r)
+        let (repair, replacement) = try pack([record], kind: .term, version: "v1", root: r)
+        XCTAssertEqual(m, repair)
+        try store.install(m, stagedDirectory: stage)
+        try Data("corrupt".utf8).write(to: r.appendingPathComponent("packs/term-v1/"+m.files[0].name))
+        try store.install(repair, stagedDirectory: replacement)
+        XCTAssertEqual(store.localEvidence(title: "Fixture Mod", creatorID: "").terms.first?.meaning, "Original")
     }
     func testBoundedCreatorCacheNegativeEntriesAndVersionChange() throws {
         let r = try root(); var settings = DictionarySettings(); settings.creatorCacheSize = 2

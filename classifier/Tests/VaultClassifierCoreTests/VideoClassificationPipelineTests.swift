@@ -236,7 +236,7 @@ extension VideoClassificationPipelineTests {
         let pipeline = VideoClassificationPipeline(llm: engine)
         let creator = KnowledgeEntry(kind: .creator, subject: "youtube:channel:UCfixture", meaning: "Official creator context")
         for id in ["first", "second"] {
-            let outputs = try await pipeline.classifyBatch([.init(title: "Unclear title", entryID: id, creatorID: creator.subject)], platformID: "youtube", classifierType: makeType(), tree: makeTree(), catalog: WorkspaceCatalog(), dictionaryEvidence: [id:.init(creator:creator)])
+            let outputs = try await pipeline.classifyBatch([.init(title: "Unclear title", entryID: id, creatorID: "youtube:handle:@fixture")], platformID: "youtube", classifierType: makeType(), tree: makeTree(), catalog: WorkspaceCatalog(), dictionaryEvidence: [id:.init(creator:creator)])
             XCTAssertTrue(recorder.last?.dynamicSuffix.contains("Official creator context") ?? false)
             XCTAssertEqual(outputs.first?.source, .modelKnowledge)
             XCTAssertNotNil(outputs.first?.knowledgeFingerprint)

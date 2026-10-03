@@ -25,15 +25,7 @@ public final class VaultClassifierPage {
         model?.contributionPromptNative = true
         DispatchQueue.main.async { [weak self] in
             guard let model = self?.model, model.coordinator?.snapshot().settings.dictionaries.contributionChoiceMade == false else { return }
-            let alert = NSAlert()
-            alert.messageText = "Help improve the creator dictionary"
-            alert.informativeText = "Vault can occasionally send public creator IDs and their displayed subscriber/follower counts to customblocker.com. No titles, term names, browsing history or personal definitions are sent. Contributions are capped at 50 per day and retained for 7 days. You can disable this anytime in Classifier → Knowledge."
-            let checkbox = NSButton(checkboxWithTitle: "Share creator IDs and subscriber counts", target: nil, action: nil)
-            checkbox.state = .on; alert.accessoryView = checkbox
-            alert.addButton(withTitle: "Save choice")
-            alert.addButton(withTitle: "Don't share")
-            let result = alert.runModal()
-            model.completeDictionaryOnboarding(enabled: result == .alertFirstButtonReturn && checkbox.state == .on)
+            model.completeDictionaryOnboarding(enabled: DictionaryContributionPrompt.present())
         }
     }
 

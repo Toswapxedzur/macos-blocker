@@ -9,12 +9,18 @@ extension LocalClassifierCoordinator {
         let pack = try PersonalDictionaryPack.decode(data)
         try lock.withLock {
             var catalog = state.workspaceCatalog
+            for kind in KnowledgeEntryKind.allCases {
+                let existing = kind == .term ? catalog.knowledgeEntries : catalog.creatorKnowledge
+                let incoming = pack.entries.filter { $0.kind == kind }.map { KnowledgeEntry.key(kind: kind, subject: $0.subject) }
+                guard Set(existing.map(\.id)).union(incoming).count <= WorkspaceCatalog.maximumKnowledgeEntries else { throw DictionaryError.personalCapacityExceeded }
+            }
             for entry in pack.entries {
                 catalog.upsertKnowledgeEntry(.init(kind: entry.kind, subject: entry.subject.trimmingCharacters(in: .whitespacesAndNewlines), meaning: entry.meaning, writtenByUser: true))
             }
             try catalog.validate()
-            state.workspaceCatalog = catalog
-            try stateFile.save(state)
+            var updated = state; updated.workspaceCatalog = catalog
+            try stateFile.save(updated)
+            state = updated
         }
     }
 

@@ -16,6 +16,8 @@ window.runDictionaryTests = async () => {
   check(testState.lastDownloadedKind==='creator','download requires the explicit button action');
   q('.dictionary-personal').open=true;
   const personal=q('[data-personal-import]');personal.value='{"schemaVersion":1,"entries":[]}';
+  personal.dispatchEvent(new Event('input',{bubbles:true}));pushSnapshot();await wait();
+  check(q('[data-personal-import]').value===personal.value,'personal import draft survives a live snapshot');
   q('[data-action="importPersonalDictionary"]').click();await wait();
   check(testState.lastDictionaryImport===personal.value,'personal JSON import uses shared action');
   q('[data-action="exportPersonalDictionary"]').click();await wait();
