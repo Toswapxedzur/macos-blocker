@@ -60,6 +60,7 @@
   let utilityPanel = null;
   let researchSetupRequested = false;
   let researchSetupFocusPending = false;
+  let dictionarySetupFocusPending = false;
   let researchModelQuery = "";
   let researchModelQueryProvider = null;
   let releaseDialogFocus = null;
@@ -569,10 +570,30 @@
 
   function openResearchSetup() {
     utilityPanel = "settings";
+    dictionarySetupFocusPending = false;
     researchSetupRequested = true;
     researchSetupFocusPending = true;
     render();
     window.requestAnimationFrame(placeResearchSetup);
+  }
+
+  function openDictionarySetup() {
+    utilityPanel = "settings";
+    researchSetupRequested = false;
+    researchSetupFocusPending = false;
+    dictionarySetupFocusPending = true;
+    render();
+    window.requestAnimationFrame(placeDictionarySetup);
+  }
+
+  function placeDictionarySetup() {
+    if (!dictionarySetupFocusPending || utilityPanel !== "settings") return;
+    const target = root.querySelector(".utility-dictionary-section h3");
+    if (!target) return;
+    dictionarySetupFocusPending = false;
+    target.tabIndex = -1;
+    target.focus({ preventScroll: true });
+    target.scrollIntoView({ block: "center" });
   }
 
   function placeResearchSetup() {
@@ -710,7 +731,7 @@
         researchModelPicker()
       }</div><p class="small-copy" data-info="research.constantsNote" data-info-target=".utility-research-section h3">${tx("research.constantsNote")}</p><p class="small-copy">${tx("research.usageToday", { used: research.tokensUsedToday ?? 0, limit: research.dailyTokenLimit ?? 10000 })}</p>${researchStatusBlock(research.status)}</section>`;
       const packageSection = `<section class="utility-settings-section utility-resource-section" data-form-id="utility-package-form" data-autosave-action="savePackageSettings"><h3 class="utility-settings-section-title">${tx("settings.packageUpdates")}</h3><div class="utility-settings-fields">${selectField("settings.packageUpdates", "settings.packageUpdatesCopy", "packageUpdateMode", settings.packageUpdateMode, [["automatic", "enum.update.automatic"], ["downloadThenAsk", "enum.update.downloadThenAsk"], ["manual", "enum.update.manual"]])}</div></section>`;
-      content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy" data-info>${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${notice(state.issue, "red")}${classificationSection}${apiKeySettings()}${researchSection}${packageSection}<section class="utility-settings-section"><h3 class="utility-settings-section-title">${tx("language.label")}</h3>${languageSelection()}</section></div></section>`;
+      content = `<section class="utility-panel utility-settings-modal"><div class="utility-panel-head"><div><h2>${tx("utility.settings.title")}</h2><p class="section-copy" data-info>${tx("utility.settings.copy")}</p></div><button class="secondary utility-close" data-action="closeUtilityPanel">${tx("utility.close")}</button></div><div class="utility-settings-body">${notice(state.issue, "red")}${classificationSection}${apiKeySettings()}${researchSection}${dictionaryControls()}${packageSection}<section class="utility-settings-section"><h3 class="utility-settings-section-title">${tx("language.label")}</h3>${languageSelection()}</section></div></section>`;
     }
     if (!content) return "";
     return `<div class="utility-popover-layer" role="presentation"><button class="utility-popover-dismiss" data-action="closeUtilityPanel" aria-label="${tx("utility.close")}"></button><div class="utility-popover" data-list-key="settings" role="dialog" aria-modal="true" aria-label="${esc(tx("utility.settings.title"))}">${content}</div></div>`;
@@ -1215,17 +1236,17 @@
       const row = packs.find(item => item.kind === kind) || {};
       return `<div class="dictionary-pack"><div><strong>${label}</strong><p class="small-copy">${row.entryCount || 0} entries · ${esc(row.installedVersion || "Not downloaded")}${row.updateAvailable ? " · Update available" : ""}</p></div><button class="secondary" data-action="downloadDictionary" data-kind="${kind}" ${d.busy ? "disabled" : ""}>${kind === "creator" && d.creatorMode !== "full" ? "Update cache version" : "Download / Update"}</button></div>`;
     };
-    return `<section class="knowledge-group dictionary-controls"><div class="section-header"><div><h3>Official dictionaries</h3><p class="section-copy">Your own descriptions and AI-researched descriptions always take priority.</p></div><button class="secondary" data-action="checkDictionaryUpdates" ${d.busy ? "disabled" : ""}>${d.busy ? "Working…" : "Check for updates"}</button></div>
+    return `<section class="utility-settings-section utility-dictionary-section dictionary-controls"><div class="section-header"><div><h3 class="utility-settings-section-title">Official dictionaries</h3><p class="section-copy">Your own descriptions and AI-researched descriptions always take priority.</p></div><button class="secondary" data-action="checkDictionaryUpdates" ${d.busy ? "disabled" : ""}>${d.busy ? "Working…" : "Check for updates"}</button></div>
       ${pack("term", "Terms")}${pack("creator", "Creators")}
       <div data-form-id="dictionary-settings" data-autosave-action="saveDictionarySettings" class="form-stack">
         <label class="field"><span class="field-label">Creator dictionary</span><select data-field="creatorMode"><option value="cache" ${selected(d.creatorMode || "cache", "cache")}>Cache + online lookup</option><option value="full" ${selected(d.creatorMode, "full")}>Full download · offline lookup</option></select></label>
         <label class="field"><span class="field-label">Maximum cached creators</span><input type="number" data-field="creatorCacheSize" min="1" max="100000" step="1" value="${d.creatorCacheSize || 10000}" ${d.creatorMode === "full" ? "readonly" : ""}></label>
-        <label class="field wide"><span><input type="checkbox" data-field="contributionEnabled" ${d.contributionEnabled !== false ? "checked" : ""}> Help improve the creator dictionary</span><span class="small-copy">Occasionally send missing public creator IDs and available subscriber/follower counts. No term names, titles, history or personal descriptions. Maximum 50 submissions/day; server retention 7 days. Turn this off anytime.</span></label>
+        <label class="field wide dictionary-contribution"><span class="toggle-row"><input type="checkbox" data-field="contributionEnabled" ${d.contributionEnabled !== false ? "checked" : ""}> Help improve the creator dictionary</span><span class="small-copy">Occasionally send missing public creator IDs and available subscriber/follower counts. No term names, titles, history or personal descriptions. Maximum 50 submissions/day; server retention 7 days. Turn this off anytime.</span></label>
         <input type="checkbox" data-field="choiceMade" checked hidden>
       </div>
       <p class="small-copy">${d.cachedCreators || 0} creators cached. Full packs stay indexed on disk; only matching descriptions enter tagging. ${d.creatorMode === "full" && !d.fullCreatorReady ? "Download Creators to enable full offline lookup." : ""}</p>
       ${notice(d.notice, "navy")}
-      <details class="dictionary-personal"><summary>Import / export your dictionary</summary><div data-form-id="dictionary-import" class="form-stack"><label class="field wide"><span class="field-label">Personal dictionary JSON</span><textarea data-field="json" data-personal-import rows="5" maxlength="8388608" placeholder='{"schemaVersion":1,"entries":[{"kind":"term","subject":"Example","meaning":"Description"}]}'>${esc(personalDictionaryImportDraft)}</textarea></label><label class="field">Open JSON file<input type="file" accept=".json,application/json" data-personal-file></label><div class="action-row"><button class="secondary" data-action="importPersonalDictionary" data-form="dictionary-import">Import</button><button class="secondary" data-action="exportPersonalDictionary">Export JSON</button></div></div>${d.personalJSON ? `<textarea class="dictionary-export" data-personal-export readonly rows="6" aria-label="Exported personal dictionary">${esc(d.personalJSON)}</textarea><button class="secondary" data-action="copyPersonalDictionary">Copy JSON</button>` : ""}</details></section>`;
+      <details class="dictionary-personal" data-expand="dictionary-personal"${openExpands.has("dictionary-personal") ? " open" : ""}><summary>Import / export your dictionary</summary><div data-form-id="dictionary-import" class="form-stack"><label class="field wide"><span class="field-label">Personal dictionary JSON</span><textarea data-field="json" data-personal-import rows="5" maxlength="8388608" placeholder='{"schemaVersion":1,"entries":[{"kind":"term","subject":"Example","meaning":"Description"}]}'>${esc(personalDictionaryImportDraft)}</textarea></label><label class="field">Open JSON file<input type="file" accept=".json,application/json" data-personal-file></label><div class="action-row"><button class="secondary" data-action="importPersonalDictionary" data-form="dictionary-import">Import</button><button class="secondary" data-action="exportPersonalDictionary">Export JSON</button></div></div>${d.personalJSON ? `<textarea class="dictionary-export" data-personal-export readonly rows="6" aria-label="Exported personal dictionary">${esc(d.personalJSON)}</textarea><button class="secondary" data-action="copyPersonalDictionary">Copy JSON</button>` : ""}</details></section>`;
   }
   scope.addEventListener("change", async event => {
     if (!event.target.matches("[data-personal-file]")) return;
@@ -1241,7 +1262,23 @@
   function dictionaryOnboarding() {
     const d = state.settings?.dictionaries;
     if (!d || d.contributionChoiceMade || d.nativePrompt) return "";
-    return `<div class="utility-popover-layer" role="presentation"><div class="deletion-dialog" role="dialog" aria-modal="true" aria-label="Creator dictionary contribution"><h3>Help improve the creator dictionary</h3><p>Vault can occasionally send public creator IDs and their available subscriber/follower counts to our server. No titles, term names, browsing history or personal definitions are sent. You can disable this anytime in Knowledge.</p><label><input type="checkbox" data-contribution-first checked> Share creator IDs and subscriber counts</label><p class="small-copy">Maximum 50/day; retained for 7 days. See the Privacy Policy for details.</p><div class="action-row"><button class="primary" data-action="saveDictionaryFirstChoice">Save choice</button><button class="secondary" data-action="declineDictionaryContribution">Don't share</button></div></div></div>`;
+    return `<div class="utility-popover-layer" role="presentation"><div class="deletion-dialog" role="dialog" aria-modal="true" aria-label="Creator dictionary contribution"><h3>Help improve the creator dictionary</h3><p>Vault can occasionally send public creator IDs and their available subscriber/follower counts to our server. No titles, term names, browsing history or personal definitions are sent. You can disable this anytime in Settings.</p><label><input type="checkbox" data-contribution-first checked> Share creator IDs and subscriber counts</label><p class="small-copy">Maximum 50/day; retained for 7 days. See the Privacy Policy for details.</p><div class="action-row"><button class="primary" data-action="saveDictionaryFirstChoice">Save choice</button><button class="secondary" data-action="declineDictionaryContribution">Don't share</button></div></div></div>`;
+  }
+
+  function dictionaryConnection() {
+    const d = state.settings?.dictionaries || {};
+    const packs = d.packs || [];
+    const term = packs.find(item => item.kind === "term") || {};
+    const creator = packs.find(item => item.kind === "creator") || {};
+    const version = pack => pack.installedVersion || "Not downloaded";
+    const creatorSummary = d.creatorMode === "full"
+      ? `Full download · ${creator.entryCount || 0} entries`
+      : `Cache + online lookup · ${d.cachedCreators || 0} cached`;
+    const updating = packs.some(pack => pack.updateAvailable);
+    const creatorReady = creator.installedVersion && (d.creatorMode !== "full" || d.fullCreatorReady);
+    const complete = term.installedVersion && creatorReady;
+    const status = d.busy ? "Working…" : updating ? "Update available" : complete ? "Installed" : "Not downloaded";
+    return `<section class="knowledge-dictionary-connection"><div><h3>Dictionary</h3><p class="small-copy">Terms · ${term.entryCount || 0} entries · ${esc(version(term))}</p><p class="small-copy">Creators · ${esc(creatorSummary)} · ${esc(creatorReady ? version(creator) : "Not downloaded")}</p>${statusPill(esc(status), d.busy || updating || !complete ? "gold" : "cyan")}</div><button class="secondary" data-action="openDictionarySetup">Configure dictionaries</button></section>`;
   }
 
   function knowledgeWorkspace() {
@@ -1282,7 +1319,7 @@
     const creatorGroups = KNOWLEDGE_PLATFORMS.map(([platformID, label]) =>
       group(t("knowledge.creatorsOn", { platform: label }), "", creators.filter((entry) => entry.platformID === platformID), "creator", platformID)).join("");
 
-    return `<div class="workspace knowledge-workspace">${header("knowledge.title", "knowledge.copy", tx("knowledge.badge"), "gold")}<div class="notice navy" data-info="knowledge.disclosure">${tx("knowledge.disclosure")}</div>${dictionaryControls()}${connection}${notice(state.notices?.knowledge, "navy")}${notice(state.issue, "red")}${addTerm}${addCreator}${group(t("knowledge.terms"), t("knowledge.termsHint"), terms, "term")}<p class="small-copy" data-info="knowledge.creatorsHint">${tx("knowledge.creatorsHint")}</p>${creatorGroups}</div>`;
+    return `<div class="workspace knowledge-workspace">${header("knowledge.title", "knowledge.copy", tx("knowledge.badge"), "gold")}<div class="notice navy" data-info="knowledge.disclosure">${tx("knowledge.disclosure")}</div>${dictionaryConnection()}${connection}${notice(state.notices?.knowledge, "navy")}${notice(state.issue, "red")}${addTerm}${addCreator}${group(t("knowledge.terms"), t("knowledge.termsHint"), terms, "term")}<p class="small-copy" data-info="knowledge.creatorsHint">${tx("knowledge.creatorsHint")}</p>${creatorGroups}</div>`;
   }
 
   // Each platform and Terms share the standard per-list search. Keep names,
@@ -1577,6 +1614,7 @@
       drawTreeConnections();
       placeTreePopovers();
       placeResearchSetup();
+      placeDictionarySetup();
       placeResearchModelMenu();
       placeKnowledgeSuggestions();
     });
@@ -1712,12 +1750,14 @@
       return;
     }
 
+    if (action === "openDictionarySetup") { openDictionarySetup(); return; }
     if (action === "openResearchSetup") { openResearchSetup(); return; }
     if (action === "openManual") { window.VaultManual?.open("user", "Classifier"); return; }
     if (action === "openUtilityPanel") {
       closeKnowledgeSuggestions();
       researchSetupRequested = false;
       researchSetupFocusPending = false;
+      dictionarySetupFocusPending = false;
       const nextPanel = data.utilityPanel === "settings" ? "settings" : null;
       utilityPanel = utilityPanel === nextPanel ? null : nextPanel;
       render();
@@ -1727,6 +1767,7 @@
       utilityPanel = null;
       researchSetupRequested = false;
       researchSetupFocusPending = false;
+      dictionarySetupFocusPending = false;
       render();
       return;
     }
@@ -1805,6 +1846,7 @@
     utilityPanel = null;
     researchSetupRequested = false;
     researchSetupFocusPending = false;
+    dictionarySetupFocusPending = false;
     render();
   }
 
