@@ -438,7 +438,7 @@ public struct BlockerWebView: NSViewRepresentable {
             panel.canChooseDirectories = true
             panel.canCreateDirectories = true
             panel.allowsMultipleSelection = false
-            panel.message = "Grant a folder for custom rules to read and write .txt, .csv, and .json files."
+            panel.message = VaultNativeLanguage.text("native.folderGrant", fallback: "Grant a folder for custom rules to read and write .txt, .csv, and .json files.")
             guard panel.runModal() == .OK, let url = panel.url else { return }
             if let bookmark = try? url.bookmarkData(
                 options: [.withSecurityScope],
@@ -493,7 +493,7 @@ public struct BlockerWebView: NSViewRepresentable {
             #if os(macOS)
             let alert = NSAlert()
             alert.messageText = message
-            alert.addButton(withTitle: "OK")
+            alert.addButton(withTitle: VaultNativeLanguage.text("native.ok", fallback: "OK"))
             alert.runModal()
             #endif
             completionHandler()
@@ -508,8 +508,8 @@ public struct BlockerWebView: NSViewRepresentable {
             #if os(macOS)
             let alert = NSAlert()
             alert.messageText = message
-            alert.addButton(withTitle: "OK")
-            alert.addButton(withTitle: "Cancel")
+            alert.addButton(withTitle: VaultNativeLanguage.text("native.ok", fallback: "OK"))
+            alert.addButton(withTitle: VaultNativeLanguage.text("native.cancel", fallback: "Cancel"))
             let response = alert.runModal()
             completionHandler(response == .alertFirstButtonReturn)
             #else
@@ -527,8 +527,8 @@ public struct BlockerWebView: NSViewRepresentable {
             #if os(macOS)
             let alert = NSAlert()
             alert.messageText = prompt
-            alert.addButton(withTitle: "OK")
-            alert.addButton(withTitle: "Cancel")
+            alert.addButton(withTitle: VaultNativeLanguage.text("native.ok", fallback: "OK"))
+            alert.addButton(withTitle: VaultNativeLanguage.text("native.cancel", fallback: "Cancel"))
             let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
             input.stringValue = defaultText ?? ""
             alert.accessoryView = input

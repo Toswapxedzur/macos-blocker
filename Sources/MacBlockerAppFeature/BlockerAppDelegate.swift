@@ -130,12 +130,11 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
     open func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard ConnectionHub.shared.activeClusterCount() > 0 else { return .terminateNow }
         let alert = NSAlert()
-        alert.messageText = "Quit Mac Vault and disconnect linked groups?"
+        alert.messageText = VaultNativeLanguage.text("native.quitLinked.title", fallback: "Quit Mac Vault and disconnect linked groups?")
         alert.informativeText =
-            "You have linked groups. Quitting disconnects Mac Vault, so linked browsers "
-            + "will show this Mac as offline and shared changes won't sync until you reopen the app."
-        alert.addButton(withTitle: "Quit")
-        alert.addButton(withTitle: "Cancel")
+            VaultNativeLanguage.text("native.quitLinked.body", fallback: "You have linked groups. Quitting disconnects Mac Vault, so linked browsers will show this Mac as offline and shared changes won't sync until you reopen the app.")
+        alert.addButton(withTitle: VaultNativeLanguage.text("native.quit", fallback: "Quit"))
+        alert.addButton(withTitle: VaultNativeLanguage.text("native.cancel", fallback: "Cancel"))
         return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
     }
 
