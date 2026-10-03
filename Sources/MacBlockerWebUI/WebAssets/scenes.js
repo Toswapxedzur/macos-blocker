@@ -14,7 +14,7 @@
   const SCENES = {
     classifier: {
       styles: ["classifier/app.css"],
-      scripts: ["classifier/strings.js", "classifier/app.js"],
+      scripts: ["classifier/strings.js", "classifier/notice-language.js", "classifier/app.js"],
       markup: '<main id="app" aria-live="polite"></main>'
     },
     activity: {
