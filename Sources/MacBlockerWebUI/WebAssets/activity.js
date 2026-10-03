@@ -8,14 +8,27 @@
   // The scene's shadow root (Mac Vault's scenes.js): the page is built and
   // listened to inside it.
   var scope = window.VaultScenes.scope("activity");
+  function language() { return document.documentElement.lang || "en"; }
+  function at(key, fallback, values) {
+    var fullKey = "activity." + key, translated = window.VaultTranslate && window.VaultTranslate(fullKey, values || {});
+    var result = translated && translated !== fullKey ? translated : fallback;
+    Object.keys(values || {}).forEach(function (name) { result = result.replaceAll("{" + name + "}", String(values[name])); });
+    return result;
+  }
+  function kindLabel(kind) { return at("kind." + kind, kind); }
+  function refreshHeaderLanguage() {
+    scope.querySelectorAll("[data-i18n]").forEach(function (node) { node.textContent = window.VaultTranslate ? window.VaultTranslate(node.dataset.i18n) : node.textContent; });
+    scope.querySelectorAll("[data-i18n-aria-label]").forEach(function (node) { if (window.VaultTranslate) node.setAttribute("aria-label", window.VaultTranslate(node.dataset.i18nAriaLabel)); });
+  }
+
   scope.getElementById("activity").innerHTML = [
     '<header class="vui-topbar">',
-    '<nav class="vui-tabs" aria-label="Scene">',
-    '<button type="button" class="vui-tab" data-scene="vault">Vault</button>',
-    '<button type="button" class="vui-tab" data-scene="classifier">Classifier</button>',
-    '<button type="button" class="vui-tab is-active" data-scene="activity">Activity</button>',
+    '<nav class="vui-tabs" data-i18n-aria-label="activity.scene" aria-label="Scene">',
+    '<button type="button" class="vui-tab" data-scene="vault" data-i18n="scene.vault">Vault</button>',
+    '<button type="button" class="vui-tab" data-scene="classifier" data-i18n="scene.classifier">Classifier</button>',
+    '<button type="button" class="vui-tab is-active" data-scene="activity" data-i18n="scene.activity">Activity</button>',
     "</nav>",
-    '<div class="vui-topbar-links"><button type="button" class="secondary" id="activityManualButton">User manual</button></div>',
+    '<div class="vui-topbar-links"><button type="button" class="secondary" id="activityManualButton" data-i18n="manual.title">User manual</button></div>',
     "</header>",
     '<main><div class="page" id="page"><p class="empty">Loading…</p></div></main>'
   ].join("");
@@ -83,7 +96,7 @@
     } catch (_) {}
   }
 
-  var CLICK_AGAIN = "Click again to delete";
+  var CLICK_AGAIN = at("clickAgain", "Click again to delete");
 
   // Durations read as the Vault editor's (owner 2026-09-30): 01:20:00.
   function fmt(seconds) {
@@ -193,7 +206,7 @@
     var body = el("div", "row-body");
     var name = el("div", "row-name");
     name.appendChild(el("span", "row-label", item.label || item.key));
-    if (kind) name.appendChild(el("span", "row-kind", kind));
+    if (kind) name.appendChild(el("span", "row-kind", kindLabel(kind)));
     body.appendChild(name);
     if (seconds !== null) {
       var bar = el("div", "row-bar"), fill = item.color ? el("span") : paint(el("span"), item.colorIndex);
@@ -294,8 +307,8 @@
 
   // One formatter each: building one per call cost ~0.2 ms, thousands of
   // times per render.
-  var CLOCK = new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" });
-  var DAY = new Intl.DateTimeFormat([], { month: "short", day: "numeric" });
+  var CLOCK = new Intl.DateTimeFormat(language(), { hour: "numeric", minute: "2-digit" });
+  var DAY = new Intl.DateTimeFormat(language(), { month: "short", day: "numeric" });
   function clock(ms) { return CLOCK.format(ms); }
   function day(ms) { return DAY.format(ms); }
 
@@ -318,7 +331,7 @@
   function hoverable(node, info) { hoverInfo.set(node, info); return node; }
   function share(part, whole, of) {
     var p = part / whole * 100;
-    return (p > 0 && p < 1 ? "<1%" : Math.round(p) + "%") + " of " + of;
+    return at("shareOf", "{percent} of {total}", { percent: p > 0 && p < 1 ? "<1%" : Math.round(p) + "%", total: of });
   }
   function timeSpan(fromMs, toMs, withDay) {
     var text = clock(fromMs) + " – " + clock(toMs);
@@ -386,7 +399,7 @@
     return {
       title: s.label || s.key,
       key: s.key,
-      lines: [kind + (browser ? " · in " + (browser.label || browser.key) : ""),
+      lines: [browser ? at("kindInBrowser", "{kind} · in {browser}", { kind: kindLabel(kind), browser: browser.label || browser.key }) : kindLabel(kind),
         timeSpan(fromMs, toMs, multiDay) + " · " + fmt((toMs - fromMs) / 1000)]
     };
   }
@@ -394,9 +407,9 @@
   // A Usage entry (an app, a site, a merge group, a browser's leftover).
   function entryInfo(entry, lines) {
     var kind = entry.kind === "Group"
-      ? "Merge group · " + entry.group.members.length + (entry.group.members.length === 1 ? " member" : " members")
-      : entry.nameOnly ? "App · browser, time outside recorded sites"
-      : entry.videos ? entry.kind + " · " + entry.videos.length + (entry.videos.length === 1 ? " item" : " items") : entry.kind;
+      ? at("mergeMembers", "Merge group · {count} members", { count: entry.group.members.length })
+      : entry.nameOnly ? at("outsideBrowser", "App · browser, time outside recorded sites", {})
+      : entry.videos ? kindLabel(entry.kind) + " · " + at("itemsCount", "{count} items", { count: entry.videos.length }) : kindLabel(entry.kind);
     if (entry.item.color) return { title: entry.item.label, color: entry.item.color, lines: [kind].concat(lines) };
     return { title: entry.item.label || entry.item.key, key: entry.item.key, lines: [kind].concat(lines) };
   }
@@ -408,8 +421,8 @@
 
   function notRecorded(categories) {
     var off = el("div", "off");
-    off.appendChild(el("span", null, "Not recorded."));
-    off.appendChild(textButton("Turn on", function () {
+    off.appendChild(el("span", null, at("notRecorded", "Not recorded.")));
+    off.appendChild(textButton(at("turnOn", "Turn on"), function () {
       categories.forEach(function (category) { send({ kind: "setSettings", category: category, enabled: true }); });
     }));
     return off;
@@ -429,8 +442,8 @@
 
   function keepSelect(value, follow, onChange) {
     var sel = el("select");
-    var choices = (follow ? [[-1, "Same as all (" + follow + ")"]] : []).concat(RETENTIONS);
-    choices.forEach(function (r) { var o = el("option", null, r[1]); o.value = String(r[0]); o.selected = r[0] === value; sel.appendChild(o); });
+    var choices = (follow ? [[-1, at("sameAsAll", "Same as all ({setting})", { setting: follow })]] : []).concat(RETENTIONS);
+    choices.forEach(function (r) { var o = el("option", null, at("label." + r[1], r[1])); o.value = String(r[0]); o.selected = r[0] === value; sel.appendChild(o); });
     sel.addEventListener("change", function () { onChange(parseInt(sel.value, 10)); });
     return sel;
   }
@@ -442,34 +455,34 @@
     var box = el("details", "vui-expand settings");
     box.open = recordingOpen;
     box.addEventListener("toggle", function () { recordingOpen = box.open; });
-    box.appendChild(el("summary", null, "Recording"));
+    box.appendChild(el("summary", null, at("recording", "Recording")));
     // The global Keep (owner 2026-09-29); each kind follows it unless set.
     var global = typeof s.retentionDays === "number" ? s.retentionDays : 180;
-    var globalName = (RETENTIONS.filter(function (r) { return r[0] === global; })[0] || [0, global + " days"])[1];
+    var globalName = (RETENTIONS.filter(function (r) { return r[0] === global; })[0] || [0, at("days", "{count} days", { count: global })])[1];
     var all = el("div", "settings-row");
-    all.appendChild(el("span", "name", "All history"));
-    var allKeep = el("label"); allKeep.appendChild(document.createTextNode("Keep"));
+    all.appendChild(el("span", "name", at("allHistory", "All history")));
+    var allKeep = el("label"); allKeep.appendChild(document.createTextNode(at("keep", "Keep")));
     allKeep.appendChild(keepSelect(global, null, function (days) { send({ kind: "setSettings", retentionDays: days }); }));
-    infoField(allKeep, "retention:all", "Keep all history", "How long recorded history is retained. Categories and platform feeds follow this value unless they have their own setting. Older records are deleted automatically.");
+    infoField(allKeep, "retention:all", at("keepAllHistory", "Keep all history"), at("howLongRecordedHistoryIsRetainedCategoriesAndPlatformFeedsFollowThisValueUnlessTheyHaveTheirOwnSettingOlderRecordsAreDeletedAutomatically", "How long recorded history is retained. Categories and platform feeds follow this value unless they have their own setting. Older records are deleted automatically."));
     all.appendChild(allKeep);
     box.appendChild(all);
     KINDS.forEach(function (c) {
       var cat = s[c.id] || { enabled: false, retentionDays: null };
       var row = el("div", "settings-row");
-      row.appendChild(el("span", "name", c.title));
+      row.appendChild(el("span", "name", at("label." + c.title, c.title)));
       var rec = el("label"); var sw = el("input"); sw.type = "checkbox"; sw.checked = !!cat.enabled;
       sw.addEventListener("change", function () { send({ kind: "setSettings", category: c.key, enabled: sw.checked }); });
-      infoField(rec, "record:" + c.key, "Record " + c.title, "Record new " + c.title.toLowerCase() + " history. Turning recording off leaves saved history in place.");
-      rec.appendChild(sw); rec.appendChild(document.createTextNode("Record")); row.appendChild(rec);
-      var keep = el("label"); keep.appendChild(document.createTextNode("Keep"));
+      infoField(rec, "record:" + c.key, at("recordCategory", "Record {category}", { category: at("label." + c.title, c.title) }), at("recordCategoryInfo", "Record new {category} history. Turning recording off leaves saved history in place.", { category: at("label." + c.title, c.title) }));
+      rec.appendChild(sw); rec.appendChild(document.createTextNode(at("record", "Record"))); row.appendChild(rec);
+      var keep = el("label"); keep.appendChild(document.createTextNode(at("keep", "Keep")));
       var own = typeof cat.retentionDays === "number" ? cat.retentionDays : -1;
-      keep.appendChild(keepSelect(own, globalName.toLowerCase(), function (days) {
+      keep.appendChild(keepSelect(own, at("label." + globalName, globalName), function (days) {
         send({ kind: "setSettings", category: c.key, retentionDays: days });
       }));
-      infoField(keep, "keep:" + c.key, "Keep " + c.title, "How long this category’s history is retained. Choose Same as all to follow the shared retention setting; older records are deleted automatically.");
+      infoField(keep, "keep:" + c.key, at("keepCategory", "Keep {category}", { category: at("label." + c.title, c.title) }), at("howLongThisCategorySHistoryIsRetainedChooseSameAsAllToFollowTheSharedRetentionSettingOlderRecordsAreDeletedAutomatically", "How long this category’s history is retained. Choose Same as all to follow the shared retention setting; older records are deleted automatically."));
       row.appendChild(keep);
       // Every delete asks once more (VaultUI.confirmClick, as in every section).
-      var del = deleteButton("Delete history", "history:" + c.key, function () {
+      var del = deleteButton(at("deleteHistory", "Delete history"), "history:" + c.key, function () {
         send({ kind: "delete", scope: "category", category: c.key });
       });
       row.appendChild(del);
@@ -481,28 +494,28 @@
 
   // Platform feeds (owner 2026-09-30): what the classifier records from each
   // platform's pages — everything shown, opened or not — to tag it. Only the
-  // platforms that classify need it; each keeps "Keep all history" unless set.
+  // platforms that classify need it; each keeps at("keepAllHistory", "Keep all history") unless set.
   function feedsGroup(globalName) {
     var group = el("div", "feeds");
-    group.appendChild(el("div", "feeds-title", "Platform feeds"));
-    group.appendChild(el("p", "feeds-hint", "Record content shown on platform pages, whether opened or not. Local tagging is supported on the indicated platforms and requires feed recording to be on."));
+    group.appendChild(el("div", "feeds-title", at("platformFeeds", "Platform feeds")));
+    group.appendChild(el("p", "feeds-hint", at("recordContentShownOnPlatformPagesWhetherOpenedOrNotLocalTaggingIsSupportedOnTheIndicatedPlatformsAndRequiresFeedRecordingToBeOn", "Record content shown on platform pages, whether opened or not. Local tagging is supported on the indicated platforms and requires feed recording to be on.")));
     (platformFeeds.platforms || []).forEach(function (p) {
       var row = el("div", "settings-row");
       var name = el("span", "name");
       name.appendChild(el("span", null, p.name));
-      name.appendChild(el("span", "feeds-meta", (p.classifies ? "Tagging supported" : "Tagging not supported") + " · " + p.entries + (p.entries === 1 ? " entry" : " entries")));
+      name.appendChild(el("span", "feeds-meta", (p.classifies ? at("taggingSupported", "Tagging supported") : at("taggingNotSupported", "Tagging not supported")) + " · " + at("entriesCount", "{count} entries", { count: p.entries })));
       row.appendChild(name);
       var rec = el("label"); var sw = el("input"); sw.type = "checkbox"; sw.checked = !!p.record;
       sw.addEventListener("change", function () { send({ kind: "collection-record", platformID: p.id, record: sw.checked }); });
-      infoField(rec, "feed-record:" + p.id, "Record " + p.name, "Record content seen on this platform for the Classifier. Content is tagged only while its platform feed is recorded.");
-      rec.appendChild(sw); rec.appendChild(document.createTextNode("Record")); row.appendChild(rec);
-      var keep = el("label"); keep.appendChild(document.createTextNode("Keep"));
-      keep.appendChild(keepSelect(typeof p.keepDays === "number" ? p.keepDays : -1, globalName.toLowerCase(), function (days) {
+      infoField(rec, "feed-record:" + p.id, at("recordPlatform", "Record {platform}", { platform: p.name }), at("recordContentSeenOnThisPlatformForTheClassifierContentIsTaggedOnlyWhileItsPlatformFeedIsRecorded", "Record content seen on this platform for the Classifier. Content is tagged only while its platform feed is recorded."));
+      rec.appendChild(sw); rec.appendChild(document.createTextNode(at("record", "Record"))); row.appendChild(rec);
+      var keep = el("label"); keep.appendChild(document.createTextNode(at("keep", "Keep")));
+      keep.appendChild(keepSelect(typeof p.keepDays === "number" ? p.keepDays : -1, at("label." + globalName, globalName), function (days) {
         send({ kind: "collection-keep", platformID: p.id, days: days });
       }));
-      infoField(keep, "feed-keep:" + p.id, "Keep " + p.name, "How long this platform’s feed entries are retained. Choose Same as all to follow the shared retention setting; older entries are deleted automatically.");
+      infoField(keep, "feed-keep:" + p.id, at("keepPlatform", "Keep {platform}", { platform: p.name }), at("howLongThisPlatformSFeedEntriesAreRetainedChooseSameAsAllToFollowTheSharedRetentionSettingOlderEntriesAreDeletedAutomatically", "How long this platform’s feed entries are retained. Choose Same as all to follow the shared retention setting; older entries are deleted automatically."));
       row.appendChild(keep);
-      var del = deleteButton("Delete collected data", "feed:" + p.id, function () {
+      var del = deleteButton(at("deleteCollectedData", "Delete collected data"), "feed:" + p.id, function () {
         send({ kind: "collection-clear", platformID: p.id });
       });
       del.disabled = !p.entries;
@@ -514,9 +527,16 @@
 
   var NAVY = [30, 58, 138];
   function navy(alpha) { return "rgba(" + NAVY.join(",") + "," + alpha + ")"; }
-  var DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  var MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  var DAY_NAMES, MONTHS, MONTH_NAMES;
+  function refreshDateNames() {
+    var weekday = new Intl.DateTimeFormat(language(), { weekday: "short" });
+    var month = new Intl.DateTimeFormat(language(), { month: "short" });
+    var fullMonth = new Intl.DateTimeFormat(language(), { month: "long" });
+    DAY_NAMES = Array.from({ length: 7 }, function (_, i) { return weekday.format(new Date(2023, 0, i + 1, 12)); });
+    MONTHS = Array.from({ length: 12 }, function (_, i) { return month.format(new Date(2023, i, 1, 12)); });
+    MONTH_NAMES = Array.from({ length: 12 }, function (_, i) { return fullMonth.format(new Date(2023, i, 1, 12)); });
+  }
+  refreshDateNames();
 
   function svg(tag, attrs) {
     var node = document.createElementNS("http://www.w3.org/2000/svg", tag);
@@ -528,7 +548,7 @@
   // darker = more time.
   function dayMap(h, name, section) {
     var wrap = el("div", "chart");
-    wrap.appendChild(el("div", "chart-title", "Last " + h.daySeconds.length + " days"));
+    wrap.appendChild(el("div", "chart-title", at("lastDays", "Last {count} days", { count: h.daySeconds.length })));
     var max = Math.max.apply(null, h.daySeconds.concat([1]));
     var cell = 13, gap = 3, top = 16, left = 28;
     var firstDay = new Date(h.dayStartsMs[0]);
@@ -536,7 +556,7 @@
     var weeks = Math.ceil((lead + h.daySeconds.length) / 7);
     var width = left + weeks * (cell + gap), height = top + 7 * (cell + gap);
     var chart = svg("svg", { viewBox: "0 0 " + width + " " + height, width: width, height: height, class: "map" });
-    ["Mon", "Wed", "Fri"].forEach(function (name, i) {
+    [DAY_NAMES[1], DAY_NAMES[3], DAY_NAMES[5]].forEach(function (name, i) {
       var label = svg("text", { x: 0, y: top + (i * 2) * (cell + gap) + cell - 2, class: "axis-label" });
       label.textContent = name;
       chart.appendChild(label);
@@ -561,8 +581,8 @@
       hoverable(square, {
         title: DAY_NAMES[date.getDay()] + " " + MONTHS[date.getMonth()] + " " + date.getDate() + ", " + date.getFullYear(),
         color: level === 0 ? "#e8ecf2" : navy([0, 0.3, 0.5, 0.72, 1][level]),
-        lines: [name + ": " + (seconds > 0 ? fmt(seconds) : "not used"),
-          seconds > 0 ? share(seconds, max, "the busiest day") : null]
+        lines: [name + ": " + (seconds > 0 ? fmt(seconds) : at("notUsed", "not used")),
+          seconds > 0 ? share(seconds, max, at("theBusiestDay", "the busiest day")) : null]
       });
       square.style.cursor = "pointer";
       square.addEventListener("click", function () { setRange(section, "since:" + dayStart(h.dayStartsMs[i])); });
@@ -602,9 +622,9 @@
   // Share of the chosen range (Today / 7 / 30 days): the Usage rows.
   function pie(items, title, searchKey) {
     var wrap = el("div", "chart");
-    wrap.appendChild(el("div", "chart-title", title || "Share"));
+    wrap.appendChild(el("div", "chart-title", title || at("share", "Share")));
     var total = items.reduce(function (sum, entry) { return sum + entry.seconds; }, 0);
-    if (!total) { wrap.appendChild(el("p", "empty", "Nothing in this range.")); return wrap; }
+    if (!total) { wrap.appendChild(el("p", "empty", at("nothingInThisRange", "Nothing in this range."))); return wrap; }
     var split = splitSlices(items, total);
     var slices = split.named.map(function (entry) {
       var label = entry.item.label || entry.item.key;
@@ -612,23 +632,23 @@
     });
     if (split.otherSeconds > 0) {
       slices.push({
-        label: "Other · " + split.other.length + (split.other.length === 1 ? " item" : " items"),
+        label: at("otherItems", "Other · {count} items", { count: split.other.length }),
         other: split.other,
         seconds: split.otherSeconds,
         color: "#cbd5e1"
       });
     }
     function sliceInfo(slice) {
-      var line = fmt(slice.seconds) + " · " + share(slice.seconds, total, "the total (" + fmt(total) + ")");
+      var line = fmt(slice.seconds) + " · " + share(slice.seconds, total, at("totalDuration", "the total ({time})", { time: fmt(total) }));
       if (slice.entry) return entryInfo(slice.entry, [line]);
       var list = slice.other.slice(0, 12).map(function (entry) {
-        return [entry.item.label || entry.item.key, entry.nameOnly ? "outside sites" : fmt(entry.seconds)];
+        return [entry.item.label || entry.item.key, entry.nameOnly ? at("outsideSites", "outside sites") : fmt(entry.seconds)];
       });
-      if (slice.other.length > 12) list.push(["and " + (slice.other.length - 12) + " more", ""]);
+      if (slice.other.length > 12) list.push([at("moreCount", "and {count} more", { count: slice.other.length - 12 }), ""]);
       var why = [];
-      if (slice.other.some(function (entry) { return !entry.nameOnly; })) why.push("items under 2% each");
-      if (slice.other.some(function (entry) { return entry.nameOnly; })) why.push("browsers' time outside recorded sites");
-      return { title: slice.label, color: slice.color, lines: [line, why.join(", and ")], list: list };
+      if (slice.other.some(function (entry) { return !entry.nameOnly; })) why.push(at("itemsUnder2Each", "items under 2% each"));
+      if (slice.other.some(function (entry) { return entry.nameOnly; })) why.push(at("browsersTimeOutsideRecordedSites", "browsers' time outside recorded sites"));
+      return { title: slice.label, color: slice.color, lines: [line, why.join(at("andSeparator", ", and "))], list: list };
     }
     var size = 140, r = 64, c = size / 2;
     var chart = svg("svg", { viewBox: "0 0 " + size + " " + size, width: size, height: size, class: "pie" });
@@ -653,7 +673,7 @@
     var body = el("div", "pie-body");
     body.appendChild(chart);
     var legend = el("div", "pie-legend");
-    searchable(legend, searchKey, "Search chart items", ".legend-item");
+    searchable(legend, searchKey, at("searchChartItems", "Search chart items"), ".legend-item");
     paged(legend, slices, function (slice) { return slice.label; }, function (slice) {
       var item = el("div", "legend-item");
       item.dataset.vuiSearchText = slice.label;
@@ -698,7 +718,7 @@
     var target = editing;
     if (answer.ok) { editing = null; return; }
     if (!target) return;
-    target.message = answer.message || "Not saved.";
+    target.message = answer.message || at("notSaved", "Not saved.");
     target.conflicts = answer.conflicts || null;
     refreshGroups();
   };
@@ -722,8 +742,8 @@
     box.id = "groups";
     box.dataset.editingId = editing ? editing.id : "";
     var head = el("div", "column-head");
-    head.appendChild(el("h2", null, "Groups"));
-    if (!editing) head.appendChild(textButton("New group", function () { openEditor(null); }, "head-button"));
+    head.appendChild(el("h2", null, at("groups", "Groups")));
+    if (!editing) head.appendChild(textButton(at("newGroup", "New group"), function () { openEditor(null); }, "head-button"));
     box.appendChild(head);
     if (editing) { box.appendChild(groupForm()); return box; }
     var usageSeconds = new Map();
@@ -737,11 +757,11 @@
       return { g: g, seconds: seconds };
     }).sort(function (x, y) { return y.seconds - x.seconds; });   // merge or not, by time (owner 2026-09-30)
     if (!list.length) {
-      box.appendChild(el("p", "empty", "No groups yet. A group shows its apps and websites together in Usage; a merge group also stands in for them everywhere."));
+      box.appendChild(el("p", "empty", at("noGroupsYetAGroupShowsItsAppsAndWebsitesTogetherInUsageAMergeGroupAlsoStandsInForThemEverywhere", "No groups yet. A group shows its apps and websites together in Usage; a merge group also stands in for them everywhere.")));
       return box;
     }
     var cards = el("div", "group-cards");
-    searchable(cards, "activity-groups", "Search groups", ".group-card");
+    searchable(cards, "activity-groups", at("searchGroups", "Search groups"), ".group-card");
     var top = Math.max.apply(null, list.map(function (x) { return x.seconds; }).concat([1]));
     paged(cards, list, function (x) { return x.g.name; }, function (x) {
       var g = x.g;
@@ -752,7 +772,7 @@
       name.appendChild(groupIcon(g));
       var label = el("div", "group-card-name");
       label.appendChild(el("span", "row-label", g.name));
-      label.appendChild(el("span", "row-kind", g.merge ? "Merge" : "View"));
+      label.appendChild(el("span", "row-kind", g.merge ? at("merge", "Merge") : at("view", "View")));
       name.appendChild(label);
       card.appendChild(name);
       var bar = el("div", "row-bar"), fill = paint(el("span"), g.colorIndex);
@@ -760,8 +780,8 @@
       bar.appendChild(fill);
       card.appendChild(bar);
       var foot = el("div", "group-card-foot");
-      foot.appendChild(el("span", null, g.members.length + (g.members.length === 1 ? " member" : " members") + " · " + fmt(x.seconds)));
-      var edit = textButton("Edit", function (event) { event.stopPropagation(); openEditor(g); }, "secondary");
+      foot.appendChild(el("span", null, at("membersCount", "{count} members", { count: g.members.length }) + " · " + fmt(x.seconds)));
+      var edit = textButton(at("edit", "Edit"), function (event) { event.stopPropagation(); openEditor(g); }, "secondary");
       foot.appendChild(edit);
       card.appendChild(foot);
       return card;
@@ -829,10 +849,10 @@
     var name = el("input");
     name.type = "text";
     name.dataset.groupField = "name";
-    name.placeholder = "Group name";
+    name.placeholder = at("groupName", "Group name");
     name.value = editing.name;
     name.addEventListener("input", function () { editing.name = name.value; });
-    top.appendChild(infoControl(name, "activity-group-name", "Group name", "The name shown for this Activity group. The change is saved when you click Save."));
+    top.appendChild(infoControl(name, "activity-group-name", at("groupName", "Group name"), at("theNameShownForThisActivityGroupTheChangeIsSavedWhenYouClickSave", "The name shown for this Activity group. The change is saved when you click Save.")));
     first.appendChild(top);
     var mergeRow = el("label", "group-merge");
     var merge = el("input");
@@ -840,15 +860,15 @@
     merge.checked = editing.merge;
     merge.addEventListener("change", function () { editing.merge = merge.checked; });
     mergeRow.appendChild(merge);
-    mergeRow.appendChild(document.createTextNode("Merge — show as one, in one color, everywhere"));
-    infoField(mergeRow, "activity-group-merge", "Merge group", "Show the group’s members as one item with one shared color throughout Activity. A view group keeps each member separate. Saved when you click Save.");
+    mergeRow.appendChild(document.createTextNode(at("mergeShowAsOneInOneColorEverywhere", "Merge — show as one, in one color, everywhere")));
+    infoField(mergeRow, "activity-group-merge", at("mergeGroup", "Merge group"), at("showTheGroupSMembersAsOneItemWithOneSharedColorThroughoutActivityAViewGroupKeepsEachMemberSeparateSavedWhenYouClickSave", "Show the group’s members as one item with one shared color throughout Activity. A view group keeps each member separate. Saved when you click Save."));
     first.appendChild(mergeRow);
 
     var chips = el("div", "chips vui-list-box group-selected-members");
-    searchable(chips, "activity-members:" + (editing.id || "new"), "Search selected members", ".chip");
+    searchable(chips, "activity-members:" + (editing.id || "new"), at("searchSelectedMembers", "Search selected members"), ".chip");
     chips.tabIndex = 0;
-    chips.setAttribute("aria-label", "Members");
-    if (!editing.members.length) chips.appendChild(el("span", "vui-muted", "No members yet."));
+    chips.setAttribute("aria-label", at("members", "Members"));
+    if (!editing.members.length) chips.appendChild(el("span", "vui-muted", at("noMembersYet", "No members yet.")));
     paged(chips, editing.members, function (id) { return memberLabel(id) + " " + id; }, function (id) {
       var chip = el("span", "chip");
       chip.dataset.vuiSearchText = memberLabel(id) + " " + id;
@@ -861,25 +881,25 @@
       }, "chip-remove"));
       return chip;
     });
-    second.appendChild(infoField(el("div", "chart-subtitle", "Members"), "activity-group-members", "Members", "The apps and websites included in this Activity group. Add from the search results or remove with the cross, then click Save."));
+    second.appendChild(infoField(el("div", "chart-subtitle", at("members", "Members")), "activity-group-members", at("members", "Members"), at("theAppsAndWebsitesIncludedInThisActivityGroupAddFromTheSearchResultsOrRemoveWithTheCrossThenClickSave", "The apps and websites included in this Activity group. Add from the search results or remove with the cross, then click Save.")));
     second.appendChild(chips);
 
     var search = el("input");
     search.type = "search";
     search.dataset.groupField = "search";
-    search.placeholder = "Add an app or website";
+    search.placeholder = at("addAnAppOrWebsite", "Add an app or website");
     search.value = groupSearch;
-    third.appendChild(infoControl(search, "activity-member-search", "Find members", "Find an app or website to add to this Activity group."));
+    third.appendChild(infoControl(search, "activity-member-search", at("findMembers", "Find members"), at("findAnAppOrWebsiteToAddToThisActivityGroup", "Find an app or website to add to this Activity group.")));
     var found = el("div", "group-members");
     function fill() {
       found.textContent = "";
-      if (!knownItems) { found.appendChild(el("p", "empty", "Loading…")); return; }
+      if (!knownItems) { found.appendChild(el("p", "empty", at("loading", "Loading…"))); return; }
       var q = groupSearch.trim().toLowerCase();
       var selected = new Set(editing.members);
       var matches = knownItems.filter(function (item) {
         return !selected.has(item.id) && (!q || (item.label + " " + item.id).toLowerCase().indexOf(q) >= 0);
       });
-      if (!matches.length) found.appendChild(el("p", "empty", q ? "Nothing matches." : "Everything is in."));
+      if (!matches.length) found.appendChild(el("p", "empty", q ? at("nothingMatches", "Nothing matches.") : at("everythingIsIn", "Everything is in.")));
       window.VaultUI.renderList(found, { scope: scope, key: "activity-member-results", searchable: false, items: matches, text: item => item.label + " " + item.id, pageSize: 60, render: function (item) {
         var line = el("button", "member-row");
         line.type = "button";
@@ -903,16 +923,16 @@
     if (editing.message) {
       var note = el("div", "group-note", editing.message + ".");
       if (editing.conflicts) {
-        note.appendChild(textButton("Move them here", function () { saveGroup(editing, true, "editor"); }, "secondary"));
+        note.appendChild(textButton(at("moveThemHere", "Move them here"), function () { saveGroup(editing, true, "editor"); }, "secondary"));
       }
       first.appendChild(note);
     }
     var actions = el("div", "group-actions");
-    actions.appendChild(textButton("Save", function () { editing.message = null; saveGroup(editing, false, "editor"); }));
-    actions.appendChild(textButton("Cancel", function () { editing = null; refreshGroups(); }, "secondary"));
+    actions.appendChild(textButton(at("save", "Save"), function () { editing.message = null; saveGroup(editing, false, "editor"); }));
+    actions.appendChild(textButton(at("cancel", "Cancel"), function () { editing = null; refreshGroups(); }, "secondary"));
     if (editing.id) {
       var id = editing.id;
-      var del = deleteButton("Delete group", "group:" + id, function () {
+      var del = deleteButton(at("deleteGroup", "Delete group"), "group:" + id, function () {
         editing = null;
         send({ kind: "group-delete", id: id });
       });
@@ -928,13 +948,13 @@
   // own focus; Recording last, collapsed. Panels keep a fixed size and scroll
   // inside. "Empty" is every hour not used (all 24 h of a day). ══
 
-  var UNTAGGED = { id: "", name: "Untagged", color: "#94a3b8" };
+  var UNTAGGED = { id: "", name: at("untagged", "Untagged"), color: "#94a3b8" };
   var EMPTY_COLOR = "#e2e8f0";
-  var OTHER_PAGES = { id: "other-pages", name: "Other pages", color: "#cbd5e1" };
+  var OTHER_PAGES = { id: "other-pages", name: at("otherPages", "Other pages"), color: "#cbd5e1" };
   var PLATFORM_NAMES = { youtube: "YouTube", bilibili: "Bilibili", twitch: "Twitch", reddit: "Reddit",
     twitter: "X", instagram: "Instagram", facebook: "Facebook", discord: "Discord" };
   // The sites of the platforms content is recorded on (their pages that are
-  // no one piece of content are "Other pages").
+  // no one piece of content are at("otherPages", "Other pages")).
   var PLATFORM_SITES = [["youtube.com", "youtube"], ["bilibili.com", "bilibili"], ["twitch.tv", "twitch"], ["reddit.com", "reddit"],
     ["x.com", "twitter"], ["twitter.com", "twitter"], ["instagram.com", "instagram"], ["facebook.com", "facebook"], ["discord.com", "discord"]];
   // One colour per weekday (the authors' per-day segments).
@@ -976,7 +996,7 @@
   // ── Usage ──
 
   function focusName(id) {
-    if (id === "all") return "All usage";
+    if (id === "all") return at("allUsage", "All usage");
     if (id.indexOf("group|") === 0) {
       var g = groupsList().filter(function (x) { return "group|" + x.id === id; })[0];
       return g ? g.name : "Group";
@@ -1069,13 +1089,13 @@
   function usageStrip(data) {
     var f = stripFrame(44, snapshot);
     if (data.segments.length + data.pieces.length > 128) return stripCanvas(f, [
-      ...data.segments.map(s => ({from:s.startFraction,to:s.startFraction+s.widthFraction,color:colorOf(colorIndexFor("app",s.key,s.colorIndex)),info:()=>segmentInfo(s,BROWSERS[s.key] ? "App · browser" : "App",s.startedAtMs,s.startedAtMs+s.seconds*1000,f.multiDay)})),
+      ...data.segments.map(s => ({from:s.startFraction,to:s.startFraction+s.widthFraction,color:colorOf(colorIndexFor("app",s.key,s.colorIndex)),info:()=>segmentInfo(s,BROWSERS[s.key] ? at("appBrowser", "App · browser") : "App",s.startedAtMs,s.startedAtMs+s.seconds*1000,f.multiDay)})),
       ...data.pieces.map(piece => ({from:piece.from,to:piece.to,height:44*.85,color:colorOf(colorIndexFor("web",piece.site.key,piece.site.colorIndex)),info:()=>segmentInfo(piece.site,"Website",snapshot.rangeStartMs+piece.from*f.span,snapshot.rangeStartMs+piece.to*f.span,f.multiDay,piece.browser)}))
     ],44);
     data.segments.forEach(function (s) {
       var seg = paint(el("div", "seg"), colorIndexFor("app", s.key, s.colorIndex));
       place(seg, s.startFraction, s.startFraction + s.widthFraction);
-      hoverable(seg, function () { return segmentInfo(s, BROWSERS[s.key] ? "App · browser" : "App", s.startedAtMs, s.startedAtMs + s.seconds * 1000, f.multiDay); });
+      hoverable(seg, function () { return segmentInfo(s, BROWSERS[s.key] ? at("appBrowser", "App · browser") : "App", s.startedAtMs, s.startedAtMs + s.seconds * 1000, f.multiDay); });
       f.track.appendChild(seg);
     });
     data.pieces.forEach(function (piece) {
@@ -1092,7 +1112,7 @@
   // and Empty. Clicking one focuses it.
   function colourMap(entries, empty, onPick, emptyLabel) {
     var box = el("div", "colour-map");
-    searchable(box, emptyLabel === "No recorded usage" ? "activity-usage-items" : "activity-content-tags", emptyLabel === "No recorded usage" ? "Search apps and websites" : "Search tags", ".colour-row");
+    searchable(box, emptyLabel === at("noRecordedUsage", "No recorded usage") ? "activity-usage-items" : "activity-content-tags", emptyLabel === at("noRecordedUsage", "No recorded usage") ? at("searchAppsAndWebsites", "Search apps and websites") : at("searchTags", "Search tags"), ".colour-row");
     paged(box, entries, function (entry) { return (entry.item.label || "") + " " + (entry.item.key || ""); }, function (entry) {
       var line = el("button", "colour-row");
       line.dataset.vuiSearchText = (entry.item.label || "") + " " + (entry.item.key || "");
@@ -1115,7 +1135,7 @@
       row.appendChild(el("span", "colour-time", fmt(empty.seconds)));
       box.appendChild(row);
     }
-    if (!entries.length && !empty) box.appendChild(el("p", "empty", "Nothing in this range."));
+    if (!entries.length && !empty) box.appendChild(el("p", "empty", at("nothingInThisRange", "Nothing in this range.")));
     return box;
   }
 
@@ -1206,7 +1226,7 @@
       var y = base - (t / topSeconds) * plot;
       chart.appendChild(svg("line", { x1: left, x2: width, y1: y, y2: y, stroke: "#eef1f6", "stroke-width": 1 }));
       var label = svg("text", { x: 0, y: y + 3, class: "axis-label" });
-      label.textContent = t === 0 ? "0" : (t / 3600) + "h";
+      label.textContent = t === 0 ? "0" : at("hoursShort", "{hours} h", { hours: t / 3600 });
       chart.appendChild(label);
     }
     var barWidth = layout.barWidth;
@@ -1265,9 +1285,9 @@
           var y = base - bin.to * plot, h = (bin.to - bin.from) * plot;
           var info = function () {
             var shown = bin.items.slice(0, 7).map(function (item) { return [item.label, fmt(item.seconds)]; });
-            if (bin.items.length > 7) shown.push(["More items", String(bin.items.length - 7) + " · choose Exact to inspect"]);
+            if (bin.items.length > 7) shown.push([at("moreItems", "More items"), at("inspectExact", "{count} · choose Exact to inspect", { count: bin.items.length - 7 })]);
             return { title: hourMinute(bin.from) + " – " + hourMinute(bin.to),
-              lines: [dayName(d.start), fmt(bin.usedSeconds) + " used · " + fmt(bin.idleSeconds) + " not recorded"], list: shown };
+              lines: [dayName(d.start), at("usageSummary", "{used} used · {unrecorded} not recorded", { used: fmt(bin.usedSeconds), unrecorded: fmt(bin.idleSeconds) })], list: shown };
           };
           var background = { x: x, y: y, width: barWidth, height: h, fill: "#e5eaf1" };
           appendDayRect(chart, background, info);
@@ -1303,7 +1323,7 @@
     return chart;
   }
 
-  // "Day by day": the ordered graph over the totals, scrolling together.
+  // at("dayByDay", "Day by day"): the ordered graph over the totals, scrolling together.
   var activeDayCharts = [];
   var chartResizePending = false;
   window.addEventListener("resize", function () {
@@ -1318,16 +1338,16 @@
   });
   function dayCharts(ordered, totals, rest, fixedDayScale, isUsage) {
     var box = el("div", "chart");
-    box.appendChild(el("div", "chart-title", "Day by day"));
+    box.appendChild(el("div", "chart-title", at("dayByDay", "Day by day")));
     var scroller = el("div", "totals-scroll");
     var toolbar = el("div", "day-chart-toolbar");
-    toolbar.appendChild(el("div", "chart-subtitle", "Timeline"));
+    toolbar.appendChild(el("div", "chart-subtitle", at("timeline", "Timeline")));
     if (isUsage) {
       var control = el("label", "block-length-control");
-      control.appendChild(infoField(el("span", null, "Time interval"), "activity-time-interval", "Time interval", "Group timeline usage into vertical time intervals to reduce thin segments. Exact shows the original intervals. This changes the chart, not recorded usage."));
+      control.appendChild(infoField(el("span", null, at("timeInterval", "Time interval")), "activity-time-interval", at("timeInterval", "Time interval"), at("groupTimelineUsageIntoVerticalTimeIntervalsToReduceThinSegmentsExactShowsTheOriginalIntervalsThisChangesTheChartNotRecordedUsage", "Group timeline usage into vertical time intervals to reduce thin segments. Exact shows the original intervals. This changes the chart, not recorded usage.")));
       var select = el("select");
-      select.setAttribute("aria-label", "Activity time interval");
-      [[0, "Exact"], [5, "5 min"], [15, "15 min"], [30, "30 min"], [60, "1 hour"]].forEach(function (choice) {
+      select.setAttribute("aria-label", at("activityTimeInterval", "Activity time interval"));
+      [[0, at("exact", "Exact")], [5, at("5Min", "5 min")], [15, at("15Min", "15 min")], [30, at("30Min", "30 min")], [60, at("1Hour", "1 hour")]].forEach(function (choice) {
         var option = el("option", null, choice[1]);
         option.value = String(choice[0]);
         option.selected = choice[0] === usageBlockMinutes;
@@ -1352,7 +1372,7 @@
     scroller.appendChild(toolbar);
     var orderedSlot = el("div");
     scroller.appendChild(orderedSlot);
-    scroller.appendChild(el("div", "chart-subtitle", "Totals"));
+    scroller.appendChild(el("div", "chart-subtitle", at("totals", "Totals")));
     var totalsSlot = el("div");
     scroller.appendChild(totalsSlot);
     box.appendChild(scroller);
@@ -1383,8 +1403,8 @@
   function usageTotals() {
     if (!usageHistory) {
       var loading = el("div", "chart");
-      loading.appendChild(el("div", "chart-title", "Day by day"));
-      loading.appendChild(el("p", "empty", "Loading…"));
+      loading.appendChild(el("div", "chart-title", at("dayByDay", "Day by day")));
+      loading.appendChild(el("p", "empty", at("loading", "Loading…")));
       return loading;
     }
     var set = usageFocusSet();
@@ -1405,7 +1425,7 @@
         var color = colorOf(colorIndexFor("app", seg.key, seg.colorIndex));
         binApps.push({ key: seg.key, label: seg.label || seg.key, from: seg.startFraction, to: seg.startFraction + seg.widthFraction, color: color });
         blocks.push({ from: seg.startFraction, to: seg.startFraction + seg.widthFraction, color: color,
-          info: function () { return { title: seg.label || seg.key, key: seg.key, lines: [(BROWSERS[seg.key] ? "App · browser" : "App") + " · " + dayName(day.dayStartMs),
+          info: function () { return { title: seg.label || seg.key, key: seg.key, lines: [(BROWSERS[seg.key] ? at("appBrowser", "App · browser") : "App") + " · " + dayName(day.dayStartMs),
             hourMinute(seg.startFraction) + " – " + hourMinute(seg.startFraction + seg.widthFraction) + " · " + fmt(seg.widthFraction * 86400)] }; } });
       });
       attribution.pieces.forEach(function (piece) {
@@ -1414,13 +1434,13 @@
         binSites.push({ key: piece.site.key, label: piece.site.label || piece.site.key, browserKey: piece.browser.key,
           from: piece.from, to: piece.to, color: color });
         blocks.push({ from: piece.from, to: piece.to, narrow: true, color: color,
-          info: function () { return { title: piece.site.label || piece.site.key, key: piece.site.key, lines: ["Website · in " + (piece.browser.label || piece.browser.key) + " · " + dayName(day.dayStartMs),
+          info: function () { return { title: piece.site.label || piece.site.key, key: piece.site.key, lines: [at("websiteIn", "Website · in {browser}", { browser: piece.browser.label || piece.browser.key }) + " · " + dayName(day.dayStartMs),
             hourMinute(piece.from) + " – " + hourMinute(piece.to) + " · " + fmt((piece.to - piece.from) * 86400)] }; } });
       });
       ordered.push({ start: day.dayStartMs, blocks: blocks,
         bins: usageBlockMinutes ? window.ActivityTimeBins.aggregate(binApps, binSites, usageBlockMinutes) : [] });
     });
-    return dayCharts(ordered, totals, { name: "No recorded usage", color: EMPTY_COLOR }, true, true);
+    return dayCharts(ordered, totals, { name: at("noRecordedUsage", "No recorded usage"), color: EMPTY_COLOR }, true, true);
   }
 
   // A day's segments as bars (seconds per key).
@@ -1435,13 +1455,13 @@
 
   function usageFocusSelect() {
     var select = el("select");
-    var choices = [["all", "All usage"]];
-    groupsList().forEach(function (g) { choices.push(["group|" + g.id, g.name + " · " + (g.merge ? "Merge group" : "View group")]); });
+    var choices = [["all", at("allUsage", "All usage")]];
+    groupsList().forEach(function (g) { choices.push(["group|" + g.id, g.name + " · " + (g.merge ? at("mergeGroup", "Merge group") : at("viewGroup", "View group"))]); });
     usageItemsRaw.forEach(function (entry) { choices.push([entryID(entry), (entry.item.label || entry.item.key) + " · " + entry.kind]); });
     if (!choices.some(function (c) { return c[0] === usageFocus; })) choices.push([usageFocus, focusName(usageFocus)]);
     window.VaultUI.setSelectOptions(select, choices, usageFocus);
     select.addEventListener("change", function () { setUsageFocus(select.value); });
-    return infoControl(select, "activity-usage-filter", "Usage filter", "Show all usage, one app or website, or an Activity group. Filtering does not change recorded history.");
+    return infoControl(select, "activity-usage-filter", at("usageFilter", "Usage filter"), at("showAllUsageOneAppOrWebsiteOrAnActivityGroupFilteringDoesNotChangeRecordedHistory", "Show all usage, one app or website, or an Activity group. Filtering does not change recorded history."));
   }
 
   function setUsageFocus(id) {
@@ -1455,7 +1475,7 @@
   function usageSection(s) {
     var section = el("section", "panel act-section");
     var head = el("div", "section-head");
-    head.appendChild(el("h2", null, "Usage"));
+    head.appendChild(el("h2", null, at("usage", "Usage")));
     head.appendChild(usageFocusSelect());
     head.appendChild(rangeTabs("usage"));
     var appsOn = s.appUsage && s.appUsage.enabled, webOn = s.webVisit && s.webVisit.enabled;
@@ -1467,19 +1487,19 @@
     var data = usageData();
     var summary = el("span", "section-summary");
     summary.appendChild(el("strong", null, fmt(data.used)));
-    summary.appendChild(document.createTextNode(" used · " + fmt(data.empty) + " not recorded"));
+    summary.appendChild(document.createTextNode(at("usageSummarySuffix", " used · {unrecorded} not recorded", { unrecorded: fmt(data.empty) })));
     head.appendChild(summary);
     section.appendChild(head);
     section.appendChild(usageStrip(data));
     var grid = el("div", "act-grid");
     var mapPanel = el("div", "act-cell");
-    mapPanel.appendChild(el("div", "chart-title", "Colors"));
+    mapPanel.appendChild(el("div", "chart-title", at("colors", "Colors")));
     mapPanel.appendChild(colourMap(data.items, { seconds: data.empty, color: EMPTY_COLOR }, function (entry) {
       setUsageFocus(entryID(entry));
-    }, "No recorded usage"));
+    }, at("noRecordedUsage", "No recorded usage")));
     grid.appendChild(mapPanel);
     var pieCell = el("div", "act-cell");
-    pieCell.appendChild(pie(data.items.filter(function (e) { return !e.nameOnly; }), "Share", "activity-usage-share"));
+    pieCell.appendChild(pie(data.items.filter(function (e) { return !e.nameOnly; }), at("share", "Share"), "activity-usage-share"));
     grid.appendChild(pieCell);
     var year = el("div", "act-cell");
     year.id = "usage-year";
@@ -1495,9 +1515,9 @@
 
   function fillYear(box, history, name, section) {
     box.textContent = "";
-    if (!history) { box.appendChild(el("div", "chart-title", "Last 365 days")); box.appendChild(el("p", "empty", "Loading…")); return; }
+    if (!history) { box.appendChild(el("div", "chart-title", at("last365Days", "Last 365 days"))); box.appendChild(el("p", "empty", at("loading", "Loading…"))); return; }
     box.appendChild(dayMap(history, name, section));
-    box.appendChild(el("p", "chart-note", "Choose a day to view activity from then until now."));
+    box.appendChild(el("p", "chart-note", at("chooseADayToViewActivityFromThenUntilNow", "Choose a day to view activity from then until now.")));
     [].forEach.call(box.querySelectorAll(".map-scroll"), scrollToNewest);
   }
 
@@ -1568,14 +1588,14 @@
     var f = stripFrame(30, contentSnap);
     var fraction = function (ms) { return (ms - contentSnap.rangeStartMs) / f.span; };
     if (data.other.length + data.pieces.length > 128) return stripCanvas(f, [
-      ...data.other.map(o => ({from:fraction(o.startMs),to:fraction(o.endMs),color:OTHER_PAGES.color,info:()=>({title:"Other pages",color:OTHER_PAGES.color,lines:[o.site.label||o.site.key,timeSpan(o.startMs,o.endMs,f.multiDay)+" · "+fmt((o.endMs-o.startMs)/1000)]})})),
+      ...data.other.map(o => ({from:fraction(o.startMs),to:fraction(o.endMs),color:OTHER_PAGES.color,info:()=>({title:at("otherPages", "Other pages"),color:OTHER_PAGES.color,lines:[o.site.label||o.site.key,timeSpan(o.startMs,o.endMs,f.multiDay)+" · "+fmt((o.endMs-o.startMs)/1000)]})})),
       ...data.pieces.map(p => ({from:fraction(p.startMs),to:fraction(p.endMs),color:p.tags[0].color||"#94a3b8",info:()=>{const fact=watchedFacts[p.seg.key]||{};return {title:p.seg.label||p.seg.key,key:p.seg.key,lines:[(PLATFORM_NAMES[String(p.seg.key).split(":")[0]]||"")+(fact.creator?" · "+fact.creator:""),p.tags.map(t=>t.name).join(", "),timeSpan(p.startMs,p.endMs,f.multiDay)+" · "+fmt((p.endMs-p.startMs)/1000)]};}}))
     ],30);
     data.other.forEach(function (o) {
       var seg = el("div", "seg");
       seg.style.background = OTHER_PAGES.color;
       place(seg, fraction(o.startMs), fraction(o.endMs));
-      hoverable(seg, function () { return { title: "Other pages", color: OTHER_PAGES.color, lines: [o.site.label || o.site.key, timeSpan(o.startMs, o.endMs, f.multiDay) + " · " + fmt((o.endMs - o.startMs) / 1000)] }; });
+      hoverable(seg, function () { return { title: at("otherPages", "Other pages"), color: OTHER_PAGES.color, lines: [o.site.label || o.site.key, timeSpan(o.startMs, o.endMs, f.multiDay) + " · " + fmt((o.endMs - o.startMs) / 1000)] }; });
       f.track.appendChild(seg);
     });
     data.pieces.forEach(function (p) {
@@ -1612,7 +1632,7 @@
     };
     data.other.forEach(function (o) {
       splitByDay(o.startMs, o.endMs, starts, function (i, sec) { perDay[i].rest += sec; });
-      addBlock(o.startMs, o.endMs, OTHER_PAGES.color, function () { return { title: "Other pages", color: OTHER_PAGES.color, lines: [o.site.label || o.site.key, clock(o.startMs) + " – " + clock(o.endMs) + " · " + fmt((o.endMs - o.startMs) / 1000)] }; });
+      addBlock(o.startMs, o.endMs, OTHER_PAGES.color, function () { return { title: at("otherPages", "Other pages"), color: OTHER_PAGES.color, lines: [o.site.label || o.site.key, clock(o.startMs) + " – " + clock(o.endMs) + " · " + fmt((o.endMs - o.startMs) / 1000)] }; });
     });
     data.pieces.forEach(function (p) {
       splitByDay(p.startMs, p.endMs, starts, function (i, sec) {
@@ -1634,9 +1654,9 @@
   // Authors: total time, the bar split per day (one colour per weekday).
   function authorsList(data) {
     var box = el("div", "act-cell act-list");
-    box.appendChild(el("div", "chart-title", "Content sources"));
+    box.appendChild(el("div", "chart-title", at("contentSources", "Content sources")));
     var legend = el("div", "chart-legend");
-    ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].forEach(function (name, i) {
+    [DAY_NAMES[1], DAY_NAMES[2], DAY_NAMES[3], DAY_NAMES[4], DAY_NAMES[5], DAY_NAMES[6], DAY_NAMES[0]].forEach(function (name, i) {
       var item = el("span", "legend-item"); var dot = el("span", "dot"); dot.style.background = WEEKDAY_COLORS[(i + 1) % 7];
       item.appendChild(dot); item.appendChild(el("span", null, name)); legend.appendChild(item);
     });
@@ -1645,7 +1665,7 @@
     var by = {};
     data.pieces.forEach(function (p) {
       var fact = watchedFacts[p.seg.key] || {};
-      var name = fact.creator || "Unknown source";
+      var name = fact.creator || at("unknownSource", "Unknown source");
       var a = by[name] || (by[name] = { name: name, key: fact.creator ? "author|" + fact.creator : "", seconds: 0, days: starts.map(function () { return 0; }), items: 0 });
       a.items += 1;
       splitByDay(p.startMs, p.endMs, starts, function (i, sec) { a.days[i] += sec; a.seconds += sec; });
@@ -1653,7 +1673,7 @@
     var authors = Object.keys(by).map(function (k) { return by[k]; }).sort(function (a, b) { return b.seconds - a.seconds; });
     var top = Math.max(1, authors.length ? authors[0].seconds : 1);
     var list = el("div", "scroll-list");
-    searchable(list, "activity-authors", "Search content sources", ".author-row");
+    searchable(list, "activity-authors", at("searchContentSources", "Search content sources"), ".author-row");
     paged(list, authors, function (a) { return a.name + " " + a.key; }, function (a) {
       var line = el("div", "author-row");
       line.dataset.vuiSearchText = a.name + " " + a.key;
@@ -1661,7 +1681,7 @@
       var body = el("div", "row-body");
       var name = el("div", "row-name");
       name.appendChild(el("span", "row-label", a.name));
-      name.appendChild(el("span", "row-count", a.items + (a.items === 1 ? " item" : " items")));
+      name.appendChild(el("span", "row-count", at("itemsCount", "{count} items", { count: a.items })));
       body.appendChild(name);
       var bar = el("div", "day-bar");
       bar.style.width = Math.max(2, a.seconds / top * 100) + "%";
@@ -1678,7 +1698,7 @@
       line.appendChild(el("div", "row-time", fmt(a.seconds)));
       return line;
     });
-    if (!authors.length) list.appendChild(el("p", "empty", "Nothing in this range."));
+    if (!authors.length) list.appendChild(el("p", "empty", at("nothingInThisRange", "Nothing in this range.")));
     box.appendChild(list);
     return box;
   }
@@ -1686,9 +1706,9 @@
   // Everything watched, newest first, with its platform, author and tags.
   function rawList(data) {
     var box = el("div", "act-cell act-list");
-    box.appendChild(el("div", "chart-title", "Content viewed"));
+    box.appendChild(el("div", "chart-title", at("contentViewed", "Content viewed")));
     var list = el("div", "scroll-list");
-    searchable(list, "activity-watched", "Search viewed content", ".raw-row");
+    searchable(list, "activity-watched", at("searchViewedContent", "Search viewed content"), ".raw-row");
     paged(list, data.pieces.slice().sort(function (a, b) { return b.startMs - a.startMs; }), function (p) {
       var fact = watchedFacts[p.seg.key] || {};
       return (p.seg.label || "") + " " + p.seg.key + " " + (fact.creator || "") + " " + p.tags.map(tag => tag.name).join(" ");
@@ -1701,7 +1721,7 @@
       body.appendChild(el("div", "raw-title", p.seg.label || p.seg.key));
       var meta = el("div", "raw-meta");
       meta.appendChild(el("span", "row-kind", PLATFORM_NAMES[String(p.seg.key).split(":")[0]] || "Content"));
-      meta.appendChild(el("span", null, fact.creator || "Unknown source"));
+      meta.appendChild(el("span", null, fact.creator || at("unknownSource", "Unknown source")));
       meta.appendChild(el("span", "vui-muted", dayName(p.startMs) + " " + clock(p.startMs)));
       p.tags.forEach(function (t) {
         var chip = el("span", "tag-chip", t.name);
@@ -1713,14 +1733,14 @@
       line.appendChild(el("div", "row-time", fmt((p.endMs - p.startMs) / 1000)));
       return line;
     });
-    if (!data.pieces.length) list.appendChild(el("p", "empty", "Nothing in this range."));
+    if (!data.pieces.length) list.appendChild(el("p", "empty", at("nothingInThisRange", "Nothing in this range.")));
     box.appendChild(list);
     return box;
   }
 
   function contentFocusSelect() {
     var select = el("select");
-    var choices = [["all", "All content"]];
+    var choices = [["all", at("allContent", "All content")]];
     // Iterative preorder avoids quadratic depth walks and deep-tree stack overflows.
     var byID = tagByID(), children = {}, seen = new Set();
     tagNodes.forEach(function (n) { var parent = byID[n.parentID] ? n.parentID : ""; (children[parent] = children[parent] || []).push(n); });
@@ -1737,7 +1757,7 @@
     walk(tagNodes.filter(function (node) { return !seen.has(node.id); })); // safe orphan/cycle guard
     window.VaultUI.setSelectOptions(select, choices, contentFocus);
     select.addEventListener("change", function () { setContentFocus(select.value); });
-    return infoControl(select, "activity-content-filter", "Content filter", "Show all viewed content or content with the selected tag. Filtering does not change recorded history.");
+    return infoControl(select, "activity-content-filter", at("contentFilter", "Content filter"), at("showAllViewedContentOrContentWithTheSelectedTagFilteringDoesNotChangeRecordedHistory", "Show all viewed content or content with the selected tag. Filtering does not change recorded history."));
   }
 
   function setContentFocus(id) {
@@ -1750,7 +1770,7 @@
   function contentSection(s) {
     var section = el("section", "panel act-section");
     var head = el("div", "section-head");
-    head.appendChild(el("h2", null, "Content"));
+    head.appendChild(el("h2", null, at("label.Content", "Content")));
     head.appendChild(contentFocusSelect());
     head.appendChild(rangeTabs("content"));
     if (!(s.contentWatched && s.contentWatched.enabled)) {
@@ -1761,23 +1781,23 @@
     var data = contentData();
     var summary = el("span", "section-summary");
     summary.appendChild(el("strong", null, fmt(data.watched)));
-    summary.appendChild(document.createTextNode(" on content" + (contentFocus === "all" ? " · " + fmt(data.otherSeconds) + " other pages" : "")));
+    summary.appendChild(document.createTextNode(at("contentSummarySuffix", " on content") + (contentFocus === "all" ? " · " + at("timeOnOtherPages", "{time} other pages", { time: fmt(data.otherSeconds) }) : "")));
     head.appendChild(summary);
     section.appendChild(head);
     section.appendChild(contentStrip(data));
     var grid = el("div", "act-grid");
     var mapCell = el("div", "act-cell");
-    mapCell.appendChild(el("div", "chart-title", "Tags"));
+    mapCell.appendChild(el("div", "chart-title", at("tags", "Tags")));
     mapCell.appendChild(colourMap(data.tags, contentFocus === "all" ? { seconds: data.otherSeconds, color: OTHER_PAGES.color } : null, function (entry) {
       if (entry.item.tagID) setContentFocus("tag|" + entry.item.tagID);
-    }, "Other pages"));
+    }, at("otherPages", "Other pages")));
     grid.appendChild(mapCell);
     var pieCell = el("div", "act-cell");
-    pieCell.appendChild(pie(data.tags, "Share", "activity-content-share"));
+    pieCell.appendChild(pie(data.tags, at("share", "Share"), "activity-content-share"));
     grid.appendChild(pieCell);
     var year = el("div", "act-cell");
     year.id = "content-year";
-    fillYear(year, contentYear, contentFocus === "all" ? "All content" : (tagByID()[contentFocus.slice(4)] || { name: "Tag" }).name, "content");
+    fillYear(year, contentYear, contentFocus === "all" ? at("allContent", "All content") : (tagByID()[contentFocus.slice(4)] || { name: "Tag" }).name, "content");
     grid.appendChild(year);
     section.appendChild(grid);
     var totals = el("div", "act-wide");
@@ -1801,7 +1821,7 @@
     var scrolls = {};
     [].forEach.call(page.querySelectorAll(".scroll-list, .colour-map, .strip-scroll, .totals-scroll, .map-scroll"), function (node, i) { scrolls[i] = [node.scrollLeft, node.scrollTop]; });
     page.textContent = "";
-    if (!snapshot) { page.appendChild(el("p", "empty", "Loading…")); return; }
+    if (!snapshot) { page.appendChild(el("p", "empty", at("loading", "Loading…"))); return; }
     refreshMergeMap();
     var s = snapshot.settings || {};
     var usage = usageSection(s); usage.id = "usage-section";
@@ -1864,7 +1884,7 @@
       if (request.pick !== contentPick()) return;
       contentYear = data;
       var box = scope.getElementById("content-year");
-      if (box) fillYear(box, contentYear, contentFocus === "all" ? "All content" : (tagByID()[contentFocus.slice(4)] || { name: "Tag" }).name, "content");
+      if (box) fillYear(box, contentYear, contentFocus === "all" ? at("allContent", "All content") : (tagByID()[contentFocus.slice(4)] || { name: "Tag" }).name, "content");
       return;
     }
     if (request.pick !== usageFocus || request.barDays !== historyDays()) return;
@@ -1888,15 +1908,15 @@
   }
   function rangeTabs(section) {
     var tabs = el("div", "vui-tabs range-tabs");
-    infoField(tabs, "activity-range:" + section, "Date range", "Choose a rolling date range or a custom starting day. Custom date shows history from that day until now.");
+    infoField(tabs, "activity-range:" + section, at("dateRange", "Date range"), at("chooseARollingDateRangeOrACustomStartingDayCustomDateShowsHistoryFromThatDayUntilNow", "Choose a rolling date range or a custom starting day. Custom date shows history from that day until now."));
     var current = ranges[section];
     RANGES.forEach(function (r) {
-      var b = textButton(r[1], function () { setRange(section, r[0]); }, "vui-tab");
+      var b = textButton(at("label." + r[1], r[1]), function () { setRange(section, r[0]); }, "vui-tab");
       b.classList.toggle("is-active", current === r[0]);
       tabs.appendChild(b);
     });
     var since = current.indexOf("since:") === 0 ? +current.slice(6) : null;
-    var custom = textButton(since ? "Since " + shortDate(since) : "Custom date", function () { openPicker(custom, section); }, "vui-tab");
+    var custom = textButton(since ? at("since", "Since {date}", { date: shortDate(since) }) : at("customDate", "Custom date"), function () { openPicker(custom, section); }, "vui-tab");
     custom.classList.toggle("is-active", !!since);
     tabs.appendChild(custom);
     return tabs;
@@ -1941,7 +1961,7 @@
     head.appendChild(next); head.appendChild(nextYear);
     box.appendChild(head);
     var grid = el("div", "picker-grid");
-    ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].forEach(function (d) { grid.appendChild(el("span", "picker-weekday", d)); });
+    [1, 2, 3, 4, 5, 6, 0].map(function (day) { return new Intl.DateTimeFormat(language(), { weekday: "narrow" }).format(new Date(2023, 0, day + 1, 12)); }).forEach(function (d) { grid.appendChild(el("span", "picker-weekday", d)); });
     var lead = (month.getDay() + 6) % 7;
     for (var i = 0; i < lead; i++) grid.appendChild(el("span"));
     var d = new Date(month);
@@ -1955,7 +1975,7 @@
       })(d.getTime());
     }
     box.appendChild(grid);
-    box.appendChild(el("div", "picker-note", "From the selected day until now."));
+    box.appendChild(el("div", "picker-note", at("fromTheSelectedDayUntilNow", "From the selected day until now.")));
     var r = picker.anchor.getBoundingClientRect();
     box.style.top = (r.bottom + 6) + "px";
     box.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 268)) + "px";
@@ -1990,5 +2010,14 @@
 
   window.VaultUI.observe(scope);
   window.VaultInfo.watch(scope, { selector: ".feeds-hint,.chart-note,.picker-note" });
+  window.addEventListener("vault-language-changed", function () {
+    CLOCK = new Intl.DateTimeFormat(language(), { hour: "numeric", minute: "2-digit" });
+    DAY = new Intl.DateTimeFormat(language(), { month: "short", day: "numeric" });
+    refreshDateNames();
+    CLICK_AGAIN = at("clickAgain", "Click again to delete");
+    refreshHeaderLanguage();
+    if (snapshot) render();
+  });
+  refreshHeaderLanguage();
   send({ kind: "ready" });
 })();

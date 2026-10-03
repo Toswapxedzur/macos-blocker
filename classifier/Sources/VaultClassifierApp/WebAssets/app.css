@@ -212,7 +212,7 @@ h3 { font-size: 14px; }
 .dial-card-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
 .dial-card {
   display: flex; flex-direction: column; gap: 4px; align-items: flex-start;
-  padding: 10px 12px; border-radius: 11px; text-align: left; cursor: pointer;
+  padding: 10px 12px; border-radius: 11px; text-align: start; cursor: pointer;
   border: none; background: #f8fafc;
   transition: border-color .12s ease, background .12s ease;
 }
@@ -221,7 +221,7 @@ h3 { font-size: 14px; }
 .dial-card-head { display: flex; align-items: center; gap: 6px; width: 100%; }
 .dial-card-name { font-size: 12px; font-weight: 600; color: var(--ink); }
 .dial-card-badge {
-  margin-left: auto; font-size: 10px; font-weight: 600; letter-spacing: .02em;
+  margin-inline-start: auto; font-size: 10px; font-weight: 600; letter-spacing: .02em;
   padding: 2px 6px; border-radius: 6px; color: var(--green-text); background: var(--green-50);
 }
 .dial-card-desc { font-size: 11px; line-height: 1.4; color: var(--muted); }
@@ -352,13 +352,13 @@ h3 { font-size: 14px; }
 .knowledge-card-head { display: flex; align-items: center; gap: 10px; }
 .knowledge-face { width: 28px; height: 28px; flex: none; border-radius: 50%; object-fit: cover; }
 .knowledge-face-empty { display: inline-flex; align-items: center; justify-content: center; background: var(--navy-100); color: var(--navy-700); font-weight: 700; font-size: 12px; }
-.knowledge-name { display: flex; flex-direction: column; min-width: 0; margin-right: auto; }
+.knowledge-name { display: flex; flex-direction: column; min-width: 0; margin-inline-end: auto; }
 .knowledge-subject { font-weight: 700; overflow-wrap: anywhere; }
 .knowledge-id { color: #64748b; font-size: 11px; overflow-wrap: anywhere; }
 .knowledge-card textarea { min-height: 60px; resize: vertical; }
 .knowledge-suggestions { display: flex; flex-direction: column; gap: 2px; }
 .knowledge-suggestions:empty { display: none; }
-.knowledge-suggestion { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; border-radius: 8px; background: #fff; color: #1f2937; font-size: 12px; font-weight: 400; text-align: left; }
+.knowledge-suggestion { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; border-radius: 8px; background: #fff; color: #1f2937; font-size: 12px; font-weight: 400; text-align: start; }
 .knowledge-suggestion:hover { background: var(--navy-100); filter: none; }
 
 .utility-toggles {
@@ -377,7 +377,7 @@ h3 { font-size: 14px; }
   .utility-panel { padding: 16px; }
   .utility-settings-fields { grid-template-columns: 1fr; }
   .utility-settings-fields .field:last-child { grid-column: auto; }
-  .model-download-label { text-align: left; }
+  .model-download-label { text-align: start; }
 }
 
 .classifier-type-workspace { gap: 14px; }
@@ -536,7 +536,7 @@ h3 { font-size: 14px; }
   color: var(--ink);
   background: color-mix(in srgb, var(--navy-100) 45%, #fff);
   box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
-  text-align: left;
+  text-align: start;
   transition: background 120ms ease, box-shadow 120ms ease, transform 120ms ease;
 }
 
@@ -666,7 +666,7 @@ h3 { font-size: 14px; }
   font-size: 10px;
   line-height: 1.35;
   overflow-wrap: anywhere;
-  text-align: left;
+  text-align: start;
 }
 
 .provider-response-shape span {
@@ -686,7 +686,7 @@ h3 { font-size: 14px; }
 @media (max-width: 620px) {
   .provider-panel-head { align-items: flex-start; }
   .provider-connection-fields { grid-template-columns: 1fr; }
-  .provider-response-shape { text-align: left; }
+  .provider-response-shape { text-align: start; }
 }
 
 .status-pill { padding: 6px 9px; }
@@ -729,7 +729,7 @@ textarea {
 select.select-control {
   -webkit-appearance: none;
   appearance: none;
-  padding-right: 34px;
+  padding-inline-end: 34px;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4.5l4 4 4-4' stroke='%23475569' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-position: right 12px center;
   background-repeat: no-repeat;
@@ -929,7 +929,7 @@ textarea:focus {
 .classifier-local-model .section-copy { margin: 2px 0 10px; }
 
 /* Two-dial local model settings (2026-09-23). */
-.dial-card { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; text-align: left; }
+.dial-card { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; text-align: start; }
 .dial-card-meta { font-size: 11px; color: var(--muted); }
 .dial-card-warning { font-size: 11px; color: var(--pink-700); }
 .dial-card-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
@@ -1060,7 +1060,7 @@ textarea:focus {
 
 .classifier-type-panel .classifier-name-row input {
   max-width: 520px;
-  margin-left: -8px;
+  margin-inline-start: -8px;
   padding: 4px 8px;
   background: transparent;
   font-size: 16px;
@@ -1092,8 +1092,8 @@ textarea:focus {
 }
 
 .classifier-group-more > .classifier-type-section {
-  padding-left: 0;
-  padding-right: 0;
+  padding-inline-start: 0;
+  padding-inline-end: 0;
 }
 
 /* ── A type's tag tree (owner 2026-09-30: one look, no scroll bars) ──
@@ -1115,7 +1115,7 @@ textarea:focus {
   border: 0; border-radius: 999px;
   color: #000; background: var(--tag-color-light);
   box-shadow: 0 2px 5px rgba(15, 23, 42, 0.2);
-  text-align: left; user-select: none; -webkit-user-drag: none; touch-action: none; cursor: grab;
+  text-align: start; user-select: none; -webkit-user-drag: none; touch-action: none; cursor: grab;
 }
 .tree-map-node:active { cursor: grabbing; }
 .tree-map-node > span { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: rgba(0, 0, 0, 0.72); }
@@ -1208,7 +1208,7 @@ textarea:focus {
 .research-model-menu.vui-menu { display: flex; flex-direction: column; gap: 8px; padding: 8px; max-width: none; overflow: hidden; visibility: hidden; }
 .research-model-menu > input, .research-model-menu > p { flex-shrink: 0; margin: 0; }
 .research-model-list { display: grid; gap: 2px; max-height: min(32vh, 280px); padding: 0; border-radius: 8px; }
-.research-model-option { text-align: left; justify-content: flex-start; overflow-wrap: anywhere; }
+.research-model-option { text-align: start; justify-content: flex-start; overflow-wrap: anywhere; }
 .research-model-option[hidden] { display: none; }
 .research-model-unavailable { color: var(--gold-text); }
 
