@@ -1401,6 +1401,7 @@ final class ConnectionHub: ObservableObject {
     /// The entry a scope line belongs to: "apps" for the app list, "site" for
     /// the website list, else its platform id.
     static func scopeEntryKey(_ line: [String: Any]) -> String {
+        if let entry = line["entryID"] as? String, !entry.isEmpty { return entry }
         if (line["surface"] as? String) == "apps" { return "apps" }
         if let platform = line["platform"] as? String, !platform.isEmpty { return platform }
         return "site"
