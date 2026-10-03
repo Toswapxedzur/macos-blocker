@@ -116,9 +116,7 @@ In **Registrazione**, attiva o disattiva la registrazione per categoria o singol
 
 I feed delle piattaforme raccolgono i contenuti mostrati nelle pagine supportate, aperte o meno. Un feed con **Tagging supportato** può fornire dati a Classifier quando la registrazione è attiva. La sua conservazione controlla i contenuti raccolti separatamente dall'uso di app e siti. Sospendere un gruppo Classifier non disattiva la registrazione.
 
-## Impostazioni Classifier
-
-**Aggiornamenti dei pacchetti di tag** sceglie quando applicare gli aggiornamenti verificati: **Automaticamente**, **Chiedi prima** o **Manualmente**. È distinto dal download del modello locale scelto in un gruppo. I file modello vengono scaricati da Hugging Face quando scegli **Scarica**; durante il download usa stato/progresso del gruppo e **Annulla**.
+## Impostazioni
 
 Scegli la lingua dell'interfaccia in Settings. Le spiegazioni dei campi sono disponibili tramite i piccoli pulsanti Info nella lingua selezionata.
 

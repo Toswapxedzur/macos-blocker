@@ -7,7 +7,7 @@ Mac Vault has three pages: **Vault** blocks native apps, **Classifier** tags sup
 1. In **Vault**, add a blocking group and an Apps target, then select apps with the + picker.
 2. Choose the group's blocking behavior and enable it.
 3. In **Classifier**, create a group, choose its platforms, and add tags with descriptions.
-4. Choose a local model tier and download it if needed. Enable tagging in Classifier settings and resume the group.
+4. Choose a local model tier and download it if needed. Enable tagging in Settings and resume the group.
 5. Open supported content in the connected browser. Configure a tag filter in a browser blocking group if you want the tags to control blocking.
 
 ## Blocking groups
@@ -65,7 +65,7 @@ A blocked app is asked to quit. **Ask a blocked app to quit again every (minutes
 
 A Classifier group tags content from its assigned platforms with its own tag tree and model settings. Each platform belongs to one group. Choose platforms when creating the group; they cannot be changed afterward. Blocking-group schedules and filters do not control tagging.
 
-Enable tagging in Classifier settings. Use each group's **Pause tagging / Resume tagging** separately. Turning off a platform feed's recording in **Activity → Recording** also stops its tagging.
+Enable tagging in Settings. Use each group's **Pause tagging / Resume tagging** separately. Turning off a platform feed's recording in **Activity → Recording** also stops its tagging.
 
 ### Tags and model settings
 
@@ -88,11 +88,11 @@ Add a source or term and its description, or leave the description empty to requ
 
 ### Configure a research provider
 
-1. Open **Classifier settings → API keys & providers**.
+1. Open **Settings → API keys & providers**.
 2. Choose a provider type and **Add provider**. This creates a configuration; it does not issue an API key.
 3. Obtain credentials from that provider and enter them. For a compatible custom endpoint, also configure its endpoint and protocol fields.
 4. In **Web research**, choose a provider with built-in web search. Fetch its model list and select a research model. Use the model chooser's search to narrow the list; refresh it to fetch it again.
-5. Read the consent disclosure and enable consent. Choose **On**, **Off**, or **Follow Classifier settings** in each group.
+5. Read the consent disclosure and enable consent. Choose **On**, **Off**, or **Follow Settings** in each group.
 
 **Set up web research…** takes you to settings when configuration is missing. A group cannot bypass research consent. **Test connection** confirms the test request succeeded, not that every model supports research. A provider's test model is separate from the selected research model.
 
@@ -116,9 +116,7 @@ In **Recording**, turn recording on or off for each category or individual sourc
 
 Platform feeds collect content shown on supported platform pages, whether opened or not. A feed with **Tagging supported** can supply the Classifier while recording is on. Its retention controls collected content separately from app and website usage. A paused Classifier group does not itself turn off recording.
 
-## Classifier settings
-
-**Tag-package updates** selects when verified tag-package updates take effect: **Automatic**, **Ask first**, or **Manual**. It is separate from downloading the local model chosen in a group. Model files download from Hugging Face when you choose **Download**; use the group's progress/status and **Cancel** controls during a download.
+## Settings
 
 Choose the interface language in Settings. Field explanations are available through the small Info buttons in the selected interface language.
 

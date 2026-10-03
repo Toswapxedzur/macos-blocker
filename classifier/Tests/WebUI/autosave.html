@@ -4,13 +4,25 @@
 <style>html,body,#host{height:100%;margin:0}#host{display:block}</style><div id="host"></div>
 <script>
 const scope = document.getElementById('host').attachShadow({mode:'open'});
-scope.innerHTML = '<link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/vault-ui.css"><link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/vault-info.css"><link rel="stylesheet" href="/classifier/Sources/VaultClassifierApp/WebAssets/app.css"><div id="app"></div>';
+scope.innerHTML = '<link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/vault-ui.css"><link rel="stylesheet" href="/Sources/MacBlockerWebUI/WebAssets/vault-info.css"><link rel="stylesheet" href="/classifier/Sources/VaultClassifierApp/WebAssets/app.css"><div id="app"></div><div id="fixture-settings" class="utility-popover-layer" hidden><div class="utility-popover" role="dialog" aria-modal="true"><button data-action="closeUtilityPanel">Close</button><div id="native-settings" class="utility-settings-body"></div></div></div>' ;
 window.VaultScenes = {scope:()=>scope};
+let releaseFixtureSettings = null;
+window.VaultSettings = {
+  scope, root: scope.getElementById('native-settings'),
+  isOpen: () => !scope.getElementById('fixture-settings').hidden,
+  open() {
+    scope.getElementById('fixture-settings').hidden=false;
+    window.dispatchEvent(new CustomEvent('vault-settings-changed',{detail:{open:true}}));
+    releaseFixtureSettings?.(false);
+    releaseFixtureSettings=VaultUI.focusDialog(scope.querySelector('#fixture-settings [role="dialog"]'),{initialFocus:scope.querySelector('[data-action="closeUtilityPanel"]'),returnFocus:()=>scope.querySelector('[data-action="openUtilityPanel"]'),onEscape:()=>VaultSettings.close()});
+  },
+  close() { scope.getElementById('fixture-settings').hidden=true; window.dispatchEvent(new CustomEvent('vault-settings-changed',{detail:{open:false}})); releaseFixtureSettings?.(); releaseFixtureSettings=null; }
+};
 window.uiErrors=[];
 window.addEventListener('error',e=>uiErrors.push(e.message));
 window.testState = {
   presentationRevision:1,workspace:'browserBridge',issue:null,notices:{},
-  settings:{packageUpdateMode:'automatic',localModels:{modelLibrary:[]},research:{enabled:false,llmProviderProfileID:'',llmModelIdentifier:'',status:{}}},
+  settings:{localModels:{modelLibrary:[]},research:{enabled:false,llmProviderProfileID:'',llmModelIdentifier:'',status:{}}},
   backup:{unlocked:true,hasOwnerCode:true,enabled:false,savedEnabled:false,directory:'/tmp/test-backups'},
   assets:{classifierTypes:[{id:'group-1',name:'Test group',treeID:'tree-1',applicablePlatformIDs:['youtube'],localModel:{speedQuality:'balanced',strictness:3,houseRules:''},researchEnabled:null,order:0}],
     trees:[{id:'tree-1',name:'Test tags',nodes:[{id:'tag-1',name:'Science',description:'',parentID:null,positionX:24,positionY:24}]}],datasets:[],
@@ -35,7 +47,6 @@ window.webkit={messageHandlers:{vaultClassifier:{postMessage(message){
     case 'saveClassifierTypeLocalModel':type.localModel={speedQuality:data.speedQuality,strictness:Number(data.strictness),houseRules:data.houseRules||'',minimumTagsOverride:data.minimumTagsOverride===''||data.minimumTagsOverride==null?null:Number(data.minimumTagsOverride),maximumTagsOverride:data.maximumTagsOverride===''||data.maximumTagsOverride==null?null:Number(data.maximumTagsOverride)};break;
     case 'saveClassifierTypeResearch':type.researchEnabled=data.researchMode==='inherit'?null:data.researchMode==='on';break;
     case 'saveResearchSettings':Object.assign(testState.settings.research,data);break;
-    case 'savePackageSettings':testState.settings.packageUpdateMode=data.packageUpdateMode;break;
     case 'updateTag':Object.assign(testState.assets.trees[0].nodes[0],data);break;
     case 'editKnowledgeEntry':testState.assets.knowledge.terms[0].meaning=data.meaning;break;
     case 'updateProviderConnection':Object.assign(testState.assets.providerProfiles.find(p=>p.id===data.profileID),data,{hasCredential:!!data.credential});break;
@@ -125,8 +136,7 @@ window.runAutosaveTests=async()=>{
   await poll(()=>q('[data-model-selector]'));q('[data-model-selector]').click();q('[data-model-pick="test-model"]').click();
   await poll(()=>testState.settings.research.llmModelIdentifier==='test-model');
   expect(testState.settings.research.llmProviderProfileID==='provider-1','global research provider and model autosave');
-  change('[data-form-id="utility-package-form"] [data-field="packageUpdateMode"]','manual');
-  expect(testState.settings.packageUpdateMode==='manual','package-update choice autosaves');
+  expect(!q('[data-field="packageUpdateMode"]') && !q('[data-language-selection]'), 'app settings have no separate Classifier update or language policy');
   expect(!q('[data-action^="save"]'),'settings have no Save buttons');
   q('[data-action="closeUtilityPanel"]').click();
   q('[data-action="workspace"][data-workspace="knowledge"]').click();
@@ -174,7 +184,7 @@ window.runAutosaveTests=async()=>{
   expect(!q('[data-create-type-dialog]') && scope.activeElement===q('[data-action="newType"]'),'Escape closes creation and returns focus');
   q('[data-action="openUtilityPanel"]').click();
   scope.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true,composed:true}));
-  expect(!q('.utility-popover') && scope.activeElement===q('[data-action="openUtilityPanel"]'),'Escape closes settings and returns focus');
+  expect(q('#fixture-settings').hidden && scope.activeElement===q('[data-action="openUtilityPanel"]'),'Escape closes settings and returns focus');
   testState.issue=null;pushSnapshot();
   const dialForm=q('[data-form-id="classifier-local-model-form-group-1"]');
   expect(dialForm.querySelectorAll('[data-field="speedQuality"]').length===3 && dialForm.querySelectorAll('[data-field="strictness"]').length===5, 'each group contains all model tier cards and strictness positions');

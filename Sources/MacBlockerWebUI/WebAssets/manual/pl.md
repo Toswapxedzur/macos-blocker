@@ -116,9 +116,7 @@ W sekcji **Rejestrowanie** włącz lub wyłącz rejestrowanie każdej kategorii 
 
 Feedy platform zbierają treści pokazywane na obsługiwanych stronach platform, otwartych lub nie. Feed z etykietą **Obsługa tagowania** może dostarczać dane Classifier, gdy rejestrowanie jest włączone. Jego przechowywanie kontroluje zebrane treści niezależnie od użycia aplikacji i witryn. Wstrzymana grupa Classifier sama nie wyłącza rejestrowania.
 
-## Ustawienia Classifier
-
-**Aktualizacje pakietów tagów** określają, kiedy zweryfikowane aktualizacje pakietu tagów wchodzą w życie: **Automatycznie**, **Zapytaj najpierw** lub **Ręcznie**. To osobne od pobierania lokalnego modelu wybranego w grupie. Pliki modelu są pobierane z Hugging Face po wybraniu **Pobierz**; podczas pobierania używaj statusu/postępu grupy i przycisku **Anuluj**.
+## Ustawienia
 
 Wybierz język interfejsu w Settings. Objaśnienia pól są dostępne po kliknięciu małych przycisków Info w wybranym języku interfejsu.
 

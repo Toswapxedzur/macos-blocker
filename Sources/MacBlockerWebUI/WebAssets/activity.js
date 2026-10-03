@@ -28,10 +28,11 @@
     '<button type="button" class="vui-tab" data-scene="classifier" data-i18n="scene.classifier">Classifier</button>',
     '<button type="button" class="vui-tab is-active" data-scene="activity" data-i18n="scene.activity">Activity</button>',
     "</nav>",
-    '<div class="vui-topbar-links"><button type="button" class="secondary" id="activityManualButton" data-i18n="manual.title">User manual</button></div>',
+    '<div class="vui-topbar-links"><button type="button" class="secondary" id="activityManualButton" data-i18n="manual.title">User manual</button><button type="button" class="secondary" id="activitySettingsButton" data-i18n="settings.button">Settings</button></div>',
     "</header>",
     '<main><div class="page" id="page"><p class="empty">Loading…</p></div></main>'
   ].join("");
+  scope.getElementById("activitySettingsButton").addEventListener("click", function () { window.VaultSettings.open(); });
   scope.getElementById("activityManualButton").addEventListener("click", function () { window.VaultManual.open("user", "Activity"); });
   var RETENTIONS = [[7, "7 days"], [30, "30 days"], [90, "90 days"], [180, "180 days"], [365, "365 days"], [0, "Forever"]];
   // What is recorded (each kind has its own switch under Recording).

@@ -32,7 +32,6 @@ final class VaultClassifierViewModel: ObservableObject {
     @Published var workspace: Workspace = .browserBridge
     @Published var issue: String?
     @Published var localState: LocalClassifierState?
-    @Published var packageUpdateMode: PackageUpdateMode = .automatic
     @Published private(set) var modelEngineStatuses: [String: String] = [:]
     @Published var backupOwnerCode = ""
     @Published var backupDirectory = ""
@@ -89,7 +88,6 @@ final class VaultClassifierViewModel: ObservableObject {
             let providerModelCatalogStore = ProviderModelCatalogStore(fileURL: vaultDirectory.appendingPathComponent("provider-model-catalogs.json"))
             self.providerModelCatalogStore = providerModelCatalogStore
             self.providerModelCatalogs = providerModelCatalogStore.load(allowedProfileIDs: llmProviderProfileIDs())
-            loadResourceSettings(from: coordinator.snapshot().settings)
             loadBackupConfiguration(from: coordinator.snapshot().backupConfiguration)
             self.hasBackupOwnerCode = LocalBackupOwnerCodeStore.hasOwnerCode
             let sharedHubClient = SharedHubClient()
@@ -140,7 +138,6 @@ final class VaultClassifierViewModel: ObservableObject {
         let providerModelCatalogStore = ProviderModelCatalogStore(fileURL: vaultDirectory.appendingPathComponent("provider-model-catalogs.json"))
         self.providerModelCatalogStore = providerModelCatalogStore
         self.providerModelCatalogs = providerModelCatalogStore.load(allowedProfileIDs: llmProviderProfileIDs())
-        loadResourceSettings(from: coordinator.snapshot().settings)
         loadBackupConfiguration(from: coordinator.snapshot().backupConfiguration)
         coordinator.setOnDeviceLLM(StubOnDeviceLLM())
         try installDictionaries(directory: vaultDirectory, coordinator: coordinator, automaticallyCheck: false)

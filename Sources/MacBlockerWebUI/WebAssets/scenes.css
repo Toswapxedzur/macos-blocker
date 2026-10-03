@@ -15,3 +15,11 @@ body[data-scene="classifier"] > main.popup,
 body[data-scene="activity"] > main.popup {
   display: none;
 }
+
+/* Native services share the app Settings dialog, independent of active page. */
+.native-settings-host { display: block; height: auto; margin-top: 24px; }
+
+/* The shared dialog owns the scroll, so native fields cannot be clipped. */
+#settingsModal .settings-body { display: block; overflow-y: auto; }
+#settingsModal .settings-cols { min-height: auto; }
+#settingsModal .settings-col { overflow: visible; }

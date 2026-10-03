@@ -402,48 +402,6 @@ public struct LocalPackageLifecycleState: Codable, Equatable, Sendable {
     }
 }
 
-public enum PackageUpdateMode: String, Codable, Equatable, Sendable, CaseIterable {
-    case automatic
-    case downloadThenAsk
-    case manual
-}
-
-public enum PackageDownloadDisposition: String, Codable, Equatable, Sendable {
-    case automatic
-    case askBeforeDownload
-}
-
-public enum DailyPackageSyncDecision: Equatable, Sendable {
-    case checkManifest(downloadDisposition: PackageDownloadDisposition)
-    case waitUntil(Date)
-    case backgroundSyncDisabled
-    case manualOnly
-}
-
-/// Pure scheduling logic. It never opens a connection; a caller may use a
-/// `checkManifest` decision to perform a separately implemented transport.
-public struct DailyPackageSyncPlanner: Sendable {
-    public static let interval: TimeInterval = 24 * 60 * 60
-
-    public init() {}
-
-    public func decision(
-        now: Date = .now,
-        state: LocalPackageLifecycleState,
-        updateMode: PackageUpdateMode = .automatic,
-        backgroundSyncEnabled: Bool
-    ) -> DailyPackageSyncDecision {
-        guard backgroundSyncEnabled else { return .backgroundSyncDisabled }
-        guard updateMode != .manual else { return .manualOnly }
-        let disposition: PackageDownloadDisposition = updateMode == .automatic ? .automatic : .askBeforeDownload
-        guard let lastCheck = state.lastManifestCheckAt else {
-            return .checkManifest(downloadDisposition: disposition)
-        }
-        let nextCheck = lastCheck.addingTimeInterval(Self.interval)
-        return now >= nextCheck ? .checkManifest(downloadDisposition: disposition) : .waitUntil(nextCheck)
-    }
-}
-
 /// Local, crash-safe package staging and activation. Package files are written
 /// into a same-volume staging directory and renamed before the lifecycle state
 /// is atomically replaced. A failure therefore leaves the previously active

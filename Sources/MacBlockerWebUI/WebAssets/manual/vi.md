@@ -7,7 +7,7 @@ Mac Vault có ba trang: **Vault** chặn ứng dụng native, **Bộ phân loạ
 1. Trong **Vault**, thêm nhóm chặn và mục tiêu Apps, sau đó chọn ứng dụng bằng bộ chọn +.
 2. Chọn hành vi chặn của nhóm và bật nhóm.
 3. Trong **Bộ phân loại**, tạo nhóm, chọn nền tảng rồi thêm thẻ kèm mô tả.
-4. Chọn cấp mô hình cục bộ và tải xuống nếu cần. Bật gắn thẻ trong cài đặt bộ phân loại và tiếp tục nhóm.
+4. Chọn cấp mô hình cục bộ và tải xuống nếu cần. Bật gắn thẻ trong Cài đặt và tiếp tục nhóm.
 5. Mở nội dung được hỗ trợ trong trình duyệt đã kết nối. Cấu hình bộ lọc thẻ trong nhóm chặn của trình duyệt nếu muốn thẻ điều khiển việc chặn.
 
 ## Nhóm chặn
@@ -65,7 +65,7 @@ Dùng bộ chọn + của mục tiêu Apps để chọn ứng dụng đã cài �
 
 Nhóm phân loại gắn thẻ nội dung từ nền tảng được giao, bằng cây thẻ và cài đặt mô hình riêng. Mỗi nền tảng thuộc về một nhóm. Chọn nền tảng khi tạo nhóm; không thể đổi sau đó. Lịch và bộ lọc của nhóm chặn không điều khiển việc gắn thẻ.
 
-Bật gắn thẻ trong cài đặt bộ phân loại. Dùng riêng **Tạm dừng gắn thẻ / Tiếp tục gắn thẻ** cho mỗi nhóm. Tắt ghi nhận feed nền tảng trong **Activity → Ghi nhận** cũng sẽ dừng việc gắn thẻ của feed đó.
+Bật gắn thẻ trong Cài đặt. Dùng riêng **Tạm dừng gắn thẻ / Tiếp tục gắn thẻ** cho mỗi nhóm. Tắt ghi nhận feed nền tảng trong **Activity → Ghi nhận** cũng sẽ dừng việc gắn thẻ của feed đó.
 
 ### Thẻ và cài đặt mô hình
 
@@ -88,11 +88,11 @@ Thêm nguồn hoặc thuật ngữ cùng mô tả, hoặc để trống mô tả
 
 ### Cấu hình nhà cung cấp nghiên cứu
 
-1. Mở **Cài đặt bộ phân loại → API keys & providers**.
+1. Mở **Cài đặt → API keys & providers**.
 2. Chọn loại nhà cung cấp và **Thêm nhà cung cấp**. Thao tác này tạo cấu hình, không cấp API key.
 3. Lấy thông tin xác thực từ nhà cung cấp đó rồi nhập vào. Với endpoint tùy chỉnh tương thích, cấu hình thêm các trường endpoint và protocol.
 4. Trong **Nghiên cứu web**, chọn nhà cung cấp có web search tích hợp. Lấy danh sách mô hình rồi chọn mô hình nghiên cứu. Dùng ô tìm kiếm của bộ chọn mô hình để thu hẹp danh sách; làm mới để lấy lại danh sách.
-5. Đọc thông báo đồng ý và bật chấp thuận. Trong mỗi nhóm, chọn **Bật**, **Tắt** hoặc **Theo cài đặt bộ phân loại**.
+5. Đọc thông báo đồng ý và bật chấp thuận. Trong mỗi nhóm, chọn **Bật**, **Tắt** hoặc **Theo Cài đặt**.
 
 **Thiết lập nghiên cứu web…** mở cài đặt khi thiếu cấu hình. Nhóm không thể bỏ qua yêu cầu đồng ý nghiên cứu. **Kiểm tra kết nối** xác nhận yêu cầu thử đã thành công, không xác nhận mọi mô hình đều hỗ trợ nghiên cứu. Mô hình thử của nhà cung cấp khác với mô hình nghiên cứu đã chọn.
 
@@ -116,9 +116,7 @@ Trong **Ghi nhận**, bật hoặc tắt việc ghi theo từng danh mục hay n
 
 Feed nền tảng thu thập nội dung hiển thị trên trang nền tảng được hỗ trợ, dù đã mở hay chưa. Feed có nhãn **Hỗ trợ gắn thẻ** có thể cung cấp dữ liệu cho bộ phân loại khi đang bật ghi nhận. Lưu giữ của feed kiểm soát nội dung đã thu thập riêng với mức sử dụng ứng dụng/trang web. Tạm dừng nhóm phân loại không tự tắt ghi nhận.
 
-## Cài đặt bộ phân loại
-
-**Cập nhật gói thẻ** chọn thời điểm gói thẻ đã xác minh có hiệu lực: **Tự động**, **Hỏi trước** hoặc **Thủ công**. Cài đặt này tách biệt với tải mô hình cục bộ đã chọn trong nhóm. Tệp mô hình được tải từ Hugging Face khi chọn **Tải xuống**; trong lúc tải, dùng tiến trình/trạng thái nhóm và nút **Hủy**.
+## Cài đặt
 
 Chọn ngôn ngữ giao diện trong Settings. Có thể xem giải thích trường qua các nút Info nhỏ bằng ngôn ngữ giao diện đã chọn.
 

@@ -116,9 +116,7 @@ Usage-এ নির্বাচিত app ও website একসঙ্গে দ�
 
 Platform feed supported page-এ দেখানো content সংগ্রহ করে, খোলা না হলেও। **Tagging supported** feed recording চালু থাকলে শ্রেণিবিন্যাসে তথ্য দিতে পারে। এর retention app ও website use থেকে আলাদাভাবে সংগৃহীত content নিয়ন্ত্রণ করে। শ্রেণিবিন্যাস group pause করলে recording নিজে বন্ধ হয় না।
 
-## শ্রেণিবিন্যাস settings
-
-**Tag-package update** যাচাইকৃত tag package কখন প্রযোজ্য হবে বেছে নেয়: **Automatic**, **Ask first**, বা **Manual**। Group-এ নির্বাচিত local model download থেকে এটি আলাদা। **Download** বাছলে Hugging Face থেকে model file আসে; download চলাকালে group-এর progress/status ও **Cancel** ব্যবহার করুন।
+## সেটিংস
 
 Settings-এ interface language বেছে নিন। নির্বাচিত interface language-এ ছোট Info বোতামে field explanation পাওয়া যায়।
 

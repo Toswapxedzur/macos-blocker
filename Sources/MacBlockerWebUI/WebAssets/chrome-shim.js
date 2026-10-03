@@ -21,6 +21,15 @@
  * before the editor reads storage.
  */
 (function () {
+  // Reconcile the retired scene-only language once. The app choice wins when
+  // both exist; names, rules and Classifier data are never rewritten.
+  try {
+    const oldLanguage = localStorage.getItem("vaultClassifier.language");
+    if (!localStorage.getItem("custom-blocker-language") && /^(en|ar|bn|de|es|fr|hi|id|it|ja|ko|nl|pa|pl|pt|ru|th|tr|vi|zh)$/.test(oldLanguage || "")) {
+      localStorage.setItem("custom-blocker-language", oldLanguage);
+    }
+    localStorage.removeItem("vaultClassifier.language");
+  } catch (_) {}
   window.__CB_DESKTOP_PROGRAM_ID = window.__CB_DESKTOP_PROGRAM_ID || "macapp";
   if (window.chrome && window.chrome.__cbShim) {
     return;

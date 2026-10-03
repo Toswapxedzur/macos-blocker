@@ -4,14 +4,17 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+const desktopAssets=process.env.UI_ASSET_ROOT ? path.resolve(process.env.UI_ASSET_ROOT) : null;
 const types={'.html':'text/html','.js':'text/javascript','.css':'text/css'};
 const server=http.createServer(async(req,res)=>{
   try{
     let requestPath=new URL(req.url,'http://localhost').pathname;
     const classifierAsset=requestPath.match(/^\/Sources\/MacBlockerWebUI\/WebAssets\/classifier\/(app\.js|app\.css|strings\.js|notice-language\.js)$/);
-    if(classifierAsset)requestPath='/classifier/Sources/VaultClassifierApp/WebAssets/'+classifierAsset[1];
-    const file=path.resolve(repo,'.'+requestPath);
-    if(!file.startsWith(repo+path.sep))throw Error('Outside fixture root');
+    if(classifierAsset && !desktopAssets)requestPath='/classifier/Sources/VaultClassifierApp/WebAssets/'+classifierAsset[1];
+    const desktopPath=desktopAssets && requestPath.startsWith('/Sources/MacBlockerWebUI/WebAssets/');
+    const base=desktopPath ? desktopAssets : repo;
+    const file=path.resolve(base,desktopPath ? requestPath.slice('/Sources/MacBlockerWebUI/WebAssets/'.length) : '.'+requestPath);
+    if(!file.startsWith(base+path.sep))throw Error('Outside fixture root');
     res.setHeader('Content-Type',types[path.extname(file)]||'text/plain');
     res.end(await fs.readFile(file));
   }catch{res.writeHead(404);res.end();}
@@ -32,6 +35,11 @@ try{
     return r.result.result.value;
   };
   await call('Page.enable');
+  if(process.env.UI_INITIAL_STORAGE){
+    const storage=JSON.parse(process.env.UI_INITIAL_STORAGE);
+    await call('Page.addScriptToEvaluateOnNewDocument',{source:`localStorage.clear(); for(const [key,value] of Object.entries(${JSON.stringify(storage)})) localStorage.setItem(key,value); window.__INTEGRATION_INITIAL_STORAGE=${JSON.stringify(storage)}; window.__INTEGRATION_EXPECTED_LANGUAGE=${JSON.stringify(process.env.UI_EXPECTED_LANGUAGE || 'en')}; window.__INTEGRATION_EXPECTED_PROGRAM=${JSON.stringify(process.env.UI_EXPECTED_PROGRAM || 'macapp')};`});
+    await call('Page.reload');
+  }
   await call('Emulation.setDeviceMetricsOverride',{width:Number(process.env.UI_WIDTH)||1280,height:Number(process.env.UI_HEIGHT)||1000,deviceScaleFactor:1,mobile:false});
   const until=Date.now()+10000;
   while(!await evaluate(process.env.UI_READY_EXPRESSION || 'typeof runAutosaveTests === "function"')){

@@ -1252,3 +1252,6 @@ textarea[data-personal-import], textarea[data-personal-export] { direction:ltr; 
 .utility-dictionary-section .dictionary-contribution { gap: 8px; }
 .utility-dictionary-section .dictionary-contribution .toggle-row { justify-content: flex-start; }
 @media (max-width: 600px) { .dictionary-pack { align-items: flex-start; flex-direction: column; } }
+
+:host(.native-settings-host) { display: block; height: auto; overflow: visible; }
+#native-settings { font: 12px/1.4 var(--font-ui); }

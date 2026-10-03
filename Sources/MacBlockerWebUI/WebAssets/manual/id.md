@@ -116,9 +116,7 @@ Di **Rekaman**, nyalakan atau matikan rekaman untuk tiap kategori atau sumber. *
 
 Feed platform mengumpulkan konten yang ditampilkan di halaman platform yang didukung, baik dibuka maupun tidak. Feed berlabel **Tagging didukung** dapat memasok Klasifikasi saat rekaman aktif. Retensinya mengatur konten yang dikumpulkan secara terpisah dari penggunaan aplikasi dan situs. Grup Klasifikasi yang dijeda tidak otomatis mematikan rekaman.
 
-## Setelan Klasifikasi
-
-**Pembaruan paket tag** memilih kapan pembaruan paket tag terverifikasi berlaku: **Otomatis**, **Tanya dahulu**, atau **Manual**. Ini terpisah dari pengunduhan model lokal yang dipilih dalam grup. File model diunduh dari Hugging Face saat Anda memilih **Unduh**; gunakan progres/status grup dan kontrol **Batal** selama pengunduhan.
+## Pengaturan
 
 Pilih bahasa antarmuka di Setelan. Penjelasan kolom tersedia lewat tombol Info kecil dalam bahasa antarmuka terpilih.
 

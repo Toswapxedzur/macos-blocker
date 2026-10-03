@@ -7,7 +7,7 @@ Mac Vault hat drei Seiten: **Vault** blockiert native Apps, **Klassifizierung** 
 1. Fügen Sie in **Vault** eine Blockierungsgruppe und ein Apps-Ziel hinzu und wählen Sie mit der + Auswahl Apps aus.
 2. Wählen Sie das Blockierungsverhalten der Gruppe und aktivieren Sie sie.
 3. Erstellen Sie in **Klassifizierung** eine Gruppe, wählen Sie ihre Plattformen und fügen Sie Tags mit Beschreibungen hinzu.
-4. Wählen Sie eine lokale Modellstufe und laden Sie sie bei Bedarf herunter. Aktivieren Sie die Tag-Zuweisung in den Klassifizierungseinstellungen und setzen Sie die Gruppe fort.
+4. Wählen Sie eine lokale Modellstufe und laden Sie sie bei Bedarf herunter. Aktivieren Sie die Tag-Zuweisung in den Einstellungen und setzen Sie die Gruppe fort.
 5. Öffnen Sie unterstützte Inhalte im verbundenen Browser. Konfigurieren Sie einen Tag-Filter in einer Browser-Blockierungsgruppe, wenn die Tags die Blockierung steuern sollen.
 
 ## Blockierungsgruppen
@@ -65,7 +65,7 @@ Eine blockierte App wird zum Beenden aufgefordert. **Eine blockierte App erneut 
 
 Eine Klassifizierungsgruppe weist Inhalten ihrer zugeordneten Plattformen mit ihrem eigenen Tag-Baum und ihren eigenen Modelleinstellungen Tags zu. Jede Plattform gehört zu einer Gruppe. Wählen Sie Plattformen beim Erstellen der Gruppe; sie lassen sich danach nicht ändern. Zeitpläne und Filter von Blockierungsgruppen steuern die Tag-Zuweisung nicht.
 
-Aktivieren Sie die Tag-Zuweisung in den Klassifizierungseinstellungen. Verwenden Sie **Tag-Zuweisung pausieren / Tag-Zuweisung fortsetzen** für jede Gruppe getrennt. Das Ausschalten der Aufzeichnung eines Plattformfeeds in **Aktivität → Aufzeichnung** stoppt auch dessen Tag-Zuweisung.
+Aktivieren Sie die Tag-Zuweisung in den Einstellungen. Verwenden Sie **Tag-Zuweisung pausieren / Tag-Zuweisung fortsetzen** für jede Gruppe getrennt. Das Ausschalten der Aufzeichnung eines Plattformfeeds in **Aktivität → Aufzeichnung** stoppt auch dessen Tag-Zuweisung.
 
 ### Tags und Modelleinstellungen
 
@@ -88,11 +88,11 @@ Fügen Sie eine Quelle oder einen Begriff und deren Beschreibung hinzu oder lass
 
 ### Rechercheanbieter konfigurieren
 
-1. Öffnen Sie **Klassifizierungseinstellungen → API-Schlüssel und Anbieter**.
+1. Öffnen Sie **Einstellungen → API-Schlüssel und Anbieter**.
 2. Wählen Sie einen Anbietertyp und **Anbieter hinzufügen**. Dies erstellt eine Konfiguration; es stellt keinen API-Schlüssel aus.
 3. Besorgen Sie Anmeldedaten bei diesem Anbieter und tragen Sie sie ein. Konfigurieren Sie bei einem kompatiblen benutzerdefinierten Endpunkt auch dessen Endpunkt- und Protokollfelder.
 4. Wählen Sie in **Webrecherche** einen Anbieter mit integrierter Websuche. Rufen Sie dessen Modellliste ab und wählen Sie ein Recherchemodell. Verwenden Sie die Suche der Modellauswahl, um die Liste einzugrenzen; aktualisieren Sie sie zum erneuten Abruf.
-5. Lesen Sie die Einwilligungserklärung und aktivieren Sie die Einwilligung. Wählen Sie in jeder Gruppe **Ein**, **Aus** oder **Klassifizierungseinstellungen folgen**.
+5. Lesen Sie die Einwilligungserklärung und aktivieren Sie die Einwilligung. Wählen Sie in jeder Gruppe **Ein**, **Aus** oder **Einstellungen folgen**.
 
 **Webrecherche einrichten…** führt Sie bei fehlender Konfiguration zu den Einstellungen. Eine Gruppe kann die Rechercheeinwilligung nicht umgehen. **Verbindung testen** bestätigt den Erfolg der Testanfrage, nicht, dass jedes Modell Recherche unterstützt. Das Testmodell eines Anbieters ist vom ausgewählten Recherchemodell getrennt.
 
@@ -116,9 +116,7 @@ Schalten Sie in **Aufzeichnung** die Aufzeichnung für jede Kategorie oder einze
 
 Plattformfeeds erfassen Inhalte auf unterstützten Plattformseiten, unabhängig davon, ob diese geöffnet wurden. Ein Feed mit **Tag-Zuweisung unterstützt** kann bei eingeschalteter Aufzeichnung die Klassifizierung versorgen. Seine Aufbewahrung steuert erfasste Inhalte getrennt von App- und Websitenutzung. Eine pausierte Klassifizierungsgruppe schaltet die Aufzeichnung nicht selbst aus.
 
-## Klassifizierungseinstellungen
-
-**Tagpaket-Updates** wählt, wann geprüfte Tagpaket-Updates wirksam werden: **Automatisch**, **Zuerst fragen** oder **Manuell**. Dies ist vom Herunterladen des in einer Gruppe gewählten lokalen Modells getrennt. Modelldateien werden von Hugging Face heruntergeladen, wenn Sie **Herunterladen** wählen; verwenden Sie während eines Downloads die Fortschritts-/Statusanzeige und **Abbrechen** der Gruppe.
+## Einstellungen
 
 Wählen Sie die Oberflächensprache in den Einstellungen. Felderklärungen sind über die kleinen Info-Schaltflächen in der gewählten Oberflächensprache verfügbar.
 

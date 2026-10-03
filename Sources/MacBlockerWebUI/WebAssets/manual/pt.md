@@ -116,9 +116,7 @@ Em **Registro**, ative ou desative o registro por categoria ou por fonte individ
 
 Feeds de plataforma coletam conteúdo exibido em páginas compatíveis, abertas ou não. Um feed com **Marcação compatível** pode fornecer dados ao Classifier enquanto o registro estiver ligado. A retenção desse feed controla o conteúdo coletado separadamente do uso de aplicativos e sites. Pausar um grupo Classifier não desativa o registro.
 
-## Configurações do Classifier
-
-**Atualizações de pacotes de tags** escolhe quando atualizações verificadas de pacotes entram em vigor: **Automático**, **Perguntar antes** ou **Manual**. É separado do download do modelo local escolhido no grupo. Arquivos de modelo vêm do Hugging Face quando você seleciona **Baixar**; durante o download, use o progresso/status do grupo e os controles **Cancelar**.
+## Configurações
 
 Escolha o idioma da interface em Settings. Explicações dos campos estão disponíveis nos pequenos botões Info no idioma selecionado.
 
