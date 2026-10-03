@@ -8,8 +8,30 @@ protocol DictionaryHTTP: Sendable {
     func request(path: String, method: String, body: Data?) async throws -> Data
 }
 
-final class DictionaryHTTPClient: NSObject, DictionaryHTTP, URLSessionDownloadDelegate, @unchecked Sendable {
+private final class DictionaryRequestCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: URLSessionDataTask?
+    private var cancelled = false
+    func start(_ task: URLSessionDataTask) {
+        let cancel = lock.withLock { self.task = task; return cancelled }
+        if cancel { task.cancel() }
+        task.resume()
+    }
+    func cancel() {
+        let task = lock.withLock { cancelled = true; return self.task }
+        task?.cancel()
+    }
+}
+
+final class DictionaryHTTPClient: NSObject, DictionaryHTTP, URLSessionDataDelegate, @unchecked Sendable {
     private let baseURL: URL
+    private let lock = NSLock()
+    private struct Pending {
+        var data = Data()
+        var error: Error?
+        let continuation: CheckedContinuation<Data, Error>
+    }
+    private var pending: [Int: Pending] = [:]
     private lazy var session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 5; config.timeoutIntervalForResource = 60
@@ -17,24 +39,54 @@ final class DictionaryHTTPClient: NSObject, DictionaryHTTP, URLSessionDownloadDe
         return URLSession(configuration: config, delegate: self, delegateQueue: nil)
     }()
     init(baseURL: URL = URL(string: "https://customblocker.com/api/vault-classifier/")!) { self.baseURL = baseURL }
+    private func sameOrigin(_ url: URL?) -> Bool {
+        url?.scheme == baseURL.scheme && url?.host == baseURL.host && url?.port == baseURL.port
+    }
     func request(path: String, method: String = "GET", body: Data? = nil) async throws -> Data {
-        guard let url = URL(string: path, relativeTo: baseURL)?.absoluteURL,
-              url.scheme == baseURL.scheme, url.host == baseURL.host, url.port == baseURL.port else { throw DictionaryError.unavailable }
+        guard let url = URL(string: path, relativeTo: baseURL)?.absoluteURL, sameOrigin(url) else { throw DictionaryError.unavailable }
         var request = URLRequest(url: url); request.httpMethod = method; request.httpBody = body
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
-        let (file, response) = try await session.download(for: request)
-        defer { try? FileManager.default.removeItem(at: file) }
-        guard let response = response as? HTTPURLResponse, response.statusCode == 200,
-              let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 8*1024*1024 else { throw DictionaryError.unavailable }
-        return try Data(contentsOf: file)
+        let cancellation = DictionaryRequestCancellation()
+        return try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { continuation in
+                // Plain delegate tasks work on both Foundation and
+                // FoundationNetworking, with cancellation and transfer limits.
+                let task = lock.withLock { () -> URLSessionDataTask in
+                    let task = session.dataTask(with: request)
+                    pending[task.taskIdentifier] = Pending(continuation: continuation)
+                    return task
+                }
+                cancellation.start(task)
+            }
+        }, onCancel: { cancellation.cancel() })
     }
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {}
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        if totalBytesWritten > 8*1024*1024 || totalBytesExpectedToWrite > 8*1024*1024 { downloadTask.cancel() }
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        let error: DictionaryError?
+        if let response = response as? HTTPURLResponse, response.statusCode == 200, sameOrigin(response.url) {
+            error = response.expectedContentLength > 8*1024*1024 ? .tooLarge : nil
+        } else { error = .unavailable }
+        if let error { lock.withLock { pending[dataTask.taskIdentifier]?.error = error } }
+        completionHandler(error == nil ? .allow : .cancel)
+    }
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        let tooLarge = lock.withLock { () -> Bool in
+            guard var entry = pending[dataTask.taskIdentifier], entry.error == nil else { return true }
+            guard data.count <= 8*1024*1024-entry.data.count else {
+                pending[dataTask.taskIdentifier]?.error = DictionaryError.tooLarge
+                return true
+            }
+            entry.data.append(data); pending[dataTask.taskIdentifier] = entry
+            return false
+        }
+        if tooLarge { dataTask.cancel() }
+    }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        guard let entry = lock.withLock({ pending.removeValue(forKey: task.taskIdentifier) }) else { return }
+        if let error = entry.error ?? error { entry.continuation.resume(throwing: error) }
+        else { entry.continuation.resume(returning: entry.data) }
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        let url = request.url
-        completionHandler(url?.scheme == baseURL.scheme && url?.host == baseURL.host && url?.port == baseURL.port ? request : nil)
+        completionHandler(sameOrigin(request.url) ? request : nil)
     }
 }
 
