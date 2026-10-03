@@ -110,4 +110,19 @@ final class ClusterScopesShareTests: XCTestCase {
         XCTAssertEqual(ConnectionHub.scopeEntryKey(merged[2]), "site")
         XCTAssertEqual(merged[2]["sites"] as? [String], ["a.com"], "the incoming version of a shared entry wins")
     }
+    func testRepeatedPlatformEntriesMergeByIdentity() {
+        let existing: [[String: Any]] = [
+            ["surface": "items", "platform": "youtube", "entryID": "youtube:shorts", "form": "short"],
+            ["surface": "items", "platform": "youtube", "entryID": "youtube:creator", "sources": ["old"]]
+        ]
+        let incoming: [[String: Any]] = [
+            ["surface": "items", "platform": "youtube", "entryID": "youtube:creator", "sources": ["new"]]
+        ]
+        let merged = ConnectionHub.unionScopes(existing, incoming: incoming)
+        XCTAssertEqual(merged.count, 2)
+        XCTAssertEqual(merged[0]["form"] as? String, "short")
+        XCTAssertEqual(merged[1]["sources"] as? [String], ["new"])
+        XCTAssertEqual(merged.map(ConnectionHub.scopeEntryKey), ["youtube:shorts", "youtube:creator"])
+    }
+
 }
