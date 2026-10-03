@@ -120,7 +120,7 @@ Platform feeds collect content shown on supported platform pages, whether opened
 
 **Tag-package updates** selects when verified tag-package updates take effect: **Automatic**, **Ask first**, or **Manual**. It is separate from downloading the local model chosen in a group. Model files download from Hugging Face when you choose **Download**; use the group's progress/status and **Cancel** controls during a download.
 
-Choose the interface language in Settings. Field explanations are available through the small Info buttons in English.
+Choose the interface language in Settings. Field explanations are available through the small Info buttons in the selected interface language.
 
 ## Saving and troubleshooting
 
