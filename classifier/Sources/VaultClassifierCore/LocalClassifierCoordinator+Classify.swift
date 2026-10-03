@@ -25,6 +25,12 @@ extension LocalClassifierCoordinator {
             guard Self.isClassificationCurrent(classification, forType: type, servingModelVersion: onDeviceLLMEngineResolver == nil ? servingModelVersion : "llamacpp/" + type.modelFileName) else {
                 return nil
             }
+            if classification.source != .humanCorrected, let dictionaryProvider {
+                guard let entry = Self.collectedEntry(platformID: platformID, entryID: entryID, catalog: catalog) else { return nil }
+                let evidence = dictionaryProvider.localEvidence(title: entry.title, creatorID: classification.creatorID)
+                let enriched = evidence.overlay(on: catalog, title: entry.title, creatorID: classification.creatorID)
+                guard classification.knowledgeFingerprint == DictionaryEvidence.fingerprint(title: entry.title, creatorID: classification.creatorID, catalog: enriched, settings: state.settings.research) else { return nil }
+            }
         }
         guard sawClassification else { return nil }
         return Self.videoTagsProjection(entryID: entryID, platformID: platformID, types: types, catalog: catalog)
@@ -79,11 +85,12 @@ extension LocalClassifierCoordinator {
                 onDeviceLLMEngineResolver,
                 state.settings.research,
                 groundedResearchQueue,
-                state.settings.classificationEnabled
+                state.settings.classificationEnabled,
+                self.dictionaryProvider
             )
         }
         let (
-            catalog, defaultLLM, engineResolver, globalResearchSettings, researchQueue, classificationEnabled
+            catalog, defaultLLM, engineResolver, globalResearchSettings, researchQueue, classificationEnabled, dictionaryProvider
         ) = snapshot
 
         guard let binding = catalog.bindings.first(where: { $0.id == platformID }), binding.collectionEnabled else {
@@ -92,6 +99,17 @@ extension LocalClassifierCoordinator {
         let types = classificationEnabled ? Self.orderedTypes(for: platformID, in: catalog).filter { !$0.isPaused } : []
         guard !types.isEmpty, !items.isEmpty else {
             return Dictionary(items.map { ($0.entryID, VideoTagsProjection(tags: [], predicted: false)) }, uniquingKeysWith: { first, _ in first })
+        }
+
+        var dictionaryEvidence: [String: DictionaryEvidence] = [:]
+        if let dictionaryProvider {
+            for item in items {
+                let attributes = Self.collectedEntry(platformID: platformID, entryID: item.entryID, catalog: catalog)?.attributes ?? [:]
+                dictionaryEvidence[item.entryID] = await dictionaryProvider.evidence(
+                    title: item.title,
+                    creatorID: catalog.creatorKnowledgeEntry(for: item.creatorID) == nil ? item.creatorID : "",
+                    subscriberCount: DictionaryKeys.subscriberCount(attributes))
+            }
         }
 
         var classifications: [VideoClassification] = []
@@ -150,7 +168,8 @@ extension LocalClassifierCoordinator {
                 houseRules: typeHouseRules,
                 extraTagMinimumOdds: strictness.extraTagMinimumOdds,
                 knowledgeTTLDays: globalResearchSettings.knowledgeTTLDays,
-                maxKnowledgePerVideo: globalResearchSettings.maxKnowledgePerVideo
+                maxKnowledgePerVideo: globalResearchSettings.maxKnowledgePerVideo,
+                dictionaryEvidence: dictionaryEvidence
             )
             classifications.append(contentsOf: results)
             guard let effectiveResearch = Self.effectiveResearchSettings(

@@ -1,0 +1,26 @@
+window.runDictionaryTests = async () => {
+  const results=[], q=s=>scope.querySelector(s);
+  const wait=()=>new Promise(r=>setTimeout(r,850));
+  const check=(v,label)=>{if(!v)throw Error(label);results.push('PASS '+label)};
+  testState.settings.dictionaries={creatorMode:'cache',creatorCacheSize:10000,contributionEnabled:true,contributionChoiceMade:false,nativePrompt:false,cachedCreators:0,packs:[]};
+  testState.workspace='knowledge';pushSnapshot();await wait();
+  check(q('[data-contribution-first]')?.checked,'first launch explains sharing with ON preset');
+  q('[data-contribution-first]').checked=false;q('[data-action="saveDictionaryFirstChoice"]').click();await wait();
+  check(testState.settings.dictionaries.contributionChoiceMade && !testState.settings.dictionaries.contributionEnabled,'first-launch disable persists through shared action');
+  check(!q('[data-contribution-first]'),'saved first-launch choice is not repeated');
+  const cache=q('[data-field="creatorCacheSize"]');cache.value='1234';cache.dispatchEvent(new Event('input',{bubbles:true}));await wait();
+  check(testState.settings.dictionaries.creatorCacheSize===1234,'cache capacity autosaves');
+  const mode=q('[data-field="creatorMode"]');mode.value='full';mode.dispatchEvent(new Event('change',{bubbles:true}));await wait();
+  check(testState.settings.dictionaries.creatorMode==='full','full-download mode autosaves');
+  q('[data-action="downloadDictionary"][data-kind="creator"]').click();await wait();
+  check(testState.lastDownloadedKind==='creator','download requires the explicit button action');
+  q('.dictionary-personal').open=true;
+  const personal=q('[data-personal-import]');personal.value='{"schemaVersion":1,"entries":[]}';
+  personal.dispatchEvent(new Event('input',{bubbles:true}));pushSnapshot();await wait();
+  check(q('[data-personal-import]').value===personal.value,'personal import draft survives a live snapshot');
+  q('[data-action="importPersonalDictionary"]').click();await wait();
+  check(testState.lastDictionaryImport===personal.value,'personal JSON import uses shared action');
+  q('[data-action="exportPersonalDictionary"]').click();await wait();
+  check(q('[data-personal-export]')?.value.includes('schemaVersion'),'exported JSON is available for copying');
+  check(!uiErrors.length,'dictionary controls produce no UI errors');return results;
+};

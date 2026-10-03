@@ -61,6 +61,7 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
     public var tags: [ScoredTag]
     /// Knowledge-map keys injected into the prompt that produced this result.
     public var knowledgeRefs: [String]
+    public var knowledgeFingerprint: String?
     public var source: VideoClassificationSource
     /// Model id + prompt/schema version, so stale results can be recomputed.
     public var modelVersion: String
@@ -79,6 +80,7 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
         treeRevision: Int,
         tags: [ScoredTag],
         knowledgeRefs: [String] = [],
+        knowledgeFingerprint: String? = nil,
         source: VideoClassificationSource,
         modelVersion: String,
         tagBounds: TagBounds? = nil,
@@ -94,6 +96,7 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
         self.treeRevision = treeRevision
         self.tags = Array(tags.prefix(Self.maximumTags))
         self.knowledgeRefs = knowledgeRefs
+        self.knowledgeFingerprint = knowledgeFingerprint
         self.source = source
         self.modelVersion = modelVersion
         self.tagBounds = tagBounds
@@ -106,7 +109,7 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, classifierTypeID, platformID, entryID, creatorID, treeID,
-             treeRevision, tags, knowledgeRefs, source,
+             treeRevision, tags, knowledgeRefs, knowledgeFingerprint, source,
              modelVersion, tagBounds, createdAtMilliseconds, updatedAtMilliseconds
     }
 
@@ -122,6 +125,7 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
         tags = Array((try container.decodeIfPresent([ScoredTag].self, forKey: .tags) ?? []).prefix(Self.maximumTags))
         // (Legacy `unknownTerms` key is intentionally ignored on decode — dropped in Phase 1.)
         knowledgeRefs = try container.decodeIfPresent([String].self, forKey: .knowledgeRefs) ?? []
+        knowledgeFingerprint = try container.decodeIfPresent(String.self, forKey: .knowledgeFingerprint)
         source = try container.decodeIfPresent(VideoClassificationSource.self, forKey: .source) ?? .model
         modelVersion = try container.decodeIfPresent(String.self, forKey: .modelVersion) ?? ""
         tagBounds = try? container.decodeIfPresent(TagBounds.self, forKey: .tagBounds)
@@ -132,7 +136,7 @@ public struct VideoClassification: Codable, Equatable, Sendable, Identifiable {
 
 // MARK: - Knowledge map (RAG store for grounded research results)
 
-public enum KnowledgeEntryKind: String, Codable, Sendable, CaseIterable {
+public enum KnowledgeEntryKind: String, Codable, Sendable, CaseIterable, Hashable {
     case term      // a special noun / entity, e.g. "HermitCraft"
     case creator   // a creator's grounded identity
 }
@@ -602,8 +606,7 @@ public extension WorkspaceCatalog {
     /// Term knowledge relevant to one video: term entries whose subject appears
     /// in the title. This is the classify-time RAG lookup for the primary
     /// (content-based) decode — creator descriptions are looked up separately
-    /// via `creatorKnowledgeEntry(for:)` and used only as a low-confidence
-    /// fallback, so they are deliberately not returned here.
+    /// via `creatorKnowledgeEntry(for:)` and supplied on the creator line.
     func matchedKnowledge(
         title: String,
         creatorID: String,

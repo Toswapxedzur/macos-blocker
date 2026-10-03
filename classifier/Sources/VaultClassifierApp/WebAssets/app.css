@@ -1238,3 +1238,7 @@ input[data-field="creator"], input[data-model-search] {
   unicode-bidi: isolate;
   text-align: start;
 }
+.dictionary-pack { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-block:16px; }
+.dictionary-personal { margin-top:16px; }
+.dictionary-personal summary { cursor:pointer; font-weight:600; margin-bottom:12px; }
+.dictionary-export { width:100%; box-sizing:border-box; margin-block:12px; font-family:monospace; }

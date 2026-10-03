@@ -55,6 +55,11 @@ window.webkit={messageHandlers:{vaultClassifier:{postMessage(message){
     }
     case 'createProviderProfile':testState.assets.providerProfiles.push({id:'provider-created',name:'New provider',type:data.type,credential:'',hasCredential:false,protocolConfiguration:{}});break;
     case 'workspace':testState.workspace=data.workspace;break;
+    case 'saveDictionarySettings':Object.assign(testState.settings.dictionaries,data,{creatorCacheSize:Number(data.creatorCacheSize)});break;
+    case 'completeDictionaryOnboarding':Object.assign(testState.settings.dictionaries,{contributionChoiceMade:true,contributionEnabled:data.enabled});break;
+    case 'importPersonalDictionary':testState.lastDictionaryImport=data.json;break;
+    case 'exportPersonalDictionary':testState.settings.dictionaries.personalJSON='{"schemaVersion":1,"entries":[]}';break;
+    case 'downloadDictionary':testState.lastDownloadedKind=data.kind;break;
     case 'state':break;
     default:return;
   }

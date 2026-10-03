@@ -22,6 +22,11 @@ public final class VaultClassifierPage {
         // no installer); a no-op in development and for un-bundled builds.
         NativeMessagingHostRegistration.registerBundledHost()
         model = VaultClassifierViewModel()
+        model?.contributionPromptNative = true
+        DispatchQueue.main.async { [weak self] in
+            guard let model = self?.model, model.coordinator?.snapshot().settings.dictionaries.contributionChoiceMade == false else { return }
+            model.completeDictionaryOnboarding(enabled: DictionaryContributionPrompt.present())
+        }
     }
 
     // MARK: The page, as a scene of the host's web view
