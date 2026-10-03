@@ -1242,3 +1242,9 @@ input[data-field="creator"], input[data-model-search] {
 .dictionary-personal { margin-top:16px; }
 .dictionary-personal summary { cursor:pointer; font-weight:600; margin-bottom:12px; }
 .dictionary-export { width:100%; box-sizing:border-box; margin-block:12px; font-family:monospace; }
+
+/* Dictionary JSON stays literal; long localized labels fit narrow panes. */
+textarea[data-personal-import], textarea[data-personal-export] { direction:ltr; unicode-bidi:isolate; text-align:start; }
+.dictionary-pack > div { min-width:0; overflow-wrap:anywhere; }
+.dictionary-pack > button { flex-shrink:0; }
+@media (max-width:600px) { .dictionary-pack { flex-wrap:wrap; } }
