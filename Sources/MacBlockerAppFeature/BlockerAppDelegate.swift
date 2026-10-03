@@ -59,6 +59,9 @@ open class BlockerAppDelegate: NSObject, NSApplicationDelegate {
         // (started above) is the sole hub host; the classifier never hosts, it
         // only joins as a client (see SharedHubClient).
         MainActor.assumeIsolated {
+            VaultClassifierPage.shared.nativeText = { key, fallback in
+                VaultNativeLanguage.text(key, fallback: fallback)
+            }
             VaultClassifierPage.shared.start()
         }
 

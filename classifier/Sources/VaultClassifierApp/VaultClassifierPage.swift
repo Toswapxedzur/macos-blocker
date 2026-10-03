@@ -10,6 +10,9 @@ import VaultClassifierCore
 public final class VaultClassifierPage {
     public static let shared = VaultClassifierPage()
 
+    /// The containing app supplies its saved interface language without a module dependency cycle.
+    public var nativeText: (String, String) -> String = { _, fallback in fallback }
+
     private var model: VaultClassifierViewModel?
     private var webShell: VaultClassifierWebShell?
     private var pageVisible = true
@@ -25,7 +28,7 @@ public final class VaultClassifierPage {
         model?.contributionPromptNative = true
         DispatchQueue.main.async { [weak self] in
             guard let model = self?.model, model.coordinator?.snapshot().settings.dictionaries.contributionChoiceMade == false else { return }
-            model.completeDictionaryOnboarding(enabled: DictionaryContributionPrompt.present())
+            model.completeDictionaryOnboarding(enabled: DictionaryContributionPrompt.present(translate: self?.nativeText ?? { _, fallback in fallback }))
         }
     }
 
