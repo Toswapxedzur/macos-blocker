@@ -48,6 +48,12 @@ final class VaultClassifierViewModel: ObservableObject {
 
     var coordinator: LocalClassifierCoordinator?
     var groundedResearchQueue: GroundedResearchQueue?
+    var dictionaryService: OfficialDictionaryService?
+    @Published var dictionaryStatus: [String: Any] = [:]
+    @Published var dictionaryBusy = false
+    @Published var dictionaryNotice: String?
+    @Published var personalDictionaryJSON: String?
+    var contributionPromptNative = false
     @Published var researchQueueStatus = GroundedResearchQueueStatus()
     var sharedHubClient: SharedHubClient?
     var collectionDiagnostics: CollectionDiagnosticsStore?
@@ -107,6 +113,7 @@ final class VaultClassifierViewModel: ObservableObject {
             sharedHubClient.connect()
             installGroundedResearch(coordinator: coordinator)
             installLocalLLMEngine(coordinator: coordinator)
+            try installDictionaries(directory: vaultDirectory, coordinator: coordinator, automaticallyCheck: true)
         } catch {
             issue = error.localizedDescription
         }
@@ -136,6 +143,7 @@ final class VaultClassifierViewModel: ObservableObject {
         loadResourceSettings(from: coordinator.snapshot().settings)
         loadBackupConfiguration(from: coordinator.snapshot().backupConfiguration)
         coordinator.setOnDeviceLLM(StubOnDeviceLLM())
+        try installDictionaries(directory: vaultDirectory, coordinator: coordinator, automaticallyCheck: false)
     }
 
     /// Each group's selected model loads lazily through the shared registry.

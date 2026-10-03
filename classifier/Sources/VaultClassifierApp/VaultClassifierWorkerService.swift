@@ -24,6 +24,9 @@ public final class VaultClassifierWorkerService {
         } else {
             self.model = VaultClassifierViewModel()
         }
+        #if os(Windows)
+        model.contributionPromptNative = true
+        #endif
         let directory: URL
         if let testingDirectory { directory = testingDirectory.appendingPathComponent("Activity", isDirectory: true) }
         else { directory = try VaultRuntimeEnvironment.current.classifierSupportDirectoryURL().deletingLastPathComponent().appendingPathComponent("Activity", isDirectory: true) }

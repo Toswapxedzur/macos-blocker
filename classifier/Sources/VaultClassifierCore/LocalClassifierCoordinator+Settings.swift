@@ -4,6 +4,32 @@ import Foundation
 // Split out of LocalStore.swift (CLASSIFIER-INDEPENDENCE §7, Phase 5):
 // same type, same behaviour.
 extension LocalClassifierCoordinator {
+
+    public func importPersonalDictionary(_ data: Data) throws {
+        let pack = try PersonalDictionaryPack.decode(data)
+        try lock.withLock {
+            var catalog = state.workspaceCatalog
+            for entry in pack.entries {
+                catalog.upsertKnowledgeEntry(.init(kind: entry.kind, subject: entry.subject.trimmingCharacters(in: .whitespacesAndNewlines), meaning: entry.meaning, writtenByUser: true))
+            }
+            try catalog.validate()
+            state.workspaceCatalog = catalog
+            try stateFile.save(state)
+        }
+    }
+
+    public func exportPersonalDictionary() throws -> String {
+        try lock.withLock {
+            let entries = (state.workspaceCatalog.knowledgeEntries + state.workspaceCatalog.creatorKnowledge).map {
+                PersonalDictionaryPack.Entry(kind: $0.kind, subject: $0.subject, meaning: $0.meaning)
+            }
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(PersonalDictionaryPack(schemaVersion: 1, entries: entries))
+            guard data.count <= 8 * 1024 * 1024 else { throw DictionaryError.tooLarge }
+            return String(decoding: data, as: UTF8.self)
+        }
+    }
+
     public func updateSettings(_ settings: ClassifierSettings) throws {
         lock.lock()
         defer { lock.unlock() }
@@ -71,8 +97,7 @@ extension LocalClassifierCoordinator {
 
     /// Edits the description of an existing knowledge entry, keeping its kind,
     /// subject and id; it counts as written by the user from then on. A creator
-    /// description edited here steers that creator's low-confidence
-    /// classifications.
+    /// description edited here steers that creator's classifications.
     @discardableResult
     public func updateKnowledgeEntryMeaning(id: String, meaning: String) throws -> Bool {
         lock.lock()
