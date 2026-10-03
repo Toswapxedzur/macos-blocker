@@ -108,3 +108,16 @@ extension OfficialDictionaryServiceTests {
         let cancelled = await http.flags().1; XCTAssertTrue(cancelled)
     }
 }
+
+private actor UnavailableDictionaryFixture: DictionaryHTTP {
+    var count = 0
+    func request(path: String, method: String, body: Data?) async throws -> Data { count += 1; throw DictionaryError.unavailable }
+    func total() -> Int { count }
+}
+extension OfficialDictionaryServiceTests {
+    func testUnavailableServerDoesNotDelayEverySubsequentCreator() async throws {
+        let http = UnavailableDictionaryFixture(), service = OfficialDictionaryService(disk: try disk(), http: http)
+        for id in ["one","two","three"] { _ = await service.evidence(title: "Local classification remains possible", creatorID: "twitter:account:"+id, subscriberCount: nil) }
+        let count = await http.total(); XCTAssertEqual(count, 1)
+    }
+}
