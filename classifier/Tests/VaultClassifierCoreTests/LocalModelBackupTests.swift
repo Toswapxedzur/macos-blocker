@@ -42,11 +42,11 @@ final class LocalModelBackupTests: XCTestCase {
             from: Data(contentsOf: try XCTUnwrap(folders.first).appendingPathComponent("model-state.json"))
         )
         XCTAssertEqual(payload.workspaceCatalog.datasets[0].collectedEntries.count, 1)
-        let payloadText = String(decoding: try JSONEncoder().encode(payload), as: UTF8.self)
-        XCTAssertFalse(payloadText.contains("\"cache\""))
-        XCTAssertFalse(payloadText.contains("\"ledger\""))
-        XCTAssertFalse(payloadText.contains("\"trainingCorpus\""))
-        XCTAssertFalse(payloadText.contains("\"personalModel\""))
+        let payloadObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(payload)) as! [String: Any]
+        // Retired fields are absent; the supported creatorMode value "cache" is valid.
+        for retired in ["cache", "ledger", "trainingCorpus", "personalModel"] {
+            XCTAssertNil(payloadObject[retired])
+        }
 
         #if !os(Windows)
         let attributes = try FileManager.default.attributesOfItem(atPath: root.path)

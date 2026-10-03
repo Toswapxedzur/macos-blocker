@@ -5,6 +5,22 @@ import XCTest
 
 @MainActor
 final class DictionaryContributionPromptTests: XCTestCase {
+    func testLocalizedPromptPreservesConsentControlsAndDefault() throws {
+        let strings = [
+            "native.dictionary.title": "Wörterbuch verbessern",
+            "native.dictionary.macBody": "Öffentliche IDs; höchstens 50 pro Tag, 7 Tage Aufbewahrung.",
+            "native.dictionary.share": "Öffentliche IDs teilen",
+            "native.dictionary.saveChoice": "Auswahl speichern",
+            "native.dictionary.decline": "Nicht teilen"
+        ]
+        let alert = DictionaryContributionPrompt.makeAlert { key, fallback in strings[key] ?? fallback }
+        XCTAssertEqual(alert.messageText, strings["native.dictionary.title"])
+        XCTAssertEqual(alert.informativeText, strings["native.dictionary.macBody"])
+        let checkbox = try XCTUnwrap(alert.accessoryView as? NSButton)
+        XCTAssertEqual(checkbox.title, strings["native.dictionary.share"])
+        XCTAssertEqual(checkbox.state, .on)
+        XCTAssertEqual(alert.buttons.map(\.title), ["Auswahl speichern", "Nicht teilen"])
+    }
     func testNativeDefaultOnScreenCanSaveDisabledChoiceAndDecline() throws {
         guard ProcessInfo.processInfo.environment["VAULT_DICTIONARY_NATIVE_UI_TEST"] == "1" else { throw XCTSkip("Native modal requires mini1's desktop test window.") }
         let app = NSApplication.shared

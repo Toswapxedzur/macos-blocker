@@ -46,9 +46,9 @@ final class VaultClassifierCoreTests: XCTestCase {
             LocalClassifierState.self,
             from: JSONSerialization.data(withJSONObject: legacy)
         )
-        let encoded = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
+        let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(decoded)) as! [String: Any]
         for retired in ["cache", "ledger", "cacheBackfill", "personalModel", "trainingCorpus", "sourceProfiles", "sourcePrior", "creatorClassifications"] {
-            XCTAssertFalse(encoded.contains("\"\(retired)\""))
+            XCTAssertNil(encoded[retired])
         }
     }
 
