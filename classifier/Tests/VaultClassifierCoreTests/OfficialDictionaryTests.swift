@@ -55,6 +55,11 @@ final class OfficialDictionaryTests: XCTestCase {
             let evidence = DictionaryEvidence(terms: [official], creator: entry(.creator, "youtube:channel:UCfixture").knowledge())
             let overlay = evidence.overlay(on: catalog, title: "测试模组", creatorID: "youtube:channel:UCfixture")
             XCTAssertEqual(overlay.knowledgeEntries.first?.meaning, "Personal")
+            var aliasCatalog = WorkspaceCatalog()
+            aliasCatalog.knowledgeEntries = [.init(kind: .term, subject: "测试模组", meaning: "Personal alias")]
+            let aliasTerms = evidence.overlay(on: aliasCatalog, title: "测试模组", creatorID: "")
+            XCTAssertEqual(aliasTerms.knowledgeEntries.count, 1)
+            XCTAssertEqual(aliasTerms.knowledgeEntries.first?.meaning, "Personal alias")
             XCTAssertEqual(overlay.creatorKnowledge.first?.meaning, "Personal creator")
             let aliasOverlay = evidence.overlay(on: catalog, title: "", creatorID: "youtube:handle:@fixture")
             XCTAssertEqual(aliasOverlay.creatorKnowledgeEntry(for: "youtube:handle:@fixture")?.meaning, "Personal creator")
