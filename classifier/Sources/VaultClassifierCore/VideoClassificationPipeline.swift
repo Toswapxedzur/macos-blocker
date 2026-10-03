@@ -97,7 +97,8 @@ public struct VideoClassificationPipeline: Sendable {
         houseRules: String? = nil,
         extraTagMinimumOdds: Double? = nil,
         knowledgeTTLDays: Int = ResearchSettings.defaultKnowledgeTTLDays,
-        maxKnowledgePerVideo: Int = ResearchSettings.defaultMaxKnowledgePerVideo
+        maxKnowledgePerVideo: Int = ResearchSettings.defaultMaxKnowledgePerVideo,
+        dictionaryEvidence: [String: DictionaryEvidence] = [:]
     ) async throws -> [VideoClassification] {
         guard !inputs.isEmpty else { return [] }
         let timing = ProcessInfo.processInfo.environment["VAULT_DECODE_TIMING"] == "1"
@@ -108,7 +109,8 @@ public struct VideoClassificationPipeline: Sendable {
         let evidence = inputs.map { input in
             gatherEvidence(
                 title: input.title, entryID: input.entryID, creatorID: input.creatorID, platformID: platformID,
-                classifierType: classifierType, tree: tree, catalog: catalog,
+                classifierType: classifierType, tree: tree,
+                catalog: (dictionaryEvidence[input.entryID] ?? .init()).overlay(on: catalog, title: input.title, creatorID: input.creatorID),
                 knowledgeTTLDays: knowledgeTTLDays, maxKnowledgePerVideo: maxKnowledgePerVideo
             )
         }
@@ -130,7 +132,7 @@ public struct VideoClassificationPipeline: Sendable {
         }
 
         // Primary decode: each video's own content plus any matched term
-        // knowledge. The creator description is deliberately withheld here.
+        // knowledge and the matching creator description.
         let primaryParts = inputs.indices.map { parts($0, knowledge: evidence[$0].termKnowledge) }
         let tAssembled = DispatchTime.now()
         let primaryResults = try await llm.classifyAll(primaryParts.map(request))
@@ -156,6 +158,9 @@ public struct VideoClassificationPipeline: Sendable {
                 treeRevision: tree.revision,
                 tags: tags[index],
                 knowledgeRefs: knowledgeUsed[index].map(\.id),
+                knowledgeFingerprint: DictionaryEvidence.fingerprint(title: inputs[index].title, creatorID: inputs[index].creatorID,
+                    catalog: (dictionaryEvidence[inputs[index].entryID] ?? .init()).overlay(on: catalog, title: inputs[index].title, creatorID: inputs[index].creatorID),
+                    settings: .init(), limit: maxKnowledgePerVideo, ttlDays: knowledgeTTLDays),
                 source: knowledgeUsed[index].isEmpty ? .model : .modelKnowledge,
                 modelVersion: "\(llm.modelVersion)+\(promptVersion)",
                 tagBounds: TagBounds(minimum: minimumTags, maximum: maximumTags)
@@ -195,8 +200,7 @@ public struct VideoClassificationPipeline: Sendable {
                 .sorted { $0.share == $1.share ? $0.tagName < $1.tagName : $0.share > $1.share }
         }
 
-        // Matched term knowledge. The creator description is deliberately withheld
-        // here (it enters only via the low-confidence creator fallback).
+        // Matched terms; creator descriptions enter separately on the creator line.
         let termKnowledge = catalog.matchedKnowledge(
             title: title,
             creatorID: creatorID,
