@@ -45,7 +45,7 @@ While frozen, the wait can be extended and a PIN can be added if none exists. Th
 
 ### Linked groups
 
-Use **Link** to connect explicitly selected groups in other Vault programs. Linked groups share their name, supported policy settings, usage, and freeze conditions. Each program retains its own targets and enforces the actions it supports. Unlinking keeps each group and its settings.
+Use **Link** to connect explicitly selected groups in other Vault programs. Linked groups share their name, supported policy settings, targets, usage, and freeze conditions. Each program edits and enforces the target types it supports; other target entries remain available to linked programs. Unlinking keeps each group and its settings.
 
 If a linked member is offline, editing can be unavailable. Open Mac Vault and the linked browser to reconnect. A local saved policy can continue to apply while a member is offline.
 
@@ -78,7 +78,7 @@ Create tags, describe their meanings, and set or remove their parents in the tag
 
 Routine Classifier edits save automatically. A selected tier must be downloaded before it can tag content. Groups using the same tier share a loaded model; up to two tiers remain loaded at once.
 
-Correct a content item's tags in the browser extension's tag chooser. Add a tag and confidence, or remove a selected tag once. **Untagged** means tagging finished with no tags; **Tagging** means a result is pending. Corrections inform future tagging.
+Correct a content item's tags in the browser extension. Click **+ tag**, search the Classifier's existing tags, and choose one to add it. Use a tag's remove control, or select it and press Delete once, to remove it. **Untagged** means tagging finished with no tags; **Tagging** means a result is pending. Corrections inform future tagging.
 
 ## Knowledge and web research
 

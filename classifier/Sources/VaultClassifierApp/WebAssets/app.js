@@ -72,6 +72,8 @@
   // next snapshot can open the freshly created type.
   let pendingSelectNewType = null;
   let selectedLanguage = "en";
+  let languageMessages = {};
+  let languageRevision = 0;
   let navigationPanelWidth = navigationWidthRange.fallback;
   let navigationResize = null;
   const workspaceNames = new Set(["browserBridge", "knowledge"]);
@@ -89,6 +91,7 @@
     }
   } catch (_) {}
   root.lang = selectedLanguage;
+  root.dir = selectedLanguage === "ar" ? "rtl" : "ltr";
 
   function applyNavigationPanelWidth() {
     root.style.setProperty("--navigation-panel-width", `${navigationPanelWidth}px`);
@@ -138,12 +141,36 @@
   }
 
   function t(key, values = {}) {
-    const template = strings[key];
+    const template = languageMessages["classifier." + key] ?? strings[key];
     if (typeof template !== "string") return key;
     return template.replace(/\{([a-zA-Z0-9_]+)\}/g, (_, name) => String(values[name] ?? ""));
   }
 
+  async function loadSelectedLanguage() {
+    const revision = ++languageRevision;
+    const language = selectedLanguage;
+    let messages = {};
+    try {
+      if (window.VaultLoadMessages) messages = await window.VaultLoadMessages(language);
+      else {
+        const response = await fetch(`translation/${language}.json`);
+        if (response.ok) messages = await response.json();
+      }
+    } catch (_) {}
+    if (revision !== languageRevision) return;
+    languageMessages = messages;
+    root.lang = language;
+    root.dir = language === "ar" ? "rtl" : "ltr";
+    render();
+    window.VaultInfo.refresh(scope);
+  }
+
+  window.VaultClassifierTranslate = (key, values = {}) => {
+    const template = languageMessages[key];
+    return template ? template.replace(/\{([a-zA-Z0-9_]+)\}/g, (_, name) => String(values[name] ?? "")) : key;
+  };
   const tx = (key, values = {}) => esc(t(key, values));
+  const sx = (key, fallback) => esc(languageMessages[key] ?? fallback);
   const percent = (value) => `${Math.round(Number(value || 0) * 100)}%`;
   const modelSizeGB = (bytes) => {
     const gigabytes = Math.max(0, Number(bytes) || 0) / 1_000_000_000;
@@ -414,11 +441,11 @@
     "tree.tagName": "The name of the tag to add to this Classifier group’s taxonomy."
   });
   function infoAttrs(labelKey, hintKey = "") {
-    const text = fieldInfo[labelKey] || strings[hintKey] || "";
+    const text = languageMessages["classifierInfo." + labelKey] || fieldInfo[labelKey] || (hintKey ? t(hintKey) : "");
     if (!text) return "";
     const target = labelKey === "bridge.typeName" ? ".classifier-name-row .field"
       : labelKey === "llm.providerType" ? ".provider-create .field" : "";
-    return `data-info-label="${esc(strings[labelKey] || labelKey)}" data-info-key="${esc(labelKey)}" data-info-copy="${esc(text)}"${target ? ` data-info-target="${target}"` : ""}`;
+    return `data-info-label="${esc(t(labelKey))}" data-info-key="${esc(labelKey)}" data-info-copy="${esc(text)}"${target ? ` data-info-target="${target}"` : ""}`;
   }
 
   function field(labelKey, hintKey, key, value, type = "text", extra = "") {
@@ -753,8 +780,8 @@
   function shell(content) {
     return `<div class="popup">
       <header class="vui-topbar">
-        <nav class="vui-tabs" aria-label="Scene"><button type="button" class="vui-tab" data-scene="vault">Vault</button><button type="button" class="vui-tab is-active" data-scene="classifier">Classifier</button><button type="button" class="vui-tab" data-scene="activity">Activity</button></nav>
-        <div class="vui-topbar-links"><button type="button" class="secondary" data-action="openManual">User manual</button><span class="settings-popover-anchor"><button type="button" class="secondary" data-action="openUtilityPanel" data-utility-panel="settings" aria-haspopup="dialog" aria-expanded="${utilityPanel ? "true" : "false"}">${tx("utility.settings.button")}</button>${utilityPanelContent()}</span></div>
+        <nav class="vui-tabs" aria-label="${sx("activity.scene", "Scene")}"><button type="button" class="vui-tab" data-scene="vault">${sx("scene.vault", "Vault")}</button><button type="button" class="vui-tab is-active" data-scene="classifier">${sx("scene.classifier", "Classifier")}</button><button type="button" class="vui-tab" data-scene="activity">${sx("scene.activity", "Activity")}</button></nav>
+        <div class="vui-topbar-links"><button type="button" class="secondary" data-action="openManual">${sx("manual.title", "User manual")}</button><span class="settings-popover-anchor"><button type="button" class="secondary" data-action="openUtilityPanel" data-utility-panel="settings" aria-haspopup="dialog" aria-expanded="${utilityPanel ? "true" : "false"}">${tx("utility.settings.button")}</button>${utilityPanelContent()}</span></div>
       </header>
       <div class="layout">
         <aside class="navigation-panel" aria-label="${tx("navigation.aria")}">
@@ -770,7 +797,7 @@
   function initialShell() {
     // Native state arrives asynchronously. Keep navigation available from the
     // first paint rather than replacing the whole scene with a loading screen.
-    return `<div class="popup"><header class="vui-topbar"><nav class="vui-tabs" aria-label="Scene"><button type="button" class="vui-tab" data-scene="vault">Vault</button><button type="button" class="vui-tab is-active" data-scene="classifier">Classifier</button><button type="button" class="vui-tab" data-scene="activity">Activity</button></nav></header><div class="layout" aria-busy="true"></div></div>`;
+    return `<div class="popup"><header class="vui-topbar"><nav class="vui-tabs" aria-label="${sx("activity.scene", "Scene")}"><button type="button" class="vui-tab" data-scene="vault">${sx("scene.vault", "Vault")}</button><button type="button" class="vui-tab is-active" data-scene="classifier">${sx("scene.classifier", "Classifier")}</button><button type="button" class="vui-tab" data-scene="activity">${sx("scene.activity", "Activity")}</button></nav></header><div class="layout" aria-busy="true"></div></div>`;
   }
 
   function syncDialogFocus(previousControl) {
@@ -1822,6 +1849,7 @@
       selectedLanguage = languageControl.value;
       root.lang = selectedLanguage;
       try { window.localStorage.setItem("vaultClassifier.language", selectedLanguage); } catch (_) {}
+      void loadSelectedLanguage();
       return;
     }
     // Preserve creation choices across page re-renders.
@@ -1858,7 +1886,7 @@
     const layout = root.querySelector(".layout");
     if (!layout) return;
     const bounds = layout.getBoundingClientRect();
-    const width = Math.round(event.clientX - bounds.left);
+    const width = Math.round(root.dir === "rtl" ? bounds.right - event.clientX : event.clientX - bounds.left);
     navigationPanelWidth = Math.min(navigationWidthRange.maximum, Math.max(navigationWidthRange.minimum, width));
     applyNavigationPanelWidth();
     event.preventDefault();
@@ -2043,8 +2071,8 @@
     const resizer = event.target.closest?.("[data-navigation-resizer]");
     if (!resizer) return;
     let nextWidth = navigationPanelWidth;
-    if (event.key === "ArrowLeft") nextWidth -= 16;
-    else if (event.key === "ArrowRight") nextWidth += 16;
+    if (event.key === "ArrowLeft") nextWidth += root.dir === "rtl" ? 16 : -16;
+    else if (event.key === "ArrowRight") nextWidth += root.dir === "rtl" ? -16 : 16;
     else if (event.key === "Home") nextWidth = navigationWidthRange.minimum;
     else if (event.key === "End") nextWidth = navigationWidthRange.maximum;
     else return;
@@ -2264,7 +2292,12 @@
 
   window.addEventListener("resize", () => window.requestAnimationFrame(drawTreeConnections));
   window.VaultUI.observe(scope);
-  window.VaultInfo.watch(scope, { enabled: () => selectedLanguage === "en" });
+  window.VaultInfo.watch(scope, { enabled: () => true, translate: (key, values = {}) => {
+    const template = languageMessages[key];
+    if (!template) return null;
+    return template.replace(/\{([a-zA-Z0-9_]+)\}/g, (_, name) => String(values[name] ?? ""));
+  } });
   render();
+  void loadSelectedLanguage();
   send("state", {});
 })();
