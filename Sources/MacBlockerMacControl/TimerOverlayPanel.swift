@@ -1,5 +1,6 @@
 import Foundation
 import MacBlockerCore
+import MacBlockerWebUI
 
 #if canImport(AppKit)
 import AppKit
@@ -220,7 +221,7 @@ struct PanelControlView: View {
                 Button(action: {
                     onEvent(control.id, "click", control.action ?? "", "")
                 }) {
-                    Text(control.label ?? "Button")
+                    Text(control.label ?? VaultNativeLanguage.text("contentPage.button", fallback: "Button"))
                         .font(.custom("Arial", size: 13)).fontWeight(.medium)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 6)
@@ -583,7 +584,7 @@ private struct PanelToggleControl: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityValue(value ? "On" : "Off")
+        .accessibilityValue(value ? VaultNativeLanguage.text("native.panelOn", fallback: "On") : VaultNativeLanguage.text("native.panelOff", fallback: "Off"))
         .disabled(control.disabled == true)
         .onChange(of: value) { newValue in
             if suppressEmit { suppressEmit = false; return }
@@ -638,13 +639,13 @@ private struct PanelSelectControl: View {
                 .background(Capsule().fill(Color(red: 0.933, green: 0.949, blue: 1)))
             }
             .buttonStyle(.plain)
-            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            .accessibilityValue(expanded ? VaultNativeLanguage.text("native.panelExpanded", fallback: "Expanded") : VaultNativeLanguage.text("native.panelCollapsed", fallback: "Collapsed"))
         }
         .popover(isPresented: $expanded, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 4) {
                 if (control.options ?? []).count > 5 || !query.isEmpty {
                     HStack {
-                        TextField("Search options", text: $query)
+                        TextField(VaultNativeLanguage.text("ui.searchOptions", fallback: "Search options"), text: $query)
                             .textFieldStyle(.plain)
                             .font(.custom("Arial", size: 13))
                             .padding(7)
@@ -652,14 +653,14 @@ private struct PanelSelectControl: View {
                             .cornerRadius(8)
                         if !query.isEmpty {
                             Button { query = "" } label: { Text("×") }
-                                .buttonStyle(.plain).accessibilityLabel("Clear search")
+                                .buttonStyle(.plain).accessibilityLabel(VaultNativeLanguage.text("ui.clearSearch", fallback: "Clear search"))
                         }
                     }
                 }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 2) {
                         if filteredOptions.isEmpty {
-                            Text("No matches").font(.custom("Arial", size: 13))
+                            Text(VaultNativeLanguage.text("ui.noMatches", fallback: "No matches")).font(.custom("Arial", size: 13))
                                 .foregroundColor(.secondary).padding(7)
                         }
                         ForEach(filteredOptions, id: \.value) { option in
@@ -870,6 +871,7 @@ struct PanelCardView: View {
         .cornerRadius(14)
         .shadow(color: .black.opacity(0.32), radius: 14, y: 5)
         .preferredColorScheme(.dark)
+        .environment(\.layoutDirection, VaultNativeLanguage.language == "ar" ? .rightToLeft : .leftToRight)
     }
 }
 

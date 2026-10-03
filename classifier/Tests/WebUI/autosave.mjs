@@ -8,7 +8,7 @@ const types={'.html':'text/html','.js':'text/javascript','.css':'text/css'};
 const server=http.createServer(async(req,res)=>{
   try{
     let requestPath=new URL(req.url,'http://localhost').pathname;
-    const classifierAsset=requestPath.match(/^\/Sources\/MacBlockerWebUI\/WebAssets\/classifier\/(app\.js|app\.css|strings\.js)$/);
+    const classifierAsset=requestPath.match(/^\/Sources\/MacBlockerWebUI\/WebAssets\/classifier\/(app\.js|app\.css|strings\.js|notice-language\.js)$/);
     if(classifierAsset)requestPath='/classifier/Sources/VaultClassifierApp/WebAssets/'+classifierAsset[1];
     const file=path.resolve(repo,'.'+requestPath);
     if(!file.startsWith(repo+path.sep))throw Error('Outside fixture root');
